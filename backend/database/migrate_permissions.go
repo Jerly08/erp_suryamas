@@ -21,7 +21,7 @@ func MigratePermissions(db *gorm.DB) error {
 		return err
 	}
 	
-modules := []string{"accounts", "products", "contacts", "assets", "sales", "purchases", "payments", "cash_bank", "reports", "settings"}
+	modules := []string{"accounts", "products", "contacts", "assets", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings"}
 	
 	for _, user := range users {
 		// Check if user already has permissions

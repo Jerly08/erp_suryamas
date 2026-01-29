@@ -33,15 +33,17 @@ func (pc *PermissionController) GetUserPermissions(c *gin.Context) {
 		return
 	}
 	
-	// Get user permissions
+	// Get user permissions from database
 	var permissions []models.ModulePermissionRecord
 	if err := pc.db.Where("user_id = ?", id).Find(&permissions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch permissions"})
 		return
 	}
 	
-	// Build permission map
-	permMap := make(map[string]*models.ModulePermission)
+	// Start with default permissions based on role
+	permMap := models.GetDefaultPermissions(user.Role)
+	
+	// Override with database permissions if they exist
 	for _, perm := range permissions {
 		permMap[perm.Module] = &models.ModulePermission{
 			CanView:    perm.CanView,
@@ -52,11 +54,6 @@ func (pc *PermissionController) GetUserPermissions(c *gin.Context) {
 			CanExport:  perm.CanExport,
 			CanMenu:    perm.CanMenu,
 		}
-	}
-	
-	// If no permissions exist, return default permissions based on role
-	if len(permissions) == 0 {
-		permMap = models.GetDefaultPermissions(user.Role)
 	}
 	
 	response := models.UserPermission{
@@ -149,12 +146,14 @@ func (pc *PermissionController) GetAllUsersPermissions(c *gin.Context) {
 	var response []models.UserPermission
 	
 	for _, user := range users {
-		// Get user permissions
+		// Get user permissions from database
 		var permissions []models.ModulePermissionRecord
 		pc.db.Where("user_id = ?", user.ID).Find(&permissions)
 		
-		// Build permission map
-		permMap := make(map[string]*models.ModulePermission)
+		// Start with default permissions based on role
+		permMap := models.GetDefaultPermissions(user.Role)
+		
+		// Override with database permissions if they exist
 		for _, perm := range permissions {
 			permMap[perm.Module] = &models.ModulePermission{
 				CanView:    perm.CanView,
@@ -165,11 +164,6 @@ func (pc *PermissionController) GetAllUsersPermissions(c *gin.Context) {
 				CanExport:  perm.CanExport,
 				CanMenu:    perm.CanMenu,
 			}
-		}
-		
-		// If no permissions exist, use default permissions based on role
-		if len(permissions) == 0 {
-			permMap = models.GetDefaultPermissions(user.Role)
 		}
 		
 		userPerm := models.UserPermission{
@@ -277,15 +271,17 @@ func (pc *PermissionController) GetMyPermissions(c *gin.Context) {
 		return
 	}
 
-	// Get user permissions
+	// Get user permissions from database
 	var permissions []models.ModulePermissionRecord
 	if err := pc.db.Where("user_id = ?", id).Find(&permissions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch permissions"})
 		return
 	}
 
-	// Build permission map
-	permMap := make(map[string]*models.ModulePermission)
+	// Start with default permissions based on role
+	permMap := models.GetDefaultPermissions(user.Role)
+	
+	// Override with database permissions if they exist
 	for _, perm := range permissions {
 		permMap[perm.Module] = &models.ModulePermission{
 			CanView:    perm.CanView,
@@ -296,11 +292,6 @@ func (pc *PermissionController) GetMyPermissions(c *gin.Context) {
 			CanExport:  perm.CanExport,
 			CanMenu:    perm.CanMenu,
 		}
-	}
-
-	// If no permissions exist, return default permissions based on role
-	if len(permissions) == 0 {
-		permMap = models.GetDefaultPermissions(user.Role)
 	}
 
 	response := models.UserPermission{
