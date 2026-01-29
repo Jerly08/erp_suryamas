@@ -449,29 +449,36 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
         {/* Pricing */}
         <Box>
           <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.pricing')}</Text>
-          <Grid templateColumns="repeat(3, 1fr)" gap={4}>
-            <GridItem>
-              <CurrencyInput
-                value={formData.purchase_price || 0}
-                onChange={(value) => handleInputChange('purchase_price', value)}
-                label={t('products.purchasePrice')}
-                placeholder="Contoh: Rp 50.000"
-                isRequired={true}
-                size="md"
-                min={0}
-              />
-            </GridItem>
-            <GridItem>
-              <CurrencyInput
-                value={formData.cost_price || 0}
-                onChange={(value) => handleInputChange('cost_price', value)}
-                label={t('products.costPrice')}
-                placeholder="Contoh: Rp 300.000"
-                isRequired={true}
-                size="md"
-                min={0}
-              />
-            </GridItem>
+          <Grid templateColumns={formData.is_service ? "repeat(1, 1fr)" : "repeat(3, 1fr)"} gap={4}>
+            {/* Harga Beli - Only for Non-Service */}
+            {!formData.is_service && (
+              <GridItem>
+                <CurrencyInput
+                  value={formData.purchase_price || 0}
+                  onChange={(value) => handleInputChange('purchase_price', value)}
+                  label={t('products.purchasePrice')}
+                  placeholder="Contoh: Rp 50.000"
+                  isRequired={true}
+                  size="md"
+                  min={0}
+                />
+              </GridItem>
+            )}
+            {/* Harga Pokok (COGS) - Only for Non-Service */}
+            {!formData.is_service && (
+              <GridItem>
+                <CurrencyInput
+                  value={formData.cost_price || 0}
+                  onChange={(value) => handleInputChange('cost_price', value)}
+                  label={t('products.costPrice')}
+                  placeholder="Contoh: Rp 300.000"
+                  isRequired={true}
+                  size="md"
+                  min={0}
+                />
+              </GridItem>
+            )}
+            {/* Harga Jual - Always shown */}
             <GridItem>
               <CurrencyInput
                 value={formData.sale_price || 0}
@@ -483,7 +490,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                 min={0}
               />
             </GridItem>
-            <GridItem colSpan={3}>
+            <GridItem colSpan={formData.is_service ? 1 : 3}>
               <FormControl>
                 <FormLabel>{t('products.pricingTier')}</FormLabel>
                 <Select
