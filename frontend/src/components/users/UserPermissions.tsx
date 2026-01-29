@@ -75,6 +75,9 @@ const modules = [
   { key: 'purchases', label: 'Purchases', description: 'Purchase Orders & Receipts' },
   { key: 'payments', label: 'Payments', description: 'Payment Processing' },
   { key: 'cash_bank', label: 'Cash & Bank', description: 'Cash & Bank Management' },
+  { key: 'journal', label: 'Journal', description: 'General Journal & Journal Entries' },
+  { key: 'reports', label: 'Reports', description: 'Financial & Business Reports' },
+  { key: 'users', label: 'Users', description: 'User Management (Admin Only)' },
   { key: 'settings', label: 'Settings', description: 'System Settings & Invoice Types Management' },
 ];
 
@@ -93,19 +96,19 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
 
   const fetchUserPermissions = async () => {
     if (!user) return;
-    
+
     setLoading(true);
     try {
       const response = await api.get(API_ENDPOINTS.PERMISSIONS_USER_BY_ID(user.id));
       const data = response.data;
-      
+
       setPermissions(data);
       setOriginalPermissions(JSON.parse(JSON.stringify(data))); // Deep copy
     } catch (error: any) {
       console.error('Error fetching user permissions:', error);
-      
+
       const errorResult = handleApiError(error, 'UserPermissions.fetchUserPermissions');
-      
+
       toast({
         title: 'Error',
         description: errorResult.message,
@@ -173,9 +176,9 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
       setOriginalPermissions(JSON.parse(JSON.stringify(permissions)));
     } catch (error: any) {
       console.error('Error updating user permissions:', error);
-      
+
       const errorResult = handleApiError(error, 'UserPermissions.handleSavePermissions');
-      
+
       toast({
         title: 'Error',
         description: errorResult.message,
@@ -207,9 +210,9 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
       fetchUserPermissions();
     } catch (error: any) {
       console.error('Error resetting user permissions:', error);
-      
+
       const errorResult = handleApiError(error, 'UserPermissions.handleResetToDefault');
-      
+
       toast({
         title: 'Error',
         description: errorResult.message,
@@ -257,7 +260,7 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
           </VStack>
         </ModalHeader>
         <ModalCloseButton />
-        
+
         <ModalBody>
           {loading ? (
             <Box textAlign="center" py={10}>
@@ -269,7 +272,7 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
               <Alert status="info" mb={4}>
                 <AlertIcon />
                 <Text fontSize="sm">
-                  Permissions control what actions users can perform in each module. 
+                  Permissions control what actions users can perform in each module.
                   View permission is required for all other permissions to work.
                   Menu permission controls whether users can access the module through navigation menus.
                 </Text>
