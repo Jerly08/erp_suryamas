@@ -37,17 +37,18 @@ import {
   AlertDialogContent,
   AlertDialogOverlay,
 } from '@chakra-ui/react';
-import { 
-  FiBell, 
-  FiCheckCircle, 
-  FiXCircle, 
-  FiClock, 
+import {
+  FiBell,
+  FiCheckCircle,
+  FiXCircle,
+  FiClock,
   FiShoppingCart,
-  FiPackage, 
-  FiAlertTriangle, 
+  FiPackage,
+  FiAlertTriangle,
   FiAlertCircle,
   FiLogOut
 } from 'react-icons/fi';
+import { useTranslation } from '@/hooks/useTranslation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import approvalService from '../../services/approvalService';
@@ -80,6 +81,7 @@ interface StockAlert {
 }
 
 const UnifiedNotifications: React.FC = () => {
+  const { t, language } = useTranslation();
   const [approvalNotifications, setApprovalNotifications] = useState<NotificationItem[]>([]);
   const [stockNotifications, setStockNotifications] = useState<NotificationItem[]>([]);
   const [stockAlerts, setStockAlerts] = useState<StockAlert[]>([]);
@@ -117,7 +119,7 @@ const UnifiedNotifications: React.FC = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       setApprovalNotifications(response.data.notifications || []);
-      
+
       // Count unread approval notifications from the response
       const unreadCount = (response.data.notifications || []).filter((n: NotificationItem) => !n.is_read).length;
       setApprovalUnreadCount(unreadCount);
@@ -137,7 +139,7 @@ const UnifiedNotifications: React.FC = () => {
   const fetchStockNotifications = async () => {
     try {
       const token = localStorage.getItem('token');
-      
+
       // Get both MIN_STOCK and REORDER_ALERT notifications
       const [minStockResponse, reorderResponse] = await Promise.all([
         axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_BY_TYPE('MIN_STOCK')}`, {
@@ -149,20 +151,20 @@ const UnifiedNotifications: React.FC = () => {
           headers: { Authorization: `Bearer ${token}` }
         })
       ]);
-      
+
       // Combine both types of notifications
       const minStockNotifs = minStockResponse.data.notifications || [];
       const reorderNotifs = reorderResponse.data.notifications || [];
       const allStockNotifs = [...minStockNotifs, ...reorderNotifs]
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 10); // Limit to 10 most recent
-      
+
       setStockNotifications(allStockNotifs);
-      
+
       // Count unread notifications from both types
       const unreadCount = allStockNotifs.filter((n: NotificationItem) => !n.is_read).length;
       setStockUnreadCount(unreadCount);
-      
+
     } catch (error: any) {
       if (error.response?.status === 401) {
         // Token expired or invalid - show user-friendly modal
@@ -182,7 +184,7 @@ const UnifiedNotifications: React.FC = () => {
       const response = await axios.get(`${API_BASE_URL}${API_ENDPOINTS.DASHBOARD_STOCK_ALERTS}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.data?.alerts) {
         setStockAlerts(response.data.data.alerts);
       } else {
@@ -209,7 +211,7 @@ const UnifiedNotifications: React.FC = () => {
   const handleMarkApprovalAsRead = async (notificationId: number) => {
     try {
       await approvalService.markNotificationAsRead(notificationId);
-      setApprovalNotifications(prev => prev.map(n => 
+      setApprovalNotifications(prev => prev.map(n =>
         n.id === notificationId ? { ...n, is_read: true } : n
       ));
       setApprovalUnreadCount(prev => Math.max(0, prev - 1));
@@ -226,8 +228,8 @@ const UnifiedNotifications: React.FC = () => {
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      
-      setStockNotifications(prev => 
+
+      setStockNotifications(prev =>
         prev.map(n => n.id === notificationId ? { ...n, is_read: true } : n)
       );
       setStockUnreadCount(prev => Math.max(0, prev - 1));
@@ -244,7 +246,7 @@ const UnifiedNotifications: React.FC = () => {
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      
+
       setStockAlerts(prev => prev.filter(a => a.id !== alertId));
     } catch (error) {
       console.error('Failed to dismiss stock alert:', error);
@@ -290,14 +292,16 @@ const UnifiedNotifications: React.FC = () => {
     const date = new Date(dateString);
     const now = new Date();
     const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-    
-    if (diffInHours < 1) return 'Baru saja';
-    if (diffInHours < 24) return `${Math.floor(diffInHours)} jam lalu`;
-    return date.toLocaleDateString('id-ID', { 
-      month: 'short', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit' 
+
+    if (diffInHours < 1) return t('notifications.time.justNow');
+    if (diffInHours < 24) return t('notifications.time.hoursAgo', { count: Math.floor(diffInHours) });
+
+    const locale = language === 'id' ? 'id-ID' : 'en-US';
+    return date.toLocaleDateString(locale, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
   };
 
@@ -310,8 +314,9 @@ const UnifiedNotifications: React.FC = () => {
     // If structured data contains total_amount, ensure we append a nicely formatted value
     const totalAmount = data?.total_amount ?? data?.amount ?? data?.totalAmount;
     if (typeof totalAmount === 'number') {
+      const amountLabel = t('common.labels.amount');
       // Replace patterns like (Amount: ...)
-      result = result.replace(/\(\s*Amount\s*:\s*[^\)]*\)/i, (m) => `(${'Amount'}: ${formatIDR(totalAmount)})`);
+      result = result.replace(/\(\s*Amount\s*:\s*[^\)]*\)/i, (m) => `(${amountLabel}: ${formatIDR(totalAmount)})`);
     }
 
     // Generic replacement: find "Amount: <number>" or "amount: <number>"
@@ -319,7 +324,8 @@ const UnifiedNotifications: React.FC = () => {
       // Normalize number
       const normalized = parseFloat(String(num).replace(/\./g, '').replace(/,/g, '.'));
       const formatted = isNaN(normalized) ? num : formatIDR(normalized);
-      return `${lbl}: ${formatted}`;
+      const amountLabel = t('common.labels.amount');
+      return `${amountLabel}: ${formatted}`;
     });
 
     return result;
@@ -342,13 +348,13 @@ const UnifiedNotifications: React.FC = () => {
         <Box position="relative">
           <FiBell />
           {totalUnreadCount > 0 && (
-            <Badge 
-              colorScheme="red" 
-              borderRadius="full" 
-              position="absolute" 
-              top={-2} 
-              right={-2} 
-              fontSize="0.6em" 
+            <Badge
+              colorScheme="red"
+              borderRadius="full"
+              position="absolute"
+              top={-2}
+              right={-2}
+              fontSize="0.6em"
               px={2}
             >
               {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
@@ -356,24 +362,24 @@ const UnifiedNotifications: React.FC = () => {
           )}
         </Box>
       </MenuButton>
-      
+
       <MenuList minW="420px" maxW="90vw" maxH="80vh" overflowY="auto">
         <Box px={3} pt={2} pb={1}>
-          <Text fontSize="md" fontWeight="bold">Notifications</Text>
+          <Text fontSize="md" fontWeight="bold">{t('notifications.title')}</Text>
           {totalUnreadCount > 0 && (
             <Text fontSize="xs" color="gray.500">
-              {totalUnreadCount} unread notification{totalUnreadCount > 1 ? 's' : ''}
+              {t(totalUnreadCount > 1 ? 'notifications.unread_plural' : 'notifications.unread', { count: totalUnreadCount })}
             </Text>
           )}
         </Box>
-        
+
         <Divider />
-        
+
         {canViewStockNotifications ? (
           <Tabs variant="enclosed" size="sm">
             <TabList>
               <Tab>
-                Approval
+                {t('notifications.tabs.approval')}
                 {approvalUnreadCount > 0 && (
                   <Badge ml={2} colorScheme="blue" borderRadius="full" fontSize="0.6em">
                     {approvalUnreadCount}
@@ -381,7 +387,7 @@ const UnifiedNotifications: React.FC = () => {
                 )}
               </Tab>
               <Tab>
-                Stock
+                {t('notifications.tabs.stock')}
                 {(stockUnreadCount + stockAlerts.length) > 0 && (
                   <Badge ml={2} colorScheme="red" borderRadius="full" fontSize="0.6em">
                     {stockUnreadCount + stockAlerts.length}
@@ -389,14 +395,14 @@ const UnifiedNotifications: React.FC = () => {
                 )}
               </Tab>
             </TabList>
-            
+
             <TabPanels>
               {/* Approval Notifications Tab */}
               <TabPanel p={0}>
                 <Box maxH="300px" overflowY="auto">
                   {approvalNotifications.length === 0 ? (
                     <MenuItem isDisabled>
-                      <Text fontSize="sm" color="gray.500">No approval notifications</Text>
+                      <Text fontSize="sm" color="gray.500">{t('notifications.empty.approval')}</Text>
                     </MenuItem>
                   ) : (
                     approvalNotifications.map((n) => (
@@ -427,13 +433,13 @@ const UnifiedNotifications: React.FC = () => {
                   )}
                 </Box>
               </TabPanel>
-              
+
               {/* Stock Notifications Tab */}
               <TabPanel p={0}>
                 <Box maxH="300px" overflowY="auto">
                   {stockAlerts.length === 0 && stockNotifications.length === 0 ? (
                     <MenuItem isDisabled>
-                      <Text fontSize="sm" color="gray.500">No stock alerts</Text>
+                      <Text fontSize="sm" color="gray.500">{t('notifications.empty.stock')}</Text>
                     </MenuItem>
                   ) : (
                     <>
@@ -451,30 +457,30 @@ const UnifiedNotifications: React.FC = () => {
                                   {alert.urgency}
                                 </Badge>
                               </HStack>
-                              
+
                               <Text fontSize="xs" color="gray.600">
-                                Code: {alert.product_code} {alert.category_name && `• ${alert.category_name}`}
+                                {t('notifications.stock.code')}: {alert.product_code} {alert.category_name && `• ${alert.category_name}`}
                               </Text>
-                              
+
                               <Alert status="warning" size="sm" borderRadius="md">
                                 <AlertIcon />
                                 <Text fontSize="xs">
-                                  Stock: {alert.current_stock} / Min: {alert.threshold_stock}
+                                  {t('notifications.stock.current')}: {alert.current_stock} / {t('notifications.stock.min')}: {alert.threshold_stock}
                                 </Text>
                               </Alert>
-                              
-                              <Button 
-                                size="xs" 
-                                colorScheme="gray" 
+
+                              <Button
+                                size="xs"
+                                colorScheme="gray"
                                 onClick={() => dismissStockAlert(alert.id)}
                               >
-                                Dismiss
+                                {t('notifications.stock.dismiss')}
                               </Button>
                             </VStack>
                           </HStack>
                         </Box>
                       ))}
-                      
+
                       {/* Stock Notifications */}
                       {stockNotifications.map((notif) => {
                         const data = typeof notif.data === 'string' ? JSON.parse(notif.data) : notif.data;
@@ -496,17 +502,17 @@ const UnifiedNotifications: React.FC = () => {
                                   </Text>
                                   {!notif.is_read && <Box w={2} h={2} bg="orange.500" borderRadius="full" />}
                                 </HStack>
-                                
+
                                 <Text fontSize="xs" color="gray.600" noOfLines={2}>
                                   {formatMessageCurrency(notif.message, notif.data)}
                                 </Text>
-                                
+
                                 {data && (
                                   <Text fontSize="xs" color="gray.500">
-                                    Stock: {data.current_stock} / Min: {data.minimum_stock}
+                                    {t('notifications.stock.current')}: {data.current_stock} / {t('notifications.stock.min')}: {data.minimum_stock}
                                   </Text>
                                 )}
-                                
+
                                 <Text fontSize="xs" color="gray.500">
                                   {formatDate(notif.created_at)}
                                 </Text>
@@ -526,7 +532,7 @@ const UnifiedNotifications: React.FC = () => {
           <Box maxH="350px" overflowY="auto">
             {approvalNotifications.length === 0 ? (
               <MenuItem isDisabled>
-                <Text fontSize="sm" color="gray.500">No notifications</Text>
+                <Text fontSize="sm" color="gray.500">{t('notifications.empty.general')}</Text>
               </MenuItem>
             ) : (
               approvalNotifications.map((n) => (
@@ -569,44 +575,44 @@ const UnifiedNotifications: React.FC = () => {
         <AlertDialogOverlay>
           <AlertDialogContent>
             <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              🔐 Sesi Berakhir
+              🔐 {t('auth.session.expiredTitle')}
             </AlertDialogHeader>
 
             <AlertDialogBody>
               <VStack align="start" spacing={3}>
                 <Text>
-                  Sesi login Anda telah berakhir atau token tidak valid.
+                  {t('auth.session.expiredMessage')}
                 </Text>
                 <Alert status="warning" borderRadius="md">
                   <AlertIcon />
                   <Box flex="1">
                     <Text fontSize="sm">
-                      Untuk keamanan akun Anda, silakan login kembali untuk melanjutkan.
+                      {t('auth.session.securityNote')}
                     </Text>
                   </Box>
                 </Alert>
                 <Text fontSize="sm" color="gray.600">
-                  Kemungkinan penyebab:
+                  {t('auth.session.possibleCauses')}
                 </Text>
                 <VStack align="start" spacing={1} pl={4} fontSize="sm" color="gray.600">
-                  <Text>• Token keamanan telah kedaluwarsa</Text>
-                  <Text>• Anda telah login dari perangkat lain</Text>
-                  <Text>• Sesi telah melebihi batas waktu</Text>
+                  <Text>{t('auth.session.tokenExpired')}</Text>
+                  <Text>{t('auth.session.otherDevice')}</Text>
+                  <Text>{t('auth.session.timeout')}</Text>
                 </VStack>
               </VStack>
             </AlertDialogBody>
 
             <AlertDialogFooter>
               <Button ref={cancelRef} onClick={handleCloseAuthError} variant="ghost">
-                Tutup
+                {t('auth.session.close')}
               </Button>
-              <Button 
-                colorScheme="blue" 
-                onClick={handleLogout} 
+              <Button
+                colorScheme="blue"
+                onClick={handleLogout}
                 ml={3}
                 leftIcon={<FiLogOut />}
               >
-                Login Ulang
+                {t('auth.session.relogin')}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

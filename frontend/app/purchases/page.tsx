@@ -73,11 +73,11 @@ import {
   MenuItem,
   Tooltip,
 } from '@chakra-ui/react';
-import { 
-  FiPlus, 
-  FiEye, 
-  FiEdit, 
-  FiTrash2, 
+import {
+  FiPlus,
+  FiEye,
+  FiEdit,
+  FiTrash2,
   FiFilter,
   FiRefreshCw,
   FiCheckCircle,
@@ -100,6 +100,8 @@ import { Account as GLAccount, AccountCatalogItem } from '@/types/account';
 import approvalService from '@/services/approvalService';
 import { assetService } from '@/services/assetService';
 import { normalizeRole } from '@/utils/roles';
+import { useModulePermissions } from '@/hooks/usePermissions';
+import ProtectedModule from '@/components/common/ProtectedModule';
 import { useColorModeValue } from '@chakra-ui/react';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import CurrencyInput from '@/components/common/CurrencyInput';
@@ -115,25 +117,25 @@ interface PurchaseFormData {
   due_date: string;
   notes: string;
   discount: string;
-  
+
   // Legacy tax field (backward compatibility)
   tax: string;
-  
+
   // Tax additions (Penambahan)
   ppn_rate: string;
   other_tax_additions: string;
-  
+
   // Tax deductions (Pemotongan)
   pph21_rate: string;
   pph23_rate: string;
   other_tax_deductions: string;
-  
+
   // Payment method fields
   payment_method: string;
   bank_account_id: string;
   credit_account_id: string;  // New field for liability account
   payment_reference: string;
-  
+
   items: PurchaseItemFormData[];
 }
 
@@ -245,30 +247,30 @@ const formatDate = (date: string) => {
 
 const columns = [
   { header: 'Code', accessor: 'code' as keyof Purchase },
-  { 
-    header: 'Vendor', 
+  {
+    header: 'Vendor',
     accessor: ((row: Purchase) => {
       return row.vendor?.name || 'N/A';
     }) as (row: Purchase) => React.ReactNode
   },
-  { 
-    header: 'Date', 
+  {
+    header: 'Date',
     accessor: ((row: Purchase) => {
       return new Date(row.date).toLocaleDateString('id-ID');
     }) as (row: Purchase) => React.ReactNode
   },
-  { 
-    header: 'Total', 
+  {
+    header: 'Total',
     accessor: ((row: Purchase) => {
       return formatCurrency(row.total_amount);
     }) as (row: Purchase) => React.ReactNode
   },
-  { 
-    header: 'Paid', 
+  {
+    header: 'Paid',
     accessor: ((row: Purchase) => {
       const paidAmount = row.paid_amount || 0;
       return (
-        <Text 
+        <Text
           color={paidAmount > 0 ? "green.600" : "gray.500"}
           fontWeight={paidAmount > 0 ? "semibold" : "normal"}
         >
@@ -277,12 +279,12 @@ const columns = [
       );
     }) as (row: Purchase) => React.ReactNode
   },
-  { 
-    header: 'Outstanding', 
+  {
+    header: 'Outstanding',
     accessor: ((row: Purchase) => {
       const outstandingAmount = row.outstanding_amount || 0;
       return (
-        <Text 
+        <Text
           color={outstandingAmount > 0 ? "orange.600" : "gray.500"}
           fontWeight={outstandingAmount > 0 ? "semibold" : "normal"}
         >
@@ -291,15 +293,15 @@ const columns = [
       );
     }) as (row: Purchase) => React.ReactNode
   },
-  { 
-    header: 'Payment', 
+  {
+    header: 'Payment',
     accessor: ((row: Purchase) => {
       const paymentMethod = row.payment_method || 'CASH';
       const canReceivePayment = purchaseService.canReceivePayment(row);
       return (
         <VStack spacing={1} align="start">
-          <Badge 
-            colorScheme={paymentMethod === 'CREDIT' ? 'blue' : 'gray'} 
+          <Badge
+            colorScheme={paymentMethod === 'CREDIT' ? 'blue' : 'gray'}
             variant="subtle"
             fontSize="xs"
           >
@@ -314,16 +316,16 @@ const columns = [
       );
     }) as (row: Purchase) => React.ReactNode
   },
-  { 
-    header: 'Status', 
+  {
+    header: 'Status',
     accessor: ((row: Purchase) => (
       <Badge colorScheme={getStatusColor(row.status)} variant="subtle">
         {row.status.replace('_', ' ').toUpperCase()}
       </Badge>
     )) as (row: Purchase) => React.ReactNode
   },
-  { 
-    header: 'Approval Status', 
+  {
+    header: 'Approval Status',
     accessor: ((row: Purchase) => (
       <Badge colorScheme={getApprovalStatusColor(row.approval_status)} variant="subtle">
         {row.approval_status.replace('_', ' ').toUpperCase()}
@@ -337,13 +339,13 @@ const PurchasesPage: React.FC = () => {
   const toast = useToast();
   const { t } = useTranslation();
   const { isOpen: isFilterOpen, onOpen: onFilterOpen, onClose: onFilterClose } = useDisclosure();
-  
+
   // Theme colors for enhanced styling - MUST be at top to follow Rules of Hooks
   const bgColor = useColorModeValue('gray.50', 'gray.900');
   const cardBg = useColorModeValue('white', 'gray.800');
   const headingColor = useColorModeValue('gray.800', 'gray.100');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
-  
+
   // Pre-calculate all useColorModeValue calls to avoid conditional hook calls
   const textSecondary = useColorModeValue('gray.600', 'gray.400');
   const textPrimary = useColorModeValue('gray.700', 'gray.200');
@@ -373,37 +375,37 @@ const PurchasesPage: React.FC = () => {
   const inputFocusBorder = useColorModeValue('blue.500', 'blue.400');
   const inputFocusShadow = `0 0 0 1px ${useColorModeValue('blue.500', 'blue.400')}`;
   const ghostHoverBg = useColorModeValue('gray.50', 'gray.700');
-  
+
   // Additional colors for view modal
   const modalContentBg = useColorModeValue('white', 'gray.800');
   const modalHeaderBg = useColorModeValue('gray.50', 'gray.700');
   const notesBoxBg = useColorModeValue('gray.50', 'gray.600');
   const tableBg = useColorModeValue('white', 'gray.700');
   const tableHeaderBg = useColorModeValue('gray.50', 'gray.600');
-  
+
   // Tooltip descriptions for purchase page
   const tooltips = {
-    search: 'Cari pembelian berdasarkan kode, nama vendor, atau nomor referensi',
-    vendor: 'Pilih vendor/supplier untuk transaksi pembelian',
-    status: 'Status pembelian: Draft (belum final), Pending (menunggu persetujuan), Approved (disetujui), Completed (selesai)',
-    approvalStatus: 'Status persetujuan: Not Required (tidak perlu), Pending (menunggu), Approved (disetujui), Rejected (ditolak)',
-    date: 'Tanggal transaksi pembelian',
-    dueDate: 'Tanggal jatuh tempo pembayaran',
-    paymentMethod: 'Metode pembayaran: Cash (tunai), Bank (transfer), Credit (kredit/hutang)',
-    bankAccount: 'Akun bank untuk pembayaran',
-    creditAccount: 'Akun utang/liability untuk pembelian kredit',
-    ppnRate: 'Tarif PPN/Pajak Pertambahan Nilai yang dikenakan (default: 11%)',
-    otherTaxAdditions: 'Pajak tambahan lainnya dalam nominal',
-    pph21Rate: 'Tarif PPh 21 untuk pemotongan pajak penghasilan',
-    pph23Rate: 'Tarif PPh 23 untuk pemotongan pajak jasa',
-    otherTaxDeductions: 'Potongan pajak lainnya dalam nominal',
-    discount: 'Diskon pembelian (dalam persen atau nominal)',
-    product: 'Pilih produk/barang yang dibeli',
-    quantity: 'Jumlah unit yang dibeli',
-    unitPrice: 'Harga per unit (sebelum pajak dan diskon)',
-    expenseAccount: 'Akun biaya/expense untuk item ini',
-    notes: 'Catatan atau keterangan tambahan untuk pembelian ini',
-    reference: 'Nomor referensi eksternal (contoh: PO number dari vendor)',
+    search: t('purchases.tooltips.search'),
+    vendor: t('purchases.tooltips.vendor'),
+    status: t('purchases.tooltips.status'),
+    approvalStatus: t('purchases.tooltips.approvalStatus'),
+    date: t('purchases.tooltips.date'),
+    dueDate: t('purchases.tooltips.dueDate'),
+    paymentMethod: t('purchases.tooltips.paymentMethod'),
+    bankAccount: t('purchases.tooltips.bankAccount'),
+    creditAccount: t('purchases.tooltips.creditAccount'),
+    ppnRate: t('purchases.tooltips.ppnRate'),
+    otherTaxAdditions: t('purchases.tooltips.otherTaxAdditions'),
+    pph21Rate: t('purchases.tooltips.pph21Rate'),
+    pph23Rate: t('purchases.tooltips.pph23Rate'),
+    otherTaxDeductions: t('purchases.tooltips.otherTaxDeductions'),
+    discount: t('purchases.tooltips.discount'),
+    product: t('purchases.tooltips.product'),
+    quantity: t('purchases.tooltips.quantity'),
+    unitPrice: t('purchases.tooltips.unitPrice'),
+    expenseAccount: t('purchases.tooltips.expenseAccount'),
+    notes: t('purchases.tooltips.notes'),
+    reference: t('purchases.tooltips.reference'),
   };
 
   // State management
@@ -417,7 +419,7 @@ const PurchasesPage: React.FC = () => {
     total: 0,
     totalPages: 0,
   });
-  
+
   // Filter state
   const [filters, setFilters] = useState<PurchaseFilterParams>({
     status: '',
@@ -429,10 +431,10 @@ const PurchasesPage: React.FC = () => {
     page: 1,
     limit: 10,
   });
-  
+
   // Local search state (client-side, no debouncing needed)
   const [searchInput, setSearchInput] = useState('');
-  
+
   // Statistics state
   const [stats, setStats] = useState({
     total: 0,
@@ -455,13 +457,13 @@ const PurchasesPage: React.FC = () => {
   const { isOpen: isViewOpen, onOpen: onViewOpen, onClose: onViewClose } = useDisclosure();
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
-  
+
   // Receipt Modal states
   const { isOpen: isReceiptOpen, onOpen: onReceiptOpen, onClose: onReceiptClose } = useDisclosure();
-  
+
   // Payment Modal states
   const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
-  
+
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [selectedPurchaseForPayment, setSelectedPurchaseForPayment] = useState<Purchase | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -481,30 +483,30 @@ const PurchasesPage: React.FC = () => {
     due_date: '',
     notes: '',
     discount: '0',
-    
+
     // Legacy tax field
     tax: '0',
-    
+
     // Tax additions (Penambahan)
     ppn_rate: '11',
     other_tax_additions: '0',
-    
+
     // Tax deductions (Pemotongan)
     pph21_rate: '0',
-    pph23_rate: '0', 
+    pph23_rate: '0',
     other_tax_deductions: '0',
-    
+
     // Payment method fields
     payment_method: 'CREDIT',
     bank_account_id: '',
     credit_account_id: '',  // New field for liability account
     payment_reference: '',
-    
+
     items: []
   });
   const [loadingVendors, setLoadingVendors] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
-  
+
   // Add Vendor Modal states
   const { isOpen: isAddVendorOpen, onOpen: onAddVendorOpen, onClose: onAddVendorClose } = useDisclosure();
   const [newVendorData, setNewVendorData] = useState({
@@ -561,10 +563,11 @@ const PurchasesPage: React.FC = () => {
   const [loadingReceipts, setLoadingReceipts] = useState(false);
   const [selectedPurchaseForReceipts, setSelectedPurchaseForReceipts] = useState<Purchase | null>(null);
 
-  // Role-based permissions
+  // Role-based permissions (kept for approval workflow logic)
   const roleNorm = normalizeRole(user?.role as any);
-  const canEdit = roleNorm === 'employee' || roleNorm === 'admin';
-  const canDelete = roleNorm === 'admin';
+
+  // Permission-based access control
+  const { canCreate, canEdit, canDelete, canExport, canApprove } = useModulePermissions('purchases');
 
   // Helper function to notify directors
   const notifyDirectors = async (purchase: Purchase) => {
@@ -581,8 +584,8 @@ const PurchasesPage: React.FC = () => {
   const handleAddVendor = async () => {
     if (!newVendorData.name.trim()) {
       toast({
-        title: 'Error',
-        description: 'Vendor name is required',
+        title: t('common.error'),
+        description: t('contacts.validation.nameRequired'),
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -592,8 +595,8 @@ const PurchasesPage: React.FC = () => {
 
     if (!newVendorData.email.trim()) {
       toast({
-        title: 'Error',
-        description: 'Vendor email is required',
+        title: t('common.error'),
+        description: t('contacts.validation.emailRequired') || 'Vendor email is required',
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -603,7 +606,7 @@ const PurchasesPage: React.FC = () => {
 
     try {
       setSavingVendor(true);
-      
+
       // Generate unique vendor code if not provided
       let vendorCode = newVendorData.code.trim();
       if (!vendorCode) {
@@ -626,72 +629,72 @@ const PurchasesPage: React.FC = () => {
           return;
         }
       }
-      
+
       const vendorPayload = {
         ...newVendorData,
         code: vendorCode,
         type: 'VENDOR',
         is_active: true
       };
-      
+
       console.log('Creating vendor with payload:', vendorPayload);
-      
+
       let newVendor;
       try {
         newVendor = await contactService.createContact(token!, vendorPayload);
         console.log('Vendor creation response:', newVendor);
-        
+
         // Check if the response indicates an error (some APIs return error in success response)
         if (newVendor && typeof newVendor === 'object' && 'error' in newVendor) {
           throw new Error(newVendor.error as string || 'Server returned an error');
         }
-        
+
       } catch (createError: any) {
         console.error('API Error creating vendor:', createError);
         throw new Error(
-          createError.message || 
-          createError.response?.data?.error || 
+          createError.message ||
+          createError.response?.data?.error ||
           'Failed to create vendor: Server error'
         );
       }
-      
+
       // Validate that the new vendor was created successfully
       // Handle different response structures
       let vendorData = newVendor;
       if (newVendor?.data) {
         vendorData = newVendor.data; // If response is wrapped in data object
       }
-      
+
       // Additional checks for undefined response
       if (!newVendor) {
         console.error('Vendor creation returned undefined response');
         throw new Error('Failed to create vendor: Server returned no response. Please try again.');
       }
-      
+
       if (!vendorData || (!vendorData.id && !vendorData.ID)) {
         console.error('Invalid vendor response:', newVendor);
         console.error('Expected vendor data with id field, got:', vendorData);
         throw new Error('Failed to create vendor: Invalid response structure from server. Please check console for details.');
       }
-      
+
       // Use the validated vendor data
       const vendorId = vendorData.id || vendorData.ID;
       const vendorName = vendorData.name || vendorData.Name;
       const finalVendorCode = vendorData.code || vendorData.Code || `V${vendorId}`;
-      
+
       // Add the new vendor to the vendors list
       const formattedVendor = {
         id: vendorId,
         name: vendorName,
         code: finalVendorCode,
       };
-      
+
       console.log('Adding formatted vendor to list:', formattedVendor);
       setVendors(prev => [...prev, formattedVendor]);
-      
+
       // Select the new vendor in the form
       setFormData(prev => ({ ...prev, vendor_id: vendorId.toString() }));
-      
+
       // Reset form and close modal
       setNewVendorData({
         name: '',
@@ -704,22 +707,22 @@ const PurchasesPage: React.FC = () => {
         external_id: '',
         notes: ''
       });
-      
+
       onAddVendorClose();
-      
+
       toast({
-        title: 'Success',
-        description: `Vendor "${vendorName}" created successfully and selected`,
+        title: t('common.success'),
+        description: t('contacts.messages.createSuccess', { name: vendorName }) || `Vendor "${vendorName}" created successfully and selected`,
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (err: any) {
       console.error('Error creating vendor:', err);
       toast({
-        title: 'Error',
-        description: err.response?.data?.error || 'Failed to create vendor',
+        title: t('common.error'),
+        description: err.response?.data?.error || t('contacts.messages.saveFailed'),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -755,7 +758,7 @@ const PurchasesPage: React.FC = () => {
 
     try {
       setSavingProduct(true);
-      
+
       const productPayload = {
         name: newProductData.name,
         code: newProductData.code || undefined,
@@ -771,17 +774,17 @@ const PurchasesPage: React.FC = () => {
         is_service: false,
         taxable: true
       };
-      
+
       const newProduct = await productService.createProduct(productPayload);
-      
+
       // Add the new product to the products list
       setProducts(prev => [...prev, newProduct.data]);
-      
+
       // Select the new product in the form if we have items
       if (formData.items.length > 0) {
         const items = [...formData.items];
-        items[0] = { 
-          ...items[0], 
+        items[0] = {
+          ...items[0],
           product_id: newProduct.data.id.toString(),
           unit_price: newProduct.data.purchase_price?.toString() || '0'
         };
@@ -800,7 +803,7 @@ const PurchasesPage: React.FC = () => {
           }]
         });
       }
-      
+
       // Reset form and close modal
       setNewProductData({
         name: '',
@@ -810,9 +813,9 @@ const PurchasesPage: React.FC = () => {
         purchase_price: '0',
         sale_price: '0',
       });
-      
+
       onAddProductClose();
-      
+
       toast({
         title: 'Success',
         description: `Product "${newProduct.data.name}" created successfully and selected`,
@@ -820,7 +823,7 @@ const PurchasesPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (err: any) {
       console.error('Error creating product:', err);
       toast({
@@ -838,14 +841,14 @@ const PurchasesPage: React.FC = () => {
   // Fetch purchases from API
   const fetchPurchases = async (filterParams: PurchaseFilterParams = filters) => {
     if (!token) return;
-    
+
     try {
       setLoading(true);
       const response = await purchaseService.list(filterParams);
-      
+
       // Ensure response data is an array
       const purchaseData = Array.isArray(response?.data) ? response.data : [];
-      
+
       // Store all purchases for client-side filtering
       setAllPurchases(purchaseData);
       setPurchases(purchaseData);
@@ -855,7 +858,7 @@ const PurchasesPage: React.FC = () => {
         total: response?.total || 0,
         totalPages: response?.total_pages || 0,
       });
-      
+
       // Calculate stats with correct logic for approval status
       // Note: We use purchaseData.length for total since pagination affects response.total
       const totalPurchases = purchaseData.length;
@@ -863,33 +866,33 @@ const PurchasesPage: React.FC = () => {
         const approvalStatus = (p?.approval_status || '').toUpperCase();
         const status = (p?.status || '').toUpperCase();
         // Pending approval includes: PENDING approval status, or purchases requiring approval that haven't been approved/rejected
-        return approvalStatus === 'PENDING' || 
-               (!!p?.requires_approval && approvalStatus !== 'APPROVED' && approvalStatus !== 'REJECTED' && status !== 'CANCELLED');
+        return approvalStatus === 'PENDING' ||
+          (!!p?.requires_approval && approvalStatus !== 'APPROVED' && approvalStatus !== 'REJECTED' && status !== 'CANCELLED');
       }).length;
-      
+
       const approved = purchaseData.filter(p => (p?.approval_status || '').toUpperCase() === 'APPROVED').length;
       const rejected = purchaseData.filter(p => {
         const approvalStatus = (p?.approval_status || '').toUpperCase();
         const status = (p?.status || '').toUpperCase();
         return approvalStatus === 'REJECTED' || status === 'CANCELLED';
       }).length;
-      
+
       // Calculate total value, paid amount, and outstanding amount from current page data
       const totalValue = purchaseData.reduce((sum, p) => {
         const amount = p?.total_amount || 0;
         return sum + (typeof amount === 'number' ? amount : parseFloat(amount) || 0);
       }, 0);
-      
+
       const totalPaid = purchaseData.reduce((sum, p) => {
         const amount = p?.paid_amount || 0;
         return sum + (typeof amount === 'number' ? amount : parseFloat(amount) || 0);
       }, 0);
-      
+
       const totalOutstanding = purchaseData.reduce((sum, p) => {
         const amount = p?.outstanding_amount || 0;
         return sum + (typeof amount === 'number' ? amount : parseFloat(amount) || 0);
       }, 0);
-      
+
       // Fetch purchase summary to get approved amount
       let totalApprovedAmount = 0;
       try {
@@ -899,7 +902,7 @@ const PurchasesPage: React.FC = () => {
         console.warn('Failed to fetch purchase summary:', summaryErr);
         // Continue without approved amount if summary fetch fails
       }
-      
+
       setStats({
         total: response?.total || totalPurchases, // Use API total if available, otherwise current page count
         pending: pendingApproval,
@@ -911,11 +914,11 @@ const PurchasesPage: React.FC = () => {
         totalPaid: totalPaid, // Add total paid amount
         totalOutstanding: totalOutstanding, // Add total outstanding amount
       });
-      
+
       setError(null);
     } catch (err: any) {
       console.error('Error fetching purchases:', err);
-      
+
       // Set empty state on error
       setPurchases([]);
       setPagination({
@@ -924,7 +927,7 @@ const PurchasesPage: React.FC = () => {
         total: 0,
         totalPages: 0,
       });
-      
+
       setStats({
         total: 0,
         pending: 0,
@@ -936,10 +939,10 @@ const PurchasesPage: React.FC = () => {
         totalPaid: 0,
         totalOutstanding: 0,
       });
-      
+
       const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch purchases';
       setError(errorMessage);
-      
+
       toast({
         title: 'Error',
         description: 'Failed to fetch purchase data. Please check your connection and try again.',
@@ -964,39 +967,39 @@ const PurchasesPage: React.FC = () => {
     setFilters(updatedFilters);
     fetchPurchases(updatedFilters);
   };
-  
+
   // Client-side search handler (instant, no API call)
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
-    
+
     // Client-side filtering - no API call
     if (!value.trim()) {
       // If search is empty, show all purchases
       setPurchases(allPurchases);
       return;
     }
-    
+
     // Filter purchases based on search term
     const searchTerm = value.toLowerCase();
     const filtered = allPurchases.filter(purchase => {
       // Search in purchase code
       if (purchase.code?.toLowerCase().includes(searchTerm)) return true;
-      
+
       // Search in vendor name
       if (purchase.vendor?.name?.toLowerCase().includes(searchTerm)) return true;
-      
+
       // Search in notes
       if (purchase.notes?.toLowerCase().includes(searchTerm)) return true;
-      
+
       // Search in payment reference
       if (purchase.payment_reference?.toLowerCase().includes(searchTerm)) return true;
-      
+
       return false;
     });
-    
+
     setPurchases(filtered);
   };
-  
+
   // Apply client-side search when allPurchases changes
   useEffect(() => {
     if (searchInput) {
@@ -1084,13 +1087,13 @@ const PurchasesPage: React.FC = () => {
     // Find the purchase to check its status
     const purchaseToDelete = purchases.find(p => p.id === purchaseId);
     const isApproved = purchaseToDelete && (purchaseToDelete.status || '').toUpperCase() === 'APPROVED';
-    
-    const confirmMessage = isApproved 
+
+    const confirmMessage = isApproved
       ? 'WARNING: This purchase is APPROVED. Are you sure you want to delete this approved purchase? This action cannot be undone.'
       : 'Are you sure you want to delete this purchase?';
-    
+
     if (!confirm(confirmMessage)) return;
-    
+
     try {
       await purchaseService.delete(purchaseId);
       await fetchPurchases(); // Refresh data
@@ -1136,8 +1139,8 @@ const PurchasesPage: React.FC = () => {
       // Validate that purchase can receive payment
       if (!purchaseService.canReceivePayment(purchase)) {
         toast({
-          title: 'Cannot Record Payment',
-          description: 'Only approved or completed credit purchases with outstanding amount can receive payments',
+          title: t('purchases.cannotRecordPaymentTitle'),
+          description: t('purchases.canReceivePaymentErrorDesc'),
           status: 'warning',
           duration: 4000,
           isClosable: true,
@@ -1166,13 +1169,13 @@ const PurchasesPage: React.FC = () => {
   // Handle payment success
   const handlePaymentSuccess = async (result: any) => {
     toast({
-      title: 'Payment Recorded Successfully! 🎉',
-      description: `Payment ${result.payment?.code || 'N/A'} has been recorded via Payment Management`,
+      title: t('purchases.paymentSuccessTitle'),
+      description: t('purchases.paymentSuccessDesc', { code: result.payment?.code || 'N/A' }),
       status: 'success',
       duration: 5000,
       isClosable: true,
     });
-    
+
     // Refresh purchases to show updated amounts
     await fetchPurchases();
   };
@@ -1213,10 +1216,8 @@ const PurchasesPage: React.FC = () => {
       const allowedStatuses = ['APPROVED', 'PENDING', 'PAID'];
       if (!allowedStatuses.includes(serverStatus)) {
         toast({
-          title: 'Tidak dapat membuat receipt',
-          description:
-            `Purchase ini belum boleh diterima di server (status sekarang: ${serverStatus || 'UNKNOWN'}). ` +
-            'Pastikan purchase sudah APPROVED/PAID lalu refresh data.',
+          title: t('purchases.createReceiptErrorTitle'),
+          description: t('purchases.createReceiptErrorDesc', { status: serverStatus || 'UNKNOWN' }),
           status: 'warning',
           duration: 5000,
           isClosable: true,
@@ -1245,7 +1246,7 @@ const PurchasesPage: React.FC = () => {
 
       // Ensure accounts catalog is loaded (to detect fixed asset 150x)
       await fetchExpenseAccounts();
-      
+
       // Initialize receipt form data with remaining quantity per item
       const receiptItems = (detailResponse.purchase_items || []).map((item: any) => {
         const receivedSoFar = receivedMap[item.id] || 0;
@@ -1275,21 +1276,21 @@ const PurchasesPage: React.FC = () => {
       if (allZero) {
         setFullyReceivedPurchases(prev => new Set(prev).add(purchase.id));
         toast({
-          title: 'Semua item sudah diterima',
-          description: 'Tidak ada sisa yang perlu diterima. Tombol Create Receipt disembunyikan.',
+          title: t('purchases.allItemsReceivedTitle'),
+          description: t('purchases.allItemsReceivedDesc'),
           status: 'info',
           duration: 4000,
           isClosable: true,
         });
         return; // Jangan buka modal
       }
-      
+
       setReceiptFormData({
         received_date: new Date().toISOString().split('T')[0],
         notes: '',
         receipt_items: receiptItems
       });
-      
+
       onReceiptOpen();
     } catch (err: any) {
       toast({
@@ -1306,8 +1307,8 @@ const PurchasesPage: React.FC = () => {
   const handleSaveReceipt = async () => {
     if (!selectedPurchase) {
       toast({
-        title: 'Error',
-        description: 'No purchase selected',
+        title: 'Error', // Or common.error
+        description: t('purchases.noPurchaseSelected'),
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -1318,7 +1319,7 @@ const PurchasesPage: React.FC = () => {
     if (receiptFormData.receipt_items.length === 0) {
       toast({
         title: 'Error',
-        description: 'Please add at least one receipt item',
+        description: t('purchases.addReceiptItemError'),
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -1328,7 +1329,7 @@ const PurchasesPage: React.FC = () => {
 
     try {
       setSavingReceipt(true);
-      
+
       // Filter setelah validasi agar minimal ada 1 item
       const filteredItems = receiptFormData.receipt_items
         .filter(item => (item.quantity_received || 0) > 0)
@@ -1350,8 +1351,8 @@ const PurchasesPage: React.FC = () => {
 
       if (filteredItems.length === 0) {
         toast({
-          title: 'Tidak ada item untuk diterima',
-          description: 'Semua kuantitas 0 atau sudah habis. Tombol Create Receipt disembunyikan.',
+          title: t('purchases.noItemsToReceiveTitle'),
+          description: t('purchases.noItemsToReceiveDesc'),
           status: 'info',
           duration: 4000,
           isClosable: true,
@@ -1424,7 +1425,7 @@ const PurchasesPage: React.FC = () => {
       } catch (parseOkError) {
         console.error('Failed to parse receipt success response as JSON:', parseOkError);
       }
-      
+
       // Normalize receipt number from API response shape
       const receiptNumber: string = receiptData?.receipt?.receipt_number || receiptData?.receipt_number || 'N/A';
 
@@ -1443,27 +1444,27 @@ const PurchasesPage: React.FC = () => {
       if (isFullyReceived) {
         setFullyReceivedPurchases(prev => new Set(prev).add(selectedPurchase.id));
       }
-      
+
       // NEW: Auto create assets for items marked as assets
       const assetsToCreate = receiptFormData.receipt_items.filter(item => item.create_asset);
-      
+
       console.log('🔍 Debug - Receipt Items:', receiptFormData.receipt_items);
       console.log('🔍 Debug - Assets to Create:', assetsToCreate);
-      
+
       if (assetsToCreate.length > 0) {
         console.log('🚀 Creating assets from receipt...');
         await createAssetsFromReceipt(selectedPurchase, assetsToCreate, receiptNumber);
       } else {
         console.log('⏭️ No assets to create (no items marked as assets)');
       }
-      
+
       const assetCount = assetsToCreate.length;
-      const successMessage = assetCount > 0 
-        ? `Receipt ${receiptNumber} created successfully. ${assetCount} asset(s) will be created automatically.`
-        : `Receipt ${receiptNumber} created successfully.`;
-      
+      const successMessage = assetCount > 0
+        ? t('purchases.receiptCreatedSuccessDesc', { number: receiptNumber, count: assetCount })
+        : t('purchases.receiptCreatedSuccessDescNoAssets', { number: receiptNumber });
+
       toast({
-        title: 'Receipt Created Successfully! 🎉',
+        title: t('purchases.receiptCreatedSuccessTitle'),
         description: successMessage,
         status: 'success',
         duration: assetCount > 0 ? 7000 : 5000,
@@ -1476,12 +1477,12 @@ const PurchasesPage: React.FC = () => {
         notes: '',
         receipt_items: []
       });
-      
+
       onReceiptClose();
-      
+
       // Refresh the purchase list
       await fetchPurchases();
-      
+
     } catch (err: any) {
       console.error('Error creating receipt:', err);
       toast({
@@ -1499,10 +1500,10 @@ const PurchasesPage: React.FC = () => {
   // Fetch vendors
   const fetchVendors = async () => {
     if (!token) return;
-    
+
     try {
       setLoadingVendors(true);
-      
+
       const response = await fetch(`/api/v1/contacts?type=VENDOR`, {
         method: 'GET',
         headers: {
@@ -1516,17 +1517,17 @@ const PurchasesPage: React.FC = () => {
       }
 
       const vendorsData = await response.json();
-      
+
       // Handle both array and object responses (e.g., { data: [...] })
       const vendorsArray = Array.isArray(vendorsData) ? vendorsData : (vendorsData.data || []);
-      
+
       // Transform the data to match our Vendor interface
       const formattedVendors = vendorsArray.map((vendor: any) => ({
         id: vendor.id,
         name: vendor.name,
         code: vendor.code || `V${vendor.id}`,
       }));
-      
+
       setVendors(formattedVendors);
     } catch (err: any) {
       console.error('Error fetching vendors:', err);
@@ -1568,7 +1569,7 @@ const PurchasesPage: React.FC = () => {
     if (!token) return;
     try {
       setLoadingBankAccounts(true);
-      
+
       const response = await fetch('/api/v1/cash-bank/reports/payment-accounts', {
         method: 'GET',
         headers: {
@@ -1582,11 +1583,11 @@ const PurchasesPage: React.FC = () => {
       }
 
       const data = await response.json();
-      
+
       // API returns { success: true, data: [...] }
       // The data array already contains both bank and cash accounts
       const allAccounts = data.data || [];
-      
+
       setBankAccounts(allAccounts);
     } catch (err: any) {
       console.error('Error fetching bank accounts:', err);
@@ -1607,7 +1608,7 @@ const PurchasesPage: React.FC = () => {
     if (!token) return;
     try {
       setLoadingCreditAccounts(true);
-      
+
       // Use public catalog endpoint for all roles - no authentication required
       try {
         const catalogData = await accountService.getCreditAccounts(); // Use our fixed public method
@@ -1631,7 +1632,7 @@ const PurchasesPage: React.FC = () => {
         console.log('Public catalog endpoint failed, trying regular endpoint with auth:', catalogError.message);
         // Fall through to try regular endpoint with authentication
       }
-      
+
       // Use full account data for other roles or as fallback for EMPLOYEE
       try {
         const data = await accountService.getAccounts(token, 'LIABILITY');
@@ -1646,7 +1647,7 @@ const PurchasesPage: React.FC = () => {
       console.error('Error fetching credit accounts:', err);
       // If both endpoints fail, fall back to manual entry mode
       setCreditAccounts([]);
-      
+
       // Show friendly message for network errors, but don't show "Limited Access" for public endpoint failures
       console.log('Unable to load credit accounts, falling back to manual entry mode');
       // Only show toast for actual network errors, not permission issues
@@ -1669,9 +1670,9 @@ const PurchasesPage: React.FC = () => {
     if (!token) return;
     try {
       setLoadingExpenseAccounts(true);
-      
+
       let allAccounts: GLAccount[] = [];
-      
+
       // Use public catalog endpoint for all roles - no authentication required
       try {
         // Fetch expense accounts using public endpoint
@@ -1689,86 +1690,20 @@ const PurchasesPage: React.FC = () => {
           updated_at: '',
           description: '',
         }));
-          
-          // Fetch asset accounts (inventory + fixed assets) using public endpoint
-          try {
-            const assetCatalogData = await accountService.getAccountCatalog(undefined, 'ASSET'); // Public endpoint
-            // Include both inventory and fixed asset accounts
-            const assetAccounts = assetCatalogData.filter(item => {
-              const code = item.code || '';
-              const name = (item.name || '').toLowerCase();
-              
-              // Inventory accounts (current assets)
-              const isInventory = code === '1301' || name.includes('persediaan');
-              
-              // Fixed asset accounts (codes 1500-1599 and specific account codes)
-              const isFixedAsset = 
-                (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
-                ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
-                name.includes('fixed asset') ||
-                name.includes('asset tetap') ||
-                name.includes('peralatan') ||
-                name.includes('mesin') ||
-                name.includes('printer') ||
-                name.includes('komputer') ||
-                name.includes('equipment') ||
-                name.includes('furniture') ||
-                name.includes('kendaraan') ||
-                name.includes('bangunan') ||
-                name.includes('gedung');
-              
-              return isInventory || isFixedAsset;
-            }).map(item => ({
-              id: item.id,
-              code: item.code,
-              name: item.name,
-              type: 'ASSET' as const,
-              is_active: item.active,
-              level: 1,
-              is_header: false,
-              balance: 0,
-              created_at: '',
-              updated_at: '',
-              description: '',
-            }));
-            allAccounts = [...assetAccounts, ...formattedExpenseAccounts];
-          } catch (assetError) {
-            console.log('Could not fetch asset accounts, using expense only:', assetError);
-            allAccounts = formattedExpenseAccounts;
-          }
-          
-          console.log('Formatted accounts from public catalog (inventory + fixed assets + expense):', allAccounts);
-          setExpenseAccounts(allAccounts);
-          setCanListExpenseAccounts(true);
-          if (allAccounts.length > 0) {
-            setDefaultExpenseAccountId(allAccounts[0].id as number);
-          }
-          return; // Success, exit early
-        } catch (catalogError: any) {
-          console.log('Public catalog endpoint failed, trying regular endpoint with auth:', catalogError.message);
-          // Fall through to try regular endpoint with authentication
-        }
-      
-      // Use full account data for other roles or as fallback for EMPLOYEE
-      try {
-        // Fetch expense accounts
-        const expenseData = await accountService.getAccounts(token, 'EXPENSE');
-        const expenseList: GLAccount[] = Array.isArray(expenseData) ? expenseData : [];
-        
-        // Try to fetch asset accounts (inventory + fixed assets)
-        let allAccountsList: GLAccount[] = expenseList;
+
+        // Fetch asset accounts (inventory + fixed assets) using public endpoint
         try {
-          const assetData = await accountService.getAccounts(token, 'ASSET');
-          const assetList: GLAccount[] = Array.isArray(assetData) ? assetData : [];
-          const assetAccounts = assetList.filter(acc => {
-            const code = acc.code || '';
-            const name = (acc.name || '').toLowerCase();
-            
+          const assetCatalogData = await accountService.getAccountCatalog(undefined, 'ASSET'); // Public endpoint
+          // Include both inventory and fixed asset accounts
+          const assetAccounts = assetCatalogData.filter(item => {
+            const code = item.code || '';
+            const name = (item.name || '').toLowerCase();
+
             // Inventory accounts (current assets)
             const isInventory = code === '1301' || name.includes('persediaan');
-            
+
             // Fixed asset accounts (codes 1500-1599 and specific account codes)
-            const isFixedAsset = 
+            const isFixedAsset =
               (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
               ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
               name.includes('fixed asset') ||
@@ -1782,14 +1717,80 @@ const PurchasesPage: React.FC = () => {
               name.includes('kendaraan') ||
               name.includes('bangunan') ||
               name.includes('gedung');
-            
+
+            return isInventory || isFixedAsset;
+          }).map(item => ({
+            id: item.id,
+            code: item.code,
+            name: item.name,
+            type: 'ASSET' as const,
+            is_active: item.active,
+            level: 1,
+            is_header: false,
+            balance: 0,
+            created_at: '',
+            updated_at: '',
+            description: '',
+          }));
+          allAccounts = [...assetAccounts, ...formattedExpenseAccounts];
+        } catch (assetError) {
+          console.log('Could not fetch asset accounts, using expense only:', assetError);
+          allAccounts = formattedExpenseAccounts;
+        }
+
+        console.log('Formatted accounts from public catalog (inventory + fixed assets + expense):', allAccounts);
+        setExpenseAccounts(allAccounts);
+        setCanListExpenseAccounts(true);
+        if (allAccounts.length > 0) {
+          setDefaultExpenseAccountId(allAccounts[0].id as number);
+        }
+        return; // Success, exit early
+      } catch (catalogError: any) {
+        console.log('Public catalog endpoint failed, trying regular endpoint with auth:', catalogError.message);
+        // Fall through to try regular endpoint with authentication
+      }
+
+      // Use full account data for other roles or as fallback for EMPLOYEE
+      try {
+        // Fetch expense accounts
+        const expenseData = await accountService.getAccounts(token, 'EXPENSE');
+        const expenseList: GLAccount[] = Array.isArray(expenseData) ? expenseData : [];
+
+        // Try to fetch asset accounts (inventory + fixed assets)
+        let allAccountsList: GLAccount[] = expenseList;
+        try {
+          const assetData = await accountService.getAccounts(token, 'ASSET');
+          const assetList: GLAccount[] = Array.isArray(assetData) ? assetData : [];
+          const assetAccounts = assetList.filter(acc => {
+            const code = acc.code || '';
+            const name = (acc.name || '').toLowerCase();
+
+            // Inventory accounts (current assets)
+            const isInventory = code === '1301' || name.includes('persediaan');
+
+            // Fixed asset accounts (codes 1500-1599 and specific account codes)
+            const isFixedAsset =
+              (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
+              ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
+              name.includes('fixed asset') ||
+              name.includes('asset tetap') ||
+              name.includes('peralatan') ||
+              name.includes('mesin') ||
+              name.includes('printer') ||
+              name.includes('komputer') ||
+              name.includes('equipment') ||
+              name.includes('furniture') ||
+              name.includes('kendaraan') ||
+              name.includes('bangunan') ||
+              name.includes('gedung');
+
             return isInventory || isFixedAsset;
           });
           allAccountsList = [...assetAccounts, ...expenseList];
         } catch (assetError) {
           console.log('Could not fetch asset accounts from regular endpoint, using expense only:', assetError);
         }
-        
+
         console.log('Formatted accounts from regular endpoint (inventory + fixed assets + expense):', allAccountsList);
         setExpenseAccounts(allAccountsList);
         setCanListExpenseAccounts(true);
@@ -1806,7 +1807,7 @@ const PurchasesPage: React.FC = () => {
       setCanListExpenseAccounts(false);
       setExpenseAccounts([]);
       setDefaultExpenseAccountId(null);
-      
+
       // Show friendly message for network errors, but don't show "Limited Access" for public endpoint failures
       console.log('Unable to load expense accounts, falling back to manual entry mode');
       // Only show toast for actual network errors, not permission issues
@@ -1827,17 +1828,17 @@ const PurchasesPage: React.FC = () => {
   // Helper function to get receiver name from user object
   const getReceiverName = (receiver: any): string => {
     if (!receiver) return 'N/A';
-    
+
     // Try to build name from FirstName and LastName
     if (receiver.first_name || receiver.last_name) {
       return `${receiver.first_name || ''} ${receiver.last_name || ''}`.trim();
     }
-    
+
     // Fallback to username
     if (receiver.username) {
       return receiver.username;
     }
-    
+
     // Final fallback
     return 'N/A';
   };
@@ -1847,9 +1848,9 @@ const PurchasesPage: React.FC = () => {
     try {
       setLoadingReceipts(true);
       setSelectedPurchaseForReceipts(purchase);
-      
+
       // Fetch all receipts (include PARTIAL and COMPLETE)
-      const response = await fetch(`${API_ENDPOINTS.PURCHASES_RECEIPTS_BY_ID(purchase.id)}` , {
+      const response = await fetch(`${API_ENDPOINTS.PURCHASES_RECEIPTS_BY_ID(purchase.id)}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -1928,20 +1929,20 @@ const PurchasesPage: React.FC = () => {
   const getValidAccountIds = async () => {
     try {
       console.log('🔍 Fetching valid account IDs for asset creation...');
-      
+
       // Try to get available accounts
       const [fixedAssetRes, liabilityRes, depreciationRes] = await Promise.all([
         assetService.getFixedAssetAccounts().catch(() => ({ data: [] })),
         assetService.getLiabilityAccounts().catch(() => ({ data: [] })),
         assetService.getDepreciationExpenseAccounts().catch(() => ({ data: [] }))
       ]);
-      
+
       const fixedAssets = fixedAssetRes.data || [];
       const liabilities = liabilityRes.data || [];
       const depreciation = depreciationRes.data || [];
-      
+
       console.log('📋 Available accounts:', { fixedAssets: fixedAssets.length, liabilities: liabilities.length, depreciation: depreciation.length });
-      
+
       return {
         assetAccountId: fixedAssets.length > 0 ? fixedAssets[0].id : undefined,
         liabilityAccountId: liabilities.length > 0 ? liabilities[0].id : undefined,
@@ -1984,27 +1985,27 @@ const PurchasesPage: React.FC = () => {
           (a: any) => a.name === name && typeof a.notes === 'string' && a.notes.includes(`Receipt ${receiptNumber}`)
         );
       };
-      
+
       // Get valid account IDs first
       const accountIds = await getValidAccountIds();
-      
+
       for (const receiptItem of assetItems) {
         console.log('🔧 Processing asset item:', receiptItem);
-        
+
         // Find the corresponding purchase item
         const purchaseItem = purchase.purchase_items?.find(p => p.id === receiptItem.purchase_item_id);
-        
+
         if (!purchaseItem) {
           console.error('❌ Purchase item not found for receipt item:', receiptItem.purchase_item_id);
           continue;
         }
-        
+
         console.log('✅ Found purchase item:', purchaseItem);
-        
+
         // Calculate asset values
         const purchasePrice = purchaseItem.unit_price * receiptItem.quantity_received;
         const salvageValue = purchasePrice * (receiptItem.asset_salvage_percentage || 10) / 100;
-        
+
         // Create asset payload aligned with AssetCreateRequest; let backend handle journals
         const assetName = `${purchaseItem.product?.name || 'Asset'} (${purchase.code})`;
 
@@ -2028,17 +2029,17 @@ const PurchasesPage: React.FC = () => {
           serial_number: receiptItem.serial_number || undefined,
           condition: receiptItem.condition || 'Good',
           is_active: true,
-          
+
           // Financial Info
           purchase_date: purchase.date,
           purchase_price: purchasePrice,
           salvage_value: salvageValue,
           useful_life: receiptItem.asset_useful_life || 5,
           depreciation_method: 'STRAIGHT_LINE',
-          
+
           // Notes (include references & vendor info here instead of extra fields)
           notes: `Auto-created from Purchase ${purchase.code}, Receipt ${receiptNumber}. Vendor: ${purchase.vendor?.name || 'N/A'}. ${receiptItem.notes || ''}`,
-          
+
           // Accounting links (optional, backend may fall back to defaults)
           asset_account_id: accountIds.assetAccountId,
           depreciation_account_id: accountIds.depreciationAccountId,
@@ -2047,9 +2048,9 @@ const PurchasesPage: React.FC = () => {
           user_id: userIdNum,
           payment_method: 'CREDIT',
         };
-        
+
         console.log('📋 Asset data prepared:', assetData);
-        
+
         try {
           // Duplicate guard: skip if serial exists OR name+receipt already present
           const serialKey = (assetData.serial_number || '').toString().trim().toLowerCase();
@@ -2070,7 +2071,7 @@ const PurchasesPage: React.FC = () => {
           console.error('❌ AssetService Error:', apiError);
           const errorResponse = apiError.response?.data;
           let errorMessage = apiError.message || 'Unknown error';
-          
+
           // Handle specific account-related errors
           if (errorResponse?.details?.includes('foreign key constraint')) {
             errorMessage = 'Account configuration error. Please check Chart of Accounts setup.';
@@ -2079,19 +2080,19 @@ const PurchasesPage: React.FC = () => {
           } else if (errorResponse?.error) {
             errorMessage = errorResponse.error;
           }
-          
+
           console.error('❌ Detailed error:', {
             status: apiError.response?.status,
             data: errorResponse,
             message: errorMessage
           });
-          
+
           errors.push(`Asset for ${purchaseItem.product?.name}: ${errorMessage}`);
         }
       }
-      
+
       console.log('📊 Asset creation summary:', { created: assetsCreated.length, errors: errors.length });
-      
+
       if (assetsCreated.length > 0) {
         toast({
           title: 'Assets Created Successfully! 🎉',
@@ -2101,7 +2102,7 @@ const PurchasesPage: React.FC = () => {
           isClosable: true,
         });
       }
-      
+
       if (errors.length > 0) {
         console.error('⚠️ Asset creation errors:', errors);
         toast({
@@ -2112,7 +2113,7 @@ const PurchasesPage: React.FC = () => {
           isClosable: true,
         });
       }
-      
+
     } catch (err: any) {
       console.error('💥 Critical error in asset creation:', err);
       toast({
@@ -2124,7 +2125,7 @@ const PurchasesPage: React.FC = () => {
       });
     }
   };
-  
+
   // Handle download all receipts PDF
   const handleDownloadAllReceiptsPDF = async (purchase: Purchase) => {
     try {
@@ -2175,7 +2176,7 @@ const PurchasesPage: React.FC = () => {
       // Fetch detailed purchase data for editing
       const detailResponse = await purchaseService.getById(purchase.id);
       setSelectedPurchase(detailResponse);
-      
+
       // Set form data for editing
       setFormData({
         vendor_id: detailResponse.vendor_id?.toString() || '',
@@ -2212,13 +2213,13 @@ const PurchasesPage: React.FC = () => {
           expense_account_id: '1'
         }]
       });
-      
-    await fetchVendors(); // Load vendors for dropdown
-    await fetchProductsList(); // Load products for dropdown
-    await fetchExpenseAccounts(); // Load expense accounts for dropdown
-    await fetchBankAccounts(); // Load bank accounts for dropdown
-    await fetchCreditAccounts(); // Load credit accounts (liability) for dropdown
-    onEditOpen();
+
+      await fetchVendors(); // Load vendors for dropdown
+      await fetchProductsList(); // Load products for dropdown
+      await fetchExpenseAccounts(); // Load expense accounts for dropdown
+      await fetchBankAccounts(); // Load bank accounts for dropdown
+      await fetchCreditAccounts(); // Load credit accounts (liability) for dropdown
+      onEditOpen();
     } catch (err: any) {
       toast({
         title: 'Error',
@@ -2231,7 +2232,7 @@ const PurchasesPage: React.FC = () => {
   };
 
   // Handle create new purchase
-const handleCreate = async () => {
+  const handleCreate = async () => {
     // Reset form data
     setFormData({
       vendor_id: '',
@@ -2239,25 +2240,25 @@ const handleCreate = async () => {
       due_date: '',
       notes: '',
       discount: '0',
-      
+
       // Legacy tax field
       tax: '0',
-      
+
       // Tax additions (Penambahan)
       ppn_rate: '11',
       other_tax_additions: '0',
-      
+
       // Tax deductions (Pemotongan)
       pph21_rate: '0',
       pph23_rate: '0',
       other_tax_deductions: '0',
-      
+
       // Payment method fields
       payment_method: 'CREDIT',
       bank_account_id: '',
       credit_account_id: '',
       payment_reference: '',
-      
+
       items: []
     });
     setSelectedPurchase(null);
@@ -2294,7 +2295,7 @@ const handleCreate = async () => {
     }
 
     // Validate all items have product, quantity, and expense account
-    const invalidItems = formData.items.filter(item => 
+    const invalidItems = formData.items.filter(item =>
       !item.product_id || !item.quantity || !item.expense_account_id
     );
 
@@ -2311,7 +2312,7 @@ const handleCreate = async () => {
 
     try {
       setLoading(true);
-      
+
       // Format the payload with proper tax rates
       const payload = {
         vendor_id: parseInt(formData.vendor_id),
@@ -2320,7 +2321,7 @@ const handleCreate = async () => {
         notes: formData.notes,
         discount: parseFloat(formData.discount) || 0,
         // Send proper tax rates (not legacy tax field)
-        ppn_rate: parseFloat(formData.ppn_rate) || 11,
+        ppn_rate: !isNaN(parseFloat(formData.ppn_rate)) ? parseFloat(formData.ppn_rate) : 11,
         other_tax_additions: parseFloat(formData.other_tax_additions) || 0,
         pph21_rate: parseFloat(formData.pph21_rate) || 0,
         pph23_rate: parseFloat(formData.pph23_rate) || 0,
@@ -2341,7 +2342,7 @@ const handleCreate = async () => {
       };
 
       let response;
-      
+
       if (selectedPurchase) {
         // Update existing purchase
         response = await purchaseService.update(selectedPurchase.id, payload);
@@ -2364,14 +2365,14 @@ const handleCreate = async () => {
           isClosable: true,
         });
         onCreateClose();
-        
+
         // NOTE: Purchase is now created as DRAFT - Employee must manually submit for approval
         // This allows Employee to review the purchase details before submitting
       }
-      
+
       // Refresh the list
       await fetchPurchases();
-      
+
     } catch (err: any) {
       console.error('Error saving purchase:', err);
       const errorMessage = err.response?.data?.message || err.response?.data?.error || err.message || 'An error occurred';
@@ -2388,12 +2389,86 @@ const handleCreate = async () => {
   };
 
 
+  // Handle duplicate purchase
+  const handleDuplicate = async (purchase: Purchase) => {
+    try {
+      setLoading(true);
+      // Fetch detailed purchase data for duplication
+      const detailResponse = await purchaseService.getById(purchase.id);
+
+      // Set form data for NEW purchase (cleared ID, cleared status-related fields)
+      setFormData({
+        vendor_id: detailResponse.vendor_id?.toString() || '',
+        date: new Date().toISOString().split('T')[0], // Use today's date
+        due_date: '', // Clear due date
+        notes: detailResponse.notes || '',
+        discount: detailResponse.discount?.toString() || '0',
+        tax: detailResponse.tax?.toString() || '0',
+        // Tax additions
+        ppn_rate: detailResponse.ppn_rate?.toString() || '11',
+        other_tax_additions: detailResponse.other_tax_additions?.toString() || '0',
+        // Tax deductions
+        pph21_rate: detailResponse.pph21_rate?.toString() || '0',
+        pph23_rate: detailResponse.pph23_rate?.toString() || '0',
+        other_tax_deductions: detailResponse.other_tax_deductions?.toString() || '0',
+        // Payment method fields
+        payment_method: detailResponse.payment_method || 'CREDIT',
+        bank_account_id: detailResponse.bank_account_id?.toString() || '',
+        credit_account_id: detailResponse.credit_account_id?.toString() || '',
+        payment_reference: '', // Clear payment reference
+        items: detailResponse.purchase_items?.map(item => ({
+          product_id: item.product_id.toString(),
+          quantity: item.quantity.toString(),
+          unit_price: item.unit_price.toString(),
+          discount: item.discount?.toString() || '0',
+          tax: item.tax?.toString() || '0',
+          expense_account_id: item.expense_account_id?.toString() || '1'
+        })) || []
+      });
+
+      // Reset selected purchase so it treats it as NEW
+      setSelectedPurchase(null);
+
+      // We can run these in parallel to speed up
+      await Promise.all([
+        fetchVendors(),
+        fetchProductsList(),
+        fetchExpenseAccounts(),
+        fetchBankAccounts(),
+        fetchCreditAccounts()
+      ]);
+
+      onCreateOpen();
+
+      toast({
+        title: t('common.duplicate'),
+        description: t('purchases.messages.duplicateSuccess'),
+        status: 'info',
+        duration: 3000,
+        isClosable: true,
+      });
+    } catch (error) {
+      console.error('Error duplicating purchase:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to duplicate purchase data',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+    } finally {
+      setLoading(false);
+    }
+
+
+  };
+
   // Smart Action Button Logic
   const getActionButtonProps = (purchase: Purchase) => {
     const roleNorm = normalizeRole(user?.role as any);
     const status = (purchase.approval_status || '').toUpperCase();
     const purchaseStatus = (purchase.status || '').toUpperCase();
-    
+
     // Helper function to get current active approval step
     const getCurrentActiveStep = () => {
       // Check if we have approval steps data from backend
@@ -2402,7 +2477,7 @@ const handleCreate = async () => {
         const activeStep = purchase.approval_request.approval_steps.find(
           step => step.is_active && step.status === 'PENDING'
         );
-        
+
         if (activeStep) {
           return {
             step_name: activeStep.step.step_name,
@@ -2411,12 +2486,12 @@ const handleCreate = async () => {
             is_escalated: activeStep.step.step_name?.includes('Escalated') || activeStep.step.step_name?.includes('Director') || false
           };
         }
-        
+
         // If no active step found, check for any pending step (fallback)
         const pendingStep = purchase.approval_request.approval_steps.find(
           step => step.status === 'PENDING'
         );
-        
+
         if (pendingStep) {
           return {
             step_name: pendingStep.step.step_name,
@@ -2426,33 +2501,33 @@ const handleCreate = async () => {
           };
         }
       }
-      
+
       // Fallback logic if no approval steps data available
       if (purchaseStatus === 'DRAFT' && roleNorm === 'employee') {
         return { step_name: 'Submit', approver_role: 'employee', step_order: 0, is_escalated: false };
       }
-      
+
       // Enhanced fallback logic based on status and amount
       if (status === 'PENDING' || status === 'NOT_STARTED' || purchaseStatus === 'PENDING_APPROVAL') {
         // Check if this purchase requires director approval based on amount or other criteria
         const requiresDirectorApproval = purchase.total_amount > 25000000;
-        
+
         // Check if purchase has been escalated to director (look for director-related indicators)
         const isEscalatedToDirector = purchase.approval_request?.approval_steps?.some(
           step => normalizeRole(step.step.approver_role) === 'director' && step.status === 'PENDING'
         ) || purchase.approval_request?.current_step_name?.toLowerCase().includes('director');
-        
+
         if (requiresDirectorApproval || isEscalatedToDirector) {
           return { step_name: 'Director Approval', approver_role: 'director', step_order: 2, is_escalated: true };
         }
-        
+
         // Default to finance approval
         return { step_name: 'Finance Approval', approver_role: 'finance', step_order: 1, is_escalated: false };
       }
-      
+
       return null;
     };
-    
+
     const activeStep = getCurrentActiveStep();
     const isUserTurn = activeStep?.approver_role === roleNorm;
 
@@ -2466,7 +2541,7 @@ const handleCreate = async () => {
       if (roleNorm === 'employee' && purchaseStatus === 'DRAFT') {
         return { text: 'Submit for Approval', icon: <FiAlertCircle />, colorScheme: 'blue', variant: 'solid' };
       }
-      
+
       // Show appropriate text based on escalation
       const actionText = activeStep?.is_escalated ? 'Action Required (Escalated)' : 'Action Required';
       return { text: actionText, icon: <FiAlertCircle />, colorScheme: 'orange', variant: 'solid' };
@@ -2475,16 +2550,16 @@ const handleCreate = async () => {
     // Waiting for others - show who needs to act
     if (status === 'PENDING' || purchaseStatus === 'PENDING_APPROVAL') {
       if (activeStep) {
-        const waitingForRole = activeStep.approver_role === 'finance' ? 'Finance' : 
-                              activeStep.approver_role === 'director' ? 'Director' :
-                              activeStep.approver_role === 'admin' ? 'Admin' : 'Approval';
-        
+        const waitingForRole = activeStep.approver_role === 'finance' ? 'Finance' :
+          activeStep.approver_role === 'director' ? 'Director' :
+            activeStep.approver_role === 'admin' ? 'Admin' : 'Approval';
+
         const waitingText = activeStep.is_escalated ? `Waiting for ${waitingForRole} (Escalated)` : `Waiting for ${waitingForRole}`;
         return { text: waitingText, icon: <FiClock />, colorScheme: 'blue', variant: 'outline' };
       }
       return { text: 'Review Progress', icon: <FiClock />, colorScheme: 'blue', variant: 'outline' };
     }
-    
+
     return { text: 'View', icon: <FiEye />, colorScheme: 'gray', variant: 'outline' };
   };
 
@@ -2493,7 +2568,7 @@ const handleCreate = async () => {
     const actionProps = getActionButtonProps(purchase);
     const roleNorm = normalizeRole(user?.role as any);
     const purchaseStatus = (purchase.status || '').toUpperCase();
-    
+
     return (
       <HStack spacing={2}>
         {/* Smart Single Action Button */}
@@ -2519,89 +2594,89 @@ const handleCreate = async () => {
         >
           {actionProps.text}
         </Button>
-        
+
         {/* Record Payment button for APPROVED or PAID CREDIT purchases with outstanding amount */}
-        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID' || purchaseStatus === 'COMPLETED') && 
-         purchaseService.canReceivePayment(purchase) &&
-         (roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director') && (
-          <Button
-            size="sm"
-            colorScheme="blue"
-            variant="solid"
-            leftIcon={<Icon as={FiPlus} />}
-            onClick={() => handleRecordPayment(purchase)}
-            fontWeight="semibold"
-            _hover={{
-              transform: 'translateY(-1px)',
-              boxShadow: 'md'
-            }}
-          >
-            Record Payment
-          </Button>
-        )}
-        
+        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID' || purchaseStatus === 'COMPLETED') &&
+          purchaseService.canReceivePayment(purchase) &&
+          (roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director') && (
+            <Button
+              size="sm"
+              colorScheme="blue"
+              variant="solid"
+              leftIcon={<Icon as={FiPlus} />}
+              onClick={() => handleRecordPayment(purchase)}
+              fontWeight="semibold"
+              _hover={{
+                transform: 'translateY(-1px)',
+                boxShadow: 'md'
+              }}
+            >
+              Record Payment
+            </Button>
+          )}
+
         {/* Create Receipt button for APPROVED or PAID purchases for Inventory Manager, Admin, Director */}
-        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID') && 
-         (roleNorm === 'inventory_manager' || roleNorm === 'admin' || roleNorm === 'director') &&
-         !fullyReceivedPurchases.has(purchase.id) && (
-          <Button
-            size="sm"
-            colorScheme="green"
-            variant="solid"
-            leftIcon={<FiPackage />}
-            onClick={() => handleCreateReceipt(purchase)}
-            fontWeight="semibold"
-            _hover={{
-              transform: 'translateY(-1px)',
-              boxShadow: 'md'
-            }}
-          >
-            Create Receipt
-          </Button>
-        )}
-        
+        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID') &&
+          (roleNorm === 'inventory_manager' || roleNorm === 'admin' || roleNorm === 'director') &&
+          !fullyReceivedPurchases.has(purchase.id) && (
+            <Button
+              size="sm"
+              colorScheme="green"
+              variant="solid"
+              leftIcon={<FiPackage />}
+              onClick={() => handleCreateReceipt(purchase)}
+              fontWeight="semibold"
+              _hover={{
+                transform: 'translateY(-1px)',
+                boxShadow: 'md'
+              }}
+            >
+              Create Receipt
+            </Button>
+          )}
+
         {/* View Receipts button always available (modal will show empty state if none) */}
         {(
           roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director' || roleNorm === 'inventory_manager' || roleNorm === 'employee'
         ) && (
-          <Button
-            size="sm"
-            colorScheme="blue"
-            variant="outline"
-            leftIcon={<FiFileText />}
-            onClick={() => handleViewReceipts(purchase)}
-            fontWeight="medium"
-            _hover={{
-              transform: 'translateY(-1px)',
-              boxShadow: 'md'
-            }}
-          >
-            Receipts
-          </Button>
-        )}
-        
+            <Button
+              size="sm"
+              colorScheme="blue"
+              variant="outline"
+              leftIcon={<FiFileText />}
+              onClick={() => handleViewReceipts(purchase)}
+              fontWeight="medium"
+              _hover={{
+                transform: 'translateY(-1px)',
+                boxShadow: 'md'
+              }}
+            >
+              Receipts
+            </Button>
+          )}
+
         {/* View Journal Entries button for APPROVED or PAID purchases - for users with report view permissions */}
-        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID' || purchaseStatus === 'COMPLETED') && 
-         (roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director') && (
-          <Button
-            size="sm"
-            colorScheme="purple"
-            variant="outline"
-            leftIcon={<FiFileText />}
-            onClick={() => {
-              setSelectedPurchaseForJournal(purchase);
-              onJournalOpen();
-            }}
-            fontWeight="medium"
-            _hover={{
-              transform: 'translateY(-1px)',
-              boxShadow: 'md'
-            }}
-          >
-            {t('purchases.viewJournal')}
-          </Button>
-        )}
-        
+        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID' || purchaseStatus === 'COMPLETED') &&
+          (roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director') && (
+            <Button
+              size="sm"
+              colorScheme="purple"
+              variant="outline"
+              leftIcon={<FiFileText />}
+              onClick={() => {
+                setSelectedPurchaseForJournal(purchase);
+                onJournalOpen();
+              }}
+              fontWeight="medium"
+              _hover={{
+                transform: 'translateY(-1px)',
+                boxShadow: 'md'
+              }}
+            >
+              {t('purchases.viewJournal')}
+            </Button>
+          )}
+
         {/* Delete button for ADMIN - can delete any status */}
         {normalizeRole(user?.role as any) === 'admin' && (
           <Button
@@ -2614,7 +2689,7 @@ const handleCreate = async () => {
             {t('purchases.delete')}
           </Button>
         )}
-        
+
         {/* Delete button removed for DIRECTOR role per requirement */}
       </HStack>
     );
@@ -2622,889 +2697,898 @@ const handleCreate = async () => {
 
   if (loading) {
     return (
-<SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
-        <Box>
-          <Text>{t('purchases.loadingPurchases')}</Text>
-        </Box>
-      </SimpleLayout>
+      <ProtectedModule module="purchases">
+        <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
+          <Box>
+            <Text>{t('purchases.loadingPurchases')}</Text>
+          </Box>
+        </SimpleLayout>
+      </ProtectedModule>
     );
   }
 
   return (
-    <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
-      <Box 
-        bg={bgColor}
-        minH="100vh"
-        p={6}
-      >
-        <VStack spacing={6} align="stretch">
-        {/* Enhanced Header */}
-        <Card 
-          bg={cardBg}
-          borderWidth="1px"
-          borderColor={borderColor}
-          boxShadow="sm"
-          borderRadius="lg"
-          mb={2}
+    <ProtectedModule module="purchases">
+      <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
+        <Box
+          bg={bgColor}
+          minH="100vh"
+          p={6}
         >
-          <CardBody p={6}>
-            <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
-              <VStack align="start" spacing={1}>
-                <Heading 
-                  size="xl" 
-                  color={headingColor}
-                  fontWeight="600"
-                >
-                  Purchase Management
-                </Heading>
-                <Text 
-                  fontSize="md" 
-                  color={textSecondary}
-                >
-                  {t('purchases.manageTransactions')}
-                </Text>
-              </VStack>
-              
-              <HStack spacing={3}>
-                <Tooltip label={t('purchases.refreshData')}>
-                  <IconButton
-                    aria-label={t('purchases.refresh')}
-                    icon={<FiRefreshCw />}
-                    variant="ghost"
-                    onClick={handleRefresh}
-                    isLoading={loading}
-                    _hover={{ 
-                      bg: hoverBg,
-                      transform: 'translateY(-1px)',
-                      boxShadow: 'md'
-                    }}
-                    transition="all 0.2s ease"
-                  />
-                </Tooltip>
-                
-                <Menu zIndex={9999} strategy="fixed">
-                  <MenuButton
-                    as={Button}
-                    leftIcon={<FiDownload />}
-                    colorScheme="green"
-                    variant="outline"
-                    size="md"
-                    _hover={{ 
-                      bg: hoverBg,
-                      borderColor: hoverBorder,
-                      transform: 'translateY(-1px)'
-                    }}
-                    transition="all 0.2s ease"
-                  >
-                    {t('purchases.exportReport')}
-                  </MenuButton>
-                  <MenuList 
-                    zIndex={10001}
-                    boxShadow="lg"
-                    border="1px solid"
-                    borderColor={borderColor}
-                    bg={cardBg}
-                    minW="160px"
-                    maxW="240px"
-                  >
-                    <MenuItem onClick={handleExportPDF} icon={<FiFileText />}>{t('purchases.exportPDF')}</MenuItem>
-                    <MenuItem onClick={handleExportCSV} icon={<FiDownload />}>{t('purchases.exportCSV')}</MenuItem>
-                  </MenuList>
-                </Menu>
-                
-                {(normalizeRole(user?.role as any) === 'employee') && (
-                  <Button 
-                    leftIcon={<FiPlus />} 
-                    colorScheme="blue" 
-                    size="md"
-                    px={6}
-                    fontWeight="medium"
-                    onClick={handleCreate}
-                    _hover={{ 
-                      transform: 'translateY(-1px)',
-                      boxShadow: 'lg'
-                    }}
-                  >
-                    {t('purchases.createPurchase')}
-                  </Button>
-                )}
-              </HStack>
-            </Flex>
-          </CardBody>
-        </Card>
+          <VStack spacing={6} align="stretch">
+            {/* Enhanced Header */}
+            <Card
+              bg={cardBg}
+              borderWidth="1px"
+              borderColor={borderColor}
+              boxShadow="sm"
+              borderRadius="lg"
+              mb={2}
+            >
+              <CardBody p={6}>
+                <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
+                  <VStack align="start" spacing={1}>
+                    <Heading
+                      size="xl"
+                      color={headingColor}
+                      fontWeight="600"
+                    >
+                      {t('purchases.title') || 'Purchase Management'}
+                    </Heading>
+                    <Text
+                      fontSize="md"
+                      color={textSecondary}
+                    >
+                      {t('purchases.manageTransactions')}
+                    </Text>
+                  </VStack>
 
-        {/* Enhanced Statistics Cards */}
-        <Grid templateColumns="repeat(auto-fit, minmax(280px, 1fr))" gap={6}>
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.totalPurchases')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={headingColor}
-                    fontSize="2xl"
-                    fontWeight="bold"
-                  >
-                    {stats.total}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.blue}
-                  color={statColors.blue}
-                >
-                  <FiRefreshCw size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.pendingApproval')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={statColors.orange}
-                    fontSize="2xl"
-                    fontWeight="bold"
-                  >
-                    {stats.needingApproval}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.orange}
-                  color={statColors.orange}
-                >
-                  <FiClock size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.approved')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={statColors.green}
-                    fontSize="2xl"
-                    fontWeight="bold"
-                  >
-                    {stats.approved}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.green}
-                  color={statColors.green}
-                >
-                  <FiCheckCircle size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.rejected')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={statColors.red}
-                    fontSize="2xl"
-                    fontWeight="bold"
-                  >
-                    {stats.rejected}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.red}
-                  color={statColors.red}
-                >
-                  <FiXCircle size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.totalValue')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={headingColor}
-                    fontSize="lg"
-                    fontWeight="bold"
-                  >
-                    {formatCurrency(stats.totalValue || 0)}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.purple}
-                  color={statColors.purple}
-                >
-                  <FiAlertCircle size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.totalApprovedAmount')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={headingColor}
-                    fontSize="lg"
-                    fontWeight="bold"
-                  >
-                    {formatCurrency(stats.totalApprovedAmount || 0)}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.purple}
-                  color={statColors.purple}
-                >
-                  <FiAlertCircle size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.totalPaid')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={statColors.green}
-                    fontSize="lg"
-                    fontWeight="bold"
-                  >
-                    {formatCurrency(stats.totalPaid || 0)}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.green}
-                  color={statColors.green}
-                >
-                  <FiCheckCircle size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            bg={cardBg}
-            borderWidth="1px"
-            borderColor={borderColor}
-            boxShadow="sm"
-            borderRadius="lg"
-            _hover={{ 
-              boxShadow: 'md',
-              transform: 'translateY(-2px)',
-              transition: 'all 0.2s ease'
-            }}
-            transition="all 0.2s ease"
-          >
-            <CardBody p={6}>
-              <Flex align="center" justify="space-between">
-                <Stat>
-                  <StatLabel 
-                    color={textSecondary}
-                    fontSize="sm"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    {t('purchases.outstandingAmount')}
-                  </StatLabel>
-                  <StatNumber 
-                    color={statColors.orange}
-                    fontSize="lg"
-                    fontWeight="bold"
-                  >
-                    {formatCurrency(stats.totalOutstanding || 0)}
-                  </StatNumber>
-                </Stat>
-                <Box 
-                  p={3} 
-                  borderRadius="lg"
-                  bg={statBgColors.orange}
-                  color={statColors.orange}
-                >
-                  <FiClock size={20} />
-                </Box>
-              </Flex>
-            </CardBody>
-          </Card>
-        </Grid>
+                  <HStack spacing={3}>
+                    <Tooltip label={t('purchases.refreshData')}>
+                      <IconButton
+                        aria-label={t('purchases.refresh')}
+                        icon={<FiRefreshCw />}
+                        variant="ghost"
+                        onClick={handleRefresh}
+                        isLoading={loading}
+                        _hover={{
+                          bg: hoverBg,
+                          transform: 'translateY(-1px)',
+                          boxShadow: 'md'
+                        }}
+                        transition="all 0.2s ease"
+                      />
+                    </Tooltip>
 
-        {error && (
-          <Alert status="error">
-            <AlertIcon />
-            <AlertTitle>Error!</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+                    <Menu zIndex={9999} strategy="fixed">
+                      <MenuButton
+                        as={Button}
+                        leftIcon={<FiDownload />}
+                        colorScheme="green"
+                        variant="outline"
+                        size="md"
+                        _hover={{
+                          bg: hoverBg,
+                          borderColor: hoverBorder,
+                          transform: 'translateY(-1px)'
+                        }}
+                        transition="all 0.2s ease"
+                      >
+                        {t('purchases.exportReport')}
+                      </MenuButton>
+                      <MenuList
+                        zIndex={10001}
+                        boxShadow="lg"
+                        border="1px solid"
+                        borderColor={borderColor}
+                        bg={cardBg}
+                        minW="160px"
+                        maxW="240px"
+                      >
+                        <MenuItem onClick={handleExportPDF} icon={<FiFileText />}>{t('purchases.exportPDF')}</MenuItem>
+                        <MenuItem onClick={handleExportCSV} icon={<FiDownload />}>{t('purchases.exportCSV')}</MenuItem>
+                      </MenuList>
+                    </Menu>
 
-        {/* Search and Filters */}
-        <Card mb={6}>
-          <CardBody>
-            <Flex gap={4} align="end" wrap="wrap">
-              <Box flex="1" minW="300px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                  {t('purchases.searchTransactions')}
-                </Text>
-                <InputGroup>
-                  <InputLeftElement pointerEvents="none">
-                    <FiSearch color={textSecondary} />
-                  </InputLeftElement>
-                  <Input
-                    placeholder={t('purchases.searchPlaceholder')}
-                    value={searchInput}
-                    onChange={(e) => handleSearchChange(e.target.value)}
-                    bg={cardBg}
-                  />
-                </InputGroup>
-              </Box>
-              
-              <Box minW="180px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                  {t('purchases.filterByVendor')}
-                </Text>
-                <Select 
-                  placeholder={t('purchases.allVendors')}
-                  value={filters.vendor_id || ''}
-                  onChange={(e) => handleFilterChange({ vendor_id: e.target.value })}
-                  bg={cardBg}
-                >
-                  {vendors.map((vendor) => (
-                    <option key={vendor.id} value={vendor.id.toString()}>
-                      {vendor.name}
-                    </option>
-                  ))}
-                </Select>
-              </Box>
-              
-              <Box minW="160px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                  {t('purchases.filterByStatus')}
-                </Text>
-                <Select 
-                  placeholder={t('purchases.allStatuses')}
-                  value={filters.status || ''}
-                  onChange={(e) => handleFilterChange({ status: e.target.value })}
-                  bg={cardBg}
-                >
-                  <option value="">{t('purchases.allStatuses')}</option>
-                  <option value="draft">{t('purchases.draft')}</option>
-                  <option value="pending_approval">{t('purchases.pendingApprovalStatus')}</option>
-                  <option value="approved">{t('purchases.approved')}</option>
-                  <option value="cancelled">{t('purchases.cancelled')}</option>
-                </Select>
-              </Box>
-              
-              <Box minW="160px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                  {t('purchases.approvalStatus')}
-                </Text>
-                <Select 
-                  placeholder={t('purchases.allApprovalStatuses')}
-                  value={filters.approval_status || ''}
-                  onChange={(e) => handleFilterChange({ approval_status: e.target.value })}
-                  bg={cardBg}
-                >
-                  <option value="">{t('purchases.allApprovalStatuses')}</option>
-                  <option value="not_required">{t('purchases.notRequired')}</option>
-                  <option value="pending">{t('purchases.pending')}</option>
-                  <option value="approved">{t('purchases.approved')}</option>
-                  <option value="rejected">{t('purchases.rejected')}</option>
-                </Select>
-              </Box>
-              
-              <Box minW="160px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                  {t('purchases.startDate')}
-                </Text>
-                <Input
-                  type="date"
-                  value={filters.start_date || ''}
-                  onChange={(e) => handleFilterChange({ start_date: e.target.value })}
-                  bg={cardBg}
-                />
-              </Box>
-              
-              <Box minW="160px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                  {t('purchases.endDate')}
-                </Text>
-                <Input
-                  type="date"
-                  value={filters.end_date || ''}
-                  onChange={(e) => handleFilterChange({ end_date: e.target.value })}
-                  bg={cardBg}
-                />
-              </Box>
-              
-              <Button
-                leftIcon={<FiFilter />}
-                variant="outline"
-                onClick={() => {
-                  // Clear search input state
-                  setSearchInput('');
-                  // Reset purchases to show all
-                  setPurchases(allPurchases);
-                  // Reset filters
-                  setFilters({ 
-                    page: 1, 
-                    limit: 10, 
-                    status: '', 
-                    vendor_id: '', 
-                    approval_status: '', 
-                    search: '', 
-                    start_date: '', 
-                    end_date: '' 
-                  });
-                  fetchPurchases({ page: 1, limit: 10 });
+                    {canCreate && (
+                      <Button
+                        leftIcon={<FiPlus />}
+                        colorScheme="blue"
+                        size="md"
+                        px={6}
+                        fontWeight="medium"
+                        onClick={handleCreate}
+                        _hover={{
+                          transform: 'translateY(-1px)',
+                          boxShadow: 'lg'
+                        }}
+                      >
+                        {t('purchases.createPurchase')}
+                      </Button>
+                    )}
+                  </HStack>
+                </Flex>
+              </CardBody>
+            </Card>
+
+            {/* Enhanced Statistics Cards */}
+            <Grid templateColumns="repeat(auto-fit, minmax(280px, 1fr))" gap={6}>
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
                 }}
+                transition="all 0.2s ease"
               >
-                {t('purchases.clearFilters')}
-              </Button>
-            </Flex>
-          </CardBody>
-        </Card>
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.totalPurchases')}
+                      </StatLabel>
+                      <StatNumber
+                        color={headingColor}
+                        fontSize="2xl"
+                        fontWeight="bold"
+                      >
+                        {stats.total}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.blue}
+                      color={statColors.blue}
+                    >
+                      <FiRefreshCw size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
 
-        {/* Main Data Table */}
-        <EnhancedPurchaseTable
-          purchases={purchases}
-          loading={loading}
-          onViewDetails={handleView}
-          onEdit={canEdit ? handleEdit : undefined}
-          onSubmitForApproval={handleSubmitForApproval}
-          onDelete={canDelete ? handleDelete : undefined}
-          renderActions={renderActions}
-          title={t('purchases.purchaseTransactions')}
-          formatCurrency={formatCurrency}
-          formatDate={formatDate}
-          canEdit={canEdit}
-          canDelete={canDelete}
-          userRole={normalizeRole(user?.role as any)}
-        />
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
+                }}
+                transition="all 0.2s ease"
+              >
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.pendingApproval')}
+                      </StatLabel>
+                      <StatNumber
+                        color={statColors.orange}
+                        fontSize="2xl"
+                        fontWeight="bold"
+                      >
+                        {stats.needingApproval}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.orange}
+                      color={statColors.orange}
+                    >
+                      <FiClock size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
 
-        {/* View Purchase Modal */}
-        <Modal isOpen={isViewOpen} onClose={onViewClose} size="xl">
-          <ModalOverlay />
-          <ModalContent bg={modalContentBg}>
-            <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-              {t('purchases.viewPurchase')} - {selectedPurchase?.code}
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
-              {selectedPurchase && (
-                <VStack spacing={6} align="stretch">
-                  {/* Show rejection alert for cancelled/rejected purchases */}
-                  {(selectedPurchase.status === 'CANCELLED' || selectedPurchase.approval_status === 'REJECTED') && (
-                    <Alert status="error" variant="left-accent">
-                      <AlertIcon />
-                      <VStack align="start" spacing={1}>
-                        <AlertTitle>
-                          {selectedPurchase.status === 'CANCELLED' ? t('purchases.purchaseCancelled') : t('purchases.purchaseRejected')}
-                        </AlertTitle>
-                        <AlertDescription>
-                          {selectedPurchase.status === 'CANCELLED' 
-                            ? t('purchases.purchaseCancelledDesc')
-                            : t('purchases.purchaseRejectedDesc')}
-                        </AlertDescription>
-                      </VStack>
-                    </Alert>
-                  )}
-                  
-                  {/* Basic Info */}
-                  <SimpleGrid columns={2} spacing={4}>
-                    <FormControl>
-                      <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
-                      <Text fontWeight="medium">{selectedPurchase.code}</Text>
-                    </FormControl>
-                    
-                    <FormControl>
-                      <FormLabel>{t('purchases.vendor')}</FormLabel>
-                      <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
-                    </FormControl>
-                    
-                    <FormControl>
-                      <FormLabel>{t('purchases.date')}</FormLabel>
-                      <Text fontWeight="medium">{new Date(selectedPurchase.date).toLocaleDateString('id-ID')}</Text>
-                    </FormControl>
-                    
-                    <FormControl>
-                      <FormLabel>{t('purchases.totalAmount')}</FormLabel>
-                      <Text fontWeight="medium" color="green.500">{formatCurrency(selectedPurchase.total_amount)}</Text>
-                    </FormControl>
-                    
-                    <FormControl>
-                      <FormLabel>{t('purchases.status')}</FormLabel>
-                      <Badge colorScheme={getStatusColor(selectedPurchase.status)} variant="subtle" w="fit-content">
-                        {selectedPurchase.status.replace('_', ' ').toUpperCase()}
-                      </Badge>
-                    </FormControl>
-                    
-                    <FormControl>
-                      <FormLabel>{t('purchases.approvalStatus')}</FormLabel>
-                      <Badge colorScheme={getApprovalStatusColor(selectedPurchase.approval_status)} variant="subtle" w="fit-content">
-                        {selectedPurchase.approval_status.replace('_', ' ').toUpperCase()}
-                      </Badge>
-                    </FormControl>
-                  </SimpleGrid>
-                  
-                  {/* Payment Information */}
-                  {selectedPurchase.payment_method && (
-                    <Box>
-                      <FormLabel mb={3}>{t('purchases.paymentInformation')}</FormLabel>
-                      <SimpleGrid columns={3} spacing={4}>
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
+                }}
+                transition="all 0.2s ease"
+              >
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.approved')}
+                      </StatLabel>
+                      <StatNumber
+                        color={statColors.green}
+                        fontSize="2xl"
+                        fontWeight="bold"
+                      >
+                        {stats.approved}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.green}
+                      color={statColors.green}
+                    >
+                      <FiCheckCircle size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
+
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
+                }}
+                transition="all 0.2s ease"
+              >
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.rejected')}
+                      </StatLabel>
+                      <StatNumber
+                        color={statColors.red}
+                        fontSize="2xl"
+                        fontWeight="bold"
+                      >
+                        {stats.rejected}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.red}
+                      color={statColors.red}
+                    >
+                      <FiXCircle size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
+
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
+                }}
+                transition="all 0.2s ease"
+              >
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.totalValue')}
+                      </StatLabel>
+                      <StatNumber
+                        color={headingColor}
+                        fontSize="lg"
+                        fontWeight="bold"
+                      >
+                        {formatCurrency(stats.totalValue || 0)}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.purple}
+                      color={statColors.purple}
+                    >
+                      <FiAlertCircle size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
+
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
+                }}
+                transition="all 0.2s ease"
+              >
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.totalApprovedAmount')}
+                      </StatLabel>
+                      <StatNumber
+                        color={headingColor}
+                        fontSize="lg"
+                        fontWeight="bold"
+                      >
+                        {formatCurrency(stats.totalApprovedAmount || 0)}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.purple}
+                      color={statColors.purple}
+                    >
+                      <FiAlertCircle size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
+
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
+                }}
+                transition="all 0.2s ease"
+              >
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.totalPaid')}
+                      </StatLabel>
+                      <StatNumber
+                        color={statColors.green}
+                        fontSize="lg"
+                        fontWeight="bold"
+                      >
+                        {formatCurrency(stats.totalPaid || 0)}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.green}
+                      color={statColors.green}
+                    >
+                      <FiCheckCircle size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
+
+              <Card
+                bg={cardBg}
+                borderWidth="1px"
+                borderColor={borderColor}
+                boxShadow="sm"
+                borderRadius="lg"
+                _hover={{
+                  boxShadow: 'md',
+                  transform: 'translateY(-2px)',
+                  transition: 'all 0.2s ease'
+                }}
+                transition="all 0.2s ease"
+              >
+                <CardBody p={6}>
+                  <Flex align="center" justify="space-between">
+                    <Stat>
+                      <StatLabel
+                        color={textSecondary}
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                      >
+                        {t('purchases.outstandingAmount')}
+                      </StatLabel>
+                      <StatNumber
+                        color={statColors.orange}
+                        fontSize="lg"
+                        fontWeight="bold"
+                      >
+                        {formatCurrency(stats.totalOutstanding || 0)}
+                      </StatNumber>
+                    </Stat>
+                    <Box
+                      p={3}
+                      borderRadius="lg"
+                      bg={statBgColors.orange}
+                      color={statColors.orange}
+                    >
+                      <FiClock size={20} />
+                    </Box>
+                  </Flex>
+                </CardBody>
+              </Card>
+            </Grid>
+
+            {error && (
+              <Alert status="error">
+                <AlertIcon />
+                <AlertTitle>Error!</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Search and Filters */}
+            <Card mb={6}>
+              <CardBody>
+                <Flex gap={4} align="end" wrap="wrap">
+                  <Box flex="1" minW="300px">
+                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                      {t('purchases.searchTransactions')}
+                    </Text>
+                    <InputGroup>
+                      <InputLeftElement pointerEvents="none">
+                        <FiSearch color={textSecondary} />
+                      </InputLeftElement>
+                      <Input
+                        placeholder={t('purchases.searchPlaceholder')}
+                        value={searchInput}
+                        onChange={(e) => handleSearchChange(e.target.value)}
+                        bg={cardBg}
+                      />
+                    </InputGroup>
+                  </Box>
+
+                  <Box minW="180px">
+                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                      {t('purchases.filterByVendor')}
+                    </Text>
+                    <Select
+                      placeholder={t('purchases.allVendors')}
+                      value={filters.vendor_id || ''}
+                      onChange={(e) => handleFilterChange({ vendor_id: e.target.value })}
+                      bg={cardBg}
+                    >
+                      {vendors.map((vendor) => (
+                        <option key={vendor.id} value={vendor.id.toString()}>
+                          {vendor.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Box>
+
+                  <Box minW="160px">
+                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                      {t('purchases.filterByStatus')}
+                    </Text>
+                    <Select
+                      placeholder={t('purchases.allStatuses')}
+                      value={filters.status || ''}
+                      onChange={(e) => handleFilterChange({ status: e.target.value })}
+                      bg={cardBg}
+                    >
+                      <option value="">{t('purchases.allStatuses')}</option>
+                      <option value="draft">{t('purchases.draft')}</option>
+                      <option value="pending_approval">{t('purchases.pendingApprovalStatus')}</option>
+                      <option value="approved">{t('purchases.approved')}</option>
+                      <option value="cancelled">{t('purchases.cancelled')}</option>
+                    </Select>
+                  </Box>
+
+                  <Box minW="160px">
+                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                      {t('purchases.approvalStatus')}
+                    </Text>
+                    <Select
+                      placeholder={t('purchases.allApprovalStatuses')}
+                      value={filters.approval_status || ''}
+                      onChange={(e) => handleFilterChange({ approval_status: e.target.value })}
+                      bg={cardBg}
+                    >
+                      <option value="">{t('purchases.allApprovalStatuses')}</option>
+                      <option value="not_required">{t('purchases.notRequired')}</option>
+                      <option value="pending">{t('purchases.pending')}</option>
+                      <option value="approved">{t('purchases.approved')}</option>
+                      <option value="rejected">{t('purchases.rejected')}</option>
+                    </Select>
+                  </Box>
+
+                  <Box minW="160px">
+                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                      {t('purchases.startDate')}
+                    </Text>
+                    <Input
+                      type="date"
+                      value={filters.start_date || ''}
+                      onChange={(e) => handleFilterChange({ start_date: e.target.value })}
+                      bg={cardBg}
+                    />
+                  </Box>
+
+                  <Box minW="160px">
+                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                      {t('purchases.endDate')}
+                    </Text>
+                    <Input
+                      type="date"
+                      value={filters.end_date || ''}
+                      onChange={(e) => handleFilterChange({ end_date: e.target.value })}
+                      bg={cardBg}
+                    />
+                  </Box>
+
+                  <Button
+                    leftIcon={<FiFilter />}
+                    variant="outline"
+                    onClick={() => {
+                      // Clear search input state
+                      setSearchInput('');
+                      // Reset purchases to show all
+                      setPurchases(allPurchases);
+                      // Reset filters
+                      setFilters({
+                        page: 1,
+                        limit: 10,
+                        status: '',
+                        vendor_id: '',
+                        approval_status: '',
+                        search: '',
+                        start_date: '',
+                        end_date: ''
+                      });
+                      fetchPurchases({ page: 1, limit: 10 });
+                    }}
+                  >
+                    {t('purchases.clearFilters')}
+                  </Button>
+                </Flex>
+              </CardBody>
+            </Card>
+
+            {/* Main Data Table */}
+            <EnhancedPurchaseTable
+              purchases={purchases}
+              loading={loading}
+              onViewDetails={handleView}
+              onEdit={canEdit ? handleEdit : undefined}
+              onSubmitForApproval={handleSubmitForApproval}
+              onDelete={canDelete ? handleDelete : undefined}
+              onDuplicate={canEdit ? handleDuplicate : undefined}
+              renderActions={renderActions}
+              title={t('purchases.purchaseTransactions')}
+              formatCurrency={formatCurrency}
+              formatDate={formatDate}
+              canEdit={canEdit}
+              canDelete={canDelete}
+              userRole={normalizeRole(user?.role as any)}
+            />
+
+            {/* View Purchase Modal */}
+            <Modal isOpen={isViewOpen} onClose={onViewClose} size="xl">
+              <ModalOverlay />
+              <ModalContent bg={modalContentBg}>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  {t('purchases.viewPurchase')} - {selectedPurchase?.code}
+                </ModalHeader>
+                <ModalCloseButton />
+                <ModalBody>
+                  {selectedPurchase && (
+                    <VStack spacing={6} align="stretch">
+                      {/* Show rejection alert for cancelled/rejected purchases */}
+                      {(selectedPurchase.status === 'CANCELLED' || selectedPurchase.approval_status === 'REJECTED') && (
+                        <Alert status="error" variant="left-accent">
+                          <AlertIcon />
+                          <VStack align="start" spacing={1}>
+                            <AlertTitle>
+                              {selectedPurchase.status === 'CANCELLED' ? t('purchases.purchaseCancelled') : t('purchases.purchaseRejected')}
+                            </AlertTitle>
+                            <AlertDescription>
+                              {selectedPurchase.status === 'CANCELLED'
+                                ? t('purchases.purchaseCancelledDesc')
+                                : t('purchases.purchaseRejectedDesc')}
+                            </AlertDescription>
+                          </VStack>
+                        </Alert>
+                      )}
+
+                      {/* Basic Info */}
+                      <SimpleGrid columns={2} spacing={4}>
                         <FormControl>
-                          <FormLabel fontSize="sm">{t('purchases.paymentMethod')}</FormLabel>
-                          <Badge 
-                            colorScheme={
-                              selectedPurchase.payment_method === 'CREDIT' ? 'orange' :
-                              selectedPurchase.payment_method === 'CASH' ? 'green' :
-                              selectedPurchase.payment_method === 'BANK_TRANSFER' ? 'blue' :
-                              selectedPurchase.payment_method === 'CHECK' ? 'purple' : 'gray'
-                            } 
-                            variant="subtle" 
-                            w="fit-content"
-                          >
-                            {selectedPurchase.payment_method.replace('_', ' ')}
+                          <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
+                          <Text fontWeight="medium">{selectedPurchase.code}</Text>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel>{t('purchases.vendor')}</FormLabel>
+                          <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel>{t('purchases.date')}</FormLabel>
+                          <Text fontWeight="medium">{new Date(selectedPurchase.date).toLocaleDateString('id-ID')}</Text>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel>{t('purchases.totalAmount')}</FormLabel>
+                          <Text fontWeight="medium" color="green.500">{formatCurrency(selectedPurchase.total_amount)}</Text>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel>{t('purchases.status')}</FormLabel>
+                          <Badge colorScheme={getStatusColor(selectedPurchase.status)} variant="subtle" w="fit-content">
+                            {selectedPurchase.status.replace('_', ' ').toUpperCase()}
                           </Badge>
                         </FormControl>
-                        
-                        {selectedPurchase.bank_account_id && (
-                          <FormControl>
-                            <FormLabel fontSize="sm">{t('purchases.bankAccount')}</FormLabel>
-                            <Text fontWeight="medium">
-                              {(() => {
-                                // Prefer relation from backend if available
-                                const relatedAccount: any = (selectedPurchase as any).bank_account;
-                                const accountFromList = bankAccounts.find(
-                                  (account) => account.id === selectedPurchase.bank_account_id
-                                );
-                                const name = relatedAccount?.name || accountFromList?.name;
-                                const code = relatedAccount?.code || accountFromList?.code;
-                                if (!name && !code) return 'Unknown Account';
-                                if (name && code) return `${name} (${code})`;
-                                return name || code || 'Unknown Account';
-                              })()}
-                            </Text>
-                          </FormControl>
-                        )}
-                        
-                        {selectedPurchase.payment_reference && (
-                          <FormControl>
-                            <FormLabel fontSize="sm">{t('purchases.paymentReference')}</FormLabel>
-                            <Text fontWeight="medium">{selectedPurchase.payment_reference}</Text>
-                          </FormControl>
-                        )}
+
+                        <FormControl>
+                          <FormLabel>{t('purchases.approvalStatus')}</FormLabel>
+                          <Badge colorScheme={getApprovalStatusColor(selectedPurchase.approval_status)} variant="subtle" w="fit-content">
+                            {selectedPurchase.approval_status.replace('_', ' ').toUpperCase()}
+                          </Badge>
+                        </FormControl>
                       </SimpleGrid>
-                    </Box>
-                  )}
-                  
-                  {/* Notes */}
-                  {selectedPurchase.notes && (
-                    <FormControl>
-                      <FormLabel>{t('purchases.notes')}</FormLabel>
-                      <Text p={3} bg={notesBoxBg} borderRadius="md">{selectedPurchase.notes}</Text>
-                    </FormControl>
-                  )}
-                  
-                  {/* Approval Panel */}
-                  <ApprovalPanel 
-                    purchaseId={selectedPurchase.id}
-                    approvalStatus={selectedPurchase.approval_status}
-                    purchaseAmount={selectedPurchase.total_amount}
-                    canApprove={(() => {
-                      const roleNorm = normalizeRole(user?.role as any);
-                      const isDraft = (selectedPurchase.status || '').toUpperCase() === 'DRAFT';
-                      const isPending = (selectedPurchase.approval_status || '').toUpperCase() === 'PENDING';
-                      const isNotStarted = (selectedPurchase.approval_status || '').toUpperCase() === 'NOT_STARTED';
-                      
-                      // Admin can always approve
-                      if (roleNorm === 'admin') return true;
-                      
-                      // Finance can approve DRAFT purchases, pending purchases (escalated), or purchases that haven't started approval
-                      if (roleNorm === 'finance' && (isDraft || isPending || isNotStarted)) return true;
-                      
-                      // Director can approve pending purchases (escalated)
-                      if (roleNorm === 'director' && isPending) return true;
-                      
-                      // Check approval steps for other roles
-                      const steps: any[] = (selectedPurchase as any)?.approval_steps || [];
-                      if (!Array.isArray(steps) || steps.length === 0) return false;
-                      const active = steps.find((s: any) => s.is_active && s.status === 'PENDING');
-                      const approverRole = active?.step?.approver_role ? normalizeRole(active.step.approver_role) : null;
-                      return !!approverRole && approverRole === roleNorm;
-                    })()}
-                    onApprove={async (comments?: string, requiresDirector?: boolean) => {
-                      if (!selectedPurchase) return;
-                      try {
-                        // Call API to approve with escalation parameter
-                        const result = await approvalService.approvePurchase(selectedPurchase.id, { 
-                          comments: comments || '',
-                          escalate_to_director: requiresDirector || false
-                        });
-                        
-                        // Handle different approval outcomes
-                        if (result.escalated) {
-                          toast({ 
-                            title: 'Approved & Escalated', 
-                            description: result.message || 'Purchase approved by Finance and escalated to Director for final approval', 
-                            status: 'info', 
-                            duration: 5000, 
-                            isClosable: true 
-                          });
-                          
-                          // Send notification to directors
-                          await notifyDirectors(selectedPurchase);
-                        } else {
-                          toast({ 
-                            title: 'Approved', 
-                            description: result.message || 'Purchase approved successfully', 
-                            status: 'success', 
-                            duration: 3000, 
-                            isClosable: true 
-                          });
-                        }
-                        
-                        // Refresh purchase data
-                        const detailResponse = await purchaseService.getById(selectedPurchase.id);
-                        setSelectedPurchase(detailResponse);
-                        await fetchPurchases();
-                        // Don't close modal - let user see the updated history with comments
-                      } catch (err: any) {
-                        toast({ 
-                          title: 'Error', 
-                          description: err.response?.data?.message || err.response?.data?.error || 'Failed to approve', 
-                          status: 'error', 
-                          duration: 5000, 
-                          isClosable: true 
-                        });
-                      }
-                    }}
-                    onReject={async (comments: string) => {
-                      if (!selectedPurchase) return;
-                      if (!comments || comments.trim() === '') {
-                        toast({ title: 'Komentar diperlukan', description: 'Mohon isi alasan penolakan.', status: 'warning', duration: 3000, isClosable: true });
-                        return;
-                      }
-                      try {
-                        await approvalService.rejectPurchase(selectedPurchase.id, { comments });
-                        toast({ title: 'Rejected', description: 'Purchase rejected successfully', status: 'warning', duration: 3000, isClosable: true });
-                        const detailResponse = await purchaseService.getById(selectedPurchase.id);
-                        setSelectedPurchase(detailResponse);
-                        await fetchPurchases();
-                        // Don't close modal - let user see the updated history with rejection comments
-                      } catch (err: any) {
-                        toast({ title: 'Error', description: err.response?.data?.message || 'Failed to reject', status: 'error', duration: 5000, isClosable: true });
-                      }
-                    }}
-                  />
 
-                  {/* Items */}
-                  {selectedPurchase.purchase_items && selectedPurchase.purchase_items.length > 0 && (
-                    <FormControl>
-                      <FormLabel>{t('purchases.purchaseItems')}</FormLabel>
-                      <TableContainer>
-                        <Table size="sm" bg={tableBg}>
-                          <Thead bg={tableHeaderBg}>
-                            <Tr>
-                              <Th>{t('purchases.product')}</Th>
-                              <Th isNumeric>{t('purchases.quantity')}</Th>
-                              <Th isNumeric>{t('purchases.unitPrice')}</Th>
-                              <Th isNumeric>{t('purchases.total')}</Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {selectedPurchase.purchase_items.map((item: any, index: number) => (
-                              <Tr key={index}>
-                                <Td>{item.product?.name || 'N/A'}</Td>
-                                <Td isNumeric>{item.quantity}</Td>
-                                <Td isNumeric>{formatCurrency(item.unit_price)}</Td>
-                                <Td isNumeric>{formatCurrency(item.quantity * item.unit_price)}</Td>
-                              </Tr>
-                            ))}
-                          </Tbody>
-                        </Table>
-                      </TableContainer>
-                    </FormControl>
-                  )}
-                </VStack>
-              )}
-            </ModalBody>
-            <ModalFooter>
-              <Button onClick={onViewClose}>{t('purchases.close')}</Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+                      {/* Payment Information */}
+                      {selectedPurchase.payment_method && (
+                        <Box>
+                          <FormLabel mb={3}>{t('purchases.paymentInformation')}</FormLabel>
+                          <SimpleGrid columns={3} spacing={4}>
+                            <FormControl>
+                              <FormLabel fontSize="sm">{t('purchases.paymentMethod')}</FormLabel>
+                              <Badge
+                                colorScheme={
+                                  selectedPurchase.payment_method === 'CREDIT' ? 'orange' :
+                                    selectedPurchase.payment_method === 'CASH' ? 'green' :
+                                      selectedPurchase.payment_method === 'BANK_TRANSFER' ? 'blue' :
+                                        selectedPurchase.payment_method === 'CHECK' ? 'purple' : 'gray'
+                                }
+                                variant="subtle"
+                                w="fit-content"
+                              >
+                                {selectedPurchase.payment_method.replace('_', ' ')}
+                              </Badge>
+                            </FormControl>
 
-        {/* Edit Purchase Modal */}
-        <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl">
-          <ModalOverlay />
-          <ModalContent bg={modalContentBg}>
-            <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-              Edit Purchase - {selectedPurchase?.code}
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
-              <VStack spacing={4} align="stretch">
-                <Text fontSize="md" fontWeight="semibold" color={headingColor}>Basic Info</Text>
-                <SimpleGrid columns={2} spacing={4}>
+                            {selectedPurchase.bank_account_id && (
+                              <FormControl>
+                                <FormLabel fontSize="sm">{t('purchases.bankAccount')}</FormLabel>
+                                <Text fontWeight="medium">
+                                  {(() => {
+                                    // Prefer relation from backend if available
+                                    const relatedAccount: any = (selectedPurchase as any).bank_account;
+                                    const accountFromList = bankAccounts.find(
+                                      (account) => account.id === selectedPurchase.bank_account_id
+                                    );
+                                    const name = relatedAccount?.name || accountFromList?.name;
+                                    const code = relatedAccount?.code || accountFromList?.code;
+                                    if (!name && !code) return 'Unknown Account';
+                                    if (name && code) return `${name} (${code})`;
+                                    return name || code || 'Unknown Account';
+                                  })()}
+                                </Text>
+                              </FormControl>
+                            )}
+
+                            {selectedPurchase.payment_reference && (
+                              <FormControl>
+                                <FormLabel fontSize="sm">{t('purchases.paymentReference')}</FormLabel>
+                                <Text fontWeight="medium">{selectedPurchase.payment_reference}</Text>
+                              </FormControl>
+                            )}
+                          </SimpleGrid>
+                        </Box>
+                      )}
+
+                      {/* Notes */}
+                      {selectedPurchase.notes && (
+                        <FormControl>
+                          <FormLabel>{t('purchases.notes')}</FormLabel>
+                          <Text p={3} bg={notesBoxBg} borderRadius="md">{selectedPurchase.notes}</Text>
+                        </FormControl>
+                      )}
+
+                      {/* Approval Panel */}
+                      <ApprovalPanel
+                        purchaseId={selectedPurchase.id}
+                        approvalStatus={selectedPurchase.approval_status}
+                        purchaseAmount={selectedPurchase.total_amount}
+                        canApprove={(() => {
+                          const roleNorm = normalizeRole(user?.role as any);
+                          const isDraft = (selectedPurchase.status || '').toUpperCase() === 'DRAFT';
+                          const isPending = (selectedPurchase.approval_status || '').toUpperCase() === 'PENDING';
+                          const isNotStarted = (selectedPurchase.approval_status || '').toUpperCase() === 'NOT_STARTED';
+
+                          // Admin can always approve
+                          if (roleNorm === 'admin') return true;
+
+                          // Finance can approve DRAFT purchases, pending purchases (escalated), or purchases that haven't started approval
+                          if (roleNorm === 'finance' && (isDraft || isPending || isNotStarted)) return true;
+
+                          // Director can approve pending purchases (escalated)
+                          if (roleNorm === 'director' && isPending) return true;
+
+                          // Check approval steps for other roles
+                          const steps: any[] = (selectedPurchase as any)?.approval_steps || [];
+                          if (!Array.isArray(steps) || steps.length === 0) return false;
+                          const active = steps.find((s: any) => s.is_active && s.status === 'PENDING');
+                          const approverRole = active?.step?.approver_role ? normalizeRole(active.step.approver_role) : null;
+                          return !!approverRole && approverRole === roleNorm;
+                        })()}
+                        onApprove={async (comments?: string, requiresDirector?: boolean) => {
+                          if (!selectedPurchase) return;
+                          try {
+                            // Call API to approve with escalation parameter
+                            const result = await approvalService.approvePurchase(selectedPurchase.id, {
+                              comments: comments || '',
+                              escalate_to_director: requiresDirector || false
+                            });
+
+                            // Handle different approval outcomes
+                            if (result.escalated) {
+                              toast({
+                                title: 'Approved & Escalated',
+                                description: result.message || 'Purchase approved by Finance and escalated to Director for final approval',
+                                status: 'info',
+                                duration: 5000,
+                                isClosable: true
+                              });
+
+                              // Send notification to directors
+                              await notifyDirectors(selectedPurchase);
+                            } else {
+                              toast({
+                                title: 'Approved',
+                                description: result.message || 'Purchase approved successfully',
+                                status: 'success',
+                                duration: 3000,
+                                isClosable: true
+                              });
+                            }
+
+                            // Refresh purchase data
+                            const detailResponse = await purchaseService.getById(selectedPurchase.id);
+                            setSelectedPurchase(detailResponse);
+                            await fetchPurchases();
+                            // Don't close modal - let user see the updated history with comments
+                          } catch (err: any) {
+                            toast({
+                              title: 'Error',
+                              description: err.response?.data?.message || err.response?.data?.error || 'Failed to approve',
+                              status: 'error',
+                              duration: 5000,
+                              isClosable: true
+                            });
+                          }
+                        }}
+                        onReject={async (comments: string) => {
+                          if (!selectedPurchase) return;
+                          if (!comments || comments.trim() === '') {
+                            toast({ title: 'Komentar diperlukan', description: 'Mohon isi alasan penolakan.', status: 'warning', duration: 3000, isClosable: true });
+                            return;
+                          }
+                          try {
+                            await approvalService.rejectPurchase(selectedPurchase.id, { comments });
+                            toast({ title: 'Rejected', description: 'Purchase rejected successfully', status: 'warning', duration: 3000, isClosable: true });
+                            const detailResponse = await purchaseService.getById(selectedPurchase.id);
+                            setSelectedPurchase(detailResponse);
+                            await fetchPurchases();
+                            // Don't close modal - let user see the updated history with rejection comments
+                          } catch (err: any) {
+                            toast({ title: 'Error', description: err.response?.data?.message || 'Failed to reject', status: 'error', duration: 5000, isClosable: true });
+                          }
+                        }}
+                      />
+
+                      {/* Items */}
+                      {selectedPurchase.purchase_items && selectedPurchase.purchase_items.length > 0 && (
+                        <FormControl>
+                          <FormLabel>{t('purchases.purchaseItems')}</FormLabel>
+                          <TableContainer>
+                            <Table size="sm" bg={tableBg}>
+                              <Thead bg={tableHeaderBg}>
+                                <Tr>
+                                  <Th>{t('purchases.product')}</Th>
+                                  <Th isNumeric>{t('purchases.quantity')}</Th>
+                                  <Th isNumeric>{t('purchases.unitPrice')}</Th>
+                                  <Th isNumeric>{t('purchases.total')}</Th>
+                                </Tr>
+                              </Thead>
+                              <Tbody>
+                                {selectedPurchase.purchase_items.map((item: any, index: number) => (
+                                  <Tr key={index}>
+                                    <Td>{item.product?.name || 'N/A'}</Td>
+                                    <Td isNumeric>{item.quantity}</Td>
+                                    <Td isNumeric>{formatCurrency(item.unit_price)}</Td>
+                                    <Td isNumeric>{formatCurrency(item.quantity * item.unit_price)}</Td>
+                                  </Tr>
+                                ))}
+                              </Tbody>
+                            </Table>
+                          </TableContainer>
+                        </FormControl>
+                      )}
+                    </VStack>
+                  )}
+                </ModalBody>
+                <ModalFooter>
+                  <Button onClick={onViewClose}>{t('purchases.close')}</Button>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            {/* Edit Purchase Modal */}
+            <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl">
+              <ModalOverlay />
+              <ModalContent bg={modalContentBg}>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  Edit Purchase - {selectedPurchase?.code}
+                </ModalHeader>
+                <ModalCloseButton />
+                <ModalBody>
+                  <VStack spacing={4} align="stretch">
+                    <Text fontSize="md" fontWeight="semibold" color={headingColor}>Basic Info</Text>
+                    <SimpleGrid columns={2} spacing={4}>
+                      <FormControl>
+                        <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
+                        <Input value={selectedPurchase?.code || ''} isReadOnly bg="gray.50" />
+                      </FormControl>
+
                       <FormControl isRequired>
                         <FormLabel>Vendor</FormLabel>
                         <HStack spacing={2}>
@@ -3514,7 +3598,7 @@ const handleCreate = async () => {
                             <Select
                               placeholder="Select vendor"
                               value={formData.vendor_id}
-                              onChange={(e) => setFormData({...formData, vendor_id: e.target.value})}
+                              onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
                               flex={1}
                             >
                               {vendors.map(vendor => (
@@ -3536,2258 +3620,2265 @@ const handleCreate = async () => {
                           />
                         </HStack>
                       </FormControl>
-                  
-                  <FormControl isRequired>
-                    <FormLabel>Purchase Date</FormLabel>
-                    <Input
-                      type="date"
-                      value={formData.date}
-                      onChange={(e) => setFormData({...formData, date: e.target.value})}
-                    />
-                  </FormControl>
-                </SimpleGrid>
 
-                <SimpleGrid columns={2} spacing={4}>
-                  <FormControl>
-                    <FormLabel>Due Date</FormLabel>
-                    <Input
-                      type="date"
-                      value={formData.due_date}
-                      onChange={(e) => setFormData({...formData, due_date: e.target.value})}
-                    />
-                  </FormControl>
-
-                  <FormControl>
-                    <FormLabel>Discount (%)</FormLabel>
-                    <NumberInput
-                      value={formData.discount}
-                      onChange={(value) => setFormData({...formData, discount: value})}
-                    >
-                      <NumberInputField placeholder="0" />
-                    </NumberInput>
-                    <FormHelperText>Masukkan persentase diskon atas subtotal (0-100).</FormHelperText>
-                  </FormControl>
-                </SimpleGrid>
-
-                {!canListExpenseAccounts && (
-                  <FormControl>
-                    <FormLabel>Default Expense Account ID</FormLabel>
-                    <NumberInput min={1} value={defaultExpenseAccountId ?? ''} onChange={(v) => setDefaultExpenseAccountId(isNaN(Number(v)) ? null : Number(v))} maxW="260px">
-                      <NumberInputField placeholder="Masukkan Account ID (EXPENSE)" />
-                    </NumberInput>
-                    <FormHelperText>Karena role Anda tidak bisa melihat daftar akun, isi ID akun beban (EXPENSE) default di sini.</FormHelperText>
-                  </FormControl>
-                )}
-                
-                <FormControl>
-                  <FormLabel>Notes</FormLabel>
-                  <Textarea
-                    value={formData.notes}
-                    onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                    placeholder="Enter any notes or descriptions..."
-                    rows={4}
-                  />
-                </FormControl>
-
-                {/* Purchase Items Section */}
-                <Card>
-                  <CardHeader pb={3}>
-                    <Flex justify="space-between" align="center">
-                      <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                        🛒 Purchase Items
-                      </Text>
-                      <Button 
-                        size="sm" 
-                        leftIcon={<FiPlus />} 
-                        colorScheme="blue"
-                        variant="outline"
-                        onClick={() => {
-                          setFormData({
-                            ...formData,
-                            items: [
-                              ...formData.items,
-                              { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: '' }
-                            ]
-                          });
-                        }}
-                      >
-                        Add Item
-                      </Button>
-                    </Flex>
-                  </CardHeader>
-                  <CardBody pt={0}>
-                    <Box overflow="visible">
-                      <Table size="sm" variant="simple">
-                        <Thead bg={tableHeaderBg}>
-                          <Tr>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Expense Account</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Total (IDR)</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {formData.items.length === 0 ? (
-                            <Tr>
-                              <Td colSpan={6} textAlign="center" py={8}>
-                                <VStack spacing={2}>
-                                  <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
-                                  <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
-                                </VStack>
-                              </Td>
-                            </Tr>
-                          ) : (
-                            formData.items.map((item, index) => (
-                              <Tr key={index} _hover={{ bg: hoverBg }}>
-                                <Td minW="200px">
-                                  {loadingProducts ? (
-                                    <Flex align="center" justify="center" h="32px">
-                                      <Spinner size="sm" />
-                                    </Flex>
-                                  ) : (
-                                    <HStack spacing={2}>
-                                      <VStack spacing={2} align="stretch">
-                                        <Select
-                                          placeholder="🔍 Choose Product - V2.0 (Stock Available)"
-                                          value={item.product_id}
-                                          onChange={(e) => {
-                                            const items = [...formData.items];
-                                            items[index] = { ...items[index], product_id: e.target.value };
-                                            // Auto-fill unit price from product purchase_price if available
-                                            const selectedProduct = products.find(p => p.id?.toString() === e.target.value);
-                                            if (selectedProduct && selectedProduct.purchase_price) {
-                                              items[index] = { ...items[index], unit_price: selectedProduct.purchase_price.toString() };
-                                            }
-                                            // Reset quantity when switching products to prevent stock issues
-                                            if (selectedProduct) {
-                                              items[index] = { ...items[index], quantity: '1' };
-                                            }
-                                            setFormData({ ...formData, items });
-                                          }}
-                                          size="sm"
-                                          maxW="320px"
-                                          bg={cardBg}
-                                          borderColor={borderColor}
-                                          _hover={{ borderColor: inputHoverBorder }}
-                                          _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
-                                        >
-                                          {products.map((p) => {
-                                            // Handle unit display properly - some units might be numeric IDs
-                                            // We'll use a proper unit name or fallback to 'units'
-                                            
-                                            // Determine stock status and styling
-                                            const stockLevel = p?.stock || 0;
-                                            const minStock = p?.min_stock || 0;
-                                            
-                                            // Handle unit display - if unit is numeric (ID), use generic 'units'
-                                            // If unit is text, use it as-is
-                                            let productUnit = 'units';
-                                            if (p?.unit) {
-                                              if (typeof p.unit === 'string' && isNaN(Number(p.unit))) {
-                                                productUnit = p.unit;
-                                              } else {
-                                                // Unit seems to be an ID, use generic
-                                                productUnit = 'units';
-                                              }
-                                            }
-                                            const isOutOfStock = stockLevel === 0;
-                                            const isLowStock = stockLevel > 0 && stockLevel <= minStock;
-                                            
-                                            let stockStatus = '';
-                                            let stockColor = '#2d3748';
-                                            
-                                            if (isOutOfStock) {
-                                              stockStatus = ' ❌ OUT OF STOCK';
-                                              stockColor = '#999';
-                                            } else if (isLowStock) {
-                                              stockStatus = ' ⚠️ LOW STOCK';
-                                              stockColor = '#d69e2e';
-                                            } else if (stockLevel <= 10) {
-                                              stockStatus = ' ⏰ RUNNING LOW';
-                                              stockColor = '#e6a700';
-                                            } else {
-                                              stockStatus = ' ✅ AVAILABLE';
-                                              stockColor = '#2d3748';
-                                            }
-                                            
-                                            return (
-                                              <option 
-                                                key={p.id} 
-                                                value={p.id?.toString()}
-                                                disabled={isOutOfStock}
-                                                style={{
-                                                  color: stockColor,
-                                                  fontWeight: (isLowStock || isOutOfStock) ? '600' : 'normal',
-                                                  backgroundColor: isOutOfStock ? '#f7fafc' : 'white'
-                                                }}
-                                              >
-                                                🏆 NEW: {p?.code} - {p?.name} | Stock: {stockLevel} {productUnit}{stockStatus}
-                                              </option>
-                                            );
-                                          })}
-                                        </Select>
-                                        
-                                        {/* Stock status indicator for selected product */}
-                                        {item.product_id && (() => {
-                                          const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                                          if (selectedProduct) {
-                                            const stockLevel = selectedProduct.stock || 0;
-                                            const minStock = selectedProduct.min_stock || 0;
-                                            
-                                            // Handle unit display consistently
-                                            let productUnit = 'units';
-                                            if (selectedProduct?.unit) {
-                                              if (typeof selectedProduct.unit === 'string' && isNaN(Number(selectedProduct.unit))) {
-                                                productUnit = selectedProduct.unit;
-                                              } else {
-                                                productUnit = 'units';
-                                              }
-                                            }
-                                            const isOutOfStock = stockLevel === 0;
-                                            const isLowStock = stockLevel > 0 && stockLevel <= minStock;
-                                            const isRunningLow = stockLevel > minStock && stockLevel <= 10;
-                                            
-                                            if (isOutOfStock) {
-                                              return (
-                                                <Badge colorScheme="red" size="sm" variant="solid">
-                                                  ❌ Out of Stock - Cannot Purchase
-                                                </Badge>
-                                              );
-                                            } else if (isLowStock) {
-                                              return (
-                                                <Badge colorScheme="orange" size="sm" variant="solid">
-                                                  ⚠️ Low Stock: {stockLevel} {productUnit} remaining
-                                                </Badge>
-                                              );
-                                            } else if (isRunningLow) {
-                                              return (
-                                                <Badge colorScheme="yellow" size="sm" variant="outline">
-                                                  ⏰ Running Low: {stockLevel} {productUnit} available
-                                                </Badge>
-                                              );
-                                            } else {
-                                              return (
-                                                <Badge colorScheme="green" size="sm" variant="subtle">
-                                                  ✅ Available: {stockLevel} {productUnit} in stock
-                                                </Badge>
-                                              );
-                                            }
-                                          }
-                                          return null;
-                                        })()}
-                                      </VStack>
-                                      <IconButton 
-                                        aria-label="Add new product"
-                                        icon={<FiPlus />}
-                                        size="sm"
-                                        colorScheme="blue"
-                                        variant="outline"
-                                        onClick={onAddProductOpen}
-                                        title="Add New Product"
-                                        _hover={{ bg: 'blue.50' }}
-                                      />
-                                    </HStack>
-                                  )}
-                                </Td>
-                                <Td isNumeric>
-                                  <VStack spacing={1} align="end">
-                                    {(() => {
-                                      const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                                      const availableStock = selectedProduct?.stock || 0;
-                                      const currentQty = parseFloat(item.quantity) || 0;
-                                      const isExceedingStock = currentQty > availableStock;
-                                      
-                                      return (
-                                        <>
-                                          <NumberInput 
-                                            size="sm" 
-                                            min={1}
-                                            max={selectedProduct ? Math.max(1, availableStock) : undefined}
-                                            value={item.quantity} 
-                                            onChange={(valueString) => {
-                                              const items = [...formData.items];
-                                              const numValue = parseFloat(valueString) || 0;
-                                              
-                                              // Allow input but warn if exceeding stock
-                                              items[index] = { ...items[index], quantity: valueString };
-                                              setFormData({ ...formData, items });
-                                              
-                                              // Show toast warning for exceeding stock
-                                              if (selectedProduct && numValue > availableStock && availableStock > 0) {
-                                                toast({
-                                                  title: 'Stock Warning',
-                                                  description: `Quantity (${numValue}) exceeds available stock (${availableStock}). This purchase may face stock shortages.`,
-                                                  status: 'warning',
-                                                  duration: 4000,
-                                                  isClosable: true,
-                                                });
-                                              }
-                                            }} 
-                                            maxW="90px"
-                                            isInvalid={isExceedingStock && availableStock > 0}
-                                          >
-                                            <NumberInputField 
-                                              textAlign="right" 
-                                              fontSize="sm" 
-                                              bg={isExceedingStock && availableStock > 0 ? 'red.50' : cardBg}
-                                              borderColor={isExceedingStock && availableStock > 0 ? 'red.300' : borderColor}
-                                              _hover={{ 
-                                                borderColor: isExceedingStock && availableStock > 0 ? 'red.400' : inputHoverBorder 
-                                              }}
-                                              _focus={{ 
-                                                borderColor: isExceedingStock && availableStock > 0 ? 'red.500' : inputFocusBorder, 
-                                                boxShadow: isExceedingStock && availableStock > 0 ? '0 0 0 1px #e53e3e' : inputFocusShadow 
-                                              }}
-                                            />
-                                            <NumberInputStepper>
-                                              <NumberIncrementStepper 
-                                                isDisabled={selectedProduct && currentQty >= availableStock && availableStock > 0}
-                                              />
-                                              <NumberDecrementStepper />
-                                            </NumberInputStepper>
-                                          </NumberInput>
-                                          
-                                          {/* Stock validation indicator */}
-                                          {selectedProduct && availableStock > 0 && isExceedingStock && (
-                                            <Text fontSize="xs" color="red.500" fontWeight="bold" textAlign="center" w="90px">
-                                              ⚠️ Exceeds stock!
-                                            </Text>
-                                          )}
-                                          {selectedProduct && availableStock > 0 && currentQty > 0 && !isExceedingStock && (
-                                            <Text fontSize="xs" color="green.500" fontWeight="medium" textAlign="center" w="90px">
-                                              ✓ Stock OK
-                                            </Text>
-                                          )}
-                                          {selectedProduct && availableStock === 0 && currentQty > 0 && (
-                                            <Text fontSize="xs" color="red.600" fontWeight="bold" textAlign="center" w="90px">
-                                              ❌ No stock
-                                            </Text>
-                                          )}
-                                        </>
-                                      );
-                                    })()}
-                                  </VStack>
-                                </Td>
-                                <Td isNumeric>
-                                  <Box maxW="160px">
-                                    <CurrencyInput
-                                      value={parseFloat(item.unit_price) || 0}
-                                      onChange={(value) => {
-                                        const items = [...formData.items];
-                                        items[index] = { ...items[index], unit_price: value.toString() };
-                                        setFormData({ ...formData, items });
-                                      }}
-                                      placeholder="Rp 10.000"
-                                      size="sm"
-                                      min={0}
-                                      showLabel={false}
-                                    />
-                                  </Box>
-                                </Td>
-                                <Td minW="240px" position="relative">
-                                  {canListExpenseAccounts ? (
-                                    <Box minW="240px" w="100%">
-                                      <SearchableSelect
-                                        options={expenseAccounts.map(acc => ({
-                                          id: acc.id!,
-                                          code: acc.code,
-                                          name: acc.name,
-                                          active: acc.is_active
-                                        }))}
-                                        value={item.expense_account_id}
-                                        onChange={(value) => {
-                                          const items = [...formData.items];
-                                          items[index] = { ...items[index], expense_account_id: value.toString() };
-                                          setFormData({ ...formData, items });
-                                        }}
-                                        placeholder="Pilih akun beban..."
-                                        isLoading={loadingExpenseAccounts}
-                                        displayFormat={(option) => `${option.code} - ${option.name}`}
-                                        size="sm"
-                                      />
-                                    </Box>
-                                  ) : (
-                                    <NumberInput 
-                                      min={1} 
-                                      value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')} 
-                                      onChange={(v) => {
-                                        const items = [...formData.items];
-                                        items[index] = { ...items[index], expense_account_id: v.toString() };
-                                        setFormData({ ...formData, items });
-                                      }} 
-                                      maxW="240px"
-                                      size="sm"
-                                    >
-                                      <NumberInputField placeholder="Expense Account ID" fontSize="sm" />
-                                    </NumberInput>
-                                  )}
-                                </Td>
-                                <Td isNumeric>
-                                  <Text fontSize="sm" fontWeight="medium" color="green.600">
-                                    {(() => {
-                                      const qty = parseFloat(item.quantity || '0');
-                                      const price = parseFloat(item.unit_price || '0');
-                                      return formatCurrency((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
-                                    })()}
-                                  </Text>
-                                </Td>
-                                <Td>
-                                  <IconButton
-                                    aria-label="Remove item"
-                                    size="sm"
-                                    colorScheme="red"
-                                    variant="ghost"
-                                    icon={<FiTrash2 />}
-                                    onClick={() => {
-                                      const items = [...formData.items];
-                                      items.splice(index, 1);
-                                      setFormData({ ...formData, items });
-                                    }}
-                                    _hover={{ bg: 'red.50' }}
-                                  />
-                                </Td>
-                              </Tr>
-                            ))
-                          )}
-                        </Tbody>
-                      </Table>
-                    </Box>
-                    
-                    {/* Stock Alert Summary */}
-                    {formData.items.length > 0 && (() => {
-                      const itemsWithStockIssues = formData.items.filter(item => {
-                        const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                        const availableStock = selectedProduct?.stock || 0;
-                        const currentQty = parseFloat(item.quantity) || 0;
-                        return selectedProduct && (availableStock === 0 || currentQty > availableStock);
-                      });
-                      
-                      const outOfStockItems = formData.items.filter(item => {
-                        const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                        return selectedProduct && selectedProduct.stock === 0;
-                      });
-                      
-                      const exceedsStockItems = formData.items.filter(item => {
-                        const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                        const availableStock = selectedProduct?.stock || 0;
-                        const currentQty = parseFloat(item.quantity) || 0;
-                        return selectedProduct && availableStock > 0 && currentQty > availableStock;
-                      });
-                      
-                      const lowStockItems = formData.items.filter(item => {
-                        const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                        const availableStock = selectedProduct?.stock || 0;
-                        const minStock = selectedProduct?.min_stock || 0;
-                        return selectedProduct && availableStock > 0 && availableStock <= minStock;
-                      });
-                      
-                      return (
-                        <VStack spacing={3} mt={4}>
-                          {/* Critical Stock Issues Alert */}
-                          {(outOfStockItems.length > 0 || exceedsStockItems.length > 0) && (
-                            <Alert status="error" variant="left-accent" borderRadius="md">
-                              <AlertIcon />
-                              <VStack align="start" spacing={1}>
-                                <AlertTitle fontSize="sm">Stock Issues Detected!</AlertTitle>
-                                <AlertDescription fontSize="xs">
-                                  {outOfStockItems.length > 0 && (
-                                    <Text>❌ {outOfStockItems.length} item(s) are out of stock</Text>
-                                  )}
-                                  {exceedsStockItems.length > 0 && (
-                                    <Text>⚠️ {exceedsStockItems.length} item(s) exceed available stock</Text>
-                                  )}
-                                  <Text fontWeight="medium">Purchase may face stock shortages or delivery delays.</Text>
-                                </AlertDescription>
-                              </VStack>
-                            </Alert>
-                          )}
-                          
-                          {/* Low Stock Warning */}
-                          {lowStockItems.length > 0 && outOfStockItems.length === 0 && exceedsStockItems.length === 0 && (
-                            <Alert status="warning" variant="left-accent" borderRadius="md">
-                              <AlertIcon />
-                              <VStack align="start" spacing={1}>
-                                <AlertTitle fontSize="sm">Low Stock Alert</AlertTitle>
-                                <AlertDescription fontSize="xs">
-                                  ⏰ {lowStockItems.length} item(s) have low stock levels. Consider increasing order quantities.
-                                </AlertDescription>
-                              </VStack>
-                            </Alert>
-                          )}
-                          
-                          {/* All Good Status */}
-                          {itemsWithStockIssues.length === 0 && lowStockItems.length === 0 && (
-                            <Alert status="success" variant="left-accent" borderRadius="md">
-                              <AlertIcon />
-                              <VStack align="start" spacing={1}>
-                                <AlertTitle fontSize="sm">Stock Status: All Good</AlertTitle>
-                                <AlertDescription fontSize="xs">
-                                  ✅ All selected products have sufficient stock for this purchase.
-                                </AlertDescription>
-                              </VStack>
-                            </Alert>
-                          )}
-                        </VStack>
-                      );
-                    })()}
-                    
-                    {/* Summary Row */}
-                    {formData.items.length > 0 && (
-                      <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
-                        <Flex justify="space-between" align="center">
-                          <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
-                            Total Items: {formData.items.length}
-                          </Text>
-                          <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                            Subtotal: {formatCurrency(
-                              formData.items.reduce((total, item) => {
-                                const qty = parseFloat(item.quantity || '0');
-                                const price = parseFloat(item.unit_price || '0');
-                                return total + ((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
-                              }, 0)
-                            )}
-                          </Text>
-                        </Flex>
-                      </Box>
-                    )}
-                    
-                    <FormHelperText mt={3} fontSize="xs">
-                      📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
-                    </FormHelperText>
-                  </CardBody>
-                </Card>
-
-                {/* Tax Configuration Section */}
-                <Card>
-                  <CardHeader pb={3}>
-                    <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                      💰 Tax Configuration
-                    </Text>
-                  </CardHeader>
-                  <CardBody pt={0}>
-                    <VStack spacing={4} align="stretch">
-                      {/* Tax Additions (Penambahan) */}
-                      <Box>
-                        <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
-                          ➕ Tax Additions (Penambahan)
-                        </Text>
-                        <SimpleGrid columns={2} spacing={4}>
-                          <FormControl>
-                            <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
-                            <NumberInput
-                              value={formData.ppn_rate}
-                              onChange={(value) => setFormData({...formData, ppn_rate: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="11" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
-                            <NumberInput
-                              value={formData.other_tax_additions}
-                              onChange={(value) => setFormData({...formData, other_tax_additions: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="0" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
-                          </FormControl>
-                        </SimpleGrid>
-                      </Box>
-
-                      <Divider />
-
-                      {/* Tax Deductions (Pemotongan) */}
-                      <Box>
-                        <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
-                          ➖ Tax Deductions (Pemotongan)
-                        </Text>
-                        <SimpleGrid columns={3} spacing={4}>
-                          <FormControl>
-                            <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
-                            <NumberInput
-                              value={formData.pph21_rate}
-                              onChange={(value) => setFormData({...formData, pph21_rate: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="0" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 21</FormHelperText>
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
-                            <NumberInput
-                              value={formData.pph23_rate}
-                              onChange={(value) => setFormData({...formData, pph23_rate: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="0" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 23</FormHelperText>
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
-                            <NumberInput
-                              value={formData.other_tax_deductions}
-                              onChange={(value) => setFormData({...formData, other_tax_deductions: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="0" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
-                          </FormControl>
-                        </SimpleGrid>
-                      </Box>
-
-                      {/* Tax Summary Calculation */}
-                      {formData.items.length > 0 && (
-                        <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
-                          <VStack spacing={2} align="stretch">
-                            <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
-                            {(() => {
-                              const subtotal = formData.items.reduce((total, item) => {
-                                const qty = parseFloat(item.quantity || '0');
-                                const price = parseFloat(item.unit_price || '0');
-                                const discount = parseFloat(item.discount || '0');
-                                const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
-                                return total + lineTotal;
-                              }, 0);
-                              
-                              const discount = (parseFloat(formData.discount) || 0) / 100;
-                              const discountedSubtotal = subtotal * (1 - discount);
-                              
-                              const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
-                              const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
-                              const totalAdditions = ppnAmount + otherAdditions;
-                              
-                              const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
-                              const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
-                              const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
-                              const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
-                              
-                              const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
-                              
-                              return (
-                                <SimpleGrid columns={2} spacing={4} fontSize="xs">
-                                  <VStack align="start" spacing={1}>
-                                    <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
-                                    <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
-                                    <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
-                                  </VStack>
-                                  
-                                  <VStack align="start" spacing={1}>
-                                    <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
-                                    {parseFloat(formData.other_tax_additions) > 0 && (
-                                      <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
-                                    )}
-                                    {parseFloat(formData.pph21_rate) > 0 && (
-                                      <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
-                                    )}
-                                    {parseFloat(formData.pph23_rate) > 0 && (
-                                      <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
-                                    )}
-                                    {parseFloat(formData.other_tax_deductions) > 0 && (
-                                      <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
-                                    )}
-                                    <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
-                                      Final Total: {formatCurrency(finalTotal)}
-                                    </Text>
-                                  </VStack>
-                                </SimpleGrid>
-                              );
-                            })()}
-                          </VStack>
-                        </Box>
-                      )}
-                    </VStack>
-                  </CardBody>
-                </Card>
-
-                {/* Payment Method Section */}
-                <Card>
-                  <CardHeader pb={3}>
-                    <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                      💳 Payment Method
-                    </Text>
-                  </CardHeader>
-                  <CardBody pt={0}>
-                    <SimpleGrid columns={2} spacing={4}>
                       <FormControl isRequired>
-                        <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
-                        <Select
-                          value={formData.payment_method}
-                          onChange={(e) => {
-                            // Reset bank_account_id saat ganti payment method untuk menghindari konflik
-                            setFormData({
-                              ...formData, 
-                              payment_method: e.target.value,
-                              bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
-                            })
-                          }}
-                          size="sm"
-                        >
-                          <option value="CREDIT">Credit</option>
-                          <option value="CASH">Cash</option>
-                          <option value="BANK_TRANSFER">Bank Transfer</option>
-                          <option value="CHECK">Check</option>
-                        </Select>
-                        <FormHelperText fontSize="xs">
-                          {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
-                          {formData.payment_method === 'CASH' && 'Direct cash payment'}
-                          {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
-                          {formData.payment_method === 'CHECK' && 'Payment by check'}
-                        </FormHelperText>
-                      </FormControl>
-
-                      {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
-                      {formData.payment_method !== 'CREDIT' && (
-                        <FormControl isRequired>
-                          <FormLabel fontSize="sm" fontWeight="medium">
-                            {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
-                          </FormLabel>
-                          <Select
-                            value={formData.bank_account_id}
-                            onChange={(e) => setFormData({...formData, bank_account_id: e.target.value})}
-                            size="sm"
-                            disabled={loadingBankAccounts}
-                            placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
-                          >
-                            {bankAccounts
-                              .filter(account => {
-                                // Filter berdasarkan payment method
-                                if (formData.payment_method === 'CASH') {
-                                  return account.type === 'CASH';
-                                } else {
-                                  return account.type === 'BANK';
-                                }
-                              })
-                              .map((account) => (
-                                <option key={account.id} value={account.id.toString()}>
-                                  {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
-                                </option>
-                              ))
-                            }
-                          </Select>
-                          <FormHelperText fontSize="xs">
-                            Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
-                          </FormHelperText>
-                        </FormControl>
-                      )}
-                      
-                      {/* Credit Account dropdown for Credit payment */}
-                      {formData.payment_method === 'CREDIT' && (
-                        <FormControl isRequired>
-                          <FormLabel fontSize="sm" fontWeight="medium">
-                            Liability Account
-                          </FormLabel>
-                          <Select
-                            value={formData.credit_account_id}
-                            onChange={(e) => setFormData({...formData, credit_account_id: e.target.value})}
-                            size="sm"
-                            disabled={loadingCreditAccounts}
-                            placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
-                          >
-                            {creditAccounts.map((account) => (
-                              <option key={account.id} value={account.id?.toString()}>
-                                {account.code} - {account.name}
-                              </option>
-                            ))}
-                          </Select>
-                          <FormHelperText fontSize="xs">
-                            Required: Select liability account for tracking credit purchases
-                          </FormHelperText>
-                        </FormControl>
-                      )}
-                    </SimpleGrid>
-
-                    {/* Payment Reference (for non-credit and non-cash payments) */}
-                    {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
-                      <FormControl mt={4}>
-                        <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
-                        <Input
-                          value={formData.payment_reference}
-                          onChange={(e) => setFormData({...formData, payment_reference: e.target.value})}
-                          placeholder={
-                            formData.payment_method === 'CHECK' ? 'Check number' :
-                            formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
-                            'Payment reference number'
-                          }
-                          size="sm"
-                        />
-                        <FormHelperText fontSize="xs">
-                          Optional reference for tracking this payment
-                        </FormHelperText>
-                      </FormControl>
-                    )}
-                  </CardBody>
-                </Card>
-
-              </VStack>
-            </ModalBody>
-            <ModalFooter>
-              <HStack spacing={3}>
-                <Button variant="ghost" onClick={onEditClose}>
-                  Cancel
-                </Button>
-                <Button colorScheme="blue" onClick={handleSave}>
-                  Update Purchase
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-
-        {/* Create Purchase Modal */}
-        <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="6xl">
-          <ModalOverlay />
-          <ModalContent maxW="95vw" maxH="95vh" bg={modalContentBg}>
-            <ModalHeader bg={modalHeaderBg} borderRadius="md" mx={4} mt={4} mb={2} borderBottomWidth={1} borderColor={borderColor}>
-              <HStack>
-                <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
-                <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                  Create New Purchase
-                </Text>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton top={6} right={6} />
-            <ModalBody overflowY="auto" px={6} pb={2}>
-              <VStack spacing={6} align="stretch">
-                {/* Basic Information Section */}
-                <Card>
-                  <CardHeader pb={3}>
-                    <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                      📋 Basic Information
-                    </Text>
-                  </CardHeader>
-                  <CardBody pt={0}>
-                    <SimpleGrid columns={3} spacing={4}>
-                      <FormControl isRequired>
-                        <FormLabel fontSize="sm" fontWeight="medium">Vendor</FormLabel>
-                        <HStack spacing={2}>
-                          {loadingVendors ? (
-                            <Spinner size="sm" />
-                          ) : (
-                            <Select
-                              placeholder="Select vendor"
-                              value={formData.vendor_id}
-                              onChange={(e) => setFormData({...formData, vendor_id: e.target.value})}
-                              size="sm"
-                              flex={1}
-                            >
-                              {vendors.map(vendor => (
-                                <option key={vendor.id} value={vendor.id}>
-                                  {vendor.name} ({vendor.code})
-                                </option>
-                              ))}
-                            </Select>
-                          )}
-                          <IconButton
-                            aria-label="Add new vendor"
-                            icon={<FiPlus />}
-                            size="sm"
-                            colorScheme="green"
-                            variant="outline"
-                            onClick={onAddVendorOpen}
-                            title="Add New Vendor"
-                            _hover={{ bg: 'green.50' }}
-                          />
-                        </HStack>
-                      </FormControl>
-                      
-                      <FormControl isRequired>
-                        <FormLabel fontSize="sm" fontWeight="medium">Purchase Date</FormLabel>
+                        <FormLabel>Purchase Date</FormLabel>
                         <Input
                           type="date"
-                          size="sm"
                           value={formData.date}
-                          onChange={(e) => setFormData({...formData, date: e.target.value})}
-                        />
-                      </FormControl>
-
-                      <FormControl>
-                        <FormLabel fontSize="sm" fontWeight="medium">Due Date</FormLabel>
-                        <Input
-                          type="date"
-                          size="sm"
-                          value={formData.due_date}
-                          onChange={(e) => setFormData({...formData, due_date: e.target.value})}
+                          onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                         />
                       </FormControl>
                     </SimpleGrid>
 
-                    <SimpleGrid columns={2} spacing={4} mt={4}>
+                    <SimpleGrid columns={2} spacing={4}>
                       <FormControl>
-                        <FormLabel fontSize="sm" fontWeight="medium">Discount (%)</FormLabel>
+                        <FormLabel>Due Date</FormLabel>
+                        <Input
+                          type="date"
+                          value={formData.due_date}
+                          onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                        />
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel>Discount (%)</FormLabel>
                         <NumberInput
                           value={formData.discount}
-                          onChange={(value) => setFormData({...formData, discount: value})}
-                          size="sm"
-                          min={0}
-                          max={100}
+                          onChange={(value) => setFormData({ ...formData, discount: value })}
                         >
                           <NumberInputField placeholder="0" />
-                          <NumberInputStepper>
-                            <NumberIncrementStepper />
-                            <NumberDecrementStepper />
-                          </NumberInputStepper>
                         </NumberInput>
-                        <FormHelperText fontSize="xs">Masukkan persentase diskon atas subtotal (0-100)</FormHelperText>
+                        <FormHelperText>Masukkan persentase diskon atas subtotal (0-100).</FormHelperText>
+                      </FormControl>
+                    </SimpleGrid>
+
+                    {!canListExpenseAccounts && (
+                      <FormControl>
+                        <FormLabel>Default Expense Account ID</FormLabel>
+                        <NumberInput min={1} value={defaultExpenseAccountId ?? ''} onChange={(v) => setDefaultExpenseAccountId(isNaN(Number(v)) ? null : Number(v))} maxW="260px">
+                          <NumberInputField placeholder="Masukkan Account ID (EXPENSE)" />
+                        </NumberInput>
+                        <FormHelperText>Karena role Anda tidak bisa melihat daftar akun, isi ID akun beban (EXPENSE) default di sini.</FormHelperText>
+                      </FormControl>
+                    )}
+
+                    <FormControl>
+                      <FormLabel>Notes</FormLabel>
+                      <Textarea
+                        value={formData.notes}
+                        onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                        placeholder="Enter any notes or descriptions..."
+                        rows={4}
+                      />
+                    </FormControl>
+
+                    {/* Purchase Items Section */}
+                    <Card>
+                      <CardHeader pb={3}>
+                        <Flex justify="space-between" align="center">
+                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            🛒 Purchase Items
+                          </Text>
+                          <Button
+                            size="sm"
+                            leftIcon={<FiPlus />}
+                            colorScheme="blue"
+                            variant="outline"
+                            onClick={() => {
+                              setFormData({
+                                ...formData,
+                                items: [
+                                  ...formData.items,
+                                  { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: '' }
+                                ]
+                              });
+                            }}
+                          >
+                            Add Item
+                          </Button>
+                        </Flex>
+                      </CardHeader>
+                      <CardBody pt={0}>
+                        <Box overflow="visible">
+                          <Table size="sm" variant="simple">
+                            <Thead bg={tableHeaderBg}>
+                              <Tr>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Expense Account</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Total (IDR)</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
+                              </Tr>
+                            </Thead>
+                            <Tbody>
+                              {formData.items.length === 0 ? (
+                                <Tr>
+                                  <Td colSpan={6} textAlign="center" py={8}>
+                                    <VStack spacing={2}>
+                                      <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
+                                      <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
+                                    </VStack>
+                                  </Td>
+                                </Tr>
+                              ) : (
+                                formData.items.map((item, index) => (
+                                  <Tr key={index} _hover={{ bg: hoverBg }}>
+                                    <Td minW="200px">
+                                      {loadingProducts ? (
+                                        <Flex align="center" justify="center" h="32px">
+                                          <Spinner size="sm" />
+                                        </Flex>
+                                      ) : (
+                                        <HStack spacing={2}>
+                                          <VStack spacing={2} align="stretch">
+                                            <Select
+                                              placeholder="🔍 Choose Product - V2.0 (Stock Available)"
+                                              value={item.product_id}
+                                              onChange={(e) => {
+                                                const items = [...formData.items];
+                                                items[index] = { ...items[index], product_id: e.target.value };
+                                                // Auto-fill unit price from product purchase_price if available
+                                                const selectedProduct = products.find(p => p.id?.toString() === e.target.value);
+                                                if (selectedProduct && selectedProduct.purchase_price) {
+                                                  items[index] = { ...items[index], unit_price: selectedProduct.purchase_price.toString() };
+                                                }
+                                                // Reset quantity when switching products to prevent stock issues
+                                                if (selectedProduct) {
+                                                  items[index] = { ...items[index], quantity: '1' };
+                                                }
+                                                setFormData({ ...formData, items });
+                                              }}
+                                              size="sm"
+                                              maxW="320px"
+                                              bg={cardBg}
+                                              borderColor={borderColor}
+                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                                            >
+                                              {products.map((p) => {
+                                                // Handle unit display properly - some units might be numeric IDs
+                                                // We'll use a proper unit name or fallback to 'units'
+
+                                                // Determine stock status and styling
+                                                const stockLevel = p?.stock || 0;
+                                                const minStock = p?.min_stock || 0;
+
+                                                // Handle unit display - if unit is numeric (ID), use generic 'units'
+                                                // If unit is text, use it as-is
+                                                let productUnit = 'units';
+                                                if (p?.unit) {
+                                                  if (typeof p.unit === 'string' && isNaN(Number(p.unit))) {
+                                                    productUnit = p.unit;
+                                                  } else {
+                                                    // Unit seems to be an ID, use generic
+                                                    productUnit = 'units';
+                                                  }
+                                                }
+                                                const isOutOfStock = stockLevel === 0;
+                                                const isLowStock = stockLevel > 0 && stockLevel <= minStock;
+
+                                                let stockStatus = '';
+                                                let stockColor = '#2d3748';
+
+                                                if (isOutOfStock) {
+                                                  stockStatus = ' ❌ OUT OF STOCK';
+                                                  stockColor = '#999';
+                                                } else if (isLowStock) {
+                                                  stockStatus = ' ⚠️ LOW STOCK';
+                                                  stockColor = '#d69e2e';
+                                                } else if (stockLevel <= 10) {
+                                                  stockStatus = ' ⏰ RUNNING LOW';
+                                                  stockColor = '#e6a700';
+                                                } else {
+                                                  stockStatus = ' ✅ AVAILABLE';
+                                                  stockColor = '#2d3748';
+                                                }
+
+                                                return (
+                                                  <option
+                                                    key={p.id}
+                                                    value={p.id?.toString()}
+                                                    disabled={isOutOfStock}
+                                                    style={{
+                                                      color: stockColor,
+                                                      fontWeight: (isLowStock || isOutOfStock) ? '600' : 'normal',
+                                                      backgroundColor: isOutOfStock ? '#f7fafc' : 'white'
+                                                    }}
+                                                  >
+                                                    🏆 NEW: {p?.code} - {p?.name} | Stock: {stockLevel} {productUnit}{stockStatus}
+                                                  </option>
+                                                );
+                                              })}
+                                            </Select>
+
+                                            {/* Stock status indicator for selected product */}
+                                            {item.product_id && (() => {
+                                              const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                                              if (selectedProduct) {
+                                                const stockLevel = selectedProduct.stock || 0;
+                                                const minStock = selectedProduct.min_stock || 0;
+
+                                                // Handle unit display consistently
+                                                let productUnit = 'units';
+                                                if (selectedProduct?.unit) {
+                                                  if (typeof selectedProduct.unit === 'string' && isNaN(Number(selectedProduct.unit))) {
+                                                    productUnit = selectedProduct.unit;
+                                                  } else {
+                                                    productUnit = 'units';
+                                                  }
+                                                }
+                                                const isOutOfStock = stockLevel === 0;
+                                                const isLowStock = stockLevel > 0 && stockLevel <= minStock;
+                                                const isRunningLow = stockLevel > minStock && stockLevel <= 10;
+
+                                                if (isOutOfStock) {
+                                                  return (
+                                                    <Badge colorScheme="red" size="sm" variant="solid">
+                                                      ❌ Out of Stock - Cannot Purchase
+                                                    </Badge>
+                                                  );
+                                                } else if (isLowStock) {
+                                                  return (
+                                                    <Badge colorScheme="orange" size="sm" variant="solid">
+                                                      ⚠️ Low Stock: {stockLevel} {productUnit} remaining
+                                                    </Badge>
+                                                  );
+                                                } else if (isRunningLow) {
+                                                  return (
+                                                    <Badge colorScheme="yellow" size="sm" variant="outline">
+                                                      ⏰ Running Low: {stockLevel} {productUnit} available
+                                                    </Badge>
+                                                  );
+                                                } else {
+                                                  return (
+                                                    <Badge colorScheme="green" size="sm" variant="subtle">
+                                                      ✅ Available: {stockLevel} {productUnit} in stock
+                                                    </Badge>
+                                                  );
+                                                }
+                                              }
+                                              return null;
+                                            })()}
+                                          </VStack>
+                                          <IconButton
+                                            aria-label="Add new product"
+                                            icon={<FiPlus />}
+                                            size="sm"
+                                            colorScheme="blue"
+                                            variant="outline"
+                                            onClick={onAddProductOpen}
+                                            title="Add New Product"
+                                            _hover={{ bg: 'blue.50' }}
+                                          />
+                                        </HStack>
+                                      )}
+                                    </Td>
+                                    <Td isNumeric>
+                                      <VStack spacing={1} align="end">
+                                        {(() => {
+                                          const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                                          const availableStock = selectedProduct?.stock || 0;
+                                          const currentQty = parseFloat(item.quantity) || 0;
+                                          const isExceedingStock = currentQty > availableStock;
+
+                                          return (
+                                            <>
+                                              <NumberInput
+                                                size="sm"
+                                                min={1}
+                                                max={selectedProduct ? Math.max(1, availableStock) : undefined}
+                                                value={item.quantity}
+                                                onChange={(valueString) => {
+                                                  const items = [...formData.items];
+                                                  const numValue = parseFloat(valueString) || 0;
+
+                                                  // Allow input but warn if exceeding stock
+                                                  items[index] = { ...items[index], quantity: valueString };
+                                                  setFormData({ ...formData, items });
+
+                                                  // Show toast warning for exceeding stock
+                                                  if (selectedProduct && numValue > availableStock && availableStock > 0) {
+                                                    toast({
+                                                      title: 'Stock Warning',
+                                                      description: `Quantity (${numValue}) exceeds available stock (${availableStock}). This purchase may face stock shortages.`,
+                                                      status: 'warning',
+                                                      duration: 4000,
+                                                      isClosable: true,
+                                                    });
+                                                  }
+                                                }}
+                                                maxW="90px"
+                                                isInvalid={isExceedingStock && availableStock > 0}
+                                              >
+                                                <NumberInputField
+                                                  textAlign="right"
+                                                  fontSize="sm"
+                                                  bg={isExceedingStock && availableStock > 0 ? 'red.50' : cardBg}
+                                                  borderColor={isExceedingStock && availableStock > 0 ? 'red.300' : borderColor}
+                                                  _hover={{
+                                                    borderColor: isExceedingStock && availableStock > 0 ? 'red.400' : inputHoverBorder
+                                                  }}
+                                                  _focus={{
+                                                    borderColor: isExceedingStock && availableStock > 0 ? 'red.500' : inputFocusBorder,
+                                                    boxShadow: isExceedingStock && availableStock > 0 ? '0 0 0 1px #e53e3e' : inputFocusShadow
+                                                  }}
+                                                />
+                                                <NumberInputStepper>
+                                                  <NumberIncrementStepper
+                                                    isDisabled={selectedProduct && currentQty >= availableStock && availableStock > 0}
+                                                  />
+                                                  <NumberDecrementStepper />
+                                                </NumberInputStepper>
+                                              </NumberInput>
+
+                                              {/* Stock validation indicator */}
+                                              {selectedProduct && availableStock > 0 && isExceedingStock && (
+                                                <Text fontSize="xs" color="red.500" fontWeight="bold" textAlign="center" w="90px">
+                                                  ⚠️ Exceeds stock!
+                                                </Text>
+                                              )}
+                                              {selectedProduct && availableStock > 0 && currentQty > 0 && !isExceedingStock && (
+                                                <Text fontSize="xs" color="green.500" fontWeight="medium" textAlign="center" w="90px">
+                                                  ✓ Stock OK
+                                                </Text>
+                                              )}
+                                              {selectedProduct && availableStock === 0 && currentQty > 0 && (
+                                                <Text fontSize="xs" color="red.600" fontWeight="bold" textAlign="center" w="90px">
+                                                  ❌ No stock
+                                                </Text>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
+                                      </VStack>
+                                    </Td>
+                                    <Td isNumeric>
+                                      <Box maxW="160px">
+                                        <CurrencyInput
+                                          value={parseFloat(item.unit_price) || 0}
+                                          onChange={(value) => {
+                                            const items = [...formData.items];
+                                            items[index] = { ...items[index], unit_price: value.toString() };
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          placeholder="Rp 10.000"
+                                          size="sm"
+                                          min={0}
+                                          showLabel={false}
+                                        />
+                                      </Box>
+                                    </Td>
+                                    <Td minW="240px" position="relative">
+                                      {canListExpenseAccounts ? (
+                                        <Box minW="240px" w="100%">
+                                          <SearchableSelect
+                                            options={expenseAccounts.map(acc => ({
+                                              id: acc.id!,
+                                              code: acc.code,
+                                              name: acc.name,
+                                              active: acc.is_active
+                                            }))}
+                                            value={item.expense_account_id}
+                                            onChange={(value) => {
+                                              const items = [...formData.items];
+                                              items[index] = { ...items[index], expense_account_id: value.toString() };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            placeholder="Pilih akun beban..."
+                                            isLoading={loadingExpenseAccounts}
+                                            displayFormat={(option) => `${option.code} - ${option.name}`}
+                                            size="sm"
+                                          />
+                                        </Box>
+                                      ) : (
+                                        <NumberInput
+                                          min={1}
+                                          value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')}
+                                          onChange={(v) => {
+                                            const items = [...formData.items];
+                                            items[index] = { ...items[index], expense_account_id: v.toString() };
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          maxW="240px"
+                                          size="sm"
+                                        >
+                                          <NumberInputField placeholder="Expense Account ID" fontSize="sm" />
+                                        </NumberInput>
+                                      )}
+                                    </Td>
+                                    <Td isNumeric>
+                                      <Text fontSize="sm" fontWeight="medium" color="green.600">
+                                        {(() => {
+                                          const qty = parseFloat(item.quantity || '0');
+                                          const price = parseFloat(item.unit_price || '0');
+                                          return formatCurrency((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
+                                        })()}
+                                      </Text>
+                                    </Td>
+                                    <Td>
+                                      <IconButton
+                                        aria-label="Remove item"
+                                        size="sm"
+                                        colorScheme="red"
+                                        variant="ghost"
+                                        icon={<FiTrash2 />}
+                                        onClick={() => {
+                                          const items = [...formData.items];
+                                          items.splice(index, 1);
+                                          setFormData({ ...formData, items });
+                                        }}
+                                        _hover={{ bg: 'red.50' }}
+                                      />
+                                    </Td>
+                                  </Tr>
+                                ))
+                              )}
+                            </Tbody>
+                          </Table>
+                        </Box>
+
+                        {/* Stock Alert Summary */}
+                        {formData.items.length > 0 && (() => {
+                          const itemsWithStockIssues = formData.items.filter(item => {
+                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                            const availableStock = selectedProduct?.stock || 0;
+                            const currentQty = parseFloat(item.quantity) || 0;
+                            return selectedProduct && (availableStock === 0 || currentQty > availableStock);
+                          });
+
+                          const outOfStockItems = formData.items.filter(item => {
+                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                            return selectedProduct && selectedProduct.stock === 0;
+                          });
+
+                          const exceedsStockItems = formData.items.filter(item => {
+                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                            const availableStock = selectedProduct?.stock || 0;
+                            const currentQty = parseFloat(item.quantity) || 0;
+                            return selectedProduct && availableStock > 0 && currentQty > availableStock;
+                          });
+
+                          const lowStockItems = formData.items.filter(item => {
+                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                            const availableStock = selectedProduct?.stock || 0;
+                            const minStock = selectedProduct?.min_stock || 0;
+                            return selectedProduct && availableStock > 0 && availableStock <= minStock;
+                          });
+
+                          return (
+                            <VStack spacing={3} mt={4}>
+                              {/* Critical Stock Issues Alert */}
+                              {(outOfStockItems.length > 0 || exceedsStockItems.length > 0) && (
+                                <Alert status="error" variant="left-accent" borderRadius="md">
+                                  <AlertIcon />
+                                  <VStack align="start" spacing={1}>
+                                    <AlertTitle fontSize="sm">Stock Issues Detected!</AlertTitle>
+                                    <AlertDescription fontSize="xs">
+                                      {outOfStockItems.length > 0 && (
+                                        <Text>❌ {outOfStockItems.length} item(s) are out of stock</Text>
+                                      )}
+                                      {exceedsStockItems.length > 0 && (
+                                        <Text>⚠️ {exceedsStockItems.length} item(s) exceed available stock</Text>
+                                      )}
+                                      <Text fontWeight="medium">Purchase may face stock shortages or delivery delays.</Text>
+                                    </AlertDescription>
+                                  </VStack>
+                                </Alert>
+                              )}
+
+                              {/* Low Stock Warning */}
+                              {lowStockItems.length > 0 && outOfStockItems.length === 0 && exceedsStockItems.length === 0 && (
+                                <Alert status="warning" variant="left-accent" borderRadius="md">
+                                  <AlertIcon />
+                                  <VStack align="start" spacing={1}>
+                                    <AlertTitle fontSize="sm">Low Stock Alert</AlertTitle>
+                                    <AlertDescription fontSize="xs">
+                                      ⏰ {lowStockItems.length} item(s) have low stock levels. Consider increasing order quantities.
+                                    </AlertDescription>
+                                  </VStack>
+                                </Alert>
+                              )}
+
+                              {/* All Good Status */}
+                              {itemsWithStockIssues.length === 0 && lowStockItems.length === 0 && (
+                                <Alert status="success" variant="left-accent" borderRadius="md">
+                                  <AlertIcon />
+                                  <VStack align="start" spacing={1}>
+                                    <AlertTitle fontSize="sm">Stock Status: All Good</AlertTitle>
+                                    <AlertDescription fontSize="xs">
+                                      ✅ All selected products have sufficient stock for this purchase.
+                                    </AlertDescription>
+                                  </VStack>
+                                </Alert>
+                              )}
+                            </VStack>
+                          );
+                        })()}
+
+                        {/* Summary Row */}
+                        {formData.items.length > 0 && (
+                          <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
+                            <Flex justify="space-between" align="center">
+                              <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
+                                Total Items: {formData.items.length}
+                              </Text>
+                              <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                                Subtotal: {formatCurrency(
+                                  formData.items.reduce((total, item) => {
+                                    const qty = parseFloat(item.quantity || '0');
+                                    const price = parseFloat(item.unit_price || '0');
+                                    return total + ((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
+                                  }, 0)
+                                )}
+                              </Text>
+                            </Flex>
+                          </Box>
+                        )}
+
+                        <FormHelperText mt={3} fontSize="xs">
+                          📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
+                        </FormHelperText>
+                      </CardBody>
+                    </Card>
+
+                    {/* Tax Configuration Section */}
+                    <Card>
+                      <CardHeader pb={3}>
+                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          💰 Tax Configuration
+                        </Text>
+                      </CardHeader>
+                      <CardBody pt={0}>
+                        <VStack spacing={4} align="stretch">
+                          {/* Tax Additions (Penambahan) */}
+                          <Box>
+                            <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
+                              ➕ Tax Additions (Penambahan)
+                            </Text>
+                            <SimpleGrid columns={2} spacing={4}>
+                              <FormControl>
+                                <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.ppn_rate}
+                                  onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="11" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
+                              </FormControl>
+
+                              <FormControl>
+                                <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.other_tax_additions}
+                                  onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="0" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
+                              </FormControl>
+                            </SimpleGrid>
+                          </Box>
+
+                          <Divider />
+
+                          {/* Tax Deductions (Pemotongan) */}
+                          <Box>
+                            <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
+                              ➖ Tax Deductions (Pemotongan)
+                            </Text>
+                            <SimpleGrid columns={3} spacing={4}>
+                              <FormControl>
+                                <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.pph21_rate}
+                                  onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="0" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 21</FormHelperText>
+                              </FormControl>
+
+                              <FormControl>
+                                <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.pph23_rate}
+                                  onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="0" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 23</FormHelperText>
+                              </FormControl>
+
+                              <FormControl>
+                                <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.other_tax_deductions}
+                                  onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="0" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
+                              </FormControl>
+                            </SimpleGrid>
+                          </Box>
+
+                          {/* Tax Summary Calculation */}
+                          {formData.items.length > 0 && (
+                            <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
+                              <VStack spacing={2} align="stretch">
+                                <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
+                                {(() => {
+                                  const subtotal = formData.items.reduce((total, item) => {
+                                    const qty = parseFloat(item.quantity || '0');
+                                    const price = parseFloat(item.unit_price || '0');
+                                    const discount = parseFloat(item.discount || '0');
+                                    const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                    const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
+                                    return total + lineTotal;
+                                  }, 0);
+
+                                  const discount = (parseFloat(formData.discount) || 0) / 100;
+                                  const discountedSubtotal = subtotal * (1 - discount);
+
+                                  const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
+                                  const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
+                                  const totalAdditions = ppnAmount + otherAdditions;
+
+                                  const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
+                                  const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
+                                  const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
+                                  const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
+
+                                  const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
+
+                                  return (
+                                    <SimpleGrid columns={2} spacing={4} fontSize="xs">
+                                      <VStack align="start" spacing={1}>
+                                        <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
+                                        <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
+                                        <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
+                                      </VStack>
+
+                                      <VStack align="start" spacing={1}>
+                                        <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
+                                        {parseFloat(formData.other_tax_additions) > 0 && (
+                                          <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
+                                        )}
+                                        {parseFloat(formData.pph21_rate) > 0 && (
+                                          <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
+                                        )}
+                                        {parseFloat(formData.pph23_rate) > 0 && (
+                                          <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
+                                        )}
+                                        {parseFloat(formData.other_tax_deductions) > 0 && (
+                                          <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
+                                        )}
+                                        <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
+                                          Final Total: {formatCurrency(finalTotal)}
+                                        </Text>
+                                      </VStack>
+                                    </SimpleGrid>
+                                  );
+                                })()}
+                              </VStack>
+                            </Box>
+                          )}
+                        </VStack>
+                      </CardBody>
+                    </Card>
+
+                    {/* Payment Method Section */}
+                    <Card>
+                      <CardHeader pb={3}>
+                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          💳 Payment Method
+                        </Text>
+                      </CardHeader>
+                      <CardBody pt={0}>
+                        <SimpleGrid columns={2} spacing={4}>
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
+                            <Select
+                              value={formData.payment_method}
+                              onChange={(e) => {
+                                // Reset bank_account_id saat ganti payment method untuk menghindari konflik
+                                setFormData({
+                                  ...formData,
+                                  payment_method: e.target.value,
+                                  bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
+                                })
+                              }}
+                              size="sm"
+                            >
+                              <option value="CREDIT">Credit</option>
+                              <option value="CASH">Cash</option>
+                              <option value="BANK_TRANSFER">Bank Transfer</option>
+                              <option value="CHECK">Check</option>
+                            </Select>
+                            <FormHelperText fontSize="xs">
+                              {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
+                              {formData.payment_method === 'CASH' && 'Direct cash payment'}
+                              {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
+                              {formData.payment_method === 'CHECK' && 'Payment by check'}
+                            </FormHelperText>
+                          </FormControl>
+
+                          {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
+                          {formData.payment_method !== 'CREDIT' && (
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
+                              </FormLabel>
+                              <Select
+                                value={formData.bank_account_id}
+                                onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
+                                size="sm"
+                                disabled={loadingBankAccounts}
+                                placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
+                              >
+                                {bankAccounts
+                                  .filter(account => {
+                                    // Filter berdasarkan payment method
+                                    if (formData.payment_method === 'CASH') {
+                                      return account.type === 'CASH';
+                                    } else {
+                                      return account.type === 'BANK';
+                                    }
+                                  })
+                                  .map((account) => (
+                                    <option key={account.id} value={account.id.toString()}>
+                                      {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
+                                    </option>
+                                  ))
+                                }
+                              </Select>
+                              <FormHelperText fontSize="xs">
+                                Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
+                              </FormHelperText>
+                            </FormControl>
+                          )}
+
+                          {/* Credit Account dropdown for Credit payment */}
+                          {formData.payment_method === 'CREDIT' && (
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Liability Account
+                              </FormLabel>
+                              <Select
+                                value={formData.credit_account_id}
+                                onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
+                                size="sm"
+                                disabled={loadingCreditAccounts}
+                                placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
+                              >
+                                {creditAccounts.map((account) => (
+                                  <option key={account.id} value={account.id?.toString()}>
+                                    {account.code} - {account.name}
+                                  </option>
+                                ))}
+                              </Select>
+                              <FormHelperText fontSize="xs">
+                                Required: Select liability account for tracking credit purchases
+                              </FormHelperText>
+                            </FormControl>
+                          )}
+                        </SimpleGrid>
+
+                        {/* Payment Reference (for non-credit and non-cash payments) */}
+                        {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
+                          <FormControl mt={4}>
+                            <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
+                            <Input
+                              value={formData.payment_reference}
+                              onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
+                              placeholder={
+                                formData.payment_method === 'CHECK' ? 'Check number' :
+                                  formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
+                                    'Payment reference number'
+                              }
+                              size="sm"
+                            />
+                            <FormHelperText fontSize="xs">
+                              Optional reference for tracking this payment
+                            </FormHelperText>
+                          </FormControl>
+                        )}
+                      </CardBody>
+                    </Card>
+
+                  </VStack>
+                </ModalBody>
+                <ModalFooter>
+                  <HStack spacing={3}>
+                    <Button variant="ghost" onClick={onEditClose}>
+                      Cancel
+                    </Button>
+                    <Button colorScheme="blue" onClick={handleSave}>
+                      Update Purchase
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            {/* Create Purchase Modal */}
+            <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="6xl">
+              <ModalOverlay />
+              <ModalContent maxW="95vw" maxH="95vh" bg={modalContentBg}>
+                <ModalHeader bg={modalHeaderBg} borderRadius="md" mx={4} mt={4} mb={2} borderBottomWidth={1} borderColor={borderColor}>
+                  <HStack>
+                    <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
+                    <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                      Create New Purchase
+                    </Text>
+                  </HStack>
+                </ModalHeader>
+                <ModalCloseButton top={6} right={6} />
+                <ModalBody overflowY="auto" px={6} pb={2}>
+                  <VStack spacing={6} align="stretch">
+                    {/* Basic Information Section */}
+                    <Card>
+                      <CardHeader pb={3}>
+                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          📋 Basic Information
+                        </Text>
+                      </CardHeader>
+                      <CardBody pt={0}>
+                        <SimpleGrid columns={3} spacing={4}>
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('purchases.purchaseCode')}</FormLabel>
+                            <Input value={t('purchases.autoGenerated')} isReadOnly bg="gray.100" size="sm" color="gray.500" />
+                            <FormHelperText fontSize="xs">{t('purchases.autoGeneratedDesc')}</FormHelperText>
+                          </FormControl>
+
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm" fontWeight="medium">Vendor</FormLabel>
+                            <HStack spacing={2}>
+                              {loadingVendors ? (
+                                <Spinner size="sm" />
+                              ) : (
+                                <Select
+                                  placeholder="Select vendor"
+                                  value={formData.vendor_id}
+                                  onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
+                                  size="sm"
+                                  flex={1}
+                                >
+                                  {vendors.map(vendor => (
+                                    <option key={vendor.id} value={vendor.id}>
+                                      {vendor.name} ({vendor.code})
+                                    </option>
+                                  ))}
+                                </Select>
+                              )}
+                              <IconButton
+                                aria-label="Add new vendor"
+                                icon={<FiPlus />}
+                                size="sm"
+                                colorScheme="green"
+                                variant="outline"
+                                onClick={onAddVendorOpen}
+                                title="Add New Vendor"
+                                _hover={{ bg: 'green.50' }}
+                              />
+                            </HStack>
+                          </FormControl>
+
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm" fontWeight="medium">Purchase Date</FormLabel>
+                            <Input
+                              type="date"
+                              size="sm"
+                              value={formData.date}
+                              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                            />
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">Due Date</FormLabel>
+                            <Input
+                              type="date"
+                              size="sm"
+                              value={formData.due_date}
+                              onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                            />
+                          </FormControl>
+                        </SimpleGrid>
+
+                        <SimpleGrid columns={2} spacing={4} mt={4}>
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">Discount (%)</FormLabel>
+                            <NumberInput
+                              value={formData.discount}
+                              onChange={(value) => setFormData({ ...formData, discount: value })}
+                              size="sm"
+                              min={0}
+                              max={100}
+                            >
+                              <NumberInputField placeholder="0" />
+                              <NumberInputStepper>
+                                <NumberIncrementStepper />
+                                <NumberDecrementStepper />
+                              </NumberInputStepper>
+                            </NumberInput>
+                            <FormHelperText fontSize="xs">Masukkan persentase diskon atas subtotal (0-100)</FormHelperText>
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">Notes</FormLabel>
+                            <Textarea
+                              value={formData.notes}
+                              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                              placeholder="Enter any notes or descriptions..."
+                              rows={3}
+                              size="sm"
+                              resize="vertical"
+                            />
+                          </FormControl>
+                        </SimpleGrid>
+                      </CardBody>
+                    </Card>
+
+                    {/* Purchase Items Section */}
+                    <Card>
+                      <CardHeader pb={3}>
+                        <Flex justify="space-between" align="center">
+                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            🛒 Purchase Items
+                          </Text>
+                          <Button
+                            size="sm"
+                            leftIcon={<FiPlus />}
+                            colorScheme="blue"
+                            variant="outline"
+                            onClick={() => {
+                              setFormData({
+                                ...formData,
+                                items: [
+                                  ...formData.items,
+                                  { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: '' }
+                                ]
+                              });
+                            }}
+                          >
+                            Add Item
+                          </Button>
+                        </Flex>
+                      </CardHeader>
+                      <CardBody pt={0}>
+                        <Box overflow="visible">
+                          <Table size="sm" variant="simple">
+                            <Thead bg={tableHeaderBg}>
+                              <Tr>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Discount (IDR)</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Account</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Line Total (IDR)</Th>
+                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
+                              </Tr>
+                            </Thead>
+                            <Tbody>
+                              {formData.items.length === 0 ? (
+                                <Tr>
+                                  <Td colSpan={7} textAlign="center" py={8}>
+                                    <VStack spacing={2}>
+                                      <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
+                                      <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
+                                    </VStack>
+                                  </Td>
+                                </Tr>
+                              ) : (
+                                formData.items.map((item, index) => (
+                                  <Tr key={index} _hover={{ bg: hoverBg }}>
+                                    <Td minW="200px">
+                                      {loadingProducts ? (
+                                        <Flex align="center" justify="center" h="32px">
+                                          <Spinner size="sm" />
+                                        </Flex>
+                                      ) : (
+                                        <HStack spacing={2}>
+                                          <Select
+                                            placeholder="Select product"
+                                            value={item.product_id}
+                                            onChange={(e) => {
+                                              const items = [...formData.items];
+                                              items[index] = { ...items[index], product_id: e.target.value };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            size="sm"
+                                            maxW="280px"
+                                          >
+                                            {products.map((p) => (
+                                              <option key={p.id} value={p.id?.toString()}>
+                                                {p?.id} - {p?.name || p?.code}
+                                              </option>
+                                            ))}
+                                          </Select>
+                                          <IconButton
+                                            aria-label="Add new product"
+                                            icon={<FiPlus />}
+                                            size="sm"
+                                            colorScheme="blue"
+                                            variant="outline"
+                                            onClick={onAddProductOpen}
+                                            title="Add New Product"
+                                            _hover={{ bg: 'blue.50' }}
+                                          />
+                                        </HStack>
+                                      )}
+                                    </Td>
+                                    <Td isNumeric>
+                                      <NumberInput
+                                        size="sm"
+                                        min={1}
+                                        value={item.quantity}
+                                        onChange={(valueString) => {
+                                          const items = [...formData.items];
+                                          items[index] = { ...items[index], quantity: valueString };
+                                          setFormData({ ...formData, items });
+                                        }}
+                                        maxW="80px"
+                                      >
+                                        <NumberInputField textAlign="right" fontSize="sm" />
+                                        <NumberInputStepper>
+                                          <NumberIncrementStepper />
+                                          <NumberDecrementStepper />
+                                        </NumberInputStepper>
+                                      </NumberInput>
+                                    </Td>
+                                    <Td isNumeric>
+                                      <Box maxW="160px">
+                                        <CurrencyInput
+                                          value={parseFloat(item.unit_price) || 0}
+                                          onChange={(value) => {
+                                            const items = [...formData.items];
+                                            items[index] = { ...items[index], unit_price: value.toString() };
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          placeholder="Rp 10.000"
+                                          size="sm"
+                                          min={0}
+                                          showLabel={false}
+                                        />
+                                      </Box>
+                                    </Td>
+                                    <Td isNumeric>
+                                      <Box maxW="140px">
+                                        <CurrencyInput
+                                          value={parseFloat(item.discount) || 0}
+                                          onChange={(value) => {
+                                            const items = [...formData.items];
+                                            items[index] = { ...items[index], discount: value.toString() };
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          placeholder="Rp 0"
+                                          size="sm"
+                                          min={0}
+                                          showLabel={false}
+                                        />
+                                      </Box>
+                                    </Td>
+                                    <Td minW="240px">
+                                      {canListExpenseAccounts ? (
+                                        <Box maxW="240px">
+                                          <SearchableSelect
+                                            options={expenseAccounts.map(acc => ({
+                                              id: acc.id!,
+                                              code: acc.code,
+                                              name: acc.name,
+                                              active: acc.is_active
+                                            }))}
+                                            value={item.expense_account_id}
+                                            onChange={(value) => {
+                                              const items = [...formData.items];
+                                              items[index] = { ...items[index], expense_account_id: value.toString() };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            placeholder="Pilih akun..."
+                                            isLoading={loadingExpenseAccounts}
+                                            displayFormat={(option) => `${option.code} - ${option.name}`}
+                                          />
+                                        </Box>
+                                      ) : (
+                                        <NumberInput
+                                          min={1}
+                                          value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')}
+                                          onChange={(v) => {
+                                            const items = [...formData.items];
+                                            items[index] = { ...items[index], expense_account_id: v.toString() };
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          maxW="240px"
+                                          size="sm"
+                                        >
+                                          <NumberInputField placeholder="Account ID" fontSize="sm" />
+                                        </NumberInput>
+                                      )}
+                                    </Td>
+                                    <Td isNumeric>
+                                      <Text fontSize="sm" fontWeight="medium" color={statColors.green}>
+                                        {(() => {
+                                          const qty = parseFloat(item.quantity || '0');
+                                          const price = parseFloat(item.unit_price || '0');
+                                          const discount = parseFloat(item.discount || '0');
+                                          const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                          const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
+                                          return formatCurrency(lineTotal);
+                                        })()}
+                                      </Text>
+                                    </Td>
+                                    <Td>
+                                      <IconButton
+                                        aria-label="Remove item"
+                                        size="sm"
+                                        colorScheme="red"
+                                        variant="ghost"
+                                        icon={<FiTrash2 />}
+                                        onClick={() => {
+                                          const items = [...formData.items];
+                                          items.splice(index, 1);
+                                          setFormData({ ...formData, items });
+                                        }}
+                                        _hover={{ bg: 'red.50' }}
+                                      />
+                                    </Td>
+                                  </Tr>
+                                ))
+                              )}
+                            </Tbody>
+                          </Table>
+                        </Box>
+
+                        {/* Summary Row */}
+                        {formData.items.length > 0 && (
+                          <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
+                            <Flex justify="space-between" align="center">
+                              <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
+                                Total Items: {formData.items.length}
+                              </Text>
+                              <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                                Subtotal: {formatCurrency(
+                                  formData.items.reduce((total, item) => {
+                                    const qty = parseFloat(item.quantity || '0');
+                                    const price = parseFloat(item.unit_price || '0');
+                                    const discount = parseFloat(item.discount || '0');
+                                    const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                    const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
+                                    return total + lineTotal;
+                                  }, 0)
+                                )}
+                              </Text>
+                            </Flex>
+                          </Box>
+                        )}
+
+                        <FormControl>
+                          <FormHelperText mt={3} fontSize="xs">
+                            📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
+                          </FormHelperText>
+                        </FormControl>
+                      </CardBody>
+                    </Card>
+
+                    {/* Tax Configuration Section */}
+                    <Card>
+                      <CardHeader pb={3}>
+                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          💰 Tax Configuration
+                        </Text>
+                      </CardHeader>
+                      <CardBody pt={0}>
+                        <VStack spacing={4} align="stretch">
+                          {/* Tax Additions (Penambahan) */}
+                          <Box>
+                            <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
+                              ➕ Tax Additions (Penambahan)
+                            </Text>
+                            <SimpleGrid columns={2} spacing={4}>
+                              <FormControl>
+                                <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.ppn_rate}
+                                  onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="11" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
+                              </FormControl>
+
+                              <FormControl>
+                                <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.other_tax_additions}
+                                  onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="0" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
+                              </FormControl>
+                            </SimpleGrid>
+                          </Box>
+
+                          <Divider />
+
+                          {/* Tax Deductions (Pemotongan) */}
+                          <Box>
+                            <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
+                              ➖ Tax Deductions (Pemotongan)
+                            </Text>
+                            <SimpleGrid columns={3} spacing={4}>
+                              <FormControl>
+                                <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.pph21_rate}
+                                  onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="2" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">PPh 21: 2% jasa konstruksi, 15% dividen/bunga</FormHelperText>
+                              </FormControl>
+
+                              <FormControl>
+                                <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.pph23_rate}
+                                  onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="2" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">PPh 23: 2% jasa umum, 15% dividen/bunga/royalti</FormHelperText>
+                              </FormControl>
+
+                              <FormControl>
+                                <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
+                                <NumberInput
+                                  value={formData.other_tax_deductions}
+                                  onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
+                                  size="sm"
+                                  min={0}
+                                  max={100}
+                                  step={0.1}
+                                >
+                                  <NumberInputField placeholder="0" />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
+                              </FormControl>
+                            </SimpleGrid>
+                          </Box>
+
+                          {/* Tax Summary Calculation */}
+                          {formData.items.length > 0 && (
+                            <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
+                              <VStack spacing={2} align="stretch">
+                                <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
+                                {(() => {
+                                  const subtotal = formData.items.reduce((total, item) => {
+                                    const qty = parseFloat(item.quantity || '0');
+                                    const price = parseFloat(item.unit_price || '0');
+                                    const discount = parseFloat(item.discount || '0');
+                                    const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                    const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
+                                    return total + lineTotal;
+                                  }, 0);
+
+                                  const discount = (parseFloat(formData.discount) || 0) / 100;
+                                  const discountedSubtotal = subtotal * (1 - discount);
+
+                                  const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
+                                  const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
+                                  const totalAdditions = ppnAmount + otherAdditions;
+
+                                  const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
+                                  const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
+                                  const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
+                                  const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
+
+                                  const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
+
+                                  return (
+                                    <SimpleGrid columns={2} spacing={4} fontSize="xs">
+                                      <VStack align="start" spacing={1}>
+                                        <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
+                                        <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
+                                        <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
+                                      </VStack>
+
+                                      <VStack align="start" spacing={1}>
+                                        <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
+                                        {parseFloat(formData.other_tax_additions) > 0 && (
+                                          <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
+                                        )}
+                                        {parseFloat(formData.pph21_rate) > 0 && (
+                                          <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
+                                        )}
+                                        {parseFloat(formData.pph23_rate) > 0 && (
+                                          <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
+                                        )}
+                                        {parseFloat(formData.other_tax_deductions) > 0 && (
+                                          <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
+                                        )}
+                                        <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
+                                          Final Total: {formatCurrency(finalTotal)}
+                                        </Text>
+                                      </VStack>
+                                    </SimpleGrid>
+                                  );
+                                })()}
+                              </VStack>
+                            </Box>
+                          )}
+                        </VStack>
+                      </CardBody>
+                    </Card>
+
+                    {/* Payment Method Section */}
+                    <Card>
+                      <CardHeader pb={3}>
+                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          💳 Payment Method
+                        </Text>
+                      </CardHeader>
+                      <CardBody pt={0}>
+                        <SimpleGrid columns={2} spacing={4}>
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
+                            <Select
+                              value={formData.payment_method}
+                              onChange={(e) => {
+                                // Reset bank_account_id saat ganti payment method untuk menghindari konflik
+                                setFormData({
+                                  ...formData,
+                                  payment_method: e.target.value,
+                                  bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
+                                })
+                              }}
+                              size="sm"
+                            >
+                              <option value="CREDIT">Credit</option>
+                              <option value="CASH">Cash</option>
+                              <option value="BANK_TRANSFER">Bank Transfer</option>
+                              <option value="CHECK">Check</option>
+                            </Select>
+                            <FormHelperText fontSize="xs">
+                              {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
+                              {formData.payment_method === 'CASH' && 'Direct cash payment'}
+                              {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
+                              {formData.payment_method === 'CHECK' && 'Payment by check'}
+                            </FormHelperText>
+                          </FormControl>
+
+                          {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
+                          {formData.payment_method !== 'CREDIT' && (
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
+                              </FormLabel>
+                              <Select
+                                value={formData.bank_account_id}
+                                onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
+                                size="sm"
+                                disabled={loadingBankAccounts}
+                                placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
+                              >
+                                {bankAccounts
+                                  .filter(account => {
+                                    // Filter berdasarkan payment method
+                                    if (formData.payment_method === 'CASH') {
+                                      return account.type === 'CASH';
+                                    } else {
+                                      return account.type === 'BANK';
+                                    }
+                                  })
+                                  .map((account) => (
+                                    <option key={account.id} value={account.id.toString()}>
+                                      {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
+                                    </option>
+                                  ))
+                                }
+                              </Select>
+                              <FormHelperText fontSize="xs">
+                                Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
+                              </FormHelperText>
+                            </FormControl>
+                          )}
+
+                          {/* Credit Account dropdown for Credit payment */}
+                          {formData.payment_method === 'CREDIT' && (
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Liability Account
+                              </FormLabel>
+                              <Select
+                                value={formData.credit_account_id}
+                                onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
+                                size="sm"
+                                disabled={loadingCreditAccounts}
+                                placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
+                              >
+                                {creditAccounts.map((account) => (
+                                  <option key={account.id} value={account.id?.toString()}>
+                                    {account.code} - {account.name}
+                                  </option>
+                                ))}
+                              </Select>
+                              <FormHelperText fontSize="xs">
+                                Required: Select liability account for tracking credit purchases
+                              </FormHelperText>
+                            </FormControl>
+                          )}
+                        </SimpleGrid>
+
+                        {/* Payment Reference (for non-credit and non-cash payments) */}
+                        {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
+                          <FormControl mt={4}>
+                            <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
+                            <Input
+                              value={formData.payment_reference}
+                              onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
+                              placeholder={
+                                formData.payment_method === 'CHECK' ? 'Check number' :
+                                  formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
+                                    'Payment reference number'
+                              }
+                              size="sm"
+                            />
+                            <FormHelperText fontSize="xs">
+                              Optional reference for tracking this payment
+                            </FormHelperText>
+                          </FormControl>
+                        )}
+                      </CardBody>
+                    </Card>
+                  </VStack>
+                </ModalBody>
+                <ModalFooter>
+                  <HStack spacing={3}>
+                    <Button variant="ghost" onClick={onCreateClose}>
+                      Cancel
+                    </Button>
+                    <Button colorScheme="blue" onClick={handleSave}>
+                      Create Purchase
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            {/* Add Vendor Modal */}
+            <Modal isOpen={isAddVendorOpen} onClose={onAddVendorClose} size="lg">
+              <ModalOverlay />
+              <ModalContent bg={modalContentBg}>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  <HStack>
+                    <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
+                    <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
+                      Add New Vendor
+                    </Text>
+                  </HStack>
+                </ModalHeader>
+                <ModalCloseButton />
+                <ModalBody>
+                  <VStack spacing={4} align="stretch">
+                    <SimpleGrid columns={2} spacing={4}>
+                      <FormControl isRequired>
+                        <FormLabel fontSize="sm">Vendor Name</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="Enter vendor name"
+                          value={newVendorData.name}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, name: e.target.value })}
+                        />
                       </FormControl>
 
                       <FormControl>
-                        <FormLabel fontSize="sm" fontWeight="medium">Notes</FormLabel>
-                        <Textarea
-                          value={formData.notes}
-                          onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                          placeholder="Enter any notes or descriptions..."
-                          rows={3}
+                        <FormLabel fontSize="sm">Vendor Code</FormLabel>
+                        <Input
                           size="sm"
-                          resize="vertical"
+                          placeholder="Auto-generated if empty"
+                          value={newVendorData.code}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, code: e.target.value })}
                         />
                       </FormControl>
                     </SimpleGrid>
-                  </CardBody>
-                </Card>
 
-                {/* Purchase Items Section */}
-                <Card>
-                  <CardHeader pb={3}>
-                    <Flex justify="space-between" align="center">
-                      <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                        🛒 Purchase Items
-                      </Text>
-                      <Button 
-                        size="sm" 
-                        leftIcon={<FiPlus />} 
-                        colorScheme="blue"
-                        variant="outline"
-                        onClick={() => {
-                          setFormData({
-                            ...formData,
-                            items: [
-                              ...formData.items,
-                              { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: '' }
-                            ]
-                          });
-                        }}
-                      >
-                        Add Item
-                      </Button>
-                    </Flex>
-                  </CardHeader>
-                  <CardBody pt={0}>
-                    <Box overflow="visible">
-                        <Table size="sm" variant="simple">
-                        <Thead bg={tableHeaderBg}>
-                          <Tr>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Discount (IDR)</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Account</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Line Total (IDR)</Th>
-                            <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {formData.items.length === 0 ? (
-                            <Tr>
-                              <Td colSpan={7} textAlign="center" py={8}>
-                                <VStack spacing={2}>
-                                  <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
-                                  <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
-                                </VStack>
-                              </Td>
-                            </Tr>
-                          ) : (
-                            formData.items.map((item, index) => (
-                              <Tr key={index} _hover={{ bg: hoverBg }}>
-                                <Td minW="200px">
-                                  {loadingProducts ? (
-                                    <Flex align="center" justify="center" h="32px">
-                                      <Spinner size="sm" />
-                                    </Flex>
-                                  ) : (
-                                    <HStack spacing={2}>
-                                      <Select
-                                        placeholder="Select product"
-                                        value={item.product_id}
-                                        onChange={(e) => {
-                                          const items = [...formData.items];
-                                          items[index] = { ...items[index], product_id: e.target.value };
-                                          setFormData({ ...formData, items });
-                                        }}
-                                        size="sm"
-                                        maxW="280px"
-                                      >
-                                        {products.map((p) => (
-                                          <option key={p.id} value={p.id?.toString()}>
-                                            {p?.id} - {p?.name || p?.code}
-                                          </option>
-                                        ))}
-                                      </Select>
-                                      <IconButton 
-                                        aria-label="Add new product"
-                                        icon={<FiPlus />}
-                                        size="sm"
-                                        colorScheme="blue"
-                                        variant="outline"
-                                        onClick={onAddProductOpen}
-                                        title="Add New Product"
-                                        _hover={{ bg: 'blue.50' }}
-                                      />
-                                    </HStack>
-                                  )}
-                                </Td>
-                                <Td isNumeric>
-                                  <NumberInput 
-                                    size="sm" 
-                                    min={1} 
-                                    value={item.quantity} 
-                                    onChange={(valueString) => {
-                                      const items = [...formData.items];
-                                      items[index] = { ...items[index], quantity: valueString };
-                                      setFormData({ ...formData, items });
-                                    }} 
-                                    maxW="80px"
-                                  >
-                                    <NumberInputField textAlign="right" fontSize="sm" />
-                                    <NumberInputStepper>
-                                      <NumberIncrementStepper />
-                                      <NumberDecrementStepper />
-                                    </NumberInputStepper>
-                                  </NumberInput>
-                                </Td>
-                                <Td isNumeric>
-                                  <Box maxW="160px">
-                                    <CurrencyInput
-                                      value={parseFloat(item.unit_price) || 0}
-                                      onChange={(value) => {
-                                        const items = [...formData.items];
-                                        items[index] = { ...items[index], unit_price: value.toString() };
-                                        setFormData({ ...formData, items });
-                                      }}
-                                      placeholder="Rp 10.000"
-                                      size="sm"
-                                      min={0}
-                                      showLabel={false}
-                                    />
-                                  </Box>
-                                </Td>
-                                <Td isNumeric>
-                                  <Box maxW="140px">
-                                    <CurrencyInput
-                                      value={parseFloat(item.discount) || 0}
-                                      onChange={(value) => {
-                                        const items = [...formData.items];
-                                        items[index] = { ...items[index], discount: value.toString() };
-                                        setFormData({ ...formData, items });
-                                      }}
-                                      placeholder="Rp 0"
-                                      size="sm"
-                                      min={0}
-                                      showLabel={false}
-                                    />
-                                  </Box>
-                                </Td>
-                                <Td minW="240px">
-                                  {canListExpenseAccounts ? (
-                                    <Box maxW="240px">
-                                      <SearchableSelect
-                                        options={expenseAccounts.map(acc => ({
-                                          id: acc.id!,
-                                          code: acc.code,
-                                          name: acc.name,
-                                          active: acc.is_active
-                                        }))}
-                                        value={item.expense_account_id}
-                                        onChange={(value) => {
-                                          const items = [...formData.items];
-                                          items[index] = { ...items[index], expense_account_id: value.toString() };
-                                          setFormData({ ...formData, items });
-                                        }}
-                                        placeholder="Pilih akun..."
-                                        isLoading={loadingExpenseAccounts}
-                                        displayFormat={(option) => `${option.code} - ${option.name}`}
-                                      />
-                                    </Box>
-                                  ) : (
-                                    <NumberInput 
-                                      min={1} 
-                                      value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')} 
-                                      onChange={(v) => {
-                                        const items = [...formData.items];
-                                        items[index] = { ...items[index], expense_account_id: v.toString() };
-                                        setFormData({ ...formData, items });
-                                      }} 
-                                      maxW="240px"
-                                      size="sm"
-                                    >
-                                      <NumberInputField placeholder="Account ID" fontSize="sm" />
-                                    </NumberInput>
-                                  )}
-                                </Td>
-                                <Td isNumeric>
-                                  <Text fontSize="sm" fontWeight="medium" color={statColors.green}>
-                                    {(() => {
-                                      const qty = parseFloat(item.quantity || '0');
-                                      const price = parseFloat(item.unit_price || '0');
-                                      const discount = parseFloat(item.discount || '0');
-                                      const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                      const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
-                                      return formatCurrency(lineTotal);
-                                    })()}
-                                  </Text>
-                                </Td>
-                                <Td>
-                                  <IconButton
-                                    aria-label="Remove item"
-                                    size="sm"
-                                    colorScheme="red"
-                                    variant="ghost"
-                                    icon={<FiTrash2 />}
-                                    onClick={() => {
-                                      const items = [...formData.items];
-                                      items.splice(index, 1);
-                                      setFormData({ ...formData, items });
-                                    }}
-                                    _hover={{ bg: 'red.50' }}
-                                  />
-                                </Td>
-                              </Tr>
-                            ))
-                          )}
-                        </Tbody>
-                      </Table>
-                    </Box>
-                    
-                    {/* Summary Row */}
-                    {formData.items.length > 0 && (
-                      <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
-                        <Flex justify="space-between" align="center">
-                          <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
-                            Total Items: {formData.items.length}
-                          </Text>
-                          <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                            Subtotal: {formatCurrency(
-                              formData.items.reduce((total, item) => {
-                                const qty = parseFloat(item.quantity || '0');
-                                const price = parseFloat(item.unit_price || '0');
-                                const discount = parseFloat(item.discount || '0');
-                                const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
-                                return total + lineTotal;
-                              }, 0)
-                            )}
-                          </Text>
-                        </Flex>
-                      </Box>
-                    )}
-                    
-                    <FormControl>
-                      <FormHelperText mt={3} fontSize="xs">
-                        📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
-                      </FormHelperText>
-                    </FormControl>
-                  </CardBody>
-                </Card>
-
-                {/* Tax Configuration Section */}
-                <Card>
-                  <CardHeader pb={3}>
-                    <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                      💰 Tax Configuration
-                    </Text>
-                  </CardHeader>
-                  <CardBody pt={0}>
-                    <VStack spacing={4} align="stretch">
-                      {/* Tax Additions (Penambahan) */}
-                      <Box>
-                        <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
-                          ➕ Tax Additions (Penambahan)
-                        </Text>
-                        <SimpleGrid columns={2} spacing={4}>
-                          <FormControl>
-                            <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
-                            <NumberInput
-                              value={formData.ppn_rate}
-                              onChange={(value) => setFormData({...formData, ppn_rate: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="11" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
-                            <NumberInput
-                              value={formData.other_tax_additions}
-                              onChange={(value) => setFormData({...formData, other_tax_additions: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="0" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
-                          </FormControl>
-                        </SimpleGrid>
-                      </Box>
-
-                      <Divider />
-
-                      {/* Tax Deductions (Pemotongan) */}
-                      <Box>
-                        <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
-                          ➖ Tax Deductions (Pemotongan)
-                        </Text>
-                        <SimpleGrid columns={3} spacing={4}>
-                          <FormControl>
-                            <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
-                            <NumberInput
-                              value={formData.pph21_rate}
-                              onChange={(value) => setFormData({...formData, pph21_rate: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                            <NumberInputField placeholder="2" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">PPh 21: 2% jasa konstruksi, 15% dividen/bunga</FormHelperText>
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
-                            <NumberInput
-                              value={formData.pph23_rate}
-                              onChange={(value) => setFormData({...formData, pph23_rate: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="2" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">PPh 23: 2% jasa umum, 15% dividen/bunga/royalti</FormHelperText>
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
-                            <NumberInput
-                              value={formData.other_tax_deductions}
-                              onChange={(value) => setFormData({...formData, other_tax_deductions: value})}
-                              size="sm"
-                              min={0}
-                              max={100}
-                              step={0.1}
-                            >
-                              <NumberInputField placeholder="0" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
-                          </FormControl>
-                        </SimpleGrid>
-                      </Box>
-
-                      {/* Tax Summary Calculation */}
-                      {formData.items.length > 0 && (
-                        <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
-                          <VStack spacing={2} align="stretch">
-                            <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
-                            {(() => {
-                              const subtotal = formData.items.reduce((total, item) => {
-                                const qty = parseFloat(item.quantity || '0');
-                                const price = parseFloat(item.unit_price || '0');
-                                const discount = parseFloat(item.discount || '0');
-                                const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
-                                return total + lineTotal;
-                              }, 0);
-                              
-                              const discount = (parseFloat(formData.discount) || 0) / 100;
-                              const discountedSubtotal = subtotal * (1 - discount);
-                              
-                              const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
-                              const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
-                              const totalAdditions = ppnAmount + otherAdditions;
-                              
-                              const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
-                              const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
-                              const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
-                              const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
-                              
-                              const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
-                              
-                              return (
-                                <SimpleGrid columns={2} spacing={4} fontSize="xs">
-                                  <VStack align="start" spacing={1}>
-                                    <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
-                                    <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
-                                    <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
-                                  </VStack>
-                                  
-                                  <VStack align="start" spacing={1}>
-                                    <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
-                                    {parseFloat(formData.other_tax_additions) > 0 && (
-                                      <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
-                                    )}
-                                    {parseFloat(formData.pph21_rate) > 0 && (
-                                      <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
-                                    )}
-                                    {parseFloat(formData.pph23_rate) > 0 && (
-                                      <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
-                                    )}
-                                    {parseFloat(formData.other_tax_deductions) > 0 && (
-                                      <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
-                                    )}
-                                    <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
-                                      Final Total: {formatCurrency(finalTotal)}
-                                    </Text>
-                                  </VStack>
-                                </SimpleGrid>
-                              );
-                            })()}
-                          </VStack>
-                        </Box>
-                      )}
-                    </VStack>
-                  </CardBody>
-                </Card>
-
-                {/* Payment Method Section */}
-                <Card>
-                  <CardHeader pb={3}>
-                    <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                      💳 Payment Method
-                    </Text>
-                  </CardHeader>
-                  <CardBody pt={0}>
                     <SimpleGrid columns={2} spacing={4}>
                       <FormControl isRequired>
-                        <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
-                        <Select
-                          value={formData.payment_method}
-                          onChange={(e) => {
-                            // Reset bank_account_id saat ganti payment method untuk menghindari konflik
-                            setFormData({
-                              ...formData, 
-                              payment_method: e.target.value,
-                              bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
-                            })
-                          }}
+                        <FormLabel fontSize="sm">Email</FormLabel>
+                        <Input
                           size="sm"
-                        >
-                          <option value="CREDIT">Credit</option>
-                          <option value="CASH">Cash</option>
-                          <option value="BANK_TRANSFER">Bank Transfer</option>
-                          <option value="CHECK">Check</option>
-                        </Select>
-                        <FormHelperText fontSize="xs">
-                          {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
-                          {formData.payment_method === 'CASH' && 'Direct cash payment'}
-                          {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
-                          {formData.payment_method === 'CHECK' && 'Payment by check'}
-                        </FormHelperText>
+                          type="email"
+                          placeholder="vendor@company.com"
+                          value={newVendorData.email}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, email: e.target.value })}
+                        />
                       </FormControl>
 
-                      {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
-                      {formData.payment_method !== 'CREDIT' && (
-                        <FormControl isRequired>
-                          <FormLabel fontSize="sm" fontWeight="medium">
-                            {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
-                          </FormLabel>
-                          <Select
-                            value={formData.bank_account_id}
-                            onChange={(e) => setFormData({...formData, bank_account_id: e.target.value})}
-                            size="sm"
-                            disabled={loadingBankAccounts}
-                            placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
-                          >
-                            {bankAccounts
-                              .filter(account => {
-                                // Filter berdasarkan payment method
-                                if (formData.payment_method === 'CASH') {
-                                  return account.type === 'CASH';
-                                } else {
-                                  return account.type === 'BANK';
-                                }
-                              })
-                              .map((account) => (
-                                <option key={account.id} value={account.id.toString()}>
-                                  {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
-                                </option>
-                              ))
-                            }
-                          </Select>
-                          <FormHelperText fontSize="xs">
-                            Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
-                          </FormHelperText>
-                        </FormControl>
-                      )}
-                      
-                      {/* Credit Account dropdown for Credit payment */}
-                      {formData.payment_method === 'CREDIT' && (
-                        <FormControl isRequired>
-                          <FormLabel fontSize="sm" fontWeight="medium">
-                            Liability Account
-                          </FormLabel>
-                          <Select
-                            value={formData.credit_account_id}
-                            onChange={(e) => setFormData({...formData, credit_account_id: e.target.value})}
-                            size="sm"
-                            disabled={loadingCreditAccounts}
-                            placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
-                          >
-                            {creditAccounts.map((account) => (
-                              <option key={account.id} value={account.id?.toString()}>
-                                {account.code} - {account.name}
-                              </option>
-                            ))}
-                          </Select>
-                          <FormHelperText fontSize="xs">
-                            Required: Select liability account for tracking credit purchases
-                          </FormHelperText>
-                        </FormControl>
-                      )}
+                      <FormControl>
+                        <FormLabel fontSize="sm">Phone</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="Enter phone number"
+                          value={newVendorData.phone}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, phone: e.target.value })}
+                        />
+                      </FormControl>
                     </SimpleGrid>
 
-                    {/* Payment Reference (for non-credit and non-cash payments) */}
-                    {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
-                      <FormControl mt={4}>
-                        <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
+                    <SimpleGrid columns={2} spacing={4}>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Mobile</FormLabel>
                         <Input
-                          value={formData.payment_reference}
-                          onChange={(e) => setFormData({...formData, payment_reference: e.target.value})}
-                          placeholder={
-                            formData.payment_method === 'CHECK' ? 'Check number' :
-                            formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
-                            'Payment reference number'
-                          }
                           size="sm"
+                          placeholder="Enter mobile number"
+                          value={newVendorData.mobile}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, mobile: e.target.value })}
                         />
-                        <FormHelperText fontSize="xs">
-                          Optional reference for tracking this payment
-                        </FormHelperText>
                       </FormControl>
-                    )}
-                  </CardBody>
-                </Card>
-              </VStack>
-            </ModalBody>
-            <ModalFooter>
-              <HStack spacing={3}>
-                <Button variant="ghost" onClick={onCreateClose}>
-                  Cancel
-                </Button>
-                <Button colorScheme="blue" onClick={handleSave}>
-                  Create Purchase
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
 
-        {/* Add Vendor Modal */}
-        <Modal isOpen={isAddVendorOpen} onClose={onAddVendorClose} size="lg">
-          <ModalOverlay />
-          <ModalContent bg={modalContentBg}>
-            <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-              <HStack>
-                <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
-                <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
-                  Add New Vendor
-                </Text>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
-              <VStack spacing={4} align="stretch">
-                <SimpleGrid columns={2} spacing={4}>
-                  <FormControl isRequired>
-                    <FormLabel fontSize="sm">Vendor Name</FormLabel>
-                    <Input
-                      size="sm"
-                      placeholder="Enter vendor name"
-                      value={newVendorData.name}
-                      onChange={(e) => setNewVendorData({...newVendorData, name: e.target.value})}
-                    />
-                  </FormControl>
-                  
-                  <FormControl>
-                    <FormLabel fontSize="sm">Vendor Code</FormLabel>
-                    <Input
-                      size="sm"
-                      placeholder="Auto-generated if empty"
-                      value={newVendorData.code}
-                      onChange={(e) => setNewVendorData({...newVendorData, code: e.target.value})}
-                    />
-                  </FormControl>
-                </SimpleGrid>
-                
-                <SimpleGrid columns={2} spacing={4}>
-                  <FormControl isRequired>
-                    <FormLabel fontSize="sm">Email</FormLabel>
-                    <Input
-                      size="sm"
-                      type="email"
-                      placeholder="vendor@company.com"
-                      value={newVendorData.email}
-                      onChange={(e) => setNewVendorData({...newVendorData, email: e.target.value})}
-                    />
-                  </FormControl>
-                  
-                  <FormControl>
-                    <FormLabel fontSize="sm">Phone</FormLabel>
-                    <Input
-                      size="sm"
-                      placeholder="Enter phone number"
-                      value={newVendorData.phone}
-                      onChange={(e) => setNewVendorData({...newVendorData, phone: e.target.value})}
-                    />
-                  </FormControl>
-                </SimpleGrid>
-                
-                <SimpleGrid columns={2} spacing={4}>
-                  <FormControl>
-                    <FormLabel fontSize="sm">Mobile</FormLabel>
-                    <Input
-                      size="sm"
-                      placeholder="Enter mobile number"
-                      value={newVendorData.mobile}
-                      onChange={(e) => setNewVendorData({...newVendorData, mobile: e.target.value})}
-                    />
-                  </FormControl>
-                  
-                  <FormControl>
-                    <FormLabel fontSize="sm">PIC Name</FormLabel>
-                    <Input
-                      size="sm"
-                      placeholder="Person in charge"
-                      value={newVendorData.pic_name}
-                      onChange={(e) => setNewVendorData({...newVendorData, pic_name: e.target.value})}
-                    />
-                  </FormControl>
-                </SimpleGrid>
-                
-                <FormControl>
-                  <FormLabel fontSize="sm">Vendor ID</FormLabel>
-                  <Input
-                    size="sm"
-                    placeholder="External vendor ID (optional)"
-                    value={newVendorData.external_id}
-                    onChange={(e) => setNewVendorData({...newVendorData, external_id: e.target.value})}
-                  />
-                </FormControl>
-                
-                <FormControl>
-                  <FormLabel fontSize="sm">Address</FormLabel>
-                  <Textarea
-                    size="sm"
-                    placeholder="Enter vendor address"
-                    rows={3}
-                    value={newVendorData.address}
-                    onChange={(e) => setNewVendorData({...newVendorData, address: e.target.value})}
-                  />
-                </FormControl>
-                
-                <FormControl>
-                  <FormLabel fontSize="sm">Notes</FormLabel>
-                  <Textarea
-                    size="sm"
-                    placeholder="Additional notes (optional)"
-                    rows={2}
-                    value={newVendorData.notes}
-                    onChange={(e) => setNewVendorData({...newVendorData, notes: e.target.value})}
-                  />
-                </FormControl>
-              </VStack>
-            </ModalBody>
-            <ModalFooter>
-              <HStack spacing={3}>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setNewVendorData({
-                      name: '',
-                      code: '',
-                      email: '',
-                      phone: '',
-                      mobile: '',
-                      address: '',
-                      pic_name: '',
-                      external_id: '',
-                      notes: ''
-                    });
-                    onAddVendorClose();
-                  }}
-                  disabled={savingVendor}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  colorScheme="green"
-                  onClick={handleAddVendor}
-                  isLoading={savingVendor}
-                  loadingText="Creating..."
-                >
-                  Create Vendor
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+                      <FormControl>
+                        <FormLabel fontSize="sm">PIC Name</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="Person in charge"
+                          value={newVendorData.pic_name}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, pic_name: e.target.value })}
+                        />
+                      </FormControl>
+                    </SimpleGrid>
 
-        {/* Add Product Modal */}
-        <Modal isOpen={isAddProductOpen} onClose={onAddProductClose} size="lg">
-          <ModalOverlay />
-          <ModalContent bg={modalContentBg}>
-            <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-              <HStack>
-                <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
-                <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                  Add New Product
-                </Text>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
-              <VStack spacing={4} align="stretch">
-                <FormControl isRequired>
-                  <FormLabel fontSize="sm">Product Name</FormLabel>
-                  <Input
-                    size="sm"
-                    placeholder="Enter product name"
-                    value={newProductData.name}
-                    onChange={(e) => setNewProductData({ ...newProductData, name: e.target.value })}
-                  />
-                </FormControl>
-                
-                <FormControl>
-                  <FormLabel fontSize="sm">Product Code</FormLabel>
-                  <Input
-                    size="sm"
-                    placeholder="Enter product code (optional)"
-                    value={newProductData.code}
-                    onChange={(e) => setNewProductData({ ...newProductData, code: e.target.value })}
-                  />
-                </FormControl>
-                
-                <FormControl>
-                  <FormLabel fontSize="sm">Description</FormLabel>
-                  <Textarea
-                    size="sm"
-                    placeholder="Enter product description"
-                    value={newProductData.description}
-                    onChange={(e) => setNewProductData({ ...newProductData, description: e.target.value })}
-                  />
-                </FormControl>
-                
-                <SimpleGrid columns={3} spacing={4}>
-                  <FormControl isRequired>
-                    <FormLabel fontSize="sm">Unit</FormLabel>
-                    <Input
-                      size="sm"
-                      placeholder="e.g., pcs, kg, box"
-                      value={newProductData.unit}
-                      onChange={(e) => setNewProductData({ ...newProductData, unit: e.target.value })}
-                    />
-                  </FormControl>
-                  
-                  <FormControl>
-                    <FormLabel fontSize="sm">Purchase Price (IDR)</FormLabel>
-                    <CurrencyInput
-                      value={parseFloat(newProductData.purchase_price) || 0}
-                      onChange={(value) => setNewProductData({ ...newProductData, purchase_price: value.toString() })}
-                      placeholder="Rp 10.000"
-                      size="sm"
-                      min={0}
-                      showLabel={false}
-                    />
-                  </FormControl>
-                  
-                  <FormControl>
-                    <FormLabel fontSize="sm">Sale Price (IDR)</FormLabel>
-                    <CurrencyInput
-                      value={parseFloat(newProductData.sale_price) || 0}
-                      onChange={(value) => setNewProductData({ ...newProductData, sale_price: value.toString() })}
-                      placeholder="Rp 15.000"
-                      size="sm"
-                      min={0}
-                      showLabel={false}
-                    />
-                  </FormControl>
-                </SimpleGrid>
-              </VStack>
-            </ModalBody>
-            <ModalFooter>
-              <HStack spacing={3} w="100%">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setNewProductData({
-                      name: '',
-                      code: '',
-                      description: '',
-                      unit: '',
-                      purchase_price: '0',
-                      sale_price: '0',
-                    });
-                    onAddProductClose();
-                  }}
-                  flex={1}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  colorScheme="blue"
-                  onClick={handleAddProduct}
-                  isLoading={savingProduct}
-                  loadingText="Creating..."
-                  flex={1}
-                >
-                  Create Product
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+                    <FormControl>
+                      <FormLabel fontSize="sm">Vendor ID</FormLabel>
+                      <Input
+                        size="sm"
+                        placeholder="External vendor ID (optional)"
+                        value={newVendorData.external_id}
+                        onChange={(e) => setNewVendorData({ ...newVendorData, external_id: e.target.value })}
+                      />
+                    </FormControl>
 
-        {/* Create Receipt Modal */}
-        <Modal isOpen={isReceiptOpen} onClose={onReceiptClose} size="xl">
-          <ModalOverlay />
-          <ModalContent bg={modalContentBg}>
-            <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-              <HStack>
-                <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
-                <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
-                  Create Goods Receipt - {selectedPurchase?.code}
-                </Text>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
-              {selectedPurchase && (
-                <VStack spacing={6} align="stretch">
-                  {/* Purchase Info */}
-                  <Card variant="outline">
-                    <CardBody p={4}>
-                      <SimpleGrid columns={3} spacing={4}>
-                        <FormControl>
-                          <FormLabel fontSize="sm">Purchase Code</FormLabel>
-                          <Text fontWeight="medium">{selectedPurchase.code}</Text>
+                    <FormControl>
+                      <FormLabel fontSize="sm">Address</FormLabel>
+                      <Textarea
+                        size="sm"
+                        placeholder="Enter vendor address"
+                        rows={3}
+                        value={newVendorData.address}
+                        onChange={(e) => setNewVendorData({ ...newVendorData, address: e.target.value })}
+                      />
+                    </FormControl>
+
+                    <FormControl>
+                      <FormLabel fontSize="sm">Notes</FormLabel>
+                      <Textarea
+                        size="sm"
+                        placeholder="Additional notes (optional)"
+                        rows={2}
+                        value={newVendorData.notes}
+                        onChange={(e) => setNewVendorData({ ...newVendorData, notes: e.target.value })}
+                      />
+                    </FormControl>
+                  </VStack>
+                </ModalBody>
+                <ModalFooter>
+                  <HStack spacing={3}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setNewVendorData({
+                          name: '',
+                          code: '',
+                          email: '',
+                          phone: '',
+                          mobile: '',
+                          address: '',
+                          pic_name: '',
+                          external_id: '',
+                          notes: ''
+                        });
+                        onAddVendorClose();
+                      }}
+                      disabled={savingVendor}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      colorScheme="green"
+                      onClick={handleAddVendor}
+                      isLoading={savingVendor}
+                      loadingText="Creating..."
+                    >
+                      Create Vendor
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            {/* Add Product Modal */}
+            <Modal isOpen={isAddProductOpen} onClose={onAddProductClose} size="lg">
+              <ModalOverlay />
+              <ModalContent bg={modalContentBg}>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  <HStack>
+                    <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
+                    <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                      Add New Product
+                    </Text>
+                  </HStack>
+                </ModalHeader>
+                <ModalCloseButton />
+                <ModalBody>
+                  <VStack spacing={4} align="stretch">
+                    <FormControl isRequired>
+                      <FormLabel fontSize="sm">Product Name</FormLabel>
+                      <Input
+                        size="sm"
+                        placeholder="Enter product name"
+                        value={newProductData.name}
+                        onChange={(e) => setNewProductData({ ...newProductData, name: e.target.value })}
+                      />
+                    </FormControl>
+
+                    <FormControl>
+                      <FormLabel fontSize="sm">Product Code</FormLabel>
+                      <Input
+                        size="sm"
+                        placeholder="Enter product code (optional)"
+                        value={newProductData.code}
+                        onChange={(e) => setNewProductData({ ...newProductData, code: e.target.value })}
+                      />
+                    </FormControl>
+
+                    <FormControl>
+                      <FormLabel fontSize="sm">Description</FormLabel>
+                      <Textarea
+                        size="sm"
+                        placeholder="Enter product description"
+                        value={newProductData.description}
+                        onChange={(e) => setNewProductData({ ...newProductData, description: e.target.value })}
+                      />
+                    </FormControl>
+
+                    <SimpleGrid columns={3} spacing={4}>
+                      <FormControl isRequired>
+                        <FormLabel fontSize="sm">Unit</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="e.g., pcs, kg, box"
+                          value={newProductData.unit}
+                          onChange={(e) => setNewProductData({ ...newProductData, unit: e.target.value })}
+                        />
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel fontSize="sm">Purchase Price (IDR)</FormLabel>
+                        <CurrencyInput
+                          value={parseFloat(newProductData.purchase_price) || 0}
+                          onChange={(value) => setNewProductData({ ...newProductData, purchase_price: value.toString() })}
+                          placeholder="Rp 10.000"
+                          size="sm"
+                          min={0}
+                          showLabel={false}
+                        />
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel fontSize="sm">Sale Price (IDR)</FormLabel>
+                        <CurrencyInput
+                          value={parseFloat(newProductData.sale_price) || 0}
+                          onChange={(value) => setNewProductData({ ...newProductData, sale_price: value.toString() })}
+                          placeholder="Rp 15.000"
+                          size="sm"
+                          min={0}
+                          showLabel={false}
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                  </VStack>
+                </ModalBody>
+                <ModalFooter>
+                  <HStack spacing={3} w="100%">
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setNewProductData({
+                          name: '',
+                          code: '',
+                          description: '',
+                          unit: '',
+                          purchase_price: '0',
+                          sale_price: '0',
+                        });
+                        onAddProductClose();
+                      }}
+                      flex={1}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      colorScheme="blue"
+                      onClick={handleAddProduct}
+                      isLoading={savingProduct}
+                      loadingText="Creating..."
+                      flex={1}
+                    >
+                      Create Product
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            {/* Create Receipt Modal */}
+            <Modal isOpen={isReceiptOpen} onClose={onReceiptClose} size="xl">
+              <ModalOverlay />
+              <ModalContent bg={modalContentBg}>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  <HStack>
+                    <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
+                    <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
+                      Create Goods Receipt - {selectedPurchase?.code}
+                    </Text>
+                  </HStack>
+                </ModalHeader>
+                <ModalCloseButton />
+                <ModalBody>
+                  {selectedPurchase && (
+                    <VStack spacing={6} align="stretch">
+                      {/* Purchase Info */}
+                      <Card variant="outline">
+                        <CardBody p={4}>
+                          <SimpleGrid columns={3} spacing={4}>
+                            <FormControl>
+                              <FormLabel fontSize="sm">Purchase Code</FormLabel>
+                              <Text fontWeight="medium">{selectedPurchase.code}</Text>
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">Vendor</FormLabel>
+                              <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">Total Amount</FormLabel>
+                              <Text fontWeight="medium" color="green.500">
+                                {formatCurrency(selectedPurchase.total_amount)}
+                              </Text>
+                            </FormControl>
+                          </SimpleGrid>
+                        </CardBody>
+                      </Card>
+
+                      {/* Receipt Details */}
+                      <SimpleGrid columns={2} spacing={4}>
+                        <FormControl isRequired>
+                          <FormLabel fontSize="sm">Received Date</FormLabel>
+                          <Input
+                            type="date"
+                            size="sm"
+                            value={receiptFormData.received_date}
+                            onChange={(e) => setReceiptFormData({
+                              ...receiptFormData,
+                              received_date: e.target.value
+                            })}
+                          />
                         </FormControl>
                         <FormControl>
-                          <FormLabel fontSize="sm">Vendor</FormLabel>
-                          <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
-                        </FormControl>
-                        <FormControl>
-                          <FormLabel fontSize="sm">Total Amount</FormLabel>
-                          <Text fontWeight="medium" color="green.500">
-                            {formatCurrency(selectedPurchase.total_amount)}
-                          </Text>
+                          <FormLabel fontSize="sm">Receipt Notes</FormLabel>
+                          <Input
+                            size="sm"
+                            placeholder="General notes for this receipt"
+                            value={receiptFormData.notes}
+                            onChange={(e) => setReceiptFormData({
+                              ...receiptFormData,
+                              notes: e.target.value
+                            })}
+                          />
                         </FormControl>
                       </SimpleGrid>
-                    </CardBody>
-                  </Card>
 
-                  {/* Receipt Details */}
-                  <SimpleGrid columns={2} spacing={4}>
-                    <FormControl isRequired>
-                      <FormLabel fontSize="sm">Received Date</FormLabel>
-                      <Input
-                        type="date"
-                        size="sm"
-                        value={receiptFormData.received_date}
-                        onChange={(e) => setReceiptFormData({
-                          ...receiptFormData,
-                          received_date: e.target.value
-                        })}
-                      />
-                    </FormControl>
-                    <FormControl>
-                      <FormLabel fontSize="sm">Receipt Notes</FormLabel>
-                      <Input
-                        size="sm"
-                        placeholder="General notes for this receipt"
-                        value={receiptFormData.notes}
-                        onChange={(e) => setReceiptFormData({
-                          ...receiptFormData,
-                          notes: e.target.value
-                        })}
-                      />
-                    </FormControl>
-                  </SimpleGrid>
+                      {/* Receipt Items */}
+                      <FormControl>
+                        <FormLabel fontSize="sm">Receipt Items & Asset Creation</FormLabel>
+                        <TableContainer>
+                          <Table size="sm" bg={tableBg}>
+                            <Thead bg={tableHeaderBg}>
+                              <Tr>
+                                <Th fontSize="xs">Product</Th>
+                                <Th fontSize="xs" isNumeric>Ordered Qty</Th>
+                                <Th fontSize="xs" isNumeric>Received Qty</Th>
+                                <Th fontSize="xs">Condition</Th>
+                                <Th fontSize="xs">Serial Number</Th>
+                                <Th fontSize="xs" textAlign="center">🏭 Create Asset</Th>
+                                <Th fontSize="xs">Notes</Th>
+                              </Tr>
+                            </Thead>
+                            <Tbody>
+                              {receiptFormData.receipt_items.map((receiptItem, index) => {
+                                const purchaseItem = selectedPurchase.purchase_items?.find(
+                                  item => item.id === receiptItem.purchase_item_id
+                                );
+                                return (
+                                  <Tr key={receiptItem.purchase_item_id}>
+                                    <Td fontSize="sm">
+                                      {purchaseItem?.product?.name || 'Unknown Product'}
+                                    </Td>
+                                    <Td fontSize="sm" isNumeric>
+                                      {purchaseItem?.quantity || 0}
+                                    </Td>
+                                    <Td>
+                                      <NumberInput
+                                        size="sm"
+                                        min={0}
+                                        max={remainingQtyMap[purchaseItem?.id as number] ?? (purchaseItem?.quantity || 0)}
+                                        value={receiptItem.quantity_received}
+                                        onChange={(_, value) => {
+                                          const newItems = [...receiptFormData.receipt_items];
+                                          newItems[index].quantity_received = value || 0;
+                                          setReceiptFormData({
+                                            ...receiptFormData,
+                                            receipt_items: newItems
+                                          });
+                                        }}
+                                      >
+                                        <NumberInputField />
+                                        <NumberInputStepper>
+                                          <NumberIncrementStepper />
+                                          <NumberDecrementStepper />
+                                        </NumberInputStepper>
+                                      </NumberInput>
+                                    </Td>
+                                    <Td>
+                                      <Select
+                                        size="sm"
+                                        value={receiptItem.condition}
+                                        onChange={(e) => {
+                                          const newItems = [...receiptFormData.receipt_items];
+                                          newItems[index].condition = e.target.value;
+                                          setReceiptFormData({
+                                            ...receiptFormData,
+                                            receipt_items: newItems
+                                          });
+                                        }}
+                                      >
+                                        <option value="GOOD">Good</option>
+                                        <option value="DAMAGED">Damaged</option>
+                                        <option value="DEFECTIVE">Defective</option>
+                                      </Select>
+                                    </Td>
+                                    {/* Serial Number */}
+                                    <Td>
+                                      <Input
+                                        size="sm"
+                                        placeholder="Serial/Chassis number"
+                                        value={receiptItem.serial_number || ''}
+                                        onChange={(e) => {
+                                          const newItems = [...receiptFormData.receipt_items];
+                                          newItems[index].serial_number = e.target.value;
+                                          setReceiptFormData({
+                                            ...receiptFormData,
+                                            receipt_items: newItems
+                                          });
+                                        }}
+                                      />
+                                    </Td>
 
-                  {/* Receipt Items */}
-                  <FormControl>
-                    <FormLabel fontSize="sm">Receipt Items & Asset Creation</FormLabel>
-                    <TableContainer>
-                      <Table size="sm" bg={tableBg}>
-                        <Thead bg={tableHeaderBg}>
-                          <Tr>
-                            <Th fontSize="xs">Product</Th>
-                            <Th fontSize="xs" isNumeric>Ordered Qty</Th>
-                            <Th fontSize="xs" isNumeric>Received Qty</Th>
-                            <Th fontSize="xs">Condition</Th>
-                            <Th fontSize="xs">Serial Number</Th>
-                            <Th fontSize="xs" textAlign="center">🏭 Create Asset</Th>
-                            <Th fontSize="xs">Notes</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {receiptFormData.receipt_items.map((receiptItem, index) => {
-                            const purchaseItem = selectedPurchase.purchase_items?.find(
-                              item => item.id === receiptItem.purchase_item_id
-                            );
-                            return (
-                              <Tr key={receiptItem.purchase_item_id}>
-                                <Td fontSize="sm">
-                                  {purchaseItem?.product?.name || 'Unknown Product'}
-                                </Td>
-                                <Td fontSize="sm" isNumeric>
-                                  {purchaseItem?.quantity || 0}
-                                </Td>
-                                <Td>
-                                  <NumberInput
-                                    size="sm"
-                                    min={0}
-                                    max={remainingQtyMap[purchaseItem?.id as number] ?? (purchaseItem?.quantity || 0)}
-                                    value={receiptItem.quantity_received}
-                                    onChange={(_, value) => {
-                                      const newItems = [...receiptFormData.receipt_items];
-                                      newItems[index].quantity_received = value || 0;
-                                      setReceiptFormData({
-                                        ...receiptFormData,
-                                        receipt_items: newItems
-                                      });
-                                    }}
-                                  >
-                                    <NumberInputField />
-                                    <NumberInputStepper>
-                                      <NumberIncrementStepper />
-                                      <NumberDecrementStepper />
-                                    </NumberInputStepper>
-                                  </NumberInput>
-                                </Td>
-                                <Td>
-                                  <Select
-                                    size="sm"
-                                    value={receiptItem.condition}
-                                    onChange={(e) => {
-                                      const newItems = [...receiptFormData.receipt_items];
-                                      newItems[index].condition = e.target.value;
-                                      setReceiptFormData({
-                                        ...receiptFormData,
-                                        receipt_items: newItems
-                                      });
-                                    }}
-                                  >
-                                    <option value="GOOD">Good</option>
-                                    <option value="DAMAGED">Damaged</option>
-                                    <option value="DEFECTIVE">Defective</option>
-                                  </Select>
-                                </Td>
-                                {/* Serial Number */}
-                                <Td>
-                                  <Input
-                                    size="sm"
-                                    placeholder="Serial/Chassis number"
-                                    value={receiptItem.serial_number || ''}
-                                    onChange={(e) => {
-                                      const newItems = [...receiptFormData.receipt_items];
-                                      newItems[index].serial_number = e.target.value;
-                                      setReceiptFormData({
-                                        ...receiptFormData,
-                                        receipt_items: newItems
-                                      });
-                                    }}
-                                  />
-                                </Td>
-                                
-                                {/* Create Asset Checkbox & Options */}
-                                <Td>
-                                  <VStack spacing={2} align="center">
-                                    {/* Asset Creation Checkbox */}
-                                    <HStack>
-                                      {(() => {
-                                        // Determine account type from selected expense account
-                                        const accId = purchaseItem?.expense_account_id as number | undefined;
-                                        const acc = expenseAccounts.find(a => a.id === accId);
-                                        const code = (acc?.code || '').toString();
-                                        const name = (acc?.name || '').toLowerCase();
-                                        const isFixedAsset = code.startsWith('15') || name.includes('asset tetap') || name.includes('fixed asset') || name.includes('bangunan') || name.includes('gedung');
-                                        // Convenience mode: checkbox always enabled
-                                        const disabled = false;
-                                        // Default-check for Fixed Asset items if user hasn't set it yet
-                                        const checked = receiptItem.create_asset ?? isFixedAsset;
-                                        return (
-                                          <>
-                                            <input
-                                              type="checkbox"
-                                              checked={checked}
-                                              disabled={disabled}
+                                    {/* Create Asset Checkbox & Options */}
+                                    <Td>
+                                      <VStack spacing={2} align="center">
+                                        {/* Asset Creation Checkbox */}
+                                        <HStack>
+                                          {(() => {
+                                            // Determine account type from selected expense account
+                                            const accId = purchaseItem?.expense_account_id as number | undefined;
+                                            const acc = expenseAccounts.find(a => a.id === accId);
+                                            const code = (acc?.code || '').toString();
+                                            const name = (acc?.name || '').toLowerCase();
+                                            const isFixedAsset = code.startsWith('15') || name.includes('asset tetap') || name.includes('fixed asset') || name.includes('bangunan') || name.includes('gedung');
+                                            // Convenience mode: checkbox always enabled
+                                            const disabled = false;
+                                            // Default-check for Fixed Asset items if user hasn't set it yet
+                                            const checked = receiptItem.create_asset ?? isFixedAsset;
+                                            return (
+                                              <>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={checked}
+                                                  disabled={disabled}
+                                                  onChange={(e) => {
+                                                    const newItems = [...receiptFormData.receipt_items];
+                                                    newItems[index].create_asset = e.target.checked;
+                                                    // Set defaults when checked
+                                                    if (e.target.checked) {
+                                                      newItems[index].asset_category = newItems[index].asset_category || 'Equipment';
+                                                      newItems[index].asset_useful_life = newItems[index].asset_useful_life || 5;
+                                                      newItems[index].asset_salvage_percentage = newItems[index].asset_salvage_percentage || 10;
+                                                    }
+                                                    setReceiptFormData({
+                                                      ...receiptFormData,
+                                                      receipt_items: newItems
+                                                    });
+                                                  }}
+                                                  style={{ transform: 'scale(1.2)' }}
+                                                />
+                                                <VStack spacing={0} align="start">
+                                                  <Text fontSize="xs" fontWeight="medium">
+                                                    Asset
+                                                  </Text>
+                                                  <Text fontSize="10px" color="gray.400">
+                                                    (Shortcut: creates asset record only; journals follow purchase account)
+                                                  </Text>
+                                                </VStack>
+                                              </>
+                                            );
+                                          })()}
+                                        </HStack>
+
+                                        {/* Asset Options - Show when checked */}
+                                        {receiptItem.create_asset && (
+                                          <VStack spacing={1} w="full">
+                                            <Select
+                                              size="xs"
+                                              value={receiptItem.asset_category || 'Equipment'}
                                               onChange={(e) => {
                                                 const newItems = [...receiptFormData.receipt_items];
-                                                newItems[index].create_asset = e.target.checked;
-                                                // Set defaults when checked
-                                                if (e.target.checked) {
-                                                  newItems[index].asset_category = newItems[index].asset_category || 'Equipment';
-                                                  newItems[index].asset_useful_life = newItems[index].asset_useful_life || 5;
-                                                  newItems[index].asset_salvage_percentage = newItems[index].asset_salvage_percentage || 10;
-                                                }
+                                                newItems[index].asset_category = e.target.value;
                                                 setReceiptFormData({
                                                   ...receiptFormData,
                                                   receipt_items: newItems
                                                 });
                                               }}
-                                              style={{ transform: 'scale(1.2)' }}
-                                            />
-                                            <VStack spacing={0} align="start">
-                                              <Text fontSize="xs" fontWeight="medium">
-                                                Asset
-                                              </Text>
-                                              <Text fontSize="10px" color="gray.400">
-                                                (Shortcut: creates asset record only; journals follow purchase account)
-                                              </Text>
-                                            </VStack>
-                                          </>
-                                        );
-                                      })()}
-                                    </HStack>
-                                    
-                                    {/* Asset Options - Show when checked */}
-                                    {receiptItem.create_asset && (
-                                      <VStack spacing={1} w="full">
-                                        <Select
-                                          size="xs"
-                                          value={receiptItem.asset_category || 'Equipment'}
-                                          onChange={(e) => {
-                                            const newItems = [...receiptFormData.receipt_items];
-                                            newItems[index].asset_category = e.target.value;
-                                            setReceiptFormData({
-                                              ...receiptFormData,
-                                              receipt_items: newItems
-                                            });
-                                          }}
-                                        >
-                                          <option value="Equipment">Equipment</option>
-                                          <option value="Vehicle">Vehicle</option>
-                                          <option value="Furniture">Furniture</option>
-                                          <option value="Computer">Computer</option>
-                                          <option value="Machinery">Machinery</option>
-                                          <option value="Building">Building</option>
-                                        </Select>
-                                        
-                                        <HStack spacing={1}>
-                                          <NumberInput
-                                            size="xs"
-                                            min={1}
-                                            max={50}
-                                            value={receiptItem.asset_useful_life || 5}
-                                            onChange={(_, value) => {
-                                              const newItems = [...receiptFormData.receipt_items];
-                                              newItems[index].asset_useful_life = value || 5;
-                                              setReceiptFormData({
-                                                ...receiptFormData,
-                                                receipt_items: newItems
-                                              });
-                                            }}
-                                            maxW="50px"
-                                          >
-                                            <NumberInputField />
-                                          </NumberInput>
-                                          <Text fontSize="xs">yrs</Text>
-                                        </HStack>
+                                            >
+                                              <option value="Equipment">Equipment</option>
+                                              <option value="Vehicle">Vehicle</option>
+                                              <option value="Furniture">Furniture</option>
+                                              <option value="Computer">Computer</option>
+                                              <option value="Machinery">Machinery</option>
+                                              <option value="Building">Building</option>
+                                            </Select>
+
+                                            <HStack spacing={1}>
+                                              <NumberInput
+                                                size="xs"
+                                                min={1}
+                                                max={50}
+                                                value={receiptItem.asset_useful_life || 5}
+                                                onChange={(_, value) => {
+                                                  const newItems = [...receiptFormData.receipt_items];
+                                                  newItems[index].asset_useful_life = value || 5;
+                                                  setReceiptFormData({
+                                                    ...receiptFormData,
+                                                    receipt_items: newItems
+                                                  });
+                                                }}
+                                                maxW="50px"
+                                              >
+                                                <NumberInputField />
+                                              </NumberInput>
+                                              <Text fontSize="xs">yrs</Text>
+                                            </HStack>
+                                          </VStack>
+                                        )}
                                       </VStack>
-                                    )}
-                                  </VStack>
-                                </Td>
-                                
-                                {/* Notes */}
-                                <Td>
-                                  <Input
-                                    size="sm"
-                                    placeholder="Item notes"
-                                    value={receiptItem.notes}
-                                    onChange={(e) => {
-                                      const newItems = [...receiptFormData.receipt_items];
-                                      newItems[index].notes = e.target.value;
-                                      setReceiptFormData({
-                                        ...receiptFormData,
-                                        receipt_items: newItems
-                                      });
-                                    }}
-                                  />
-                                </Td>
-                              </Tr>
-                            );
-                          })}
-                        </Tbody>
-                      </Table>
-                    </TableContainer>
-                  </FormControl>
+                                    </Td>
 
-                  {/* Asset Creation Summary */}
-                  {receiptFormData.receipt_items.some(item => item.create_asset) && (
-                    <Alert status="success" variant="left-accent">
-                      <AlertIcon />
-                      <VStack align="start" spacing={1}>
-                        <AlertTitle fontSize="sm">🎉 Auto Asset Creation Enabled!</AlertTitle>
-                        <AlertDescription fontSize="xs">
-                          {receiptFormData.receipt_items.filter(item => item.create_asset).length} item(s) will be automatically created as assets after receipt completion.
-                          Assets will include purchase reference, vendor info, and depreciation settings.
-                        </AlertDescription>
-                        <HStack mt={2}>
-                          <Button 
-                            size="xs" 
-                            variant="outline" 
-                            colorScheme="blue"
-                            onClick={() => {
-                              const assetsToCreate = receiptFormData.receipt_items.filter(item => item.create_asset);
-                              console.log('🔍 DEBUG - Current receipt form data:', receiptFormData);
-                              console.log('🔍 DEBUG - Assets to create:', assetsToCreate);
-                              console.log('🔍 DEBUG - Selected purchase:', selectedPurchase);
-                              alert(`Debug info logged to console. Assets to create: ${assetsToCreate.length}`);
-                            }}
-                          >
-                            🔍 Debug Info
-                          </Button>
-                        </HStack>
-                      </VStack>
-                    </Alert>
-                  )}
+                                    {/* Notes */}
+                                    <Td>
+                                      <Input
+                                        size="sm"
+                                        placeholder="Item notes"
+                                        value={receiptItem.notes}
+                                        onChange={(e) => {
+                                          const newItems = [...receiptFormData.receipt_items];
+                                          newItems[index].notes = e.target.value;
+                                          setReceiptFormData({
+                                            ...receiptFormData,
+                                            receipt_items: newItems
+                                          });
+                                        }}
+                                      />
+                                    </Td>
+                                  </Tr>
+                                );
+                              })}
+                            </Tbody>
+                          </Table>
+                        </TableContainer>
+                      </FormControl>
 
-                  <Alert status="info" variant="left-accent">
-                    <AlertIcon />
-                    <VStack align="start" spacing={1}>
-                      <AlertTitle fontSize="sm">Receipt Information</AlertTitle>
-                      <AlertDescription fontSize="xs">
-                        • Creating this receipt will mark the purchase as COMPLETED if all items are fully received.<br/>
-                        • Stock quantities were already updated when the purchase was approved.<br/>
-                        • Check "Create Asset" for fixed assets (vehicles, equipment, machinery) to auto-create asset records.
-                      </AlertDescription>
+                      {/* Asset Creation Summary */}
+                      {receiptFormData.receipt_items.some(item => item.create_asset) && (
+                        <Alert status="success" variant="left-accent">
+                          <AlertIcon />
+                          <VStack align="start" spacing={1}>
+                            <AlertTitle fontSize="sm">🎉 Auto Asset Creation Enabled!</AlertTitle>
+                            <AlertDescription fontSize="xs">
+                              {receiptFormData.receipt_items.filter(item => item.create_asset).length} item(s) will be automatically created as assets after receipt completion.
+                              Assets will include purchase reference, vendor info, and depreciation settings.
+                            </AlertDescription>
+                            <HStack mt={2}>
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                colorScheme="blue"
+                                onClick={() => {
+                                  const assetsToCreate = receiptFormData.receipt_items.filter(item => item.create_asset);
+                                  console.log('🔍 DEBUG - Current receipt form data:', receiptFormData);
+                                  console.log('🔍 DEBUG - Assets to create:', assetsToCreate);
+                                  console.log('🔍 DEBUG - Selected purchase:', selectedPurchase);
+                                  alert(`Debug info logged to console. Assets to create: ${assetsToCreate.length}`);
+                                }}
+                              >
+                                🔍 Debug Info
+                              </Button>
+                            </HStack>
+                          </VStack>
+                        </Alert>
+                      )}
+
+                      <Alert status="info" variant="left-accent">
+                        <AlertIcon />
+                        <VStack align="start" spacing={1}>
+                          <AlertTitle fontSize="sm">Receipt Information</AlertTitle>
+                          <AlertDescription fontSize="xs">
+                            • Creating this receipt will mark the purchase as COMPLETED if all items are fully received.<br />
+                            • Stock quantities were already updated when the purchase was approved.<br />
+                            • Check "Create Asset" for fixed assets (vehicles, equipment, machinery) to auto-create asset records.
+                          </AlertDescription>
+                        </VStack>
+                      </Alert>
                     </VStack>
-                  </Alert>
-                </VStack>
-              )}
-            </ModalBody>
-            <ModalFooter>
-              <HStack spacing={3} w="100%">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setReceiptFormData({
-                      received_date: new Date().toISOString().split('T')[0],
-                      notes: '',
-                      receipt_items: []
-                    });
-                    onReceiptClose();
-                  }}
-                  disabled={savingReceipt}
-                  flex={1}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  colorScheme="green"
-                  onClick={handleSaveReceipt}
-                  isLoading={savingReceipt}
-                  loadingText="Creating Receipt..."
-                  flex={1}
-                  leftIcon={<FiPackage />}
-                >
-                  Create Receipt
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-
-        {/* Receipts Modal */}
-        <Modal isOpen={isReceiptsOpen} onClose={onReceiptsClose} size="4xl">
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
-              <HStack>
-                <Icon as={FiPackage} />
-                <VStack align="start" spacing={0}>
-                  <Text fontWeight="bold">Receipts for {selectedPurchaseForReceipts?.code}</Text>
-                  <Text fontSize="sm" color="gray.600">
-                    Vendor: {selectedPurchaseForReceipts?.vendor?.name}
-                  </Text>
-                </VStack>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody>
-              {loadingReceipts ? (
-                <VStack spacing={4}>
-                  <Spinner size="lg" />
-                  <Text>Loading receipts...</Text>
-                </VStack>
-              ) : (
-                <Box>
-                  {receipts.length === 0 ? (
-                    <Alert status="info">
-                      <AlertIcon />
-                      <Text>No completed receipts found for this purchase.</Text>
-                    </Alert>
-                  ) : (
-                    <TableContainer>
-                      <Table size="sm">
-                        <Thead>
-                          <Tr>
-                            <Th>Receipt #</Th>
-                            <Th>Date</Th>
-                            <Th>Received By</Th>
-                            <Th>Status</Th>
-                            <Th>Items</Th>
-                            <Th>Actions</Th>
-                          </Tr>
-                        </Thead>
-                        <Tbody>
-                          {receipts.map(receipt => (
-                            <Tr key={receipt.id}>
-                              <Td fontWeight="medium">{receipt.receipt_number}</Td>
-                              <Td>{formatDate(receipt.received_date)}</Td>
-                              <Td>{getReceiverName(receipt.receiver)}</Td>
-                              <Td>
-                                <Badge colorScheme={getStatusColor(receipt.status)}>
-                                  {receipt.status}
-                                </Badge>
-                              </Td>
-                              <Td>{(receipt.receipt_items || []).reduce((sum: number, it: any) => sum + (it.quantity_received || 0), 0)}</Td>
-                              <Td>
-                                <IconButton
-                                  aria-label="Download Receipt PDF"
-                                  icon={<FiDownload />}
-                                  size="sm"
-                                  colorScheme="blue"
-                                  variant="ghost"
-                                  onClick={() => handleDownloadReceiptPDF(receipt.id, receipt.receipt_number)}
-                                  title="Download this receipt as PDF"
-                                />
-                              </Td>
-                            </Tr>
-                          ))}
-                        </Tbody>
-                      </Table>
-                    </TableContainer>
                   )}
-                </Box>
-              )}
-            </ModalBody>
-            <ModalFooter>
-              <HStack spacing={3} w="100%">
-                {receipts.length > 0 && (
-                  <Button
-                    leftIcon={<FiDownload />}
-                    colorScheme="green"
-                    onClick={() => selectedPurchaseForReceipts && handleDownloadAllReceiptsPDF(selectedPurchaseForReceipts)}
-                    flex={1}
-                  >
-                    Download Receipts
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  onClick={onReceiptsClose}
-                  flex={receipts.length > 0 ? 0 : 1}
-                >
-                  Close
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+                </ModalBody>
+                <ModalFooter>
+                  <HStack spacing={3} w="100%">
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setReceiptFormData({
+                          received_date: new Date().toISOString().split('T')[0],
+                          notes: '',
+                          receipt_items: []
+                        });
+                        onReceiptClose();
+                      }}
+                      disabled={savingReceipt}
+                      flex={1}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      colorScheme="green"
+                      onClick={handleSaveReceipt}
+                      isLoading={savingReceipt}
+                      loadingText="Creating Receipt..."
+                      flex={1}
+                      leftIcon={<FiPackage />}
+                    >
+                      Create Receipt
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
 
-        {/* Journal Entries Modal */}
-        <PurchaseJournalEntriesModal
-          isOpen={isJournalOpen}
-          onClose={onJournalClose}
-          purchase={selectedPurchaseForJournal}
-        />
+            {/* Receipts Modal */}
+            <Modal isOpen={isReceiptsOpen} onClose={onReceiptsClose} size="4xl">
+              <ModalOverlay />
+              <ModalContent>
+                <ModalHeader>
+                  <HStack>
+                    <Icon as={FiPackage} />
+                    <VStack align="start" spacing={0}>
+                      <Text fontWeight="bold">Receipts for {selectedPurchaseForReceipts?.code}</Text>
+                      <Text fontSize="sm" color="gray.600">
+                        Vendor: {selectedPurchaseForReceipts?.vendor?.name}
+                      </Text>
+                    </VStack>
+                  </HStack>
+                </ModalHeader>
+                <ModalCloseButton />
+                <ModalBody>
+                  {loadingReceipts ? (
+                    <VStack spacing={4}>
+                      <Spinner size="lg" />
+                      <Text>Loading receipts...</Text>
+                    </VStack>
+                  ) : (
+                    <Box>
+                      {receipts.length === 0 ? (
+                        <Alert status="info">
+                          <AlertIcon />
+                          <Text>No completed receipts found for this purchase.</Text>
+                        </Alert>
+                      ) : (
+                        <TableContainer>
+                          <Table size="sm">
+                            <Thead>
+                              <Tr>
+                                <Th>Receipt #</Th>
+                                <Th>Date</Th>
+                                <Th>Received By</Th>
+                                <Th>Status</Th>
+                                <Th>Items</Th>
+                                <Th>Actions</Th>
+                              </Tr>
+                            </Thead>
+                            <Tbody>
+                              {receipts.map(receipt => (
+                                <Tr key={receipt.id}>
+                                  <Td fontWeight="medium">{receipt.receipt_number}</Td>
+                                  <Td>{formatDate(receipt.received_date)}</Td>
+                                  <Td>{getReceiverName(receipt.receiver)}</Td>
+                                  <Td>
+                                    <Badge colorScheme={getStatusColor(receipt.status)}>
+                                      {receipt.status}
+                                    </Badge>
+                                  </Td>
+                                  <Td>{(receipt.receipt_items || []).reduce((sum: number, it: any) => sum + (it.quantity_received || 0), 0)}</Td>
+                                  <Td>
+                                    <IconButton
+                                      aria-label="Download Receipt PDF"
+                                      icon={<FiDownload />}
+                                      size="sm"
+                                      colorScheme="blue"
+                                      variant="ghost"
+                                      onClick={() => handleDownloadReceiptPDF(receipt.id, receipt.receipt_number)}
+                                      title="Download this receipt as PDF"
+                                    />
+                                  </Td>
+                                </Tr>
+                              ))}
+                            </Tbody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </Box>
+                  )}
+                </ModalBody>
+                <ModalFooter>
+                  <HStack spacing={3} w="100%">
+                    {receipts.length > 0 && (
+                      <Button
+                        leftIcon={<FiDownload />}
+                        colorScheme="green"
+                        onClick={() => selectedPurchaseForReceipts && handleDownloadAllReceiptsPDF(selectedPurchaseForReceipts)}
+                        flex={1}
+                      >
+                        Download Receipts
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      onClick={onReceiptsClose}
+                      flex={receipts.length > 0 ? 0 : 1}
+                    >
+                      Close
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
 
-        {/* Payment Modal */}
-        <PurchasePaymentForm
-          isOpen={isPaymentOpen}
-          onClose={onPaymentClose}
-          purchase={selectedPurchaseForPayment}
-          onSuccess={handlePaymentSuccess}
-          cashBanks={cashBanks}
-        />
-        
-        </VStack>
-      </Box>
-    </SimpleLayout>
+            {/* Journal Entries Modal */}
+            <PurchaseJournalEntriesModal
+              isOpen={isJournalOpen}
+              onClose={onJournalClose}
+              purchase={selectedPurchaseForJournal}
+            />
+
+            {/* Payment Modal */}
+            <PurchasePaymentForm
+              isOpen={isPaymentOpen}
+              onClose={onPaymentClose}
+              purchase={selectedPurchaseForPayment}
+              onSuccess={handlePaymentSuccess}
+              cashBanks={cashBanks}
+            />
+
+          </VStack>
+        </Box>
+      </SimpleLayout>
+    </ProtectedModule>
   );
 };
 

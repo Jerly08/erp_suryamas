@@ -42,7 +42,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import {
-  FiBarChart3,
+  FiBarChart,
   FiDownload,
   FiFileText,
   FiFilePlus,
@@ -54,13 +54,14 @@ import {
 } from 'react-icons/fi';
 
 // Import services and utilities
-import { 
-  ssotTrialBalanceService, 
-  SSOTTrialBalanceData 
+import {
+  ssotTrialBalanceService,
+  SSOTTrialBalanceData
 } from '../../services/ssotTrialBalanceService';
-import { 
-  exportAndDownloadTrialBalanceCSV, 
-  exportAndDownloadTrialBalancePDF 
+import { useTranslation } from '@/hooks/useTranslation';
+import {
+  exportAndDownloadTrialBalanceCSV,
+  exportAndDownloadTrialBalancePDF
 } from '../../utils/trialBalanceExportUtils';
 
 interface EnhancedTrialBalanceReportProps {
@@ -77,20 +78,23 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
   const [asOfDate, setAsOfDate] = useState(new Date().toISOString().split('T')[0]);
   const [includeAccountDetails, setIncludeAccountDetails] = useState(true);
   const [companyName, setCompanyName] = useState('Company Name Not Set');
-  
+
   // Export states
   const [exportingCSV, setExportingCSV] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
-  
+
   // Modal controls
-  const { 
-    isOpen: isExportModalOpen, 
-    onOpen: onExportModalOpen, 
-    onClose: onExportModalClose 
+  const {
+    isOpen: isExportModalOpen,
+    onOpen: onExportModalOpen,
+    onClose: onExportModalClose
   } = useDisclosure();
-  
+
+
+
   const toast = useToast();
-  
+  const { t } = useTranslation();
+
   // Color mode values
   const cardBg = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
@@ -103,17 +107,17 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
     if (amount === null || amount === undefined || isNaN(Number(amount))) {
       return 'Rp 0';
     }
-    
+
     let displayAmount = Number(amount);
-    
+
     // Convert to positive for revenue and liability accounts for user-friendly display
-    if (accountType === 'REVENUE' || accountType === 'LIABILITY' || 
-        accountCode?.startsWith('4') || // Revenue accounts
-        accountCode?.startsWith('2103') || accountCode?.startsWith('2203')) { // PPN accounts
+    if (accountType === 'REVENUE' || accountType === 'LIABILITY' ||
+      accountCode?.startsWith('4') || // Revenue accounts
+      accountCode?.startsWith('2103') || accountCode?.startsWith('2203')) { // PPN accounts
       displayAmount = Math.abs(displayAmount);
       console.log(`[EnhancedTrialBalanceReport] Converted ${accountCode} (${accountType}) balance ${amount} to positive ${displayAmount}`);
     }
-    
+
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
@@ -126,29 +130,29 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
   const generateTrialBalanceReport = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const data = await ssotTrialBalanceService.generateSSOTTrialBalance({
         as_of_date: asOfDate,
         format: 'json'
       });
-      
+
       setTrialBalanceData(data);
-      
+
       toast({
-        title: 'Success',
-        description: 'Trial Balance generated successfully',
+        title: t('reports.modal.status.success'),
+        description: t('reports.messages.trialBalanceGenerated'),
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error: any) {
-      const errorMessage = error.message || 'Failed to generate Trial Balance';
+      const errorMessage = error.message || t('reports.messages.failedToGenerateTrialBalance');
       setError(errorMessage);
-      
+
       toast({
-        title: 'Error',
+        title: t('reports.modal.status.error'),
         description: errorMessage,
         status: 'error',
         duration: 5000,
@@ -173,26 +177,26 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
     }
 
     setExportingCSV(true);
-    
+
     try {
       exportAndDownloadTrialBalanceCSV(trialBalanceData, {
         includeAccountDetails,
         companyName,
         filename: `trial_balance_${asOfDate}.csv`
       });
-      
+
       toast({
-        title: 'CSV Export Successful',
-        description: 'Trial Balance has been downloaded as CSV',
+        title: t('reports.csvExportSuccess'),
+        description: t('reports.messages.balanceSheetDownloadedCSV'), // Reusing similar message or add specific if needed
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error: any) {
       toast({
-        title: 'CSV Export Failed',
-        description: error.message || 'Failed to export CSV',
+        title: t('reports.csvExportFailedTitle'),
+        description: error.message || t('reports.csvExportError'),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -216,26 +220,26 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
     }
 
     setExportingPDF(true);
-    
+
     try {
       exportAndDownloadTrialBalancePDF(trialBalanceData, {
         companyName,
         includeAccountDetails,
         filename: `trial_balance_${asOfDate}.pdf`
       });
-      
+
       toast({
-        title: 'PDF Export Successful',
-        description: 'Trial Balance has been downloaded as PDF',
+        title: t('reports.pdfExportSuccess'),
+        description: t('reports.messages.balanceSheetDownloadedPDF'), // Reusing similar message or add specific if needed
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error: any) {
       toast({
-        title: 'PDF Export Failed',
-        description: error.message || 'Failed to export PDF',
+        title: t('reports.pdfExportFailedTitle'),
+        description: error.message || t('reports.pdfExportError'),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -253,13 +257,13 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
           <CardHeader pb={3}>
             <HStack justify="space-between">
               <HStack>
-                <Icon as={FiBarChart3} color="purple.500" boxSize={6} />
+                <Icon as={FiBarChart} color="purple.500" boxSize={6} />
                 <VStack align="start" spacing={0}>
                   <Text fontSize="xl" fontWeight="bold" color={headingColor}>
-                    Enhanced Trial Balance Report
+                    {t('reports.trialBalance.title')}
                   </Text>
                   <Text fontSize="sm" color={descriptionColor}>
-                    Real-time SSOT integration with advanced export features
+                    {t('reports.trialBalance.ssotIntegrationDesc') || 'Real-time SSOT integration with advanced export features'}
                   </Text>
                 </VStack>
               </HStack>
@@ -276,29 +280,29 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
               {/* Configuration Section */}
               <Box bg={useColorModeValue('gray.50', 'gray.700')} p={4} borderRadius="md">
                 <Text fontSize="md" fontWeight="semibold" mb={3} color={headingColor}>
-                  Report Configuration
+                  {t('reports.common.configuration')}
                 </Text>
                 <SimpleGrid columns={[1, 2, 3]} spacing={4}>
                   <FormControl>
-                    <FormLabel fontSize="sm">As of Date</FormLabel>
-                    <Input 
-                      type="date" 
-                      value={asOfDate} 
+                    <FormLabel fontSize="sm">{t('reports.common.asOfDate')}</FormLabel>
+                    <Input
+                      type="date"
+                      value={asOfDate}
                       onChange={(e) => setAsOfDate(e.target.value)}
                       size="sm"
                     />
                   </FormControl>
                   <FormControl>
-                    <FormLabel fontSize="sm">Company Name</FormLabel>
-                    <Input 
-                      value={companyName} 
+                    <FormLabel fontSize="sm">{t('reports.common.companyName')}</FormLabel>
+                    <Input
+                      value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
                       placeholder="Company Name"
                       size="sm"
                     />
                   </FormControl>
                   <FormControl>
-                    <FormLabel fontSize="sm">Include Account Details</FormLabel>
+                    <FormLabel fontSize="sm">{t('reports.common.includeAccountDetails')}</FormLabel>
                     <Switch
                       isChecked={includeAccountDetails}
                       onChange={(e) => setIncludeAccountDetails(e.target.checked)}
@@ -316,12 +320,12 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                     leftIcon={<FiRefreshCw />}
                     onClick={generateTrialBalanceReport}
                     isLoading={loading}
-                    loadingText="Generating..."
+                    loadingText={t('common.generating') || 'Generating...'}
                     size="md"
                   >
-                    Generate Report
+                    {t('reports.generateReport') || 'Generate Report'}
                   </Button>
-                  
+
                   {trialBalanceData && (
                     <Button
                       variant="outline"
@@ -329,7 +333,7 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                       onClick={onExportModalOpen}
                       size="md"
                     >
-                      Export Options
+                      {t('reports.exportOptions')}
                     </Button>
                   )}
                 </HStack>
@@ -343,13 +347,13 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                         leftIcon={<FiFileText />}
                         onClick={handleExportCSV}
                         isLoading={exportingCSV}
-                        loadingText="Exporting..."
+                        loadingText={t('reports.exporting') || "Exporting..."}
                         size="sm"
                       >
                         CSV
                       </Button>
                     </Tooltip>
-                    
+
                     <Tooltip label="Export as PDF file">
                       <Button
                         colorScheme="red"
@@ -357,7 +361,7 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                         leftIcon={<FiFilePlus />}
                         onClick={handleExportPDF}
                         isLoading={exportingPDF}
-                        loadingText="Exporting..."
+                        loadingText={t('reports.exporting') || "Exporting..."}
                         size="sm"
                       >
                         PDF
@@ -378,10 +382,10 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                 <Spinner size="xl" thickness="4px" speed="0.65s" color="purple.500" />
                 <VStack spacing={2}>
                   <Text fontSize="lg" fontWeight="medium" color={headingColor}>
-                    Generating Trial Balance
+                    {t('reports.generatingReport')}
                   </Text>
                   <Text fontSize="sm" color={descriptionColor}>
-                    Fetching real-time data from SSOT journal system...
+                    {t('reports.modal.analyzingFinancialPosition')}
                   </Text>
                 </VStack>
               </VStack>
@@ -394,7 +398,7 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
           <Alert status="error" borderRadius="md">
             <AlertIcon />
             <VStack align="start" spacing={2} flex="1">
-              <AlertTitle>Error generating Trial Balance</AlertTitle>
+              <AlertTitle>{t('reports.errorGeneratingReport')}</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </VStack>
             <Button
@@ -420,10 +424,10 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                     {trialBalanceData.company?.name || companyName}
                   </Text>
                   <Text fontSize="lg" fontWeight="semibold">
-                    Trial Balance
+                    {t('reports.trialBalance.title')}
                   </Text>
                   <Text fontSize="md" color={descriptionColor}>
-                    As of: {new Date(trialBalanceData.as_of_date).toLocaleDateString('id-ID')}
+                    {t('reports.common.asOfDate')}: {new Date(trialBalanceData.as_of_date).toLocaleDateString('id-ID')}
                   </Text>
                   <Badge
                     colorScheme={trialBalanceData.is_balanced ? 'green' : 'red'}
@@ -434,12 +438,12 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                     {trialBalanceData.is_balanced ? (
                       <>
                         <Icon as={FiCheckCircle} mr={1} />
-                        Balanced ✓
+                        {t('reports.trialBalance.balanced')} ✓
                       </>
                     ) : (
                       <>
                         <Icon as={FiAlertTriangle} mr={1} />
-                        Not Balanced (Diff: {formatCurrency(trialBalanceData.difference)})
+                        {t('reports.trialBalance.notBalanced')} (Diff: {formatCurrency(trialBalanceData.difference)})
                       </>
                     )}
                   </Badge>
@@ -452,18 +456,18 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
               <Card bg="green.50" border="1px" borderColor="green.200">
                 <CardBody textAlign="center">
                   <VStack spacing={1}>
-                    <Text fontSize="sm" color="green.600">Total Debits</Text>
+                    <Text fontSize="sm" color="green.600">{t('reports.trialBalance.totalDebits')}</Text>
                     <Text fontSize="2xl" fontWeight="bold" color="green.700">
                       {formatCurrency(trialBalanceData.total_debits || 0)}
                     </Text>
                   </VStack>
                 </CardBody>
               </Card>
-              
+
               <Card bg="orange.50" border="1px" borderColor="orange.200">
                 <CardBody textAlign="center">
                   <VStack spacing={1}>
-                    <Text fontSize="sm" color="orange.600">Total Credits</Text>
+                    <Text fontSize="sm" color="orange.600">{t('reports.trialBalance.totalCredits')}</Text>
                     <Text fontSize="2xl" fontWeight="bold" color="orange.700">
                       {formatCurrency(trialBalanceData.total_credits || 0)}
                     </Text>
@@ -477,24 +481,24 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
               <VStack spacing={4} align="stretch">
                 <Divider />
                 <Text fontSize="lg" fontWeight="bold" color={headingColor}>
-                  Account Details
+                  {t('reports.trialBalance.accountDetails') || t('reports.accountDetails')}
                 </Text>
 
                 <Card bg={cardBg} border="1px" borderColor={borderColor}>
                   <CardHeader pb={2}>
                     <Text fontSize="md" fontWeight="bold" color="purple.600">
-                      TRIAL BALANCE ACCOUNTS
+                      {t('reports.trialBalance.accounts').toUpperCase()}
                     </Text>
                   </CardHeader>
                   <CardBody pt={0}>
                     <Table size="sm" variant="simple">
                       <Thead>
                         <Tr>
-                          <Th>Account Code</Th>
-                          <Th>Account Name</Th>
-                          <Th>Type</Th>
-                          <Th isNumeric>Debit</Th>
-                          <Th isNumeric>Credit</Th>
+                          <Th>{t('reports.trialBalance.accountCode')}</Th>
+                          <Th>{t('reports.trialBalance.accountName')}</Th>
+                          <Th>{t('reports.trialBalance.accountType')}</Th>
+                          <Th isNumeric>{t('reports.trialBalance.debit')}</Th>
+                          <Th isNumeric>{t('reports.trialBalance.credit')}</Th>
                         </Tr>
                       </Thead>
                       <Tbody>
@@ -507,10 +511,10 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                                 size="sm"
                                 colorScheme={
                                   account.account_type === 'Asset' ? 'green' :
-                                  account.account_type === 'Liability' ? 'orange' :
-                                  account.account_type === 'Equity' ? 'blue' :
-                                  account.account_type === 'Revenue' ? 'purple' :
-                                  account.account_type === 'Expense' ? 'red' : 'gray'
+                                    account.account_type === 'Liability' ? 'orange' :
+                                      account.account_type === 'Equity' ? 'blue' :
+                                        account.account_type === 'Revenue' ? 'purple' :
+                                          account.account_type === 'Expense' ? 'red' : 'gray'
                                 }
                               >
                                 {account.account_type}
@@ -524,10 +528,10 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                             </Td>
                           </Tr>
                         ))}
-                        
+
                         {/* Total Row */}
                         <Tr bg="gray.100" fontWeight="bold">
-                          <Td colSpan={3}>TOTAL</Td>
+                          <Td colSpan={3}>{t('reports.modal.total').toUpperCase()}</Td>
                           <Td isNumeric fontWeight="bold">
                             {formatCurrency(trialBalanceData.total_debits || 0)}
                           </Td>
@@ -546,11 +550,9 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
             <Alert status="info" borderRadius="md">
               <AlertIcon />
               <Box>
-                <AlertTitle>Export Ready!</AlertTitle>
+                <AlertTitle>{t('reports.exportReady')}</AlertTitle>
                 <AlertDescription>
-                  Your Trial Balance is ready for export. Use the CSV button for spreadsheet analysis 
-                  or PDF button for professional reporting. Both formats include all account details 
-                  and are optimized for printing and sharing.
+                  {t('reports.exportReadyDesc')}
                 </AlertDescription>
               </Box>
             </Alert>
@@ -567,17 +569,17 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
           <ModalBody>
             <VStack spacing={4} align="stretch">
               <FormControl>
-                <FormLabel>Company Name</FormLabel>
-                <Input 
-                  value={companyName} 
+                <FormLabel>{t('reports.common.companyName')}</FormLabel>
+                <Input
+                  value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Company Name for Export"
+                  placeholder={t('reports.companyNamePlaceholder')}
                 />
               </FormControl>
-              
+
               <FormControl>
                 <HStack justify="space-between">
-                  <FormLabel mb={0}>Include Account Details</FormLabel>
+                  <FormLabel mb={0}>{t('reports.includeAccountDetails')}</FormLabel>
                   <Switch
                     isChecked={includeAccountDetails}
                     onChange={(e) => setIncludeAccountDetails(e.target.checked)}
@@ -585,12 +587,12 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                   />
                 </HStack>
                 <Text fontSize="sm" color={descriptionColor}>
-                  Include individual account breakdowns in the export
+                  {t('reports.includeAccountDetailsDesc')}
                 </Text>
               </FormControl>
 
               <VStack spacing={2} align="stretch">
-                <Text fontSize="sm" fontWeight="semibold">Export Formats:</Text>
+                <Text fontSize="sm" fontWeight="semibold">{t('reports.exportFormats')}</Text>
                 <HStack spacing={3}>
                   <Button
                     flex={1}
@@ -600,7 +602,7 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                     isLoading={exportingCSV}
                     loadingText="Exporting..."
                   >
-                    Export CSV
+                    {t('reports.exportCSV')}
                   </Button>
                   <Button
                     flex={1}
@@ -610,7 +612,7 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                     isLoading={exportingPDF}
                     loadingText="Exporting..."
                   >
-                    Export PDF
+                    {t('reports.exportPDF')}
                   </Button>
                 </HStack>
                 <Text fontSize="xs" color={descriptionColor} textAlign="center">

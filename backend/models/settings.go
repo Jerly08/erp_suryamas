@@ -5,6 +5,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// Company Types
+const (
+	CompanyTypeService       = "SERVICE"
+	CompanyTypeTrading       = "TRADING"
+	CompanyTypeManufacturing = "MANUFACTURING"
+)
+
 // Settings represents system-wide configuration
 type Settings struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
@@ -33,6 +40,10 @@ type Settings struct {
 	ThousandSeparator string `json:"thousand_separator" gorm:"default:'.'"`
 	DecimalSeparator  string `json:"decimal_separator" gorm:"default:','"`
 	DecimalPlaces     int    `json:"decimal_places" gorm:"default:2"`
+	
+	// Company Type (Standard COA)
+	CompanyType string `json:"company_type" gorm:"size:20;default:null"` // SERVICE, TRADING, MANUFACTURING
+
 	
 	// Invoice/Document Prefix Settings
 	InvoicePrefix      string `json:"invoice_prefix" gorm:"default:'INV'"`
@@ -111,6 +122,8 @@ type SettingsResponse struct {
 	JournalNextNumber      int    `json:"journal_next_number"`
 	RequireJournalApproval bool   `json:"require_journal_approval"`
 	
+	// Company Type
+	CompanyType string `json:"company_type"`
 }
 
 // ToResponse converts Settings to SettingsResponse
@@ -135,6 +148,7 @@ func (s *Settings) ToResponse() SettingsResponse {
 		ThousandSeparator:  s.ThousandSeparator,
 		DecimalSeparator:   s.DecimalSeparator,
 		DecimalPlaces:      s.DecimalPlaces,
+		CompanyType:        s.CompanyType, // Added field
 		InvoicePrefix:      s.InvoicePrefix,
 		SalesPrefix:        s.SalesPrefix,
 		QuotePrefix:        s.QuotePrefix,
@@ -150,3 +164,4 @@ func (s *Settings) ToResponse() SettingsResponse {
 		RequireJournalApproval: s.RequireJournalApproval,
 	}
 }
+

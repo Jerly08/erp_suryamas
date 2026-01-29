@@ -49,12 +49,12 @@ import {
   Stack,
   IconButton
 } from '@chakra-ui/react';
-import { 
-  FiSave, 
-  FiX, 
-  FiSettings, 
-  FiDollarSign, 
-  FiShoppingCart, 
+import {
+  FiSave,
+  FiX,
+  FiSettings,
+  FiDollarSign,
+  FiShoppingCart,
   FiCreditCard,
   FiInfo,
   FiRefreshCw,
@@ -81,14 +81,14 @@ interface TaxAccountSettings {
   sales_bank_account: AccountOption;
   sales_revenue_account: AccountOption;
   sales_output_vat_account: AccountOption;
-  
+
   // Purchase accounts
   purchase_payable_account: AccountOption;
   purchase_cash_account: AccountOption;
   purchase_bank_account: AccountOption;
   purchase_input_vat_account: AccountOption;
   purchase_expense_account: AccountOption;
-  
+
   // Optional accounts
   withholding_tax21_account?: AccountOption;
   withholding_tax23_account?: AccountOption;
@@ -96,7 +96,7 @@ interface TaxAccountSettings {
   tax_payable_account?: AccountOption;
   inventory_account?: AccountOption;
   cogs_account?: AccountOption;
-  
+
   is_active: boolean;
   apply_to_all_companies: boolean;
   notes: string;
@@ -113,25 +113,25 @@ interface TaxConfig {
   id?: number;
   config_name: string;
   description: string;
-  
+
   // Sales tax rates
   sales_ppn_rate: number;
   sales_pph21_rate: number;
   sales_pph23_rate: number;
   sales_other_tax_rate: number;
-  
+
   // Purchase tax rates
   purchase_ppn_rate: number;
   purchase_pph21_rate: number;
   purchase_pph23_rate: number;
   purchase_pph25_rate: number;
   purchase_other_tax_rate: number;
-  
+
   // Additional settings
   shipping_taxable: boolean;
   discount_before_tax: boolean;
   rounding_method: string;
-  
+
   is_active: boolean;
   is_default: boolean;
   notes: string;
@@ -183,7 +183,7 @@ const TaxAccountSettingsPage: React.FC = () => {
   const { user } = useAuth();
   const { t } = useTranslation();
   const toast = useToast();
-  
+
   const [settings, setSettings] = useState<TaxAccountSettings | null>(null);
   const [availableAccounts, setAvailableAccounts] = useState<AccountOption[]>([]);
   const [suggestions, setSuggestions] = useState<AccountSuggestions | null>(null);
@@ -191,7 +191,7 @@ const TaxAccountSettingsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
-  const [validationErrors, setValidationErrors] = useState<{[key: string]: string}>({});
+  const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
 
   // Form state
   const [formData, setFormData] = useState<any>({});
@@ -231,7 +231,7 @@ const TaxAccountSettingsPage: React.FC = () => {
       if (settingsRes.data.success) {
         const settingsData = settingsRes.data.data;
         setSettings(settingsData);
-        
+
         // Helper function to parse account JSON strings
         const parseAccount = (accountData: any) => {
           if (!accountData) return null;
@@ -245,7 +245,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           }
           return accountData; // Already an object
         };
-        
+
         // Transform the settings data to match form field names
         const formDataTransformed = {
           ...settingsData,
@@ -266,21 +266,21 @@ const TaxAccountSettingsPage: React.FC = () => {
           tax_payable_account: parseAccount(settingsData.tax_payable_account),
           inventory_account: parseAccount(settingsData.inventory_account),
           cogs_account: parseAccount(settingsData.cogs_account),
-          
+
           // Sales account IDs
           sales_receivable_account_id: parseAccount(settingsData.sales_receivable_account)?.id,
           sales_cash_account_id: parseAccount(settingsData.sales_cash_account)?.id,
           sales_bank_account_id: parseAccount(settingsData.sales_bank_account)?.id,
           sales_revenue_account_id: parseAccount(settingsData.sales_revenue_account)?.id,
           sales_output_vat_account_id: parseAccount(settingsData.sales_output_vat_account)?.id,
-          
+
           // Purchase account IDs
           purchase_payable_account_id: parseAccount(settingsData.purchase_payable_account)?.id,
           purchase_cash_account_id: parseAccount(settingsData.purchase_cash_account)?.id,
           purchase_bank_account_id: parseAccount(settingsData.purchase_bank_account)?.id,
           purchase_input_vat_account_id: parseAccount(settingsData.purchase_input_vat_account)?.id,
           purchase_expense_account_id: parseAccount(settingsData.purchase_expense_account)?.id,
-          
+
           // Optional account IDs
           withholding_tax21_account_id: parseAccount(settingsData.withholding_tax21_account)?.id,
           withholding_tax23_account_id: parseAccount(settingsData.withholding_tax23_account)?.id,
@@ -289,7 +289,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           inventory_account_id: parseAccount(settingsData.inventory_account)?.id,
           cogs_account_id: parseAccount(settingsData.cogs_account)?.id
         };
-        
+
         setFormData(formDataTransformed);
       }
 
@@ -318,7 +318,7 @@ const TaxAccountSettingsPage: React.FC = () => {
   const handleAccountChange = (fieldName: string, accountId: string) => {
     const accountIdNum = parseInt(accountId);
     const selectedAccount = availableAccounts.find(acc => acc.id === accountIdNum);
-    
+
     if (selectedAccount) {
       setFormData((prev: any) => ({
         ...prev,
@@ -326,7 +326,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         [`${fieldName}_account`]: selectedAccount
       }));
       setHasChanges(true);
-      
+
       // Clear validation error for this field
       setValidationErrors(prev => ({
         ...prev,
@@ -336,15 +336,15 @@ const TaxAccountSettingsPage: React.FC = () => {
   };
 
   const validateForm = () => {
-    const errors: {[key: string]: string} = {};
-    
+    const errors: { [key: string]: string } = {};
+
     // NOTE: This page only shows OPTIONAL withholding tax and inventory accounts
     // Sales and purchase accounts are configured elsewhere and already exist in settings
     // So we don't validate them here - they should already be set
-    
+
     // No required fields to validate on this page
     // All fields (PPh 21, 23, 25, Tax Payable, Inventory, COGS) are optional
-    
+
     setValidationErrors(errors);
     return true; // Always valid since all fields are optional
   };
@@ -371,14 +371,14 @@ const TaxAccountSettingsPage: React.FC = () => {
         sales_bank_account_id: formData.sales_bank_account_id || settings?.sales_bank_account?.id,
         sales_revenue_account_id: formData.sales_revenue_account_id || settings?.sales_revenue_account?.id,
         sales_output_vat_account_id: formData.sales_output_vat_account_id || settings?.sales_output_vat_account?.id,
-        
+
         // Purchase accounts (preserve existing values from settings)
         purchase_payable_account_id: formData.purchase_payable_account_id || settings?.purchase_payable_account?.id,
         purchase_cash_account_id: formData.purchase_cash_account_id || settings?.purchase_cash_account?.id,
         purchase_bank_account_id: formData.purchase_bank_account_id || settings?.purchase_bank_account?.id,
         purchase_input_vat_account_id: formData.purchase_input_vat_account_id || settings?.purchase_input_vat_account?.id,
         purchase_expense_account_id: formData.purchase_expense_account_id || settings?.purchase_expense_account?.id,
-        
+
         // Optional accounts
         withholding_tax21_account_id: formData.withholding_tax21_account_id || null,
         withholding_tax23_account_id: formData.withholding_tax23_account_id || null,
@@ -386,7 +386,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         tax_payable_account_id: formData.tax_payable_account_id || null,
         inventory_account_id: formData.inventory_account_id || null,
         cogs_account_id: formData.cogs_account_id || null,
-        
+
         apply_to_all_companies: true,
         notes: formData.notes || ''
       };
@@ -404,7 +404,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         setSettings(response.data.data);
         setFormData(response.data.data);
         setHasChanges(false);
-        
+
         toast({
           title: 'Success',
           description: 'Tax account settings saved successfully',
@@ -441,7 +441,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         }
         return accountData; // Already an object
       };
-      
+
       // Transform the settings data to match form field names
       const formDataTransformed = {
         ...settings,
@@ -462,21 +462,21 @@ const TaxAccountSettingsPage: React.FC = () => {
         tax_payable_account: parseAccount(settings.tax_payable_account),
         inventory_account: parseAccount(settings.inventory_account),
         cogs_account: parseAccount(settings.cogs_account),
-        
+
         // Sales account IDs
         sales_receivable_account_id: parseAccount(settings.sales_receivable_account)?.id,
         sales_cash_account_id: parseAccount(settings.sales_cash_account)?.id,
         sales_bank_account_id: parseAccount(settings.sales_bank_account)?.id,
         sales_revenue_account_id: parseAccount(settings.sales_revenue_account)?.id,
         sales_output_vat_account_id: parseAccount(settings.sales_output_vat_account)?.id,
-        
+
         // Purchase account IDs
         purchase_payable_account_id: parseAccount(settings.purchase_payable_account)?.id,
         purchase_cash_account_id: parseAccount(settings.purchase_cash_account)?.id,
         purchase_bank_account_id: parseAccount(settings.purchase_bank_account)?.id,
         purchase_input_vat_account_id: parseAccount(settings.purchase_input_vat_account)?.id,
         purchase_expense_account_id: parseAccount(settings.purchase_expense_account)?.id,
-        
+
         // Optional account IDs
         withholding_tax21_account_id: parseAccount(settings.withholding_tax21_account)?.id,
         withholding_tax23_account_id: parseAccount(settings.withholding_tax23_account)?.id,
@@ -485,7 +485,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         inventory_account_id: parseAccount(settings.inventory_account)?.id,
         cogs_account_id: parseAccount(settings.cogs_account)?.id
       };
-      
+
       setFormData(formDataTransformed);
     } else {
       setFormData({});
@@ -507,15 +507,15 @@ const TaxAccountSettingsPage: React.FC = () => {
 
   const getAccountOptions = (accountTypes: string[] = [], categories: string[] = []) => {
     let filtered = availableAccounts;
-    
+
     if (accountTypes.length > 0) {
       filtered = filtered.filter(acc => accountTypes.includes(acc.type));
     }
-    
+
     if (categories.length > 0) {
       filtered = filtered.filter(acc => categories.includes(acc.category));
     }
-    
+
     return filtered.sort((a, b) => a.code.localeCompare(b.code));
   };
 
@@ -532,21 +532,21 @@ const TaxAccountSettingsPage: React.FC = () => {
     const currentAccount = formData[`${fieldName}_account`];
     const hasError = validationErrors[fieldName];
     const options = getAccountOptions(accountTypes, categories);
-    
+
     // Check if critical from field name OR from selected account's database flag
     const isCritical = isCriticalAccount(fieldName);
     const selectedAccount = availableAccounts.find(acc => acc.id === currentValue);
     const isSelectedCritical = selectedAccount?.is_system_critical === true;
-    
+
     return (
       <FormControl isRequired={isRequired} isInvalid={!!hasError}>
         <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
           <HStack>
             <Text>{label}</Text>
             {tooltipInfo && (
-              <Tooltip 
-                label={tooltipInfo} 
-                fontSize="xs" 
+              <Tooltip
+                label={tooltipInfo}
+                fontSize="xs"
                 placement="top"
                 hasArrow
                 bg="blue.600"
@@ -599,7 +599,7 @@ const TaxAccountSettingsPage: React.FC = () => {
             <HStack spacing={1}>
               <Icon as={FiInfo} />
               <Text>
-                🔒 This account is system critical and locked to ensure data integrity. 
+                🔒 This account is system critical and locked to ensure data integrity.
                 Changing it would break journal entries and reports.
                 {isSelectedCritical && ' (Locked in database)'}
               </Text>
@@ -636,12 +636,12 @@ const TaxAccountSettingsPage: React.FC = () => {
           {/* Header */}
           <HStack justify="space-between" width="full">
             <VStack alignItems="start" spacing={2}>
-              <Heading as="h1" size="xl">Tax Account Settings</Heading>
+              <Heading as="h1" size="xl">{t('settings.taxAccounts.title')}</Heading>
               <Text color="gray.600" fontSize="sm">
-                Configure VAT/PPN accounts, withholding tax accounts (PPh 21, 23, 25), and other tax obligations
+                {t('settings.taxAccounts.subtitle')}
               </Text>
             </VStack>
-            
+
             <ButtonGroup spacing={2}>
               {hasChanges && (
                 <>
@@ -650,10 +650,10 @@ const TaxAccountSettingsPage: React.FC = () => {
                     leftIcon={<FiSave />}
                     onClick={handleSave}
                     isLoading={saving}
-                    loadingText="Saving..."
+                    loadingText={t('common.saving')}
                     size="sm"
                   >
-                    Save Changes
+                    {t('common.saveChanges')}
                   </Button>
                   <Button
                     variant="outline"
@@ -662,7 +662,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                     isDisabled={saving}
                     size="sm"
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                 </>
               )}
@@ -672,7 +672,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                 onClick={handleRefresh}
                 size="sm"
               >
-                Refresh
+                {t('common.refresh')}
               </Button>
               <Button
                 variant="outline"
@@ -680,7 +680,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                 onClick={onSuggestionsOpen}
                 size="sm"
               >
-                Suggestions
+                {t('common.suggestions') || "Suggestions"}
               </Button>
             </ButtonGroup>
           </HStack>
@@ -690,14 +690,14 @@ const TaxAccountSettingsPage: React.FC = () => {
             <Alert status="success" variant="left-accent">
               <AlertIcon />
               <Box>
-                <AlertTitle>Current Configuration Active</AlertTitle>
+                <AlertTitle>{t('settings.taxAccounts.currentConfig')}</AlertTitle>
                 <AlertDescription>
-                  Last updated: {new Date(settings.updated_at).toLocaleString()} by {settings.updated_by_user.name}
+                  {t('settings.lastUpdated')}: {new Date(settings.updated_at).toLocaleString()} {t('common.by')} {settings.updated_by_user.name}
                 </AlertDescription>
               </Box>
             </Alert>
           )}
-          
+
           {error && (
             <Alert status="error" width="full">
               <AlertIcon />
@@ -714,11 +714,11 @@ const TaxAccountSettingsPage: React.FC = () => {
                 <HStack spacing={3} justify="space-between">
                   <HStack spacing={3}>
                     <Icon as={FiCreditCard} boxSize={5} color={purpleColor} />
-                    <Heading size="md">VAT/PPN Accounts</Heading>
-                    <Badge colorScheme="red" size="sm">CRITICAL - LOCKED</Badge>
+                    <Heading size="md">{t('settings.taxAccounts.vatAccounts')}</Heading>
+                    <Badge colorScheme="red" size="sm">{t('settings.taxAccounts.status.criticalLocked')}</Badge>
                   </HStack>
-                  <Tooltip 
-                    label="VAT/PPN accounts are critical for tax compliance (DJP). These accounts are locked to ensure data integrity."
+                  <Tooltip
+                    label={t('settings.taxAccounts.tooltips.vat')}
                     placement="left"
                     hasArrow
                   >
@@ -736,10 +736,9 @@ const TaxAccountSettingsPage: React.FC = () => {
                 <Alert status="info" mb={4} variant="left-accent">
                   <AlertIcon />
                   <Box>
-                    <AlertTitle fontSize="sm">Tax Remittance (Setor PPN)</AlertTitle>
+                    <AlertTitle fontSize="sm">{t('settings.taxAccounts.taxRemittance')}</AlertTitle>
                     <AlertDescription fontSize="xs">
-                      These accounts are used to calculate PPN Terutang = PPN Keluaran - PPN Masukan when you make tax remittance payments. 
-                      These settings are automatically configured and locked by the system for compliance.
+                      {t('settings.taxAccounts.descriptions.taxRemittance')}
                     </AlertDescription>
                   </Box>
                 </Alert>
@@ -748,17 +747,17 @@ const TaxAccountSettingsPage: React.FC = () => {
                     <FormControl isReadOnly>
                       <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
                         <HStack>
-                          <Text>Purchase Input VAT (PPN Masukan)</Text>
-                          <Badge colorScheme="red" size="sm">LOCKED</Badge>
+                          <Text>{t('settings.taxAccounts.vatInput')}</Text>
+                          <Badge colorScheme="red" size="sm">{t('settings.taxAccounts.status.locked')}</Badge>
                           <Icon as={FiLock} color="red.500" boxSize={3} />
                         </HStack>
                       </FormLabel>
                       {settings?.purchase_input_vat_account ? (
-                        <Box 
-                          p={3} 
-                          bg="gray.100" 
-                          borderRadius="md" 
-                          borderWidth="1px" 
+                        <Box
+                          p={3}
+                          bg="gray.100"
+                          borderRadius="md"
+                          borderWidth="1px"
                           borderColor="gray.300"
                         >
                           <HStack spacing={2}>
@@ -768,38 +767,38 @@ const TaxAccountSettingsPage: React.FC = () => {
                             </Text>
                           </HStack>
                           <Text fontSize="xs" color="gray.600" mt={1}>
-                            {settings.purchase_input_vat_account.type} • Hardcoded by system
+                            {settings.purchase_input_vat_account.type} • {t('settings.taxAccounts.messages.hardcoded')}
                           </Text>
                         </Box>
                       ) : (
                         <Box p={3} bg="red.50" borderRadius="md" borderWidth="1px" borderColor="red.200">
                           <HStack spacing={2}>
                             <Icon as={FiInfo} color="red.500" />
-                            <Text fontSize="sm" color="red.600">Account 1240 not found in database</Text>
+                            <Text fontSize="sm" color="red.600">{t('settings.taxAccounts.errors.accountNotFound', { code: '1240' })}</Text>
                           </HStack>
                         </Box>
                       )}
                       <FormHelperText fontSize="xs" color="gray.500">
-                        PPN Masukan (Asset account) tracks VAT paid on purchases that can be credited when remitting tax.
+                        {t('settings.taxAccounts.descriptions.vatInput')}
                       </FormHelperText>
                     </FormControl>
                   </Box>
-                  
+
                   <Box>
                     <FormControl isReadOnly>
                       <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
                         <HStack>
-                          <Text>Sales Output VAT (PPN Keluaran)</Text>
-                          <Badge colorScheme="red" size="sm">LOCKED</Badge>
+                          <Text>{t('settings.taxAccounts.vatOutput')}</Text>
+                          <Badge colorScheme="red" size="sm">{t('settings.taxAccounts.status.locked')}</Badge>
                           <Icon as={FiLock} color="red.500" boxSize={3} />
                         </HStack>
                       </FormLabel>
                       {settings?.sales_output_vat_account ? (
-                        <Box 
-                          p={3} 
-                          bg="gray.100" 
-                          borderRadius="md" 
-                          borderWidth="1px" 
+                        <Box
+                          p={3}
+                          bg="gray.100"
+                          borderRadius="md"
+                          borderWidth="1px"
                           borderColor="gray.300"
                         >
                           <HStack spacing={2}>
@@ -809,37 +808,37 @@ const TaxAccountSettingsPage: React.FC = () => {
                             </Text>
                           </HStack>
                           <Text fontSize="xs" color="gray.600" mt={1}>
-                            {settings.sales_output_vat_account.type} • Hardcoded by system
+                            {settings.sales_output_vat_account.type} • {t('settings.taxAccounts.messages.hardcoded')}
                           </Text>
                         </Box>
                       ) : (
                         <Box p={3} bg="red.50" borderRadius="md" borderWidth="1px" borderColor="red.200">
                           <HStack spacing={2}>
                             <Icon as={FiInfo} color="red.500" />
-                            <Text fontSize="sm" color="red.600">Account 2103 not found in database</Text>
+                            <Text fontSize="sm" color="red.600">{t('settings.taxAccounts.errors.accountNotFound', { code: '2103' })}</Text>
                           </HStack>
                         </Box>
                       )}
                       <FormHelperText fontSize="xs" color="gray.500">
-                        PPN Keluaran (Liability account) tracks VAT collected from customers to be remitted to the government.
+                        {t('settings.taxAccounts.descriptions.vatOutput')}
                       </FormHelperText>
                     </FormControl>
                   </Box>
                 </SimpleGrid>
               </CardBody>
             </Card>
-            
+
             {/* Withholding Tax Accounts */}
             <Card mb={6}>
               <CardHeader>
                 <HStack spacing={3} justify="space-between">
                   <HStack spacing={3}>
                     <Icon as={FiDollarSign} boxSize={5} color={greenColor} />
-                    <Heading size="md">Withholding Tax Accounts</Heading>
-                    <Badge colorScheme="green" size="sm">Configurable</Badge>
+                    <Heading size="md">{t('settings.taxAccounts.withholdingTax')}</Heading>
+                    <Badge colorScheme="green" size="sm">{t('settings.taxAccounts.status.configurable')}</Badge>
                   </HStack>
-                  <Tooltip 
-                    label="Configure accounts for withholding taxes (PPh). These are optional and only used when you have withholding tax transactions."
+                  <Tooltip
+                    label={t('settings.taxAccounts.descriptions.withholdingTax')}
                     placement="left"
                     hasArrow
                   >
@@ -857,58 +856,58 @@ const TaxAccountSettingsPage: React.FC = () => {
                 <SimpleGrid columns={[1, 1, 2]} spacing={6}>
                   {renderAccountSelect(
                     'withholding_tax21',
-                    'PPh 21 Account',
+                    t('settings.taxAccounts.pph21.label'),
                     false,
                     ['ASSET'],
                     ['CURRENT_ASSET'],
-                    'For employee income tax withholding',
-                    'PPh 21 is withheld from employee salaries and services. Typically 2% for construction services, 5% for professionals. This account tracks prepaid tax that can offset your tax obligations.'
+                    t('settings.taxAccounts.pph21.desc'),
+                    t('settings.taxAccounts.pph21.tooltip')
                   )}
-                  
+
                   {renderAccountSelect(
                     'withholding_tax23',
-                    'PPh 23 Account',
+                    t('settings.taxAccounts.pph23.label'),
                     false,
                     ['ASSET'],
                     ['CURRENT_ASSET'],
-                    'For vendor service tax withholding',
-                    'PPh 23 is withheld from vendor payments for services, rent, royalties. Typically 2% for services, 15% for dividends/interest. Select the account where this prepaid tax will be recorded.'
+                    t('settings.taxAccounts.pph23.desc'),
+                    t('settings.taxAccounts.pph23.tooltip')
                   )}
-                  
+
                   {renderAccountSelect(
                     'withholding_tax25',
-                    'PPh 25 Account',
+                    t('settings.taxAccounts.pph25.label'),
                     false,
                     ['ASSET'],
                     ['CURRENT_ASSET'],
-                    'For installment tax payments',
-                    'PPh 25 is corporate income tax paid monthly in installments. This is an advance payment of annual tax. Configure this if you need to track monthly tax installment payments separately.'
+                    t('settings.taxAccounts.pph25.desc'),
+                    t('settings.taxAccounts.pph25.tooltip')
                   )}
-                  
+
                   {renderAccountSelect(
                     'tax_payable',
-                    'Tax Payable Account',
+                    t('settings.taxAccounts.taxPayable.label'),
                     false,
                     ['LIABILITY'],
                     ['CURRENT_LIABILITY'],
-                    'For other tax obligations',
-                    'Generic tax payable account for various tax obligations like property tax, vehicle tax, or other taxes not covered by specific accounts. This is a liability account.'
+                    t('settings.taxAccounts.taxPayable.desc'),
+                    t('settings.taxAccounts.taxPayable.tooltip')
                   )}
                 </SimpleGrid>
               </CardBody>
             </Card>
-            
+
             {/* Inventory & COGS Accounts */}
             <Card>
               <CardHeader>
                 <HStack spacing={3} justify="space-between">
                   <HStack spacing={3}>
                     <Icon as={FiShoppingCart} boxSize={5} color={blueColor} />
-                    <Heading size="md">Inventory & Cost Accounts</Heading>
-                    <Badge colorScheme="blue" size="sm">Configurable</Badge>
+                    <Heading size="md">{t('settings.taxAccounts.inventoryAccounts')}</Heading>
+                    <Badge colorScheme="blue" size="sm">{t('settings.taxAccounts.status.configurable')}</Badge>
                   </HStack>
-                  <Tooltip 
-                    label="Configure accounts for inventory tracking and cost of goods sold. These are used when recording COGS in sales transactions."
+                  <Tooltip
+                    label={t('settings.taxAccounts.descriptions.inventory')}
                     placement="left"
                     hasArrow
                   >
@@ -926,22 +925,22 @@ const TaxAccountSettingsPage: React.FC = () => {
                 <SimpleGrid columns={[1, 1, 2]} spacing={6}>
                   {renderAccountSelect(
                     'inventory',
-                    'Inventory Account',
+                    t('settings.taxAccounts.inventory.label'),
                     false,
                     ['ASSET'],
                     ['CURRENT_ASSET'],
-                    'For tracking inventory/stock value',
-                    'Main inventory asset account (typically code 1301). When you sell items, the cost is deducted from this account. If you have multiple inventory types, select your main inventory account here.'
+                    t('settings.taxAccounts.inventory.desc'),
+                    t('settings.taxAccounts.inventory.tooltip')
                   )}
-                  
+
                   {renderAccountSelect(
                     'cogs',
-                    'Cost of Goods Sold Account',
+                    t('settings.taxAccounts.cogs.label'),
                     false,
                     ['EXPENSE'],
                     ['COST_OF_GOODS_SOLD', 'OPERATING_EXPENSE'],
-                    'For recording cost of sold items',
-                    'COGS expense account (typically code 5101 - Harga Pokok Penjualan). When items are sold, the cost is recorded as an expense in this account. This directly affects your profit/loss calculations.'
+                    t('settings.taxAccounts.cogs.desc'),
+                    t('settings.taxAccounts.cogs.tooltip')
                   )}
                 </SimpleGrid>
               </CardBody>
@@ -1006,91 +1005,91 @@ const TaxAccountSettingsPage: React.FC = () => {
                     <Text fontSize="sm" fontWeight="bold" mb={3} color="green.600">Withholding Tax Accounts (Optional)</Text>
                     <SimpleGrid columns={[1, 2, 3]} spacing={6}>
                       <VStack spacing={2} alignItems="start">
-                    <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 21 (Employee Tax)</Text>
-                    {settings.withholding_tax21_account ? (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="green">Configured</Badge>
-                        <Text fontSize="sm">
-                          {settings.withholding_tax21_account?.code} - {settings.withholding_tax21_account?.name}
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 21 (Employee Tax)</Text>
+                        {settings.withholding_tax21_account ? (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="green">Configured</Badge>
+                            <Text fontSize="sm">
+                              {settings.withholding_tax21_account?.code} - {settings.withholding_tax21_account?.name}
+                            </Text>
+                          </HStack>
+                        ) : (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="gray">Not Set</Badge>
+                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                          </HStack>
+                        )}
+                      </VStack>
+
+                      <VStack spacing={2} alignItems="start">
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 23 (Vendor Tax)</Text>
+                        {settings.withholding_tax23_account ? (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="green">Configured</Badge>
+                            <Text fontSize="sm">
+                              {settings.withholding_tax23_account?.code} - {settings.withholding_tax23_account?.name}
+                            </Text>
+                          </HStack>
+                        ) : (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="gray">Not Set</Badge>
+                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                          </HStack>
+                        )}
+                      </VStack>
+
+                      <VStack spacing={2} alignItems="start">
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 25 (Installment Tax)</Text>
+                        {settings.withholding_tax25_account ? (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="green">Configured</Badge>
+                            <Text fontSize="sm">
+                              {settings.withholding_tax25_account?.code} - {settings.withholding_tax25_account?.name}
+                            </Text>
+                          </HStack>
+                        ) : (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="gray">Not Set</Badge>
+                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                          </HStack>
+                        )}
+                      </VStack>
+
+                      <VStack spacing={2} alignItems="start">
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">Tax Payable</Text>
+                        {settings.tax_payable_account ? (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="green">Configured</Badge>
+                            <Text fontSize="sm">
+                              {settings.tax_payable_account?.code} - {settings.tax_payable_account?.name}
+                            </Text>
+                          </HStack>
+                        ) : (
+                          <HStack spacing={2}>
+                            <Badge colorScheme="gray">Not Set</Badge>
+                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                          </HStack>
+                        )}
+                      </VStack>
+
+                      <VStack spacing={2} alignItems="start">
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">Configuration Status</Text>
+                        <Badge colorScheme={settings.is_active ? 'green' : 'gray'} fontSize="sm">
+                          {settings.is_active ? 'Active' : 'Inactive'}
+                        </Badge>
+                        <Text fontSize="xs" color="gray.500">
+                          Last updated: {new Date(settings.updated_at).toLocaleDateString()}
                         </Text>
-                      </HStack>
-                    ) : (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="gray">Not Set</Badge>
-                        <Text fontSize="xs" color="gray.500">Optional</Text>
-                      </HStack>
-                    )}
-                  </VStack>
+                      </VStack>
 
-                  <VStack spacing={2} alignItems="start">
-                    <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 23 (Vendor Tax)</Text>
-                    {settings.withholding_tax23_account ? (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="green">Configured</Badge>
-                        <Text fontSize="sm">
-                          {settings.withholding_tax23_account?.code} - {settings.withholding_tax23_account?.name}
+                      <VStack spacing={2} alignItems="start">
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">Updated By</Text>
+                        <Text fontSize="sm">{settings.updated_by_user?.name || 'System'}</Text>
+                        <Text fontSize="xs" color="gray.500">
+                          {new Date(settings.updated_at).toLocaleTimeString()}
                         </Text>
-                      </HStack>
-                    ) : (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="gray">Not Set</Badge>
-                        <Text fontSize="xs" color="gray.500">Optional</Text>
-                      </HStack>
-                    )}
-                  </VStack>
-
-                  <VStack spacing={2} alignItems="start">
-                    <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 25 (Installment Tax)</Text>
-                    {settings.withholding_tax25_account ? (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="green">Configured</Badge>
-                        <Text fontSize="sm">
-                          {settings.withholding_tax25_account?.code} - {settings.withholding_tax25_account?.name}
-                        </Text>
-                      </HStack>
-                    ) : (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="gray">Not Set</Badge>
-                        <Text fontSize="xs" color="gray.500">Optional</Text>
-                      </HStack>
-                    )}
-                  </VStack>
-
-                  <VStack spacing={2} alignItems="start">
-                    <Text fontSize="xs" color="gray.500" fontWeight="bold">Tax Payable</Text>
-                    {settings.tax_payable_account ? (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="green">Configured</Badge>
-                        <Text fontSize="sm">
-                          {settings.tax_payable_account?.code} - {settings.tax_payable_account?.name}
-                        </Text>
-                      </HStack>
-                    ) : (
-                      <HStack spacing={2}>
-                        <Badge colorScheme="gray">Not Set</Badge>
-                        <Text fontSize="xs" color="gray.500">Optional</Text>
-                      </HStack>
-                    )}
-                  </VStack>
-
-                  <VStack spacing={2} alignItems="start">
-                    <Text fontSize="xs" color="gray.500" fontWeight="bold">Configuration Status</Text>
-                    <Badge colorScheme={settings.is_active ? 'green' : 'gray'} fontSize="sm">
-                      {settings.is_active ? 'Active' : 'Inactive'}
-                    </Badge>
-                    <Text fontSize="xs" color="gray.500">
-                      Last updated: {new Date(settings.updated_at).toLocaleDateString()}
-                    </Text>
-                  </VStack>
-
-                  <VStack spacing={2} alignItems="start">
-                    <Text fontSize="xs" color="gray.500" fontWeight="bold">Updated By</Text>
-                    <Text fontSize="sm">{settings.updated_by_user?.name || 'System'}</Text>
-                    <Text fontSize="xs" color="gray.500">
-                      {new Date(settings.updated_at).toLocaleTimeString()}
-                    </Text>
-                  </VStack>
-                </SimpleGrid>
+                      </VStack>
+                    </SimpleGrid>
                   </Box>
                 </VStack>
               </CardBody>
@@ -1121,7 +1120,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                       </AlertDescription>
                     </Box>
                   </Alert>
-                  
+
                   <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
                     {Object.entries(suggestions.tax || {}).map(([key, suggestion]) => (
                       <Card key={key} size="sm" variant="outline" borderWidth="2px">
@@ -1174,7 +1173,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                       </Card>
                     ))}
                   </SimpleGrid>
-                  
+
                   <Alert status="warning" variant="left-accent">
                     <AlertIcon />
                     <Box>

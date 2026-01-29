@@ -52,12 +52,14 @@ import {
   Tooltip,
   Icon,
 } from '@chakra-ui/react';
+import { useTranslation } from '@/hooks/useTranslation';
 import { useForm, Controller, useWatch } from 'react-hook-form';
+
 import { FiCreditCard, FiDollarSign, FiCalendar, FiUser, FiFileText, FiInfo } from 'react-icons/fi';
-import paymentService, { 
-  PaymentCreateRequest, 
-  PaymentAllocation, 
-  BillAllocation 
+import paymentService, {
+  PaymentCreateRequest,
+  PaymentAllocation,
+  BillAllocation
 } from '@/services/paymentService';
 import { searchableSelectService } from '@/services/searchableSelectService';
 import cashbankService, { CashBank } from '@/services/cashbankService';
@@ -124,6 +126,7 @@ const PaymentAllocationTable: React.FC<{
   maxAmount: number;
   type: 'receivable' | 'payable';
 }> = ({ items, allocations, onAllocationsChange, maxAmount, type }) => {
+  const { t } = useTranslation();
   const [tempAllocations, setTempAllocations] = useState<Record<number, number>>({});
 
   // Color mode values
@@ -137,8 +140,8 @@ const PaymentAllocationTable: React.FC<{
     // Initialize temp allocations from props
     const temp: Record<number, number> = {};
     allocations.forEach(allocation => {
-      const id = type === 'receivable' 
-        ? (allocation as PaymentAllocation).invoice_id 
+      const id = type === 'receivable'
+        ? (allocation as PaymentAllocation).invoice_id
         : (allocation as BillAllocation).bill_id;
       temp[id] = allocation.amount;
     });
@@ -222,18 +225,18 @@ const PaymentAllocationTable: React.FC<{
   return (
     <Box>
       <HStack justify="space-between" mb={4}>
-        <Text fontWeight="bold">Payment Allocation</Text>
+        <Text fontWeight="bold">{t('payments.form.allocation')}</Text>
         <HStack>
           <Text fontSize="sm" color={textColor}>
-            Allocated: {paymentService.formatCurrency(getTotalAllocated())} / {paymentService.formatCurrency(maxAmount)}
+            {t('payments.form.allocationTable.total')}: {paymentService.formatCurrency(getTotalAllocated())} / {paymentService.formatCurrency(maxAmount)}
           </Text>
           <Button size="xs" onClick={autoAllocatePayment} variant="outline">
-            Auto Allocate
+            {t('payments.form.autoAllocate')}
           </Button>
         </HStack>
       </HStack>
 
-      <TableContainer 
+      <TableContainer
         overflowY="auto"
         maxH="400px"
         css={{
@@ -260,12 +263,12 @@ const PaymentAllocationTable: React.FC<{
         <Table size="sm">
           <Thead>
             <Tr>
-              <Th>Document</Th>
-              <Th>Date</Th>
-              <Th>Total</Th>
-              <Th>Outstanding</Th>
-              <Th>Allocate</Th>
-              <Th>Remaining</Th>
+              <Th>{t('payments.form.allocationTable.document')}</Th>
+              <Th>{t('payments.form.allocationTable.date')}</Th>
+              <Th>{t('payments.form.allocationTable.total')}</Th>
+              <Th>{t('payments.form.allocationTable.outstanding')}</Th>
+              <Th>{t('payments.form.allocationTable.allocate')}</Th>
+              <Th>{t('payments.form.allocationTable.remaining')}</Th>
             </Tr>
           </Thead>
           <Tbody>
@@ -331,7 +334,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const [activeTab, setActiveTab] = useState(0);
   const [showAuthExpired, setShowAuthExpired] = useState(false);
   const { user } = useAuth();
-  
+
   // Color mode values
   const modalContentBg = useColorModeValue('white', 'gray.800');
   const modalHeaderBg = useColorModeValue('blue.500', 'blue.600');
@@ -341,18 +344,18 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const scrollbarTrackColor = useColorModeValue('#f1f1f1', '#2d3748');
   const scrollbarThumbColor = useColorModeValue('#c1c1c1', '#4a5568');
   const scrollbarThumbHoverColor = useColorModeValue('#a8a8a8', '#718096');
-  
+
   // Debug effect to track modal state changes
   useEffect(() => {
     console.log('AdvancedPaymentForm - showAuthExpired state changed:', showAuthExpired);
   }, [showAuthExpired]);
-  
+
   const toast = useToast();
-  
+
   // Check if user has permission to create payments
   const userRole = normalizeRole(user?.role);
   const canCreatePayments = userRole === 'admin' || userRole === 'finance' || userRole === 'director';
-  
+
   // If modal is opened but user doesn't have permission, close it and show error
   useEffect(() => {
     if (isOpen && user && !canCreatePayments) {
@@ -365,11 +368,13 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       onClose();
     }
   }, [isOpen, user, canCreatePayments, toast, onClose]);
-  
+
   // Don't render the form if user doesn't have permission
   if (!canCreatePayments && user) {
     return null;
   }
+
+  const { t } = useTranslation();
 
   const {
     control,
@@ -399,11 +404,11 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       console.log('AdvancedPaymentForm - Modal opened');
       loadContacts();
       loadCashBankAccounts();
-      
+
       // Clear previous data first
       setOutstandingItems([]);
       setAllocations([]);
-      
+
       if (preSelectedContact) {
         console.log('AdvancedPaymentForm - Setting preselected contact:', preSelectedContact.id, preSelectedContact.name);
         setValue('contact_id', preSelectedContact.id);
@@ -465,7 +470,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     console.log(`AdvancedPaymentForm - loadOutstandingItems called for contactId: ${contactId}, type: ${type}`);
     try {
       setLoadingItems(true);
-      
+
       let items: any[] = [];
       if (type === 'receivable') {
         console.log('AdvancedPaymentForm - Fetching unpaid invoices...');
@@ -478,7 +483,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         console.log('AdvancedPaymentForm - Received bills:', items.length, items);
         setOutstandingItems(items);
       }
-      
+
       // Log the outstanding amounts
       items.forEach((item: any) => {
         console.log(`  - ${item.code}: Outstanding = ${item.outstanding_amount}`);
@@ -514,7 +519,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       if (remainingAmount <= 0) break;
 
       const allocationAmount = Math.min(remainingAmount, item.outstanding_amount);
-      
+
       if (type === 'receivable') {
         newAllocations.push({
           invoice_id: item.id,
@@ -597,10 +602,10 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
             });
             return;
           }
-          
+
           if (data.amount > selectedAccount.balance) {
             toast({
-              title: 'Insufficient Balance ⚠️', 
+              title: 'Insufficient Balance ⚠️',
               description: (
                 `Payment amount ${paymentService.formatCurrency(data.amount)} exceeds available balance ` +
                 `${paymentService.formatCurrency(selectedAccount.balance)} in account "${selectedAccount.name}". ` +
@@ -614,7 +619,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
           }
         }
       }
-      
+
       // Validate allocations don't exceed payment amount
       const totalAllocated = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
       if (totalAllocated > data.amount) {
@@ -657,31 +662,31 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         name: error.name,
         stack: error.stack?.substring(0, 200)
       });
-      
+
       let errorMessage = error.message || 'Failed to create payment';
-      
+
       // Handle specific error types - Check both error object and message
-      const isAuthError = error.isAuthError || 
-                         error.code === 'AUTH_SESSION_EXPIRED' || 
-                         errorMessage.includes('Session expired') || 
-                         errorMessage.includes('User not authenticated');
-      
+      const isAuthError = error.isAuthError ||
+        error.code === 'AUTH_SESSION_EXPIRED' ||
+        errorMessage.includes('Session expired') ||
+        errorMessage.includes('User not authenticated');
+
       console.log('AdvancedPaymentForm - Auth error check:', { isAuthError, errorMessage });
-      
+
       if (isAuthError) {
         console.log('AdvancedPaymentForm - Detected auth error, showing auth expired modal');
-        
+
         // Show auth expired modal first (before closing payment modal)
         setShowAuthExpired(true);
-        
+
         // Close payment modal after a small delay to ensure auth modal renders
         setTimeout(() => {
           handleClose();
         }, 100);
-        
+
         return;
       }
-      
+
       toast({
         title: 'Error',
         description: errorMessage,
@@ -715,7 +720,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       localStorage.removeItem('refreshToken');
       localStorage.removeItem('user');
     }
-    
+
     // Redirect to login
     window.location.href = '/login';
   };
@@ -727,468 +732,468 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         isOpen={showAuthExpired}
         onLoginRedirect={handleAuthExpiredLoginRedirect}
       />
-      
+
       <Modal
-      isOpen={isOpen} 
-      onClose={handleClose} 
-      size="6xl"
-      scrollBehavior="inside"
-    >
-      <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(10px)" />
-      <ModalContent 
-        maxH="95vh" 
-        maxW={{ base: '95vw', md: '90vw', lg: '80vw' }}
-        mx={4}
-        bg={modalContentBg}
+        isOpen={isOpen}
+        onClose={handleClose}
+        size="6xl"
+        scrollBehavior="inside"
       >
-        <ModalHeader 
-          bg={modalHeaderBg} 
-          color="white" 
-          borderTopRadius="md"
-          py={4}
+        <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(10px)" />
+        <ModalContent
+          maxH="95vh"
+          maxW={{ base: '95vw', md: '90vw', lg: '80vw' }}
+          mx={4}
+          bg={modalContentBg}
         >
-          Create {type === 'receivable' ? 'Receivable' : 'Payable'} Payment
-        </ModalHeader>
-        <ModalCloseButton color="white" />
-
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <ModalBody 
-            overflowY="auto"
-            maxH="70vh"
-            css={{
-              '&::-webkit-scrollbar': {
-                width: '8px',
-              },
-              '&::-webkit-scrollbar-track': {
-                background: scrollbarTrackColor,
-                borderRadius: '4px',
-              },
-              '&::-webkit-scrollbar-thumb': {
-                background: scrollbarThumbColor,
-                borderRadius: '4px',
-                '&:hover': {
-                  background: scrollbarThumbHoverColor,
-                },
-              },
-              // Enhanced mouse wheel scroll
-              scrollBehavior: 'smooth',
-              // Better scroll performance for GPU acceleration
-              willChange: 'scroll-position',
-              transform: 'translateZ(0)',
-              // Better touch scrolling on mobile
-              WebkitOverflowScrolling: 'touch',
-            }}
+          <ModalHeader
+            bg={modalHeaderBg}
+            color="white"
+            borderTopRadius="md"
+            py={4}
           >
-            <Tabs index={activeTab} onChange={setActiveTab}>
-              <TabList>
-                <Tab>Payment Details</Tab>
-                <Tab isDisabled={!watchedContactId}>
-                  Allocation ({outstandingItems.length})
-                </Tab>
-              </TabList>
+            {type === 'receivable' ? t('payments.form.createReceivablePayment') : t('payments.form.createPayablePayment')}
+          </ModalHeader>
+          <ModalCloseButton color="white" />
 
-              <TabPanels>
-                {/* Payment Details Tab */}
-                <TabPanel px={0}>
-                  <VStack spacing={6} align="stretch">
-                    {/* Contact Selection */}
-                    <Card>
-                      <CardBody>
-                        <FormControl isRequired isInvalid={!!errors.contact_id}>
-                          <FormLabel>
-                            <HStack>
-                              <FiUser />
-                              <Text>{type === 'receivable' ? 'Customer' : 'Vendor'}</Text>
-                            </HStack>
-                          </FormLabel>
-                          <Select
-                            {...register('contact_id', {
-                              required: `${type === 'receivable' ? 'Customer' : 'Vendor'} is required`,
-                              setValueAs: value => parseInt(value) || 0,
-                            })}
-                            placeholder={`Select ${type === 'receivable' ? 'customer' : 'vendor'}`}
-                          >
-                            {contacts.map((contact) => (
-                              <option key={contact.id} value={contact.id}>
-                                {contact.name}
-                              </option>
-                            ))}
-                          </Select>
-                          <FormErrorMessage>{errors.contact_id?.message}</FormErrorMessage>
-                        </FormControl>
-                      </CardBody>
-                    </Card>
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <ModalBody
+              overflowY="auto"
+              maxH="70vh"
+              css={{
+                '&::-webkit-scrollbar': {
+                  width: '8px',
+                },
+                '&::-webkit-scrollbar-track': {
+                  background: scrollbarTrackColor,
+                  borderRadius: '4px',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: scrollbarThumbColor,
+                  borderRadius: '4px',
+                  '&:hover': {
+                    background: scrollbarThumbHoverColor,
+                  },
+                },
+                // Enhanced mouse wheel scroll
+                scrollBehavior: 'smooth',
+                // Better scroll performance for GPU acceleration
+                willChange: 'scroll-position',
+                transform: 'translateZ(0)',
+                // Better touch scrolling on mobile
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
+              <Tabs index={activeTab} onChange={setActiveTab}>
+                <TabList>
+                  <Tab>{t('payments.form.paymentDetails')}</Tab>
+                  <Tab isDisabled={!watchedContactId}>
+                    {t('payments.form.allocation')} ({outstandingItems.length})
+                  </Tab>
+                </TabList>
 
-                    {/* Payment Information */}
-                    <Card>
-                      <CardBody>
-                        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                          <FormControl isRequired isInvalid={!!errors.date}>
+                <TabPanels>
+                  {/* Payment Details Tab */}
+                  <TabPanel px={0}>
+                    <VStack spacing={6} align="stretch">
+                      {/* Contact Selection */}
+                      <Card>
+                        <CardBody>
+                          <FormControl isRequired isInvalid={!!errors.contact_id}>
                             <FormLabel>
                               <HStack>
-                                <FiCalendar />
-                                <Text>Payment Date</Text>
+                                <FiUser />
+                                <Text>{t('payments.form.contact')}</Text>
                               </HStack>
                             </FormLabel>
-                            <Input
-                              type="date"
-                              {...register('date', {
-                                required: 'Payment date is required',
-                                validate: {
-                                  notFuture: (value) => {
-                                    const today = new Date();
-                                    const inputDate = new Date(value);
-                                    return inputDate <= today || 'Payment date cannot be in the future';
-                                  },
-                                },
-                              })}
-                            />
-                            <FormErrorMessage>{errors.date?.message}</FormErrorMessage>
-                          </FormControl>
-
-                          <FormControl isRequired isInvalid={!!errors.amount}>
-                            <Controller
-                              name="amount"
-                              control={control}
-                              rules={{
-                                required: 'Amount is required',
-                                min: { value: 1, message: 'Amount must be greater than 0' },
-                              }}
-                              render={({ field }) => (
-                                <CurrencyInput
-                                  value={field.value || 0}
-                                  onChange={field.onChange}
-                                  label="Amount"
-                                  placeholder="Masukkan jumlah pembayaran"
-                                  isRequired={true}
-                                  isInvalid={!!errors.amount}
-                                  errorMessage={errors.amount?.message}
-                                  min={1}
-                                  showLabel={true}
-                                />
-                              )}
-                            />
-                          </FormControl>
-
-                          <FormControl isRequired isInvalid={!!errors.method}>
-                            <FormLabel>Payment Method</FormLabel>
                             <Select
-                              {...register('method', {
-                                required: 'Payment method is required',
+                              {...register('contact_id', {
+                                required: t('payments.form.contactRequired'),
+                                setValueAs: (value: string) => parseInt(value) || 0,
                               })}
+                              placeholder={t('payments.form.selectContact')}
                             >
-                              {PAYMENT_METHODS.map((method) => (
-                                <option key={method.value} value={method.value}>
-                                  {method.label}
+                              {contacts.map((contact) => (
+                                <option key={contact.id} value={contact.id}>
+                                  {contact.name}
                                 </option>
                               ))}
                             </Select>
-                            <FormErrorMessage>{errors.method?.message}</FormErrorMessage>
+                            <FormErrorMessage>{errors.contact_id?.message}</FormErrorMessage>
                           </FormControl>
+                        </CardBody>
+                      </Card>
 
-                          <FormControl isRequired isInvalid={!!errors.cash_bank_id}>
-                            <FormLabel>
-                              {watchedMethod === 'CASH' ? 'Cash Account' : 'Payment Account'}
-                            </FormLabel>
-                            <Select
-                              {...register('cash_bank_id', {
-                                required: 'Account is required',
-                                setValueAs: value => parseInt(value) || 0,
-                              })}
-                              placeholder={`Select ${watchedMethod === 'CASH' ? 'cash' : 'payment'} account`}
-                            >
-                              {cashBankAccounts
-                                .filter((account) => {
-                                  // Filter based on selected payment method
+                      {/* Payment Information */}
+                      <Card>
+                        <CardBody>
+                          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                            <FormControl isRequired isInvalid={!!errors.date}>
+                              <FormLabel>
+                                <HStack>
+                                  <FiCalendar />
+                                  <Text>{t('payments.form.paymentDate')}</Text>
+                                </HStack>
+                              </FormLabel>
+                              <Input
+                                type="date"
+                                {...register('date', {
+                                  required: t('payments.form.dateRequired'),
+                                  validate: {
+                                    notFuture: (value: string) => {
+                                      const today = new Date();
+                                      const inputDate = new Date(value);
+                                      return inputDate <= today || t('payments.form.dateNotFuture');
+                                    },
+                                  },
+                                })}
+                              />
+                              <FormErrorMessage>{errors.date?.message}</FormErrorMessage>
+                            </FormControl>
+
+                            <FormControl isRequired isInvalid={!!errors.amount}>
+                              <Controller
+                                name="amount"
+                                control={control}
+                                rules={{
+                                  required: 'Amount is required',
+                                  min: { value: 1, message: 'Amount must be greater than 0' },
+                                }}
+                                render={({ field }) => (
+                                  <CurrencyInput
+                                    value={field.value || 0}
+                                    onChange={field.onChange}
+                                    label="Amount"
+                                    placeholder="Masukkan jumlah pembayaran"
+                                    isRequired={true}
+                                    isInvalid={!!errors.amount}
+                                    errorMessage={errors.amount?.message}
+                                    min={1}
+                                    showLabel={true}
+                                  />
+                                )}
+                              />
+                            </FormControl>
+
+                            <FormControl isRequired isInvalid={!!errors.method}>
+                              <FormLabel>{t('payments.form.paymentMethod')}</FormLabel>
+                              <Select
+                                {...register('method', {
+                                  required: t('payments.form.methodRequired'),
+                                })}
+                              >
+                                {PAYMENT_METHODS.map((method) => (
+                                  <option key={method.value} value={method.value}>
+                                    {method.label}
+                                  </option>
+                                ))}
+                              </Select>
+                              <FormErrorMessage>{errors.method?.message}</FormErrorMessage>
+                            </FormControl>
+
+                            <FormControl isRequired isInvalid={!!errors.cash_bank_id}>
+                              <FormLabel>
+                                {watchedMethod === 'CASH' ? t('payments.form.cashAccount') : t('payments.form.paymentAccount')}
+                              </FormLabel>
+                              <Select
+                                {...register('cash_bank_id', {
+                                  required: t('payments.form.accountRequired'),
+                                  setValueAs: (value: string) => parseInt(value) || 0,
+                                })}
+                                placeholder={t('payments.form.selectAccount')}
+                              >
+                                {cashBankAccounts
+                                  .filter((account) => {
+                                    // Filter based on selected payment method
+                                    if (watchedMethod === 'CASH') {
+                                      return account.type === 'CASH';
+                                    } else {
+                                      // For other methods, show BANK accounts or all if no CASH type
+                                      return account.type === 'BANK' || account.type !== 'CASH';
+                                    }
+                                  })
+                                  .map((account) => {
+                                    const currentAmount = watchedAmount || 0;
+                                    const isInsufficientBalance = account.balance < currentAmount;
+                                    const isZeroBalance = account.balance <= 0;
+                                    const balanceStatus = isZeroBalance ? ' ❌ NO BALANCE' :
+                                      isInsufficientBalance ? ' ⚠️ INSUFFICIENT' :
+                                        ' ✅';
+
+                                    return (
+                                      <option key={account.id} value={account.id}
+                                        style={{
+                                          color: isZeroBalance ? '#e53e3e' :
+                                            isInsufficientBalance ? '#dd6b20' :
+                                              '#38a169',
+                                          backgroundColor: isZeroBalance ? '#fed7d7' :
+                                            isInsufficientBalance ? '#feebc8' :
+                                              '#f0fff4'
+                                        }}
+                                      >
+                                        {account.type === 'BANK' && account.bank_name
+                                          ? `${account.code} - ${account.name} (${account.bank_name}) - ${paymentService.formatCurrency(account.balance)}`
+                                          : `${account.code} - ${account.name} (${account.type}) - ${paymentService.formatCurrency(account.balance)}`
+                                        }{balanceStatus}
+                                      </option>
+                                    );
+                                  })}
+                                {/* Fallback: if no filtered accounts, show all */}
+                                {cashBankAccounts.filter((account) => {
                                   if (watchedMethod === 'CASH') {
                                     return account.type === 'CASH';
                                   } else {
-                                    // For other methods, show BANK accounts or all if no CASH type
                                     return account.type === 'BANK' || account.type !== 'CASH';
                                   }
-                                })
-                                .map((account) => {
-                                  const currentAmount = watchedAmount || 0;
-                                  const isInsufficientBalance = account.balance < currentAmount;
-                                  const isZeroBalance = account.balance <= 0;
-                                  const balanceStatus = isZeroBalance ? ' ❌ NO BALANCE' : 
-                                                       isInsufficientBalance ? ' ⚠️ INSUFFICIENT' : 
-                                                       ' ✅';
-                                  
+                                }).length === 0 && cashBankAccounts.map((account) => (
+                                  <option key={account.id} value={account.id}>
+                                    {account.type === 'BANK' && account.bank_name
+                                      ? `${account.code} - ${account.name} (${account.bank_name})`
+                                      : `${account.code} - ${account.name} (${account.type})`
+                                    }
+                                  </option>
+                                ))}
+                              </Select>
+                              <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
+                              {/* Real-time Balance Warning */}
+                              {watchedCashBankId && (() => {
+                                const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
+                                if (!selectedAccount) return null;
+
+                                const isZeroBalance = selectedAccount.balance <= 0;
+                                const isInsufficientBalance = watchedAmount > selectedAccount.balance;
+                                const remainingBalance = selectedAccount.balance - (watchedAmount || 0);
+
+                                if (isZeroBalance) {
                                   return (
-                                    <option key={account.id} value={account.id}
-                                      style={{ 
-                                        color: isZeroBalance ? '#e53e3e' : 
-                                               isInsufficientBalance ? '#dd6b20' : 
-                                               '#38a169',
-                                        backgroundColor: isZeroBalance ? '#fed7d7' : 
-                                                       isInsufficientBalance ? '#feebc8' : 
-                                                       '#f0fff4'
-                                      }}
-                                    >
-                                      {account.type === 'BANK' && account.bank_name
-                                        ? `${account.code} - ${account.name} (${account.bank_name}) - ${paymentService.formatCurrency(account.balance)}`
-                                        : `${account.code} - ${account.name} (${account.type}) - ${paymentService.formatCurrency(account.balance)}`
-                                      }{balanceStatus}
-                                    </option>
+                                    <Text fontSize="sm" color="red.500" mt={2} fontWeight="medium">
+                                      ❌ <strong>No Balance Available</strong><br />
+                                      Account "{selectedAccount.name}" has zero balance. Cannot process any payments.
+                                    </Text>
                                   );
-                                })}
-                              {/* Fallback: if no filtered accounts, show all */}
-                              {cashBankAccounts.filter((account) => {
-                                if (watchedMethod === 'CASH') {
-                                  return account.type === 'CASH';
-                                } else {
-                                  return account.type === 'BANK' || account.type !== 'CASH';
                                 }
-                              }).length === 0 && cashBankAccounts.map((account) => (
-                                <option key={account.id} value={account.id}>
-                                  {account.type === 'BANK' && account.bank_name
-                                    ? `${account.code} - ${account.name} (${account.bank_name})`
-                                    : `${account.code} - ${account.name} (${account.type})`
-                                  }
-                                </option>
-                              ))}
-                            </Select>
-                            <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
-                            {/* Real-time Balance Warning */}
-                            {watchedCashBankId && (() => {
-                              const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
-                              if (!selectedAccount) return null;
-                              
-                              const isZeroBalance = selectedAccount.balance <= 0;
-                              const isInsufficientBalance = watchedAmount > selectedAccount.balance;
-                              const remainingBalance = selectedAccount.balance - (watchedAmount || 0);
-                              
-                              if (isZeroBalance) {
+
+                                if (isInsufficientBalance && watchedAmount > 0) {
+                                  return (
+                                    <Text fontSize="sm" color="orange.500" mt={2} fontWeight="medium">
+                                      ⚠️ <strong>Insufficient Balance</strong><br />
+                                      Available: {paymentService.formatCurrency(selectedAccount.balance)} | Required: {paymentService.formatCurrency(watchedAmount)} |
+                                      Short by: {paymentService.formatCurrency(watchedAmount - selectedAccount.balance)}
+                                    </Text>
+                                  );
+                                }
+
+                                if (watchedAmount > 0 && remainingBalance >= 0) {
+                                  return (
+                                    <Text fontSize="sm" color="green.600" mt={2}>
+                                      ✅ <strong>Sufficient Balance</strong><br />
+                                      Available: {paymentService.formatCurrency(selectedAccount.balance)} | After payment: {paymentService.formatCurrency(remainingBalance)}
+                                    </Text>
+                                  );
+                                }
+
                                 return (
-                                  <Text fontSize="sm" color="red.500" mt={2} fontWeight="medium">
-                                    ❌ <strong>No Balance Available</strong><br/>
-                                    Account "{selectedAccount.name}" has zero balance. Cannot process any payments.
+                                  <Text fontSize="sm" color="blue.600" mt={2}>
+                                    💰 <strong>Account Balance:</strong> {paymentService.formatCurrency(selectedAccount.balance)}
                                   </Text>
                                 );
-                              }
-                              
-                              if (isInsufficientBalance && watchedAmount > 0) {
-                                return (
-                                  <Text fontSize="sm" color="orange.500" mt={2} fontWeight="medium">
-                                    ⚠️ <strong>Insufficient Balance</strong><br/>
-                                    Available: {paymentService.formatCurrency(selectedAccount.balance)} | Required: {paymentService.formatCurrency(watchedAmount)} | 
-                                    Short by: {paymentService.formatCurrency(watchedAmount - selectedAccount.balance)}
+                              })()}
+
+                              {/* Show helpful message about filtered accounts */}
+                              {watchedMethod === 'CASH' &&
+                                cashBankAccounts.filter(acc => acc.type === 'CASH').length === 0 && (
+                                  <Text fontSize="xs" color="orange.500" mt={1}>
+                                    ⚠️ No cash accounts found. Showing all available accounts.
                                   </Text>
-                                );
-                              }
-                              
-                              if (watchedAmount > 0 && remainingBalance >= 0) {
-                                return (
-                                  <Text fontSize="sm" color="green.600" mt={2}>
-                                    ✅ <strong>Sufficient Balance</strong><br/>
-                                    Available: {paymentService.formatCurrency(selectedAccount.balance)} | After payment: {paymentService.formatCurrency(remainingBalance)}
-                                  </Text>
-                                );
-                              }
-                              
-                              return (
-                                <Text fontSize="sm" color="blue.600" mt={2}>
-                                  💰 <strong>Account Balance:</strong> {paymentService.formatCurrency(selectedAccount.balance)}
-                                </Text>
-                              );
-                            })()}
-                            
-                            {/* Show helpful message about filtered accounts */}
-                            {watchedMethod === 'CASH' && 
-                             cashBankAccounts.filter(acc => acc.type === 'CASH').length === 0 && (
-                              <Text fontSize="xs" color="orange.500" mt={1}>
-                                ⚠️ No cash accounts found. Showing all available accounts.
-                              </Text>
-                            )}
-                          </FormControl>
-                        </SimpleGrid>
-
-                        <FormControl mt={4}>
-                          <FormLabel>Reference Number</FormLabel>
-                          <Input
-                            {...register('reference')}
-                            placeholder="Transaction reference number"
-                          />
-                        </FormControl>
-
-                        <FormControl mt={4}>
-                          <FormLabel>Notes</FormLabel>
-                          <Textarea
-                            {...register('notes')}
-                            placeholder="Additional notes about this payment"
-                            rows={3}
-                          />
-                        </FormControl>
-
-                        {outstandingItems.length > 0 && (
-                          <FormControl mt={4}>
-                            <HStack>
-                              <Switch
-                                {...register('auto_allocate')}
-                                colorScheme="blue"
-                              />
-                              <FormLabel mb={0}>Auto-allocate to outstanding items</FormLabel>
-                            </HStack>
-                          </FormControl>
-                        )}
-                      </CardBody>
-                    </Card>
-
-                    {/* Payment Summary */}
-                    {watchedAmount > 0 && (
-                      <Card>
-                        <CardBody>
-                          <Text fontWeight="bold" mb={3}>Payment Summary</Text>
-                          <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-                            <Box>
-                              <Text fontSize="sm" color={textColor}>Payment Amount</Text>
-                              <Text fontSize="lg" fontWeight="bold">
-                                {paymentService.formatCurrency(watchedAmount || 0)}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="sm" color={textColor}>Allocated</Text>
-                              <Text fontSize="lg" fontWeight="bold" color="blue.600">
-                                {paymentService.formatCurrency(getTotalAllocated())}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="sm" color={textColor}>Remaining</Text>
-                              <Text
-                                fontSize="lg"
-                                fontWeight="bold"
-                                color={getRemainingAmount() === 0 ? "green.600" : "orange.600"}
-                              >
-                                {paymentService.formatCurrency(getRemainingAmount())}
-                              </Text>
-                            </Box>
+                                )}
+                            </FormControl>
                           </SimpleGrid>
+
+                          <FormControl mt={4}>
+                            <FormLabel>Reference Number</FormLabel>
+                            <Input
+                              {...register('reference')}
+                              placeholder="Transaction reference number"
+                            />
+                          </FormControl>
+
+                          <FormControl mt={4}>
+                            <FormLabel>Notes</FormLabel>
+                            <Textarea
+                              {...register('notes')}
+                              placeholder="Additional notes about this payment"
+                              rows={3}
+                            />
+                          </FormControl>
+
+                          {outstandingItems.length > 0 && (
+                            <FormControl mt={4}>
+                              <HStack>
+                                <Switch
+                                  {...register('auto_allocate')}
+                                  colorScheme="blue"
+                                />
+                                <FormLabel mb={0}>Auto-allocate to outstanding items</FormLabel>
+                              </HStack>
+                            </FormControl>
+                          )}
                         </CardBody>
                       </Card>
+
+                      {/* Payment Summary */}
+                      {watchedAmount > 0 && (
+                        <Card>
+                          <CardBody>
+                            <Text fontWeight="bold" mb={3}>Payment Summary</Text>
+                            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                              <Box>
+                                <Text fontSize="sm" color={textColor}>Payment Amount</Text>
+                                <Text fontSize="lg" fontWeight="bold">
+                                  {paymentService.formatCurrency(watchedAmount || 0)}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="sm" color={textColor}>Allocated</Text>
+                                <Text fontSize="lg" fontWeight="bold" color="blue.600">
+                                  {paymentService.formatCurrency(getTotalAllocated())}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="sm" color={textColor}>Remaining</Text>
+                                <Text
+                                  fontSize="lg"
+                                  fontWeight="bold"
+                                  color={getRemainingAmount() === 0 ? "green.600" : "orange.600"}
+                                >
+                                  {paymentService.formatCurrency(getRemainingAmount())}
+                                </Text>
+                              </Box>
+                            </SimpleGrid>
+                          </CardBody>
+                        </Card>
+                      )}
+
+                      {outstandingItems.length > 0 && (
+                        <HStack justify="center">
+                          <Button
+                            onClick={() => setActiveTab(1)}
+                            colorScheme="blue"
+                            variant="outline"
+                          >
+                            Configure Allocation ({outstandingItems.length} items)
+                          </Button>
+                        </HStack>
+                      )}
+                    </VStack>
+                  </TabPanel>
+
+                  {/* Allocation Tab */}
+                  <TabPanel px={0}>
+                    {loadingItems ? (
+                      <Box textAlign="center" py={8}>
+                        <Spinner size="lg" />
+                        <Text mt={2}>Loading outstanding items...</Text>
+                      </Box>
+                    ) : (
+                      <PaymentAllocationTable
+                        items={outstandingItems}
+                        allocations={allocations}
+                        onAllocationsChange={setAllocations}
+                        maxAmount={watchedAmount || 0}
+                        type={type}
+                      />
                     )}
+                  </TabPanel>
+                </TabPanels>
+              </Tabs>
+            </ModalBody>
 
-                    {outstandingItems.length > 0 && (
-                      <HStack justify="center">
-                        <Button
-                          onClick={() => setActiveTab(1)}
-                          colorScheme="blue"
-                          variant="outline"
-                        >
-                          Configure Allocation ({outstandingItems.length} items)
-                        </Button>
-                      </HStack>
-                    )}
-                  </VStack>
-                </TabPanel>
-
-                {/* Allocation Tab */}
-                <TabPanel px={0}>
-                  {loadingItems ? (
-                    <Box textAlign="center" py={8}>
-                      <Spinner size="lg" />
-                      <Text mt={2}>Loading outstanding items...</Text>
-                    </Box>
-                  ) : (
-                    <PaymentAllocationTable
-                      items={outstandingItems}
-                      allocations={allocations}
-                      onAllocationsChange={setAllocations}
-                      maxAmount={watchedAmount || 0}
-                      type={type}
-                    />
-                  )}
-                </TabPanel>
-              </TabPanels>
-            </Tabs>
-          </ModalBody>
-
-          <ModalFooter 
-            bg={modalFooterBg} 
-            borderBottomRadius="md"
-            py={4}
-            px={6}
-            borderTop="1px"
-            borderColor={borderColor}
-          >
-            <HStack spacing={3} width="full" justify="flex-end">
-              {/* Payment Summary Info in Footer */}
-              {watchedAmount > 0 && (
-                <Box flex="1" display={{ base: 'none', md: 'block' }}>
-                  <HStack spacing={4}>
-                    <Text fontSize="sm" color={textColor}>
-                      Amount: <Text as="span" fontWeight="bold" color="blue.600">
-                        {paymentService.formatCurrency(watchedAmount || 0)}
-                      </Text>
-                    </Text>
-                    {getTotalAllocated() > 0 && (
+            <ModalFooter
+              bg={modalFooterBg}
+              borderBottomRadius="md"
+              py={4}
+              px={6}
+              borderTop="1px"
+              borderColor={borderColor}
+            >
+              <HStack spacing={3} width="full" justify="flex-end">
+                {/* Payment Summary Info in Footer */}
+                {watchedAmount > 0 && (
+                  <Box flex="1" display={{ base: 'none', md: 'block' }}>
+                    <HStack spacing={4}>
                       <Text fontSize="sm" color={textColor}>
-                        Remaining: <Text as="span" fontWeight="bold" color={getRemainingAmount() === 0 ? "green.600" : "orange.600"}>
-                          {paymentService.formatCurrency(getRemainingAmount())}
+                        Amount: <Text as="span" fontWeight="bold" color="blue.600">
+                          {paymentService.formatCurrency(watchedAmount || 0)}
                         </Text>
                       </Text>
-                    )}
-                  </HStack>
-                </Box>
-              )}
-              
-              {/* Action Buttons */}
-              <Button 
-                variant="outline" 
-                onClick={handleClose}
-                size={{ base: 'sm', md: 'md' }}
-                minW="80px"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                colorScheme="blue"
-                isLoading={isSubmitting || loading}
-                loadingText="Creating..."
-                isDisabled={!watchedContactId || !watchedAmount || (() => {
-                  // Only enforce balance checks for payable (outgoing) payments
-                  if (type !== 'payable') return false;
-                  if (!watchedCashBankId || !watchedAmount) return false;
-                  
-                  const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
-                  if (selectedAccount) {
-                    // Disable if zero balance or insufficient balance
-                    if (selectedAccount.balance <= 0 || watchedAmount > selectedAccount.balance) {
-                      return true;
-                    }
-                  }
-                  
-                  return false;
-                })()}
-                size={{ base: 'sm', md: 'md' }}
-                minW="140px"
-                leftIcon={<FiDollarSign />}
-              >
-                {(() => {
-                  if (isSubmitting || loading) return 'Creating...';
-                  
-                  // Only show balance warnings for payable payments
-                  if (type === 'payable') {
+                      {getTotalAllocated() > 0 && (
+                        <Text fontSize="sm" color={textColor}>
+                          Remaining: <Text as="span" fontWeight="bold" color={getRemainingAmount() === 0 ? "green.600" : "orange.600"}>
+                            {paymentService.formatCurrency(getRemainingAmount())}
+                          </Text>
+                        </Text>
+                      )}
+                    </HStack>
+                  </Box>
+                )}
+
+                {/* Action Buttons */}
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  size={{ base: 'sm', md: 'md' }}
+                  minW="80px"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  colorScheme="blue"
+                  isLoading={isSubmitting || loading}
+                  loadingText="Creating..."
+                  isDisabled={!watchedContactId || !watchedAmount || (() => {
+                    // Only enforce balance checks for payable (outgoing) payments
+                    if (type !== 'payable') return false;
+                    if (!watchedCashBankId || !watchedAmount) return false;
+
                     const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
-                    if (selectedAccount && watchedCashBankId && watchedAmount > 0) {
-                      if (selectedAccount.balance <= 0) {
-                        return 'No Balance Available';
-                      }
-                      if (watchedAmount > selectedAccount.balance) {
-                        return 'Insufficient Balance';
+                    if (selectedAccount) {
+                      // Disable if zero balance or insufficient balance
+                      if (selectedAccount.balance <= 0 || watchedAmount > selectedAccount.balance) {
+                        return true;
                       }
                     }
-                  }
-                  
-                  return 'Create Payment';
-                })()}
-              </Button>
-            </HStack>
-          </ModalFooter>
-        </form>
-      </ModalContent>
-    </Modal>
+
+                    return false;
+                  })()}
+                  size={{ base: 'sm', md: 'md' }}
+                  minW="140px"
+                  leftIcon={<FiDollarSign />}
+                >
+                  {(() => {
+                    if (isSubmitting || loading) return 'Creating...';
+
+                    // Only show balance warnings for payable payments
+                    if (type === 'payable') {
+                      const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
+                      if (selectedAccount && watchedCashBankId && watchedAmount > 0) {
+                        if (selectedAccount.balance <= 0) {
+                          return 'No Balance Available';
+                        }
+                        if (watchedAmount > selectedAccount.balance) {
+                          return 'Insufficient Balance';
+                        }
+                      }
+                    }
+
+                    return 'Create Payment';
+                  })()}
+                </Button>
+              </HStack>
+            </ModalFooter>
+          </form>
+        </ModalContent>
+      </Modal>
     </>
   );
 };

@@ -70,6 +70,7 @@ interface EnhancedPLData {
     netIncome: number;
     netIncomeMargin: number;
   };
+  generatedAt?: string;
 }
 
 interface JournalDrilldownRequest {
@@ -101,13 +102,13 @@ const EnhancedPLReportPage: React.FC = () => {
   const [isConnectedToBalanceService, setIsConnectedToBalanceService] = useState(false);
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
   const balanceClientRef = useRef<BalanceWebSocketClient | null>(null);
-  
+
   // COGS Health Check States
   const [cogsHealth, setCogsHealth] = useState<any>(null);
   const [checkingCOGS, setCheckingCOGS] = useState(false);
   const [backfillingCOGS, setBackfillingCOGS] = useState(false);
   const [showCOGSWarning, setShowCOGSWarning] = useState(false);
-  
+
   const { isOpen: isPLModalOpen, onOpen: onPLModalOpen, onClose: onPLModalClose } = useDisclosure();
   const { isOpen: isDrilldownModalOpen, onOpen: onDrilldownModalOpen, onClose: onDrilldownModalClose } = useDisclosure();
   const { isOpen: isCOGSModalOpen, onOpen: onCOGSModalOpen, onClose: onCOGSModalClose } = useDisclosure();
@@ -121,7 +122,7 @@ const EnhancedPLReportPage: React.FC = () => {
       end_date: today.toISOString().split('T')[0],
     });
   }, []);
-  
+
   // Real-time WebSocket connection effect
   useEffect(() => {
     if (realTimeUpdates && token) {
@@ -129,22 +130,22 @@ const EnhancedPLReportPage: React.FC = () => {
     } else {
       disconnectBalanceService();
     }
-    
+
     return () => {
       disconnectBalanceService();
     };
   }, [realTimeUpdates, token]);
-  
+
   const initializeBalanceConnection = async () => {
     if (!token) return;
-    
+
     try {
       balanceClientRef.current = new BalanceWebSocketClient();
       await balanceClientRef.current.connect(token);
-      
+
       balanceClientRef.current.onBalanceUpdate((data) => {
         setLastUpdateTime(new Date());
-        
+
         // Auto-refresh P&L data if we have current data and dates are set
         if (plData && reportParams.start_date && reportParams.end_date) {
           toast({
@@ -156,12 +157,12 @@ const EnhancedPLReportPage: React.FC = () => {
             position: 'bottom-right',
             size: 'sm'
           });
-          
+
           // Auto-regenerate P&L with updated data
           generateEnhancedPL();
         }
       });
-      
+
       setIsConnectedToBalanceService(true);
       toast({
         title: 'Real-time Updates Enabled',
@@ -182,7 +183,7 @@ const EnhancedPLReportPage: React.FC = () => {
       });
     }
   };
-  
+
   const disconnectBalanceService = () => {
     if (balanceClientRef.current) {
       balanceClientRef.current.disconnect();
@@ -220,7 +221,7 @@ const EnhancedPLReportPage: React.FC = () => {
 
     try {
       setBackfillingCOGS(true);
-      
+
       const result = await cogsService.backfillCOGS(
         reportParams.start_date,
         reportParams.end_date,
@@ -238,7 +239,7 @@ const EnhancedPLReportPage: React.FC = () => {
       // Close modal and re-check health
       onCOGSModalClose();
       await checkCOGSHealth();
-      
+
     } catch (error) {
       console.error('Error backfilling COGS:', error);
       toast({
@@ -268,10 +269,10 @@ const EnhancedPLReportPage: React.FC = () => {
     setLoading(true);
     try {
       console.log('Generating Enhanced P&L with params:', reportParams);
-      
+
       // 🔍 STEP 1: Check COGS Health First
       const health = await checkCOGSHealth();
-      
+
       // 🚨 STEP 2: Show warning if COGS is missing
       if (health && !health.healthy && health.sales_without_cogs > 0) {
         setShowCOGSWarning(true);
@@ -279,13 +280,13 @@ const EnhancedPLReportPage: React.FC = () => {
         setLoading(false);
         return; // Stop here, let user decide
       }
-      
+
       // ✅ STEP 3: Generate SSOT P&L (includes COGS automatically)
       const ssotData = await ssotProfitLossService.generateSSOTProfitLoss({
         start_date: reportParams.start_date,
         end_date: reportParams.end_date,
         format: 'json'
-      });
+      }) as unknown as any; // Cast to any to avoid type issues with Blob union, assuming json returned
 
       console.log('SSOT P&L data received:', ssotData);
 
@@ -293,7 +294,7 @@ const EnhancedPLReportPage: React.FC = () => {
       // Note: title will be translated in the modal component itself
       const formattedData: EnhancedPLData = {
         title: '', // Will be translated in modal using t('reports.profitLoss.enhancedTitle')
-        period: ssotData.period || `${new Date(reportParams.start_date).toLocaleDateString()} - ${new Date(reportParams.end_date).toLocaleDateString()}`,
+        period: ssotData.period || `${new Date(reportParams.start_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} - ${new Date(reportParams.end_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
         company: ssotData.company || { name: 'Company Name Not Set' },
         enhanced: ssotData.enhanced || true,
         sections: ssotData.sections || [],
@@ -307,6 +308,10 @@ const EnhancedPLReportPage: React.FC = () => {
           netIncome: 0,
           netIncomeMargin: 0,
         },
+        generatedAt: new Date().toLocaleString('id-ID', {
+          dateStyle: 'full',
+          timeStyle: 'medium'
+        })
       };
 
       setPLData(formattedData);
@@ -446,7 +451,7 @@ const EnhancedPLReportPage: React.FC = () => {
   // Handle journal drilldown from P&L modal
   const handleJournalDrilldown = useCallback((itemName: string, accountCode?: string, amount?: number) => {
     console.log('Journal drilldown requested:', { itemName, accountCode, amount });
-    
+
     if (!reportParams.start_date || !reportParams.end_date) {
       toast({
         title: 'Invalid Date Range',
@@ -495,7 +500,7 @@ const EnhancedPLReportPage: React.FC = () => {
       if (result instanceof Blob) {
         const fileName = `profit-loss-${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'csv' : 'pdf'}`;
         await reportService.downloadReport(result, fileName);
-        
+
         toast({
           title: 'Export Successful',
           description: `P&L report exported as ${format.toUpperCase()}`,
@@ -546,7 +551,7 @@ const EnhancedPLReportPage: React.FC = () => {
             <VStack spacing={4} align="stretch">
               <Flex justify="space-between" align="center">
                 <Text fontSize="lg" fontWeight="semibold">{t('reports.profitLoss.page.reportParameters')}</Text>
-                
+
                 {/* Real-time Updates Control */}
                 <HStack spacing={3}>
                   <Text fontSize="sm" color="gray.600">{t('reports.profitLoss.page.realTimeUpdates')}</Text>
@@ -577,7 +582,7 @@ const EnhancedPLReportPage: React.FC = () => {
                   )}
                 </HStack>
               </Flex>
-              
+
               <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                 <GridItem>
                   <FormControl isRequired>
@@ -618,7 +623,7 @@ const EnhancedPLReportPage: React.FC = () => {
           >
             {t('reports.profitLoss.page.generateButton')}
           </Button>
-          
+
           {/* Manual Refresh Button - visible when we have existing data */}
           {plData && (
             <Tooltip label={t('reports.profitLoss.page.refreshTooltip')} fontSize="xs">
@@ -634,7 +639,7 @@ const EnhancedPLReportPage: React.FC = () => {
               />
             </Tooltip>
           )}
-          
+
           <Button
             variant="outline"
             size="lg"
@@ -878,10 +883,10 @@ const EnhancedPLReportPage: React.FC = () => {
                             start_date: reportParams.start_date,
                             end_date: reportParams.end_date,
                             format: 'json'
-                          });
+                          }) as unknown as any;
                           const formattedData: EnhancedPLData = {
                             title: '', // Will be translated in modal using t('reports.profitLoss.enhancedTitle')
-                            period: ssotData.period || `${new Date(reportParams.start_date).toLocaleDateString()} - ${new Date(reportParams.end_date).toLocaleDateString()}`,
+                            period: ssotData.period || `${new Date(reportParams.start_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} - ${new Date(reportParams.end_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
                             company: ssotData.company || { name: 'Company Name Not Set' },
                             enhanced: ssotData.enhanced || true,
                             sections: ssotData.sections || [],
@@ -895,6 +900,10 @@ const EnhancedPLReportPage: React.FC = () => {
                               netIncome: 0,
                               netIncomeMargin: 0,
                             },
+                            generatedAt: new Date().toLocaleString('id-ID', {
+                              dateStyle: 'full',
+                              timeStyle: 'medium'
+                            })
                           };
                           setPLData(formattedData);
                           onPLModalOpen();

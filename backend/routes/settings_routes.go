@@ -39,6 +39,9 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB) {
 		settings.POST("/reset", settingsController.ResetToDefaults)
 		settings.GET("/validation-rules", settingsController.GetValidationRules)
 		settings.GET("/history", settingsController.GetSettingsHistory)
+		
+		// Initialize COA (One-time setup)
+		settings.POST("/initialize-coa", settingsController.InitializeCOA)
 	}
 	
 	// Tax Account Settings routes (admin and finance)

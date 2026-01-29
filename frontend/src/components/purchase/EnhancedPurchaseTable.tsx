@@ -37,6 +37,7 @@ import {
   FiClock,
   FiTrash2,
   FiDollarSign,
+  FiCopy
 } from 'react-icons/fi';
 import { Purchase } from '@/services/purchaseService';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -49,6 +50,7 @@ interface PurchaseTableProps {
   onSubmitForApproval?: (purchaseId: number) => void;
   onDelete?: (purchaseId: number) => void;
   onRecordPayment?: (purchase: Purchase) => void;
+  onDuplicate?: (purchase: Purchase) => void;
   renderActions?: (purchase: Purchase) => React.ReactNode;
   title?: string;
   formatCurrency: (amount: number) => string;
@@ -66,6 +68,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
   onSubmitForApproval,
   onDelete,
   onRecordPayment,
+  onDuplicate,
   renderActions,
   title = 'Purchase Transactions',
   formatCurrency,
@@ -75,7 +78,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
   userRole,
 }) => {
   const { t } = useTranslation();
-  
+
   // Theme colors with improved compatibility - using Chakra theme tokens with CSS variable fallbacks
   const headingColor = useColorModeValue('gray.800', 'gray.100');
   const tableBg = useColorModeValue('white', 'gray.800');
@@ -172,7 +175,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
               </Thead>
               <Tbody>
                 {purchases.map((purchase, index) => (
-                  <Tr 
+                  <Tr
                     key={purchase.id}
                     _hover={{ bg: hoverBg }}
                     transition="all 0.2s ease"
@@ -205,8 +208,8 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                       </Text>
                     </Td>
                     <Td borderColor={borderColor} py={3}>
-                      <Text 
-                        fontSize="sm" 
+                      <Text
+                        fontSize="sm"
                         color={purchase.outstanding_amount > 0 ? "orange.600" : "green.600"}
                         fontWeight={purchase.outstanding_amount > 0 ? "semibold" : "normal"}
                       >
@@ -214,8 +217,8 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                       </Text>
                     </Td>
                     <Td borderColor={borderColor} py={3}>
-                      <Badge 
-                        colorScheme={getStatusColor(purchase.status)} 
+                      <Badge
+                        colorScheme={getStatusColor(purchase.status)}
                         variant="subtle"
                         px={2}
                         py={1}
@@ -226,8 +229,8 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                       </Badge>
                     </Td>
                     <Td borderColor={borderColor} py={3}>
-                      <Badge 
-                        colorScheme={getApprovalStatusColor(purchase.approval_status)} 
+                      <Badge
+                        colorScheme={getApprovalStatusColor(purchase.approval_status)}
                         variant="subtle"
                         px={2}
                         py={1}
@@ -250,47 +253,57 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                             aria-label="Options"
                           />
                           <MenuList>
-                            <MenuItem 
-                              icon={<FiEye />} 
+                            <MenuItem
+                              icon={<FiEye />}
                               onClick={() => onViewDetails(purchase)}
                             >
                               {t('purchases.viewDetails')}
                             </MenuItem>
+
+                            {onDuplicate && (
+                              <MenuItem
+                                icon={<FiCopy />}
+                                onClick={() => onDuplicate(purchase)}
+                              >
+                                {t('common.duplicate')}
+                              </MenuItem>
+                            )}
+
                             {purchase.status === 'DRAFT' && canEdit && onEdit && (
                               <MenuItem icon={<FiEdit />} onClick={() => onEdit(purchase)}>
                                 {t('purchases.edit')}
                               </MenuItem>
                             )}
                             {purchase.status === 'DRAFT' && userRole === 'employee' && onSubmitForApproval && (
-                              <MenuItem 
-                                icon={<FiAlertCircle />} 
+                              <MenuItem
+                                icon={<FiAlertCircle />}
                                 onClick={() => onSubmitForApproval(purchase.id)}
                               >
                                 {t('purchases.submitForApproval')}
                               </MenuItem>
                             )}
                             {/* Record Payment - Show for APPROVED, COMPLETED, or PAID credit purchases with outstanding amount */}
-                            {(purchase.status === 'APPROVED' || purchase.status === 'COMPLETED' || purchase.status === 'PAID') && 
-                             purchase.payment_method === 'CREDIT' && 
-                             (purchase.outstanding_amount || 0) > 0 && 
-                             onRecordPayment && (
-                              <>
-                                <MenuDivider />
-                                <MenuItem 
-                                  icon={<FiDollarSign />} 
-                                  onClick={() => onRecordPayment(purchase)}
-                                  color="green.600"
-                                >
-                                  {t('purchases.recordPayment')}
-                                </MenuItem>
-                              </>
-                            )}
+                            {(purchase.status === 'APPROVED' || purchase.status === 'COMPLETED' || purchase.status === 'PAID') &&
+                              purchase.payment_method === 'CREDIT' &&
+                              (purchase.outstanding_amount || 0) > 0 &&
+                              onRecordPayment && (
+                                <>
+                                  <MenuDivider />
+                                  <MenuItem
+                                    icon={<FiDollarSign />}
+                                    onClick={() => onRecordPayment(purchase)}
+                                    color="green.600"
+                                  >
+                                    {t('purchases.recordPayment')}
+                                  </MenuItem>
+                                </>
+                              )}
                             {canDelete && onDelete && (
                               <>
                                 <MenuDivider />
-                                <MenuItem 
-                                  icon={<FiTrash2 />} 
-                                  color="red.500" 
+                                <MenuItem
+                                  icon={<FiTrash2 />}
+                                  color="red.500"
                                   onClick={() => onDelete(purchase.id)}
                                 >
                                   {t('purchases.delete')}

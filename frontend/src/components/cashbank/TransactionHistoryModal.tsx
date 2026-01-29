@@ -41,6 +41,7 @@ import {
   CardBody,
 } from '@chakra-ui/react';
 import { FiRefreshCw, FiDownload, FiCalendar, FiFilter } from 'react-icons/fi';
+import { useTranslation } from '@/hooks/useTranslation';
 import cashbankService, { CashBank, TransactionResult, CashBankTransaction, TransactionFilter } from '@/services/cashbankService';
 
 interface TransactionHistoryModalProps {
@@ -61,6 +62,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const toast = useToast();
+  const { t } = useTranslation();
 
   // Filter states
   const [filters, setFilters] = useState<TransactionFilter>({
@@ -76,12 +78,12 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
     try {
       setLoading(true);
       setError(null);
-      
+
       const result: TransactionResult = await cashbankService.getTransactionHistory(account.id, filters);
-      
+
       // Ensure we always have an array for transactions
       const transactionData = Array.isArray(result.data) ? result.data : [];
-      
+
       setTransactions(transactionData);
       setCurrentPage(result.page || 1);
       setTotalPages(result.total_pages || 1);
@@ -90,13 +92,13 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
       console.error('Error fetching transaction history:', err);
       const errorMessage = err.response?.data?.details || err.message || 'Failed to fetch transaction history';
       setError(errorMessage);
-      
+
       // Reset transactions to empty array on error to prevent runtime errors
       setTransactions([]);
       setTotal(0);
       setCurrentPage(1);
       setTotalPages(1);
-      
+
       toast({
         title: 'Error',
         description: errorMessage,
@@ -161,7 +163,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
             <Text fontSize="lg">{account.type === 'CASH' ? '💵' : '🏦'}</Text>
             <Box>
               <Text fontSize="lg" fontWeight="bold">
-                Transaction History
+                {t('common.transactionHistory') || 'Transaction History'}
               </Text>
               <Text fontSize="sm" color="gray.500" fontFamily="mono">
                 {account.name} ({account.code})
@@ -170,7 +172,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
           </Flex>
         </ModalHeader>
         <ModalCloseButton />
-        
+
         <ModalBody pb={6}>
           <VStack spacing={6} align="stretch">
             {/* Account Summary */}
@@ -178,7 +180,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
               <CardBody>
                 <SimpleGrid columns={4} spacing={4}>
                   <Stat size="sm">
-                    <StatLabel>Account Type</StatLabel>
+                    <StatLabel>{t('accounts.accountType') || 'Account Type'}</StatLabel>
                     <StatNumber fontSize="md">
                       <Badge colorScheme={account.type === 'CASH' ? 'green' : 'blue'}>
                         {account.type}
@@ -186,12 +188,12 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     </StatNumber>
                   </Stat>
                   <Stat size="sm">
-                    <StatLabel>Currency</StatLabel>
+                    <StatLabel>{t('settings.currency') || 'Currency'}</StatLabel>
                     <StatNumber fontSize="md">{account.currency}</StatNumber>
                   </Stat>
                   <Stat size="sm">
-                    <StatLabel>Current Balance</StatLabel>
-                    <StatNumber 
+                    <StatLabel>{t('products.currentStock').replace('Stock', 'Balance') || 'Current Balance'}</StatLabel>
+                    <StatNumber
                       fontSize="md"
                       color={account.balance < 0 ? 'red.500' : 'green.600'}
                       fontFamily="mono"
@@ -201,7 +203,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     </StatNumber>
                   </Stat>
                   <Stat size="sm">
-                    <StatLabel>Total Transactions</StatLabel>
+                    <StatLabel>{t('dashboard.stats.totalTransactions') || 'Total Transactions'}</StatLabel>
                     <StatNumber fontSize="md">{total?.toLocaleString() || '0'}</StatNumber>
                   </Stat>
                 </SimpleGrid>
@@ -212,11 +214,11 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
             <Card>
               <CardBody>
                 <Text fontSize="md" fontWeight="semibold" mb={4} color="gray.700">
-                  🔍 Filter Transactions
+                  {t('common.filter') || 'Filter Transactions'}
                 </Text>
                 <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4}>
                   <FormControl>
-                    <FormLabel fontSize="sm">Start Date</FormLabel>
+                    <FormLabel fontSize="sm">{t('common.filters.startDate') || 'Start Date'}</FormLabel>
                     <Input
                       type="date"
                       value={filters.start_date}
@@ -225,7 +227,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     />
                   </FormControl>
                   <FormControl>
-                    <FormLabel fontSize="sm">End Date</FormLabel>
+                    <FormLabel fontSize="sm">{t('common.filters.endDate') || 'End Date'}</FormLabel>
                     <Input
                       type="date"
                       value={filters.end_date}
@@ -283,9 +285,9 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
             {/* Transaction Table */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" mb={4} color="gray.700">
-                📋 Transaction History ({total || 0} records)
+                {t('common.transactionHistory') || 'Transaction History'} ({total || 0} {t('common.pagination.entries') || 'records'})
               </Text>
-              
+
               {loading ? (
                 <Box textAlign="center" py={8}>
                   <Spinner size="lg" />
@@ -303,19 +305,19 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                   <Table size="sm" variant="striped">
                     <Thead>
                       <Tr>
-                        <Th>Date</Th>
-                        <Th>Type</Th>
-                        <Th>Reference</Th>
-                        <Th isNumeric>Amount</Th>
-                        <Th isNumeric>Balance After</Th>
-                        <Th>Notes</Th>
+                        <Th>{t('common.labels.date') || 'Date'}</Th>
+                        <Th>{t('common.labels.type') || 'Type'}</Th>
+                        <Th>{t('common.placeholders.referenceNumber') || 'Reference'}</Th>
+                        <Th isNumeric>{t('common.labels.amount') || 'Amount'}</Th>
+                        <Th isNumeric>{t('common.labels.balance') || 'Balance After'}</Th>
+                        <Th>{t('common.labels.description') || 'Notes'}</Th>
                       </Tr>
                     </Thead>
                     <Tbody>
                       {Array.isArray(transactions) && transactions.map((transaction) => {
                         const typeInfo = formatTransactionType(transaction.reference_type);
                         const isPositive = transaction.amount >= 0;
-                        
+
                         return (
                           <Tr key={transaction.id}>
                             <Td>
@@ -327,8 +329,8 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                               </Text>
                             </Td>
                             <Td>
-                              <Badge 
-                                colorScheme={typeInfo.color} 
+                              <Badge
+                                colorScheme={typeInfo.color}
                                 size="sm"
                                 variant="solid"
                               >
@@ -340,13 +342,13 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                                 {transaction.reference_type === 'TRANSFER' && transaction.reference_id
                                   ? `TRF-${transaction.reference_id}`
                                   : transaction.reference_id
-                                  ? `REF-${transaction.reference_id}`
-                                  : 'Manual Entry'
+                                    ? `REF-${transaction.reference_id}`
+                                    : 'Manual Entry'
                                 }
                               </Text>
                             </Td>
                             <Td isNumeric>
-                              <Text 
+                              <Text
                                 fontSize="sm"
                                 fontFamily="mono"
                                 fontWeight="medium"
@@ -356,7 +358,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                               </Text>
                             </Td>
                             <Td isNumeric>
-                              <Text 
+                              <Text
                                 fontSize="sm"
                                 fontFamily="mono"
                                 color={transaction.balance_after < 0 ? 'red.500' : 'gray.700'}
@@ -388,12 +390,12 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                   >
                     Previous
                   </Button>
-                  
+
                   <HStack spacing={1}>
                     {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                       const pageNum = Math.max(1, Math.min(totalPages - 4, currentPage - 2)) + i;
                       if (pageNum > totalPages) return null;
-                      
+
                       return (
                         <Button
                           key={pageNum}
@@ -408,7 +410,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                       );
                     })}
                   </HStack>
-                  
+
                   <Button
                     size="sm"
                     onClick={() => handlePageChange(currentPage + 1)}
@@ -416,7 +418,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                   >
                     Next
                   </Button>
-                  
+
                   <Text fontSize="sm" color="gray.500">
                     Page {currentPage} of {totalPages}
                   </Text>

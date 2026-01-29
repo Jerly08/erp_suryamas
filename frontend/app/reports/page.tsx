@@ -1,6 +1,7 @@
 ﻿'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useTranslation } from '@/hooks/useTranslation';
 import SalesSummaryModal from '@/components/reports/SalesSummaryModal';
@@ -50,11 +51,11 @@ import {
   Divider,
   Tooltip,
 } from '@chakra-ui/react';
-import { 
-  FiFileText, 
-  FiBarChart, 
-  FiTrendingUp, 
-  FiShoppingCart, 
+import {
+  FiFileText,
+  FiBarChart,
+  FiTrendingUp,
+  FiShoppingCart,
   FiActivity,
   FiDownload,
   FiEye,
@@ -87,102 +88,103 @@ import cashFlowExportService from '../../src/services/cashFlowExportService';
 // Import Closing History Modal
 import ClosingHistoryModal from '../../src/components/reports/ClosingHistoryModal';
 
-  // Define reports data matching the UI design
-  const getAvailableReports = (t: any) => [
-    {
-      id: 'profit-loss',
-      name: t('reports.profitLossStatement'),
-      description: t('reports.description.profitLoss'),
-      type: 'FINANCIAL',
-      icon: FiTrendingUp
-    },
-    {
-      id: 'balance-sheet',
-      name: t('reports.balanceSheet'),
-      description: t('reports.description.balanceSheet'),
-      type: 'FINANCIAL', 
-      icon: FiBarChart
-    },
-    {
-      id: 'cash-flow',
-      name: t('reports.cashFlowStatement'),
-      description: t('reports.description.cashFlow'),
-      type: 'FINANCIAL',
-      icon: FiActivity
-    },
-    {
-      id: 'sales-summary',
-      name: t('reports.salesSummaryReport'),
-      description: t('reports.description.salesSummary'),
-      type: 'OPERATIONAL',
-      icon: FiShoppingCart
-    },
-    {
-      id: 'purchase-report',
-      name: t('reports.purchaseReport'),
-      description: t('reports.description.purchaseReport'),
-      type: 'OPERATIONAL',
-      icon: FiShoppingCart
-    },
-    {
-      id: 'trial-balance',
-      name: t('reports.trialBalance'),
-      description: t('reports.description.trialBalance'),
-      type: 'FINANCIAL',
-      icon: FiList
-    },
-    {
-      id: 'general-ledger',
-      name: t('reports.generalLedger'),
-      description: t('reports.description.generalLedger'),
-      type: 'FINANCIAL',
-      icon: FiBook
-    },
-    {
-      id: 'customer-history',
-      name: t('reports.customerHistory'),
-      description: t('reports.description.customerHistory'),
-      type: 'OPERATIONAL',
-      icon: FiUsers
-    },
-    {
-      id: 'vendor-history',
-      name: t('reports.vendorHistory'),
-      description: t('reports.description.vendorHistory'),
-      type: 'OPERATIONAL',
-      icon: FiTruck
-    }
-  ];
+// Define reports data matching the UI design
+const getAvailableReports = (t: any) => [
+  {
+    id: 'profit-loss',
+    name: t('reports.profitLossStatement'),
+    description: t('reports.description.profitLoss'),
+    type: 'FINANCIAL',
+    icon: FiTrendingUp
+  },
+  /*{
+    id: 'balance-sheet',
+    name: t('reports.balanceSheet.title'),
+    description: t('reports.description.balanceSheet'),
+    type: 'FINANCIAL',
+    icon: FiBarChart
+  },*/
+  {
+    id: 'cash-flow',
+    name: t('reports.cashFlowStatement'),
+    description: t('reports.description.cashFlow'),
+    type: 'FINANCIAL',
+    icon: FiActivity
+  },
+  {
+    id: 'sales-summary',
+    name: t('reports.salesSummaryReport'),
+    description: t('reports.description.salesSummary'),
+    type: 'OPERATIONAL',
+    icon: FiShoppingCart
+  },
+  {
+    id: 'purchase-report',
+    name: t('reports.purchaseReport'),
+    description: t('reports.description.purchaseReport'),
+    type: 'OPERATIONAL',
+    icon: FiShoppingCart
+  },
+  {
+    id: 'trial-balance',
+    name: t('reports.trialBalance.title'),
+    description: t('reports.description.trialBalance'),
+    type: 'FINANCIAL',
+    icon: FiList
+  },
+  /*{
+    id: 'general-ledger',
+    name: t('reports.generalLedger'),
+    description: t('reports.description.generalLedger'),
+    type: 'FINANCIAL',
+    icon: FiBook
+  },*/
+  {
+    id: 'customer-history',
+    name: t('reports.customerHistory'),
+    description: t('reports.description.customerHistory'),
+    type: 'OPERATIONAL',
+    icon: FiUsers
+  },
+  {
+    id: 'vendor-history',
+    name: t('reports.vendorHistory'),
+    description: t('reports.description.vendorHistory'),
+    type: 'OPERATIONAL',
+    icon: FiTruck
+  }
+];
 
 // Helpers to compute fiscal year range from Settings.fiscal_year_start
-const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-function computeFiscalRangeFromString(fyStart: string): {startISO: string, endISO: string} {
-  const lower = (fyStart||'January 1').toLowerCase();
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function computeFiscalRangeFromString(fyStart: string): { startISO: string, endISO: string } {
+  const lower = (fyStart || 'January 1').toLowerCase();
   let m = 1, d = 1;
   const idx = MONTHS.findIndex(mm => lower.startsWith(mm.toLowerCase()));
   if (idx >= 0) {
     const match = lower.match(/(\d{1,2})/);
-    d = Math.min(Math.max(parseInt(match?.[1]||'1',10),1),31);
-    m = idx+1;
+    d = Math.min(Math.max(parseInt(match?.[1] || '1', 10), 1), 31);
+    m = idx + 1;
   } else {
     const parts = lower.split(/[-/\s]/).filter(Boolean);
-    if (parts.length>=2) {
-      const mm = parseInt(parts[0],10); const dd = parseInt(parts[1],10);
-      if (mm>=1&&mm<=12&&dd>=1&&dd<=31) { m=mm; d=dd; }
+    if (parts.length >= 2) {
+      const mm = parseInt(parts[0], 10); const dd = parseInt(parts[1], 10);
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) { m = mm; d = dd; }
     }
   }
   const today = new Date();
-  const thisYearStart = new Date(Date.UTC(today.getFullYear(), m-1, d));
+  const thisYearStart = new Date(Date.UTC(today.getFullYear(), m - 1, d));
   let start = thisYearStart;
-  if (today.getTime() < thisYearStart.getTime()) start = new Date(Date.UTC(today.getFullYear()-1, m-1, d));
-  const nextStart = new Date(Date.UTC(start.getUTCFullYear()+1, m-1, d));
-  const end = new Date(nextStart.getTime() - 24*60*60*1000);
+  if (today.getTime() < thisYearStart.getTime()) start = new Date(Date.UTC(today.getFullYear() - 1, m - 1, d));
+  const nextStart = new Date(Date.UTC(start.getUTCFullYear() + 1, m - 1, d));
+  const end = new Date(nextStart.getTime() - 24 * 60 * 60 * 1000);
   return { startISO: toISO(new Date(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())), endISO: toISO(new Date(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate())) };
 }
 
 const ReportsPage: React.FC = () => {
   const { t } = useTranslation();
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   // Legacy states removed - now using SSOT system only
   const toast = useToast();
@@ -197,9 +199,9 @@ const ReportsPage: React.FC = () => {
   const summaryBg = useColorModeValue('gray.50', 'gray.700');
   const loadingTextColor = useColorModeValue('gray.700', 'gray.300');
   const previewPeriodTextColor = useColorModeValue('gray.500', 'gray.400');
-  
+
   const availableReports = getAvailableReports(t);
-  
+
   // State untuk SSOT Profit Loss
   const [ssotPLOpen, setSSOTPLOpen] = useState(false);
   const [ssotPLData, setSSOTPLData] = useState<SSOTProfitLossData | null>(null);
@@ -327,8 +329,8 @@ const ReportsPage: React.FC = () => {
       } catch (e) {
         // Fallback to current calendar year
         const today = new Date();
-        const start = new Date(today.getFullYear(),0,1);
-        const end = new Date(today.getFullYear(),11,31);
+        const start = new Date(today.getFullYear(), 0, 1);
+        const end = new Date(today.getFullYear(), 11, 31);
         const s = toISO(start), eiso = toISO(end);
         setSSOTStartDate(s); setSSOTEndDate(eiso);
         setSSOTAsOfDate(eiso);
@@ -349,13 +351,13 @@ const ReportsPage: React.FC = () => {
     const loadContacts = async () => {
       try {
         console.log('Loading customers and vendors...');
-        
+
         // Load customers
         const customersResp = await api.get('/api/v1/contacts', {
           params: { type: 'CUSTOMER', limit: 1000 }
         });
         console.log('Customers response:', customersResp.data);
-        
+
         if (customersResp.data?.data) {
           console.log('Setting customers:', customersResp.data.data.length, 'items');
           setCustomers(customersResp.data.data);
@@ -370,7 +372,7 @@ const ReportsPage: React.FC = () => {
           params: { type: 'VENDOR', limit: 1000 }
         });
         console.log('Vendors response:', vendorsResp.data);
-        
+
         if (vendorsResp.data?.data) {
           console.log('Setting vendors:', vendorsResp.data.data.length, 'items');
           setVendors(vendorsResp.data.data);
@@ -398,17 +400,17 @@ const ReportsPage: React.FC = () => {
   const fetchSSOTSalesSummaryReport = async () => {
     setSSOTSSLoading(true);
     setSSOTSSError(null);
-    
+
     try {
       const salesSummaryData = await ssotSalesSummaryService.generateSSOTSalesSummary({
         start_date: ssotSSStartDate,
         end_date: ssotSSEndDate,
         format: 'json'
       });
-      
+
       console.log('SSOT Sales Summary Data received:', salesSummaryData);
       setSSOTSSData(salesSummaryData);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.salesSummaryGenerated'),
@@ -430,11 +432,11 @@ const ReportsPage: React.FC = () => {
     }
   };
 
-// Function untuk fetch SSOT Purchase Report
+  // Function untuk fetch SSOT Purchase Report
   const fetchSSOTPurchaseReport = async () => {
     setSSOTPRLoading(true);
     setSSOTPRError(null);
-    
+
     try {
       const data: SSOTPurchaseReportData = await ssotPurchaseReportService.generateSSOTPurchaseReport({
         start_date: ssotPRStartDate,
@@ -444,7 +446,7 @@ const ReportsPage: React.FC = () => {
 
       console.log('SSOT Purchase Report Data received:', data);
       setSSOTPRData(data);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.purchaseReportGenerated'),
@@ -470,16 +472,16 @@ const ReportsPage: React.FC = () => {
   const fetchSSOTTrialBalanceReport = async () => {
     setSSOTTBLoading(true);
     setSSOTTBError(null);
-    
+
     try {
       const trialBalanceData = await ssotTrialBalanceService.generateSSOTTrialBalance({
         as_of_date: ssotTBAsOfDate,
         format: 'json'
       });
-      
+
       console.log('SSOT Trial Balance Data received:', trialBalanceData);
       setSSOTTBData(trialBalanceData);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.trialBalanceGenerated'),
@@ -540,7 +542,7 @@ const ReportsPage: React.FC = () => {
 
     setCustomerHistoryLoading(true);
     setCustomerHistoryError(null);
-    
+
     try {
       const response = await api.get('/api/v1/reports/customer-history', {
         params: {
@@ -550,10 +552,10 @@ const ReportsPage: React.FC = () => {
           format: 'json'
         }
       });
-      
+
       console.log('Customer History Data received:', response.data);
       setCustomerHistoryData(response.data.data || response.data);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.customerHistoryGenerated'),
@@ -615,7 +617,7 @@ const ReportsPage: React.FC = () => {
 
     setVendorHistoryLoading(true);
     setVendorHistoryError(null);
-    
+
     try {
       const response = await api.get('/api/v1/reports/vendor-history', {
         params: {
@@ -625,10 +627,10 @@ const ReportsPage: React.FC = () => {
           format: 'json'
         }
       });
-      
+
       console.log('Vendor History Data received:', response.data);
       setVendorHistoryData(response.data.data || response.data);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.vendorHistoryGenerated'),
@@ -679,7 +681,7 @@ const ReportsPage: React.FC = () => {
 
     setSSOTGLLoading(true);
     setSSOTGLError(null);
-    
+
     try {
       const generalLedgerData = await ssotGeneralLedgerService.generateSSOTGeneralLedger({
         start_date: ssotGLStartDate,
@@ -687,10 +689,10 @@ const ReportsPage: React.FC = () => {
         account_id: ssotGLAccountId || undefined,
         format: 'json'
       });
-      
+
       console.log('SSOT General Ledger Data received:', generalLedgerData);
       setSSOTGLData(generalLedgerData);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.generalLedgerGenerated'),
@@ -783,7 +785,7 @@ const ReportsPage: React.FC = () => {
       const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
       console.log('[Reports] Fetching closed periods:', response.data);
       console.log('[Reports] Raw data:', JSON.stringify(response.data, null, 2));
-      
+
       if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
         const periods = buildUniqueClosedPeriods(response.data.data);
 
@@ -792,13 +794,13 @@ const ReportsPage: React.FC = () => {
           `[Reports] Loaded ${periods.length} unique closed periods (from ${response.data.data.length} total entries):`,
           periods
         );
-        
+
         if (response.data.data.length > periods.length) {
           console.log(
             `[Reports] Deduplicated ${response.data.data.length - periods.length} duplicate entries`
           );
         }
-        
+
         if (periods.length === 0) {
           console.warn('[Reports] No valid closed periods found - entries may not have entry_date');
         }
@@ -826,16 +828,16 @@ const ReportsPage: React.FC = () => {
   const fetchSSOTBalanceSheetReport = async () => {
     setSSOTBSLoading(true);
     setSSOTBSError(null);
-    
+
     try {
       const balanceSheetData = await ssotBalanceSheetReportService.generateSSOTBalanceSheet({
         as_of_date: ssotAsOfDate,
         format: 'json'
       });
-      
+
       console.log('SSOT Balance Sheet Data received:', balanceSheetData);
       setSSOTBSData(balanceSheetData);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.balanceSheetGenerated'),
@@ -843,12 +845,12 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error) {
       console.error('Error fetching SSOT Balance Sheet report:', error);
       const errorMessage = error instanceof Error ? error.message : t('reports.messages.unknownError');
       setSSOTBSError(errorMessage);
-      
+
       toast({
         title: t('reports.messages.error'),
         description: errorMessage,
@@ -865,22 +867,22 @@ const ReportsPage: React.FC = () => {
   const fetchSSOTCashFlowReport = async () => {
     setSSOTCFLoading(true);
     setSSOTCFError(null);
-    
+
     try {
       const cashFlowData = await ssotCashFlowReportService.generateSSOTCashFlow({
         start_date: ssotCFStartDate,
         end_date: ssotCFEndDate,
         format: 'json'
       });
-      
+
       // Debug: Log the data structure
       console.log('Cash Flow Data Structure:', JSON.stringify(cashFlowData, null, 2));
       console.log('Operating Activities:', cashFlowData?.operating_activities);
       console.log('Investing Activities:', cashFlowData?.investing_activities);
       console.log('Financing Activities:', cashFlowData?.financing_activities);
-      
+
       setSSOTCFData(cashFlowData as SSOTCashFlowData);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.cashFlowGenerated'),
@@ -888,12 +890,12 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error) {
       console.error('Error fetching SSOT Cash Flow report:', error);
       const errorMessage = error instanceof Error ? error.message : t('reports.messages.unknownError');
       setSSOTCFError(errorMessage);
-      
+
       toast({
         title: t('reports.messages.error'),
         description: errorMessage,
@@ -906,11 +908,11 @@ const ReportsPage: React.FC = () => {
     }
   };
 
-// Function untuk fetch SSOT P&L Report
+  // Function untuk fetch SSOT P&L Report
   const fetchSSOTPLReport = async () => {
     setSSOTPLLoading(true);
     setSSOTPLError(null);
-    
+
     try {
       const result = await ssotProfitLossService.generateSSOTProfitLoss({
         start_date: ssotStartDate,
@@ -920,7 +922,7 @@ const ReportsPage: React.FC = () => {
 
       console.log('SSOT P&L Data received:', result);
       setSSOTPLData(result);
-      
+
       toast({
         title: t('reports.messages.success'),
         description: t('reports.messages.profitLossGenerated'),
@@ -928,12 +930,12 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error) {
       console.error('Error fetching SSOT P&L report:', error);
       const errorMessage = error instanceof Error ? error.message : t('reports.messages.unknownError');
       setSSOTPLError(errorMessage);
-      
+
       toast({
         title: t('reports.messages.error'),
         description: errorMessage,
@@ -1013,7 +1015,7 @@ const ReportsPage: React.FC = () => {
     try {
       // Create simple CSV content directly from the balance sheet data
       const csvLines: string[] = [];
-      
+
       // Helper function to escape CSV values
       const escapeCSV = (value: string | number | null | undefined): string => {
         if (value === null || value === undefined) return '';
@@ -1023,7 +1025,7 @@ const ReportsPage: React.FC = () => {
         }
         return str;
       };
-      
+
       // Helper function to format currency
       const formatCurrency = (amount: number | null | undefined): string => {
         if (amount === null || amount === undefined || isNaN(Number(amount))) {
@@ -1031,14 +1033,14 @@ const ReportsPage: React.FC = () => {
         }
         return Number(amount).toLocaleString('id-ID');
       };
-      
+
       // Header
       csvLines.push(escapeCSV(balanceSheetData.company?.name || 'PT. Sistem Akuntansi'));
       csvLines.push('BALANCE SHEET');
       csvLines.push(`As of: ${balanceSheetData.as_of_date || new Date().toISOString().split('T')[0]}`);
       csvLines.push(`Generated on: ${new Date().toLocaleString('id-ID')}`);
       csvLines.push(''); // Empty line
-      
+
       // Summary
       csvLines.push('FINANCIAL SUMMARY');
       csvLines.push('Category,Amount');
@@ -1051,14 +1053,14 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`Balance Difference,${formatCurrency(balanceSheetData.balance_difference)}`);
       }
       csvLines.push(''); // Empty line
-      
+
       // Detailed breakdown
       csvLines.push('DETAILED BREAKDOWN');
       csvLines.push('Account Code,Account Name,Category,Amount');
-      
+
       // Assets
       csvLines.push('ASSETS,,,');
-      
+
       // Current Assets
       if (balanceSheetData.assets?.current_assets?.items && balanceSheetData.assets.current_assets.items.length > 0) {
         csvLines.push('Current Assets,,,');
@@ -1073,7 +1075,7 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`Subtotal Current Assets,,,${formatCurrency(balanceSheetData.assets.current_assets.total_current_assets || 0)}`);
         csvLines.push('');
       }
-      
+
       // Non-Current Assets
       if (balanceSheetData.assets?.non_current_assets?.items && balanceSheetData.assets.non_current_assets.items.length > 0) {
         csvLines.push('Non-Current Assets,,,');
@@ -1088,13 +1090,13 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`Subtotal Non-Current Assets,,,${formatCurrency(balanceSheetData.assets.non_current_assets.total_non_current_assets || 0)}`);
         csvLines.push('');
       }
-      
+
       csvLines.push(`TOTAL ASSETS,,,${formatCurrency(balanceSheetData.assets?.total_assets || 0)}`);
       csvLines.push(''); // Empty line
-      
+
       // Liabilities
       csvLines.push('LIABILITIES,,,');
-      
+
       // Current Liabilities
       if (balanceSheetData.liabilities?.current_liabilities?.items && balanceSheetData.liabilities.current_liabilities.items.length > 0) {
         csvLines.push('Current Liabilities,,,');
@@ -1109,7 +1111,7 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`Subtotal Current Liabilities,,,${formatCurrency(balanceSheetData.liabilities.current_liabilities.total_current_liabilities || 0)}`);
         csvLines.push('');
       }
-      
+
       // Non-Current Liabilities
       if (balanceSheetData.liabilities?.non_current_liabilities?.items && balanceSheetData.liabilities.non_current_liabilities.items.length > 0) {
         csvLines.push('Non-Current Liabilities,,,');
@@ -1124,10 +1126,10 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`Subtotal Non-Current Liabilities,,,${formatCurrency(balanceSheetData.liabilities.non_current_liabilities.total_non_current_liabilities || 0)}`);
         csvLines.push('');
       }
-      
+
       csvLines.push(`TOTAL LIABILITIES,,,${formatCurrency(balanceSheetData.liabilities?.total_liabilities || 0)}`);
       csvLines.push(''); // Empty line
-      
+
       // Equity
       if (balanceSheetData.equity?.items && balanceSheetData.equity.items.length > 0) {
         csvLines.push('EQUITY,,,');
@@ -1141,24 +1143,24 @@ const ReportsPage: React.FC = () => {
         });
         csvLines.push('');
       }
-      
+
       csvLines.push(`TOTAL EQUITY,,,${formatCurrency(balanceSheetData.equity?.total_equity || 0)}`);
       csvLines.push(''); // Empty line
       csvLines.push(`TOTAL LIABILITIES + EQUITY,,,${formatCurrency(balanceSheetData.total_liabilities_and_equity || 0)}`);
-      
+
       // Footer
       csvLines.push('');
       csvLines.push('Generated by Sistem Akuntansi');
       csvLines.push(`Report Date: ${new Date().toLocaleString('id-ID')}`);
       csvLines.push(`Data Source: ${balanceSheetData.enhanced ? 'SSOT Enhanced' : 'SSOT Standard'}`);
-      
+
       const csvContent = csvLines.join('\n');
-      
+
       // Create and trigger download in the browser
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      
+
       link.setAttribute('href', url);
       link.setAttribute('download', `balance_sheet_${ssotAsOfDate}.csv`);
       link.style.visibility = 'hidden';
@@ -1166,7 +1168,7 @@ const ReportsPage: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
+
       toast({
         title: t('reports.messages.csvExportSuccessful'),
         description: t('reports.messages.balanceSheetDownloadedCSV'),
@@ -1192,7 +1194,7 @@ const ReportsPage: React.FC = () => {
       const pdfBlob = await ssotBalanceSheetReportService.generateSSOTBalanceSheetPDF({
         as_of_date: ssotAsOfDate
       });
-      
+
       // Create download link
       const url = window.URL.createObjectURL(pdfBlob);
       const link = document.createElement('a');
@@ -1202,7 +1204,7 @@ const ReportsPage: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      
+
       toast({
         title: t('reports.messages.pdfExportSuccessful'),
         description: t('reports.messages.balanceSheetDownloadedPDF'),
@@ -1240,7 +1242,7 @@ const ReportsPage: React.FC = () => {
         start_date: ssotCFStartDate,
         end_date: ssotCFEndDate
       });
-      
+
       toast({
         title: t('reports.messages.csvExportSuccessful'),
         description: t('reports.messages.cashFlowDownloadedCSV'),
@@ -1279,7 +1281,7 @@ const ReportsPage: React.FC = () => {
         start_date: ssotCFStartDate,
         end_date: ssotCFEndDate
       });
-      
+
       toast({
         title: t('reports.messages.pdfExportSuccessful'),
         description: t('reports.messages.cashFlowDownloadedPDF'),
@@ -1324,7 +1326,7 @@ const ReportsPage: React.FC = () => {
           as_of_date: ssotTBAsOfDate
         });
       }
-      
+
       toast({
         title: t('reports.messages.exportSuccessful'),
         description: t('reports.messages.reportDownloaded', { reportName: 'Trial Balance', format: format.toUpperCase() }),
@@ -1373,7 +1375,7 @@ const ReportsPage: React.FC = () => {
           account_id: ssotGLAccountId || undefined
         });
       }
-      
+
       toast({
         title: t('reports.messages.exportSuccessful'),
         description: t('reports.messages.reportDownloaded', { reportName: 'General Ledger', format: format.toUpperCase() }),
@@ -1433,13 +1435,13 @@ const ReportsPage: React.FC = () => {
         // CSV export - convert JSON to CSV
         const data = response.data.data || response.data;
         const csvLines: string[] = [];
-        
+
         // Header
         csvLines.push(t('reports.csv.customerHistoryReport'));
         csvLines.push(`${t('reports.csv.period')}: ${customerHistoryStartDate} to ${customerHistoryEndDate}`);
         csvLines.push(`${t('reports.csv.customer')}: ${data.customer?.name || 'N/A'}`);
         csvLines.push('');
-        
+
         // Transactions
         csvLines.push(`${t('reports.csv.headers.date')},${t('reports.csv.headers.type')},${t('reports.csv.headers.code')},${t('reports.csv.headers.description')},${t('reports.csv.headers.reference')},${t('reports.csv.headers.amount')},${t('reports.csv.headers.paid')},${t('reports.csv.headers.outstanding')},${t('reports.csv.headers.status')}`);
         if (data.transactions && Array.isArray(data.transactions)) {
@@ -1457,7 +1459,7 @@ const ReportsPage: React.FC = () => {
             ].join(','));
           });
         }
-        
+
         // Summary
         csvLines.push('');
         csvLines.push(t('reports.csv.summary'));
@@ -1465,7 +1467,7 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`${t('reports.csv.totalAmount')},${data.summary?.total_amount || 0}`);
         csvLines.push(`${t('reports.csv.totalPaid')},${data.summary?.total_paid || 0}`);
         csvLines.push(`${t('reports.csv.totalOutstanding')},${data.summary?.total_outstanding || 0}`);
-        
+
         const csvContent = csvLines.join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = window.URL.createObjectURL(blob);
@@ -1537,13 +1539,13 @@ const ReportsPage: React.FC = () => {
         // CSV export - convert JSON to CSV
         const data = response.data.data || response.data;
         const csvLines: string[] = [];
-        
+
         // Header
         csvLines.push(t('reports.csv.vendorHistoryReport'));
         csvLines.push(`${t('reports.csv.period')}: ${vendorHistoryStartDate} to ${vendorHistoryEndDate}`);
         csvLines.push(`${t('reports.csv.vendor')}: ${data.vendor?.name || 'N/A'}`);
         csvLines.push('');
-        
+
         // Transactions
         csvLines.push(`${t('reports.csv.headers.date')},${t('reports.csv.headers.type')},${t('reports.csv.headers.code')},${t('reports.csv.headers.description')},${t('reports.csv.headers.reference')},${t('reports.csv.headers.amount')},${t('reports.csv.headers.paid')},${t('reports.csv.headers.outstanding')},${t('reports.csv.headers.status')}`);
         if (data.transactions && Array.isArray(data.transactions)) {
@@ -1561,7 +1563,7 @@ const ReportsPage: React.FC = () => {
             ].join(','));
           });
         }
-        
+
         // Summary
         csvLines.push('');
         csvLines.push(t('reports.csv.summary'));
@@ -1569,7 +1571,7 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`${t('reports.csv.totalAmount')},${data.summary?.total_amount || 0}`);
         csvLines.push(`${t('reports.csv.totalPaid')},${data.summary?.total_paid || 0}`);
         csvLines.push(`${t('reports.csv.totalOutstanding')},${data.summary?.total_outstanding || 0}`);
-        
+
         const csvContent = csvLines.join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = window.URL.createObjectURL(blob);
@@ -1619,7 +1621,7 @@ const ReportsPage: React.FC = () => {
     try {
       // Import the SSOT Purchase Report Service
       const { ssotPurchaseReportService } = await import('../../src/services/ssotPurchaseReportService');
-      
+
       const params = {
         start_date: ssotPRStartDate,
         end_date: ssotPREndDate,
@@ -1627,17 +1629,17 @@ const ReportsPage: React.FC = () => {
       };
 
       console.log('Exporting Purchase Report with params:', params);
-      
+
       let result: Blob;
       if (format === 'pdf') {
         result = await ssotPurchaseReportService.exportToPDF(params);
       } else {
         result = await ssotPurchaseReportService.exportToCSV(params);
       }
-      
+
       if (result && result.size > 0) {
         const fileName = `SSOT_Purchase_Report_${ssotPRStartDate}_to_${ssotPREndDate}.${format}`;
-        
+
         // Create download link
         const url = window.URL.createObjectURL(result);
         const link = document.createElement('a');
@@ -1647,7 +1649,7 @@ const ReportsPage: React.FC = () => {
         link.click();
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
-        
+
         toast({
           title: t('reports.messages.exportSuccessful'),
           description: t('reports.messages.reportDownloaded', { reportName: 'Purchase Report', format: format.toUpperCase() }),
@@ -1658,10 +1660,10 @@ const ReportsPage: React.FC = () => {
       } else {
         throw new Error(t('reports.messages.emptyFileReceived'));
       }
-      
+
     } catch (error: any) {
       console.error('Purchase Report export error:', error);
-      
+
       toast({
         title: t('reports.messages.exportFailed'),
         description: error.message || t('reports.messages.exportError', { format: format.toUpperCase() }),
@@ -1676,7 +1678,7 @@ const ReportsPage: React.FC = () => {
 
   const handleViewReport = async (report: any) => {
     setLoading(true);
-    
+
     try {
       if (report.id === 'balance-sheet') {
         setSSOTBSOpen(true);
@@ -1700,10 +1702,10 @@ const ReportsPage: React.FC = () => {
         setSSOTGLOpen(true);
         await fetchSSOTGeneralLedgerReport();
       }
-      
+
     } catch (error) {
       console.error('Failed to load SSOT report:', error);
-      
+
       toast({
         title: t('reports.messages.reportLoadError'),
         description: error instanceof Error ? error.message : t('reports.messages.failedToLoadReport'),
@@ -1719,7 +1721,7 @@ const ReportsPage: React.FC = () => {
   // Quick download function for PDF and CSV
   const handleQuickDownload = async (report: any, format: 'pdf' | 'csv') => {
     setLoading(true);
-    
+
     try {
       // For customer-history and vendor-history, show message to use View Report first
       if (report.id === 'customer-history' || report.id === 'vendor-history') {
@@ -1733,10 +1735,10 @@ const ReportsPage: React.FC = () => {
         setLoading(false);
         return;
       }
-      
+
       // Set default parameters based on report type
       let params: any = { format };
-      
+
       if (report.id === 'balance-sheet' || report.id === 'trial-balance') {
         params.as_of_date = new Date().toISOString().split('T')[0];
       } else if (['profit-loss', 'cash-flow', 'sales-summary', 'purchase-report', 'general-ledger'].includes(report.id)) {
@@ -1744,28 +1746,28 @@ const ReportsPage: React.FC = () => {
         const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         params.start_date = firstDayOfMonth.toISOString().split('T')[0];
         params.end_date = today.toISOString().split('T')[0];
-        
+
         if (report.id === 'general-ledger') {
           params.account_id = 'all';
         }
       }
-      
+
       console.log('Downloading report:', report.id, 'with params:', params);
-      
+
       // Generate and download the report
       const result = await reportService.generateReport(report.id, params);
-      
+
       console.log('Report result type:', typeof result, 'isBlob:', result instanceof Blob);
       console.log('Report result:', result);
-      
+
       if (result instanceof Blob) {
         if (result.size === 0) {
           throw new Error('Empty file received from server');
         }
-        
+
         const fileName = `${report.id}_${format}_${new Date().toISOString().split('T')[0]}.${format}`;
         await reportService.downloadReport(result, fileName);
-        
+
         toast({
           title: t('reports.messages.downloadSuccessful'),
           description: t('reports.messages.reportDownloaded', { reportName: report.name, format: format.toUpperCase() }),
@@ -1781,7 +1783,7 @@ const ReportsPage: React.FC = () => {
           const blob = new Blob([csvContent], { type: 'text/csv' });
           const fileName = `${report.id}_${format}_${new Date().toISOString().split('T')[0]}.${format}`;
           await reportService.downloadReport(blob, fileName);
-          
+
           toast({
             title: 'Download Successful',
             description: `${report.name} has been downloaded as CSV`,
@@ -1800,20 +1802,20 @@ const ReportsPage: React.FC = () => {
       } else {
         throw new Error(`Invalid response format from server: ${typeof result}`);
       }
-      
+
     } catch (error) {
       console.error('Quick download failed:', error);
-      
+
       let errorMessage = 'Failed to download report';
       if (error instanceof Error) {
         errorMessage = error.message;
       }
-      
+
       // Provide user-friendly error messages
       if (errorMessage.includes('Unknown report type') || errorMessage.includes('endpoint not found')) {
         errorMessage = `${format.toUpperCase()} export is not yet supported for ${report.name}. Please use the "More..." option for available formats.`;
       }
-      
+
       toast({
         title: 'Download Failed',
         description: errorMessage,
@@ -1825,8 +1827,8 @@ const ReportsPage: React.FC = () => {
       setLoading(false);
     }
   };
-  
-// Helper function to convert JSON to CSV with professional formatting
+
+  // Helper function to convert JSON to CSV with professional formatting
   const convertJSONToCSV = (data: any, reportType: string): string => {
     try {
       if (!data) return 'No data available';
@@ -1990,12 +1992,12 @@ const ReportsPage: React.FC = () => {
     if (amount === null || amount === undefined || isNaN(Number(amount))) {
       return 'Rp 0';
     }
-    
+
     const numericAmount = Number(amount);
     if (!isFinite(numericAmount)) {
       return 'Rp 0';
     }
-    
+
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
@@ -2025,7 +2027,7 @@ const ReportsPage: React.FC = () => {
   const handleGenerateReport = (report: any) => {
     setSelectedReport(report);
     resetParams();
-    
+
     // Set default parameters based on report type
     if (report.id === 'balance-sheet') {
       setReportParams({ as_of_date: new Date().toISOString().split('T')[0], format: 'pdf' });
@@ -2059,10 +2061,10 @@ const ReportsPage: React.FC = () => {
         format: 'pdf'
       });
     }
-    
+
     onOpen();
   };
-  
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setReportParams(prev => ({ ...prev, [name]: value }));
@@ -2070,7 +2072,7 @@ const ReportsPage: React.FC = () => {
 
   const executeReport = async () => {
     if (!selectedReport) return;
-    
+
     setLoading(true);
     try {
       // Validate required parameters
@@ -2079,32 +2081,32 @@ const ReportsPage: React.FC = () => {
           throw new Error(t('reports.messages.startDateEndDateRequired'));
         }
       }
-      
+
       if (['balance-sheet', 'trial-balance'].includes(selectedReport.id)) {
         if (!reportParams.as_of_date) {
           throw new Error(t('reports.messages.asOfDateRequired'));
         }
       }
-      
+
       if (selectedReport.id === 'general-ledger') {
         if (!reportParams.account_id) {
           throw new Error(t('reports.messages.accountIdRequired'));
         }
       }
-      
+
       // Use unified report generation for all report types
       const result = await reportService.generateReport(selectedReport.id, reportParams);
-      
+
       if (!result) {
         throw new Error(t('reports.messages.noDataReceived'));
       }
-      
+
       // Check if result is a Blob (for file downloads)
       if (result instanceof Blob) {
         if (result.size === 0) {
           throw new Error(t('reports.messages.emptyFileReceived'));
         }
-        
+
         // Handle the result - Download file
         const fileName = `${selectedReport.id}_report_${new Date().toISOString().split('T')[0]}.${reportParams.format}`;
         await reportService.downloadReport(result, fileName);
@@ -2119,18 +2121,18 @@ const ReportsPage: React.FC = () => {
         console.error('Unexpected result format:', typeof result, result);
         throw new Error(t('reports.messages.invalidResponseFormat'));
       }
-      
+
       onClose();
     } catch (error) {
       console.error('Failed to generate report:', error);
-      
+
       let errorMessage = t('reports.messages.unknownError');
       if (error instanceof Error) {
         errorMessage = error.message;
       } else if (typeof error === 'string') {
         errorMessage = error;
       }
-      
+
       toast({
         title: t('reports.messages.reportGenerationFailed'),
         description: errorMessage,
@@ -2154,195 +2156,109 @@ const ReportsPage: React.FC = () => {
               </Heading>
             </Flex>
           </VStack>
-        
-        {/* Financial Reports Grid */}
-        <SimpleGrid columns={[1, 2, 3]} spacing={6} position="relative">
-          {availableReports.map((report) => (
-            <Card
-              key={report.id}
-              bg={cardBg}
-              border="1px"
-              borderColor={borderColor}
-              borderRadius="md"
-              overflow="visible"
-              _hover={{ shadow: 'md' }}
-              transition="all 0.2s"
-              position="relative"
-            >
-              <CardBody p={0} position="relative">
-                <VStack spacing={0} align="stretch">
-                  {/* Icon and Badge Header */}
-                  <Flex p={4} align="center" justify="space-between">
-                    <Icon as={report.icon} size="24px" color="blue.500" />
-                    <Badge 
-                      colorScheme={report.type === 'FINANCIAL' ? 'green' : 'blue'} 
-                      variant="solid"
-                      fontSize="xs"
-                      px={2}
-                      py={1}
-                      borderRadius="md"
-                    >
-                      {report.type}
-                    </Badge>
-                  </Flex>
-                  
-                  {/* Content */}
-                  <VStack spacing={3} align="stretch" px={4} pb={4}>
-                    <Heading size="md" color={textColor} fontWeight="medium">
-                      {report.name}
-                    </Heading>
-                    <Text 
-                      fontSize="sm" 
-                      color={descriptionColor} 
-                      lineHeight="1.4"
-                      noOfLines={3}
-                    >
-                      {report.description}
-                    </Text>
-                    
-                    {/* Action Buttons */}
-                    <HStack spacing={2} width="full" mt={2} align="flex-start">
-                      <Button
-                        colorScheme="blue"
-                        size="md"
-                        flex="1"
-                        onClick={() => {
-                          // Open SSOT modals for reports that have SSOT integration
-                          if (report.id === 'sales-summary') {
-                            setSSOTSSOpen(true);
-                          } else if (report.id === 'purchase-report') {
-                            setSSOTPROpen(true);
-                          } else if (report.id === 'trial-balance') {
-                            setSSOTTBOpen(true);
-                            // Auto-load closed periods untuk Trial Balance (deduplicated)
-                            (async () => {
-                              setLoadingSSOTTBClosedPeriods(true);
-                              try {
-                                const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                                if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                                  const periods = buildUniqueClosedPeriods(response.data.data);
-                                  setSSOTTBClosedPeriods(periods);
-                                  console.log(`[Trial Balance] Auto-loaded ${periods.length} unique closed periods`);
-                                }
-                              } catch (error) {
-                                console.error('[Trial Balance] Failed to auto-load closed periods:', error);
-                              } finally {
-                                setLoadingSSOTTBClosedPeriods(false);
-                              }
-                            })();
-                          } else if (report.id === 'general-ledger') {
-                            setSSOTGLOpen(true);
-                            // Auto-load closed periods untuk General Ledger (deduplicated)
-                            (async () => {
-                              setLoadingSSOTGLClosedPeriods(true);
-                              try {
-                                const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                                if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                                  const periods = buildUniqueClosedPeriods(response.data.data);
-                                  setSSOTGLClosedPeriods(periods);
-                                  console.log(`[General Ledger] Auto-loaded ${periods.length} unique closed periods`);
-                                }
-                              } catch (error) {
-                                console.error('[General Ledger] Failed to auto-load closed periods:', error);
-                              } finally {
-                                setLoadingSSOTGLClosedPeriods(false);
-                              }
-                            })();
-                          } else if (report.id === 'balance-sheet') {
-                            setSSOTBSOpen(true);
-                          } else if (report.id === 'cash-flow') {
-                            setSSOTCFOpen(true);
-                            // Auto-load closed periods untuk Cash Flow (deduplicated)
-                            (async () => {
-                              setLoadingSSOTCFClosedPeriods(true);
-                              try {
-                                const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                                if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                                  const periods = buildUniqueClosedPeriods(response.data.data);
-                                  setSSOTCFClosedPeriods(periods);
-                                  console.log(`[Cash Flow] Auto-loaded ${periods.length} unique closed periods`);
-                                }
-                              } catch (error) {
-                                console.error('[Cash Flow] Failed to auto-load closed periods:', error);
-                              } finally {
-                                setLoadingSSOTCFClosedPeriods(false);
-                              }
-                            })();
-                          } else if (report.id === 'profit-loss') {
-                            setSSOTPLOpen(true);
-                            // Auto-load closed periods untuk P&L (deduplicated)
-                            (async () => {
-                              setLoadingSSOTPLClosedPeriods(true);
-                              try {
-                                const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                                if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                                  const periods = buildUniqueClosedPeriods(response.data.data);
 
-                                  setSSOTPLClosedPeriods(periods);
-                                  console.log(`[P&L] Auto-loaded ${periods.length} unique closed periods`);
-                                }
-                              } catch (error) {
-                                console.error('[P&L] Failed to auto-load closed periods:', error);
-                              } finally {
-                                setLoadingSSOTPLClosedPeriods(false);
-                              }
-                            })();
-                          } else if (report.id === 'customer-history') {
-                            setCustomerHistoryOpen(true);
-                          } else if (report.id === 'vendor-history') {
-                            setVendorHistoryOpen(true);
-                          } else {
-                            // Use legacy modal for other reports
-                            handleGenerateReport(report);
-                          }
-                        }}
-                        isLoading={loading}
-                        leftIcon={<FiEye />}
+          {/* Financial Reports Grid */}
+          <SimpleGrid columns={[1, 2, 3]} spacing={6} position="relative">
+            {availableReports.map((report) => (
+              <Card
+                key={report.id}
+                bg={cardBg}
+                border="1px"
+                borderColor={borderColor}
+                borderRadius="md"
+                overflow="visible"
+                _hover={{ shadow: 'md' }}
+                transition="all 0.2s"
+                position="relative"
+              >
+                <CardBody p={0} position="relative">
+                  <VStack spacing={0} align="stretch">
+                    {/* Icon and Badge Header */}
+                    <Flex p={4} align="center" justify="space-between">
+                      <Icon as={report.icon} size="24px" color="blue.500" />
+                      <Badge
+                        colorScheme={report.type === 'FINANCIAL' ? 'green' : 'blue'}
+                        variant="solid"
+                        fontSize="xs"
+                        px={2}
+                        py={1}
+                        borderRadius="md"
                       >
-                        {t('reports.viewReport')}
-                      </Button>
-                      <VStack spacing={1} flex="1">
+                        {report.type}
+                      </Badge>
+                    </Flex>
+
+                    {/* Content */}
+                    <VStack spacing={3} align="stretch" px={4} pb={4}>
+                      <Heading size="md" color={textColor} fontWeight="medium">
+                        {report.name}
+                      </Heading>
+                      <Text
+                        fontSize="sm"
+                        color={descriptionColor}
+                        lineHeight="1.4"
+                        noOfLines={3}
+                      >
+                        {report.description}
+                      </Text>
+
+                      {/* Action Buttons */}
+                      <HStack spacing={2} width="full" mt={2} align="flex-start">
                         <Button
-                          colorScheme="red"
-                          variant="outline"
-                          size="sm"
-                          width="full"
+                          colorScheme="blue"
+                          size="md"
+                          flex="1"
+                          onClick={() => {
+                            // Navigate to dedicated report pages
+                            router.push(`/reports/${report.id}`);
+                          }}
                           isLoading={loading}
-                          leftIcon={<FiFilePlus />}
-                          onClick={() => handleQuickDownload(report, 'pdf')}
+                          leftIcon={<FiEye />}
                         >
-                          {t('reports.pdf')}
+                          {t('reports.viewReport')}
                         </Button>
-                        <Button
-                          colorScheme="green"
-                          variant="outline"
-                          size="sm"
-                          width="full"
-                          isLoading={loading}
-                          leftIcon={<FiFileText />}
-                          onClick={() => handleQuickDownload(report, 'csv')}
-                        >
-                          {t('reports.csv')}
-                        </Button>
-                        <Button
-                          colorScheme="gray"
-                          variant="outline"
-                          size="sm"
-                          width="full"
-                          isLoading={loading}
-                          leftIcon={<FiDownload />}
-                          onClick={() => handleGenerateReport(report)}
-                        >
-                          {t('reports.more')}
-                        </Button>
-                      </VStack>
-                    </HStack>
+                        <VStack spacing={1} flex="1">
+                          <Button
+                            colorScheme="red"
+                            variant="outline"
+                            size="sm"
+                            width="full"
+                            isLoading={loading}
+                            leftIcon={<FiFilePlus />}
+                            onClick={() => handleQuickDownload(report, 'pdf')}
+                          >
+                            {t('reports.pdf')}
+                          </Button>
+                          <Button
+                            colorScheme="green"
+                            variant="outline"
+                            size="sm"
+                            width="full"
+                            isLoading={loading}
+                            leftIcon={<FiFileText />}
+                            onClick={() => handleQuickDownload(report, 'csv')}
+                          >
+                            {t('reports.csvLabel')}
+                          </Button>
+                          <Button
+                            colorScheme="gray"
+                            variant="outline"
+                            size="sm"
+                            width="full"
+                            isLoading={loading}
+                            leftIcon={<FiDownload />}
+                            onClick={() => handleGenerateReport(report)}
+                          >
+                            {t('reports.more')}
+                          </Button>
+                        </VStack>
+                      </HStack>
+                    </VStack>
                   </VStack>
-                </VStack>
-              </CardBody>
-            </Card>
-          ))}
-        </SimpleGrid>
+                </CardBody>
+              </Card>
+            ))}
+          </SimpleGrid>
         </VStack>
       </Box>
 
@@ -2360,90 +2276,90 @@ const ReportsPage: React.FC = () => {
                   <>
                     <FormControl isRequired>
                       <FormLabel>{t('reports.modal.asOfDate')}</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="as_of_date" 
-                        value={reportParams.as_of_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="as_of_date"
+                        value={reportParams.as_of_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                   </>
                 )}
-                
+
                 {/* Profit & Loss and Cash Flow Parameters */}
                 {(selectedReport.id === 'profit-loss' || selectedReport.id === 'cash-flow') && (
                   <>
                     <FormControl isRequired>
                       <FormLabel>{t('reports.modal.startDate')}</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="start_date" 
-                        value={reportParams.start_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="start_date"
+                        value={reportParams.start_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel>{t('reports.modal.endDate')}</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="end_date" 
-                        value={reportParams.end_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="end_date"
+                        value={reportParams.end_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                   </>
                 )}
-                
+
                 {/* Sales Summary Parameters */}
                 {selectedReport.id === 'sales-summary' && (
                   <>
                     <FormControl isRequired>
                       <FormLabel>Start Date</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="start_date" 
-                        value={reportParams.start_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="start_date"
+                        value={reportParams.start_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel>End Date</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="end_date" 
-                        value={reportParams.end_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="end_date"
+                        value={reportParams.end_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                   </>
                 )}
-                
+
                 {/* Purchase Summary and Purchase Report Parameters */}
                 {(selectedReport.id === 'purchase-summary' || selectedReport.id === 'purchase-report') && (
                   <>
                     <FormControl isRequired>
                       <FormLabel>Start Date</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="start_date" 
-                        value={reportParams.start_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="start_date"
+                        value={reportParams.start_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel>End Date</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="end_date" 
-                        value={reportParams.end_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="end_date"
+                        value={reportParams.end_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                     <FormControl>
                       <FormLabel>Group By</FormLabel>
-                      <Select 
-                        name="group_by" 
-                        value={reportParams.group_by || 'month'} 
+                      <Select
+                        name="group_by"
+                        value={reportParams.group_by || 'month'}
                         onChange={handleInputChange}
                       >
                         <option value="month">Month</option>
@@ -2453,30 +2369,30 @@ const ReportsPage: React.FC = () => {
                     </FormControl>
                   </>
                 )}
-                
+
                 {/* Trial Balance Parameters */}
                 {selectedReport.id === 'trial-balance' && (
                   <>
                     <FormControl isRequired>
                       <FormLabel>As of Date</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="as_of_date" 
-                        value={reportParams.as_of_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="as_of_date"
+                        value={reportParams.as_of_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                   </>
                 )}
-                
+
                 {/* General Ledger Parameters */}
                 {selectedReport.id === 'general-ledger' && (
                   <>
                     <FormControl isRequired>
                       <FormLabel>Account Selection</FormLabel>
-                      <Select 
-                        name="account_id" 
-                        value={reportParams.account_id || 'all'} 
+                      <Select
+                        name="account_id"
+                        value={reportParams.account_id || 'all'}
                         onChange={handleInputChange}
                       >
                         <option value="all">All Accounts</option>
@@ -2492,31 +2408,31 @@ const ReportsPage: React.FC = () => {
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel>Start Date</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="start_date" 
-                        value={reportParams.start_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="start_date"
+                        value={reportParams.start_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel>End Date</FormLabel>
-                      <Input 
-                        type="date" 
-                        name="end_date" 
-                        value={reportParams.end_date || ''} 
-                        onChange={handleInputChange} 
+                      <Input
+                        type="date"
+                        name="end_date"
+                        value={reportParams.end_date || ''}
+                        onChange={handleInputChange}
                       />
                     </FormControl>
                   </>
                 )}
-                
+
                 {/* Format Selection - Common for all reports */}
                 <FormControl>
                   <FormLabel>Output Format</FormLabel>
-                  <Select 
-                    name="format" 
-                    value={reportParams.format || 'pdf'} 
+                  <Select
+                    name="format"
+                    value={reportParams.format || 'pdf'}
                     onChange={handleInputChange}
                   >
                     {/* For SSOT P&L, only allow PDF and CSV as per requirements */}
@@ -2542,8 +2458,8 @@ const ReportsPage: React.FC = () => {
             <Button variant="ghost" mr={3} onClick={onClose}>
               Cancel
             </Button>
-            <Button 
-              colorScheme="blue" 
+            <Button
+              colorScheme="blue"
               onClick={() => {
                 if (selectedReport?.id === 'sales-summary') {
                   // For sales summary, open SSOT modal with date parameters
@@ -2580,7 +2496,7 @@ const ReportsPage: React.FC = () => {
                   {t('reports.modal.profitLossTitle')}
                 </Text>
                 <Text fontSize="sm" color={previewPeriodTextColor}>
-                  {t('reports.modal.enhancedRevenueAnalysis')}
+                  {t('reports.vendorHistoryReport.helperText')}
                 </Text>
               </VStack>
             </HStack>
@@ -2677,25 +2593,25 @@ const ReportsPage: React.FC = () => {
               <HStack spacing={4} mb={4} flexWrap="wrap">
                 <FormControl>
                   <FormLabel>{t('reports.modal.startDate')}</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotStartDate} 
-                    onChange={(e) => setSSOTStartDate(e.target.value)} 
+                  <Input
+                    type="date"
+                    value={ssotStartDate}
+                    onChange={(e) => setSSOTStartDate(e.target.value)}
                   />
                 </FormControl>
                 <FormControl>
                   <FormLabel>{t('reports.modal.endDate')}</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotEndDate} 
-                    onChange={(e) => setSSOTEndDate(e.target.value)} 
+                  <Input
+                    type="date"
+                    value={ssotEndDate}
+                    onChange={(e) => setSSOTEndDate(e.target.value)}
                   />
                 </FormControl>
                 <Button
                   colorScheme="blue"
                   onClick={fetchSSOTPLReport}
                   isLoading={ssotPLLoading}
-leftIcon={<FiTrendingUp />}
+                  leftIcon={<FiTrendingUp />}
                   size="md"
                   mt={8}
                   whiteSpace="nowrap"
@@ -2939,7 +2855,7 @@ leftIcon={<FiTrendingUp />}
                               {formatCurrency(section.total || 0)}
                             </Text>
                           </HStack>
-                          
+
                           {section.items && section.items.length > 0 && (
                             <VStack spacing={1} align="stretch">
                               {section.items.map((item: any, itemIndex: number) => (
@@ -2949,8 +2865,8 @@ leftIcon={<FiTrendingUp />}
                                     {item.is_percentage && ' (%)'}
                                   </Text>
                                   <Text fontSize="sm" color={textColor}>
-                                    {item.is_percentage ? 
-                                      `${typeof item.amount === 'number' ? item.amount.toFixed(1) : item.amount}%` : 
+                                    {item.is_percentage ?
+                                      `${typeof item.amount === 'number' ? item.amount.toFixed(1) : item.amount}%` :
                                       formatCurrency(item.amount || 0)
                                     }
                                   </Text>
@@ -3015,9 +2931,9 @@ leftIcon={<FiTrendingUp />}
       </Modal>
 
       {/* SSOT Balance Sheet Modal */}
-      <Modal 
-        isOpen={ssotBSOpen} 
-        onClose={() => setSSOTBSOpen(false)} 
+      <Modal
+        isOpen={ssotBSOpen}
+        onClose={() => setSSOTBSOpen(false)}
         size="6xl"
         onCloseComplete={() => {
           // Reset closed periods when modal closes
@@ -3031,10 +2947,10 @@ leftIcon={<FiTrendingUp />}
               <Icon as={FiBarChart} color="blue.500" />
               <VStack align="start" spacing={0}>
                 <Text fontSize="lg" fontWeight="bold">
-                  SSOT Balance Sheet
+                  {t('reports.balanceSheet.enhancedTitle')}
                 </Text>
                 <Text fontSize="sm" color={previewPeriodTextColor}>
-                  Real-time integration with SSOT Journal System
+                  {t('reports.balanceSheet.realTimeSsotIntegration')}
                 </Text>
               </VStack>
             </HStack>
@@ -3044,57 +2960,59 @@ leftIcon={<FiTrendingUp />}
             <Box mb={4}>
               <HStack spacing={4} mb={4} flexWrap="wrap">
                 <FormControl flex="1">
-                  <FormLabel>As Of Date</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotAsOfDate} 
-                    onChange={(e) => setSSOTAsOfDate(e.target.value)} 
+                  <FormLabel>{t('reports.modal.asOfDate')}</FormLabel>
+                  <Input
+                    type="date"
+                    value={ssotAsOfDate}
+                    onChange={(e) => setSSOTAsOfDate(e.target.value)}
                   />
                 </FormControl>
                 <FormControl flex="1">
                   <FormLabel display="flex" alignItems="center">
-                    Closed Period
+                    {t('reports.balanceSheet.closedPeriod')}
                     <Badge ml={2} colorScheme="blue" fontSize="xs">
-                      Quick Select
+                      {t('reports.balanceSheet.quickSelect')}
                     </Badge>
-                    <Tooltip label="Select from previously closed accounting periods or enter custom date">
+                    <Tooltip label={t('reports.balanceSheet.selectClosedPeriodTooltip')}>
                       <span>
                         <Icon as={FiInfo} ml={1} color="gray.500" boxSize={3} />
                       </span>
                     </Tooltip>
                   </FormLabel>
-                  <Select 
-                    placeholder="Select closed period date..."
+                  <Select
+                    placeholder={t('reports.balanceSheet.selectClosedPeriodOptional')}
                     value=""
                     onChange={(e) => {
                       if (e.target.value) {
                         // Auto-fill As Of Date dengan entry_date dari closed period
                         const selectedDate = e.target.value;
                         setSSOTAsOfDate(selectedDate);
-                        
+
                         // Find selected period details untuk logging
                         const selectedPeriod = closedPeriods.find(p => p.date === selectedDate);
-                        
+
                         console.log(`[Reports] Closed period selected: ${selectedDate}`);
                         console.log(`[Reports] Auto-filled As Of Date: ${selectedDate}`);
-                        
+
                         if (selectedPeriod) {
                           console.log(`[Reports] Period details: ${selectedPeriod.label}`);
                         }
-                        
+
                         // Show success toast
                         toast({
-                          title: 'Period Selected',
-                          description: `Generating Balance Sheet for ${new Date(selectedDate).toLocaleDateString('id-ID', {
-                            day: '2-digit',
-                            month: 'long',
-                            year: 'numeric'
-                          })}`,
+                          title: t('reports.periodSelected'),
+                          description: t('reports.generatingReportFor', {
+                            date: new Date(selectedDate).toLocaleDateString('id-ID', {
+                              day: '2-digit',
+                              month: 'long',
+                              year: 'numeric'
+                            })
+                          }),
                           status: 'info',
                           duration: 2000,
                           isClosable: true,
                         });
-                        
+
                         // Auto-generate report dengan tanggal yang dipilih
                         // Gunakan setTimeout untuk memastikan state sudah update
                         setTimeout(() => {
@@ -3102,39 +3020,39 @@ leftIcon={<FiTrendingUp />}
                           // Call generate function langsung dengan parameter date yang sudah diset
                           setSSOTBSLoading(true);
                           setSSOTBSError(null);
-                          
+
                           ssotBalanceSheetReportService.generateSSOTBalanceSheet({
                             as_of_date: selectedDate,
                             format: 'json'
                           })
-                          .then((balanceSheetData) => {
-                            console.log('SSOT Balance Sheet Data received (auto-generated):', balanceSheetData);
-                            setSSOTBSData(balanceSheetData);
-                            
-                            toast({
-                              title: 'Success',
-                              description: 'SSOT Balance Sheet generated successfully',
-                              status: 'success',
-                              duration: 3000,
-                              isClosable: true,
+                            .then((balanceSheetData) => {
+                              console.log('SSOT Balance Sheet Data received (auto-generated):', balanceSheetData);
+                              setSSOTBSData(balanceSheetData);
+
+                              toast({
+                                title: t('reports.modal.status.success'),
+                                description: t('reports.ssotBalanceSheetGenerated'),
+                                status: 'success',
+                                duration: 3000,
+                                isClosable: true,
+                              });
+                            })
+                            .catch((error) => {
+                              console.error('Error auto-generating SSOT Balance Sheet:', error);
+                              const errorMessage = error instanceof Error ? error.message : t('reports.modal.unknownError');
+                              setSSOTBSError(errorMessage);
+
+                              toast({
+                                title: t('common.error'),
+                                description: errorMessage,
+                                status: 'error',
+                                duration: 5000,
+                                isClosable: true,
+                              });
+                            })
+                            .finally(() => {
+                              setSSOTBSLoading(false);
                             });
-                          })
-                          .catch((error) => {
-                            console.error('Error auto-generating SSOT Balance Sheet:', error);
-                            const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-                            setSSOTBSError(errorMessage);
-                            
-                            toast({
-                              title: 'Error',
-                              description: errorMessage,
-                              status: 'error',
-                              duration: 5000,
-                              isClosable: true,
-                            });
-                          })
-                          .finally(() => {
-                            setSSOTBSLoading(false);
-                          });
                         }, 100);
                       }
                     }}
@@ -3149,31 +3067,31 @@ leftIcon={<FiTrendingUp />}
                     icon={loadingClosedPeriods ? <Spinner size="xs" /> : undefined}
                   >
                     {loadingClosedPeriods && (
-                      <option disabled>Loading closed periods...</option>
+                      <option disabled>{t('reports.balanceSheet.loadingClosedPeriods')}</option>
                     )}
-                    
+
                     {!loadingClosedPeriods && closedPeriods.length === 0 && (
-                      <option disabled>No closed periods found</option>
+                      <option disabled>{t('reports.balanceSheet.noClosedPeriodsFound')}</option>
                     )}
-                    
+
                     {!loadingClosedPeriods && closedPeriods.length > 0 && (
                       <>
                         {/* Group by year */}
                         {Array.from(new Set(closedPeriods.map(p => {
                           const year = new Date(p.date).getFullYear();
                           const currentYear = new Date().getFullYear();
-                          if (year === currentYear) return 'Current Year';
-                          if (year === currentYear - 1) return 'Last Year';
-                          return `Year ${year}`;
+                          if (year === currentYear) return t('reports.balanceSheet.currentYear');
+                          if (year === currentYear - 1) return t('reports.balanceSheet.lastYear');
+                          return t('reports.balanceSheet.year', { year });
                         }))).map(group => (
                           <optgroup label={group} key={group}>
                             {closedPeriods
                               .filter(p => {
                                 const year = new Date(p.date).getFullYear();
                                 const currentYear = new Date().getFullYear();
-                                if (year === currentYear) return group === 'Current Year';
-                                if (year === currentYear - 1) return group === 'Last Year';
-                                return group === `Year ${year}`;
+                                if (year === currentYear) return group === t('reports.currentYear');
+                                if (year === currentYear - 1) return group === t('reports.lastYear');
+                                return group === t('reports.year', { year });
                               })
                               .map((period, index) => (
                                 <option key={`${period.date}-${index}`} value={period.date}>
@@ -3186,7 +3104,7 @@ leftIcon={<FiTrendingUp />}
                     )}
                   </Select>
                   <Text fontSize="xs" color="gray.500" mt={1}>
-                    Select from previously closed periods or enter custom date
+                    {t('reports.balanceSheet.selectClosedPeriodTooltip')}
                   </Text>
                 </FormControl>
                 <Button
@@ -3198,7 +3116,7 @@ leftIcon={<FiTrendingUp />}
                   mt={8}
                   whiteSpace="nowrap"
                 >
-                  Generate Report
+                  {t('reports.modal.generateReport')}
                 </Button>
               </HStack>
             </Box>
@@ -3209,10 +3127,10 @@ leftIcon={<FiTrendingUp />}
                   <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
                   <VStack spacing={2}>
                     <Text fontSize="lg" fontWeight="medium" color={loadingTextColor}>
-                      Generating SSOT Balance Sheet
+                      {t('reports.generatingBalanceSheet')}
                     </Text>
                     <Text fontSize="sm" color={descriptionColor}>
-                      Fetching real-time data from SSOT journal system...
+                      {t('reports.modal.analyzingFinancialPosition')}
                     </Text>
                   </VStack>
                 </VStack>
@@ -3221,7 +3139,7 @@ leftIcon={<FiTrendingUp />}
 
             {ssotBSError && (
               <Box bg="red.50" p={4} borderRadius="md" mb={4}>
-                <Text color="red.600" fontWeight="medium">Error: {ssotBSError}</Text>
+                <Text color="red.600" fontWeight="medium">{t('common.error')}: {ssotBSError}</Text>
                 <Button
                   mt={2}
                   size="sm"
@@ -3229,7 +3147,7 @@ leftIcon={<FiTrendingUp />}
                   variant="outline"
                   onClick={fetchSSOTBalanceSheetReport}
                 >
-                  Retry
+                  {t('reports.modal.retry')}
                 </Button>
               </Box>
             )}
@@ -3241,61 +3159,61 @@ leftIcon={<FiTrendingUp />}
                     {ssotBSData.company?.name || 'PT. Sistem Akuntansi'}
                   </Heading>
                   <Text fontSize="lg" fontWeight="semibold" mt={1}>
-                    Enhanced Balance Sheet (SSOT)
+                    {t('reports.balanceSheet.enhancedTitle')}
                   </Text>
                   <Text fontSize="sm" color={descriptionColor}>
-                    As of: {ssotBSData.as_of_date ? new Date(ssotBSData.as_of_date).toLocaleDateString('id-ID') : ssotAsOfDate}
+                    {t('reports.balanceSheet.asOf')}: {ssotBSData.as_of_date ? new Date(ssotBSData.as_of_date).toLocaleDateString('id-ID') : ssotAsOfDate}
                   </Text>
                   {ssotBSData.is_balanced ? (
-                    <Badge colorScheme="green" mt={2}>Balanced âœ“</Badge>
+                    <Badge colorScheme="green" mt={2}>{t('reports.balanceSheet.balancedCheck')}</Badge>
                   ) : (
-                    <Badge colorScheme="red" mt={2}>Not Balanced (Diff: {formatCurrency(ssotBSData.balance_difference || 0)})</Badge>
+                    <Badge colorScheme="red" mt={2}>{t('reports.balanceSheet.notBalancedDiff', { amount: formatCurrency(ssotBSData.balance_difference || 0) })}</Badge>
                   )}
                 </Box>
 
                 <SimpleGrid columns={[1, 2, 3]} spacing={4}>
                   <Box bg="green.50" p={4} borderRadius="md" textAlign="center">
-                    <Text fontSize="sm" color="green.600">Total Assets</Text>
+                    <Text fontSize="sm" color="green.600">{t('reports.balanceSheet.totalAssets')}</Text>
                     <Text fontSize="xl" fontWeight="bold" color="green.700">
                       {formatCurrency(ssotBSData.assets?.total_assets || ssotBSData.total_assets || 0)}
                     </Text>
                   </Box>
-                  
+
                   <Box bg="orange.50" p={4} borderRadius="md" textAlign="center">
-                    <Text fontSize="sm" color="orange.600">Total Liabilities</Text>
+                    <Text fontSize="sm" color="orange.600">{t('reports.balanceSheet.totalLiabilities')}</Text>
                     <Text fontSize="xl" fontWeight="bold" color="orange.700">
                       {formatCurrency(ssotBSData.liabilities?.total_liabilities || ssotBSData.total_liabilities || 0)}
                     </Text>
                   </Box>
-                  
+
                   <Box bg="blue.50" p={4} borderRadius="md" textAlign="center">
-                    <Text fontSize="sm" color="blue.600">Total Equity</Text>
+                    <Text fontSize="sm" color="blue.600">{t('reports.balanceSheet.totalEquity')}</Text>
                     <Text fontSize="xl" fontWeight="bold" color="blue.700">
                       {formatCurrency(ssotBSData.equity?.total_equity || ssotBSData.total_equity || 0)}
                     </Text>
                   </Box>
                 </SimpleGrid>
-                
+
                 {/* Display detailed sections if available */}
                 {(ssotBSData.assets?.current_assets || ssotBSData.assets?.non_current_assets) && (
                   <VStack spacing={4} align="stretch">
                     <Text fontSize="lg" fontWeight="bold" color={headingColor}>
-                      Detailed Breakdown
+                      {t('reports.balanceSheet.detailedBreakdown')}
                     </Text>
-                    
+
                     {/* Assets Section */}
                     <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                       <VStack spacing={3} align="stretch">
                         <HStack justify="space-between">
-                          <Text fontSize="md" fontWeight="bold" color={headingColor}>ASSETS</Text>
+                          <Text fontSize="md" fontWeight="bold" color={headingColor}>{t('reports.balanceSheet.assets').toUpperCase()}</Text>
                           <Text fontSize="md" fontWeight="bold" color="green.600">
                             {formatCurrency(ssotBSData.assets?.total_assets || 0)}
                           </Text>
                         </HStack>
-                        
+
                         {ssotBSData.assets?.current_assets?.items && (
                           <VStack spacing={1} align="stretch" pl={4}>
-                            <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>Current Assets</Text>
+                            <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>{t('reports.balanceSheet.currentAssets')}</Text>
                             {ssotBSData.assets.current_assets.items.map((item: any, index: number) => (
                               <HStack key={index} justify="space-between" pl={4}>
                                 <Text fontSize="sm" color={descriptionColor}>
@@ -3308,10 +3226,10 @@ leftIcon={<FiTrendingUp />}
                             ))}
                           </VStack>
                         )}
-                        
+
                         {ssotBSData.assets?.non_current_assets?.items && (
                           <VStack spacing={1} align="stretch" pl={4}>
-                            <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>Non-Current Assets</Text>
+                            <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>{t('reports.balanceSheet.nonCurrentAssets')}</Text>
                             {ssotBSData.assets.non_current_assets.items.map((item: any, index: number) => (
                               <HStack key={index} justify="space-between" pl={4}>
                                 <Text fontSize="sm" color={descriptionColor}>
@@ -3326,21 +3244,21 @@ leftIcon={<FiTrendingUp />}
                         )}
                       </VStack>
                     </Box>
-                    
+
                     {/* Liabilities Section */}
                     {ssotBSData.liabilities && (
                       <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                         <VStack spacing={3} align="stretch">
                           <HStack justify="space-between">
-                            <Text fontSize="md" fontWeight="bold" color={headingColor}>LIABILITIES</Text>
+                            <Text fontSize="md" fontWeight="bold" color={headingColor}>{t('reports.balanceSheet.liabilities').toUpperCase()}</Text>
                             <Text fontSize="md" fontWeight="bold" color="orange.600">
                               {formatCurrency(ssotBSData.liabilities?.total_liabilities || 0)}
                             </Text>
                           </HStack>
-                          
+
                           {ssotBSData.liabilities?.current_liabilities?.items && (
                             <VStack spacing={1} align="stretch" pl={4}>
-                              <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>Current Liabilities</Text>
+                              <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>{t('reports.balanceSheet.currentLiabilities')}</Text>
                               {ssotBSData.liabilities.current_liabilities.items.map((item: any, index: number) => (
                                 <HStack key={index} justify="space-between" pl={4}>
                                   <Text fontSize="sm" color={descriptionColor}>
@@ -3356,18 +3274,18 @@ leftIcon={<FiTrendingUp />}
                         </VStack>
                       </Box>
                     )}
-                    
+
                     {/* Equity Section */}
                     {ssotBSData.equity?.items && (
                       <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                         <VStack spacing={3} align="stretch">
                           <HStack justify="space-between">
-                            <Text fontSize="md" fontWeight="bold" color={headingColor}>EQUITY</Text>
+                            <Text fontSize="md" fontWeight="bold" color={headingColor}>{t('reports.balanceSheet.equity').toUpperCase()}</Text>
                             <Text fontSize="md" fontWeight="bold" color="blue.600">
                               {formatCurrency(ssotBSData.equity?.total_equity || 0)}
                             </Text>
                           </HStack>
-                          
+
                           <VStack spacing={1} align="stretch" pl={4}>
                             {ssotBSData.equity.items.map((item: any, index: number) => (
                               <HStack key={index} justify="space-between" pl={4}>
@@ -3519,7 +3437,7 @@ leftIcon={<FiTrendingUp />}
                   leftIcon={<FiClock />}
                   mt={7}
                 >
-                  {t('reports.cashFlow.loadHistory')}
+                  {t('reports.loadHistory')}
                 </Button>
               </HStack>
 
@@ -3528,18 +3446,18 @@ leftIcon={<FiTrendingUp />}
               <HStack spacing={4} mb={4} flexWrap="wrap">
                 <FormControl>
                   <FormLabel>{t('reports.cashFlow.startDate')}</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotCFStartDate} 
-                    onChange={(e) => setSSOTCFStartDate(e.target.value)} 
+                  <Input
+                    type="date"
+                    value={ssotCFStartDate}
+                    onChange={(e) => setSSOTCFStartDate(e.target.value)}
                   />
                 </FormControl>
                 <FormControl>
                   <FormLabel>{t('reports.cashFlow.endDate')}</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotCFEndDate} 
-                    onChange={(e) => setSSOTCFEndDate(e.target.value)} 
+                  <Input
+                    type="date"
+                    value={ssotCFEndDate}
+                    onChange={(e) => setSSOTCFEndDate(e.target.value)}
                   />
                 </FormControl>
                 <Button
@@ -3551,7 +3469,7 @@ leftIcon={<FiTrendingUp />}
                   mt={8}
                   whiteSpace="nowrap"
                 >
-                  {t('reports.cashFlow.generateReport')}
+                  {t('reports.generateReport')}
                 </Button>
               </HStack>
             </Box>
@@ -3642,7 +3560,7 @@ leftIcon={<FiTrendingUp />}
                     </Text>
                     <VStack align="stretch" spacing={2}>
                       <HStack justify="space-between" bg="gray.50" p={2} borderRadius="md">
-                        <Tooltip 
+                        <Tooltip
                           label={t('reports.cashFlow.tooltips.netIncome')}
                           fontSize="sm"
                           placement="top"
@@ -3658,7 +3576,7 @@ leftIcon={<FiTrendingUp />}
                       </HStack>
                       {(ssotCFData.operating_activities?.adjustments?.total_adjustments || 0) !== 0 && (
                         <Box mt={2}>
-                          <Tooltip 
+                          <Tooltip
                             label={t('reports.cashFlow.tooltips.adjustments')}
                             fontSize="sm"
                             placement="top"
@@ -3678,7 +3596,7 @@ leftIcon={<FiTrendingUp />}
                       )}
                       {ssotCFData.operating_activities?.working_capital_changes?.items?.length > 0 && (
                         <Box mt={2}>
-                          <Tooltip 
+                          <Tooltip
                             label={t('reports.cashFlow.tooltips.workingCapitalChanges')}
                             fontSize="sm"
                             placement="top"
@@ -3701,7 +3619,7 @@ leftIcon={<FiTrendingUp />}
                       <Divider />
                       <HStack justify="space-between" bg="green.50" p={2} borderRadius="md">
                         <VStack align="start" spacing={0}>
-                          <Tooltip 
+                          <Tooltip
                             label={t('reports.cashFlow.tooltips.totalOperatingCashFlow')}
                             fontSize="sm"
                             placement="top"
@@ -3815,16 +3733,16 @@ leftIcon={<FiTrendingUp />}
                           {ssotCFData.account_details
                             .filter((acc: any) => acc?.account_code?.startsWith('1101') || acc?.account_code?.startsWith('1102'))
                             .map((account: any, idx: number) => (
-                            <Tr key={idx} _hover={{ bg: 'gray.50' }}>
-                              <Td fontFamily="mono" fontWeight="medium">{account.account_code || 'N/A'}</Td>
-                              <Td>{account.account_name || 'Unknown Account'}</Td>
-                              <Td isNumeric color="green.600">{formatCurrency(account.debit_total || 0)}</Td>
-                              <Td isNumeric color="red.600">{formatCurrency(account.credit_total || 0)}</Td>
-                              <Td isNumeric fontWeight="bold" color={(account.net_balance || 0) >= 0 ? 'green.600' : 'red.600'}>
-                                {formatCurrency(account.net_balance || 0)}
-                              </Td>
-                            </Tr>
-                          ))}
+                              <Tr key={idx} _hover={{ bg: 'gray.50' }}>
+                                <Td fontFamily="mono" fontWeight="medium">{account.account_code || 'N/A'}</Td>
+                                <Td>{account.account_name || 'Unknown Account'}</Td>
+                                <Td isNumeric color="green.600">{formatCurrency(account.debit_total || 0)}</Td>
+                                <Td isNumeric color="red.600">{formatCurrency(account.credit_total || 0)}</Td>
+                                <Td isNumeric fontWeight="bold" color={(account.net_balance || 0) >= 0 ? 'green.600' : 'red.600'}>
+                                  {formatCurrency(account.net_balance || 0)}
+                                </Td>
+                              </Tr>
+                            ))}
                         </Tbody>
                       </Table>
                     </TableContainer>
@@ -3890,7 +3808,7 @@ leftIcon={<FiTrendingUp />}
               duration: 2000,
               isClosable: true,
             });
-            
+
             if (format === 'pdf' || format === 'excel') {
               // Try to use the report service for professional export
               try {
@@ -3899,11 +3817,11 @@ leftIcon={<FiTrendingUp />}
                   end_date: ssotSSEndDate,
                   format: format === 'excel' ? 'csv' : 'pdf'
                 });
-                
+
                 if (result instanceof Blob) {
                   const fileName = `sales-summary-${ssotSSStartDate}-to-${ssotSSEndDate}.${format === 'excel' ? 'csv' : 'pdf'}`;
                   await reportService.downloadReport(result, fileName);
-                  
+
                   toast({
                     title: 'Export Successful',
                     description: `Sales Summary Report exported as ${format.toUpperCase()}`,
@@ -3917,18 +3835,18 @@ leftIcon={<FiTrendingUp />}
                 console.warn('Professional export failed, falling back to JSON:', exportError);
               }
             }
-            
+
             // Fallback: export as JSON/CSV
             if (ssotSSData) {
               let content: string;
               let mimeType: string;
               let extension: string;
-              
+
               if (format === 'excel') {
                 // Generate CSV content
                 const customers = ssotSSData.sales_by_customer || [];
                 const csvHeaders = 'Customer Name,Total Sales,Transaction Count,Average Transaction\n';
-                const csvRows = customers.map(customer => 
+                const csvRows = customers.map(customer =>
                   `"${customer.customer_name || 'Unnamed Customer'}",` +
                   `${customer.total_sales || 0},` +
                   `${customer.transaction_count || 0},` +
@@ -3952,7 +3870,7 @@ leftIcon={<FiTrendingUp />}
                 mimeType = 'application/json';
                 extension = 'json';
               }
-              
+
               const dataBlob = new Blob([content], { type: mimeType });
               const url = URL.createObjectURL(dataBlob);
               const link = document.createElement('a');
@@ -3960,7 +3878,7 @@ leftIcon={<FiTrendingUp />}
               link.download = `sales-summary-${ssotSSStartDate}-to-${ssotSSEndDate}.${extension}`;
               link.click();
               URL.revokeObjectURL(url);
-              
+
               toast({
                 title: 'Export Successful',
                 description: `Sales Summary Report exported as ${extension.toUpperCase()}`,
@@ -4005,7 +3923,7 @@ leftIcon={<FiTrendingUp />}
               duration: 2000,
               isClosable: true,
             });
-            
+
             // Try to use the report service for professional export
             try {
               const result = await reportService.generateReport('purchase-report', {
@@ -4013,11 +3931,11 @@ leftIcon={<FiTrendingUp />}
                 end_date: ssotPREndDate,
                 format: format === 'excel' ? 'csv' : 'pdf'
               });
-              
+
               if (result instanceof Blob) {
                 const fileName = `purchase-report-${ssotPRStartDate}-to-${ssotPREndDate}.${format === 'excel' ? 'csv' : 'pdf'}`;
                 await reportService.downloadReport(result, fileName);
-                
+
                 toast({
                   title: 'Export Successful',
                   description: `Purchase Report exported as ${format.toUpperCase()}`,
@@ -4030,18 +3948,18 @@ leftIcon={<FiTrendingUp />}
             } catch (exportError) {
               console.warn('Professional export failed, falling back to JSON:', exportError);
             }
-            
+
             // Fallback: export as JSON/CSV
             if (ssotPRData) {
               let content: string;
               let mimeType: string;
               let extension: string;
-              
+
               if (format === 'excel') {
                 // Generate CSV content
                 const vendors = ssotPRData.purchases_by_vendor || [];
                 const csvHeaders = 'Vendor Name,Total Amount,Total Purchases,Outstanding\n';
-                const csvRows = vendors.map((vendor: any) => 
+                const csvRows = vendors.map((vendor: any) =>
                   `"${vendor.vendor_name || 'Unnamed Vendor'}",` +
                   `${vendor.total_amount || 0},` +
                   `${vendor.total_purchases || 0},` +
@@ -4065,7 +3983,7 @@ leftIcon={<FiTrendingUp />}
                 mimeType = 'application/json';
                 extension = 'json';
               }
-              
+
               const dataBlob = new Blob([content], { type: mimeType });
               const url = URL.createObjectURL(dataBlob);
               const link = document.createElement('a');
@@ -4073,7 +3991,7 @@ leftIcon={<FiTrendingUp />}
               link.download = `purchase-report-${ssotPRStartDate}-to-${ssotPREndDate}.${extension}`;
               link.click();
               URL.revokeObjectURL(url);
-              
+
               toast({
                 title: 'Export Successful',
                 description: `Purchase Report exported as ${extension.toUpperCase()}`,
@@ -4104,10 +4022,10 @@ leftIcon={<FiTrendingUp />}
               <Icon as={FiBook} color="blue.500" />
               <VStack align="start" spacing={0}>
                 <Text fontSize="lg" fontWeight="bold">
-                  Trial Balance (SSOT)
+                  {t('reports.trialBalance.title')}
                 </Text>
                 <Text fontSize="sm" color={previewPeriodTextColor}>
-As of {ssotTBAsOfDate} | SSOT Journal Integration
+                  As of {ssotTBAsOfDate} | SSOT Journal Integration
                 </Text>
               </VStack>
             </HStack>
@@ -4121,14 +4039,14 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                   <FormLabel fontSize="sm">
                     <HStack spacing={2}>
                       <Icon as={FiCalendar} />
-                      <Text>Period Closed History</Text>
+                      <Text>{t('reports.closedPeriod')}</Text>
                       <Tooltip label="Select a closed period to view historical Trial Balance" placement="top">
                         <Box><Icon as={FiInfo} color="gray.500" /></Box>
                       </Tooltip>
                     </HStack>
                   </FormLabel>
                   <Select
-                    placeholder="Select closed period (optional)"
+                    placeholder={t('reports.selectClosedPeriod')}
                     size="md"
                     onChange={(e) => {
                       if (e.target.value) {
@@ -4148,7 +4066,7 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                         </option>
                       ))
                     ) : (
-                      <option disabled>No closed periods available</option>
+                      <option disabled>{t('reports.noClosedPeriodsAvailable')}</option>
                     )}
                   </Select>
                 </FormControl>
@@ -4164,8 +4082,8 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                         const periods = buildUniqueClosedPeriods(response.data.data);
                         setSSOTTBClosedPeriods(periods);
                         toast({
-                          title: 'Success',
-                          description: `Loaded ${periods.length} closed periods`,
+                          title: t('reports.modal.status.success'),
+                          description: t('reports.loadedClosedPeriods', { count: periods.length }),
                           status: 'success',
                           duration: 2000
                         });
@@ -4180,7 +4098,7 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                   leftIcon={<FiClock />}
                   mt={7}
                 >
-                  Load History
+                  {t('reports.loadHistory')}
                 </Button>
               </HStack>
 
@@ -4188,11 +4106,11 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
 
               <HStack spacing={4} mb={4} flexWrap="wrap">
                 <FormControl>
-                  <FormLabel>As Of Date</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotTBAsOfDate} 
-                    onChange={(e) => setSSOTTBAsOfDate(e.target.value)} 
+                  <FormLabel>{t('reports.asOf')}</FormLabel>
+                  <Input
+                    type="date"
+                    value={ssotTBAsOfDate}
+                    onChange={(e) => setSSOTTBAsOfDate(e.target.value)}
                   />
                 </FormControl>
                 <Button
@@ -4204,7 +4122,7 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                   mt={8}
                   whiteSpace="nowrap"
                 >
-                  Generate Report
+                  {t('reports.generateReport')}
                 </Button>
               </HStack>
             </Box>
@@ -4251,7 +4169,7 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                           {ssotTBData.company.name || 'Company Name Not Available'}
                         </Text>
                         <Text fontSize="sm" color="blue.600">
-{ssotTBData.company.address ? (
+                          {ssotTBData.company.address ? (
                             ssotTBData.company.city ? `${ssotTBData.company.address}, ${ssotTBData.company.city}` : ssotTBData.company.address
                           ) : 'Address not available'}
                         </Text>
@@ -4263,10 +4181,10 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                       </VStack>
                       <VStack align="end" spacing={1}>
                         <Text fontSize="sm" color="blue.600">
-                          Currency: {ssotTBData.currency || 'IDR'}
+                          {t('reports.currency')}: {ssotTBData.currency || 'IDR'}
                         </Text>
                         <Text fontSize="xs" color="blue.500">
-                          Generated: {ssotTBData.generated_at ? new Date(ssotTBData.generated_at).toLocaleString('id-ID') : 'N/A'}
+                          {t('reports.trialBalance.generatedOn')} {ssotTBData.generated_at ? new Date(ssotTBData.generated_at).toLocaleString('id-ID') : 'N/A'}
                         </Text>
                       </VStack>
                     </HStack>
@@ -4276,13 +4194,13 @@ As of {ssotTBAsOfDate} | SSOT Journal Integration
                 {/* Report Header */}
                 <Box textAlign="center" bg={summaryBg} p={4} borderRadius="md">
                   <Heading size="md" color={headingColor}>
-                    Trial Balance
+                    {t('reports.trialBalance.title')}
                   </Heading>
                   <Text fontSize="sm" color={descriptionColor}>
-As of: {ssotTBAsOfDate}
+                    {t('reports.asOf')}: {ssotTBAsOfDate}
                   </Text>
                   <Text fontSize="xs" color={descriptionColor} mt={1}>
-                    Generated: {new Date().toLocaleDateString('id-ID')} at {new Date().toLocaleTimeString('id-ID')}
+                    {t('reports.trialBalance.generatedOn')} {new Date().toLocaleDateString('id-ID')} at {new Date().toLocaleTimeString('id-ID')}
                   </Text>
                 </Box>
 
@@ -4292,19 +4210,19 @@ As of: {ssotTBAsOfDate}
                     <Text fontSize="2xl" fontWeight="bold" color="blue.600">
                       {ssotTBData.accounts?.length || 0}
                     </Text>
-                    <Text fontSize="sm" color="blue.800">Total Accounts</Text>
+                    <Text fontSize="sm" color="blue.800">{t('reports.trialBalance.totalAccounts')}</Text>
                   </Box>
                   <Box bg="orange.50" p={4} borderRadius="md" textAlign="center">
                     <Text fontSize="2xl" fontWeight="bold" color="orange.600">
                       {formatCurrency(ssotTBData.total_debits || 0)}
                     </Text>
-                    <Text fontSize="sm" color="orange.800">Total Debits</Text>
+                    <Text fontSize="sm" color="orange.800">{t('reports.trialBalance.totalDebits')}</Text>
                   </Box>
                   <Box bg="green.50" p={4} borderRadius="md" textAlign="center">
                     <Text fontSize="2xl" fontWeight="bold" color="green.600">
                       {formatCurrency(ssotTBData.total_credits || 0)}
                     </Text>
-                    <Text fontSize="sm" color="green.800">Total Credits</Text>
+                    <Text fontSize="sm" color="green.800">{t('reports.trialBalance.totalCredits')}</Text>
                   </Box>
                 </SimpleGrid>
 
@@ -4313,34 +4231,34 @@ As of: {ssotTBAsOfDate}
                   <HStack justify="space-between">
                     <VStack align="start" spacing={0}>
                       <Text fontSize="lg" fontWeight="bold" color={ssotTBData.is_balanced ? 'green.700' : 'red.700'}>
-                        {ssotTBData.is_balanced ? '✓ Balanced' : '⚠ Not Balanced'}
-                    </Text>
+                        {ssotTBData.is_balanced ? `✓ ${t('reports.trialBalance.balanced')}` : `⚠ ${t('reports.trialBalance.notBalanced')}`}
+                      </Text>
                       <Text fontSize="sm" color={ssotTBData.is_balanced ? 'green.600' : 'red.600'}>
-                        {ssotTBData.is_balanced ? 'Debits equal Credits' : `Difference: ${formatCurrency(ssotTBData.difference || 0)}`}
+                        {ssotTBData.is_balanced ? t('reports.trialBalance.balancedDesc') : `${t('reports.trialBalance.difference')}: ${formatCurrency(ssotTBData.difference || 0)}`}
                       </Text>
                     </VStack>
                     {!ssotTBData.is_balanced && (
                       <Badge colorScheme="red" fontSize="md" p={2}>
-                        Investigation Required
+                        {t('reports.trialBalance.investigationRequired')}
                       </Badge>
                     )}
                   </HStack>
-                  </Box>
+                </Box>
 
                 {/* Account Details Table */}
                 <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                   <Text fontSize="md" fontWeight="bold" color={headingColor} mb={3}>
-                    Account Details
+                    {t('reports.accountDetails')}
                   </Text>
                   <TableContainer>
                     <Table size="sm" variant="striped">
                       <Thead bg="gray.100">
                         <Tr>
-                          <Th>Account Code</Th>
-                          <Th>Account Name</Th>
-                          <Th>Type</Th>
-                          <Th isNumeric>Debit Balance</Th>
-                          <Th isNumeric>Credit Balance</Th>
+                          <Th>{t('reports.trialBalance.accountCode')}</Th>
+                          <Th>{t('reports.trialBalance.accountName')}</Th>
+                          <Th>{t('reports.trialBalance.accountType')}</Th>
+                          <Th isNumeric>{t('reports.trialBalance.debit')}</Th>
+                          <Th isNumeric>{t('reports.trialBalance.credit')}</Th>
                         </Tr>
                       </Thead>
                       <Tbody>
@@ -4352,10 +4270,10 @@ As of: {ssotTBAsOfDate}
                               <Td>
                                 <Badge colorScheme={
                                   account.account_type === 'Asset' ? 'green' :
-                                  account.account_type === 'Liability' ? 'orange' :
-                                  account.account_type === 'Equity' ? 'purple' :
-                                  account.account_type === 'Revenue' ? 'blue' :
-                                  account.account_type === 'Expense' ? 'red' : 'gray'
+                                    account.account_type === 'Liability' ? 'orange' :
+                                      account.account_type === 'Equity' ? 'purple' :
+                                        account.account_type === 'Revenue' ? 'blue' :
+                                          account.account_type === 'Expense' ? 'red' : 'gray'
                                 }>
                                   {account.account_type || 'N/A'}
                                 </Badge>
@@ -4378,7 +4296,7 @@ As of: {ssotTBAsOfDate}
                       </Tbody>
                       <Thead bg="gray.200">
                         <Tr>
-                          <Th colSpan={3} textAlign="right" fontSize="md">TOTAL</Th>
+                          <Th colSpan={3} textAlign="right" fontSize="md">{t('reports.modal.total').toUpperCase()}</Th>
                           <Th isNumeric fontSize="md" fontWeight="bold" color="orange.700">
                             {formatCurrency(ssotTBData.total_debits || 0)}
                           </Th>
@@ -4436,10 +4354,10 @@ As of: {ssotTBAsOfDate}
               <Icon as={FiUsers} color="blue.500" />
               <VStack align="start" spacing={0}>
                 <Text fontSize="lg" fontWeight="bold">
-                  Customer Transaction History
+                  {t('reports.customerHistoryReport.title')}
                 </Text>
                 <Text fontSize="sm" color={previewPeriodTextColor}>
-                  Complete record of customer activities and payment history
+                  {t('reports.customerHistoryReport.description')}
                 </Text>
               </VStack>
             </HStack>
@@ -4450,9 +4368,9 @@ As of: {ssotTBAsOfDate}
               <VStack spacing={4} align="stretch">
                 <HStack spacing={4} flexWrap="wrap">
                   <FormControl flex="1" minW="250px" isRequired>
-                    <FormLabel>Select Customer</FormLabel>
+                    <FormLabel>{t('reports.customerHistoryReport.selectCustomer')}</FormLabel>
                     <Select
-                      placeholder="Choose a customer..."
+                      placeholder={t('reports.customerHistoryReport.chooseCustomer')}
                       value={customerHistoryCustomerId}
                       onChange={(e) => setCustomerHistoryCustomerId(e.target.value)}
                       borderColor={!customerHistoryCustomerId ? 'red.300' : 'gray.200'}
@@ -4464,11 +4382,11 @@ As of: {ssotTBAsOfDate}
                       ))}
                     </Select>
                     <Text fontSize="xs" color="gray.500" mt={1}>
-                      {customers.length} customer{customers.length !== 1 ? 's' : ''} available
+                      {t('reports.customerHistoryReport.available', { count: customers.length })}
                     </Text>
                   </FormControl>
                   <FormControl flex="1" minW="180px" isRequired>
-                    <FormLabel>Start Date</FormLabel>
+                    <FormLabel>{t('reports.generalLedgerReport.startDate')}</FormLabel>
                     <Input
                       type="date"
                       value={customerHistoryStartDate}
@@ -4477,7 +4395,7 @@ As of: {ssotTBAsOfDate}
                     />
                   </FormControl>
                   <FormControl flex="1" minW="180px" isRequired>
-                    <FormLabel>End Date</FormLabel>
+                    <FormLabel>{t('reports.generalLedgerReport.endDate')}</FormLabel>
                     <Input
                       type="date"
                       value={customerHistoryEndDate}
@@ -4495,11 +4413,11 @@ As of: {ssotTBAsOfDate}
                     mt={8}
                     whiteSpace="nowrap"
                   >
-                    Generate Report
+                    {t('reports.generalLedgerReport.generateReport')}
                   </Button>
                 </HStack>
                 <Text fontSize="xs" color={descriptionColor}>
-                  Select a customer and date range to view their transaction history
+                  {t('reports.customerHistoryReport.helperText')}
                 </Text>
               </VStack>
             </Box>
@@ -4563,25 +4481,25 @@ As of: {ssotTBAsOfDate}
                 {customerHistoryData.summary && (
                   <SimpleGrid columns={[1, 2, 4]} spacing={4}>
                     <Box bg="green.50" p={4} borderRadius="md" borderWidth="1px" borderColor="green.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Total Transactions</Text>
+                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.totalTransactions')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="green.600">
                         {customerHistoryData.summary.total_transactions || 0}
                       </Text>
                     </Box>
                     <Box bg="blue.50" p={4} borderRadius="md" borderWidth="1px" borderColor="blue.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Total Amount</Text>
+                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.totalAmount')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="blue.600">
                         {formatCurrency(customerHistoryData.summary.total_amount || 0)}
                       </Text>
                     </Box>
                     <Box bg="purple.50" p={4} borderRadius="md" borderWidth="1px" borderColor="purple.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Total Paid</Text>
+                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.totalPaid')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="purple.600">
                         {formatCurrency(customerHistoryData.summary.total_paid || 0)}
                       </Text>
                     </Box>
                     <Box bg="orange.50" p={4} borderRadius="md" borderWidth="1px" borderColor="orange.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Outstanding</Text>
+                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.outstanding')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="orange.600">
                         {formatCurrency(customerHistoryData.summary.total_outstanding || 0)}
                       </Text>
@@ -4598,14 +4516,14 @@ As of: {ssotTBAsOfDate}
                     <Table size="sm" variant="striped" colorScheme="gray">
                       <Thead bg="blue.600" position="sticky" top={0} zIndex={1}>
                         <Tr>
-                          <Th color="white">Date</Th>
-                          <Th color="white">Type</Th>
-                          <Th color="white">Code</Th>
-                          <Th color="white">Description</Th>
-                          <Th color="white" isNumeric>Amount</Th>
-                          <Th color="white" isNumeric>Paid</Th>
-                          <Th color="white" isNumeric>Outstanding</Th>
-                          <Th color="white">Status</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.date')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.type')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.code')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.desc')}</Th>
+                          <Th color="white" isNumeric>{t('reports.customerHistoryReport.amount')}</Th>
+                          <Th color="white" isNumeric>{t('reports.customerHistoryReport.paid')}</Th>
+                          <Th color="white" isNumeric>{t('reports.customerHistoryReport.outstanding')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.status')}</Th>
                         </Tr>
                       </Thead>
                       <Tbody>
@@ -4618,8 +4536,8 @@ As of: {ssotTBAsOfDate}
                               <Td>
                                 <Badge colorScheme={
                                   tx.transaction_type === 'SALE' ? 'green' :
-                                  tx.transaction_type === 'INVOICE' ? 'blue' :
-                                  tx.transaction_type === 'PAYMENT' ? 'purple' : 'gray'
+                                    tx.transaction_type === 'INVOICE' ? 'blue' :
+                                      tx.transaction_type === 'PAYMENT' ? 'purple' : 'gray'
                                 } size="sm">
                                   {tx.transaction_type}
                                 </Badge>
@@ -4638,8 +4556,8 @@ As of: {ssotTBAsOfDate}
                               <Td>
                                 <Badge colorScheme={
                                   tx.status === 'PAID' ? 'green' :
-                                  tx.status === 'UNPAID' ? 'red' :
-                                  tx.status === 'PARTIAL' ? 'yellow' : 'gray'
+                                    tx.status === 'UNPAID' ? 'red' :
+                                      tx.status === 'PARTIAL' ? 'yellow' : 'gray'
                                 } size="sm">
                                   {tx.status}
                                 </Badge>
@@ -4649,7 +4567,7 @@ As of: {ssotTBAsOfDate}
                         ) : (
                           <Tr>
                             <Td colSpan={8} textAlign="center" py={8}>
-                              <Text color="gray.500">No transactions found for this period</Text>
+                              <Text color="gray.500">{t('reports.customerHistoryReport.noTransactions')}</Text>
                             </Td>
                           </Tr>
                         )}
@@ -4703,10 +4621,10 @@ As of: {ssotTBAsOfDate}
               <Icon as={FiTruck} color="orange.500" />
               <VStack align="start" spacing={0}>
                 <Text fontSize="lg" fontWeight="bold">
-                  Vendor Transaction History
+                  {t('reports.vendorHistoryReport.title')}
                 </Text>
                 <Text fontSize="sm" color={previewPeriodTextColor}>
-                  Complete record of vendor activities and payment history
+                  {t('reports.vendorHistoryReport.description')}
                 </Text>
               </VStack>
             </HStack>
@@ -4717,9 +4635,9 @@ As of: {ssotTBAsOfDate}
               <VStack spacing={4} align="stretch">
                 <HStack spacing={4} flexWrap="wrap">
                   <FormControl flex="1" minW="250px" isRequired>
-                    <FormLabel>Select Vendor</FormLabel>
+                    <FormLabel>{t('reports.vendorHistoryReport.selectVendor')}</FormLabel>
                     <Select
-                      placeholder="Choose a vendor..."
+                      placeholder={t('reports.vendorHistoryReport.chooseVendor')}
                       value={vendorHistoryVendorId}
                       onChange={(e) => setVendorHistoryVendorId(e.target.value)}
                       borderColor={!vendorHistoryVendorId ? 'red.300' : 'gray.200'}
@@ -4732,7 +4650,7 @@ As of: {ssotTBAsOfDate}
                     </Select>
                   </FormControl>
                   <FormControl flex="1" minW="180px" isRequired>
-                    <FormLabel>Start Date</FormLabel>
+                    <FormLabel>{t('reports.generalLedgerReport.startDate')}</FormLabel>
                     <Input
                       type="date"
                       value={vendorHistoryStartDate}
@@ -4741,7 +4659,7 @@ As of: {ssotTBAsOfDate}
                     />
                   </FormControl>
                   <FormControl flex="1" minW="180px" isRequired>
-                    <FormLabel>End Date</FormLabel>
+                    <FormLabel>{t('reports.generalLedgerReport.endDate')}</FormLabel>
                     <Input
                       type="date"
                       value={vendorHistoryEndDate}
@@ -4759,11 +4677,11 @@ As of: {ssotTBAsOfDate}
                     mt={8}
                     whiteSpace="nowrap"
                   >
-                    Generate Report
+                    {t('reports.generalLedgerReport.generateReport')}
                   </Button>
                 </HStack>
                 <Text fontSize="xs" color={descriptionColor}>
-                  Select a vendor and date range to view their transaction history
+                  {t('reports.vendorHistoryReport.helperText')}
                 </Text>
               </VStack>
             </Box>
@@ -4774,10 +4692,9 @@ As of: {ssotTBAsOfDate}
                   <Spinner size="xl" thickness="4px" speed="0.65s" color="orange.500" />
                   <VStack spacing={2}>
                     <Text fontSize="lg" fontWeight="medium" color={loadingTextColor}>
-                      Loading Vendor History
-                    </Text>
-                    <Text fontSize="sm" color={descriptionColor}>
-                      Fetching transactions and payment records...
+                      onClose={() => setVendorHistoryOpen(false)}
+                      title={t('reports.vendorHistoryReport.loading')}
+                      message={t('reports.vendorHistoryReport.fetching')}
                     </Text>
                   </VStack>
                 </VStack>
@@ -4862,14 +4779,14 @@ As of: {ssotTBAsOfDate}
                     <Table size="sm" variant="striped" colorScheme="gray">
                       <Thead bg="orange.600" position="sticky" top={0} zIndex={1}>
                         <Tr>
-                          <Th color="white">Date</Th>
-                          <Th color="white">Type</Th>
-                          <Th color="white">Code</Th>
-                          <Th color="white">Description</Th>
-                          <Th color="white" isNumeric>Amount</Th>
-                          <Th color="white" isNumeric>Paid</Th>
-                          <Th color="white" isNumeric>Outstanding</Th>
-                          <Th color="white">Status</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.date')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.type')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.code')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.desc')}</Th>
+                          <Th color="white" isNumeric>{t('reports.customerHistoryReport.amount')}</Th>
+                          <Th color="white" isNumeric>{t('reports.customerHistoryReport.paid')}</Th>
+                          <Th color="white" isNumeric>{t('reports.customerHistoryReport.outstanding')}</Th>
+                          <Th color="white">{t('reports.customerHistoryReport.status')}</Th>
                         </Tr>
                       </Thead>
                       <Tbody>
@@ -4882,8 +4799,8 @@ As of: {ssotTBAsOfDate}
                               <Td>
                                 <Badge colorScheme={
                                   tx.transaction_type === 'PURCHASE' ? 'orange' :
-                                  tx.transaction_type === 'BILL' ? 'red' :
-                                  tx.transaction_type === 'PAYMENT' ? 'purple' : 'gray'
+                                    tx.transaction_type === 'BILL' ? 'red' :
+                                      tx.transaction_type === 'PAYMENT' ? 'purple' : 'gray'
                                 } size="sm">
                                   {tx.transaction_type}
                                 </Badge>
@@ -4902,8 +4819,8 @@ As of: {ssotTBAsOfDate}
                               <Td>
                                 <Badge colorScheme={
                                   tx.status === 'PAID' ? 'green' :
-                                  tx.status === 'UNPAID' ? 'red' :
-                                  tx.status === 'PARTIAL' ? 'yellow' : 'gray'
+                                    tx.status === 'UNPAID' ? 'red' :
+                                      tx.status === 'PARTIAL' ? 'yellow' : 'gray'
                                 } size="sm">
                                   {tx.status}
                                 </Badge>
@@ -4985,14 +4902,14 @@ As of: {ssotTBAsOfDate}
                     <FormLabel fontSize="sm">
                       <HStack spacing={2}>
                         <Icon as={FiCalendar} />
-                        <Text>Period Closed History</Text>
+                        <Text>{t('reports.closedPeriod')}</Text>
                         <Tooltip label="Select a closed period to view historical General Ledger" placement="top">
                           <Box><Icon as={FiInfo} color="gray.500" /></Box>
                         </Tooltip>
                       </HStack>
                     </FormLabel>
                     <Select
-                      placeholder="Select closed period (optional)"
+                      placeholder={t('reports.selectClosedPeriod')}
                       size="md"
                       onChange={(e) => {
                         if (e.target.value) {
@@ -5026,7 +4943,7 @@ As of: {ssotTBAsOfDate}
                           </option>
                         ))
                       ) : (
-                        <option disabled>No closed periods available</option>
+                        <option disabled>{t('reports.noClosedPeriodsAvailable')}</option>
                       )}
                     </Select>
                   </FormControl>
@@ -5058,7 +4975,7 @@ As of: {ssotTBAsOfDate}
                     leftIcon={<FiClock />}
                     mt={7}
                   >
-                    Load History
+                    {t('reports.generalLedgerReport.loadHistory')}
                   </Button>
                 </HStack>
 
@@ -5066,49 +4983,49 @@ As of: {ssotTBAsOfDate}
 
                 <HStack spacing={4} flexWrap="wrap">
                   <FormControl flex="1" minW="200px" isRequired>
-                  <FormLabel>Start Date</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotGLStartDate} 
-                    onChange={(e) => setSSOTGLStartDate(e.target.value)} 
+                    <FormLabel>{t('reports.generalLedgerReport.startDate')}</FormLabel>
+                    <Input
+                      type="date"
+                      value={ssotGLStartDate}
+                      onChange={(e) => setSSOTGLStartDate(e.target.value)}
                       isRequired
                       borderColor={!ssotGLStartDate ? 'red.300' : 'gray.200'}
-                  />
-                </FormControl>
+                    />
+                  </FormControl>
                   <FormControl flex="1" minW="200px" isRequired>
-                  <FormLabel>End Date</FormLabel>
-                  <Input 
-                    type="date" 
-                    value={ssotGLEndDate} 
-                    onChange={(e) => setSSOTGLEndDate(e.target.value)} 
+                    <FormLabel>{t('reports.generalLedgerReport.endDate')}</FormLabel>
+                    <Input
+                      type="date"
+                      value={ssotGLEndDate}
+                      onChange={(e) => setSSOTGLEndDate(e.target.value)}
                       isRequired
                       borderColor={!ssotGLEndDate ? 'red.300' : 'gray.200'}
                     />
                   </FormControl>
                   <FormControl flex="1" minW="200px">
-                    <FormLabel>Account ID (Optional)</FormLabel>
-                    <Input 
-                      type="text" 
-                      placeholder="e.g., 1101 or leave empty for all"
-                      value={ssotGLAccountId} 
-                      onChange={(e) => setSSOTGLAccountId(e.target.value)} 
-                  />
-                </FormControl>
-                <Button
-                  colorScheme="blue"
-                  onClick={fetchSSOTGeneralLedgerReport}
-                  isLoading={ssotGLLoading}
+                    <FormLabel>{t('reports.generalLedgerReport.accountId')}</FormLabel>
+                    <Input
+                      type="text"
+                      placeholder={t('reports.generalLedgerReport.accountIdPlaceholder')}
+                      value={ssotGLAccountId}
+                      onChange={(e) => setSSOTGLAccountId(e.target.value)}
+                    />
+                  </FormControl>
+                  <Button
+                    colorScheme="blue"
+                    onClick={fetchSSOTGeneralLedgerReport}
+                    isLoading={ssotGLLoading}
                     isDisabled={!ssotGLStartDate || !ssotGLEndDate}
-                  leftIcon={<FiBook />}
-                  size="md"
-                  mt={8}
-                  whiteSpace="nowrap"
-                >
-                  Generate Report
-                </Button>
-              </HStack>
+                    leftIcon={<FiBook />}
+                    size="md"
+                    mt={8}
+                    whiteSpace="nowrap"
+                  >
+                    {t('reports.generalLedgerReport.generateReport')}
+                  </Button>
+                </HStack>
                 <Text fontSize="xs" color={descriptionColor}>
-                  Leave Account ID empty to show all accounts, or enter a specific account code to filter
+                  {t('reports.generalLedgerReport.accountIdHelper')}
                 </Text>
               </VStack>
             </Box>
@@ -5119,10 +5036,10 @@ As of: {ssotTBAsOfDate}
                   <Spinner size="xl" thickness="4px" speed="0.65s" color="green.500" />
                   <VStack spacing={2}>
                     <Text fontSize="lg" fontWeight="medium" color={loadingTextColor}>
-                      Generating General Ledger
+                      {t('reports.generalLedgerReport.generating')}
                     </Text>
                     <Text fontSize="sm" color={descriptionColor}>
-                      Analyzing journal entries from SSOT journal system...
+                      {t('reports.generalLedgerReport.analyzing')}
                     </Text>
                   </VStack>
                 </VStack>
@@ -5155,7 +5072,7 @@ As of: {ssotTBAsOfDate}
                           {ssotGLData.company.name || 'Company Name Not Available'}
                         </Text>
                         <Text fontSize="sm" color="green.600">
-{ssotGLData.company.address ? (
+                          {ssotGLData.company.address ? (
                             ssotGLData.company.city ? `${ssotGLData.company.address}, ${ssotGLData.company.city}` : ssotGLData.company.address
                           ) : 'Address not available'}
                         </Text>
@@ -5180,13 +5097,13 @@ As of: {ssotTBAsOfDate}
                 {/* Report Header */}
                 <Box textAlign="center" bg={summaryBg} p={4} borderRadius="md">
                   <Heading size="md" color={headingColor}>
-                    General Ledger
+                    {t('reports.generalLedgerReport.title')}
                   </Heading>
                   <Text fontSize="sm" color={descriptionColor}>
-                    Period: {ssotGLStartDate} - {ssotGLEndDate}
+                    {t('reports.generalLedgerReport.period')} {ssotGLStartDate} - {ssotGLEndDate}
                   </Text>
                   <Text fontSize="xs" color={descriptionColor} mt={1}>
-                    Generated: {new Date().toLocaleDateString('id-ID')} at {new Date().toLocaleTimeString('id-ID')}
+                    {t('reports.generalLedgerReport.generatedOn')} {new Date().toLocaleDateString('id-ID')} at {new Date().toLocaleTimeString('id-ID')}
                   </Text>
                 </Box>
 
@@ -5194,62 +5111,62 @@ As of: {ssotTBAsOfDate}
                 <Box bg="gray.50" p={6} borderRadius="lg" border="2px" borderColor="gray.300">
                   <SimpleGrid columns={[1, 2, 5]} spacing={6}>
                     <Box textAlign="center">
-                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">Total Entries</Text>
+                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">{t('reports.generalLedgerReport.totalEntries')}</Text>
                       <Text fontSize="3xl" fontWeight="bold" color="green.600">
                         {ssotGLData.transactions?.length || 0}
                       </Text>
                     </Box>
                     <Box textAlign="center">
-                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">Opening Balance</Text>
+                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">{t('reports.generalLedgerReport.openingBalance')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="blue.600">
                         {formatCurrency(ssotGLData.opening_balance || 0)}
                       </Text>
                     </Box>
                     <Box textAlign="center">
-                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">Total Debits</Text>
+                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">{t('reports.generalLedgerReport.totalDebits')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="cyan.600">
                         {formatCurrency(ssotGLData.total_debits || 0)}
                       </Text>
                     </Box>
                     <Box textAlign="center">
-                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">Total Credits</Text>
+                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">{t('reports.generalLedgerReport.totalCredits')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="pink.600">
                         {formatCurrency(ssotGLData.total_credits || 0)}
                       </Text>
                     </Box>
                     <Box textAlign="center">
-                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">Closing Balance</Text>
+                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">{t('reports.generalLedgerReport.closingBalance')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="purple.600">
                         {formatCurrency(ssotGLData.closing_balance || 0)}
                       </Text>
                     </Box>
                   </SimpleGrid>
-                  
+
                   <Divider my={4} />
-                  
+
                   <SimpleGrid columns={[1, 2]} spacing={4}>
                     <Box textAlign="center" py={2}>
-                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">Net Change</Text>
+                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">{t('reports.generalLedgerReport.netChange')}</Text>
                       <Text fontSize="xl" fontWeight="bold" color={
-                        ((ssotGLData.total_debits || 0) - (ssotGLData.total_credits || 0)) > 0 ? "green.600" : 
-                        ((ssotGLData.total_debits || 0) - (ssotGLData.total_credits || 0)) < 0 ? "red.600" : "gray.600"
+                        ((ssotGLData.total_debits || 0) - (ssotGLData.total_credits || 0)) > 0 ? "green.600" :
+                          ((ssotGLData.total_debits || 0) - (ssotGLData.total_credits || 0)) < 0 ? "red.600" : "gray.600"
                       }>
                         {formatCurrency((ssotGLData.total_debits || 0) - (ssotGLData.total_credits || 0))}
                       </Text>
                       <Badge colorScheme={
                         (ssotGLData.total_debits || 0) === (ssotGLData.total_credits || 0) ? "green" :
-                        (ssotGLData.total_debits || 0) > (ssotGLData.total_credits || 0) ? "blue" : "orange"
+                          (ssotGLData.total_debits || 0) > (ssotGLData.total_credits || 0) ? "blue" : "orange"
                       } size="sm" mt={1}>
                         {(ssotGLData.total_debits || 0) === (ssotGLData.total_credits || 0) ? "Balanced" :
-                         (ssotGLData.total_debits || 0) > (ssotGLData.total_credits || 0) ? "Net Debit" : "Net Credit"}
+                          (ssotGLData.total_debits || 0) > (ssotGLData.total_credits || 0) ? "Net Debit" : "Net Credit"}
                       </Badge>
                     </Box>
                     <Box textAlign="center" py={2}>
-                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">Status</Text>
+                      <Text fontSize="xs" color="gray.600" mb={1} fontWeight="semibold" textTransform="uppercase">{t('reports.generalLedgerReport.status')}</Text>
                       <Badge colorScheme={
                         ssotGLData.is_balanced ? "green" : "yellow"
                       } size="lg" fontSize="md" px={3} py={1}>
-                        {ssotGLData.is_balanced ? "✓ Balanced" : "⚠ Unbalanced"}
+                        {ssotGLData.is_balanced ? `✓ ${t('reports.generalLedgerReport.balanced')}` : `⚠ ${t('reports.generalLedgerReport.unbalanced')}`}
                       </Badge>
                     </Box>
                   </SimpleGrid>
@@ -5262,7 +5179,7 @@ As of: {ssotTBAsOfDate}
                       <VStack align="start" spacing={0}>
                         <Text fontSize="lg" fontWeight="bold" color="blue.800">
                           {ssotGLData.account.account_code} - {ssotGLData.account.account_name}
-                    </Text>
+                        </Text>
                         <Text fontSize="sm" color="blue.600">
                           Account Type: {ssotGLData.account.account_type || 'N/A'}
                         </Text>
@@ -5275,25 +5192,25 @@ As of: {ssotTBAsOfDate}
                 <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor} overflowX="auto">
                   <HStack justify="space-between" mb={3}>
                     <Text fontSize="md" fontWeight="bold" color={headingColor}>
-                      Transaction Details
+                      {t('reports.generalLedgerReport.transactionDetails')}
                     </Text>
                     <Badge colorScheme="blue" fontSize="sm" px={2} py={1}>
-                      {ssotGLData.transactions?.length || 0} entries
+                      {ssotGLData.transactions?.length || 0} {t('reports.generalLedgerReport.entries').toLowerCase()}
                     </Badge>
                   </HStack>
                   <Box overflowX="auto" maxH="600px" overflowY="auto">
                     <Table size="sm" variant="striped" colorScheme="gray">
                       <Thead bg="blue.600" position="sticky" top={0} zIndex={1}>
                         <Tr>
-                          <Th color="white" fontSize="xs" py={3}>Date</Th>
-                          <Th color="white" fontSize="xs" py={3}>Journal Code</Th>
-                          <Th color="white" fontSize="xs" py={3} minW="250px">Description</Th>
-                          <Th color="white" fontSize="xs" py={3}>Reference</Th>
-                          <Th color="white" fontSize="xs" py={3} minW="150px">Account</Th>
-                          <Th color="white" fontSize="xs" py={3} isNumeric>Debit</Th>
-                          <Th color="white" fontSize="xs" py={3} isNumeric>Credit</Th>
-                          <Th color="white" fontSize="xs" py={3} isNumeric>Balance</Th>
-                          <Th color="white" fontSize="xs" py={3}>Type</Th>
+                          <Th color="white" fontSize="xs" py={3}>{t('reports.generalLedgerReport.date')}</Th>
+                          <Th color="white" fontSize="xs" py={3}>{t('reports.generalLedgerReport.journalCode')}</Th>
+                          <Th color="white" fontSize="xs" py={3} minW="250px">{t('reports.generalLedgerReport.description')}</Th>
+                          <Th color="white" fontSize="xs" py={3}>{t('reports.generalLedgerReport.reference')}</Th>
+                          <Th color="white" fontSize="xs" py={3} minW="150px">{t('reports.generalLedgerReport.account')}</Th>
+                          <Th color="white" fontSize="xs" py={3} isNumeric>{t('reports.generalLedgerReport.debit')}</Th>
+                          <Th color="white" fontSize="xs" py={3} isNumeric>{t('reports.generalLedgerReport.credit')}</Th>
+                          <Th color="white" fontSize="xs" py={3} isNumeric>{t('reports.generalLedgerReport.balance')}</Th>
+                          <Th color="white" fontSize="xs" py={3}>{t('reports.generalLedgerReport.type')}</Th>
                         </Tr>
                       </Thead>
                       <Tbody>
@@ -5332,8 +5249,8 @@ As of: {ssotTBAsOfDate}
                               <Td>
                                 <Badge colorScheme={
                                   entry.entry_type === 'SALE' ? 'green' :
-                                  entry.entry_type === 'PURCHASE' ? 'blue' :
-                                  entry.entry_type === 'PAYMENT' ? 'orange' : 'gray'
+                                    entry.entry_type === 'PURCHASE' ? 'blue' :
+                                      entry.entry_type === 'PAYMENT' ? 'orange' : 'gray'
                                 } size="sm" fontSize="xs">
                                   {entry.entry_type || 'N/A'}
                                 </Badge>
@@ -5418,8 +5335,8 @@ As of: {ssotTBAsOfDate}
           end: ssotEndDate || ssotCFEndDate || ssotSSEndDate
         }}
       />
-      
-    </SimpleLayout>
+
+    </SimpleLayout >
   );
 };
 

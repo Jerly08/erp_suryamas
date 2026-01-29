@@ -369,6 +369,7 @@ type AccountTypeSummary struct {
 }
 
 type GeneralLedgerEntry struct {
+	JournalID    uint64    `json:"journal_id"`
 	Date         time.Time `json:"date"`
 	JournalCode  string    `json:"journal_code"`
 	Description  string    `json:"description"`

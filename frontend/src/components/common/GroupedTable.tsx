@@ -23,6 +23,7 @@ import {
   IconButton,
 } from '@chakra-ui/react';
 import { FiChevronDown, FiChevronRight } from 'react-icons/fi';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface Column<T> {
   header: string;
@@ -50,17 +51,18 @@ interface GroupedTableProps<T> {
   groupLabels?: Record<string, string>;
 }
 
-function GroupedTable<T>({ 
-  columns, 
-  data, 
-  keyField, 
-  groupBy, 
-  title, 
-  actions, 
-  isLoading, 
+function GroupedTable<T>({
+  columns,
+  data,
+  keyField,
+  groupBy,
+  title,
+  actions,
+  isLoading,
   emptyMessage,
   groupLabels = {}
 }: GroupedTableProps<T>) {
+  const { t } = useTranslation();
   const [groups, setGroups] = React.useState<Record<string, Group<T>>>({});
 
   React.useEffect(() => {
@@ -95,11 +97,11 @@ function GroupedTable<T>({
     if (column.cell) {
       return column.cell(item);
     }
-    
+
     if (typeof column.accessor === 'function') {
       return column.accessor(item);
     }
-    
+
     return item[column.accessor as keyof T] as React.ReactNode;
   };
 
@@ -156,7 +158,7 @@ function GroupedTable<T>({
         <CardBody>
           <Flex justify="center" align="center" py={8}>
             <Spinner size="lg" color="brand.500" />
-            <Text ml={4}>Loading...</Text>
+            <Text ml={4}>{t('common.loading')}</Text>
           </Flex>
         </CardBody>
       </Card>
@@ -175,13 +177,13 @@ function GroupedTable<T>({
       <CardBody p={0}>
         {data.length === 0 ? (
           <Flex justify="center" align="center" py={8}>
-            <Text color="gray.500">{emptyMessage || 'No data available'}</Text>
+            <Text color="gray.500">{emptyMessage || t('common.noData')}</Text>
           </Flex>
         ) : (
           <Box>
             {sortedGroups.map((group) => {
               const groupColumns = typeof columns === 'function' ? columns(group.key) : columns;
-              
+
               return (
                 <Box key={group.key} mb={4}>
                   {/* Group Header */}
@@ -213,7 +215,7 @@ function GroupedTable<T>({
                       {groupLabels[group.key] || group.key}
                     </Badge>
                     <Text fontWeight="semibold" fontSize="md">
-                      {group.items.length} {group.items.length === 1 ? 'item' : 'items'}
+                      {group.items.length} {group.items.length === 1 ? t('common.item') : t('common.items')}
                     </Text>
                   </Flex>
 
@@ -224,7 +226,7 @@ function GroupedTable<T>({
                         <Thead bg="gray.50">
                           <Tr>
                             {groupColumns.map((column, index) => (
-                              <Th 
+                              <Th
                                 key={index}
                                 fontWeight="bold"
                                 whiteSpace="nowrap"
@@ -238,14 +240,14 @@ function GroupedTable<T>({
                               </Th>
                             ))}
                             {actions && (
-                              <Th 
+                              <Th
                                 whiteSpace="nowrap"
                                 px={4}
                                 py={3}
                                 fontSize="sm"
                                 color="gray.700"
                               >
-                                Actions
+                                {t('common.actions')}
                               </Th>
                             )}
                           </Tr>
@@ -254,7 +256,7 @@ function GroupedTable<T>({
                           {group.items.map((item) => (
                             <Tr key={String(item[keyField])} _hover={{ bg: 'gray.50' }}>
                               {groupColumns.map((column, index) => (
-                                <Td 
+                                <Td
                                   key={index}
                                   px={4}
                                   py={3}

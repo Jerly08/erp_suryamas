@@ -304,6 +304,78 @@ func (sc *SettingsController) UpdateSystemConfig(c *gin.Context) {
 	})
 }
 
+// InitializeCOA handles POST /api/v1/settings/initialize-coa
+func (sc *SettingsController) InitializeCOA(c *gin.Context) {
+	// Get user ID from context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+		})
+		return
+	}
+	
+	// Check if user has admin role
+	userRole, _ := c.Get("role")
+	if userRole != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Only administrators can initialize COA",
+		})
+		return
+	}
+	
+	// Parse request body
+	var request struct {
+		CompanyType string `json:"company_type" binding:"required"`
+	}
+	
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	// Validate type
+	if request.CompanyType != models.CompanyTypeService && 
+	   request.CompanyType != models.CompanyTypeTrading && 
+	   request.CompanyType != models.CompanyTypeManufacturing {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid company type. Must be SERVICE, TRADING, or MANUFACTURING.",
+		})
+		return
+	}
+	
+	// Convert userID to uint
+	uid, ok := userID.(uint)
+	if !ok {
+		if floatID, ok := userID.(float64); ok {
+			uid = uint(floatID)
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Invalid user ID format",
+			})
+			return
+		}
+	}
+	
+	// Initialize COA
+	if err := sc.settingsService.InitializeCOA(request.CompanyType, uid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to initialize COA",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Chart of Accounts initialized successfully",
+	})
+}
+
+
 // ResetToDefaults handles POST /api/v1/settings/reset
 func (sc *SettingsController) ResetToDefaults(c *gin.Context) {
 	// Get user ID from context

@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useModulePermissions } from '@/hooks/usePermissions';
+import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
@@ -58,7 +60,7 @@ import Link from 'next/link';
 
 // Helper for converting fiscal year formats between backend and date input
 const MONTHS = [
-  'January','February','March','April','May','June','July','August','September','October','November','December'
+  'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
 function monthDayStringToISO(src: string, useNextYear?: boolean): string {
@@ -69,7 +71,7 @@ function monthDayStringToISO(src: string, useNextYear?: boolean): string {
   if (monthIdx >= 0) {
     const dayMatch = lower.match(/(\d{1,2})/);
     const day = Math.min(Math.max(parseInt(dayMatch?.[1] || '1', 10), 1), 31);
-    
+
     // Smart year selection: use next year if specified OR if date is in the past
     let year = new Date().getFullYear();
     if (useNextYear) {
@@ -81,7 +83,7 @@ function monthDayStringToISO(src: string, useNextYear?: boolean): string {
         year += 1;
       }
     }
-    
+
     const mm = String(monthIdx + 1).padStart(2, '0');
     const dd = String(day).padStart(2, '0');
     return `${year}-${mm}-${dd}`;
@@ -172,9 +174,9 @@ interface FiscalClosingPreview {
   retained_earnings_id: number;
   can_close: boolean;
   validation_messages: string[];
-  revenue_accounts: Array<{id: number; code: string; name: string; balance: number}>;
-  expense_accounts: Array<{id: number; code: string; name: string; balance: number}>;
-  closing_entries: Array<{description: string; debit_account: string; credit_account: string; amount: number}>;
+  revenue_accounts: Array<{ id: number; code: string; name: string; balance: number }>;
+  expense_accounts: Array<{ id: number; code: string; name: string; balance: number }>;
+  closing_entries: Array<{ description: string; debit_account: string; credit_account: string; amount: number }>;
 }
 
 interface SystemSettings {
@@ -183,6 +185,8 @@ interface SystemSettings {
   company_address: string;
   company_phone: string;
   company_email: string;
+  company_type?: string; // Added field
+  company_website?: string;
   company_website?: string;
   company_logo?: string;
   tax_number?: string;
@@ -227,7 +231,7 @@ const SettingsPage: React.FC = () => {
   // Tax account settings
   const [taxAccountSettings, setTaxAccountSettings] = useState<TaxAccountSettings | null>(null);
   const [loadingTaxAccounts, setLoadingTaxAccounts] = useState(false);
-  
+
   // Period closing (flexible period closing)
   const [periodStartDate, setPeriodStartDate] = useState('');
   const [periodEndDate, setPeriodEndDate] = useState('');
@@ -236,7 +240,7 @@ const SettingsPage: React.FC = () => {
   const [showPeriodClosingModal, setShowPeriodClosingModal] = useState(false);
   const [executingPeriodClosing, setExecutingPeriodClosing] = useState(false);
   const [lastClosingInfo, setLastClosingInfo] = useState<any | null>(null);
-  
+
   // Move useColorModeValue to top level to fix hooks order
   const blueColor = useColorModeValue('blue.500', 'blue.300');
   const greenColor = useColorModeValue('green.500', 'green.300');
@@ -256,7 +260,7 @@ const SettingsPage: React.FC = () => {
       setLoadingTaxAccounts(false);
     }
   };
-  
+
   // Fetch last closing info to auto-populate start date
   const fetchLastClosingInfo = async () => {
     try {
@@ -264,7 +268,7 @@ const SettingsPage: React.FC = () => {
       if (response.data.success && response.data.data) {
         const info = response.data.data;
         setLastClosingInfo(info);
-        
+
         // Auto-populate start date based on last closing
         if (info.has_previous_closing && info.next_start_date) {
           // Has previous closing - MUST use next start date (day after last closing)
@@ -286,7 +290,7 @@ const SettingsPage: React.FC = () => {
       // On error, just let user input dates manually
     }
   };
-  
+
   const handlePreviewPeriodClosing = async () => {
     if (!periodStartDate || !periodEndDate) {
       toast({
@@ -297,7 +301,7 @@ const SettingsPage: React.FC = () => {
       });
       return;
     }
-    
+
     setLoadingPeriodPreview(true);
     try {
       const response = await api.get(
@@ -319,10 +323,10 @@ const SettingsPage: React.FC = () => {
       setLoadingPeriodPreview(false);
     }
   };
-  
+
   const handleExecutePeriodClosing = async () => {
     if (!periodClosingPreview) return;
-    
+
     setExecutingPeriodClosing(true);
     try {
       const response = await api.post('/api/v1/period-closing/execute', {
@@ -341,14 +345,14 @@ const SettingsPage: React.FC = () => {
         });
         setShowPeriodClosingModal(false);
         setPeriodClosingPreview(null);
-        
+
         // Refresh settings to update fiscal year start (auto-updated by backend)
         console.log('🔄 Refreshing settings to get updated fiscal_year_start...');
         await fetchSettings();
-        
+
         // Refresh last closing info
         await fetchLastClosingInfo();
-        
+
         console.log('✅ Settings and closing info refreshed');
       }
     } catch (err: any) {
@@ -371,11 +375,11 @@ const SettingsPage: React.FC = () => {
       if (response.data.success) {
         const fiscalYearStart = response.data.data?.fiscal_year_start;
         const fiscalISO = monthDayStringToISO(fiscalYearStart);
-        
+
         console.log('📅 Settings loaded:');
         console.log('  - fiscal_year_start (DB):', fiscalYearStart);
         console.log('  - fiscalStartISO (UI):', fiscalISO);
-        
+
         setSettings(response.data.data);
         setFormData(response.data.data);
         // derive ISO date for UI
@@ -444,7 +448,7 @@ const SettingsPage: React.FC = () => {
 
   const handleSave = async () => {
     if (!formData || !hasChanges) return;
-    
+
     setSaving(true);
     try {
       const response = await api.put(API_ENDPOINTS.SETTINGS_UPDATE, formData);
@@ -452,12 +456,12 @@ const SettingsPage: React.FC = () => {
         setSettings(response.data.data);
         setFormData(response.data.data);
         setHasChanges(false);
-        
+
         // Update language if changed
         if (response.data.data.language !== language) {
           setLanguage(response.data.data.language);
         }
-        
+
         toast({
           title: t('settings.updateSuccess') || 'Settings updated successfully',
           status: 'success',
@@ -496,12 +500,12 @@ const SettingsPage: React.FC = () => {
       if (newPath) {
         setSettings(prev => prev ? { ...prev, company_logo: newPath } : prev);
         setFormData(prev => prev ? { ...prev, company_logo: newPath } : prev);
-        toast({ title: 'Logo updated', status: 'success', duration: 2500, isClosable: true });
+        toast({ title: t('settings.taxAccounts.messages.logoUpdated') || 'Logo updated', status: 'success', duration: 2500, isClosable: true });
       } else {
-        toast({ title: 'Upload succeeded but no path returned', status: 'warning', duration: 3000, isClosable: true });
+        toast({ title: t('settings.taxAccounts.messages.uploadSuccessNoPath') || 'Upload succeeded but no path returned', status: 'warning', duration: 3000, isClosable: true });
       }
     } catch (err: any) {
-      toast({ title: 'Failed to upload logo', description: err.response?.data?.error || err.message, status: 'error', duration: 5000, isClosable: true });
+      toast({ title: t('settings.taxAccounts.messages.logoUploadFailed') || 'Failed to upload logo', description: err.response?.data?.error || err.message, status: 'error', duration: 5000, isClosable: true });
     } finally {
       setUploadingLogo(false);
     }
@@ -518,685 +522,717 @@ const SettingsPage: React.FC = () => {
   // Loading state - moved after all hooks
   if (loading) {
     return (
-<SimpleLayout allowedRoles={['admin']}>
-      <Box>
-          <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
-          <Text ml={4}>{t('common.loading')}</Text>
-        </Box>
-      </SimpleLayout>
+      <ProtectedModule module="settings">
+        <SimpleLayout allowedRoles={['admin']}>
+          <Box>
+            <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
+            <Text ml={4}>{t('common.loading')}</Text>
+          </Box>
+        </SimpleLayout>
+      </ProtectedModule>
     );
   }
 
   // Don't render form until settings are loaded
   if (!settings) {
     return (
-      <SimpleLayout allowedRoles={['admin']}>
-        <Box>
-          <Text>No settings data available</Text>
-        </Box>
-      </SimpleLayout>
+      <ProtectedModule module="settings">
+        <SimpleLayout allowedRoles={['admin']}>
+          <Box>
+            <Text>No settings data available</Text>
+          </Box>
+        </SimpleLayout>
+      </ProtectedModule>
     );
   }
 
   return (
-<SimpleLayout allowedRoles={['admin']}>
-      <Box>
-        <VStack spacing={6} alignItems="start">
-          <HStack justify="space-between" width="full">
-            <Heading as="h1" size="xl">{t('settings.title')}</Heading>
-            {hasChanges && (
-              <ButtonGroup>
-                <Button
-                  colorScheme="green"
-                  leftIcon={<FiSave />}
-                  onClick={handleSave}
-                  isLoading={saving}
-                  loadingText="Saving..."
-                  size="sm"
-                >
-                  Save Changes
-                </Button>
-                <Button
-                  variant="outline"
-                  leftIcon={<FiX />}
-                  onClick={handleCancel}
-                  isDisabled={saving}
-                  size="sm"
-                >
-                  Cancel
-                </Button>
-              </ButtonGroup>
-            )}
-          </HStack>
-          
-          {error && (
-            <Alert status="error" width="full">
-              <AlertIcon />
-              <AlertTitle>{t('common.error')}:</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          
-          <SimpleGrid columns={[1, 1, 2, 2]} spacing={6} width="full">
-            {/* Company Information Card */}
-            <Card border="1px" borderColor="gray.200" boxShadow="md">
-              <CardHeader>
-                <HStack spacing={3}>
-                  <Icon as={FiHome} boxSize={6} color={blueColor} />
-                  <Heading size="md">{t('settings.companyInfo')}</Heading>
-                </HStack>
-              </CardHeader>
-              <CardBody>
-                <VStack spacing={4} alignItems="start">
-                  {/* Company Logo */}
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      Company Logo
-                    </FormLabel>
-                    <Stack direction={{ base: 'column', md: 'row' }} spacing={4} align="center">
-                      <Image
-                        src={getImageUrl(formData?.company_logo || settings?.company_logo || '') || undefined}
-                        alt="Company Logo"
-                        boxSize="80px"
-                        objectFit="contain"
-                        borderRadius="md"
-                        fallbackStrategy="onError"
-                      />
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) handleLogoUpload(f);
-                        }}
-                        isDisabled={uploadingLogo}
-                      />
-                      {uploadingLogo && <Spinner size="sm" />}
-                    </Stack>
-                  </FormControl>
-                  <Divider />
-                  
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      {t('settings.companyName')}
-                    </FormLabel>
-                    <Input
-                      value={formData?.company_name ?? settings?.company_name ?? ''}
-                      onChange={(e) => handleFormChange('company_name', e.target.value)}
-                      placeholder="Enter company name"
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    />
-                  </FormControl>
-                  <Divider />
-                  
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      {t('settings.address')}
-                    </FormLabel>
-                    <Textarea
-                      value={formData?.company_address ?? settings?.company_address ?? ''}
-                      onChange={(e) => handleFormChange('company_address', e.target.value)}
-                      placeholder="Enter company address"
-                      rows={3}
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    />
-                  </FormControl>
-                  <Divider />
-                  
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      {t('settings.phone')}
-                    </FormLabel>
-                    <Input
-                      value={formData?.company_phone ?? settings?.company_phone ?? ''}
-                      onChange={(e) => handleFormChange('company_phone', e.target.value)}
-                      placeholder="Enter phone number"
-                      type="tel"
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    />
-                  </FormControl>
-                  <Divider />
-                  
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      {t('settings.email')}
-                    </FormLabel>
-                    <Input
-                      value={formData?.company_email ?? settings?.company_email ?? ''}
-                      onChange={(e) => handleFormChange('company_email', e.target.value)}
-                      placeholder="Enter email address"
-                      type="email"
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    />
-                  </FormControl>
-                  <Divider />
-                  
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      {t('settings.taxNumber')}
-                    </FormLabel>
-                    <Input
-                      value={formData?.tax_number ?? settings?.tax_number ?? ''}
-                      onChange={(e) => handleFormChange('tax_number', e.target.value)}
-                      placeholder="Enter tax number (optional)"
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    />
-                  </FormControl>
-                </VStack>
-              </CardBody>
-            </Card>
+    <ProtectedModule module="settings">
+      <SimpleLayout allowedRoles={['admin']}>
+        <Box>
+          <VStack spacing={6} alignItems="start">
+            <HStack justify="space-between" width="full">
+              <Heading as="h1" size="xl">{t('settings.title')}</Heading>
+              {hasChanges && (
+                <ButtonGroup>
+                  <Button
+                    colorScheme="green"
+                    leftIcon={<FiSave />}
+                    onClick={handleSave}
+                    isLoading={saving}
+                    loadingText={t('common.saving') || "Saving..."}
+                    size="sm"
+                  >
+                    {t('common.buttons.saveChanges') || "Save Changes"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    leftIcon={<FiX />}
+                    onClick={handleCancel}
+                    isDisabled={saving}
+                    size="sm"
+                  >
+                    {t('common.cancel') || "Cancel"}
+                  </Button>
+                </ButtonGroup>
+              )}
+            </HStack>
 
-            {/* System Configuration Card */}
-            <Card border="1px" borderColor="gray.200" boxShadow="md">
-              <CardHeader>
-                <HStack spacing={3}>
-                  <Icon as={FiDollarSign} boxSize={6} color={greenColor} />
-                  <Heading size="md">{t('settings.systemConfig')}</Heading>
-                </HStack>
-              </CardHeader>
-              <CardBody>
-                <VStack spacing={4} alignItems="start">
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      {t('settings.dateFormat')}
-                    </FormLabel>
-                    <Select
-                      value={formData?.date_format || settings?.date_format || 'YYYY-MM-DD'}
-                      onChange={(e) => handleFormChange('date_format', e.target.value)}
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    >
-                      <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                      <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                      <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                      <option value="DD-MM-YYYY">DD-MM-YYYY</option>
-                    </Select>
-                  </FormControl>
-                  <Divider />
-                  
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                      {t('settings.defaultTaxRate')}
-                    </FormLabel>
-                    <NumberInput
-                      value={formData?.default_tax_rate ?? settings?.default_tax_rate ?? 0}
-                      onChange={(valueString) => handleFormChange('default_tax_rate', parseFloat(valueString) || 0)}
-                      min={0}
-                      max={100}
-                      precision={2}
-                    >
-                      <NumberInputField 
+            {error && (
+              <Alert status="error" width="full">
+                <AlertIcon />
+                <AlertTitle>{t('common.error')}:</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <SimpleGrid columns={[1, 1, 2, 2]} spacing={6} width="full">
+              {/* Company Information Card */}
+              <Card border="1px" borderColor="gray.200" boxShadow="md">
+                <CardHeader>
+                  <HStack spacing={3}>
+                    <Icon as={FiHome} boxSize={6} color={blueColor} />
+                    <Heading size="md">{t('settings.companyInfo')}</Heading>
+                  </HStack>
+                </CardHeader>
+                <CardBody>
+                  <VStack spacing={4} alignItems="start">
+                    {/* Company Logo */}
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.companyLogo') || "Company Logo"}
+                      </FormLabel>
+                      <Stack direction={{ base: 'column', md: 'row' }} spacing={4} align="center">
+                        <Image
+                          src={getImageUrl(formData?.company_logo || settings?.company_logo || '') || undefined}
+                          alt="Company Logo"
+                          boxSize="80px"
+                          objectFit="contain"
+                          borderRadius="md"
+                          fallbackStrategy="onError"
+                        />
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleLogoUpload(f);
+                          }}
+                          isDisabled={uploadingLogo}
+                        />
+                        {uploadingLogo && <Spinner size="sm" />}
+                      </Stack>
+                    </FormControl>
+                    <Divider />
+
+                    {/* Company Type (Read Only) */}
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.companyType') || "Company Type"}
+                      </FormLabel>
+                      <HStack>
+                        <Input
+                          value={formData?.company_type || t('settings.notSet') || 'Not Set'}
+                          isReadOnly
+                          variant="filled"
+                          bg="gray.50"
+                          color="gray.600"
+                          cursor="not-allowed"
+                          _hover={{ bg: 'gray.50' }}
+                          _focus={{ bg: 'gray.50', borderColor: 'gray.200' }}
+                        />
+                        {formData?.company_type && (
+                          <Tooltip label="Company Type is locked to ensure data consistency.">
+                            <Box color="gray.400" cursor="help">
+                              <Icon as={FiInfo} />
+                            </Box>
+                          </Tooltip>
+                        )}
+                      </HStack>
+                      {!formData?.company_type && (
+                        <FormHelperText fontSize="xs" color="orange.500">
+                          Please set this in the Accounts page.
+                        </FormHelperText>
+                      )}
+                    </FormControl>
+                    <Divider />
+
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.companyName')}
+                      </FormLabel>
+                      <Input
+                        value={formData?.company_name ?? settings?.company_name ?? ''}
+                        onChange={(e) => handleFormChange('company_name', e.target.value)}
+                        placeholder={t('settings.companyNamePlaceholder') || "Enter company name"}
                         variant="filled"
                         _hover={{ bg: 'gray.100' }}
                         _focus={{ bg: 'white', borderColor: 'blue.500' }}
                       />
-                      <NumberInputStepper>
-                        <NumberIncrementStepper />
-                        <NumberDecrementStepper />
-                      </NumberInputStepper>
-                    </NumberInput>
-                  </FormControl>
-                  <Divider />
-                  
-                  <FormControl>
-                    <HStack mb={2}>
-                      <Icon as={FiGlobe} boxSize={4} color="gray.600" />
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm" mb={0}>
-                        {t('settings.language')}
-                      </FormLabel>
-                    </HStack>
-                    <Select 
-                      value={formData?.language || settings?.language || language} 
-                      onChange={(e) => {
-                        handleFormChange('language', e.target.value);
-                      }}
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    >
-                      <option value="id">{t('settings.indonesian')}</option>
-                      <option value="en">{t('settings.english')}</option>
-                    </Select>
-                  </FormControl>
-                </VStack>
-              </CardBody>
-            </Card>
-            
-            {/* Flexible Period Closing Card */}
-            <Card border="1px" borderColor="gray.200" boxShadow="md">
-              <CardHeader>
-                <HStack spacing={3} justify="space-between" width="full">
-                  <HStack spacing={3}>
-                    <Icon as={FiCheckCircle} boxSize={6} color="red.500" />
-                    <Heading size="md">Tutup Buku (Period Closing)</Heading>
-                  </HStack>
-                  <Tooltip
-                    label={
-                      <Box p={2}>
-                        <Text fontSize="xs" fontWeight="bold" mb={1}>📘 Tutup Buku Fleksibel</Text>
-                        <Text fontSize="xs" mb={2}>
-                          Tutup periode akuntansi dengan fleksibilitas penuh: bulanan, triwulan, semester, atau tahunan.
-                        </Text>
-                        <Text fontSize="xs" fontWeight="semibold" mb={1}>Yang Terjadi:</Text>
-                        <Text fontSize="xs" color="green.200">• Revenue → RESET ke 0</Text>
-                        <Text fontSize="xs" color="red.200">• Expense → RESET ke 0</Text>
-                        <Text fontSize="xs" color="blue.200">• Retained Earnings → BERTAMBAH (Net Income)</Text>
-                        <Text fontSize="xs">• Generate closing journal entries</Text>
-                        <Text fontSize="xs">• Period LOCK (transaksi tidak bisa diedit)</Text>
-                        <Text fontSize="xs" mt={2} fontWeight="semibold" color="orange.200">
-                          ⚠️ PERMANENT ACTION!
-                        </Text>
-                      </Box>
-                    }
-                    placement="left"
-                    hasArrow
-                    bg="red.600"
-                  >
-                    <Box cursor="help">
-                      <Icon as={FiInfo} boxSize={4} color="gray.500" _hover={{ color: 'red.500' }} />
-                    </Box>
-                  </Tooltip>
-                </HStack>
-              </CardHeader>
-              <CardBody>
-                <VStack spacing={4} alignItems="start">
-                  <Alert status="error" borderRadius="md" size="sm">
-                    <AlertIcon />
-                    <Box>
-                      <AlertTitle fontSize="sm">⚠️ Permanent Action</AlertTitle>
-                      <AlertDescription fontSize="xs">
-                        This will reset ALL revenue and expense accounts to zero and transfer
-                        net income to retained earnings. Cannot be easily reversed!
-                      </AlertDescription>
-                    </Box>
-                  </Alert>
-                  
-                  {lastClosingInfo?.has_previous_closing && lastClosingInfo?.last_closing_date && (
-                    <Alert status="info" borderRadius="md" size="sm">
-                      <AlertIcon />
-                      <Box>
-                        <AlertTitle fontSize="sm">📅 Last Closing</AlertTitle>
-                        <AlertDescription fontSize="xs">
-                          Last closed: {new Date(lastClosingInfo.last_closing_date).toLocaleDateString()}
-                        </AlertDescription>
-                      </Box>
-                    </Alert>
-                  )}
-                  
-                  {lastClosingInfo && !lastClosingInfo.has_previous_closing && (
-                    <Alert status="warning" borderRadius="md" size="sm">
-                      <AlertIcon />
-                      <Box>
-                        <AlertTitle fontSize="sm">⚠️ First Time Closing</AlertTitle>
-                        <AlertDescription fontSize="xs">
-                          No previous closing found. This will be your first period closing.
-                        </AlertDescription>
-                      </Box>
-                    </Alert>
-                  )}
-                  
-                  <Alert status="success" borderRadius="md" size="sm" variant="left-accent">
-                    <AlertIcon />
-                    <Box>
-                      <AlertTitle fontSize="sm">🔄 Auto-Update Fiscal Year</AlertTitle>
-                      <AlertDescription fontSize="xs">
-                        After closing, <strong>Fiscal Year Start</strong> will be automatically updated to the next period start date. 
-                        This keeps your fiscal period in sync with closed periods.
-                      </AlertDescription>
-                    </Box>
-                  </Alert>
-                  
-                  <Text fontSize="sm" color="gray.600">
-                    Close accounting period and generate automated closing entries.
-                  </Text>
-                  
-                  <FormControl>
-                    <FormLabel fontSize="sm" fontWeight="semibold">
-                      Dari Tanggal (Start Date)
-                      {lastClosingInfo?.has_previous_closing && (
-                        <Text as="span" fontSize="xs" fontWeight="normal" color="blue.600" ml={2}>
-                          🔒 Locked - Auto-filled
-                        </Text>
-                      )}
-                    </FormLabel>
-                    <Input
-                      type="date"
-                      value={periodStartDate}
-                      onChange={(e) => setPeriodStartDate(e.target.value)}
-                      variant="filled"
-                      bg={lastClosingInfo?.has_previous_closing ? 'blue.50' : undefined}
-                      _hover={{ bg: lastClosingInfo?.has_previous_closing ? 'blue.50' : 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                      isReadOnly={lastClosingInfo?.has_previous_closing === true}
-                      cursor={lastClosingInfo?.has_previous_closing ? 'not-allowed' : 'text'}
-                      placeholder="Select start date"
-                    />
-                    <FormHelperText fontSize="xs" color={lastClosingInfo?.has_previous_closing ? 'blue.600' : 'gray.600'}>
-                      {lastClosingInfo?.has_previous_closing 
-                        ? `🔒 Otomatis diisi dari tutup buku terakhir (${lastClosingInfo.last_closing_date ? new Date(lastClosingInfo.last_closing_date).toLocaleDateString('id-ID') : 'N/A'}). Tanggal mulai harus 1 hari setelahnya.` 
-                        : '📅 Pilih tanggal awal periode yang akan ditutup (first closing - gunakan tanggal transaksi pertama)'}
-                    </FormHelperText>
-                  </FormControl>
-                  
-                  <FormControl>
-                    <FormLabel fontSize="sm" fontWeight="semibold">
-                      Sampai Tanggal (End Date)
-                    </FormLabel>
-                    <Input
-                      type="date"
-                      value={periodEndDate}
-                      onChange={(e) => setPeriodEndDate(e.target.value)}
-                      variant="filled"
-                      _hover={{ bg: 'gray.100' }}
-                      _focus={{ bg: 'white', borderColor: 'blue.500' }}
-                    />
-                    <FormHelperText fontSize="xs">
-                      End date of the period to close
-                    </FormHelperText>
-                  </FormControl>
-                  
-                  <Button
-                    colorScheme="red"
-                    variant="solid"
-                    width="full"
-                    onClick={handlePreviewPeriodClosing}
-                    isLoading={loadingPeriodPreview}
-                    loadingText="Loading Preview..."
-                    isDisabled={!periodStartDate || !periodEndDate}
-                  >
-                    Preview Period Closing
-                  </Button>
-                </VStack>
-              </CardBody>
-            </Card>
-            
-            {/* Tax Account Configuration Card */}
-            <Card border="1px" borderColor="gray.200" boxShadow="md">
-              <CardHeader>
-                <HStack spacing={3}>
-                  <Icon as={FiCreditCard} boxSize={6} color={orangeColor} />
-                  <Heading size="md">{t('settings.taxAccountConfig')}</Heading>
-                </HStack>
-              </CardHeader>
-              <CardBody>
-                <VStack spacing={4} alignItems="start">
-                  <Text fontSize="sm" color="gray.600" mb={2}>
-                    Configure account mappings for sales and purchase transactions, including tax accounts and payment methods.
-                  </Text>
-                  
-                  <Alert status="info" variant="left-accent" size="sm">
-                    <AlertIcon />
-                    <AlertDescription fontSize="sm">
-                      Set up proper account mappings to ensure accurate financial reporting and tax calculations.
-                    </AlertDescription>
-                  </Alert>
-                  
-                  {loadingTaxAccounts ? (
-                    <HStack width="full" justify="center" py={4}>
-                      <Spinner size="sm" color="blue.500" />
-                      <Text fontSize="xs" color="gray.500">Loading configuration...</Text>
-                    </HStack>
-                  ) : taxAccountSettings ? (
-                    <VStack spacing={3} width="full" alignItems="start">
-                      <HStack justify="space-between" width="full">
-                        <VStack alignItems="start" spacing={1}>
-                          <Text fontSize="sm" fontWeight="semibold" color="gray.700">
-                            Withholding Tax Accounts
-                          </Text>
-                          <VStack spacing={1} alignItems="start" mt={2}>
-                            {taxAccountSettings.withholding_tax21_account ? (
-                              <HStack spacing={1}>
-                                <Icon as={FiDollarSign} color="green.500" boxSize={3} />
-                                <Text fontSize="xs" color="green.600" fontWeight="medium">
-                                  PPh 21: {taxAccountSettings.withholding_tax21_account.code} - {taxAccountSettings.withholding_tax21_account.name}
-                                </Text>
-                              </HStack>
-                            ) : (
-                              <Text fontSize="xs" color="gray.400">PPh 21: Not configured</Text>
-                            )}
-                            {taxAccountSettings.withholding_tax23_account ? (
-                              <HStack spacing={1}>
-                                <Icon as={FiDollarSign} color="green.500" boxSize={3} />
-                                <Text fontSize="xs" color="green.600" fontWeight="medium">
-                                  PPh 23: {taxAccountSettings.withholding_tax23_account.code} - {taxAccountSettings.withholding_tax23_account.name}
-                                </Text>
-                              </HStack>
-                            ) : (
-                              <Text fontSize="xs" color="gray.400">PPh 23: Not configured</Text>
-                            )}
-                            {taxAccountSettings.withholding_tax25_account ? (
-                              <HStack spacing={1}>
-                                <Icon as={FiDollarSign} color="green.500" boxSize={3} />
-                                <Text fontSize="xs" color="green.600" fontWeight="medium">
-                                  PPh 25: {taxAccountSettings.withholding_tax25_account.code} - {taxAccountSettings.withholding_tax25_account.name}
-                                </Text>
-                              </HStack>
-                            ) : (
-                              <Text fontSize="xs" color="gray.400">PPh 25: Not configured</Text>
-                            )}
-                          </VStack>
-                        </VStack>
-                        <Icon as={FiDollarSign} color="orange.500" boxSize={4} />
-                      </HStack>
-                      
-                      <Divider />
-                      
-                      <HStack justify="space-between" width="full">
-                        <VStack alignItems="start" spacing={1}>
-                          <Text fontSize="sm" fontWeight="semibold" color="gray.700">
-                            Inventory & COGS
-                          </Text>
-                          <VStack spacing={1} alignItems="start" mt={2}>
-                            {taxAccountSettings.inventory_account ? (
-                              <HStack spacing={1}>
-                                <Icon as={FiTrendingUp} color="blue.500" boxSize={3} />
-                                <Text fontSize="xs" color="blue.600" fontWeight="medium">
-                                  Inventory: {taxAccountSettings.inventory_account.code} - {taxAccountSettings.inventory_account.name}
-                                </Text>
-                              </HStack>
-                            ) : (
-                              <Text fontSize="xs" color="gray.400">Inventory: Not configured</Text>
-                            )}
-                            {taxAccountSettings.cogs_account ? (
-                              <HStack spacing={1}>
-                                <Icon as={FiTrendingUp} color="blue.500" boxSize={3} />
-                                <Text fontSize="xs" color="blue.600" fontWeight="medium">
-                                  COGS: {taxAccountSettings.cogs_account.code} - {taxAccountSettings.cogs_account.name}
-                                </Text>
-                              </HStack>
-                            ) : (
-                              <Text fontSize="xs" color="gray.400">COGS: Not configured</Text>
-                            )}
-                          </VStack>
-                        </VStack>
-                        <Icon as={FiTrendingUp} color="blue.500" boxSize={4} />
-                      </HStack>
-                    </VStack>
-                  ) : (
-                    <VStack spacing={3} width="full" alignItems="start">
-                      <Text fontSize="xs" color="gray.500">
-                        No tax account configuration found. Click the button below to configure withholding tax accounts.
-                      </Text>
-                    </VStack>
-                  )}
-                  
-                  <Link href="/settings/tax-accounts">
-                    <Button
-                      colorScheme="orange"
-                      variant="outline"
-                      size="sm"
-                      leftIcon={<FiSettings />}
-                      width="full"
-                      _hover={{ bg: 'orange.50' }}
-                    >
-                      Configure Tax Accounts
-                    </Button>
-                  </Link>
-                </VStack>
-              </CardBody>
-            </Card>
-          </SimpleGrid>
-        </VStack>
-      </Box>
-      
-      {/* Period Closing Preview Modal */}
-      <Modal
-        isOpen={showPeriodClosingModal}
-        onClose={() => setShowPeriodClosingModal(false)}
-        size="xl"
-      >
-        <ModalOverlay />
-        <ModalContent maxW="800px">
-          <ModalHeader bg="red.500" color="white">
-            📅 Period Closing Preview
-          </ModalHeader>
-          <ModalCloseButton color="white" />
-          <ModalBody py={6}>
-            {periodClosingPreview && (
-              <VStack spacing={4} alignItems="start">
-                {/* Period Info */}
-                <Box width="full" p={3} bg="blue.50" borderRadius="md">
-                  <Text fontSize="sm" fontWeight="bold" mb={1}>
-                    Period: {new Date(periodClosingPreview.start_date).toLocaleDateString()} - {new Date(periodClosingPreview.end_date).toLocaleDateString()}
-                  </Text>
-                  <Text fontSize="xs" color="gray.600">
-                    {periodClosingPreview.period_days} days | {periodClosingPreview.transaction_count} transactions
-                  </Text>
-                </Box>
-                
-                {/* Summary */}
-                <Box width="full" p={4} bg="gray.50" borderRadius="md">
-                  <Text fontSize="lg" fontWeight="bold" mb={2}>
-                    Financial Summary
-                  </Text>
-                  <SimpleGrid columns={3} spacing={4}>
-                    <Box>
-                      <Text fontSize="xs" color="gray.600">Total Revenue</Text>
-                      <Text fontSize="lg" fontWeight="bold" color="green.600">
-                        Rp {periodClosingPreview.total_revenue.toLocaleString('id-ID')}
-                      </Text>
-                    </Box>
-                    <Box>
-                      <Text fontSize="xs" color="gray.600">Total Expense</Text>
-                      <Text fontSize="lg" fontWeight="bold" color="red.600">
-                        Rp {periodClosingPreview.total_expense.toLocaleString('id-ID')}
-                      </Text>
-                    </Box>
-                    <Box>
-                      <Text fontSize="xs" color="gray.600">Net Income</Text>
-                      <Text fontSize="lg" fontWeight="bold" color="blue.600">
-                        Rp {periodClosingPreview.net_income.toLocaleString('id-ID')}
-                      </Text>
-                    </Box>
-                  </SimpleGrid>
-                </Box>
-                
-                {/* Validation Messages */}
-                {periodClosingPreview.validation_messages && periodClosingPreview.validation_messages.length > 0 && (
-                  <Alert status={periodClosingPreview.can_close ? 'info' : 'error'} borderRadius="md">
-                    <AlertIcon />
-                    <Box>
-                      <AlertTitle fontSize="sm">{periodClosingPreview.can_close ? 'Validation' : 'Validation Issues'}</AlertTitle>
-                      <AlertDescription fontSize="xs">
-                        {periodClosingPreview.validation_messages.map((msg: string, i: number) => (
-                          <Text key={i}>{msg}</Text>
-                        ))}
-                      </AlertDescription>
-                    </Box>
-                  </Alert>
-                )}
-                
-                {/* What Will Happen */}
-                {periodClosingPreview.can_close && (
-                  <Alert status="warning" borderRadius="md">
-                    <AlertIcon />
-                    <Box>
-                      <AlertTitle fontSize="sm">⚠️ What will happen:</AlertTitle>
-                      <AlertDescription fontSize="xs">
-                        • {periodClosingPreview.revenue_accounts?.length || 0} Revenue accounts → Reset to 0
-                        <br />
-                        • {periodClosingPreview.expense_accounts?.length || 0} Expense accounts → Reset to 0
-                        <br />
-                        • Retained Earnings → Increased by Rp {periodClosingPreview.net_income.toLocaleString('id-ID')}
-                        <br />
-                        • Automated journal entry created
-                        <br />
-                        • Period locked (cannot reopen easily)
-                      </AlertDescription>
-                    </Box>
-                  </Alert>
-                )}
-                
-                {/* Closing Entries Preview */}
-                {periodClosingPreview.closing_entries && periodClosingPreview.closing_entries.length > 0 && (
-                  <Box width="full">
-                    <Text fontSize="sm" fontWeight="bold" mb={2}>
-                      Closing Journal Entries:
-                    </Text>
-                    <VStack spacing={2} width="full" alignItems="start">
-                      {periodClosingPreview.closing_entries.map((entry: any, i: number) => (
-                        <Box
-                          key={i}
-                          width="full"
-                          p={3}
-                          bg="white"
-                          border="1px"
-                          borderColor="gray.200"
-                          borderRadius="md"
-                        >
-                          <Text fontSize="xs" fontWeight="semibold" mb={1}>
-                            {entry.description}
-                          </Text>
-                          <HStack spacing={2} fontSize="xs">
-                            <Text>Dr: {entry.debit_account}</Text>
-                            <Text>→</Text>
-                            <Text>Cr: {entry.credit_account}</Text>
-                            <Text fontWeight="bold">
-                              Rp {entry.amount.toLocaleString('id-ID')}
-                            </Text>
-                          </HStack>
-                        </Box>
-                      ))}
-                    </VStack>
-                  </Box>
-                )}
-              </VStack>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button
-              variant="ghost"
-              mr={3}
-              onClick={() => setShowPeriodClosingModal(false)}
-              isDisabled={executingPeriodClosing}
-            >
-              Cancel
-            </Button>
-            <Button
-              colorScheme="red"
-              onClick={handleExecutePeriodClosing}
-              isLoading={executingPeriodClosing}
-              loadingText="Closing..."
-              isDisabled={!periodClosingPreview?.can_close || executingPeriodClosing}
-            >
-              Execute Period Closing
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+                    </FormControl>
+                    <Divider />
 
-    </SimpleLayout>
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.address')}
+                      </FormLabel>
+                      <Textarea
+                        value={formData?.company_address ?? settings?.company_address ?? ''}
+                        onChange={(e) => handleFormChange('company_address', e.target.value)}
+                        placeholder={t('settings.addressPlaceholder') || "Enter company address"}
+                        rows={3}
+                        variant="filled"
+                        _hover={{ bg: 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                      />
+                    </FormControl>
+                    <Divider />
+
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.phone')}
+                      </FormLabel>
+                      <Input
+                        value={formData?.company_phone ?? settings?.company_phone ?? ''}
+                        onChange={(e) => handleFormChange('company_phone', e.target.value)}
+                        placeholder={t('settings.phonePlaceholder') || "Enter phone number"}
+                        type="tel"
+                        variant="filled"
+                        _hover={{ bg: 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                      />
+                    </FormControl>
+                    <Divider />
+
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.email')}
+                      </FormLabel>
+                      <Input
+                        value={formData?.company_email ?? settings?.company_email ?? ''}
+                        onChange={(e) => handleFormChange('company_email', e.target.value)}
+                        placeholder={t('settings.emailPlaceholder') || "Enter email address"}
+                        type="email"
+                        variant="filled"
+                        _hover={{ bg: 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                      />
+                    </FormControl>
+                    <Divider />
+
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.taxNumber')}
+                      </FormLabel>
+                      <Input
+                        value={formData?.tax_number ?? settings?.tax_number ?? ''}
+                        onChange={(e) => handleFormChange('tax_number', e.target.value)}
+                        placeholder={t('settings.taxNumberPlaceholder') || "Enter tax number (optional)"}
+                        variant="filled"
+                        _hover={{ bg: 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                      />
+                    </FormControl>
+                  </VStack>
+                </CardBody>
+              </Card>
+
+              {/* System Configuration Card */}
+              <Card border="1px" borderColor="gray.200" boxShadow="md">
+                <CardHeader>
+                  <HStack spacing={3}>
+                    <Icon as={FiDollarSign} boxSize={6} color={greenColor} />
+                    <Heading size="md">{t('settings.systemConfig')}</Heading>
+                  </HStack>
+                </CardHeader>
+                <CardBody>
+                  <VStack spacing={4} alignItems="start">
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.dateFormat')}
+                      </FormLabel>
+                      <Select
+                        value={formData?.date_format || settings?.date_format || 'YYYY-MM-DD'}
+                        onChange={(e) => handleFormChange('date_format', e.target.value)}
+                        variant="filled"
+                        _hover={{ bg: 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                      >
+                        <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                        <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                        <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                        <option value="DD-MM-YYYY">DD-MM-YYYY</option>
+                      </Select>
+                    </FormControl>
+                    <Divider />
+
+                    <FormControl>
+                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                        {t('settings.defaultTaxRate')}
+                      </FormLabel>
+                      <NumberInput
+                        value={formData?.default_tax_rate ?? settings?.default_tax_rate ?? 0}
+                        onChange={(valueString) => handleFormChange('default_tax_rate', parseFloat(valueString) || 0)}
+                        min={0}
+                        max={100}
+                        precision={2}
+                      >
+                        <NumberInputField
+                          variant="filled"
+                          _hover={{ bg: 'gray.100' }}
+                          _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        />
+                        <NumberInputStepper>
+                          <NumberIncrementStepper />
+                          <NumberDecrementStepper />
+                        </NumberInputStepper>
+                      </NumberInput>
+                    </FormControl>
+                    <Divider />
+
+                    <FormControl>
+                      <HStack mb={2}>
+                        <Icon as={FiGlobe} boxSize={4} color="gray.600" />
+                        <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm" mb={0}>
+                          {t('settings.language')}
+                        </FormLabel>
+                      </HStack>
+                      <Select
+                        value={formData?.language || settings?.language || language}
+                        onChange={(e) => {
+                          handleFormChange('language', e.target.value);
+                        }}
+                        variant="filled"
+                        _hover={{ bg: 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                      >
+                        <option value="id">{t('settings.indonesian')}</option>
+                        <option value="en">{t('settings.english')}</option>
+                      </Select>
+                    </FormControl>
+                  </VStack>
+                </CardBody>
+              </Card>
+
+              {/* Flexible Period Closing Card */}
+              <Card border="1px" borderColor="gray.200" boxShadow="md">
+                <CardHeader>
+                  <HStack spacing={3} justify="space-between" width="full">
+                    <HStack spacing={3}>
+                      <Icon as={FiCheckCircle} boxSize={6} color="red.500" />
+                      <Heading size="md">{t('settings.periodClosing') || 'Period Closing'}</Heading>
+                    </HStack>
+                    <Tooltip
+                      label={
+                        <Box p={2}>
+                          <Text fontSize="xs" fontWeight="bold" mb={1}>
+                            📘 {t('settings.periodClosingDesc')}
+                          </Text>
+                          <Text fontSize="xs" fontWeight="semibold" mb={1}>
+                            {t('settings.periodClosingFeatures')}
+                          </Text>
+                          <Text fontSize="xs" color="green.200">• {t('settings.periodClosingResetRev')}</Text>
+                          <Text fontSize="xs" color="red.200">• {t('settings.periodClosingResetExp')}</Text>
+                          <Text fontSize="xs" color="blue.200">• {t('settings.periodClosingRetained')}</Text>
+                          <Text fontSize="xs">• {t('settings.periodClosingJournal')}</Text>
+                          <Text fontSize="xs">• {t('settings.periodClosingLock')}</Text>
+                          <Text fontSize="xs" mt={2} fontWeight="semibold" color="orange.200">
+                            {t('settings.permanentAction')}
+                          </Text>
+                        </Box>
+                      }
+                      placement="left"
+                      hasArrow
+                      bg="red.600"
+                    >
+                      <Box cursor="help">
+                        <Icon as={FiInfo} boxSize={4} color="gray.500" _hover={{ color: 'red.500' }} />
+                      </Box>
+                    </Tooltip>
+                  </HStack>
+                </CardHeader>
+                <CardBody>
+                  <VStack spacing={4} alignItems="start">
+                    <Alert status="error" borderRadius="md" size="sm">
+                      <AlertIcon />
+                      <Box>
+                        <AlertTitle fontSize="sm">⚠️ {t('settings.permanentAction')}</AlertTitle>
+                        <AlertDescription fontSize="xs">
+                          {t('settings.periodClosingWarnings.permanentActionDesc')}
+                        </AlertDescription>
+                      </Box>
+                    </Alert>
+
+                    {lastClosingInfo?.has_previous_closing && lastClosingInfo?.last_closing_date && (
+                      <Alert status="info" borderRadius="md" size="sm">
+                        <AlertIcon />
+                        <Box>
+                          <AlertTitle fontSize="sm">📅 {t('settings.periodClosingLabels.lastClosingTitle')}</AlertTitle>
+                          <AlertDescription fontSize="xs">
+                            {t('settings.periodClosingLabels.lastClosed')}: {new Date(lastClosingInfo.last_closing_date).toLocaleDateString()}
+                          </AlertDescription>
+                        </Box>
+                      </Alert>
+                    )}
+
+                    {lastClosingInfo && !lastClosingInfo.has_previous_closing && (
+                      <Alert status="warning" borderRadius="md" size="sm">
+                        <AlertIcon />
+                        <Box>
+                          <AlertTitle fontSize="sm">⚠️ {t('settings.periodClosingWarnings.firstTimeTitle')}</AlertTitle>
+                          <AlertDescription fontSize="xs">
+                            {t('settings.periodClosingWarnings.firstTimeDesc')}
+                          </AlertDescription>
+                        </Box>
+                      </Alert>
+                    )}
+
+                    <Alert status="success" borderRadius="md" size="sm" variant="left-accent">
+                      <AlertIcon />
+                      <Box>
+                        <AlertTitle fontSize="sm">🔄 {t('settings.periodClosingWarnings.autoUpdateTitle')}</AlertTitle>
+                        <AlertDescription fontSize="xs">
+                          <Box dangerouslySetInnerHTML={{ __html: t('settings.periodClosingWarnings.autoUpdateDesc') }} />
+                        </AlertDescription>
+                      </Box>
+                    </Alert>
+
+                    <Text fontSize="sm" color="gray.600">
+                      {t('settings.periodClosingLabels.description')}
+                    </Text>
+
+                    <FormControl>
+                      <FormLabel fontSize="sm" fontWeight="semibold">
+                        {t('common.filters.startDate') || "Start Date"}
+                      </FormLabel>
+                      <Input
+                        type="date"
+                        value={periodStartDate}
+                        onChange={(e) => setPeriodStartDate(e.target.value)}
+                        variant="filled"
+                        bg={lastClosingInfo?.has_previous_closing ? 'blue.50' : undefined}
+                        _hover={{ bg: lastClosingInfo?.has_previous_closing ? 'blue.50' : 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        isReadOnly={lastClosingInfo?.has_previous_closing === true}
+                        cursor={lastClosingInfo?.has_previous_closing ? 'not-allowed' : 'text'}
+                        placeholder="Select start date"
+                      />
+                      <FormHelperText fontSize="xs" color={lastClosingInfo?.has_previous_closing ? 'blue.600' : 'gray.600'}>
+                        {lastClosingInfo?.has_previous_closing
+                          ? `🔒 ${t('settings.periodClosingHelper.autoStart')} (${lastClosingInfo.last_closing_date ? new Date(lastClosingInfo.last_closing_date).toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US') : 'N/A'})`
+                          : `📅 ${t('settings.periodClosingHelper.manualStart')}`}
+                      </FormHelperText>
+                    </FormControl>
+
+                    <FormControl>
+                      <FormLabel fontSize="sm" fontWeight="semibold">
+                        {t('common.filters.endDate') || "End Date"}
+                      </FormLabel>
+                      <Input
+                        type="date"
+                        value={periodEndDate}
+                        onChange={(e) => setPeriodEndDate(e.target.value)}
+                        variant="filled"
+                        _hover={{ bg: 'gray.100' }}
+                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                      />
+                      <FormHelperText fontSize="xs">
+                        {t('settings.periodClosingLabels.endDateHelper')}
+                      </FormHelperText>
+                    </FormControl>
+
+                    <Button
+                      colorScheme="red"
+                      variant="solid"
+                      width="full"
+                      onClick={handlePreviewPeriodClosing}
+                      isLoading={loadingPeriodPreview}
+                      loadingText={t('settings.periodClosingLabels.loadingPreview')}
+                      isDisabled={!periodStartDate || !periodEndDate}
+                    >
+                      {t('settings.periodClosingLabels.previewButton')}
+                    </Button>
+                  </VStack>
+                </CardBody>
+              </Card>
+
+              {/* Tax Account Configuration Card */}
+              <Card border="1px" borderColor="gray.200" boxShadow="md">
+                <CardHeader>
+                  <HStack spacing={3}>
+                    <Icon as={FiCreditCard} boxSize={6} color={orangeColor} />
+                    <Heading size="md">{t('settings.taxAccountConfig')}</Heading>
+                  </HStack>
+                </CardHeader>
+                <CardBody>
+                  <VStack spacing={4} alignItems="start">
+                    <Text fontSize="sm" color="gray.600" mb={2}>
+                      {t('settings.taxAccountConfigDesc')}
+                    </Text>
+
+                    <Alert status="info" variant="left-accent" size="sm">
+                      <AlertIcon />
+                      <AlertDescription fontSize="sm">
+                        {t('settings.taxAccountConfigAlert')}
+                      </AlertDescription>
+                    </Alert>
+
+                    {loadingTaxAccounts ? (
+                      <HStack width="full" justify="center" py={4}>
+                        <Spinner size="sm" color="blue.500" />
+                        <Text fontSize="xs" color="gray.500">{t('settings.taxAccountConfigLoading')}</Text>
+                      </HStack>
+                    ) : taxAccountSettings ? (
+                      <VStack spacing={3} width="full" alignItems="start">
+                        <HStack justify="space-between" width="full">
+                          <VStack alignItems="start" spacing={1}>
+                            <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+                              {t('settings.taxAccountSections.withholding')}
+                            </Text>
+                            <VStack spacing={1} alignItems="start" mt={2}>
+                              {taxAccountSettings.withholding_tax21_account ? (
+                                <HStack spacing={1}>
+                                  <Icon as={FiDollarSign} color="green.500" boxSize={3} />
+                                  <Text fontSize="xs" color="green.600" fontWeight="medium">
+                                    PPh 21: {taxAccountSettings.withholding_tax21_account.code} - {taxAccountSettings.withholding_tax21_account.name}
+                                  </Text>
+                                </HStack>
+                              ) : (
+                                <Text fontSize="xs" color="gray.400">PPh 21: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                              )}
+                              {taxAccountSettings.withholding_tax23_account ? (
+                                <HStack spacing={1}>
+                                  <Icon as={FiDollarSign} color="green.500" boxSize={3} />
+                                  <Text fontSize="xs" color="green.600" fontWeight="medium">
+                                    PPh 23: {taxAccountSettings.withholding_tax23_account.code} - {taxAccountSettings.withholding_tax23_account.name}
+                                  </Text>
+                                </HStack>
+                              ) : (
+                                <Text fontSize="xs" color="gray.400">PPh 23: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                              )}
+                              {taxAccountSettings.withholding_tax25_account ? (
+                                <HStack spacing={1}>
+                                  <Icon as={FiDollarSign} color="green.500" boxSize={3} />
+                                  <Text fontSize="xs" color="green.600" fontWeight="medium">
+                                    PPh 25: {taxAccountSettings.withholding_tax25_account.code} - {taxAccountSettings.withholding_tax25_account.name}
+                                  </Text>
+                                </HStack>
+                              ) : (
+                                <Text fontSize="xs" color="gray.400">PPh 25: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                              )}
+                            </VStack>
+                          </VStack>
+                          <Icon as={FiDollarSign} color="orange.500" boxSize={4} />
+                        </HStack>
+
+                        <Divider />
+
+                        <HStack justify="space-between" width="full">
+                          <VStack alignItems="start" spacing={1}>
+                            <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+                              {t('settings.taxAccountSections.inventoryCogs')}
+                            </Text>
+                            <VStack spacing={1} alignItems="start" mt={2}>
+                              {taxAccountSettings.inventory_account ? (
+                                <HStack spacing={1}>
+                                  <Icon as={FiTrendingUp} color="blue.500" boxSize={3} />
+                                  <Text fontSize="xs" color="blue.600" fontWeight="medium">
+                                    Inventory: {taxAccountSettings.inventory_account.code} - {taxAccountSettings.inventory_account.name}
+                                  </Text>
+                                </HStack>
+                              ) : (
+                                <Text fontSize="xs" color="gray.400">Inventory: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                              )}
+                              {taxAccountSettings.cogs_account ? (
+                                <HStack spacing={1}>
+                                  <Icon as={FiTrendingUp} color="blue.500" boxSize={3} />
+                                  <Text fontSize="xs" color="blue.600" fontWeight="medium">
+                                    COGS: {taxAccountSettings.cogs_account.code} - {taxAccountSettings.cogs_account.name}
+                                  </Text>
+                                </HStack>
+                              ) : (
+                                <Text fontSize="xs" color="gray.400">COGS: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                              )}
+                            </VStack>
+                          </VStack>
+                          <Icon as={FiTrendingUp} color="blue.500" boxSize={4} />
+                        </HStack>
+                      </VStack>
+                    ) : (
+                      <VStack spacing={3} width="full" alignItems="start">
+                        <Text fontSize="xs" color="gray.500">
+                          {t('settings.taxAccountStatus.noConfigFound')}
+                        </Text>
+                      </VStack>
+                    )}
+
+                    <Link href="/settings/tax-accounts">
+                      <Button
+                        colorScheme="orange"
+                        variant="outline"
+                        size="sm"
+                        leftIcon={<FiSettings />}
+                        width="full"
+                        _hover={{ bg: 'orange.50' }}
+                      >
+                        {t('settings.taxAccounts.title') || "Configure Tax Accounts"}
+                      </Button>
+                    </Link>
+                  </VStack>
+                </CardBody>
+              </Card>
+            </SimpleGrid>
+          </VStack>
+        </Box>
+
+        {/* Period Closing Preview Modal */}
+        <Modal
+          isOpen={showPeriodClosingModal}
+          onClose={() => setShowPeriodClosingModal(false)}
+          size="xl"
+        >
+          <ModalOverlay />
+          <ModalContent maxW="800px">
+            <ModalHeader bg="red.500" color="white">
+              📅 {t('settings.periodClosing') || "Period Closing Preview"}
+            </ModalHeader>
+            <ModalCloseButton color="white" />
+            <ModalBody py={6}>
+              {periodClosingPreview && (
+                <VStack spacing={4} alignItems="start">
+                  {/* Period Info */}
+                  <Box width="full" p={3} bg="blue.50" borderRadius="md">
+                    <Text fontSize="sm" fontWeight="bold" mb={1}>
+                      {t('settings.periodClosingLabels.period')}: {new Date(periodClosingPreview.start_date).toLocaleDateString()} - {new Date(periodClosingPreview.end_date).toLocaleDateString()}
+                    </Text>
+                    <Text fontSize="xs" color="gray.600">
+                      {periodClosingPreview.period_days} {t('settings.periodClosingLabels.days')} | {periodClosingPreview.transaction_count} {t('settings.periodClosingLabels.transactions')}
+                    </Text>
+                  </Box>
+
+                  {/* Summary */}
+                  <Box width="full" p={4} bg="gray.50" borderRadius="md">
+                    <Text fontSize="lg" fontWeight="bold" mb={2}>
+                      {t('settings.periodClosingLabels.financialSummary')}
+                    </Text>
+                    <SimpleGrid columns={3} spacing={4}>
+                      <Box>
+                        <Text fontSize="xs" color="gray.600">{t('settings.periodClosingLabels.totalRevenue')}</Text>
+                        <Text fontSize="lg" fontWeight="bold" color="green.600">
+                          Rp {periodClosingPreview.total_revenue.toLocaleString('id-ID')}
+                        </Text>
+                      </Box>
+                      <Box>
+                        <Text fontSize="xs" color="gray.600">{t('settings.periodClosingLabels.totalExpense')}</Text>
+                        <Text fontSize="lg" fontWeight="bold" color="red.600">
+                          Rp {periodClosingPreview.total_expense.toLocaleString('id-ID')}
+                        </Text>
+                      </Box>
+                      <Box>
+                        <Text fontSize="xs" color="gray.600">{t('settings.periodClosingLabels.netIncome')}</Text>
+                        <Text fontSize="lg" fontWeight="bold" color="blue.600">
+                          Rp {periodClosingPreview.net_income.toLocaleString('id-ID')}
+                        </Text>
+                      </Box>
+                    </SimpleGrid>
+                  </Box>
+
+                  {/* Validation Messages */}
+                  {periodClosingPreview.validation_messages && periodClosingPreview.validation_messages.length > 0 && (
+                    <Alert status={periodClosingPreview.can_close ? 'info' : 'error'} borderRadius="md">
+                      <AlertIcon />
+                      <Box>
+                        <AlertTitle fontSize="sm">{periodClosingPreview.can_close ? t('settings.periodClosingLabels.validation') : t('settings.periodClosingLabels.validationIssues')}</AlertTitle>
+                        <AlertDescription fontSize="xs">
+                          {periodClosingPreview.validation_messages.map((msg: string, i: number) => (
+                            <Text key={i}>{msg}</Text>
+                          ))}
+                        </AlertDescription>
+                      </Box>
+                    </Alert>
+                  )}
+
+                  {/* What Will Happen */}
+                  {periodClosingPreview.can_close && (
+                    <Alert status="warning" borderRadius="md">
+                      <AlertIcon />
+                      <Box>
+                        <AlertTitle fontSize="sm">⚠️ {t('settings.periodClosingFeatures') || "What will happen:"}</AlertTitle>
+                        <AlertDescription fontSize="xs">
+                          • {periodClosingPreview.revenue_accounts?.length || 0} {t('settings.periodClosingLabels.featureRevenue')}
+                          <br />
+                          • {periodClosingPreview.expense_accounts?.length || 0} {t('settings.periodClosingLabels.featureExpense')}
+                          <br />
+                          • {t('settings.periodClosingLabels.featureRetained')} Rp {periodClosingPreview.net_income.toLocaleString('id-ID')}
+                          <br />
+                          • {t('settings.periodClosingLabels.featureJournal')}
+                          <br />
+                          • {t('settings.periodClosingLabels.featureLocked')}
+                        </AlertDescription>
+                      </Box>
+                    </Alert>
+                  )}
+
+                  {/* Closing Entries Preview */}
+                  {periodClosingPreview.closing_entries && periodClosingPreview.closing_entries.length > 0 && (
+                    <Box width="full">
+                      <Text fontSize="sm" fontWeight="bold" mb={2}>
+                        {t('settings.periodClosingLabels.closingEntries')}
+                      </Text>
+                      <VStack spacing={2} width="full" alignItems="start">
+                        {periodClosingPreview.closing_entries.map((entry: any, i: number) => (
+                          <Box
+                            key={i}
+                            width="full"
+                            p={3}
+                            bg="white"
+                            border="1px"
+                            borderColor="gray.200"
+                            borderRadius="md"
+                          >
+                            <Text fontSize="xs" fontWeight="semibold" mb={1}>
+                              {entry.description}
+                            </Text>
+                            <HStack spacing={2} fontSize="xs">
+                              <Text>Dr: {entry.debit_account}</Text>
+                              <Text>→</Text>
+                              <Text>Cr: {entry.credit_account}</Text>
+                              <Text fontWeight="bold">
+                                Rp {entry.amount.toLocaleString('id-ID')}
+                              </Text>
+                            </HStack>
+                          </Box>
+                        ))}
+                      </VStack>
+                    </Box>
+                  )}
+                </VStack>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button
+                variant="ghost"
+                mr={3}
+                onClick={() => setShowPeriodClosingModal(false)}
+                isDisabled={executingPeriodClosing}
+              >
+                {t('common.cancel') || "Cancel"}
+              </Button>
+              <Button
+                colorScheme="red"
+                onClick={handleExecutePeriodClosing}
+                isLoading={executingPeriodClosing}
+                loadingText={t('common.processing') || "Closing..."}
+                isDisabled={!periodClosingPreview?.can_close || executingPeriodClosing}
+              >
+                {t('settings.periodClosing') || "Execute Period Closing"}
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+      </SimpleLayout>
+    </ProtectedModule>
   );
 };
 

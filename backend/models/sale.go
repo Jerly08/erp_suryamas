@@ -166,7 +166,7 @@ type SaleCreateRequest struct {
 	PPhType          string              `json:"pph_type"`
 	
 	// Enhanced tax configuration (similar to Purchase model)
-	PPNRate              float64         `json:"ppn_rate"`                    // PPN percentage
+	PPNRate              *float64        `json:"ppn_rate"`                    // PPN percentage (pointer to allow 0)
 	OtherTaxAdditions    float64         `json:"other_tax_additions"`         // Other tax additions
 	PPh21Rate            float64         `json:"pph21_rate"`                  // PPh 21 percentage
 	PPh23Rate            float64         `json:"pph23_rate"`                  // PPh 23 percentage

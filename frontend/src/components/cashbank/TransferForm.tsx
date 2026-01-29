@@ -37,6 +37,7 @@ import {
 } from '@chakra-ui/react';
 import { CashBank, TransferRequest } from '@/services/cashbankService';
 import cashbankService from '@/services/cashbankService';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface TransferFormProps {
   isOpen: boolean;
@@ -63,8 +64,10 @@ const TransferForm: React.FC<TransferFormProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<CashBank[]>([]);
+
   const [selectedDestAccount, setSelectedDestAccount] = useState<CashBank | null>(null);
   const toast = useToast();
+  const { t } = useTranslation();
 
   // Load available accounts for transfer destination
   useEffect(() => {
@@ -73,7 +76,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
         try {
           const allAccounts = await cashbankService.getCashBankAccounts();
           // Filter out the source account and inactive accounts
-          const availableAccounts = allAccounts.filter(acc => 
+          const availableAccounts = allAccounts.filter(acc =>
             acc.id !== sourceAccount.id && acc.is_active
           );
           setAccounts(availableAccounts);
@@ -82,7 +85,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
         }
       }
     };
-    
+
     loadAccounts();
   }, [isOpen, sourceAccount]);
 
@@ -97,7 +100,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
     if (field === 'to_account_id') {
       const destAccount = accounts.find(acc => acc.id === value);
       setSelectedDestAccount(destAccount || null);
-      
+
       // Auto-set exchange rate if currencies are different
       if (destAccount && sourceAccount) {
         if (sourceAccount.currency !== destAccount.currency) {
@@ -148,7 +151,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
       };
 
       await cashbankService.processTransfer(requestData);
-      
+
       toast({
         title: 'Transfer Successful',
         description: `${sourceAccount.currency} ${formData.amount.toLocaleString('id-ID')} transferred from ${sourceAccount.name} to ${selectedDestAccount.name}`,
@@ -191,7 +194,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
   if (!sourceAccount) return null;
 
   const convertedAmount = formData.amount * formData.exchange_rate;
-  const requiresExchangeRate = selectedDestAccount && 
+  const requiresExchangeRate = selectedDestAccount &&
     sourceAccount.currency !== selectedDestAccount.currency;
 
   return (
@@ -203,15 +206,15 @@ const TransferForm: React.FC<TransferFormProps> = ({
             <Text fontSize="lg">🔄</Text>
             <Box>
               <Text fontSize="lg" fontWeight="bold">
-                Transfer Funds
+                {t('cashBank.transferFunds')}
               </Text>
               <Text fontSize="sm" color="gray.500">
-                Move money between accounts
+                {t('cashBank.moveMoneyDesc')}
               </Text>
             </Box>
           </Flex>
         </ModalHeader>
-        
+
         <ModalBody>
           {error && (
             <Alert status="error" mb={4}>
@@ -224,24 +227,24 @@ const TransferForm: React.FC<TransferFormProps> = ({
             {/* Source and Destination Account Information */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
-                🏦 Account Selection
+                🏦 {t('cashBank.accountSelection')}
               </Text>
-              
+
               <SimpleGrid columns={2} spacing={4}>
                 {/* Source Account */}
                 <Card>
                   <CardBody>
-                    <Text fontSize="sm" color="gray.600" mb={2}>FROM (Source)</Text>
+                    <Text fontSize="sm" color="gray.600" mb={2}>{t('cashBank.fromSource')}</Text>
                     <Flex alignItems="center" gap={2} mb={2}>
                       <Badge colorScheme={sourceAccount.type === 'CASH' ? 'green' : 'blue'} size="sm">
                         {sourceAccount.type}
                       </Badge>
                       <Text fontWeight="medium" fontSize="sm">{sourceAccount.name}</Text>
                     </Flex>
-                    
+
                     <Stat size="sm">
-                      <StatLabel>Available Balance</StatLabel>
-                      <StatNumber 
+                      <StatLabel>{t('cashBank.availableBalance')}</StatLabel>
+                      <StatNumber
                         color={sourceAccount.balance < 0 ? 'red.500' : 'green.600'}
                         fontFamily="mono"
                         fontSize="md"
@@ -256,12 +259,12 @@ const TransferForm: React.FC<TransferFormProps> = ({
                 {/* Destination Account */}
                 <Card>
                   <CardBody>
-                    <Text fontSize="sm" color="gray.600" mb={2}>TO (Destination)</Text>
+                    <Text fontSize="sm" color="gray.600" mb={2}>{t('cashBank.toDestination')}</Text>
                     <FormControl isRequired>
                       <Select
                         value={formData.to_account_id}
                         onChange={(e) => handleInputChange('to_account_id', parseInt(e.target.value))}
-                        placeholder="Select destination account..."
+                        placeholder={t('cashBank.selectGLAccountPlaceholder')}
                         size="sm"
                       >
                         {accounts.map((acc) => (
@@ -271,7 +274,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
                         ))}
                       </Select>
                     </FormControl>
-                    
+
                     {selectedDestAccount && (
                       <Box mt={2}>
                         <Flex alignItems="center" gap={2} mb={1}>
@@ -293,13 +296,13 @@ const TransferForm: React.FC<TransferFormProps> = ({
             {/* Transfer Details */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
-                📝 Transfer Details
+                📝 {t('cashBank.transferDetails')}
               </Text>
-              
+
               <VStack spacing={4} align="stretch">
                 <SimpleGrid columns={2} spacing={4}>
                   <FormControl isRequired>
-                    <FormLabel>Transfer Date</FormLabel>
+                    <FormLabel>{t('cashBank.transferDate')}</FormLabel>
                     <Input
                       type="date"
                       value={formData.date}
@@ -308,7 +311,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
                   </FormControl>
 
                   <FormControl isRequired>
-                    <FormLabel>Amount ({sourceAccount.currency})</FormLabel>
+                    <FormLabel>{t('payments.form.amount')} ({sourceAccount.currency})</FormLabel>
                     <NumberInput
                       value={formData.amount}
                       onChange={(_, value) => handleInputChange('amount', value || 0)}
@@ -342,7 +345,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
                         {sourceAccount.currency} → {selectedDestAccount?.currency}
                       </Text>
                       <FormControl>
-                        <FormLabel fontSize="sm">Exchange Rate</FormLabel>
+                        <FormLabel fontSize="sm">{t('cashBank.exchangeRate')}</FormLabel>
                         <NumberInput
                           value={formData.exchange_rate}
                           onChange={(_, value) => handleInputChange('exchange_rate', value || 1)}
@@ -365,20 +368,20 @@ const TransferForm: React.FC<TransferFormProps> = ({
                 )}
 
                 <FormControl>
-                  <FormLabel>Reference</FormLabel>
+                  <FormLabel>{t('payments.form.referenceNumber')}</FormLabel>
                   <Input
                     value={formData.reference}
                     onChange={(e) => handleInputChange('reference', e.target.value)}
-                    placeholder="e.g., Invoice payment, Fund reallocation, etc."
+                    placeholder={t('payments.placeholders.referenceNumber')}
                   />
                 </FormControl>
 
                 <FormControl>
-                  <FormLabel>Notes</FormLabel>
+                  <FormLabel>{t('payments.form.notes')}</FormLabel>
                   <Textarea
                     value={formData.notes}
                     onChange={(e) => handleInputChange('notes', e.target.value)}
-                    placeholder="Optional transfer notes"
+                    placeholder={t('payments.placeholders.notes')}
                     rows={3}
                   />
                 </FormControl>
@@ -431,21 +434,21 @@ const TransferForm: React.FC<TransferFormProps> = ({
 
         <ModalFooter>
           <Button variant="ghost" mr={3} onClick={handleClose} isDisabled={loading}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button
             colorScheme="blue"
             onClick={handleSubmit}
             isLoading={loading}
-            loadingText="Processing transfer..."
+            loadingText={t('common.processing')}
             isDisabled={
-              formData.amount <= 0 || 
-              !selectedDestAccount || 
+              formData.amount <= 0 ||
+              !selectedDestAccount ||
               formData.amount > sourceAccount.balance ||
               (requiresExchangeRate && formData.exchange_rate <= 0)
             }
           >
-            Transfer Funds
+            {t('cashBank.transferFunds')}
           </Button>
         </ModalFooter>
       </ModalContent>

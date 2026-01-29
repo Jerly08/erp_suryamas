@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useModulePermissions } from '@/hooks/usePermissions';
+import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import Table from '@/components/common/Table';
 import {
@@ -58,10 +60,10 @@ import InteractiveMapPicker from '@/components/common/InteractiveMapPicker';
 import AssetImageUpload from '@/components/assets/AssetImageUpload';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import { getAssetImageUrl } from '@/utils/imageUrl';
-import { 
-  validateAssetForm, 
-  getFieldError, 
-  hasFieldError, 
+import {
+  validateAssetForm,
+  getFieldError,
+  hasFieldError,
   ValidationError,
   AssetFormData as FormData
 } from '@/utils/assetValidation';
@@ -72,13 +74,17 @@ type AssetFormData = FormData;
 const AssetsPage = () => {
   const { token } = useAuth();
   const { t } = useTranslation();
+
+  // Permission-based access control
+  const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('assets');
+
   const [assets, setAssets] = useState<BackendAsset[]>([]);
   const [summary, setSummary] = useState<AssetsSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingSummary, setIsLoadingSummary] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
-  
+
   // Tooltip descriptions for asset page
   const tooltips = {
     search: 'Cari aset berdasarkan nama, kode, serial number, atau lokasi',
@@ -103,21 +109,21 @@ const AssetsPage = () => {
   const [filterStatus, setFilterStatus] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState<BackendAsset | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
   const [isMapPickerOpen, setIsMapPickerOpen] = useState(false);
-  
+
   // Image upload states
-  const [pendingUpload, setPendingUpload] = useState<{assetId: number, file: File} | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<{ assetId: number, file: File } | null>(null);
   const { isOpen: isAlertOpen, onOpen: onAlertOpen, onClose: onAlertClose } = useDisclosure();
-  
+
   // Detail view states
   const [detailAsset, setDetailAsset] = useState<BackendAsset | null>(null);
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
-  
+
   // Category management states
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
@@ -135,12 +141,12 @@ const AssetsPage = () => {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [editingCategoryIndex, setEditingCategoryIndex] = useState<number | null>(null);
   const [newCategoryCode, setNewCategoryCode] = useState('');
-  
+
   // Account management states (only for optional fixed asset and depreciation accounts)
   const [fixedAssetAccounts, setFixedAssetAccounts] = useState<any[]>([]);
   const [depreciationAccounts, setDepreciationAccounts] = useState<any[]>([]);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
-  
+
   // Form state
   const [formData, setFormData] = useState<AssetFormData>({
     name: '',
@@ -203,7 +209,7 @@ const AssetsPage = () => {
         assetService.getFixedAssetAccounts(),
         assetService.getDepreciationExpenseAccounts()
       ]);
-      
+
       setFixedAssetAccounts(fixedAssetAccountsRes.data || []);
       setDepreciationAccounts(depreciationAccountsRes.data || []);
     } catch (error: any) {
@@ -225,10 +231,10 @@ const AssetsPage = () => {
         is_active: c.is_active !== false
       }));
       setDbCategories(cats);
-      
+
       // Extract category names from response
       const categoryNames = cats.map((cat: any) => cat.name) || [];
-      
+
       // Merge with default categories (avoid duplicates)
       const allCategories = [...new Set([...ASSET_CATEGORIES, ...categoryNames])];
       setCustomCategories(allCategories);
@@ -253,11 +259,11 @@ const AssetsPage = () => {
   // Handle form submission for create/update
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Validate form data (use dynamic categories loaded from DB)
     const errors = validateAssetForm(formData, customCategories);
     setValidationErrors(errors);
-    
+
     if (errors.length > 0) {
       toast({
         title: t('assets.messages.validationError'),
@@ -268,10 +274,10 @@ const AssetsPage = () => {
       });
       return;
     }
-    
+
     setIsSubmitting(true);
     setError(null);
-    
+
     try {
       // Transform form data to match backend API
       const apiData = {
@@ -297,7 +303,7 @@ const AssetsPage = () => {
         credit_account_id: formData.creditAccountId,
         user_id: 1, // TODO: Get from auth context
       };
-      
+
       if (formData.id) {
         await assetService.updateAsset(formData.id, apiData);
         toast({
@@ -317,25 +323,25 @@ const AssetsPage = () => {
           isClosable: true,
         });
       }
-      
+
       // Refresh assets list and summary
       await Promise.all([fetchAssets(), fetchAssetsSummary()]);
-      
+
       // Close modal and reset form
       handleCloseModal();
     } catch (error: any) {
       let errorMsg = error.response?.data?.details || error.response?.data?.message || `Error ${formData.id ? 'updating' : 'creating'} asset`;
-      
+
       // Handle specific duplicate code error
-      if (errorMsg.includes('duplicate key value violates unique constraint') || 
-          errorMsg.includes('uni_assets_code') ||
-          errorMsg.includes('SQLSTATE 23505')) {
+      if (errorMsg.includes('duplicate key value violates unique constraint') ||
+        errorMsg.includes('uni_assets_code') ||
+        errorMsg.includes('SQLSTATE 23505')) {
         errorMsg = 'An asset with this information already exists. Please check the asset name and category, then try again.';
       }
-      
+
       setError(errorMsg);
       console.error('Error submitting asset:', error);
-      
+
       toast({
         title: `Error ${formData.id ? 'Updating' : 'Creating'} Asset`,
         description: errorMsg,
@@ -353,7 +359,7 @@ const AssetsPage = () => {
     if (!window.confirm(t('assets.messages.confirmDelete'))) {
       return;
     }
-    
+
     try {
       setError(null);
       await assetService.deleteAsset(id);
@@ -364,7 +370,7 @@ const AssetsPage = () => {
         duration: 3000,
         isClosable: true,
       });
-      
+
       // Refresh assets list and summary
       await Promise.all([fetchAssets(), fetchAssetsSummary()]);
     } catch (error: any) {
@@ -450,12 +456,12 @@ const AssetsPage = () => {
     if (!categoryName) return { assetId: formData.assetAccountId, depId: formData.depreciationAccountId };
     const name = categoryName.toLowerCase();
     let fa = fixedAssetAccounts.find(acc => acc.code?.startsWith('1502') || /bangunan|building/.test(acc.name?.toLowerCase() || ''))
-          || fixedAssetAccounts.find(acc => acc.code?.startsWith('1503') && /vehicle|kendaraan/.test(name))
-          || fixedAssetAccounts.find(acc => acc.code?.startsWith('1504') && /furniture/.test(name))
-          || fixedAssetAccounts.find(acc => acc.code?.startsWith('1505') && /(computer|it)/.test(name))
-          || fixedAssetAccounts.find(acc => acc.code?.startsWith('1501') && /(machinery|mesin)/.test(name))
-          || fixedAssetAccounts[0];
-    let dep = depreciationAccounts.find(acc => /depreciation|penyusutan/.test((acc.name||'').toLowerCase())) || depreciationAccounts[0];
+      || fixedAssetAccounts.find(acc => acc.code?.startsWith('1503') && /vehicle|kendaraan/.test(name))
+      || fixedAssetAccounts.find(acc => acc.code?.startsWith('1504') && /furniture/.test(name))
+      || fixedAssetAccounts.find(acc => acc.code?.startsWith('1505') && /(computer|it)/.test(name))
+      || fixedAssetAccounts.find(acc => acc.code?.startsWith('1501') && /(machinery|mesin)/.test(name))
+      || fixedAssetAccounts[0];
+    let dep = depreciationAccounts.find(acc => /depreciation|penyusutan/.test((acc.name || '').toLowerCase())) || depreciationAccounts[0];
     return { assetId: fa?.id, depId: dep?.id };
   };
 
@@ -508,11 +514,11 @@ const AssetsPage = () => {
 
   // Table columns definition
   const columns = [
-    { 
-      header: t('assets.table.code'), 
+    {
+      header: t('assets.table.code'),
       accessor: (asset: BackendAsset) => (
-        <Text 
-          fontWeight="medium" 
+        <Text
+          fontWeight="medium"
           color="blue.600"
           fontSize="sm"
           whiteSpace="nowrap"
@@ -521,48 +527,48 @@ const AssetsPage = () => {
         </Text>
       )
     },
-    { 
-      header: t('assets.table.name'), 
+    {
+      header: t('assets.table.name'),
       accessor: (asset: BackendAsset) => (
         <Text fontSize="sm" fontWeight="medium" noOfLines={1}>
           {asset.name}
         </Text>
       )
     },
-    { 
-      header: t('assets.table.category'), 
+    {
+      header: t('assets.table.category'),
       accessor: (asset: BackendAsset) => (
         <Text fontSize="sm" noOfLines={1}>
           {asset.category}
         </Text>
       )
     },
-    { 
-      header: t('assets.table.purchasePrice'), 
+    {
+      header: t('assets.table.purchasePrice'),
       accessor: (asset: BackendAsset) => (
         <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
           {formatCurrency(asset.purchase_price)}
         </Text>
       )
     },
-    { 
-      header: t('assets.table.bookValue'), 
+    {
+      header: t('assets.table.bookValue'),
       accessor: (asset: BackendAsset) => (
         <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
           {formatCurrency(calculateBookValue(asset))}
         </Text>
       )
     },
-    { 
-      header: t('assets.table.status'), 
+    {
+      header: t('assets.table.status'),
       accessor: (asset: BackendAsset) => (
         <Badge colorScheme={getStatusColor(asset.status)} variant="subtle" size="sm">
           {asset.status}
         </Badge>
       )
     },
-    { 
-      header: t('assets.table.location'), 
+    {
+      header: t('assets.table.location'),
       accessor: (asset: BackendAsset) => (
         <VStack align="start" spacing={1} maxW="180px">
           <Text noOfLines={1} fontSize="xs">
@@ -595,7 +601,7 @@ const AssetsPage = () => {
   const handleLocationPick = (locationData: { name: string; description: string; address: string; coordinates: string }) => {
     // Update coordinates field
     handleInputChange('coordinates', locationData.coordinates);
-    
+
     // Update location field with comprehensive info
     let locationText = locationData.name;
     if (locationData.description) {
@@ -717,7 +723,7 @@ const AssetsPage = () => {
       });
       return;
     }
-    
+
     assetService.exportToCSV(assets);
     toast({
       title: t('assets.messages.exportStarted'),
@@ -733,7 +739,7 @@ const AssetsPage = () => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       const asset = assets.find(a => a.id === assetId);
-      
+
       if (asset && asset.image_path) {
         // Asset already has an image, show confirmation
         setPendingUpload({ assetId, file });
@@ -758,23 +764,23 @@ const AssetsPage = () => {
   const handleUpload = async (assetId: number, file: File) => {
     try {
       const response = await assetService.uploadAssetImage(assetId, file);
-      
+
       // Update the asset in the list with the new image path
-      setAssets(prevAssets => 
-        prevAssets.map(asset => 
-          asset.id === assetId 
+      setAssets(prevAssets =>
+        prevAssets.map(asset =>
+          asset.id === assetId
             ? { ...asset, image_path: response.path }
             : asset
         )
       );
-      
+
       toast({
         title: t('assets.messages.imageUploadSuccess'),
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
       // Reset file input
       const fileInput = document.getElementById(`file-upload-${assetId}`) as HTMLInputElement;
       if (fileInput) {
@@ -794,14 +800,14 @@ const AssetsPage = () => {
   const handleImageUpload = async (updatedAsset: BackendAsset) => {
     // Update the selectedAsset with new image path
     setSelectedAsset(updatedAsset);
-    
+
     // Update the assets list with the updated asset
-    setAssets(prevAssets => 
-      prevAssets.map(asset => 
+    setAssets(prevAssets =>
+      prevAssets.map(asset =>
         asset.id === updatedAsset.id ? updatedAsset : asset
       )
     );
-    
+
     toast({
       title: t('assets.messages.imageUpdated'),
       description: t('assets.messages.imageUpdatedDesc'),
@@ -880,14 +886,14 @@ const AssetsPage = () => {
         description: '',
         is_active: true
       };
-      
+
       await assetService.createAssetCategory(categoryData as any);
-      
+
       // Refresh categories from database to get the latest list
       await fetchCategories();
       setNewCategoryName('');
       setNewCategoryCode('');
-      
+
       toast({
         title: t('common.buttons.create'),
         description: t('assets.messages.categoryAdded'),
@@ -963,7 +969,7 @@ const AssetsPage = () => {
 
   const handleDeleteCategory = (index: number) => {
     const categoryToDelete = customCategories[index];
-    
+
     // Check if category is being used by any assets
     const isUsed = assets.some(asset => asset.category === categoryToDelete);
     if (isUsed) {
@@ -996,1108 +1002,1110 @@ const AssetsPage = () => {
   };
 
   return (
-<SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'director', 'employee']}>
-      <Box>
-        <Flex justify="space-between" align="center" mb={6}>
-          <Box>
-            <Heading size="lg">{t('assets.assetMaster')}</Heading>
-            <Text color="gray.600" mt={1}>
-              {t('assets.manageDescription')}
-            </Text>
-          </Box>
-          <Flex gap={3}>
-            <Button
-              variant="outline"
-              leftIcon={<FiDownload />}
-              onClick={handleExport}
-              isDisabled={assets.length === 0}
-            >
-              {t('assets.export')}
-            </Button>
-            <Button
-              variant="outline"
-              leftIcon={<FiSettings />}
-              onClick={handleOpenCategoryModal}
-              colorScheme="gray"
-            >
-              {t('assets.manageCategories')}
-            </Button>
-            <Button
-              colorScheme="blue" 
-              leftIcon={<FiPlus />}
-              onClick={handleCreate}
-            >
-              {t('assets.addAsset')}
-            </Button>
+    <ProtectedModule module="assets">
+      <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'director', 'employee']}>
+        <Box>
+          <Flex justify="space-between" align="center" mb={6}>
+            <Box>
+              <Heading size="lg">{t('assets.assetMaster')}</Heading>
+              <Text color="gray.600" mt={1}>
+                {t('assets.manageDescription')}
+              </Text>
+            </Box>
+            <Flex gap={3}>
+              <Button
+                variant="outline"
+                leftIcon={<FiDownload />}
+                onClick={handleExport}
+                isDisabled={assets.length === 0}
+              >
+                {t('assets.export')}
+              </Button>
+              <Button
+                variant="outline"
+                leftIcon={<FiSettings />}
+                onClick={handleOpenCategoryModal}
+                colorScheme="gray"
+              >
+                {t('assets.manageCategories')}
+              </Button>
+              <Button
+                colorScheme="blue"
+                leftIcon={<FiPlus />}
+                onClick={handleCreate}
+              >
+                {t('assets.addAsset')}
+              </Button>
+            </Flex>
           </Flex>
-        </Flex>
-        
-        {error && (
-          <Alert status="error" mb={4}>
-            <AlertIcon />
-            <AlertTitle mr={2}>Error!</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        
-        <AssetSummaryComponent 
-          summary={summary} 
-          isLoading={isLoadingSummary} 
-        />
-        
-        {/* Filters */}
-        <Box mb={4}>
-          <HStack spacing={3} align="center" wrap="wrap">
-            <Input
-              placeholder={t('assets.searchAssets')}
-              value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-              maxW="280px"
-            />
-            <Select
-              placeholder={t('assets.filters.allCategories')}
-              value={filterCategory}
-              onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }}
-              maxW="240px"
-            >
-              {Array.from(new Set(assets.map(a => a.category).filter(Boolean))).map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </Select>
-            <Select
-              placeholder={t('assets.filters.allStatus')}
-              value={filterStatus}
-              onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
-              maxW="200px"
-            >
-              <option value="ACTIVE">{t('assets.form.statusActive').toUpperCase()}</option>
-              <option value="INACTIVE">{t('assets.form.statusInactive').toUpperCase()}</option>
-              <option value="SOLD">{t('assets.form.statusSold').toUpperCase()}</option>
-            </Select>
-            <HStack spacing={2}>
-              <Text fontSize="sm" color="gray.600">{t('assets.filters.rows')}:</Text>
-              <Select value={pageSize} onChange={(e) => { setPageSize(parseInt(e.target.value) || 10); setCurrentPage(1); }} maxW="80px">
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-              </Select>
-            </HStack>
-          </HStack>
-        </Box>
-        
-        {/* Filter & paginate data */}
-        {(() => {
-          const filtered = assets.filter(a => {
-            const matchSearch = !searchTerm ||
-              a.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-              a.name?.toLowerCase().includes(searchTerm.toLowerCase());
-            const matchCat = !filterCategory || a.category === filterCategory;
-            const matchStatus = !filterStatus || a.status === filterStatus;
-            return matchSearch && matchCat && matchStatus;
-          });
-          const total = filtered.length;
-          const totalPages = Math.max(1, Math.ceil(total / pageSize));
-          const page = Math.min(currentPage, totalPages);
-          const start = (page - 1) * pageSize;
-          const pageData = filtered.slice(start, start + pageSize);
-          
-          return (
-            <>
-              <Table<BackendAsset>
-                columns={columns}
-                data={pageData}
-                keyField="id"
-                title={`Assets (${total})`}
-                actions={renderActions}
-                isLoading={isLoading}
-                emptyMessage={t('assets.noAssets')}
+
+          {error && (
+            <Alert status="error" mb={4}>
+              <AlertIcon />
+              <AlertTitle mr={2}>Error!</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          <AssetSummaryComponent
+            summary={summary}
+            isLoading={isLoadingSummary}
+          />
+
+          {/* Filters */}
+          <Box mb={4}>
+            <HStack spacing={3} align="center" wrap="wrap">
+              <Input
+                placeholder={t('assets.searchAssets')}
+                value={searchTerm}
+                onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                maxW="280px"
               />
-              {/* Pagination Controls */}
-              <HStack justify="space-between" mt={3}>
-                <Text fontSize="sm" color="gray.600">{t('assets.pagination.showing')} {Math.min(total, start + 1)}–{Math.min(total, start + pageSize)} {t('assets.pagination.of')} {total}</Text>
-                <HStack>
-                  <Button size="sm" onClick={() => setCurrentPage(1)} isDisabled={page<=1}>{t('assets.pagination.first')}</Button>
-                  <Button size="sm" onClick={() => setCurrentPage(p => Math.max(1, p-1))} isDisabled={page<=1}>{t('assets.pagination.prev')}</Button>
-                  <Text fontSize="sm">{t('assets.pagination.page')} {page} / {totalPages}</Text>
-                  <Button size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p+1))} isDisabled={page>=totalPages}>{t('assets.pagination.next')}</Button>
-                  <Button size="sm" onClick={() => setCurrentPage(totalPages)} isDisabled={page>=totalPages}>{t('assets.pagination.last')}</Button>
-                </HStack>
+              <Select
+                placeholder={t('assets.filters.allCategories')}
+                value={filterCategory}
+                onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }}
+                maxW="240px"
+              >
+                {Array.from(new Set(assets.map(a => a.category).filter(Boolean))).map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </Select>
+              <Select
+                placeholder={t('assets.filters.allStatus')}
+                value={filterStatus}
+                onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
+                maxW="200px"
+              >
+                <option value="ACTIVE">{t('assets.form.statusActive').toUpperCase()}</option>
+                <option value="INACTIVE">{t('assets.form.statusInactive').toUpperCase()}</option>
+                <option value="SOLD">{t('assets.form.statusSold').toUpperCase()}</option>
+              </Select>
+              <HStack spacing={2}>
+                <Text fontSize="sm" color="gray.600">{t('assets.filters.rows')}:</Text>
+                <Select value={pageSize} onChange={(e) => { setPageSize(parseInt(e.target.value) || 10); setCurrentPage(1); }} maxW="80px">
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </Select>
               </HStack>
-            </>
-          );
-        })()}
-        
-        <Modal 
-          isOpen={isModalOpen} 
-          onClose={handleCloseModal} 
-          size="6xl"
-        >
-          <ModalOverlay />
-          <ModalContent>
-            <form onSubmit={handleSubmit}>
-              <ModalHeader>
-                {selectedAsset?.id ? t('assets.editAsset') : t('assets.addAsset')}
-              </ModalHeader>
-              <ModalCloseButton />
-              
-              <ModalBody pb={6}>
-                {/* Information Banner */}
-                <Alert status="info" borderRadius="md" bg="blue.50" border="1px solid" borderColor="blue.200">
-                  <AlertIcon color="blue.500" />
-                  <Box>
-                    <AlertTitle color="blue.700" fontSize="sm" fontWeight="bold">
-                      📝 {t('assets.form.manualAssetEntry')}
-                    </AlertTitle>
-                    <AlertDescription color="blue.600" fontSize="xs" mt={1}>
-                      {t('assets.form.manualAssetEntryDesc')}
-                    </AlertDescription>
-                  </Box>
-                </Alert>
-                
-                <VStack spacing={6}>
-                  {/* Basic Information Section */}
-                  <Box w="full">
-                    <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
-                      📋 {t('assets.form.basicInfo')}
-                    </Text>
-                    <VStack spacing={4}>
-                      <HStack w="full" spacing={4}>
-                        <FormControl isRequired isInvalid={hasFieldError(validationErrors, 'name')}>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.assetName')}</FormLabel>
-                          <Input
-                            value={formData.name || ''}
-                            onChange={(e) => handleInputChange('name', e.target.value)}
-                            placeholder={t('assets.form.enterAssetName')}
-                            size="md"
-                          />
-                          {getFieldError(validationErrors, 'name') && (
-                            <Text fontSize="xs" color="red.500" mt={1}>
-                              {getFieldError(validationErrors, 'name')}
-                            </Text>
-                          )}
-                        </FormControl>
-                        
-                        <FormControl isRequired isInvalid={hasFieldError(validationErrors, 'category')}>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.category')}</FormLabel>
-                          <Select
-                            value={formData.category || ''}
-                            onChange={(e) => handleInputChange('category', e.target.value)}
-                            placeholder={t('assets.form.selectCategory')}
-                            size="md"
-                          >
-                            {customCategories.map((category) => (
-                              <option key={category} value={category}>
-                                {category}
-                              </option>
-                            ))}
-                          </Select>
-                          {getFieldError(validationErrors, 'category') && (
-                            <Text fontSize="xs" color="red.500" mt={1}>
-                              {getFieldError(validationErrors, 'category')}
-                            </Text>
-                          )}
-                        </FormControl>
-                      </HStack>
-                      
-                      <HStack w="full" spacing={4}>
-                        <FormControl>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.serialNumber')}</FormLabel>
-                          <Input
-                            value={formData.serialNumber || ''}
-                            onChange={(e) => handleInputChange('serialNumber', e.target.value)}
-                            placeholder={t('assets.form.enterSerialNumber')}
-                            size="md"
-                          />
-                        </FormControl>
-                        
-                        <FormControl>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.condition')}</FormLabel>
-                          <Select
-                            value={formData.condition || 'Good'}
-                            onChange={(e) => handleInputChange('condition', e.target.value)}
-                            size="md"
-                          >
-                            <option value="Excellent">{t('assets.form.conditionExcellent')}</option>
-                            <option value="Good">{t('assets.form.conditionGood')}</option>
-                            <option value="Fair">{t('assets.form.conditionFair')}</option>
-                            <option value="Poor">{t('assets.form.conditionPoor')}</option>
-                          </Select>
-                        </FormControl>
-                        
-                        <FormControl>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('common.status')}</FormLabel>
-                          <HStack spacing={4} pt={2}>
-                            <Switch
-                              isChecked={formData.isActive !== false}
-                              onChange={(e) => handleInputChange('isActive', e.target.checked)}
-                              colorScheme="green"
+            </HStack>
+          </Box>
+
+          {/* Filter & paginate data */}
+          {(() => {
+            const filtered = assets.filter(a => {
+              const matchSearch = !searchTerm ||
+                a.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                a.name?.toLowerCase().includes(searchTerm.toLowerCase());
+              const matchCat = !filterCategory || a.category === filterCategory;
+              const matchStatus = !filterStatus || a.status === filterStatus;
+              return matchSearch && matchCat && matchStatus;
+            });
+            const total = filtered.length;
+            const totalPages = Math.max(1, Math.ceil(total / pageSize));
+            const page = Math.min(currentPage, totalPages);
+            const start = (page - 1) * pageSize;
+            const pageData = filtered.slice(start, start + pageSize);
+
+            return (
+              <>
+                <Table<BackendAsset>
+                  columns={columns}
+                  data={pageData}
+                  keyField="id"
+                  title={`Assets (${total})`}
+                  actions={renderActions}
+                  isLoading={isLoading}
+                  emptyMessage={t('assets.noAssets')}
+                />
+                {/* Pagination Controls */}
+                <HStack justify="space-between" mt={3}>
+                  <Text fontSize="sm" color="gray.600">{t('assets.pagination.showing')} {Math.min(total, start + 1)}–{Math.min(total, start + pageSize)} {t('assets.pagination.of')} {total}</Text>
+                  <HStack>
+                    <Button size="sm" onClick={() => setCurrentPage(1)} isDisabled={page <= 1}>{t('assets.pagination.first')}</Button>
+                    <Button size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} isDisabled={page <= 1}>{t('assets.pagination.prev')}</Button>
+                    <Text fontSize="sm">{t('assets.pagination.page')} {page} / {totalPages}</Text>
+                    <Button size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} isDisabled={page >= totalPages}>{t('assets.pagination.next')}</Button>
+                    <Button size="sm" onClick={() => setCurrentPage(totalPages)} isDisabled={page >= totalPages}>{t('assets.pagination.last')}</Button>
+                  </HStack>
+                </HStack>
+              </>
+            );
+          })()}
+
+          <Modal
+            isOpen={isModalOpen}
+            onClose={handleCloseModal}
+            size="6xl"
+          >
+            <ModalOverlay />
+            <ModalContent>
+              <form onSubmit={handleSubmit}>
+                <ModalHeader>
+                  {selectedAsset?.id ? t('assets.editAsset') : t('assets.addAsset')}
+                </ModalHeader>
+                <ModalCloseButton />
+
+                <ModalBody pb={6}>
+                  {/* Information Banner */}
+                  <Alert status="info" borderRadius="md" bg="blue.50" border="1px solid" borderColor="blue.200">
+                    <AlertIcon color="blue.500" />
+                    <Box>
+                      <AlertTitle color="blue.700" fontSize="sm" fontWeight="bold">
+                        📝 {t('assets.form.manualAssetEntry')}
+                      </AlertTitle>
+                      <AlertDescription color="blue.600" fontSize="xs" mt={1}>
+                        {t('assets.form.manualAssetEntryDesc')}
+                      </AlertDescription>
+                    </Box>
+                  </Alert>
+
+                  <VStack spacing={6}>
+                    {/* Basic Information Section */}
+                    <Box w="full">
+                      <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                        📋 {t('assets.form.basicInfo')}
+                      </Text>
+                      <VStack spacing={4}>
+                        <HStack w="full" spacing={4}>
+                          <FormControl isRequired isInvalid={hasFieldError(validationErrors, 'name')}>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.assetName')}</FormLabel>
+                            <Input
+                              value={formData.name || ''}
+                              onChange={(e) => handleInputChange('name', e.target.value)}
+                              placeholder={t('assets.form.enterAssetName')}
+                              size="md"
                             />
-                            <Text fontSize="sm" color={formData.isActive ? 'green.600' : 'red.500'}>
-                              {formData.isActive ? t('assets.form.statusActive') : t('assets.form.statusInactive')}
-                            </Text>
-                          </HStack>
-                        </FormControl>
-                      </HStack>
-                    </VStack>
-                  </Box>
+                            {getFieldError(validationErrors, 'name') && (
+                              <Text fontSize="xs" color="red.500" mt={1}>
+                                {getFieldError(validationErrors, 'name')}
+                              </Text>
+                            )}
+                          </FormControl>
 
-                  {/* Financial Information Section */}
-                  <Box w="full">
-                    <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
-                      💰 {t('assets.form.financialInfo')}
-                    </Text>
-                    <VStack spacing={4}>
-                      <HStack w="full" spacing={4}>
-                        <FormControl isRequired isInvalid={hasFieldError(validationErrors, 'purchaseDate')}>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.purchaseDate')}</FormLabel>
-                          <Input
-                            type="date"
-                            value={formData.purchaseDate || ''}
-                            onChange={(e) => handleInputChange('purchaseDate', e.target.value)}
-                            size="md"
-                          />
-                          {getFieldError(validationErrors, 'purchaseDate') && (
-                            <Text fontSize="xs" color="red.500" mt={1}>
-                              {getFieldError(validationErrors, 'purchaseDate')}
-                            </Text>
-                          )}
-                        </FormControl>
-                        
-                        <CurrencyInput
-                          value={formData.purchasePrice || 0}
-                          onChange={(value) => handleInputChange('purchasePrice', value)}
-                          label={t('assets.purchasePrice')}
-                          placeholder="Contoh: Rp 100.000.000"
-                          isRequired={true}
-                          isInvalid={hasFieldError(validationErrors, 'purchasePrice')}
-                          errorMessage={getFieldError(validationErrors, 'purchasePrice')}
-                          size="md"
-                          min={1}
-                        />
-                      </HStack>
-                      
-                      <HStack w="full" spacing={4}>
-                        <FormControl isInvalid={hasFieldError(validationErrors, 'salvageValue')}>
-                          <HStack spacing={2} align="center">
-                            <FormLabel fontSize="sm" fontWeight="medium" mb={0}>{t('assets.form.salvageValue')}</FormLabel>
-                            <Tooltip
-                              label={
-                                <Box>
-                                  <Text fontWeight="semibold" mb={1}>💡 {t('assets.form.salvageValue')}</Text>
-                                  <Text fontSize="xs" lineHeight="1.4">
-                                    {t('assets.form.salvageValueTooltip')}
-                                  </Text>
-                                  <Text fontSize="xs" lineHeight="1.4" mt={1}>
-                                    {t('assets.form.salvageValueExample')}
-                                  </Text>
-                                  <Text fontSize="xs" lineHeight="1.4" mt={1} fontWeight="medium">
-                                    {t('assets.form.salvageValueNote')}
-                                  </Text>
-                                </Box>
-                              }
-                              hasArrow
-                              placement="top"
-                              bg="gray.800"
-                              color="white"
-                              borderRadius="md"
-                              p={3}
-                              maxW="280px"
+                          <FormControl isRequired isInvalid={hasFieldError(validationErrors, 'category')}>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.category')}</FormLabel>
+                            <Select
+                              value={formData.category || ''}
+                              onChange={(e) => handleInputChange('category', e.target.value)}
+                              placeholder={t('assets.form.selectCategory')}
+                              size="md"
                             >
-                              <span><Icon as={FiInfo} color="blue.500" boxSize={4} /></span>
-                            </Tooltip>
-                          </HStack>
+                              {customCategories.map((category) => (
+                                <option key={category} value={category}>
+                                  {category}
+                                </option>
+                              ))}
+                            </Select>
+                            {getFieldError(validationErrors, 'category') && (
+                              <Text fontSize="xs" color="red.500" mt={1}>
+                                {getFieldError(validationErrors, 'category')}
+                              </Text>
+                            )}
+                          </FormControl>
+                        </HStack>
+
+                        <HStack w="full" spacing={4}>
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.serialNumber')}</FormLabel>
+                            <Input
+                              value={formData.serialNumber || ''}
+                              onChange={(e) => handleInputChange('serialNumber', e.target.value)}
+                              placeholder={t('assets.form.enterSerialNumber')}
+                              size="md"
+                            />
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.condition')}</FormLabel>
+                            <Select
+                              value={formData.condition || 'Good'}
+                              onChange={(e) => handleInputChange('condition', e.target.value)}
+                              size="md"
+                            >
+                              <option value="Excellent">{t('assets.form.conditionExcellent')}</option>
+                              <option value="Good">{t('assets.form.conditionGood')}</option>
+                              <option value="Fair">{t('assets.form.conditionFair')}</option>
+                              <option value="Poor">{t('assets.form.conditionPoor')}</option>
+                            </Select>
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('common.status')}</FormLabel>
+                            <HStack spacing={4} pt={2}>
+                              <Switch
+                                isChecked={formData.isActive !== false}
+                                onChange={(e) => handleInputChange('isActive', e.target.checked)}
+                                colorScheme="green"
+                              />
+                              <Text fontSize="sm" color={formData.isActive ? 'green.600' : 'red.500'}>
+                                {formData.isActive ? t('assets.form.statusActive') : t('assets.form.statusInactive')}
+                              </Text>
+                            </HStack>
+                          </FormControl>
+                        </HStack>
+                      </VStack>
+                    </Box>
+
+                    {/* Financial Information Section */}
+                    <Box w="full">
+                      <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                        💰 {t('assets.form.financialInfo')}
+                      </Text>
+                      <VStack spacing={4}>
+                        <HStack w="full" spacing={4}>
+                          <FormControl isRequired isInvalid={hasFieldError(validationErrors, 'purchaseDate')}>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.purchaseDate')}</FormLabel>
+                            <Input
+                              type="date"
+                              value={formData.purchaseDate || ''}
+                              onChange={(e) => handleInputChange('purchaseDate', e.target.value)}
+                              size="md"
+                            />
+                            {getFieldError(validationErrors, 'purchaseDate') && (
+                              <Text fontSize="xs" color="red.500" mt={1}>
+                                {getFieldError(validationErrors, 'purchaseDate')}
+                              </Text>
+                            )}
+                          </FormControl>
+
                           <CurrencyInput
-                            value={formData.salvageValue || 0}
-                            onChange={(value) => handleInputChange('salvageValue', value)}
-                            placeholder="Contoh: Rp 5.000.000"
-                            isInvalid={hasFieldError(validationErrors, 'salvageValue')}
-                            errorMessage={getFieldError(validationErrors, 'salvageValue')}
+                            value={formData.purchasePrice || 0}
+                            onChange={(value) => handleInputChange('purchasePrice', value)}
+                            label={t('assets.purchasePrice')}
+                            placeholder="Contoh: Rp 100.000.000"
+                            isRequired={true}
+                            isInvalid={hasFieldError(validationErrors, 'purchasePrice')}
+                            errorMessage={getFieldError(validationErrors, 'purchasePrice')}
                             size="md"
-                            min={0}
-                            showLabel={false}
-                          />
-                        </FormControl>
-                        
-                        <FormControl isInvalid={hasFieldError(validationErrors, 'usefulLife')}>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.usefulLife')}</FormLabel>
-                          <NumberInput
-                            value={formData.usefulLife || 1}
-                            onChange={(valueString) => handleInputChange('usefulLife', parseInt(valueString) || 1)}
                             min={1}
-                            max={100}
-                            size="md"
-                          >
-                            <NumberInputField />
-                            <NumberInputStepper>
-                              <NumberIncrementStepper />
-                              <NumberDecrementStepper />
-                            </NumberInputStepper>
-                          </NumberInput>
-                          {getFieldError(validationErrors, 'usefulLife') && (
-                            <Text fontSize="xs" color="red.500" mt={1}>
-                              {getFieldError(validationErrors, 'usefulLife')}
-                            </Text>
-                          )}
-                        </FormControl>
-                      </HStack>
-                      
-                      <HStack w="full" spacing={4}>
-                        <FormControl>
-                          <HStack spacing={2} align="center">
-                            <FormLabel fontSize="sm" fontWeight="medium" mb={0}>{t('assets.form.depreciationMethod')}</FormLabel>
-                            <Tooltip
-                              label={
-                                <Box>
-                                  <Text fontWeight="semibold" mb={1}>💡 {t('assets.form.depreciationMethod')}</Text>
-                                  <Text fontSize="xs">{t('assets.form.depreciationMethodTooltip')}</Text>
-                                </Box>
-                              }
-                              hasArrow
-                              placement="top"
-                              bg="gray.800"
-                              color="white"
-                              borderRadius="md"
-                              p={3}
-                            >
-                              <span><Icon as={FiInfo} color="blue.500" boxSize={4} /></span>
-                            </Tooltip>
-                          </HStack>
-                          <Select
-                            value={formData.depreciationMethod || 'STRAIGHT_LINE'}
-                            onChange={(e) => handleInputChange('depreciationMethod', e.target.value as 'STRAIGHT_LINE' | 'DECLINING_BALANCE')}
-                            size="md"
-                          >
-                            <option value="STRAIGHT_LINE">{DEPRECIATION_METHOD_LABELS.STRAIGHT_LINE}</option>
-                            <option value="DECLINING_BALANCE">{DEPRECIATION_METHOD_LABELS.DECLINING_BALANCE}</option>
-                          </Select>
-                        </FormControl>
-                        
-                        <FormControl>
-                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.assetStatus')}</FormLabel>
-                          <Select
-                            value={formData.status || 'ACTIVE'}
-                            onChange={(e) => handleInputChange('status', e.target.value as 'ACTIVE' | 'INACTIVE' | 'SOLD')}
-                            size="md"
-                          >
-                            <option value="ACTIVE">🟢 {t('assets.form.statusActive')}</option>
-                            <option value="INACTIVE">⚪ {t('assets.form.statusInactive')}</option>
-                            <option value="SOLD">🔴 {t('assets.form.statusSold')}</option>
-                          </Select>
-                        </FormControl>
-                      </HStack>
-                      
-                      {/* Asset and Depreciation Account Selection */}
-                      <HStack w="full" spacing={4}>
-                        <FormControl>
-                          <FormLabel fontSize="sm" fontWeight="medium">🏢 {t('assets.form.fixedAssetAccount')}</FormLabel>
-                          <Select
-                            value={formData.assetAccountId || ''}
-                            onChange={(e) => handleInputChange('assetAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
-                            placeholder={t('assets.form.chooseFixedAssetAccount')}
-                            size="md"
-                            isDisabled={isLoadingAccounts}
-                          >
-                            {fixedAssetAccounts.map((account) => (
-                              <option key={account.id} value={account.id}>
-                                {account.code} - {account.name} ({formatCurrency(account.balance)})
-                              </option>
-                            ))}
-                          </Select>
-                          <Text fontSize="xs" color="gray.500" mt={1}>
-                            💡 {t('assets.form.fixedAssetAccountNote')}
-                          </Text>
-                        </FormControl>
-                        
-                        <FormControl>
-                          <FormLabel fontSize="sm" fontWeight="medium">📉 {t('assets.form.depreciationExpenseAccount')}</FormLabel>
-                          <Select
-                            value={formData.depreciationAccountId || ''}
-                            onChange={(e) => handleInputChange('depreciationAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
-                            placeholder={t('assets.form.chooseDepreciationAccount')}
-                            size="md"
-                            isDisabled={isLoadingAccounts}
-                          >
-                            {depreciationAccounts.map((account) => (
-                              <option key={account.id} value={account.id}>
-                                {account.code} - {account.name} ({formatCurrency(account.balance)})
-                              </option>
-                            ))}
-                          </Select>
-                          <Text fontSize="xs" color="gray.500" mt={1}>
-                            💡 {t('assets.form.depreciationAccountNote')}
-                          </Text>
-                        </FormControl>
-                      </HStack>
-                    </VStack>
-                  </Box>
+                          />
+                        </HStack>
 
-                  {/* Location Information Section */}
-                  <Box w="full">
-                    <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
-                      📍 {t('assets.form.locationInfo')}
-                    </Text>
-                    <VStack spacing={4}>
-                      <FormControl>
-                        <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.physicalLocation')}</FormLabel>
-                        <Input
-                          value={formData.location || ''}
-                          onChange={(e) => handleInputChange('location', e.target.value)}
-                          placeholder={t('assets.form.enterPhysicalLocation')}
-                          size="md"
-                        />
-                        <Text fontSize="xs" color="gray.500" mt={1}>
-                          💡 {t('assets.form.physicalLocationNote')}
-                        </Text>
-                      </FormControl>
-                      
-                      <FormControl>
-                        <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.gpsCoordinates')}</FormLabel>
-                        <HStack spacing={3}>
+                        <HStack w="full" spacing={4}>
+                          <FormControl isInvalid={hasFieldError(validationErrors, 'salvageValue')}>
+                            <HStack spacing={2} align="center">
+                              <FormLabel fontSize="sm" fontWeight="medium" mb={0}>{t('assets.form.salvageValue')}</FormLabel>
+                              <Tooltip
+                                label={
+                                  <Box>
+                                    <Text fontWeight="semibold" mb={1}>💡 {t('assets.form.salvageValue')}</Text>
+                                    <Text fontSize="xs" lineHeight="1.4">
+                                      {t('assets.form.salvageValueTooltip')}
+                                    </Text>
+                                    <Text fontSize="xs" lineHeight="1.4" mt={1}>
+                                      {t('assets.form.salvageValueExample')}
+                                    </Text>
+                                    <Text fontSize="xs" lineHeight="1.4" mt={1} fontWeight="medium">
+                                      {t('assets.form.salvageValueNote')}
+                                    </Text>
+                                  </Box>
+                                }
+                                hasArrow
+                                placement="top"
+                                bg="gray.800"
+                                color="white"
+                                borderRadius="md"
+                                p={3}
+                                maxW="280px"
+                              >
+                                <span><Icon as={FiInfo} color="blue.500" boxSize={4} /></span>
+                              </Tooltip>
+                            </HStack>
+                            <CurrencyInput
+                              value={formData.salvageValue || 0}
+                              onChange={(value) => handleInputChange('salvageValue', value)}
+                              placeholder="Contoh: Rp 5.000.000"
+                              isInvalid={hasFieldError(validationErrors, 'salvageValue')}
+                              errorMessage={getFieldError(validationErrors, 'salvageValue')}
+                              size="md"
+                              min={0}
+                              showLabel={false}
+                            />
+                          </FormControl>
+
+                          <FormControl isInvalid={hasFieldError(validationErrors, 'usefulLife')}>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.usefulLife')}</FormLabel>
+                            <NumberInput
+                              value={formData.usefulLife || 1}
+                              onChange={(valueString) => handleInputChange('usefulLife', parseInt(valueString) || 1)}
+                              min={1}
+                              max={100}
+                              size="md"
+                            >
+                              <NumberInputField />
+                              <NumberInputStepper>
+                                <NumberIncrementStepper />
+                                <NumberDecrementStepper />
+                              </NumberInputStepper>
+                            </NumberInput>
+                            {getFieldError(validationErrors, 'usefulLife') && (
+                              <Text fontSize="xs" color="red.500" mt={1}>
+                                {getFieldError(validationErrors, 'usefulLife')}
+                              </Text>
+                            )}
+                          </FormControl>
+                        </HStack>
+
+                        <HStack w="full" spacing={4}>
+                          <FormControl>
+                            <HStack spacing={2} align="center">
+                              <FormLabel fontSize="sm" fontWeight="medium" mb={0}>{t('assets.form.depreciationMethod')}</FormLabel>
+                              <Tooltip
+                                label={
+                                  <Box>
+                                    <Text fontWeight="semibold" mb={1}>💡 {t('assets.form.depreciationMethod')}</Text>
+                                    <Text fontSize="xs">{t('assets.form.depreciationMethodTooltip')}</Text>
+                                  </Box>
+                                }
+                                hasArrow
+                                placement="top"
+                                bg="gray.800"
+                                color="white"
+                                borderRadius="md"
+                                p={3}
+                              >
+                                <span><Icon as={FiInfo} color="blue.500" boxSize={4} /></span>
+                              </Tooltip>
+                            </HStack>
+                            <Select
+                              value={formData.depreciationMethod || 'STRAIGHT_LINE'}
+                              onChange={(e) => handleInputChange('depreciationMethod', e.target.value as 'STRAIGHT_LINE' | 'DECLINING_BALANCE')}
+                              size="md"
+                            >
+                              <option value="STRAIGHT_LINE">{DEPRECIATION_METHOD_LABELS.STRAIGHT_LINE}</option>
+                              <option value="DECLINING_BALANCE">{DEPRECIATION_METHOD_LABELS.DECLINING_BALANCE}</option>
+                            </Select>
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.assetStatus')}</FormLabel>
+                            <Select
+                              value={formData.status || 'ACTIVE'}
+                              onChange={(e) => handleInputChange('status', e.target.value as 'ACTIVE' | 'INACTIVE' | 'SOLD')}
+                              size="md"
+                            >
+                              <option value="ACTIVE">🟢 {t('assets.form.statusActive')}</option>
+                              <option value="INACTIVE">⚪ {t('assets.form.statusInactive')}</option>
+                              <option value="SOLD">🔴 {t('assets.form.statusSold')}</option>
+                            </Select>
+                          </FormControl>
+                        </HStack>
+
+                        {/* Asset and Depreciation Account Selection */}
+                        <HStack w="full" spacing={4}>
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">🏢 {t('assets.form.fixedAssetAccount')}</FormLabel>
+                            <Select
+                              value={formData.assetAccountId || ''}
+                              onChange={(e) => handleInputChange('assetAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
+                              placeholder={t('assets.form.chooseFixedAssetAccount')}
+                              size="md"
+                              isDisabled={isLoadingAccounts}
+                            >
+                              {fixedAssetAccounts.map((account) => (
+                                <option key={account.id} value={account.id}>
+                                  {account.code} - {account.name} ({formatCurrency(account.balance)})
+                                </option>
+                              ))}
+                            </Select>
+                            <Text fontSize="xs" color="gray.500" mt={1}>
+                              💡 {t('assets.form.fixedAssetAccountNote')}
+                            </Text>
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">📉 {t('assets.form.depreciationExpenseAccount')}</FormLabel>
+                            <Select
+                              value={formData.depreciationAccountId || ''}
+                              onChange={(e) => handleInputChange('depreciationAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
+                              placeholder={t('assets.form.chooseDepreciationAccount')}
+                              size="md"
+                              isDisabled={isLoadingAccounts}
+                            >
+                              {depreciationAccounts.map((account) => (
+                                <option key={account.id} value={account.id}>
+                                  {account.code} - {account.name} ({formatCurrency(account.balance)})
+                                </option>
+                              ))}
+                            </Select>
+                            <Text fontSize="xs" color="gray.500" mt={1}>
+                              💡 {t('assets.form.depreciationAccountNote')}
+                            </Text>
+                          </FormControl>
+                        </HStack>
+                      </VStack>
+                    </Box>
+
+                    {/* Location Information Section */}
+                    <Box w="full">
+                      <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                        📍 {t('assets.form.locationInfo')}
+                      </Text>
+                      <VStack spacing={4}>
+                        <FormControl>
+                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.physicalLocation')}</FormLabel>
                           <Input
-                            value={formData.coordinates || ''}
-                            onChange={(e) => handleInputChange('coordinates', e.target.value)}
-                            placeholder={t('assets.form.selectOnMap')}
-                            readOnly
-                            flex={1}
-                            bg="gray.50"
+                            value={formData.location || ''}
+                            onChange={(e) => handleInputChange('location', e.target.value)}
+                            placeholder={t('assets.form.enterPhysicalLocation')}
                             size="md"
                           />
-                          <Button
-                            leftIcon={<FiMapPin />}
-                            onClick={() => setIsMapPickerOpen(true)}
-                            colorScheme="blue"
-                            variant="outline"
-                            size="md"
-                            flexShrink={0}
-                          >
-                            {t('assets.form.selectOnMap')}
-                          </Button>
-                          {formData.coordinates && (
+                          <Text fontSize="xs" color="gray.500" mt={1}>
+                            💡 {t('assets.form.physicalLocationNote')}
+                          </Text>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.gpsCoordinates')}</FormLabel>
+                          <HStack spacing={3}>
+                            <Input
+                              value={formData.coordinates || ''}
+                              onChange={(e) => handleInputChange('coordinates', e.target.value)}
+                              placeholder={t('assets.form.selectOnMap')}
+                              readOnly
+                              flex={1}
+                              bg="gray.50"
+                              size="md"
+                            />
                             <Button
-                              leftIcon={<FiExternalLink />}
-                              onClick={() => assetService.openInMaps(formData.coordinates!)}
-                              colorScheme="green"
+                              leftIcon={<FiMapPin />}
+                              onClick={() => setIsMapPickerOpen(true)}
+                              colorScheme="blue"
                               variant="outline"
                               size="md"
                               flexShrink={0}
                             >
-                              {t('assets.form.viewOnMap')}
+                              {t('assets.form.selectOnMap')}
                             </Button>
-                          )}
-                        </HStack>
-                        <Text fontSize="xs" color="gray.500" mt={1}>
-                          🗺️ {t('assets.form.gpsNote')}
-                        </Text>
-                      </FormControl>
-                    </VStack>
-                  </Box>
+                            {formData.coordinates && (
+                              <Button
+                                leftIcon={<FiExternalLink />}
+                                onClick={() => assetService.openInMaps(formData.coordinates!)}
+                                colorScheme="green"
+                                variant="outline"
+                                size="md"
+                                flexShrink={0}
+                              >
+                                {t('assets.form.viewOnMap')}
+                              </Button>
+                            )}
+                          </HStack>
+                          <Text fontSize="xs" color="gray.500" mt={1}>
+                            🗺️ {t('assets.form.gpsNote')}
+                          </Text>
+                        </FormControl>
+                      </VStack>
+                    </Box>
 
-                  {/* Asset Image Section */}
-                  <Box w="full">
-                    <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
-                      📸 {t('assets.form.assetImage')}
-                    </Text>
-                    {selectedAsset && selectedAsset.id ? (
-                      /* Edit Mode - Full upload functionality */
-                      <AssetImageUpload
-                        asset={selectedAsset}
-                        onImageUpload={handleImageUpload}
-                        size="lg"
-                        showLabel={false}
-                      />
-                    ) : (
-                      /* Create Mode - Inform user to save first */
-                      <Box
-                        p={6}
-                        border="2px dashed"
-                        borderColor="gray.300"
-                        borderRadius="lg"
-                        textAlign="center"
-                        bg="gray.50"
-                      >
-                        <VStack spacing={3}>
-                          <Box
-                            p={3}
-                            bg="blue.50"
-                            borderRadius="full"
-                            border="1px"
-                            borderColor="blue.100"
-                          >
-                            <Icon as={FiEdit} boxSize={6} color="blue.500" />
-                          </Box>
-                          <Text fontSize="md" fontWeight="medium" color="gray.700">
-                            {t('assets.form.saveAssetFirst')}
+                    {/* Asset Image Section */}
+                    <Box w="full">
+                      <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                        📸 {t('assets.form.assetImage')}
+                      </Text>
+                      {selectedAsset && selectedAsset.id ? (
+                        /* Edit Mode - Full upload functionality */
+                        <AssetImageUpload
+                          asset={selectedAsset}
+                          onImageUpload={handleImageUpload}
+                          size="lg"
+                          showLabel={false}
+                        />
+                      ) : (
+                        /* Create Mode - Inform user to save first */
+                        <Box
+                          p={6}
+                          border="2px dashed"
+                          borderColor="gray.300"
+                          borderRadius="lg"
+                          textAlign="center"
+                          bg="gray.50"
+                        >
+                          <VStack spacing={3}>
+                            <Box
+                              p={3}
+                              bg="blue.50"
+                              borderRadius="full"
+                              border="1px"
+                              borderColor="blue.100"
+                            >
+                              <Icon as={FiEdit} boxSize={6} color="blue.500" />
+                            </Box>
+                            <Text fontSize="md" fontWeight="medium" color="gray.700">
+                              {t('assets.form.saveAssetFirst')}
+                            </Text>
+                            <Text fontSize="sm" color="gray.500" textAlign="center">
+                              {t('assets.form.saveAssetFirstDesc')}
+                            </Text>
+                          </VStack>
+                        </Box>
+                      )}
+                    </Box>
+
+                    {/* Additional Notes Section */}
+                    <Box w="full">
+                      <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                        📝 {t('assets.form.additionalInfo')}
+                      </Text>
+                      <FormControl>
+                        <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.notes')}</FormLabel>
+                        <Textarea
+                          value={formData.notes || ''}
+                          onChange={(e) => handleInputChange('notes', e.target.value)}
+                          placeholder={t('assets.form.enterNotes')}
+                          rows={4}
+                          resize="vertical"
+                          size="md"
+                        />
+                      </FormControl>
+                    </Box>
+                  </VStack>
+                </ModalBody>
+
+                <ModalFooter pb={6}>
+                  <HStack justify="flex-end" spacing={4}>
+                    <Button
+                      leftIcon={<FiX />}
+                      onClick={handleCloseModal}
+                      variant="outline"
+                    >
+                      {t('common.cancel')}
+                    </Button>
+                    <Button
+                      leftIcon={selectedAsset?.id ? <FiEdit /> : <FiPlus />}
+                      type="submit"
+                      colorScheme="blue"
+                      isLoading={isSubmitting}
+                      loadingText={selectedAsset?.id ? t('common.updating') : t('common.creating')}
+                    >
+                      {selectedAsset?.id ? t('assets.updateAsset') : t('assets.createAsset')}
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </form>
+            </ModalContent>
+          </Modal>
+
+          {/* Interactive Map Picker Modal */}
+          <InteractiveMapPicker
+            isOpen={isMapPickerOpen}
+            onClose={() => setIsMapPickerOpen(false)}
+            onLocationSelect={handleLocationPick}
+            currentCoordinates={formData.coordinates}
+            currentLocationData={{
+              name: formData.location ? formData.location.split(' - ')[0] : '',
+              description: '',
+              address: '',
+              coordinates: formData.coordinates || ''
+            }}
+            title={selectedAsset ? `${t('assets.form.selectOnMap')} - ${selectedAsset.name}` : t('assets.form.selectOnMap')}
+          />
+
+          {/* Image Update Confirmation Dialog */}
+          <AlertDialog
+            isOpen={isAlertOpen}
+            leastDestructiveRef={React.useRef(null)}
+            onClose={onAlertClose}
+          >
+            <AlertDialogOverlay>
+              <AlertDialogContent>
+                <AlertDialogHeader fontSize="lg" fontWeight="bold">
+                  {t('assets.imageUpload.title')}
+                </AlertDialogHeader>
+
+                <AlertDialogBody>
+                  {t('assets.imageUpload.confirmReplace')}
+                </AlertDialogBody>
+
+                <AlertDialogFooter>
+                  <Button onClick={onAlertClose}>
+                    {t('common.cancel')}
+                  </Button>
+                  <Button colorScheme="blue" onClick={confirmImageUpdate} ml={3}>
+                    {t('assets.imageUpload.updateImage')}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialogOverlay>
+          </AlertDialog>
+
+          {/* Asset Details View Modal */}
+          <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="6xl">
+            <ModalOverlay />
+            <ModalContent>
+              <ModalHeader>
+                <HStack spacing={3}>
+                  <Icon as={FiEye} color="blue.500" />
+                  <Text>{t('assets.assetDetails')}</Text>
+                </HStack>
+              </ModalHeader>
+              <ModalCloseButton />
+
+              <ModalBody pb={6}>
+                {detailAsset && (
+                  <VStack spacing={6} align="stretch">
+                    {/* Asset Image Section */}
+                    <Box textAlign="center">
+                      {detailAsset.image_path ? (
+                        <Image
+                          src={getAssetImageUrl(detailAsset.image_path) || ''}
+                          alt={detailAsset.name}
+                          maxH="300px"
+                          maxW="400px"
+                          objectFit="cover"
+                          borderRadius="lg"
+                          boxShadow="lg"
+                          mx="auto"
+                          fallback={
+                            <Box
+                              w="300px"
+                              h="200px"
+                              bg="gray.100"
+                              borderRadius="lg"
+                              display="flex"
+                              alignItems="center"
+                              justifyContent="center"
+                              mx="auto"
+                            >
+                              <Text color="gray.500" fontSize="lg">
+                                {t('assets.details.failedToLoadImage')}
+                              </Text>
+                            </Box>
+                          }
+                        />
+                      ) : (
+                        <Box
+                          w="300px"
+                          h="200px"
+                          bg="gray.100"
+                          borderRadius="lg"
+                          display="flex"
+                          alignItems="center"
+                          justifyContent="center"
+                          mx="auto"
+                        >
+                          <Text color="gray.500" fontSize="lg">
+                            {t('assets.details.noImageAvailable')}
                           </Text>
-                          <Text fontSize="sm" color="gray.500" textAlign="center">
-                            {t('assets.form.saveAssetFirstDesc')}
-                          </Text>
+                        </Box>
+                      )}
+                    </Box>
+
+                    {/* Basic Information */}
+                    <Box>
+                      <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
+                        📋 {t('assets.details.basicInfo')}
+                      </Text>
+                      <Grid templateColumns="repeat(2, 1fr)" gap={6}>
+                        <GridItem>
+                          <VStack align="start" spacing={4}>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.assetCode')}</Text>
+                              <Text fontSize="lg" fontWeight="semibold" color="blue.600">
+                                {detailAsset.code}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.assetName')}</Text>
+                              <Text fontSize="md" fontWeight="medium">
+                                {detailAsset.name}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.category')}</Text>
+                              <Badge colorScheme="purple" size="lg" px={3} py={1} fontSize="sm">
+                                {detailAsset.category}
+                              </Badge>
+                            </Box>
+                          </VStack>
+                        </GridItem>
+                        <GridItem>
+                          <VStack align="start" spacing={4}>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.serialNumber')}</Text>
+                              <Text fontSize="md">
+                                {detailAsset.serial_number || t('assets.details.notSpecified')}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.condition')}</Text>
+                              <Text fontSize="md">
+                                {detailAsset.condition || 'Good'}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.status')}</Text>
+                              <HStack spacing={3}>
+                                <Badge colorScheme={getStatusColor(detailAsset.status)} size="lg" px={3} py={1}>
+                                  {detailAsset.status}
+                                </Badge>
+                                <Badge colorScheme={detailAsset.is_active ? 'green' : 'red'} size="lg" px={3} py={1}>
+                                  {detailAsset.is_active ? t('assets.form.statusActive') : t('assets.form.statusInactive')}
+                                </Badge>
+                              </HStack>
+                            </Box>
+                          </VStack>
+                        </GridItem>
+                      </Grid>
+                    </Box>
+
+                    {/* Financial Information */}
+                    <Box>
+                      <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
+                        💰 {t('assets.details.financialInfo')}
+                      </Text>
+
+                      {/* Recalculate as of date */}
+                      <Box mb={4}>
+                        <HStack spacing={3} align="center">
+                          <Text fontSize="sm" color="gray.600">{t('assets.details.recalculateAsOf')}</Text>
+                          <Input type="date" size="sm" value={recalcDate} onChange={(e) => setRecalcDate(e.target.value)} maxW="200px" />
+                          <Button size="sm" colorScheme="blue" isLoading={isRecalcLoading} onClick={handleRecalculate}>{t('assets.details.recalculate')}</Button>
+                        </HStack>
+                        {recalcResult && (
+                          <HStack spacing={6} mt={3}>
+                            <Badge colorScheme="teal">{t('assets.details.currentBookValue')}: {formatCurrency(recalcResult.current_book_value)}</Badge>
+                            <Badge colorScheme="orange">{t('assets.details.accumulatedDepreciation')}: {formatCurrency(recalcResult.accumulated_depreciation)}</Badge>
+                            <Badge colorScheme="purple">{t('assets.details.depreciationMethod')}: {recalcResult.depreciation_method.replace('_', ' ')}</Badge>
+                          </HStack>
+                        )}
+                      </Box>
+                      <Grid templateColumns="repeat(2, 1fr)" gap={6}>
+                        <GridItem>
+                          <VStack align="start" spacing={4}>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.purchaseDate')}</Text>
+                              <Text fontSize="md">
+                                {new Date(detailAsset.purchase_date).toLocaleDateString('id-ID', {
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric'
+                                })}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.purchasePrice')}</Text>
+                              <Text fontSize="lg" fontWeight="semibold" color="green.600">
+                                {formatCurrency(detailAsset.purchase_price)}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.salvageValue')}</Text>
+                              <Text fontSize="md">
+                                {formatCurrency(detailAsset.salvage_value)}
+                              </Text>
+                            </Box>
+                          </VStack>
+                        </GridItem>
+                        <GridItem>
+                          <VStack align="start" spacing={4}>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.usefulLife')}</Text>
+                              <Text fontSize="md">
+                                {detailAsset.useful_life} {t('assets.details.years')}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.accumulatedDepreciation')}</Text>
+                              <Text fontSize="lg" fontWeight="semibold" color="orange.600">
+                                {formatCurrency(detailAsset.accumulated_depreciation)}
+                              </Text>
+                            </Box>
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.currentBookValue')}</Text>
+                              <Text fontSize="lg" fontWeight="bold" color="blue.600">
+                                {formatCurrency(calculateBookValue(detailAsset))}
+                              </Text>
+                            </Box>
+                          </VStack>
+                        </GridItem>
+                      </Grid>
+                      <Box mt={4}>
+                        <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.depreciationMethod')}</Text>
+                        <Badge colorScheme="teal" size="lg" px={3} py={1}>
+                          {DEPRECIATION_METHOD_LABELS[detailAsset.depreciation_method as keyof typeof DEPRECIATION_METHOD_LABELS]}
+                        </Badge>
+                      </Box>
+                    </Box>
+
+                    {/* Location Information */}
+                    {(detailAsset.location || detailAsset.coordinates) && (
+                      <Box>
+                        <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
+                          📍 {t('assets.details.locationInfo')}
+                        </Text>
+                        <VStack align="start" spacing={3}>
+                          {detailAsset.location && (
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.physicalLocation')}</Text>
+                              <Text fontSize="md">
+                                {detailAsset.location}
+                              </Text>
+                            </Box>
+                          )}
+                          {detailAsset.coordinates && (
+                            <Box>
+                              <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.gpsCoordinates')}</Text>
+                              <HStack spacing={3}>
+                                <Text fontSize="md" fontFamily="mono">
+                                  {detailAsset.coordinates}
+                                </Text>
+                                <Button
+                                  size="sm"
+                                  leftIcon={<FiExternalLink />}
+                                  onClick={() => assetService.openInMaps(detailAsset.coordinates!)}
+                                  colorScheme="blue"
+                                  variant="outline"
+                                >
+                                  {t('assets.details.viewOnMap')}
+                                </Button>
+                              </HStack>
+                            </Box>
+                          )}
                         </VStack>
                       </Box>
                     )}
-                  </Box>
 
-                  {/* Additional Notes Section */}
-                  <Box w="full">
-                    <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
-                      📝 {t('assets.form.additionalInfo')}
-                    </Text>
-                    <FormControl>
-                      <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.notes')}</FormLabel>
-                      <Textarea
-                        value={formData.notes || ''}
-                        onChange={(e) => handleInputChange('notes', e.target.value)}
-                        placeholder={t('assets.form.enterNotes')}
-                        rows={4}
-                        resize="vertical"
-                        size="md"
-                      />
-                    </FormControl>
-                  </Box>
-                </VStack>
+                    {/* Additional Notes */}
+                    {detailAsset.notes && (
+                      <Box>
+                        <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
+                          📝 {t('assets.details.notes')}
+                        </Text>
+                        <Box
+                          p={4}
+                          bg="gray.50"
+                          borderRadius="lg"
+                          border="1px solid"
+                          borderColor="gray.200"
+                        >
+                          <Text fontSize="md" whiteSpace="pre-wrap">
+                            {detailAsset.notes}
+                          </Text>
+                        </Box>
+                      </Box>
+                    )}
+
+                    {/* Timestamps */}
+                    <Box>
+                      <Text fontSize="lg" fontWeight="semibold" mb={3} color="gray.600">
+                        📅 {t('assets.details.recordInfo')}
+                      </Text>
+                      <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+                        <GridItem>
+                          <Box>
+                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.createdAt')}</Text>
+                            <Text fontSize="sm">
+                              {new Date(detailAsset.created_at).toLocaleString('id-ID')}
+                            </Text>
+                          </Box>
+                        </GridItem>
+                        <GridItem>
+                          <Box>
+                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.lastUpdated')}</Text>
+                            <Text fontSize="sm">
+                              {new Date(detailAsset.updated_at).toLocaleString('id-ID')}
+                            </Text>
+                          </Box>
+                        </GridItem>
+                      </Grid>
+                    </Box>
+                  </VStack>
+                )}
               </ModalBody>
-              
-              <ModalFooter pb={6}>
-                <HStack justify="flex-end" spacing={4}>
+
+              <ModalFooter>
+                <HStack spacing={3}>
                   <Button
-                    leftIcon={<FiX />}
-                    onClick={handleCloseModal}
+                    leftIcon={<FiEdit />}
+                    onClick={() => {
+                      if (detailAsset) {
+                        onDetailClose();
+                        handleEdit(detailAsset);
+                      }
+                    }}
+                    colorScheme="blue"
                     variant="outline"
                   >
-                    {t('common.cancel')}
+                    {t('assets.editAsset')}
                   </Button>
-                  <Button
-                    leftIcon={selectedAsset?.id ? <FiEdit /> : <FiPlus />}
-                    type="submit"
-                    colorScheme="blue"
-                    isLoading={isSubmitting}
-                    loadingText={selectedAsset?.id ? t('common.updating') : t('common.creating')}
-                  >
-                    {selectedAsset?.id ? t('assets.updateAsset') : t('assets.createAsset')}
+                  <Button onClick={onDetailClose}>
+                    {t('common.close')}
                   </Button>
                 </HStack>
               </ModalFooter>
-            </form>
-          </ModalContent>
-        </Modal>
-        
-        {/* Interactive Map Picker Modal */}
-        <InteractiveMapPicker
-          isOpen={isMapPickerOpen}
-          onClose={() => setIsMapPickerOpen(false)}
-          onLocationSelect={handleLocationPick}
-          currentCoordinates={formData.coordinates}
-          currentLocationData={{
-            name: formData.location ? formData.location.split(' - ')[0] : '',
-            description: '',
-            address: '',
-            coordinates: formData.coordinates || ''
-          }}
-          title={selectedAsset ? `${t('assets.form.selectOnMap')} - ${selectedAsset.name}` : t('assets.form.selectOnMap')}
-        />
+            </ModalContent>
+          </Modal>
 
-        {/* Image Update Confirmation Dialog */}
-        <AlertDialog
-          isOpen={isAlertOpen}
-          leastDestructiveRef={React.useRef(null)}
-          onClose={onAlertClose}
-        >
-          <AlertDialogOverlay>
-            <AlertDialogContent>
-              <AlertDialogHeader fontSize="lg" fontWeight="bold">
-                {t('assets.imageUpload.title')}
-              </AlertDialogHeader>
+          {/* Category Management Modal */}
+          <Modal isOpen={isCategoryModalOpen} onClose={handleCloseCategoryModal} size="lg">
+            <ModalOverlay />
+            <ModalContent>
+              <ModalHeader>
+                <HStack spacing={3}>
+                  <Icon as={FiSettings} color="gray.500" />
+                  <Text>{t('assets.categories.title')}</Text>
+                </HStack>
+              </ModalHeader>
+              <ModalCloseButton />
 
-              <AlertDialogBody>
-                {t('assets.imageUpload.confirmReplace')}
-              </AlertDialogBody>
-
-              <AlertDialogFooter>
-                <Button onClick={onAlertClose}>
-                  {t('common.cancel')}
-                </Button>
-                <Button colorScheme="blue" onClick={confirmImageUpdate} ml={3}>
-                  {t('assets.imageUpload.updateImage')}
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialogOverlay>
-        </AlertDialog>
-
-        {/* Asset Details View Modal */}
-        <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="6xl">
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
-              <HStack spacing={3}>
-                <Icon as={FiEye} color="blue.500" />
-                <Text>{t('assets.assetDetails')}</Text>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton />
-            
-            <ModalBody pb={6}>
-              {detailAsset && (
+              <ModalBody pb={6}>
                 <VStack spacing={6} align="stretch">
-                  {/* Asset Image Section */}
-                  <Box textAlign="center">
-                    {detailAsset.image_path ? (
-                      <Image
-                        src={getAssetImageUrl(detailAsset.image_path) || ''}
-                        alt={detailAsset.name}
-                        maxH="300px"
-                        maxW="400px"
-                        objectFit="cover"
-                        borderRadius="lg"
-                        boxShadow="lg"
-                        mx="auto"
-                        fallback={
-                          <Box
-                            w="300px"
-                            h="200px"
-                            bg="gray.100"
-                            borderRadius="lg"
-                            display="flex"
-                            alignItems="center"
-                            justifyContent="center"
-                            mx="auto"
+                  {/* Add New Category Section */}
+                  <Box>
+                    <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                      ➕ {t('assets.categories.addNew')}
+                    </Text>
+                    <HStack spacing={3}>
+                      <FormControl flex={1}>
+                        <Input
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          placeholder={t('assets.categories.enterCategoryName')}
+                        />
+                      </FormControl>
+                      <FormControl w="160px">
+                        <Input
+                          value={newCategoryCode}
+                          onChange={(e) => setNewCategoryCode(e.target.value.toUpperCase())}
+                          placeholder={t('assets.categories.code')}
+                          maxLength={10}
+                        />
+                      </FormControl>
+                      {editingCategoryIndex !== null ? (
+                        <>
+                          <Button
+                            colorScheme="blue"
+                            onClick={handleUpdateCategory}
+                            isDisabled={!newCategoryName.trim()}
                           >
-                            <Text color="gray.500" fontSize="lg">
-                              {t('assets.details.failedToLoadImage')}
-                            </Text>
-                          </Box>
-                        }
-                      />
-                    ) : (
-                      <Box
-                        w="300px"
-                        h="200px"
-                        bg="gray.100"
-                        borderRadius="lg"
-                        display="flex"
-                        alignItems="center"
-                        justifyContent="center"
-                        mx="auto"
-                      >
-                        <Text color="gray.500" fontSize="lg">
-                          {t('assets.details.noImageAvailable')}
-                        </Text>
-                      </Box>
-                    )}
-                  </Box>
-
-                  {/* Basic Information */}
-                  <Box>
-                    <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
-                      📋 {t('assets.details.basicInfo')}
-                    </Text>
-                    <Grid templateColumns="repeat(2, 1fr)" gap={6}>
-                      <GridItem>
-                        <VStack align="start" spacing={4}>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.assetCode')}</Text>
-                            <Text fontSize="lg" fontWeight="semibold" color="blue.600">
-                              {detailAsset.code}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.assetName')}</Text>
-                            <Text fontSize="md" fontWeight="medium">
-                              {detailAsset.name}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.category')}</Text>
-                            <Badge colorScheme="purple" size="lg" px={3} py={1} fontSize="sm">
-                              {detailAsset.category}
-                            </Badge>
-                          </Box>
-                        </VStack>
-                      </GridItem>
-                      <GridItem>
-                        <VStack align="start" spacing={4}>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.serialNumber')}</Text>
-                            <Text fontSize="md">
-                              {detailAsset.serial_number || t('assets.details.notSpecified')}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.condition')}</Text>
-                            <Text fontSize="md">
-                              {detailAsset.condition || 'Good'}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.status')}</Text>
-                            <HStack spacing={3}>
-                              <Badge colorScheme={getStatusColor(detailAsset.status)} size="lg" px={3} py={1}>
-                                {detailAsset.status}
-                              </Badge>
-                              <Badge colorScheme={detailAsset.is_active ? 'green' : 'red'} size="lg" px={3} py={1}>
-                                {detailAsset.is_active ? t('assets.form.statusActive') : t('assets.form.statusInactive')}
-                              </Badge>
-                            </HStack>
-                          </Box>
-                        </VStack>
-                      </GridItem>
-                    </Grid>
-                  </Box>
-
-              {/* Financial Information */}
-              <Box>
-                <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
-                  💰 {t('assets.details.financialInfo')}
-                </Text>
-                
-                {/* Recalculate as of date */}
-                <Box mb={4}>
-                  <HStack spacing={3} align="center">
-                    <Text fontSize="sm" color="gray.600">{t('assets.details.recalculateAsOf')}</Text>
-                    <Input type="date" size="sm" value={recalcDate} onChange={(e) => setRecalcDate(e.target.value)} maxW="200px" />
-                    <Button size="sm" colorScheme="blue" isLoading={isRecalcLoading} onClick={handleRecalculate}>{t('assets.details.recalculate')}</Button>
-                  </HStack>
-                  {recalcResult && (
-                    <HStack spacing={6} mt={3}>
-                      <Badge colorScheme="teal">{t('assets.details.currentBookValue')}: {formatCurrency(recalcResult.current_book_value)}</Badge>
-                      <Badge colorScheme="orange">{t('assets.details.accumulatedDepreciation')}: {formatCurrency(recalcResult.accumulated_depreciation)}</Badge>
-                      <Badge colorScheme="purple">{t('assets.details.depreciationMethod')}: {recalcResult.depreciation_method.replace('_',' ')}</Badge>
-                    </HStack>
-                  )}
-                </Box>
-                    <Grid templateColumns="repeat(2, 1fr)" gap={6}>
-                      <GridItem>
-                        <VStack align="start" spacing={4}>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.purchaseDate')}</Text>
-                            <Text fontSize="md">
-                              {new Date(detailAsset.purchase_date).toLocaleDateString('id-ID', {
-                                year: 'numeric',
-                                month: 'long', 
-                                day: 'numeric'
-                              })}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.purchasePrice')}</Text>
-                            <Text fontSize="lg" fontWeight="semibold" color="green.600">
-                              {formatCurrency(detailAsset.purchase_price)}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.salvageValue')}</Text>
-                            <Text fontSize="md">
-                              {formatCurrency(detailAsset.salvage_value)}
-                            </Text>
-                          </Box>
-                        </VStack>
-                      </GridItem>
-                      <GridItem>
-                        <VStack align="start" spacing={4}>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.usefulLife')}</Text>
-                            <Text fontSize="md">
-                              {detailAsset.useful_life} {t('assets.details.years')}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.accumulatedDepreciation')}</Text>
-                            <Text fontSize="lg" fontWeight="semibold" color="orange.600">
-                              {formatCurrency(detailAsset.accumulated_depreciation)}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.currentBookValue')}</Text>
-                            <Text fontSize="lg" fontWeight="bold" color="blue.600">
-                              {formatCurrency(calculateBookValue(detailAsset))}
-                            </Text>
-                          </Box>
-                        </VStack>
-                      </GridItem>
-                    </Grid>
-                    <Box mt={4}>
-                      <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.depreciationMethod')}</Text>
-                      <Badge colorScheme="teal" size="lg" px={3} py={1}>
-                        {DEPRECIATION_METHOD_LABELS[detailAsset.depreciation_method as keyof typeof DEPRECIATION_METHOD_LABELS]}
-                      </Badge>
-                    </Box>
-                  </Box>
-
-                  {/* Location Information */}
-                  {(detailAsset.location || detailAsset.coordinates) && (
-                    <Box>
-                      <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
-                        📍 {t('assets.details.locationInfo')}
-                      </Text>
-                      <VStack align="start" spacing={3}>
-                        {detailAsset.location && (
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.physicalLocation')}</Text>
-                            <Text fontSize="md">
-                              {detailAsset.location}
-                            </Text>
-                          </Box>
-                        )}
-                        {detailAsset.coordinates && (
-                          <Box>
-                            <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.gpsCoordinates')}</Text>
-                            <HStack spacing={3}>
-                              <Text fontSize="md" fontFamily="mono">
-                                {detailAsset.coordinates}
-                              </Text>
-                              <Button
-                                size="sm"
-                                leftIcon={<FiExternalLink />}
-                                onClick={() => assetService.openInMaps(detailAsset.coordinates!)}
-                                colorScheme="blue"
-                                variant="outline"
-                              >
-                                {t('assets.details.viewOnMap')}
-                              </Button>
-                            </HStack>
-                          </Box>
-                        )}
-                      </VStack>
-                    </Box>
-                  )}
-
-                  {/* Additional Notes */}
-                  {detailAsset.notes && (
-                    <Box>
-                      <Text fontSize="xl" fontWeight="bold" mb={4} color="gray.700">
-                        📝 {t('assets.details.notes')}
-                      </Text>
-                      <Box
-                        p={4}
-                        bg="gray.50"
-                        borderRadius="lg"
-                        border="1px solid"
-                        borderColor="gray.200"
-                      >
-                        <Text fontSize="md" whiteSpace="pre-wrap">
-                          {detailAsset.notes}
-                        </Text>
-                      </Box>
-                    </Box>
-                  )}
-
-                  {/* Timestamps */}
-                  <Box>
-                    <Text fontSize="lg" fontWeight="semibold" mb={3} color="gray.600">
-                      📅 {t('assets.details.recordInfo')}
-                    </Text>
-                    <Grid templateColumns="repeat(2, 1fr)" gap={4}>
-                      <GridItem>
-                        <Box>
-                          <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.createdAt')}</Text>
-                          <Text fontSize="sm">
-                            {new Date(detailAsset.created_at).toLocaleString('id-ID')}
-                          </Text>
-                        </Box>
-                      </GridItem>
-                      <GridItem>
-                        <Box>
-                          <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.lastUpdated')}</Text>
-                          <Text fontSize="sm">
-                            {new Date(detailAsset.updated_at).toLocaleString('id-ID')}
-                          </Text>
-                        </Box>
-                      </GridItem>
-                    </Grid>
-                  </Box>
-                </VStack>
-              )}
-            </ModalBody>
-            
-            <ModalFooter>
-              <HStack spacing={3}>
-                <Button
-                  leftIcon={<FiEdit />}
-                  onClick={() => {
-                    if (detailAsset) {
-                      onDetailClose();
-                      handleEdit(detailAsset);
-                    }
-                  }}
-                  colorScheme="blue"
-                  variant="outline"
-                >
-                  {t('assets.editAsset')}
-                </Button>
-                <Button onClick={onDetailClose}>
-                  {t('common.close')}
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-
-        {/* Category Management Modal */}
-        <Modal isOpen={isCategoryModalOpen} onClose={handleCloseCategoryModal} size="lg">
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
-              <HStack spacing={3}>
-                <Icon as={FiSettings} color="gray.500" />
-                <Text>{t('assets.categories.title')}</Text>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton />
-            
-            <ModalBody pb={6}>
-              <VStack spacing={6} align="stretch">
-                {/* Add New Category Section */}
-                <Box>
-                  <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
-                    ➕ {t('assets.categories.addNew')}
-                  </Text>
-                  <HStack spacing={3}>
-                    <FormControl flex={1}>
-                      <Input
-                        value={newCategoryName}
-                        onChange={(e) => setNewCategoryName(e.target.value)}
-                        placeholder={t('assets.categories.enterCategoryName')}
-                      />
-                    </FormControl>
-                    <FormControl w="160px">
-                      <Input
-                        value={newCategoryCode}
-                        onChange={(e) => setNewCategoryCode(e.target.value.toUpperCase())}
-                        placeholder={t('assets.categories.code')}
-                        maxLength={10}
-                      />
-                    </FormControl>
-                    {editingCategoryIndex !== null ? (
-                      <>
+                            {t('common.update')}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={cancelEdit}
+                          >
+                            {t('common.cancel')}
+                          </Button>
+                        </>
+                      ) : (
                         <Button
                           colorScheme="blue"
-                          onClick={handleUpdateCategory}
+                          leftIcon={<FiPlus />}
+                          onClick={handleAddCategory}
                           isDisabled={!newCategoryName.trim()}
                         >
-                          {t('common.update')}
+                          {t('common.add')}
                         </Button>
-                        <Button
-                          variant="outline"
-                          onClick={cancelEdit}
-                        >
-                          {t('common.cancel')}
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        colorScheme="blue"
-                        leftIcon={<FiPlus />}
-                        onClick={handleAddCategory}
-                        isDisabled={!newCategoryName.trim()}
-                      >
-                        {t('common.add')}
-                      </Button>
-                    )}
-                  </HStack>
-                  <Text fontSize="xs" color="gray.500" mt={2}>
-                    💡 {t('assets.categories.codeNote')}
-                  </Text>
-                </Box>
+                      )}
+                    </HStack>
+                    <Text fontSize="xs" color="gray.500" mt={2}>
+                      💡 {t('assets.categories.codeNote')}
+                    </Text>
+                  </Box>
 
-                {/* Existing Categories List */}
-                <Box>
-                  <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
-                    📋 {t('assets.categories.existingCategories')} ({customCategories.length})
-                  </Text>
-                  <VStack spacing={2} align="stretch" maxH="300px" overflowY="auto">
-                    {customCategories.map((category, index) => {
-                      const isUsed = assets.some(asset => asset.category === category);
-                      const isDefault = ASSET_CATEGORIES.includes(category as any);
-                      
-                      return (
-                        <HStack
-                          key={index}
-                          p={3}
-                          bg={editingCategoryIndex === index ? 'blue.50' : isDefault ? 'gray.50' : 'white'}
-                          border="1px solid"
-                          borderColor={editingCategoryIndex === index ? 'blue.200' : 'gray.200'}
-                          borderRadius="md"
-                          justify="space-between"
-                        >
-                          <HStack spacing={3} flex={1}>
-                            <Text
-                              fontSize="sm"
-                              fontWeight={editingCategoryIndex === index ? 'semibold' : 'normal'}
-                              color={editingCategoryIndex === index ? 'blue.700' : 'gray.700'}
-                            >
-                              {category}
-                            </Text>
-                            <Badge colorScheme="purple" size="sm" fontSize="xs">
-                              {getCodeForCategory(category) || '—'}
-                            </Badge>
+                  {/* Existing Categories List */}
+                  <Box>
+                    <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                      📋 {t('assets.categories.existingCategories')} ({customCategories.length})
+                    </Text>
+                    <VStack spacing={2} align="stretch" maxH="300px" overflowY="auto">
+                      {customCategories.map((category, index) => {
+                        const isUsed = assets.some(asset => asset.category === category);
+                        const isDefault = ASSET_CATEGORIES.includes(category as any);
+
+                        return (
+                          <HStack
+                            key={index}
+                            p={3}
+                            bg={editingCategoryIndex === index ? 'blue.50' : isDefault ? 'gray.50' : 'white'}
+                            border="1px solid"
+                            borderColor={editingCategoryIndex === index ? 'blue.200' : 'gray.200'}
+                            borderRadius="md"
+                            justify="space-between"
+                          >
+                            <HStack spacing={3} flex={1}>
+                              <Text
+                                fontSize="sm"
+                                fontWeight={editingCategoryIndex === index ? 'semibold' : 'normal'}
+                                color={editingCategoryIndex === index ? 'blue.700' : 'gray.700'}
+                              >
+                                {category}
+                              </Text>
+                              <Badge colorScheme="purple" size="sm" fontSize="xs">
+                                {getCodeForCategory(category) || '—'}
+                              </Badge>
+                              <HStack spacing={2}>
+                                {isDefault && (
+                                  <Badge colorScheme="gray" size="sm" fontSize="xs">
+                                    {t('assets.categories.default')}
+                                  </Badge>
+                                )}
+                                {isUsed && (
+                                  <Badge colorScheme="green" size="sm" fontSize="xs">
+                                    {t('assets.categories.inUse')}
+                                  </Badge>
+                                )}
+                              </HStack>
+                            </HStack>
+
                             <HStack spacing={2}>
-                              {isDefault && (
-                                <Badge colorScheme="gray" size="sm" fontSize="xs">
-                                  {t('assets.categories.default')}
-                                </Badge>
-                              )}
-                              {isUsed && (
-                                <Badge colorScheme="green" size="sm" fontSize="xs">
-                                  {t('assets.categories.inUse')}
-                                </Badge>
-                              )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                leftIcon={<FiEdit />}
+                                onClick={() => handleEditCategory(index)}
+                                isDisabled={editingCategoryIndex !== null && editingCategoryIndex !== index}
+                              >
+                                {t('common.edit')}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                leftIcon={<FiTrash2 />}
+                                onClick={() => handleDeleteCategory(index)}
+                                isDisabled={isUsed || isDefault}
+                                title={isUsed ? t('assets.categories.cannotDeleteInUse') : isDefault ? t('assets.categories.cannotDeleteDefault') : ''}
+                              >
+                                {t('common.delete')}
+                              </Button>
                             </HStack>
                           </HStack>
-                          
-                          <HStack spacing={2}>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              leftIcon={<FiEdit />}
-                              onClick={() => handleEditCategory(index)}
-                              isDisabled={editingCategoryIndex !== null && editingCategoryIndex !== index}
-                            >
-                              {t('common.edit')}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              colorScheme="red"
-                              leftIcon={<FiTrash2 />}
-                              onClick={() => handleDeleteCategory(index)}
-                              isDisabled={isUsed || isDefault}
-                              title={isUsed ? t('assets.categories.cannotDeleteInUse') : isDefault ? t('assets.categories.cannotDeleteDefault') : ''}
-                            >
-                              {t('common.delete')}
-                            </Button>
-                          </HStack>
-                        </HStack>
-                      );
-                    })}
-                    
-                    {customCategories.length === 0 && (
-                      <Box
-                        p={6}
-                        textAlign="center"
-                        bg="gray.50"
-                        borderRadius="md"
-                        border="2px dashed"
-                        borderColor="gray.300"
-                      >
-                        <Text color="gray.500">
-                          {t('assets.noAssets')}
-                        </Text>
-                      </Box>
-                    )}
-                  </VStack>
-                </Box>
-              </VStack>
-            </ModalBody>
-            
-            <ModalFooter>
-              <Button onClick={handleCloseCategoryModal}>
-                {t('common.close')}
-              </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-      </Box>
-    </SimpleLayout>
+                        );
+                      })}
+
+                      {customCategories.length === 0 && (
+                        <Box
+                          p={6}
+                          textAlign="center"
+                          bg="gray.50"
+                          borderRadius="md"
+                          border="2px dashed"
+                          borderColor="gray.300"
+                        >
+                          <Text color="gray.500">
+                            {t('assets.noAssets')}
+                          </Text>
+                        </Box>
+                      )}
+                    </VStack>
+                  </Box>
+                </VStack>
+              </ModalBody>
+
+              <ModalFooter>
+                <Button onClick={handleCloseCategoryModal}>
+                  {t('common.close')}
+                </Button>
+              </ModalFooter>
+            </ModalContent>
+          </Modal>
+        </Box>
+      </SimpleLayout>
+    </ProtectedModule>
   );
 };
 

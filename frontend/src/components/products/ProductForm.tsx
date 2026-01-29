@@ -114,7 +114,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
     try {
       const data = await ProductService.getWarehouseLocations();
       setWarehouseLocations(data.data);
-      
+
       // Show info message if using mock data
       if (data.message && data.message.includes('mock')) {
         console.info('Using mock warehouse locations data - implement backend API for full functionality');
@@ -137,7 +137,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setSelectedImage(file);
-      
+
       // Create preview URL
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -162,7 +162,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
       handleInputChange('image_path', response.path);
       setSelectedImage(null);
       setImagePreview(null);
-      
+
       toast({
         title: t('products.messages.imageUploadSuccess'),
         status: 'success',
@@ -172,13 +172,13 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
       console.error('Image upload error:', error);
       let errorMessage = t('products.messages.imageUploadFailed');
       let errorDetail = t('messages.toast.unknownErrorDesc');
-      
+
       if (error.response?.data?.error) {
         errorDetail = error.response.data.error;
       } else if (error.message) {
         errorDetail = error.message;
       }
-      
+
       toast({
         title: errorMessage,
         description: errorDetail,
@@ -200,13 +200,13 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
       } else {
         result = await ProductService.createProduct(formData as Product);
       }
-      
+
       toast({
         title: product?.id ? t('products.messages.updateSuccess') : t('products.messages.createSuccess'),
         status: 'success',
         isClosable: true,
       });
-      
+
       onSave(result.data);
     } catch (error: any) {
       toast({
@@ -230,6 +230,53 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
         {/* Basic Information */}
         <Box>
           <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.basicInfo')}</Text>
+
+          {/* Product Status & Type - Consolidated at top */}
+          <Box mb={6} bg="blue.50" p={4} borderRadius="md">
+            <VStack align="stretch" spacing={4}>
+              <FormControl display="flex" alignItems="center">
+                <FormLabel htmlFor="is_service" mb="0" fontWeight="bold" flex="1">
+                  {t('products.form.isService')}
+                  <Text fontSize="sm" fontWeight="normal" color="gray.600">
+                    {formData.is_service ? "Produk jasa tidak memerlukan stok dan pengiriman" : "Produk fisik dengan stok dan inventaris"}
+                  </Text>
+                </FormLabel>
+                <Switch
+                  id="is_service"
+                  isChecked={formData.is_service}
+                  onChange={(e) => handleInputChange('is_service', e.target.checked)}
+                  size="lg"
+                />
+              </FormControl>
+
+              <Divider borderColor="blue.200" />
+
+              <HStack spacing={8}>
+                <FormControl display="flex" alignItems="center" w="auto">
+                  <FormLabel htmlFor="is_active" mb="0" mr={3}>
+                    {t('products.form.isActive')}
+                  </FormLabel>
+                  <Switch
+                    id="is_active"
+                    isChecked={formData.is_active}
+                    onChange={(e) => handleInputChange('is_active', e.target.checked)}
+                  />
+                </FormControl>
+
+                <FormControl display="flex" alignItems="center" w="auto">
+                  <FormLabel htmlFor="taxable" mb="0" mr={3}>
+                    {t('products.form.taxable')}
+                  </FormLabel>
+                  <Switch
+                    id="taxable"
+                    isChecked={formData.taxable}
+                    onChange={(e) => handleInputChange('taxable', e.target.checked)}
+                  />
+                </FormControl>
+              </HStack>
+            </VStack>
+          </Box>
+
           <Grid templateColumns="repeat(4, 1fr)" gap={4}>
             <GridItem colSpan={2}>
               <FormControl isRequired>
@@ -263,7 +310,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
             </GridItem>
             <GridItem>
               <FormControl>
-                <FormLabel>{t('products.category')}</FormLabel>
+                <FormLabel>{t('products.categoryLabel')}</FormLabel>
                 <Select
                   value={formData.category_id || ''}
                   onChange={(e) => handleInputChange('category_id', e.target.value ? Number(e.target.value) : undefined)}
@@ -277,23 +324,28 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                 </Select>
               </FormControl>
             </GridItem>
-            <GridItem>
-              <FormControl>
-                <FormLabel>{t('products.form.warehouseLocation')}</FormLabel>
-                <Select
-                  value={formData.warehouse_location_id || ''}
-                  onChange={(e) => handleInputChange('warehouse_location_id', e.target.value ? Number(e.target.value) : undefined)}
-                  placeholder={t('products.form.selectWarehouse')}
-                >
-                  {warehouseLocations.map(location => (
-                    <option key={location.id} value={location.id}>
-                      {location.name} ({location.code})
-                    </option>
-                  ))}
-                </Select>
-              </FormControl>
-            </GridItem>
-            <GridItem colSpan={2}>
+
+            {/* Warehouse Location only for Non-Service */}
+            {!formData.is_service && (
+              <GridItem>
+                <FormControl>
+                  <FormLabel>{t('products.form.warehouseLocation')}</FormLabel>
+                  <Select
+                    value={formData.warehouse_location_id || ''}
+                    onChange={(e) => handleInputChange('warehouse_location_id', e.target.value ? Number(e.target.value) : undefined)}
+                    placeholder={t('products.form.selectWarehouse')}
+                  >
+                    {warehouseLocations.map(location => (
+                      <option key={location.id} value={location.id}>
+                        {location.name} ({location.code})
+                      </option>
+                    ))}
+                  </Select>
+                </FormControl>
+              </GridItem>
+            )}
+
+            <GridItem colSpan={formData.is_service ? 3 : 2}>
               <FormControl isRequired>
                 <FormLabel>{t('products.unit')}</FormLabel>
                 <Select
@@ -314,81 +366,85 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
 
         <Divider />
 
-        {/* Product Details */}
-        <Box>
-          <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.productDetails')}</Text>
-          <Grid templateColumns="repeat(4, 1fr)" gap={4}>
-            <GridItem colSpan={2}>
-              <FormControl>
-                <FormLabel>{t('products.form.brand')}</FormLabel>
-                <Input
-                  value={formData.brand}
-                  onChange={(e) => handleInputChange('brand', e.target.value)}
-                  placeholder={t('products.form.enterBrand')}
-                />
-              </FormControl>
-            </GridItem>
-            <GridItem colSpan={2}>
-              <FormControl>
-                <FormLabel>{t('products.form.model')}</FormLabel>
-                <Input
-                  value={formData.model}
-                  onChange={(e) => handleInputChange('model', e.target.value)}
-                  placeholder={t('products.form.enterModel')}
-                />
-              </FormControl>
-            </GridItem>
-            <GridItem colSpan={2}>
-              <FormControl>
-                <FormLabel>{t('products.form.barcode')}</FormLabel>
-                <Input
-                  value={formData.barcode}
-                  onChange={(e) => handleInputChange('barcode', e.target.value)}
-                  placeholder={t('products.form.enterBarcode')}
-                />
-              </FormControl>
-            </GridItem>
-            <GridItem colSpan={2}>
-              <FormControl>
-                <FormLabel>{t('products.form.sku')}</FormLabel>
-                <Input
-                  value={formData.sku}
-                  onChange={(e) => handleInputChange('sku', e.target.value)}
-                  placeholder={t('products.form.enterSKU')}
-                />
-              </FormControl>
-            </GridItem>
-            <GridItem>
-              <FormControl>
-                <FormLabel>{t('products.form.weight')}</FormLabel>
-                <NumberInput
-                  value={formData.weight || 0}
-                  onChange={(_, value) => handleInputChange('weight', isNaN(value) ? 0 : value)}
-                  min={0}
-                  precision={3}
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-            </GridItem>
-            <GridItem>
-              <FormControl>
-                <FormLabel>{t('products.form.dimensions')}</FormLabel>
-                <Input
-                  value={formData.dimensions}
-                  onChange={(e) => handleInputChange('dimensions', e.target.value)}
-                  placeholder="P x L x T (cm)"
-                />
-              </FormControl>
-            </GridItem>
-          </Grid>
-        </Box>
+        {/* Product Details - Only for Non-Service */}
+        {!formData.is_service && (
+          <>
+            <Box>
+              <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.productDetails')}</Text>
+              <Grid templateColumns="repeat(4, 1fr)" gap={4}>
+                <GridItem colSpan={2}>
+                  <FormControl>
+                    <FormLabel>{t('products.form.brand')}</FormLabel>
+                    <Input
+                      value={formData.brand}
+                      onChange={(e) => handleInputChange('brand', e.target.value)}
+                      placeholder={t('products.form.enterBrand')}
+                    />
+                  </FormControl>
+                </GridItem>
+                <GridItem colSpan={2}>
+                  <FormControl>
+                    <FormLabel>{t('products.form.model')}</FormLabel>
+                    <Input
+                      value={formData.model}
+                      onChange={(e) => handleInputChange('model', e.target.value)}
+                      placeholder={t('products.form.enterModel')}
+                    />
+                  </FormControl>
+                </GridItem>
+                <GridItem colSpan={2}>
+                  <FormControl>
+                    <FormLabel>{t('products.form.barcode')}</FormLabel>
+                    <Input
+                      value={formData.barcode}
+                      onChange={(e) => handleInputChange('barcode', e.target.value)}
+                      placeholder={t('products.form.enterBarcode')}
+                    />
+                  </FormControl>
+                </GridItem>
+                <GridItem colSpan={2}>
+                  <FormControl>
+                    <FormLabel>{t('products.form.sku')}</FormLabel>
+                    <Input
+                      value={formData.sku}
+                      onChange={(e) => handleInputChange('sku', e.target.value)}
+                      placeholder={t('products.form.enterSKU')}
+                    />
+                  </FormControl>
+                </GridItem>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>{t('products.form.weight')}</FormLabel>
+                    <NumberInput
+                      value={formData.weight || 0}
+                      onChange={(_, value) => handleInputChange('weight', isNaN(value) ? 0 : value)}
+                      min={0}
+                      precision={3}
+                    >
+                      <NumberInputField />
+                      <NumberInputStepper>
+                        <NumberIncrementStepper />
+                        <NumberDecrementStepper />
+                      </NumberInputStepper>
+                    </NumberInput>
+                  </FormControl>
+                </GridItem>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>{t('products.form.dimensions')}</FormLabel>
+                    <Input
+                      value={formData.dimensions}
+                      onChange={(e) => handleInputChange('dimensions', e.target.value)}
+                      placeholder="P x L x T (cm)"
+                    />
+                  </FormControl>
+                </GridItem>
+              </Grid>
+            </Box>
 
-        <Divider />
+            <Divider />
+          </>
+        )}
 
         {/* Pricing */}
         <Box>
@@ -446,78 +502,82 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
 
         <Divider />
 
-        {/* Inventory */}
-        <Box>
-          <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.inventory')}</Text>
-          <Grid templateColumns="repeat(4, 1fr)" gap={4}>
-            <GridItem>
-              <FormControl>
-                <FormLabel>{t('products.currentStock')}</FormLabel>
-                <NumberInput
-                  value={formData.stock || 0}
-                  onChange={(_, value) => handleInputChange('stock', isNaN(value) ? 0 : value)}
-                  min={0}
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-            </GridItem>
-            <GridItem>
-              <FormControl>
-                <FormLabel>{t('products.minStock')}</FormLabel>
-                <NumberInput
-                  value={formData.min_stock || 0}
-                  onChange={(_, value) => handleInputChange('min_stock', isNaN(value) ? 0 : value)}
-                  min={0}
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-            </GridItem>
-            <GridItem>
-              <FormControl>
-                <FormLabel>{t('products.maxStock')}</FormLabel>
-                <NumberInput
-                  value={formData.max_stock || 0}
-                  onChange={(_, value) => handleInputChange('max_stock', isNaN(value) ? 0 : value)}
-                  min={0}
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-            </GridItem>
-            <GridItem>
-              <FormControl>
-                <FormLabel>{t('products.reorderLevel')}</FormLabel>
-                <NumberInput
-                  value={formData.reorder_level || 0}
-                  onChange={(_, value) => handleInputChange('reorder_level', isNaN(value) ? 0 : value)}
-                  min={0}
-                >
-                  <NumberInputField />
-                  <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                  </NumberInputStepper>
-                </NumberInput>
-              </FormControl>
-            </GridItem>
-          </Grid>
-        </Box>
+        {/* Inventory - Only for Non-Service */}
+        {!formData.is_service && (
+          <>
+            <Box>
+              <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.inventory')}</Text>
+              <Grid templateColumns="repeat(4, 1fr)" gap={4}>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>{t('products.currentStock')}</FormLabel>
+                    <NumberInput
+                      value={formData.stock || 0}
+                      onChange={(_, value) => handleInputChange('stock', isNaN(value) ? 0 : value)}
+                      min={0}
+                    >
+                      <NumberInputField />
+                      <NumberInputStepper>
+                        <NumberIncrementStepper />
+                        <NumberDecrementStepper />
+                      </NumberInputStepper>
+                    </NumberInput>
+                  </FormControl>
+                </GridItem>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>{t('products.minStock')}</FormLabel>
+                    <NumberInput
+                      value={formData.min_stock || 0}
+                      onChange={(_, value) => handleInputChange('min_stock', isNaN(value) ? 0 : value)}
+                      min={0}
+                    >
+                      <NumberInputField />
+                      <NumberInputStepper>
+                        <NumberIncrementStepper />
+                        <NumberDecrementStepper />
+                      </NumberInputStepper>
+                    </NumberInput>
+                  </FormControl>
+                </GridItem>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>{t('products.maxStock')}</FormLabel>
+                    <NumberInput
+                      value={formData.max_stock || 0}
+                      onChange={(_, value) => handleInputChange('max_stock', isNaN(value) ? 0 : value)}
+                      min={0}
+                    >
+                      <NumberInputField />
+                      <NumberInputStepper>
+                        <NumberIncrementStepper />
+                        <NumberDecrementStepper />
+                      </NumberInputStepper>
+                    </NumberInput>
+                  </FormControl>
+                </GridItem>
+                <GridItem>
+                  <FormControl>
+                    <FormLabel>{t('products.reorderLevel')}</FormLabel>
+                    <NumberInput
+                      value={formData.reorder_level || 0}
+                      onChange={(_, value) => handleInputChange('reorder_level', isNaN(value) ? 0 : value)}
+                      min={0}
+                    >
+                      <NumberInputField />
+                      <NumberInputStepper>
+                        <NumberIncrementStepper />
+                        <NumberDecrementStepper />
+                      </NumberInputStepper>
+                    </NumberInput>
+                  </FormControl>
+                </GridItem>
+              </Grid>
+            </Box>
 
-        <Divider />
+            <Divider />
+          </>
+        )}
 
         {/* Product Image */}
         <Box>
@@ -528,8 +588,8 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
               <FormControl>
                 <FormLabel>{t('products.form.currentImage')}</FormLabel>
                 {formData.image_path ? (
-                  <Image 
-                    src={getProductImageUrl(formData.image_path) || ''} 
+                  <Image
+                    src={getProductImageUrl(formData.image_path) || ''}
                     alt={formData.name || 'Product image'}
                     maxH="150px"
                     maxW="200px"
@@ -545,13 +605,13 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                     }}
                   />
                 ) : (
-                  <Box 
-                    w="200px" 
-                    h="150px" 
-                    bg="gray.100" 
-                    borderRadius="md" 
-                    display="flex" 
-                    alignItems="center" 
+                  <Box
+                    w="200px"
+                    h="150px"
+                    bg="gray.100"
+                    borderRadius="md"
+                    display="flex"
+                    alignItems="center"
                     justifyContent="center"
                   >
                     <Text color="gray.500">{t('products.form.noImage')}</Text>
@@ -559,7 +619,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                 )}
               </FormControl>
             </GridItem>
-            
+
             {/* Image Upload */}
             <GridItem>
               <FormControl>
@@ -571,8 +631,8 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                   mb={2}
                 />
                 {imagePreview && (
-                  <Image 
-                    src={imagePreview} 
+                  <Image
+                    src={imagePreview}
                     alt="Preview"
                     maxH="150px"
                     maxW="200px"
@@ -584,7 +644,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                 )}
               </FormControl>
             </GridItem>
-            
+
             {/* Upload Button */}
             <GridItem>
               <FormControl>
@@ -611,40 +671,8 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
 
         {/* Settings */}
         <Box>
-          <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.settings')}</Text>
           <VStack spacing={4} align="stretch">
-            <HStack>
-              <FormControl display="flex" alignItems="center">
-                <FormLabel htmlFor="is_active" mb="0">
-                  {t('products.form.isActive')}
-                </FormLabel>
-                <Switch
-                  id="is_active"
-                  isChecked={formData.is_active}
-                  onChange={(e) => handleInputChange('is_active', e.target.checked)}
-                />
-              </FormControl>
-              <FormControl display="flex" alignItems="center">
-                <FormLabel htmlFor="is_service" mb="0">
-                  {t('products.form.isService')}
-                </FormLabel>
-                <Switch
-                  id="is_service"
-                  isChecked={formData.is_service}
-                  onChange={(e) => handleInputChange('is_service', e.target.checked)}
-                />
-              </FormControl>
-              <FormControl display="flex" alignItems="center">
-                <FormLabel htmlFor="taxable" mb="0">
-                  {t('products.form.taxable')}
-                </FormLabel>
-                <Switch
-                  id="taxable"
-                  isChecked={formData.taxable}
-                  onChange={(e) => handleInputChange('taxable', e.target.checked)}
-                />
-              </FormControl>
-            </HStack>
+            {/* Status switches moved to top */}
             <FormControl>
               <FormLabel>{t('common.notes')}</FormLabel>
               <Textarea

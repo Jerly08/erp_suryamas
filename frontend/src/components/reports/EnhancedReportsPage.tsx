@@ -21,11 +21,11 @@ import {
   CardBody,
   CardHeader
 } from '@chakra-ui/react';
-import { 
-  FiFileText, 
-  FiBarChart, 
-  FiBarChart3, 
-  FiTrendingUp, 
+import {
+  FiFileText,
+  FiBarChart,
+  FiBarChart3,
+  FiTrendingUp,
   FiDollarSign,
   FiEye
 } from 'react-icons/fi';
@@ -37,23 +37,23 @@ import { useTranslation } from '@/hooks/useTranslation';
 const EnhancedReportsPage: React.FC = () => {
   const { t } = useTranslation();
   const [selectedReportType, setSelectedReportType] = useState<string | null>(null);
-  
-  const { 
-    isOpen: isTrialBalanceOpen, 
-    onOpen: onTrialBalanceOpen, 
-    onClose: onTrialBalanceClose 
+
+  const {
+    isOpen: isTrialBalanceOpen,
+    onOpen: onTrialBalanceOpen,
+    onClose: onTrialBalanceClose
   } = useDisclosure();
-  
-  const { 
-    isOpen: isBalanceSheetOpen, 
-    onOpen: onBalanceSheetOpen, 
-    onClose: onBalanceSheetClose 
+
+  const {
+    isOpen: isBalanceSheetOpen,
+    onOpen: onBalanceSheetOpen,
+    onClose: onBalanceSheetClose
   } = useDisclosure();
 
   const reportTypes = [
     {
       id: 'trial-balance',
-      title: t('reports.trialBalance'),
+      title: t('reports.trialBalance.title'),
       description: t('reports.description.trialBalance'),
       icon: FiBarChart3,
       color: 'purple',
@@ -61,7 +61,7 @@ const EnhancedReportsPage: React.FC = () => {
     },
     {
       id: 'balance-sheet',
-      title: t('reports.balanceSheet'), 
+      title: t('reports.balanceSheet.title'),
       description: t('reports.description.balanceSheet'),
       icon: FiBarChart,
       color: 'blue',
@@ -152,7 +152,7 @@ const EnhancedReportsPage: React.FC = () => {
       <Modal isOpen={isTrialBalanceOpen} onClose={onTrialBalanceClose} size="6xl">
         <ModalOverlay />
         <ModalContent maxW="90vw">
-          <ModalHeader>{t('reports.trialBalance')}</ModalHeader>
+          <ModalHeader>{t('reports.trialBalance.title')}</ModalHeader>
           <ModalCloseButton />
           <ModalBody p={0}>
             <EnhancedTrialBalanceReport onClose={onTrialBalanceClose} />
@@ -164,7 +164,7 @@ const EnhancedReportsPage: React.FC = () => {
       <Modal isOpen={isBalanceSheetOpen} onClose={onBalanceSheetClose} size="6xl">
         <ModalOverlay />
         <ModalContent maxW="90vw">
-          <ModalHeader>{t('reports.balanceSheet')}</ModalHeader>
+          <ModalHeader>{t('reports.balanceSheet.title')}</ModalHeader>
           <ModalCloseButton />
           <ModalBody p={0}>
             <EnhancedBalanceSheetReport onClose={onBalanceSheetClose} />

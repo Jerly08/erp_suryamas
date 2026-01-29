@@ -22,7 +22,19 @@ export interface SSOTJournalEntry {
   reversed_at?: string;
   created_at: string;
   updated_at: string;
-  journal_lines?: SSOTJournalLine[];
+  lines?: SSOTJournalLine[];
+  creator?: {
+    id: number;
+    username: string;
+    first_name: string;
+    last_name: string;
+  };
+  poster?: {
+    id: number;
+    username: string;
+    first_name: string;
+    last_name: string;
+  };
 }
 
 export interface SSOTJournalLine {
@@ -72,7 +84,7 @@ class SSOTJournalService {
 
   private buildQueryString(params: Record<string, any>): string {
     const searchParams = new URLSearchParams();
-    
+
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '' && value !== 'ALL') {
         searchParams.append(key, value.toString());
@@ -98,9 +110,29 @@ class SSOTJournalService {
     limit: number;
     totalPages: number;
   }> {
-    const queryString = this.buildQueryString(params);
+    const queryParams: Record<string, any> = { ...params };
+    // Map frontend naming to backend expectation
+    if (params.start_date) queryParams.date_from = params.start_date;
+    if (params.end_date) queryParams.date_to = params.end_date;
+    // Remove old keys if we want to be clean, or keep them if needed by legacy
+    // But backend UnifiedJournalController looks explicitly for "date_from"
+
+    // Also AccountID? Backend `JournalFilters` has `AccountID`. 
+    // Frontend doesn't send account_id in this method usually (Journal View doesn't filter by account).
+
+    const searchParams = new URLSearchParams();
+
+    Object.entries(queryParams).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '' && value !== 'ALL') {
+        // Skip mapped keys if we want to avoid double sending
+        if (key === 'start_date' || key === 'end_date') return;
+        searchParams.append(key, value.toString());
+      }
+    });
+
+    const queryString = searchParams.toString();
     const url = API_ENDPOINTS.JOURNALS.LIST + (queryString ? '?' + queryString : '');
-    
+
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });
@@ -123,7 +155,7 @@ class SSOTJournalService {
     }
 
     const result = await response.json();
-    return result.data;
+    return result;
   }
 
   // Create new journal entry
@@ -136,7 +168,7 @@ class SSOTJournalService {
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.message || 'Failed to create journal entry');
+      throw new Error(error.error || error.message || 'Failed to create journal entry');
     }
 
     const result = await response.json();
@@ -221,7 +253,7 @@ class SSOTJournalService {
   }> {
     const queryString = this.buildQueryString(params);
     const url = API_ENDPOINTS.JOURNALS.SUMMARY + (queryString ? '?' + queryString : '');
-    
+
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });
@@ -274,7 +306,7 @@ class SSOTJournalService {
   // Legacy compatibility method - converts old journal entry calls to SSOT
   async getJournalEntriesLegacy(params: any): Promise<any> {
     console.warn('🔄 Using legacy compatibility method - please update to getJournalEntries()');
-    
+
     // Map legacy parameters to SSOT parameters
     const ssotParams = {
       start_date: params.start_date,
@@ -285,7 +317,7 @@ class SSOTJournalService {
     };
 
     const result = await this.getJournalEntries(ssotParams);
-    
+
     // Convert SSOT format to legacy format for backward compatibility
     return {
       data: result.data.map(entry => ({
@@ -299,7 +331,7 @@ class SSOTJournalService {
         total_debit: entry.total_debit,
         total_credit: entry.total_credit,
         is_balanced: entry.is_balanced,
-        journal_lines: entry.journal_lines
+        journal_lines: entry.lines
       })),
       total: result.total
     };

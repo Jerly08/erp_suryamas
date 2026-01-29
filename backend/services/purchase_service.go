@@ -159,7 +159,12 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		CreditAccountID:   request.CreditAccountID,
 		PaymentReference:  request.PaymentReference,
 		// Tax rates from request - use pointers to distinguish null vs zero
-		PPNRate:            getPPNRateFromPointer(request.PPNRate),
+		PPNRate: func() float64 {
+			if request.PPNRate == nil {
+				return 11.0 
+			}
+			return *request.PPNRate
+		}(),
 		OtherTaxAdditions:  request.OtherTaxAdditions,
 		PPh21Rate:          getPPhRateFromPointer(request.PPh21Rate),
 		PPh23Rate:          getPPhRateFromPointer(request.PPh23Rate),
@@ -246,7 +251,11 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 	// Update tax rates from request using double pointers for update requests
 	if request.PPNRate != nil {
-		purchase.PPNRate = getPPNRateFromDoublePointer(request.PPNRate)
+		if *request.PPNRate == nil {
+			purchase.PPNRate = 11.0
+		} else {
+			purchase.PPNRate = **request.PPNRate
+		}
 	}
 	if request.OtherTaxAdditions != nil {
 		purchase.OtherTaxAdditions = *request.OtherTaxAdditions

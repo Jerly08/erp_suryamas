@@ -44,6 +44,9 @@ func (c *UnifiedJournalController) CreateJournalEntry(ctx *gin.Context) {
 		req.EntryDate = time.Now()
 	}
 
+	// Set CreatedBy from context
+	req.CreatedBy = getJournalUserIDFromContext(ctx)
+
 	response, err := c.journalService.CreateJournalEntry(&req)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -198,16 +201,24 @@ func (c *UnifiedJournalController) GetJournalSummary(ctx *gin.Context) {
 }
 
 // Helper function to get user ID from context (implement based on your auth system)
+// Helper function to get user ID from context
 func getJournalUserIDFromContext(ctx *gin.Context) uint64 {
-	// This is a placeholder - implement based on your authentication system
-	// For example, if using JWT middleware:
-	// if userID, exists := ctx.Get("user_id"); exists {
-	//     if id, ok := userID.(uint); ok {
-	//         return id
-	//     }
-	// }
-	// For now, return a default value (you should implement proper auth)
-	return uint64(1)
+	// Get user_id from context (set by JWT middleware)
+	if userID, exists := ctx.Get("user_id"); exists {
+		// handle both uint (from jwt middleware) and float64 (from some json parsers)
+		switch v := userID.(type) {
+		case uint:
+			return uint64(v)
+		case uint64:
+			return v
+		case float64:
+			return uint64(v)
+		case int:
+			return uint64(v)
+		}
+	}
+	// Default to 1 (Admin) if not found, but log warning in real app
+	return 1
 }
 
 // Helper function to get journal summary statistics
@@ -236,6 +247,103 @@ type JournalSummary struct {
 }
 
 
+// UpdateJournalEntry updates an existing journal entry
+// @Summary Update journal entry
+// @Description Update an existing journal entry (only if DRAFT)
+// @Tags Journal
+// @Accept json
+// @Produce json
+// @Param id path int true "Journal Entry ID"
+// @Param journal body services.JournalEntryRequest true "Journal Entry Request"
+// @Success 200 {object} services.JournalResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/journals/{id} [put]
+func (c *UnifiedJournalController) UpdateJournalEntry(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid journal entry ID"})
+		return
+	}
+
+	var req services.JournalEntryRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format: " + err.Error()})
+		return
+	}
+
+	if req.EntryDate.IsZero() {
+		req.EntryDate = time.Now()
+	}
+
+	response, err := c.journalService.UpdateJournalEntry(id, &req)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, response)
+}
+
+// DeleteJournalEntry deletes a journal entry
+// @Summary Delete journal entry
+// @Description Delete a journal entry (only if DRAFT)
+// @Tags Journal
+// @Produce json
+// @Param id path int true "Journal Entry ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/journals/{id} [delete]
+func (c *UnifiedJournalController) DeleteJournalEntry(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid journal entry ID"})
+		return
+	}
+
+	if err := c.journalService.DeleteJournalEntry(id); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "Journal entry deleted successfully"})
+}
+
+// PostJournalEntry posts a journal entry
+// @Summary Post journal entry
+// @Description Post a journal entry (verify and lock)
+// @Tags Journal
+// @Produce json
+// @Param id path int true "Journal Entry ID"
+// @Success 200 {object} services.JournalResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/journals/{id}/post [put]
+func (c *UnifiedJournalController) PostJournalEntry(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid journal entry ID"})
+		return
+	}
+
+	userID := getJournalUserIDFromContext(ctx)
+
+	response, err := c.journalService.PostJournalEntry(id, userID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, response)
+}
+
 // RegisterRoutes registers all journal routes
 func (c *UnifiedJournalController) RegisterRoutes(router *gin.Engine) {
 	v1 := router.Group("/api/v1")
@@ -245,6 +353,9 @@ func (c *UnifiedJournalController) RegisterRoutes(router *gin.Engine) {
 			journals.POST("", c.CreateJournalEntry)
 			journals.GET("", c.GetJournalEntries)
 			journals.GET("/:id", c.GetJournalEntry)
+			journals.PUT("/:id", c.UpdateJournalEntry)
+			journals.DELETE("/:id", c.DeleteJournalEntry)
+			journals.PUT("/:id/post", c.PostJournalEntry)
 			journals.GET("/account-balances", c.GetAccountBalances)
 			journals.POST("/account-balances/refresh", c.RefreshAccountBalances)
 			journals.GET("/summary", c.GetJournalSummary)

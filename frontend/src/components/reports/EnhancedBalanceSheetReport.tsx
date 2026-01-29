@@ -55,18 +55,19 @@ import {
 } from 'react-icons/fi';
 
 // Import services and utilities
-import { 
-  ssotBalanceSheetReportService, 
-  SSOTBalanceSheetData 
+import {
+  ssotBalanceSheetReportService,
+  SSOTBalanceSheetData
 } from '../../services/ssotBalanceSheetReportService';
-import { 
-  exportAndDownloadCSV, 
+import {
+  exportAndDownloadCSV,
   exportAndDownloadPDF
 } from '../../utils/balanceSheetExportClient';
-import { 
-  periodClosingService, 
-  PeriodFilterOption 
+import {
+  periodClosingService,
+  PeriodFilterOption
 } from '../../services/periodClosingService';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface EnhancedBalanceSheetReportProps {
   onClose?: () => void;
@@ -82,25 +83,28 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
   const [asOfDate, setAsOfDate] = useState(new Date().toISOString().split('T')[0]);
   const [includeAccountDetails, setIncludeAccountDetails] = useState(true);
   const [companyName, setCompanyName] = useState('Company Name Not Set');
-  
+
   // Export states
   const [exportingCSV, setExportingCSV] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
-  
+
   // Closed Period states
   const [closedPeriods, setClosedPeriods] = useState<PeriodFilterOption[]>([]);
   const [loadingPeriods, setLoadingPeriods] = useState(false);
   const [periodOptionsLoaded, setPeriodOptionsLoaded] = useState(false);
-  
+
   // Modal controls
-  const { 
-    isOpen: isExportModalOpen, 
-    onOpen: onExportModalOpen, 
-    onClose: onExportModalClose 
+  const {
+    isOpen: isExportModalOpen,
+    onOpen: onExportModalOpen,
+    onClose: onExportModalClose
+
+
   } = useDisclosure();
-  
+
   const toast = useToast();
-  
+  const { t } = useTranslation();
+
   // Color mode values
   const cardBg = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
@@ -111,13 +115,13 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
   // Fetch closed periods for dropdown (lazy loading)
   const fetchClosedPeriods = async () => {
     if (periodOptionsLoaded) return; // Already loaded
-    
+
     setLoadingPeriods(true);
     try {
       const options = await periodClosingService.getClosedPeriodsForFilter();
       setClosedPeriods(options);
       setPeriodOptionsLoaded(true);
-      
+
       if (options.length === 0) {
         console.log('[EnhancedBalanceSheetReport] No closed periods found');
       } else {
@@ -136,17 +140,17 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
     if (amount === null || amount === undefined || isNaN(Number(amount))) {
       return 'Rp 0';
     }
-    
+
     let displayAmount = Number(amount);
-    
+
     // Convert to positive for revenue and liability accounts for user-friendly display
-    if (accountType === 'REVENUE' || accountType === 'LIABILITY' || 
-        accountCode?.startsWith('4') || // Revenue accounts
-        accountCode?.startsWith('2103') || accountCode?.startsWith('2203')) { // PPN accounts
+    if (accountType === 'REVENUE' || accountType === 'LIABILITY' ||
+      accountCode?.startsWith('4') || // Revenue accounts
+      accountCode?.startsWith('2103') || accountCode?.startsWith('2203')) { // PPN accounts
       displayAmount = Math.abs(displayAmount);
       console.log(`[EnhancedBalanceSheetReport] Converted ${accountCode} (${accountType}) balance ${amount} to positive ${displayAmount}`);
     }
-    
+
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
@@ -159,27 +163,27 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
   const generateBalanceSheetReport = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       const data = await ssotBalanceSheetReportService.generateSSOTBalanceSheet({
         as_of_date: asOfDate,
         format: 'json'
       });
-      
+
       setBalanceSheetData(data);
-      
+
       toast({
-        title: 'Success',
-        description: 'Balance Sheet generated successfully',
+        title: t('reports.modal.status.success'),
+        description: t('reports.ssotBalanceSheetGenerated'),
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to generate Balance Sheet';
       setError(errorMessage);
-      
+
       toast({
         title: 'Error',
         description: errorMessage,
@@ -196,8 +200,8 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
   const handleExportCSV = async () => {
     if (!asOfDate) {
       toast({
-        title: 'No Data',
-        description: 'Please select a date first',
+        title: t('reports.noData'),
+        description: t('reports.selectDateFirst'),
         status: 'warning',
         duration: 3000,
         isClosable: true,
@@ -206,14 +210,14 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
     }
 
     setExportingCSV(true);
-    
+
     try {
       console.log('Exporting CSV with asOfDate:', asOfDate);
       // Use the new CSV generation method from the service
       const csvContent = await ssotBalanceSheetReportService.generateSSOTBalanceSheetCSV({
         as_of_date: asOfDate
       });
-      
+
       console.log('Received CSV content, creating download link');
       // Create download link
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -225,21 +229,21 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      
+
       toast({
-        title: 'CSV Export Successful',
-        description: 'Balance Sheet has been downloaded as CSV',
+        title: t('reports.balanceSheet.csvExportSuccess'),
+        description: t('reports.balanceSheet.balanceSheetDownloadedCSV'),
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to export CSV';
       console.error('CSV Export Error:', error); // Log the error for debugging
-      
+
       toast({
-        title: 'CSV Export Failed',
+        title: t('reports.balanceSheet.csvExportFailedTitle'),
         description: errorMessage,
         status: 'error',
         duration: 5000,
@@ -254,8 +258,8 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
   const handleExportPDF = async () => {
     if (!asOfDate) {
       toast({
-        title: 'No Data',
-        description: 'Please select a date first',
+        title: t('reports.noData'),
+        description: t('reports.selectDateFirst'),
         status: 'warning',
         duration: 3000,
         isClosable: true,
@@ -264,13 +268,13 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
     }
 
     setExportingPDF(true);
-    
+
     try {
       // Use the new PDF generation method from the service
       const pdfBlob = await ssotBalanceSheetReportService.generateSSOTBalanceSheetPDF({
         as_of_date: asOfDate
       });
-      
+
       // Create download link
       const url = window.URL.createObjectURL(pdfBlob);
       const link = document.createElement('a');
@@ -280,19 +284,19 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      
+
       toast({
-        title: 'PDF Export Successful',
-        description: 'Balance Sheet has been downloaded as PDF',
+        title: t('reports.balanceSheet.pdfExportSuccess'),
+        description: t('reports.balanceSheet.balanceSheetDownloadedPDF'),
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
-      
+
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to export PDF';
       toast({
-        title: 'PDF Export Failed',
+        title: t('reports.balanceSheet.pdfExportFailedTitle'),
         description: errorMessage,
         status: 'error',
         duration: 5000,
@@ -314,10 +318,10 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                 <Icon as={FiBarChart} color="blue.500" boxSize={6} />
                 <VStack align="start" spacing={0}>
                   <Text fontSize="xl" fontWeight="bold" color={headingColor}>
-                    Enhanced Balance Sheet Report
+                    {t('reports.balanceSheet.ssotBalanceSheet')}
                   </Text>
                   <Text fontSize="sm" color={descriptionColor}>
-                    Real-time SSOT integration with advanced export features
+                    {t('reports.balanceSheet.ssotIntegrationDesc')}
                   </Text>
                 </VStack>
               </HStack>
@@ -334,35 +338,35 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
               {/* Configuration Section */}
               <Box bg={useColorModeValue('gray.50', 'gray.700')} p={4} borderRadius="md">
                 <Text fontSize="md" fontWeight="semibold" mb={3} color={headingColor}>
-                  Report Configuration
+                  {t('reports.balanceSheet.configuration')}
                 </Text>
                 <SimpleGrid columns={[1, 2]} spacing={4}>
                   <FormControl>
                     <FormLabel fontSize="sm" color="blue.600" fontWeight="semibold">
-                      As Of Date
+                      {t('reports.balanceSheet.asOf')}
                     </FormLabel>
-                    <Input 
-                      type="date" 
-                      value={asOfDate} 
+                    <Input
+                      type="date"
+                      value={asOfDate}
                       onChange={(e) => setAsOfDate(e.target.value)}
                       size="sm"
                     />
                   </FormControl>
-                  
+
                   <FormControl>
                     <FormLabel fontSize="sm" display="flex" alignItems="center">
-                      Closed Period
+                      {t('reports.balanceSheet.closedPeriod')}
                       <Badge ml={2} colorScheme="blue" fontSize="xs">
-                        Quick Select
+                        {t('reports.balanceSheet.quickSelect')}
                       </Badge>
-                      <Tooltip label="Select from previously closed accounting periods or enter custom date">
+                      <Tooltip label={t('reports.balanceSheet.selectClosedPeriodTooltip')}>
                         <span>
                           <Icon as={FiInfo} ml={1} color="gray.500" boxSize={3} />
                         </span>
                       </Tooltip>
                     </FormLabel>
                     <Select
-                      placeholder="Select closed period date..."
+                      placeholder={t('reports.balanceSheet.selectClosedPeriodOptional')}
                       value=""
                       onChange={(e) => {
                         if (e.target.value) {
@@ -376,13 +380,13 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                       icon={loadingPeriods ? <Spinner size="xs" /> : undefined}
                     >
                       {loadingPeriods && (
-                        <option disabled>Loading closed periods...</option>
+                        <option disabled>{t('reports.balanceSheet.loadingClosedPeriods')}</option>
                       )}
-                      
+
                       {!loadingPeriods && closedPeriods.length === 0 && (
-                        <option disabled>No closed periods found</option>
+                        <option disabled>{t('reports.balanceSheet.noClosedPeriodsFound')}</option>
                       )}
-                      
+
                       {!loadingPeriods && closedPeriods.length > 0 && (
                         <>
                           {/* Group by category */}
@@ -401,7 +405,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                       )}
                     </Select>
                     <Text fontSize="xs" color={descriptionColor} mt={1}>
-                      Select from previously closed periods or enter custom date
+                      {t('reports.balanceSheet.selectClosedPeriodTooltip')}
                     </Text>
                   </FormControl>
                 </SimpleGrid>
@@ -415,12 +419,12 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                     leftIcon={<FiRefreshCw />}
                     onClick={generateBalanceSheetReport}
                     isLoading={loading}
-                    loadingText="Generating..."
+                    loadingText={t('common.generating') || 'Generating...'}
                     size="md"
                   >
-                    Generate Report
+                    {t('reports.generateReport') || 'Generate Report'}
                   </Button>
-                  
+
                   {balanceSheetData && (
                     <Button
                       variant="outline"
@@ -428,7 +432,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                       onClick={onExportModalOpen}
                       size="md"
                     >
-                      Export Options
+                      {t('reports.exportOptions')}
                     </Button>
                   )}
                 </HStack>
@@ -442,13 +446,13 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                         leftIcon={<FiFileText />}
                         onClick={handleExportCSV}
                         isLoading={exportingCSV}
-                        loadingText="Exporting..."
+                        loadingText={t('reports.exporting')}
                         size="sm"
                       >
                         CSV
                       </Button>
                     </Tooltip>
-                    
+
                     <Tooltip label="Export as PDF file">
                       <Button
                         colorScheme="red"
@@ -456,7 +460,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                         leftIcon={<FiFilePlus />}
                         onClick={handleExportPDF}
                         isLoading={exportingPDF}
-                        loadingText="Exporting..."
+                        loadingText={t('reports.exporting')}
                         size="sm"
                       >
                         PDF
@@ -477,10 +481,10 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                 <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
                 <VStack spacing={2}>
                   <Text fontSize="lg" fontWeight="medium" color={headingColor}>
-                    Generating Balance Sheet
+                    {t('reports.balanceSheet.generatingBalanceSheet')}
                   </Text>
                   <Text fontSize="sm" color={descriptionColor}>
-                    Fetching real-time data from SSOT journal system...
+                    {t('reports.modal.analyzingFinancialPosition')}
                   </Text>
                 </VStack>
               </VStack>
@@ -516,13 +520,13 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
               <CardBody textAlign="center">
                 <VStack spacing={2}>
                   <Text fontSize="xl" fontWeight="bold" color={headingColor}>
-                    {balanceSheetData.company?.name || companyName}
+                    {balanceSheetData.company?.name || t('reports.balanceSheet.companyName')}
                   </Text>
                   <Text fontSize="lg" fontWeight="semibold">
-                    Balance Sheet
+                    {t('reports.balanceSheet.enhancedTitle')}
                   </Text>
                   <Text fontSize="md" color={descriptionColor}>
-                    As of: {new Date(balanceSheetData.as_of_date).toLocaleDateString('id-ID')}
+                    {t('reports.balanceSheet.asOf')}: {new Date(balanceSheetData.as_of_date).toLocaleDateString('id-ID')}
                   </Text>
                   <Badge
                     colorScheme={balanceSheetData.is_balanced ? 'green' : 'red'}
@@ -533,12 +537,12 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                     {balanceSheetData.is_balanced ? (
                       <>
                         <Icon as={FiCheckCircle} mr={1} />
-                        Balanced
+                        {t('reports.balanceSheet.balancedCheck')}
                       </>
                     ) : (
                       <>
                         <Icon as={FiAlertTriangle} mr={1} />
-                        Not Balanced (Diff: {formatCurrency(balanceSheetData.balance_difference)})
+                        {t('reports.balanceSheet.notBalancedDiff', { amount: formatCurrency(balanceSheetData.balance_difference) })}
                       </>
                     )}
                   </Badge>
@@ -551,29 +555,29 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
               <Card bg="green.50" border="1px" borderColor="green.200">
                 <CardBody textAlign="center">
                   <VStack spacing={1}>
-                    <Text fontSize="sm" color="green.600">Total Assets</Text>
+                    <Text fontSize="sm" color="green.600">{t('reports.balanceSheet.totalAssets')}</Text>
                     <Text fontSize="2xl" fontWeight="bold" color="green.700">
                       {formatCurrency(balanceSheetData.assets?.total_assets || 0)}
                     </Text>
                   </VStack>
                 </CardBody>
               </Card>
-              
+
               <Card bg="orange.50" border="1px" borderColor="orange.200">
                 <CardBody textAlign="center">
                   <VStack spacing={1}>
-                    <Text fontSize="sm" color="orange.600">Total Liabilities</Text>
+                    <Text fontSize="sm" color="orange.600">{t('reports.balanceSheet.totalLiabilities')}</Text>
                     <Text fontSize="2xl" fontWeight="bold" color="orange.700">
                       {formatCurrency(balanceSheetData.liabilities?.total_liabilities || 0)}
                     </Text>
                   </VStack>
                 </CardBody>
               </Card>
-              
+
               <Card bg="blue.50" border="1px" borderColor="blue.200">
                 <CardBody textAlign="center">
                   <VStack spacing={1}>
-                    <Text fontSize="sm" color="blue.600">Total Equity</Text>
+                    <Text fontSize="sm" color="blue.600">{t('reports.balanceSheet.totalEquity')}</Text>
                     <Text fontSize="2xl" fontWeight="bold" color="blue.700">
                       {formatCurrency(balanceSheetData.equity?.total_equity || 0)}
                     </Text>
@@ -587,7 +591,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
               <VStack spacing={4} align="stretch">
                 <Divider />
                 <Text fontSize="lg" fontWeight="bold" color={headingColor}>
-                  Account Details
+                  {t('reports.balanceSheet.accountDetails')}
                 </Text>
 
                 {/* Assets Table */}
@@ -595,16 +599,16 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                   <Card bg={cardBg} border="1px" borderColor={borderColor}>
                     <CardHeader pb={2}>
                       <Text fontSize="md" fontWeight="bold" color="green.600">
-                        ASSETS
+                        {t('reports.assets').toUpperCase()}
                       </Text>
                     </CardHeader>
                     <CardBody pt={0}>
                       <Table size="sm" variant="simple">
                         <Thead>
                           <Tr>
-                            <Th>Account Code</Th>
-                            <Th>Account Name</Th>
-                            <Th isNumeric>Amount</Th>
+                            <Th>{t('reports.accountCode')}</Th>
+                            <Th>{t('reports.accountName')}</Th>
+                            <Th isNumeric>{t('reports.amount')}</Th>
                           </Tr>
                         </Thead>
                         <Tbody>
@@ -612,7 +616,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                           <Tr>
                             <Td colSpan={3}>
                               <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>
-                                Current Assets
+                                {t('reports.currentAssets')}
                               </Text>
                             </Td>
                           </Tr>
@@ -623,14 +627,14 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                               <Td isNumeric>{formatCurrency(item.amount, item.account_code, 'ASSET')}</Td>
                             </Tr>
                           ))}
-                          
+
                           {/* Non-Current Assets */}
                           {balanceSheetData.assets.non_current_assets?.items && (
                             <>
                               <Tr>
                                 <Td colSpan={3}>
                                   <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>
-                                    Non-Current Assets
+                                    {t('reports.balanceSheet.nonCurrentAssets')}
                                   </Text>
                                 </Td>
                               </Tr>
@@ -643,10 +647,10 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                               ))}
                             </>
                           )}
-                          
+
                           {/* Total Assets */}
                           <Tr bg="green.50">
-                            <Td fontWeight="bold">TOTAL ASSETS</Td>
+                            <Td fontWeight="bold">{t('reports.totalAssets').toUpperCase()}</Td>
                             <Td></Td>
                             <Td isNumeric fontWeight="bold">
                               {formatCurrency(balanceSheetData.assets?.total_assets || 0)}
@@ -662,7 +666,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                 <Card bg={cardBg} border="1px" borderColor={borderColor}>
                   <CardHeader pb={2}>
                     <Text fontSize="md" fontWeight="bold" color="orange.600">
-                      LIABILITIES & EQUITY
+                      {t('reports.liabilitiesAndEquity').toUpperCase()}
                     </Text>
                   </CardHeader>
                   <CardBody pt={0}>
@@ -681,7 +685,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                             <Tr>
                               <Td colSpan={3}>
                                 <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>
-                                  Current Liabilities
+                                  {t('reports.balanceSheet.currentLiabilities')}
                                 </Text>
                               </Td>
                             </Tr>
@@ -694,14 +698,14 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                             ))}
                           </>
                         )}
-                        
+
                         {/* Equity */}
                         {balanceSheetData.equity?.items && (
                           <>
                             <Tr>
                               <Td colSpan={3}>
                                 <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>
-                                  Equity
+                                  {t('reports.equity')}
                                 </Text>
                               </Td>
                             </Tr>
@@ -714,24 +718,24 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                             ))}
                           </>
                         )}
-                        
+
                         {/* Totals */}
                         <Tr bg="orange.50">
-                          <Td fontWeight="bold">TOTAL LIABILITIES</Td>
+                          <Td fontWeight="bold">{t('reports.totalLiabilities').toUpperCase()}</Td>
                           <Td></Td>
                           <Td isNumeric fontWeight="bold">
                             {formatCurrency(balanceSheetData.liabilities?.total_liabilities || 0)}
                           </Td>
                         </Tr>
                         <Tr bg="blue.50">
-                          <Td fontWeight="bold">TOTAL EQUITY</Td>
+                          <Td fontWeight="bold">{t('reports.totalEquity').toUpperCase()}</Td>
                           <Td></Td>
                           <Td isNumeric fontWeight="bold">
                             {formatCurrency(balanceSheetData.equity?.total_equity || 0)}
                           </Td>
                         </Tr>
                         <Tr bg="gray.100">
-                          <Td fontWeight="bold">TOTAL LIABILITIES + EQUITY</Td>
+                          <Td fontWeight="bold">{t('reports.totalLiabilitiesAndEquity').toUpperCase()}</Td>
                           <Td></Td>
                           <Td isNumeric fontWeight="bold">
                             {formatCurrency(balanceSheetData.total_liabilities_and_equity || 0)}
@@ -745,14 +749,13 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
             )}
 
             {/* Export Information */}
+            {/* Export Information */}
             <Alert status="info" borderRadius="md">
               <AlertIcon />
               <Box>
-                <AlertTitle>Export Ready!</AlertTitle>
+                <AlertTitle>{t('reports.exportReady')}</AlertTitle>
                 <AlertDescription>
-                  Your Balance Sheet is ready for export. Use the CSV button for spreadsheet analysis 
-                  or PDF button for professional reporting. Both formats include all account details 
-                  and are optimized for printing and sharing.
+                  {t('reports.exportReadyDesc')}
                 </AlertDescription>
               </Box>
             </Alert>
@@ -764,22 +767,22 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
       <Modal isOpen={isExportModalOpen} onClose={onExportModalClose} size="md">
         <ModalOverlay />
         <ModalContent>
-          <ModalHeader>Export Options</ModalHeader>
+          <ModalHeader>{t('reports.exportOptions')}</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={4} align="stretch">
               <FormControl>
-                <FormLabel>Company Name</FormLabel>
-                <Input 
-                  value={companyName} 
+                <FormLabel>{t('reports.companyName')}</FormLabel>
+                <Input
+                  value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Company Name for Export"
+                  placeholder={t('reports.companyNamePlaceholder')}
                 />
               </FormControl>
-              
+
               <FormControl>
                 <HStack justify="space-between">
-                  <FormLabel mb={0}>Include Account Details</FormLabel>
+                  <FormLabel mb={0}>{t('reports.includeAccountDetails')}</FormLabel>
                   <Switch
                     isChecked={includeAccountDetails}
                     onChange={(e) => setIncludeAccountDetails(e.target.checked)}
@@ -787,12 +790,12 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
                   />
                 </HStack>
                 <Text fontSize="sm" color={descriptionColor}>
-                  Include individual account breakdowns in the export
+                  {t('reports.includeAccountDetailsDesc')}
                 </Text>
               </FormControl>
 
               <VStack spacing={2} align="stretch">
-                <Text fontSize="sm" fontWeight="semibold">Export Formats:</Text>
+                <Text fontSize="sm" fontWeight="semibold">{t('reports.exportFormats')}</Text>
                 <HStack spacing={3}>
                   <Button
                     flex={1}

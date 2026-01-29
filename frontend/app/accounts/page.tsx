@@ -63,7 +63,9 @@ import AccountTreeView from '@/components/accounts/AccountTreeView';
 import AdminDeleteDialog from '@/components/accounts/AdminDeleteDialog';
 import { Account, AccountCreateRequest, AccountUpdateRequest } from '@/types/account';
 import accountService from '@/services/accountService';
-import { API_ENDPOINTS } from '@/config/api';
+import { API_ENDPOINTS, API_BASE_URL } from '@/config/api'; // Ensure API_BASE_URL is imported or use relative path
+import CompanyTypeSelection from '@/components/onboarding/CompanyTypeSelection';
+import axios from 'axios';
 
 const AccountsPage = () => {
   const { token } = useAuth();
@@ -76,7 +78,7 @@ const AccountsPage = () => {
     canExport,
     loading: permissionLoading
   } = useModulePermissions('accounts');
-  
+
   const [hierarchyAccounts, setHierarchyAccounts] = useState<Account[]>([]);
   const [flatAccounts, setFlatAccounts] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -84,7 +86,11 @@ const AccountsPage = () => {
   const [tabIndex, setTabIndex] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  
+
+  // New state for Company Type check
+  const [checkingSettings, setCheckingSettings] = useState(true);
+  const [companyType, setCompanyType] = useState<string | null>(null);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -92,7 +98,7 @@ const AccountsPage = () => {
   const [isAdminDeleteOpen, setIsAdminDeleteOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState<Account | null>(null);
   const toast = useToast();
-  
+
   // Theme-aware colors (hooks must be called unconditionally and before any early returns)
   const headingColor = useColorModeValue('gray.800', 'var(--text-primary)');
   const cardBg = useColorModeValue('white', 'var(--bg-secondary)');
@@ -112,25 +118,25 @@ const AccountsPage = () => {
   // Helper function to flatten hierarchy for List View
   const flattenHierarchy = (accounts: Account[]): Account[] => {
     const result: Account[] = [];
-    
+
     const flatten = (accounts: Account[], level: number = 0) => {
       accounts.sort((a, b) => a.code.localeCompare(b.code));
-      
+
       for (const account of accounts) {
-        const accountWithLevel = { 
-          ...account, 
+        const accountWithLevel = {
+          ...account,
           hierarchyLevel: level,
           // Clear children to avoid circular references in JSON
-          children: undefined 
+          children: undefined
         };
         result.push(accountWithLevel);
-        
+
         if (account.children && account.children.length > 0) {
           flatten(account.children, level + 1);
         }
       }
     };
-    
+
     flatten(accounts);
     return result;
   };
@@ -141,7 +147,7 @@ const AccountsPage = () => {
   // Unified fetch function using only hierarchy endpoint
   const fetchAccountData = async () => {
     if (!token) return;
-    
+
     setIsLoading(true);
     try {
       const hierarchyData = await accountService.getAccountHierarchy(token);
@@ -150,7 +156,7 @@ const AccountsPage = () => {
 
       // 🔧 SIMPLE: Use backend data directly without ANY modifications
       console.log('✅ Using backend data directly (no processing)');
-      
+
       setHierarchyAccounts(safeHierarchy);
       setFlatAccounts(flattenHierarchy(safeHierarchy));
       setError(null);
@@ -165,14 +171,45 @@ const AccountsPage = () => {
   // Load accounts on component mount
   useEffect(() => {
     if (token) {
-      fetchAccountData();
+      checkCompanySettings();
     }
   }, [token]);
+
+  const checkCompanySettings = async () => {
+    setCheckingSettings(true);
+    try {
+      // Fetch settings to check company_type
+      const response = await axios.get(`${API_BASE_URL || 'http://localhost:8080/api/v1'}/settings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      const settings = response.data.data;
+      if (settings.company_type) {
+        setCompanyType(settings.company_type);
+        fetchAccountData(); // Only fetch accounts if type is set
+      } else {
+        setCompanyType(null);
+        setIsLoading(false); // Stop loading accounts main spinner
+      }
+    } catch (err) {
+      console.error('Failed to fetch settings:', err);
+      // Fallback: try fetching accounts anyway? No, safer to fail or assume established.
+      // But for robust UX, let's assume if it fails, maybe we just show empty or error.
+      setError('Failed to check company configuration.');
+      setIsLoading(false);
+    } finally {
+      setCheckingSettings(false);
+    }
+  };
+
+  const handleSetupSuccess = () => {
+    checkCompanySettings(); // Re-check settings to proceed
+  };
 
   // Handle fix account header status
   const handleFixHeaderStatus = async () => {
     if (!token) return;
-    
+
     try {
       const response = await fetch(`${API_ENDPOINTS.ACCOUNTS.FIX_HEADER_STATUS}`, {
         method: 'POST',
@@ -181,14 +218,14 @@ const AccountsPage = () => {
           'Content-Type': 'application/json'
         }
       });
-      
+
       if (!response.ok) {
         throw new Error('Failed to fix header status');
       }
-      
+
       const result = await response.json();
       console.log('Header status fix result:', result);
-      
+
       toast({
         title: 'Header Status Fixed',
         description: 'Account hierarchy has been corrected successfully.',
@@ -196,7 +233,7 @@ const AccountsPage = () => {
         duration: 3000,
         isClosable: true,
       });
-      
+
       // Refresh accounts list
       fetchAccountData();
     } catch (err: any) {
@@ -215,10 +252,10 @@ const AccountsPage = () => {
   const handleSubmit = async (accountData: AccountCreateRequest | AccountUpdateRequest) => {
     console.log('handleSubmit called with data:', accountData);
     console.log('selectedAccount:', selectedAccount);
-    
+
     setIsSubmitting(true);
     setError(null);
-    
+
     try {
       if (selectedAccount) {
         // Update existing account
@@ -246,10 +283,10 @@ const AccountsPage = () => {
           isClosable: true,
         });
       }
-      
+
       // Refresh accounts list
       fetchAccountData();
-      
+
       // Close modal
       setIsModalOpen(false);
       setSelectedAccount(null);
@@ -275,7 +312,7 @@ const AccountsPage = () => {
     if (!window.confirm(`Are you sure you want to delete account "${account.name}"?`)) {
       return;
     }
-    
+
     try {
       await accountService.deleteAccount(token!, account.code);
       toast({
@@ -285,7 +322,7 @@ const AccountsPage = () => {
         duration: 3000,
         isClosable: true,
       });
-      
+
       // Refresh accounts list
       fetchAccountData();
     } catch (err: any) {
@@ -315,11 +352,11 @@ const AccountsPage = () => {
   // Perform admin delete with options
   const performAdminDelete = async (options: { cascade_delete: boolean; new_parent_id?: number }) => {
     if (!accountToDelete || !token) return;
-    
+
     setIsSubmitting(true);
     try {
       const result = await accountService.adminDeleteAccount(token, accountToDelete.code, options);
-      
+
       toast({
         title: 'Account deleted (Admin)',
         description: `Account has been deleted successfully. ${options.cascade_delete ? 'All child accounts were also deleted.' : 'Child accounts were preserved.'}`,
@@ -327,7 +364,7 @@ const AccountsPage = () => {
         duration: 5000,
         isClosable: true,
       });
-      
+
       // Close dialog and refresh data
       setIsAdminDeleteOpen(false);
       setAccountToDelete(null);
@@ -435,7 +472,7 @@ const AccountsPage = () => {
     setIsHeaderMode(false);
     setIsModalOpen(true);
   };
-  
+
   // Open modal for creating a header account
   const handleCreateHeader = () => {
     setSelectedAccount(null);
@@ -454,7 +491,7 @@ const AccountsPage = () => {
   // Filter accounts based on search and type
   const filteredAccounts = flatAccounts.filter(account => {
     const matchesSearch = account.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         account.code.toLowerCase().includes(searchTerm.toLowerCase());
+      account.code.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = !typeFilter || account.type === typeFilter;
     return matchesSearch && matchesType;
   });
@@ -465,15 +502,24 @@ const AccountsPage = () => {
   const hierarchicalAccounts = filteredAccounts;
 
   // Show loading while checking permissions
-  if (permissionLoading) {
+  if (permissionLoading || checkingSettings) {
     return (
       <SimpleLayout>
         <Flex justify="center" align="center" minH="60vh">
           <VStack spacing={4}>
             <Spinner size="xl" color="blue.500" thickness="4px" />
-            <Text>Checking permissions...</Text>
+            <Text>{checkingSettings ? 'Checking company configuration...' : 'Checking permissions...'}</Text>
           </VStack>
         </Flex>
+      </SimpleLayout>
+    );
+  }
+
+  // Show Setup Wizard if company type not set
+  if (!companyType && canView) { // Only show if they have view permission, effectively "access"
+    return (
+      <SimpleLayout>
+        <CompanyTypeSelection onSuccess={handleSetupSuccess} />
       </SimpleLayout>
     );
   }
@@ -528,9 +574,9 @@ const AccountsPage = () => {
                         <ListItem><Code>5xxx</Code> - {t('accounts.guide.expenses')}</ListItem>
                       </UnorderedList>
                     </Box>
-                    
+
                     <Divider />
-                    
+
                     <Box>
                       <Text fontWeight="semibold" color="green.600" mb={2}>✅ {t('accounts.guide.requiredAccounts')}</Text>
                       <UnorderedList spacing={1} fontSize="sm">
@@ -544,9 +590,9 @@ const AccountsPage = () => {
                         <ListItem><Code>5101</Code> - {t('accounts.guide.costOfGoodsSold')}</ListItem>
                       </UnorderedList>
                     </Box>
-                    
+
                     <Divider />
-                    
+
                     <Box>
                       <Text fontWeight="semibold" color="orange.600" mb={2}>⚠️ {t('accounts.guide.importantTips')}</Text>
                       <UnorderedList spacing={1} fontSize="sm">
@@ -556,9 +602,9 @@ const AccountsPage = () => {
                         <ListItem>{t('accounts.guide.tip4')}</ListItem>
                       </UnorderedList>
                     </Box>
-                    
+
                     <Divider />
-                    
+
                     <Box>
                       <Text fontWeight="semibold" color="purple.600" mb={2}>🔧 {t('accounts.guide.ifDeleted')}</Text>
                       <Text fontSize="sm" mb={2} color="red.600">
@@ -582,7 +628,7 @@ const AccountsPage = () => {
                         <ListItem>{t('accounts.guide.recreate5')}</ListItem>
                       </UnorderedList>
                     </Box>
-                    
+
                     <Box bg="blue.50" p={3} borderRadius="md">
                       <Text fontSize="xs" color="blue.800">
                         💡 <strong>{t('accounts.guide.proTip')}</strong>
@@ -595,8 +641,8 @@ const AccountsPage = () => {
           </HStack>
           {canCreate && (
             <HStack spacing={3}>
-              <Tooltip 
-                label={t('accounts.guide.headerTooltip')} 
+              <Tooltip
+                label={t('accounts.guide.headerTooltip')}
                 placement="bottom"
                 hasArrow
               >
@@ -610,7 +656,7 @@ const AccountsPage = () => {
                   py={2}
                   borderRadius="md"
                   fontWeight="medium"
-                  _hover={{ 
+                  _hover={{
                     transform: 'translateY(-1px)',
                     boxShadow: 'md'
                   }}
@@ -618,8 +664,8 @@ const AccountsPage = () => {
                   {t('accounts.addHeaderAccount')}
                 </Button>
               </Tooltip>
-              <Tooltip 
-                label={t('accounts.guide.accountTooltip')} 
+              <Tooltip
+                label={t('accounts.guide.accountTooltip')}
                 placement="bottom"
                 hasArrow
               >
@@ -632,7 +678,7 @@ const AccountsPage = () => {
                   py={2}
                   borderRadius="md"
                   fontWeight="medium"
-                  _hover={{ 
+                  _hover={{
                     transform: 'translateY(-1px)',
                     boxShadow: 'lg'
                   }}
@@ -643,7 +689,7 @@ const AccountsPage = () => {
             </HStack>
           )}
         </Flex>
-        
+
         {/* Info Banner */}
         <Alert status="warning" mb={4} borderRadius="md" variant="left-accent">
           <AlertIcon />
@@ -654,7 +700,7 @@ const AccountsPage = () => {
             </AlertDescription>
           </Box>
         </Alert>
-        
+
         {error && (
           <Alert status="error" mb={4}>
             <AlertIcon />
@@ -663,27 +709,27 @@ const AccountsPage = () => {
           </Alert>
         )}
 
-          <Box
-            bg={cardBg}
-            borderRadius="lg"
-            boxShadow={cardShadow}
-            overflow="hidden"
-            border="1px"
-            borderColor={borderColor}
-            className="table-container"
-            transition="all 0.3s ease"
-          >
-          <Tabs 
-            index={tabIndex} 
+        <Box
+          bg={cardBg}
+          borderRadius="lg"
+          boxShadow={cardShadow}
+          overflow="hidden"
+          border="1px"
+          borderColor={borderColor}
+          className="table-container"
+          transition="all 0.3s ease"
+        >
+          <Tabs
+            index={tabIndex}
             onChange={setTabIndex}
             variant="unstyled"
           >
             <TabList borderBottom="1px" borderColor={tabBorderColor} px={4}>
-              <Tab 
-                _selected={{ 
-                  color: 'blue.500', 
-                  borderBottom: '2px solid', 
-                  borderColor: 'blue.500' 
+              <Tab
+                _selected={{
+                  color: 'blue.500',
+                  borderBottom: '2px solid',
+                  borderColor: 'blue.500'
                 }}
                 pb={4}
                 pt={4}
@@ -692,11 +738,11 @@ const AccountsPage = () => {
               >
                 {t('accounts.listView')}
               </Tab>
-              <Tab 
-                _selected={{ 
-                  color: 'blue.500', 
-                  borderBottom: '2px solid', 
-                  borderColor: 'blue.500' 
+              <Tab
+                _selected={{
+                  color: 'blue.500',
+                  borderBottom: '2px solid',
+                  borderColor: 'blue.500'
                 }}
                 pb={4}
                 pt={4}
@@ -735,27 +781,27 @@ const AccountsPage = () => {
                 )}
               </TabPanel>
 
-            <TabPanel px={0}>
-              {isLoading ? (
-                <Flex justify="center" py={10}>
-                  <Spinner size="lg" />
-                </Flex>
-              ) : (
-                <AccountTreeView
-                  accounts={hierarchyAccounts}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  onAdminDelete={handleAdminDelete}
-                  showActions={true}
-                  showBalance={true}
-                />
-              )}
-            </TabPanel>
+              <TabPanel px={0}>
+                {isLoading ? (
+                  <Flex justify="center" py={10}>
+                    <Spinner size="lg" />
+                  </Flex>
+                ) : (
+                  <AccountTreeView
+                    accounts={hierarchyAccounts}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    onAdminDelete={handleAdminDelete}
+                    showActions={true}
+                    showBalance={true}
+                  />
+                )}
+              </TabPanel>
 
-          </TabPanels>
-        </Tabs>
+            </TabPanels>
+          </Tabs>
         </Box>
-        
+
         <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} size="lg">
           <ModalOverlay />
           <ModalContent>
@@ -775,7 +821,7 @@ const AccountsPage = () => {
             </ModalBody>
           </ModalContent>
         </Modal>
-        
+
         {/* Admin Delete Dialog */}
         <AdminDeleteDialog
           isOpen={isAdminDeleteOpen}

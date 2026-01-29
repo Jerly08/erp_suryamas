@@ -34,6 +34,7 @@ import {
 import { CashBank, DepositRequest, WithdrawalRequest, ManualJournalEntry } from '@/services/cashbankService';
 import cashbankService from '@/services/cashbankService';
 import JournalEntryForm from './JournalEntryForm';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface DepositWithdrawalFormProps {
   isOpen: boolean;
@@ -61,8 +62,10 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [journalEntries, setJournalEntries] = useState<ManualJournalEntry[]>([]);
   const [manualJournalMode, setManualJournalMode] = useState(false);
+
   const [journalErrors, setJournalErrors] = useState<{ [key: number]: string }>({});
   const toast = useToast();
+  const { t } = useTranslation();
 
   const handleInputChange = (field: string, value: any) => {
     setFormData(prev => ({
@@ -74,29 +77,29 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
 
   const validateJournalEntries = (): boolean => {
     if (!manualJournalMode) return true;
-    
+
     const errors: { [key: number]: string } = {};
     let hasErrors = false;
 
     journalEntries.forEach((entry, index) => {
       const entryErrors: string[] = [];
-      
+
       if (!entry.account_id || entry.account_id === 0) {
         entryErrors.push('Account is required');
       }
-      
+
       if (!entry.description || entry.description.trim() === '') {
         entryErrors.push('Description is required');
       }
-      
+
       if (entry.debit_amount === 0 && entry.credit_amount === 0) {
         entryErrors.push('Either debit or credit amount must be greater than zero');
       }
-      
+
       if (entry.debit_amount > 0 && entry.credit_amount > 0) {
         entryErrors.push('Entry cannot have both debit and credit amounts');
       }
-      
+
       if (entryErrors.length > 0) {
         errors[index] = entryErrors.join(', ');
         hasErrors = true;
@@ -106,7 +109,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
     // Check if debits equal credits
     const totalDebit = journalEntries.reduce((sum, entry) => sum + entry.debit_amount, 0);
     const totalCredit = journalEntries.reduce((sum, entry) => sum + entry.credit_amount, 0);
-    
+
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
       setError('Journal entries are not balanced. Total debits must equal total credits.');
       hasErrors = true;
@@ -163,7 +166,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         if (!validateJournalEntries()) {
           return; // Validation failed, errors are already set
         }
-        
+
         if (journalEntries.length === 0) {
           setError('At least one journal entry is required in manual mode');
           return;
@@ -184,9 +187,8 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         await cashbankService.processDeposit(requestData as DepositRequest);
         toast({
           title: 'Deposit Successful',
-          description: `${account.currency} ${formData.amount.toLocaleString('id-ID')} has been deposited to ${account.name}${
-            manualJournalMode ? ' with manual journal entries' : ''
-          }`,
+          description: `${account.currency} ${formData.amount.toLocaleString('id-ID')} has been deposited to ${account.name}${manualJournalMode ? ' with manual journal entries' : ''
+            }`,
           status: 'success',
           duration: 3000,
           isClosable: true,
@@ -195,9 +197,8 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         await cashbankService.processWithdrawal(requestData as WithdrawalRequest);
         toast({
           title: 'Withdrawal Successful',
-          description: `${account.currency} ${formData.amount.toLocaleString('id-ID')} has been withdrawn from ${account.name}${
-            manualJournalMode ? ' with manual journal entries' : ''
-          }`,
+          description: `${account.currency} ${formData.amount.toLocaleString('id-ID')} has been withdrawn from ${account.name}${manualJournalMode ? ' with manual journal entries' : ''
+            }`,
           status: 'success',
           duration: 3000,
           isClosable: true,
@@ -208,16 +209,16 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
       onClose();
     } catch (err: any) {
       console.error(`Error processing ${mode}:`, err);
-      
+
       let errorMessage = err.response?.data?.details || err.message || `Failed to process ${mode}`;
       let errorTitle = 'Transaction Failed';
-      
+
       // Handle timeout errors specifically
       if (err.code === 'ECONNABORTED' || err.message?.includes('timeout') || err.message?.includes('exceeded')) {
         errorTitle = 'Transaction Timeout';
         errorMessage = `The ${mode} operation timed out. This might happen due to high server load. Please wait a moment and check your account balance before retrying.`;
       }
-      
+
       setError(errorMessage);
       toast({
         title: errorTitle,
@@ -247,7 +248,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
 
   if (!account) return null;
 
-  const newBalance = mode === 'deposit' 
+  const newBalance = mode === 'deposit'
     ? account.balance + formData.amount
     : account.balance - formData.amount;
 
@@ -260,7 +261,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             <Text fontSize="lg">{mode === 'deposit' ? '💰' : '💸'}</Text>
             <Box>
               <Text fontSize="lg" fontWeight="bold">
-                {mode === 'deposit' ? 'Make Deposit' : 'Make Withdrawal'}
+                {mode === 'deposit' ? t('cashBank.makeDeposit') : t('cashBank.makeWithdrawal')}
               </Text>
               <Text fontSize="sm" color="gray.500" fontFamily="mono">
                 {account.name} ({account.code})
@@ -268,7 +269,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             </Box>
           </Flex>
         </ModalHeader>
-        
+
         <ModalBody>
           {error && (
             <Alert status="error" mb={4}>
@@ -281,7 +282,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             {/* Account Information */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
-                💼 Account Information
+                💼 {t('cashBank.accountInformation')}
               </Text>
               <Box bg="gray.50" p={4} borderRadius="md">
                 <Flex justify="space-between" align="center" mb={2}>
@@ -293,10 +294,10 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                     {account.type}
                   </Badge>
                 </Flex>
-                
+
                 <Stat>
-                  <StatLabel>Current Balance</StatLabel>
-                  <StatNumber 
+                  <StatLabel>{t('cashBank.currentBalance')}</StatLabel>
+                  <StatNumber
                     color={account.balance < 0 ? 'red.500' : 'green.600'}
                     fontFamily="mono"
                   >
@@ -304,8 +305,8 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                     {account.balance < 0 && ' (Dr)'}
                   </StatNumber>
                   <StatHelpText>
-                    {account.balance < 0 ? '⚠️ Overdraft' : 
-                     account.balance > 0 ? '✅ Available' : '➖ Zero Balance'}
+                    {account.balance < 0 ? '⚠️ Overdraft' :
+                      account.balance > 0 ? '✅ Available' : '➖ Zero Balance'}
                   </StatHelpText>
                 </Stat>
               </Box>
@@ -314,12 +315,12 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             {/* Transaction Form */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
-                📝 Transaction Details
+                📝 {t('cashBank.transactionDetails')}
               </Text>
-              
+
               <VStack spacing={4} align="stretch">
                 <FormControl isRequired>
-                  <FormLabel>Transaction Date</FormLabel>
+                  <FormLabel>{t('payments.form.paymentDate')}</FormLabel>
                   <Input
                     type="date"
                     value={formData.date}
@@ -328,7 +329,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                 </FormControl>
 
                 <FormControl isRequired>
-                  <FormLabel>Amount ({account.currency})</FormLabel>
+                  <FormLabel>{t('payments.form.amount')} ({account.currency})</FormLabel>
                   <NumberInput
                     value={formData.amount}
                     onChange={(_, value) => handleInputChange('amount', value || 0)}
@@ -349,20 +350,20 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                 </FormControl>
 
                 <FormControl>
-                  <FormLabel>Reference</FormLabel>
+                  <FormLabel>{t('payments.form.referenceNumber')}</FormLabel>
                   <Input
                     value={formData.reference}
                     onChange={(e) => handleInputChange('reference', e.target.value)}
-                    placeholder="e.g., Receipt #123, Bank slip, etc."
+                    placeholder={t('payments.placeholders.referenceNumber')}
                   />
                 </FormControl>
 
                 <FormControl>
-                  <FormLabel>Notes</FormLabel>
+                  <FormLabel>{t('payments.form.notes')}</FormLabel>
                   <Textarea
                     value={formData.notes}
                     onChange={(e) => handleInputChange('notes', e.target.value)}
-                    placeholder="Optional transaction notes"
+                    placeholder={t('payments.placeholders.notes')}
                     rows={3}
                   />
                 </FormControl>
@@ -411,16 +412,16 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
 
         <ModalFooter>
           <Button variant="ghost" mr={3} onClick={handleClose} isDisabled={loading}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button
             colorScheme={mode === 'deposit' ? 'green' : 'orange'}
             onClick={handleSubmit}
             isLoading={loading}
-            loadingText={`Processing ${mode}...`}
+            loadingText={t('common.processing')}
             isDisabled={formData.amount <= 0 || (mode === 'withdrawal' && formData.amount > account.balance)}
           >
-            {mode === 'deposit' ? 'Process Deposit' : 'Process Withdrawal'}
+            {mode === 'deposit' ? t('cashBank.processDeposit') : t('cashBank.processWithdrawal')}
           </Button>
         </ModalFooter>
       </ModalContent>

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/utils"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -68,8 +69,11 @@ func (c *SSOTProfitLossController) GetSSOTProfitLoss(ctx *gin.Context) {
 		return
 	}
 
+	// Get language setting from database
+	language := utils.GetUserLanguageFromSettings(c.db)
+
 	// Send data in the format the frontend expects (sections format)
-	responseData := c.TransformToFrontendFormat(ssotData)
+	responseData := c.TransformToFrontendFormat(ssotData, language)
 	
 	// Log response data for debugging
 	log.Printf("P&L Response data: %+v", responseData)
@@ -164,7 +168,7 @@ case "excel", "csv":
 }
 
 // TransformToFrontendFormat transforms SSOT data to the format expected by EnhancedProfitLossModal
-func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.SSOTProfitLossData) gin.H {
+func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.SSOTProfitLossData, language string) gin.H {
 	sections := []gin.H{}
 	
 	// 1. REVENUE Section
@@ -201,7 +205,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		} else if ssotData.Revenue.TotalRevenue > 0 {
 			// If no detailed items but has total revenue, create a generic item
 			revenueItems = append(revenueItems, gin.H{
-				"name":         "Pendapatan Penjualan",
+				"name":         utils.T("sales_revenue", language),
 				"amount":       ssotData.Revenue.TotalRevenue,
 				"account_code": "4101",
 			})
@@ -214,7 +218,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		}
 		
 		sections = append(sections, gin.H{
-			"name":  "REVENUE",
+			"name":  utils.T("revenue", language),
 			"total": actualTotal,  // Use actual total from deduplicated items
 			"items": revenueItems,
 		})
@@ -228,7 +232,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 			materialItems := c.filterItemsByPrefix(ssotData.COGS.Items, "510")
 			if len(materialItems) > 0 {
 				cogsSubsections = append(cogsSubsections, gin.H{
-					"name":  "Direct Materials",
+					"name":  utils.T("direct_materials", language),
 					"total": ssotData.COGS.DirectMaterials,
 					"items": materialItems,
 				})
@@ -239,7 +243,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 			laborItems := c.filterItemsByPrefix(ssotData.COGS.Items, "511")
 			if len(laborItems) > 0 {
 				cogsSubsections = append(cogsSubsections, gin.H{
-					"name":  "Direct Labor",
+					"name":  utils.T("direct_labor", language),
 					"total": ssotData.COGS.DirectLabor,
 					"items": laborItems,
 				})
@@ -250,7 +254,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 			mfgItems := c.filterItemsByPrefix(ssotData.COGS.Items, "512")
 			if len(mfgItems) > 0 {
 				cogsSubsections = append(cogsSubsections, gin.H{
-					"name":  "Manufacturing Overhead",
+					"name":  utils.T("manufacturing_overhead", language),
 					"total": ssotData.COGS.Manufacturing,
 					"items": mfgItems,
 				})
@@ -287,7 +291,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 			
 			if len(otherItems) > 0 {
 				cogsSubsections = append(cogsSubsections, gin.H{
-					"name":  "Other COGS",
+					"name":  utils.T("other_cogs", language),
 					"total": ssotData.COGS.OtherCOGS,
 					"items": otherItems,
 				})
@@ -295,7 +299,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		}
 		
 		sections = append(sections, gin.H{
-			"name":        "COST OF GOODS SOLD",
+			"name":        utils.T("cost_of_goods_sold", language),
 			"total":       ssotData.COGS.TotalCOGS,
 			"subsections": cogsSubsections,
 		})
@@ -303,17 +307,17 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 
 	// 3. GROSS PROFIT Section (calculated)
 	sections = append(sections, gin.H{
-		"name":          "GROSS PROFIT",
+		"name":          utils.T("gross_profit", language),
 		"total":         ssotData.GrossProfit,
 		"is_calculated": true,
 		"items": []gin.H{
 			{
-				"name":          "Gross Profit",
+				"name":          utils.T("gross_profit_label", language),
 				"amount":        ssotData.GrossProfit,
 				"is_percentage": false,
 			},
 			{
-				"name":          "Gross Profit Margin",
+				"name":          utils.T("gross_profit_margin", language),
 				"amount":        ssotData.GrossProfitMargin,
 				"is_percentage": true,
 			},
@@ -327,7 +331,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		if ssotData.OperatingExpenses.Administrative.Subtotal != 0 {
 			adminItems := c.deduplicateItems(ssotData.OperatingExpenses.Administrative.Items)
 			opexSubsections = append(opexSubsections, gin.H{
-				"name":  "Administrative Expenses",
+				"name":  utils.T("administrative_expenses", language),
 				"total": ssotData.OperatingExpenses.Administrative.Subtotal,
 				"items": adminItems,
 			})
@@ -336,7 +340,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		if ssotData.OperatingExpenses.SellingMarketing.Subtotal != 0 {
 			sellItems := c.deduplicateItems(ssotData.OperatingExpenses.SellingMarketing.Items)
 			opexSubsections = append(opexSubsections, gin.H{
-				"name":  "Selling & Marketing",
+				"name":  utils.T("selling_marketing", language),
 				"total": ssotData.OperatingExpenses.SellingMarketing.Subtotal,
 				"items": sellItems,
 			})
@@ -345,14 +349,14 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		if ssotData.OperatingExpenses.General.Subtotal != 0 {
 			genItems := c.deduplicateItems(ssotData.OperatingExpenses.General.Items)
 			opexSubsections = append(opexSubsections, gin.H{
-				"name":  "General Expenses",
+				"name":  utils.T("general_expenses", language),
 				"total": ssotData.OperatingExpenses.General.Subtotal,
 				"items": genItems,
 			})
 		}
 		
 		sections = append(sections, gin.H{
-			"name":        "OPERATING EXPENSES",
+			"name":        utils.T("operating_expenses", language),
 			"total":       ssotData.OperatingExpenses.TotalOpEx,
 			"subsections": opexSubsections,
 		})
@@ -360,17 +364,17 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 
 	// 5. OPERATING INCOME Section (calculated)
 	sections = append(sections, gin.H{
-		"name":          "OPERATING INCOME",
+		"name":          utils.T("operating_income", language),
 		"total":         ssotData.OperatingIncome,
 		"is_calculated": true,
 		"items": []gin.H{
 			{
-				"name":          "Operating Income",
+				"name":          utils.T("operating_income_label", language),
 				"amount":        ssotData.OperatingIncome,
 				"is_percentage": false,
 			},
 			{
-				"name":          "Operating Margin",
+				"name":          utils.T("operating_margin", language),
 				"amount":        ssotData.OperatingMargin,
 				"is_percentage": true,
 			},
@@ -382,19 +386,19 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		otherItems := []gin.H{}
 		if ssotData.OtherIncome != 0 {
 			otherItems = append(otherItems, gin.H{
-				"name":   "Other Income",
+				"name":   utils.T("other_income", language),
 				"amount": ssotData.OtherIncome,
 			})
 		}
 		if ssotData.OtherExpenses != 0 {
 			otherItems = append(otherItems, gin.H{
-				"name":   "Other Expenses",
+				"name":   utils.T("other_expenses", language),
 				"amount": ssotData.OtherExpenses,
 			})
 		}
 		
 		sections = append(sections, gin.H{
-			"name":  "OTHER INCOME/EXPENSES",
+			"name":  utils.T("other_income_expenses", language),
 			"total": ssotData.OtherIncome - ssotData.OtherExpenses,
 			"items": otherItems,
 		})
@@ -402,25 +406,25 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 
 	// 7. NET INCOME Section (calculated)
 	sections = append(sections, gin.H{
-		"name":          "NET INCOME",
+		"name":          utils.T("net_income", language),
 		"total":         ssotData.NetIncome,
 		"is_calculated": true,
 		"items": []gin.H{
 			{
-				"name":   "Income Before Tax",
+				"name":   utils.T("income_before_tax", language),
 				"amount": ssotData.IncomeBeforeTax,
 			},
 			{
-				"name":   "Tax Expense (25%)",
+				"name":   utils.T("tax_expense", language) + " (25%)",
 				"amount": ssotData.TaxExpense,
 			},
 			{
-				"name":          "Net Income",
+				"name":          utils.T("net_income_label", language),
 				"amount":        ssotData.NetIncome,
 				"is_percentage": false,
 			},
 			{
-				"name":          "Net Income Margin",
+				"name":          utils.T("net_income_margin", language),
 				"amount":        ssotData.NetIncomeMargin,
 				"is_percentage": true,
 			},
@@ -462,7 +466,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 	
 	// Create the frontend-compatible response
 	return gin.H{
-		"title":   "Enhanced Profit and Loss Statement",
+		"title":   utils.T("enhanced_profit_loss", language),
 		"period":  ssotData.StartDate.Format("2006-01-02") + " - " + ssotData.EndDate.Format("2006-01-02"),
 		"company": gin.H{
 			"name":    ssotData.Company.Name,

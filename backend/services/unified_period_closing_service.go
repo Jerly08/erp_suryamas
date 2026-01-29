@@ -35,8 +35,8 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// 1. Get retained earnings account
 		var retainedEarnings models.Account
-		if err := tx.Where("code = ? AND type = ?", "3201", "EQUITY").First(&retainedEarnings).Error; err != nil {
-			return fmt.Errorf("retained earnings account (3201) not found: %v", err)
+		if err := tx.Where("code = ? AND type = ?", "3102", "EQUITY").First(&retainedEarnings).Error; err != nil {
+			return fmt.Errorf("retained earnings account (3102) not found: %v", err)
 		}
 
 		// 2. Get the last closed period (for logging & validation only)
@@ -376,8 +376,8 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 
 	// 1. Retained earnings account
 	var retainedEarnings models.Account
-	if err := tx.Where("code = ? AND type = ?", "3201", models.AccountTypeEquity).First(&retainedEarnings).Error; err != nil {
-		return nil, fmt.Errorf("retained earnings account (3201) not found: %v", err)
+	if err := tx.Where("code = ? AND type = ?", "3102", models.AccountTypeEquity).First(&retainedEarnings).Error; err != nil {
+		return nil, fmt.Errorf("retained earnings account (3102) not found: %v", err)
 	}
 
 	// 2. Info last closed period (untuk warning & auto-detection di UI)
@@ -590,20 +590,28 @@ func (s *UnifiedPeriodClosingService) GetLastClosingInfo(ctx context.Context) (m
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			// Belum pernah closing sama sekali → cari tanggal transaksi pertama dari SSOT
-			var earliestTxn time.Time
+			var count int64
 			if err := tx.Model(&models.SSOTJournalEntry{}).
 				Where("status = ? AND source_type != ?", models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
-				Select("MIN(entry_date)").
-				Scan(&earliestTxn).Error; err != nil {
-				return nil, fmt.Errorf("failed to query earliest transaction date: %v", err)
+				Count(&count).Error; err != nil {
+				return nil, fmt.Errorf("failed to count transactions: %v", err)
 			}
 
 			resp := map[string]interface{}{
 				"has_previous_closing": false,
 			}
-			if !earliestTxn.IsZero() {
+
+			if count > 0 {
+				var earliestTxn time.Time
+				if err := tx.Model(&models.SSOTJournalEntry{}).
+					Where("status = ? AND source_type != ?", models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+					Select("MIN(entry_date)").
+					Scan(&earliestTxn).Error; err != nil {
+					return nil, fmt.Errorf("failed to query earliest transaction date: %v", err)
+				}
 				resp["period_start_date"] = earliestTxn.Format("2006-01-02")
 			}
+			
 			return resp, nil
 		}
 		return nil, fmt.Errorf("failed to query last closing period: %v", err)

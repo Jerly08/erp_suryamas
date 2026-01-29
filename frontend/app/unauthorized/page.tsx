@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   Box,
   Flex,
@@ -17,26 +18,27 @@ import { FiXCircle, FiLayout, FiLogOut, FiRefreshCw } from 'react-icons/fi';
 
 export default function UnauthorizedPage() {
   const { user, logout } = useAuth();
+  const { t } = useTranslation();
   const router = useRouter();
   const toast = useToast();
 
   const handleClearAuthAndRelogin = () => {
     // Clear all auth data
     logout();
-    
+
     // Clear localStorage completely
     if (typeof window !== 'undefined') {
       localStorage.clear();
     }
-    
+
     toast({
-      title: 'Auth Data Cleared',
-      description: 'Please login again with your credentials.',
+      title: t('auth.authCleared'),
+      description: t('auth.authClearedDesc'),
       status: 'info',
       duration: 3000,
       isClosable: true,
     });
-    
+
     // Redirect to login
     router.push('/login');
   };
@@ -44,8 +46,8 @@ export default function UnauthorizedPage() {
   const handleLogout = () => {
     logout();
     toast({
-      title: 'Logged Out',
-      description: 'You have been logged out successfully.',
+      title: t('auth.loggedOut'),
+      description: t('auth.loggedOutDesc'),
       status: 'success',
       duration: 3000,
       isClosable: true,
@@ -55,7 +57,7 @@ export default function UnauthorizedPage() {
 
   return (
     <Flex minH="100vh" align="center" justify="center" bg="red.50">
-      <Box 
+      <Box
         maxW="md"
         w="full"
         bg="white"
@@ -65,72 +67,72 @@ export default function UnauthorizedPage() {
         mx={4}
       >
         <Stack align="center" spacing={4} mb={8}>
-          <Flex 
-            w={16} 
-            h={16} 
-            align="center" 
-            justify="center" 
-            color="white" 
-            bg="red.500" 
+          <Flex
+            w={16}
+            h={16}
+            align="center"
+            justify="center"
+            color="white"
+            bg="red.500"
             borderRadius="full"
           >
             <FiXCircle size="2rem" />
           </Flex>
           <Heading as="h1" size="lg" textAlign="center" color="red.600">
-            Access Denied
+            {t('auth.accessDenied')}
           </Heading>
           <Text color="gray.600" textAlign="center">
-            You do not have permission to view this page
+            {t('auth.permissionDenied')}
           </Text>
         </Stack>
-        
+
         <Box textAlign="center" mb={6}>
-          <Heading as="h2" size="md" mb={4}>Unauthorized Access</Heading>
+          <Heading as="h2" size="md" mb={4}>{t('auth.unauthorizedTitle')}</Heading>
           <Text mb={4} color="gray.600">
-            Sorry, you are not authorized to access this resource.
+            {t('auth.resourceUnauthorized')}
           </Text>
-          
+
           <Text fontSize="sm" color="gray.700" mb={4}>
-            The page you are trying to access has restricted permissions.
+            {t('auth.restrictedPage')}
             {user && (
-              <Text as="span"> Your current role is <Text as="strong">{user.role}</Text>.</Text>
+              <Text as="span"> {t('auth.unauthorizedMessage', { role: user.role })}</Text>
             )}
           </Text>
-          
+
           <Text fontSize="sm" color="gray.600" mb={6}>
-            If you believe this is an error, please contact your system administrator to request access.
+            {t('auth.sysAdminContact')}
           </Text>
         </Box>
-        
+
         <Stack spacing={3} w="full">
-          <Button 
+          <Button
             onClick={handleClearAuthAndRelogin}
-            colorScheme="orange" 
+            colorScheme="orange"
             leftIcon={<FiRefreshCw />}
             width="full"
           >
-            Clear Auth Data & Login Again
+            {t('auth.clearAuth')}
           </Button>
-          
-          <Button 
+
+          <Button
             onClick={handleLogout}
-            colorScheme="red" 
+            colorScheme="red"
             variant="outline"
             leftIcon={<FiLogOut />}
             width="full"
           >
-            Logout
+            {t('auth.logout')}
           </Button>
-          
-          <Button 
-            as={Link} 
-            href="/dashboard" 
-            colorScheme="blue" 
+
+          <Button
+            as={Link}
+            href="/dashboard"
+            colorScheme="blue"
             variant="ghost"
             leftIcon={<FiLayout />}
             width="full"
           >
-            Try Dashboard Again
+            {t('auth.tryDashboard')}
           </Button>
         </Stack>
       </Box>

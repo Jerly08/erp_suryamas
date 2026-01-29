@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useModulePermissions } from '@/hooks/usePermissions';
+import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import { DataTable } from '@/components/common/DataTable';
 import {
@@ -58,14 +60,14 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import {
-  FiPlus, 
-  FiEye, 
-  FiEdit, 
-  FiTrash2, 
-  FiFilter, 
-  FiRefreshCw, 
-  FiDownload, 
-  FiDollarSign, 
+  FiPlus,
+  FiEye,
+  FiEdit,
+  FiTrash2,
+  FiFilter,
+  FiRefreshCw,
+  FiDownload,
+  FiDollarSign,
   FiFilePlus,
   FiSearch,
   FiMoreVertical,
@@ -111,7 +113,7 @@ const PaymentsPage: React.FC = () => {
   const { token, user } = useAuth();
   const { t } = useTranslation();
   const toast = useToast();
-  
+
   // Theme colors for dark mode support
   const bgColor = useColorModeValue('gray.50', 'gray.900');
   const cardBg = useColorModeValue('white', 'gray.800');
@@ -158,7 +160,7 @@ const PaymentsPage: React.FC = () => {
     totalItems: 0
   });
   const [summary, setSummary] = useState<any>(null);
-  
+
   // Filter states
   const [filters, setFilters] = useState<PaymentFilters>({
     page: 1,
@@ -168,7 +170,7 @@ const PaymentsPage: React.FC = () => {
   const [methodFilter, setMethodFilter] = useState<PaymentMethodType>('ALL');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
-  
+
   // State for modals
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [paymentType, setPaymentType] = useState<'receivable' | 'payable'>('receivable');
@@ -180,12 +182,8 @@ const PaymentsPage: React.FC = () => {
   const [ppnPaymentType, setPPNPaymentType] = useState<'INPUT' | 'OUTPUT'>('OUTPUT');
   const [showExpensePayment, setShowExpensePayment] = useState(false);
 
-  // Permission checks - Normalize role comparison for case-insensitive check
-  const userRole = user?.role?.toLowerCase();
-  const canCreate = userRole === 'finance' || userRole === 'director';
-  const canEdit = userRole === 'admin' || userRole === 'finance' || userRole === 'director';
-  const canDelete = userRole === 'admin';
-  const canExport = userRole === 'admin' || userRole === 'finance' || userRole === 'director';
+  // Permission-based access control
+  const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('payments');
 
   // New Payment handler
   const handleNewPayment = (type: 'receivable' | 'payable' = 'receivable') => {
@@ -193,13 +191,13 @@ const PaymentsPage: React.FC = () => {
     setSelectedPayment(null);
     setShowPaymentForm(true);
   };
-  
+
   // PPN Payment handler
   const handlePPNPayment = () => {
     setPPNPaymentType('OUTPUT');
     setShowPPNPayment(true);
   };
-  
+
   // Edit Payment handler
   const handleEditPayment = (payment: Payment) => {
     // Check if PPN payment - cannot be edited
@@ -212,34 +210,34 @@ const PaymentsPage: React.FC = () => {
       });
       return;
     }
-    
+
     // Detect payment type from contact type or code
     let type: 'receivable' | 'payable' = 'receivable';
-    
+
     // Check contact type first (most reliable)
     if (payment.contact?.type === 'VENDOR') {
       type = 'payable';
     } else if (payment.contact?.type === 'CUSTOMER') {
       type = 'receivable';
-    } 
+    }
     // Fallback to code prefix
     else if (payment.code?.startsWith('PAY')) {
       type = 'payable';
     } else if (payment.code?.startsWith('RCV')) {
       type = 'receivable';
     }
-    
+
     setPaymentType(type);
     setSelectedPayment(payment);
     setShowPaymentForm(true);
   };
-  
+
   // View Payment handler
   const handleViewPayment = (payment: Payment) => {
     setSelectedPayment(payment);
     setShowPaymentDetail(true);
   };
-  
+
   // Delete Payment handler
   const handleDeletePayment = (payment: Payment) => {
     setSelectedPayment(payment);
@@ -247,312 +245,312 @@ const PaymentsPage: React.FC = () => {
   };
 
   const columns = [
-  {
-    header: t('payments.code'),
-    accessor: (row: Payment) => (
-      <Text fontWeight="medium" color={statColors.blue}>{row.code}</Text>
-    )
-  },
-  { 
-    header: t('payments.contact'),
-    accessor: (row: Payment) => {
-      // For PPN tax payments, show "Negara" instead of contact name
-      if (row.payment_type === 'TAX_PPN' || 
-          row.payment_type === 'TAX_PPN_INPUT' || 
+    {
+      header: t('payments.code'),
+      accessor: (row: Payment) => (
+        <Text fontWeight="medium" color={statColors.blue}>{row.code}</Text>
+      )
+    },
+    {
+      header: t('payments.contact'),
+      accessor: (row: Payment) => {
+        // For PPN tax payments, show "Negara" instead of contact name
+        if (row.payment_type === 'TAX_PPN' ||
+          row.payment_type === 'TAX_PPN_INPUT' ||
           row.payment_type === 'TAX_PPN_OUTPUT' ||
           row.code?.startsWith('SETOR-PPN')) {
-        return t('payments.negara');
+          return t('payments.negara');
+        }
+        return row.contact?.name || '-';
       }
-      return row.contact?.name || '-';
-    }
-  },
-  {
-    header: t('payments.date'),
-    accessor: (row: Payment) => formatDate(row.date)
-  },
-  {
-    header: t('payments.amount'),
-    accessor: (row: Payment) => (
-      <Text fontWeight="medium">{formatCurrency(row.amount)}</Text>
-    )
-  },
-  {
-    header: t('payments.method'),
-    accessor: (row: Payment) => paymentService.getMethodDisplayName(row.method)
-  },
-  {
-    header: t('payments.status'),
-    accessor: (row: Payment) => {
-      const statusKey = row.status.toLowerCase();
-      const translationKey = `payments.statuses.${statusKey}`;
-      return (
-        <Badge colorScheme={paymentService.getStatusColorScheme(row.status)} variant="subtle">
-          {t(translationKey)}
-        </Badge>
-      );
-    }
-  },
-  {
-    header: t('payments.actions'),
-    accessor: (row: Payment) => (
-      <Menu strategy="fixed" placement="bottom-end">
-        <MenuButton 
-          as={IconButton} 
-          icon={<FiMoreVertical />} 
-          variant="ghost" 
-          size="sm"
-          aria-label={t('payments.actions')}
-        />
-        <MenuList zIndex={9999}>
-          <MenuItem icon={<FiEye />} onClick={() => handleViewPayment(row)}>
-            {t('payments.viewDetails')}
-          </MenuItem>
-          {canEdit && (
-            <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
-              {t('payments.edit')}
+    },
+    {
+      header: t('payments.date'),
+      accessor: (row: Payment) => formatDate(row.date)
+    },
+    {
+      header: t('payments.amount'),
+      accessor: (row: Payment) => (
+        <Text fontWeight="medium">{formatCurrency(row.amount)}</Text>
+      )
+    },
+    {
+      header: t('payments.method'),
+      accessor: (row: Payment) => paymentService.getMethodDisplayName(row.method)
+    },
+    {
+      header: t('payments.status'),
+      accessor: (row: Payment) => {
+        const statusKey = row.status.toLowerCase();
+        const translationKey = `payments.statuses.${statusKey}`;
+        return (
+          <Badge colorScheme={paymentService.getStatusColorScheme(row.status)} variant="subtle">
+            {t(translationKey)}
+          </Badge>
+        );
+      }
+    },
+    {
+      header: t('payments.actions'),
+      accessor: (row: Payment) => (
+        <Menu strategy="fixed" placement="bottom-end">
+          <MenuButton
+            as={IconButton}
+            icon={<FiMoreVertical />}
+            variant="ghost"
+            size="sm"
+            aria-label={t('payments.actions')}
+          />
+          <MenuList zIndex={9999}>
+            <MenuItem icon={<FiEye />} onClick={() => handleViewPayment(row)}>
+              {t('payments.viewDetails')}
             </MenuItem>
-          )}
-          <MenuItem 
-            icon={<FiFilePlus />} 
-            onClick={() => paymentService.downloadPaymentDetailPDF(row.id, row.code)}
-          >
-            {t('payments.exportPDF')}
-          </MenuItem>
-          {canDelete && (
-            <>
-              <MenuDivider />
-              <MenuItem icon={<FiTrash2 />} color="red.500" onClick={() => handleDeletePayment(row)}>
-                {t('payments.delete')}
+            {canEdit && (
+              <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
+                {t('payments.edit')}
               </MenuItem>
-            </>
-          )}
-        </MenuList>
-      </Menu>
-    )
-  }
-];
-
-// Load payments data
-const loadPayments = async (newFilters?: Partial<PaymentFilters>) => {
-  try {
-    setLoading(true);
-    setError(null);
-    
-    const currentFilters = newFilters ? { ...filters, ...newFilters } : filters;
-    
-    // Prepare filters for API request
-    const apiFilters: PaymentFilters = {
-      page: currentFilters.page,
-      limit: currentFilters.limit
-    };
-    
-    // NOTE: Search is handled client-side, so we don't send search to API
-    // Other filters (status, method, date) still use server-side filtering
-    
-    // Add status filter if selected
-    if (statusFilter !== 'ALL') {
-      apiFilters.status = statusFilter;
+            )}
+            <MenuItem
+              icon={<FiFilePlus />}
+              onClick={() => paymentService.downloadPaymentDetailPDF(row.id, row.code)}
+            >
+              {t('payments.exportPDF')}
+            </MenuItem>
+            {canDelete && (
+              <>
+                <MenuDivider />
+                <MenuItem icon={<FiTrash2 />} color="red.500" onClick={() => handleDeletePayment(row)}>
+                  {t('payments.delete')}
+                </MenuItem>
+              </>
+            )}
+          </MenuList>
+        </Menu>
+      )
     }
-    
-    // Add method filter if selected
-    if (methodFilter !== 'ALL') {
-      apiFilters.method = methodFilter;
+  ];
+
+  // Load payments data
+  const loadPayments = async (newFilters?: Partial<PaymentFilters>) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const currentFilters = newFilters ? { ...filters, ...newFilters } : filters;
+
+      // Prepare filters for API request
+      const apiFilters: PaymentFilters = {
+        page: currentFilters.page,
+        limit: currentFilters.limit
+      };
+
+      // NOTE: Search is handled client-side, so we don't send search to API
+      // Other filters (status, method, date) still use server-side filtering
+
+      // Add status filter if selected
+      if (statusFilter !== 'ALL') {
+        apiFilters.status = statusFilter;
+      }
+
+      // Add method filter if selected
+      if (methodFilter !== 'ALL') {
+        apiFilters.method = methodFilter;
+      }
+
+      // Add date filters if selected
+      if (startDate) {
+        apiFilters.start_date = startDate;
+      }
+
+      if (endDate) {
+        apiFilters.end_date = endDate;
+      }
+
+      // Make API call
+      const result = await paymentService.getPayments(apiFilters);
+
+      // Store all payments for client-side filtering
+      const paymentData = result?.data || [];
+      setAllPayments(paymentData);
+
+      // Apply client-side search filter if search input exists
+      if (searchInput && searchInput.trim()) {
+        const filtered = filterPaymentsBySearch(paymentData, searchInput);
+        setPayments(filtered);
+      } else {
+        setPayments(paymentData);
+      }
+
+      setFilters({ ...currentFilters, page: result?.page || currentFilters.page });
+      setPagination({
+        current: result?.page || 1,
+        total: result?.total_pages || 1,
+        totalItems: result?.total || 0
+      });
+
+    } catch (err: any) {
+      console.error('Error fetching payments:', err);
+      setError(err.message || 'An error occurred while fetching payments');
+      setPayments([]);
+
+      toast({
+        title: 'Error loading payments',
+        description: err.message || 'Failed to load payments data',
+        status: 'error',
+        duration: 3000
+      });
+    } finally {
+      setLoading(false);
     }
-    
-    // Add date filters if selected
-    if (startDate) {
-      apiFilters.start_date = startDate;
+  };
+
+  // Load payment summary
+  const loadPaymentSummary = async () => {
+    try {
+      const totalAmount = payments.reduce((sum, payment) => sum + payment.amount, 0);
+      const completedPayments = payments.filter(p => p.status === 'COMPLETED');
+      const pendingPayments = payments.filter(p => p.status === 'PENDING');
+      const completedAmount = completedPayments.reduce((sum, payment) => sum + payment.amount, 0);
+      const pendingAmount = pendingPayments.reduce((sum, payment) => sum + payment.amount, 0);
+
+      setSummary({
+        total_payments: payments.length,
+        total_amount: totalAmount,
+        completed_amount: completedAmount,
+        pending_amount: pendingAmount,
+        completed_count: completedPayments.length,
+        pending_count: pendingPayments.length,
+        avg_payment_value: payments.length > 0 ? totalAmount / payments.length : 0
+      });
+    } catch (error) {
+      console.error('Failed to calculate payment summary:', error);
     }
-    
-    if (endDate) {
-      apiFilters.end_date = endDate;
+  };
+
+  // Initial load
+  useEffect(() => {
+    if (token) {
+      loadPayments();
     }
-    
-    // Make API call
-    const result = await paymentService.getPayments(apiFilters);
-    
-    // Store all payments for client-side filtering
-    const paymentData = result?.data || [];
-    setAllPayments(paymentData);
-    
-    // Apply client-side search filter if search input exists
-    if (searchInput && searchInput.trim()) {
-      const filtered = filterPaymentsBySearch(paymentData, searchInput);
-      setPayments(filtered);
-    } else {
-      setPayments(paymentData);
+  }, [token]);
+
+  // Update summary when payments change
+  useEffect(() => {
+    if (payments.length > 0) {
+      loadPaymentSummary();
     }
-    
-    setFilters({ ...currentFilters, page: result?.page || currentFilters.page });
-    setPagination({
-      current: result?.page || 1,
-      total: result?.total_pages || 1,
-      totalItems: result?.total || 0
-    });
-    
-  } catch (err: any) {
-    console.error('Error fetching payments:', err);
-    setError(err.message || 'An error occurred while fetching payments');
-    setPayments([]);
-    
-    toast({
-      title: 'Error loading payments',
-      description: err.message || 'Failed to load payments data',
-      status: 'error',
-      duration: 3000
-    });
-  } finally {
-    setLoading(false);
-  }
-};
+  }, [payments]);
 
-// Load payment summary
-const loadPaymentSummary = async () => {
-  try {
-    const totalAmount = payments.reduce((sum, payment) => sum + payment.amount, 0);
-    const completedPayments = payments.filter(p => p.status === 'COMPLETED');
-    const pendingPayments = payments.filter(p => p.status === 'PENDING');
-    const completedAmount = completedPayments.reduce((sum, payment) => sum + payment.amount, 0);
-    const pendingAmount = pendingPayments.reduce((sum, payment) => sum + payment.amount, 0);
-    
-    setSummary({
-      total_payments: payments.length,
-      total_amount: totalAmount,
-      completed_amount: completedAmount,
-      pending_amount: pendingAmount,
-      completed_count: completedPayments.length,
-      pending_count: pendingPayments.length,
-      avg_payment_value: payments.length > 0 ? totalAmount / payments.length : 0
-    });
-  } catch (error) {
-    console.error('Failed to calculate payment summary:', error);
-  }
-};
+  // Handle filters change - trigger API call
+  useEffect(() => {
+    if (token) {
+      loadPayments({ page: 1 });
+    }
+  }, [statusFilter, methodFilter, startDate, endDate]);
 
-// Initial load
-useEffect(() => {
-  if (token) {
-    loadPayments();
-  }
-}, [token]);
+  // Apply client-side search when allPayments changes
+  useEffect(() => {
+    if (searchInput) {
+      handleSearch(searchInput);
+    }
+  }, [allPayments]);
 
-// Update summary when payments change
-useEffect(() => {
-  if (payments.length > 0) {
-    loadPaymentSummary();
-  }
-}, [payments]);
+  // Helper function to filter payments by search term (client-side)
+  const filterPaymentsBySearch = (paymentsToFilter: Payment[], searchTerm: string) => {
+    if (!searchTerm.trim()) return paymentsToFilter;
 
-// Handle filters change - trigger API call
-useEffect(() => {
-  if (token) {
-    loadPayments({ page: 1 });
-  }
-}, [statusFilter, methodFilter, startDate, endDate]);
+    const term = searchTerm.toLowerCase();
+    return paymentsToFilter.filter(payment => {
+      // Search in payment code
+      if (payment.code?.toLowerCase().includes(term)) return true;
 
-// Apply client-side search when allPayments changes
-useEffect(() => {
-  if (searchInput) {
-    handleSearch(searchInput);
-  }
-}, [allPayments]);
-
-// Helper function to filter payments by search term (client-side)
-const filterPaymentsBySearch = (paymentsToFilter: Payment[], searchTerm: string) => {
-  if (!searchTerm.trim()) return paymentsToFilter;
-  
-  const term = searchTerm.toLowerCase();
-  return paymentsToFilter.filter(payment => {
-    // Search in payment code
-    if (payment.code?.toLowerCase().includes(term)) return true;
-    
-    // Search in contact name (handle PPN tax payments - show "Negara")
-    if (payment.payment_type === 'TAX_PPN' || 
-        payment.payment_type === 'TAX_PPN_INPUT' || 
+      // Search in contact name (handle PPN tax payments - show "Negara")
+      if (payment.payment_type === 'TAX_PPN' ||
+        payment.payment_type === 'TAX_PPN_INPUT' ||
         payment.payment_type === 'TAX_PPN_OUTPUT' ||
         payment.code?.startsWith('SETOR-PPN')) {
-      if ('negara'.includes(term)) return true;
-    } else if (payment.contact?.name?.toLowerCase().includes(term)) {
-      return true;
+        if ('negara'.includes(term)) return true;
+      } else if (payment.contact?.name?.toLowerCase().includes(term)) {
+        return true;
+      }
+
+      // Search in payment reference
+      if (payment.reference?.toLowerCase().includes(term)) return true;
+
+      // Search in notes
+      if (payment.notes?.toLowerCase().includes(term)) return true;
+
+      return false;
+    });
+  };
+
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    setFilters(prev => ({
+      ...prev,
+      page: page
+    }));
+  };
+
+  // Client-side search handler (instant, no API call)
+  const handleSearch = (value: string) => {
+    setSearchInput(value);
+
+    // Client-side filtering - no API call
+    if (!value.trim()) {
+      // If search is empty, show all payments
+      setPayments(allPayments);
+      return;
     }
-    
-    // Search in payment reference
-    if (payment.reference?.toLowerCase().includes(term)) return true;
-    
-    // Search in notes
-    if (payment.notes?.toLowerCase().includes(term)) return true;
-    
-    return false;
-  });
-};
 
-// Handle page change
-const handlePageChange = (page: number) => {
-  setFilters(prev => ({
-    ...prev,
-    page: page
-  }));
-};
+    // Filter payments based on search term
+    const filtered = filterPaymentsBySearch(allPayments, value);
+    setPayments(filtered);
+  };
 
-// Client-side search handler (instant, no API call)
-const handleSearch = (value: string) => {
-  setSearchInput(value);
-  
-  // Client-side filtering - no API call
-  if (!value.trim()) {
-    // If search is empty, show all payments
-    setPayments(allPayments);
-    return;
-  }
-  
-  // Filter payments based on search term
-  const filtered = filterPaymentsBySearch(allPayments, value);
-  setPayments(filtered);
-};
+  // Handle filter change
+  const handleFilterChange = (key: string, value: string) => {
+    switch (key) {
+      case 'status':
+        setStatusFilter(value as PaymentStatusType);
+        break;
+      case 'method':
+        setMethodFilter(value as PaymentMethodType);
+        break;
+      case 'start_date':
+        setStartDate(value);
+        break;
+      case 'end_date':
+        setEndDate(value);
+        break;
+    }
+  };
 
-// Handle filter change
-const handleFilterChange = (key: string, value: string) => {
-  switch(key) {
-    case 'status':
-      setStatusFilter(value as PaymentStatusType);
-      break;
-    case 'method':
-      setMethodFilter(value as PaymentMethodType);
-      break;
-    case 'start_date':
-      setStartDate(value);
-      break;
-    case 'end_date':
-      setEndDate(value);
-      break;
-  }
-};
+  // Apply filters
+  const applyFilters = () => {
+    loadPayments({ page: 1 });
+  };
 
-// Apply filters
-const applyFilters = () => {
-  loadPayments({ page: 1 });
-};
-
-// Reset filters
-const resetFilters = () => {
-  setStatusFilter('ALL');
-  setMethodFilter('ALL');
-  setStartDate('');
-  setEndDate('');
-  setSearchInput(''); // Clear search input
-  setPayments(allPayments); // Reset to show all payments
-  setFilters({
-    page: 1,
-    limit: ITEMS_PER_PAGE
-  });
-  // Reload data from server with reset filters
-  loadPayments({ page: 1 });
-};
+  // Reset filters
+  const resetFilters = () => {
+    setStatusFilter('ALL');
+    setMethodFilter('ALL');
+    setStartDate('');
+    setEndDate('');
+    setSearchInput(''); // Clear search input
+    setPayments(allPayments); // Reset to show all payments
+    setFilters({
+      page: 1,
+      limit: ITEMS_PER_PAGE
+    });
+    // Reload data from server with reset filters
+    loadPayments({ page: 1 });
+  };
 
   // Handle delete payment
   const handleDelete = async (payment: Payment) => {
     if (!window.confirm('Are you sure you want to delete this payment?')) return;
-    
+
     try {
       await paymentService.deletePayment(payment.id);
       toast({
@@ -571,11 +569,11 @@ const resetFilters = () => {
       });
     }
   };
-  
+
   // Confirm delete
   const confirmDeletePayment = async () => {
     if (!selectedPayment) return;
-    
+
     try {
       await paymentService.deletePayment(selectedPayment.id);
       toast({
@@ -597,7 +595,7 @@ const resetFilters = () => {
       });
     }
   };
-  
+
   // Export payments to Excel handler
   const handleExportPayments = async () => {
     try {
@@ -607,10 +605,10 @@ const resetFilters = () => {
       if (methodFilter !== 'ALL') exportFilters.method = methodFilter;
       if (startDate) exportFilters.start_date = startDate;
       if (endDate) exportFilters.end_date = endDate;
-      
+
       // Call export API
       const blob = await paymentService.exportPayments(exportFilters);
-      
+
       // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -630,7 +628,7 @@ const resetFilters = () => {
   const handleExportPaymentsPDF = async () => {
     try {
       setError(null);
-      
+
       // Prepare PDF export options
       const pdfOptions: PDFExportOptions = {
         title: 'Laporan Pembayaran',
@@ -643,23 +641,23 @@ const resetFilters = () => {
         startDate: startDate,
         endDate: endDate
       };
-      
+
       // Export PDF with current data
       exportPaymentsToPDF(payments, pdfOptions);
-      
+
     } catch (error: any) {
       console.error('Error exporting payments to PDF:', error);
       setError(error.message || 'Failed to export payments to PDF');
     }
   };
-  
+
   // Handle bulk export (like sales page)
   const handleBulkExport = async () => {
     try {
       // Prepare filters for export
       const exportStatus = statusFilter !== 'ALL' ? statusFilter : undefined;
       const exportMethod = methodFilter !== 'ALL' ? methodFilter : undefined;
-      
+
       // Use backend PDF export
       await paymentService.downloadPaymentReportPDF(
         startDate || undefined,
@@ -667,7 +665,7 @@ const resetFilters = () => {
         exportStatus,
         exportMethod
       );
-      
+
       toast({
         title: t('common.messages.toast.success'),
         description: t('payments.messages.exportSuccess'),
@@ -684,7 +682,7 @@ const resetFilters = () => {
       });
     }
   };
-  
+
   // Refresh data handler
   const handleRefreshData = () => {
     loadPayments();
@@ -704,7 +702,7 @@ const resetFilters = () => {
     setSelectedPayment(null);
     setError(null);
   };
-  
+
   if (loading && (!payments || payments.length === 0)) {
     return (
       <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
@@ -717,366 +715,368 @@ const resetFilters = () => {
   }
 
   return (
-    <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
-      <Box bg={bgColor} minH="100vh" p={6}>
-        <VStack spacing={6} align="stretch">
-        {/* Summary Cards */}
-        {summary && (
-          <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={4}>
-            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-              <CardBody>
-                <Stat>
-                  <StatLabel>{t('payments.summary.totalPayments')}</StatLabel>
-                  <StatNumber>{summary.total_payments}</StatNumber>
-                  <StatHelpText>{t('payments.summary.thisPeriod')}</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-              <CardBody>
-                <Stat>
-                  <StatLabel>{t('payments.summary.totalAmount')}</StatLabel>
-                  <StatNumber>{formatCurrency(summary.total_amount)}</StatNumber>
-                  <StatHelpText>{t('payments.summary.grossAmount')}</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-              <CardBody>
-                <Stat>
-                  <StatLabel>{t('payments.summary.completed')}</StatLabel>
-                  <StatNumber color={statColors.green}>
-                    {formatCurrency(summary.completed_amount)}
-                  </StatNumber>
-                  <StatHelpText>{summary.completed_count} {t('payments.summary.payments')}</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-              <CardBody>
-                <Stat>
-                  <StatLabel>{t('payments.summary.avgPaymentValue')}</StatLabel>
-                  <StatNumber>{formatCurrency(summary.avg_payment_value)}</StatNumber>
-                  <StatHelpText>{t('payments.summary.perTransaction')}</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-          </SimpleGrid>
-        )}
-
-        {/* Header */}
-        <Flex justify="space-between" align="center">
-          <Box>
-            <Heading as="h1" size="xl" mb={2} color={headingColor}>{t('payments.title')}</Heading>
-            <Text color={textSecondary}>{t('payments.managePayments')}</Text>
-          </Box>
-          <HStack spacing={3}>
-            <Button
-              leftIcon={<FiRefreshCw />}
-              variant="ghost"
-              size="md"
-              onClick={handleRefreshData}
-              isLoading={loading}
-            >
-              {t('payments.refresh')}
-            </Button>
-            {canExport && (
-              <Menu>
-                <MenuButton 
-                  as={Button} 
-                  leftIcon={<FiDownload />}
-                  colorScheme="green"
-                  variant="outline"
-                  size="md"
-                >
-                  {t('payments.exportReport')}
-                </MenuButton>
-                <MenuList>
-                  <MenuItem icon={<FiFileText />} onClick={handleBulkExport}>
-                    {t('payments.exportPDFReport')}
-                  </MenuItem>
-                  <MenuItem icon={<FiDownload />} onClick={async () => {
-                    try {
-                      // Prepare current filters for export
-                      const exportFilters: any = {};
-                      if (statusFilter !== 'ALL') exportFilters.status = statusFilter;
-                      if (methodFilter !== 'ALL') exportFilters.method = methodFilter;
-                      if (startDate) exportFilters.start_date = startDate;
-                      if (endDate) exportFilters.end_date = endDate;
-                      
-                      // Call Excel export API
-                      await paymentService.downloadPaymentReportExcel(
-                        startDate || undefined,
-                        endDate || undefined,
-                        exportFilters.status,
-                        exportFilters.method
-                      );
-                      
-                      toast({
-                        title: t('common.messages.toast.success'),
-                        description: t('payments.messages.exportSuccess'),
-                        status: 'success',
-                        duration: 3000
-                      });
-                    } catch (error: any) {
-                      console.error('Error exporting payments to Excel:', error);
-                      toast({
-                        title: t('common.messages.toast.error'),
-                        description: t('payments.messages.exportError'),
-                        status: 'error',
-                        duration: 3000
-                      });
-                    }
-                  }}>
-                    {t('payments.exportExcelReport')}
-                  </MenuItem>
-                </MenuList>
-              </Menu>
+    <ProtectedModule module="payments">
+      <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
+        <Box bg={bgColor} minH="100vh" p={6}>
+          <VStack spacing={6} align="stretch">
+            {/* Summary Cards */}
+            {summary && (
+              <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={4}>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Stat>
+                      <StatLabel>{t('payments.summary.totalPayments')}</StatLabel>
+                      <StatNumber>{summary.total_payments}</StatNumber>
+                      <StatHelpText>{t('payments.summary.thisPeriod')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Stat>
+                      <StatLabel>{t('payments.summary.totalAmount')}</StatLabel>
+                      <StatNumber>{formatCurrency(summary.total_amount)}</StatNumber>
+                      <StatHelpText>{t('payments.summary.grossAmount')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Stat>
+                      <StatLabel>{t('payments.summary.completed')}</StatLabel>
+                      <StatNumber color={statColors.green}>
+                        {formatCurrency(summary.completed_amount)}
+                      </StatNumber>
+                      <StatHelpText>{summary.completed_count} {t('payments.summary.payments')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Stat>
+                      <StatLabel>{t('payments.summary.avgPaymentValue')}</StatLabel>
+                      <StatNumber>{formatCurrency(summary.avg_payment_value)}</StatNumber>
+                      <StatHelpText>{t('payments.summary.perTransaction')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+              </SimpleGrid>
             )}
-            {canCreate && (
-              <Menu>
-                <MenuButton 
-                  as={Button} 
-                  leftIcon={<FiPlus />}
-                  rightIcon={<FiChevronDown />}
-                  colorScheme="blue"
-                  size="md"
-                >
-                  {t('payments.createPayment')}
-                </MenuButton>
-                <MenuList>
-                  <MenuItem 
-                    icon={<FiArrowDown />} 
-                    onClick={() => handleNewPayment('receivable')}
-                  >
-                    {t('payments.receivablePayment')}
-                  </MenuItem>
-                  <MenuItem 
-                    icon={<FiArrowRight />} 
-                    onClick={() => handleNewPayment('payable')}
-                  >
-                    {t('payments.payablePayment')}
-                  </MenuItem>
-                  <MenuDivider />
-                  <MenuItem 
-                    icon={<FiDollarSign />} 
-                    onClick={() => handlePPNPayment()}
-                  >
-                    {t('payments.setorPPN')}
-                  </MenuItem>
-                  <MenuItem 
-                    icon={<FiBriefcase />} 
-                    onClick={() => setShowExpensePayment(true)}
-                  >
-                    {t('payments.expensePayment')}
-                  </MenuItem>
-                </MenuList>
-              </Menu>
-            )}
-          </HStack>
-        </Flex>
 
-        {/* Search and Filters */}
-        <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-          <CardBody>
-            <HStack spacing={4} wrap="wrap">
-              <InputGroup maxW="400px">
-                <InputLeftElement pointerEvents="none">
-                  <FiSearch color={searchIconColor} />
-                </InputLeftElement>
-                <Input 
-                  placeholder={t('payments.searchPlaceholder')}
-                  value={searchInput}
-                  onChange={(e) => handleSearch(e.target.value)}
-                  bg={inputBg}
-                  borderColor={borderColor}
-                />
-              </InputGroup>
-              
-              <Select 
-                maxW="200px" 
-                placeholder={t('payments.filters.allStatus')}
-                value={statusFilter}
-                onChange={(e) => handleFilterChange('status', e.target.value)}
-                bg={inputBg}
-                borderColor={borderColor}
-              >
-                <option value="PENDING">{t('payments.filters.pending')}</option>
-                <option value="COMPLETED">{t('payments.filters.completed')}</option>
-                <option value="FAILED">{t('payments.filters.failed')}</option>
-              </Select>
-              
-              <Select
-                maxW="200px"
-                placeholder={t('payments.filters.allMethods')}
-                value={methodFilter}
-                onChange={(e) => handleFilterChange('method', e.target.value)}
-                bg={inputBg}
-                borderColor={borderColor}
-              >
-                <option value="CASH">{t('payments.filters.cash')}</option>
-                <option value="BANK_TRANSFER">{t('payments.filters.bankTransfer')}</option>
-                <option value="CHECK">{t('payments.filters.check')}</option>
-                <option value="CREDIT_CARD">{t('payments.filters.creditCard')}</option>
-                <option value="DEBIT_CARD">{t('payments.filters.debitCard')}</option>
-              </Select>
-              
-              <Input
-                type="date"
-                maxW="200px"
-                placeholder={t('payments.filters.startDate')}
-                value={startDate}
-                onChange={(e) => handleFilterChange('start_date', e.target.value)}
-                bg={inputBg}
-                borderColor={borderColor}
-              />
-              
-              <Input
-                type="date"
-                maxW="200px"
-                placeholder={t('payments.filters.endDate')}
-                value={endDate}
-                onChange={(e) => handleFilterChange('end_date', e.target.value)}
-                bg={inputBg}
-                borderColor={borderColor}
-              />
-              
-              <Button
-                leftIcon={<FiFilter />}
-                variant="outline"
-                onClick={resetFilters}
-                colorScheme="gray"
-              >
-                {t('payments.clearFilters')}
-              </Button>
-            </HStack>
-          </CardBody>
-        </Card>
-
-        {/* Error Alert */}
-        {error && (
-          <Alert status="error">
-            <AlertIcon />
-            {error}
-          </Alert>
-        )}
-
-        {/* Payments Table */}
-        <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-          <CardHeader>
+            {/* Header */}
             <Flex justify="space-between" align="center">
-              <Heading size="md" color={headingColor}>{t('payments.paymentTransactions')} ({payments?.length || 0})</Heading>
+              <Box>
+                <Heading as="h1" size="xl" mb={2} color={headingColor}>{t('payments.title')}</Heading>
+                <Text color={textSecondary}>{t('payments.managePayments')}</Text>
+              </Box>
+              <HStack spacing={3}>
+                <Button
+                  leftIcon={<FiRefreshCw />}
+                  variant="ghost"
+                  size="md"
+                  onClick={handleRefreshData}
+                  isLoading={loading}
+                >
+                  {t('payments.refresh')}
+                </Button>
+                {canExport && (
+                  <Menu>
+                    <MenuButton
+                      as={Button}
+                      leftIcon={<FiDownload />}
+                      colorScheme="green"
+                      variant="outline"
+                      size="md"
+                    >
+                      {t('payments.exportReport')}
+                    </MenuButton>
+                    <MenuList>
+                      <MenuItem icon={<FiFileText />} onClick={handleBulkExport}>
+                        {t('payments.exportPDFReport')}
+                      </MenuItem>
+                      <MenuItem icon={<FiDownload />} onClick={async () => {
+                        try {
+                          // Prepare current filters for export
+                          const exportFilters: any = {};
+                          if (statusFilter !== 'ALL') exportFilters.status = statusFilter;
+                          if (methodFilter !== 'ALL') exportFilters.method = methodFilter;
+                          if (startDate) exportFilters.start_date = startDate;
+                          if (endDate) exportFilters.end_date = endDate;
+
+                          // Call Excel export API
+                          await paymentService.downloadPaymentReportExcel(
+                            startDate || undefined,
+                            endDate || undefined,
+                            exportFilters.status,
+                            exportFilters.method
+                          );
+
+                          toast({
+                            title: t('common.messages.toast.success'),
+                            description: t('payments.messages.exportSuccess'),
+                            status: 'success',
+                            duration: 3000
+                          });
+                        } catch (error: any) {
+                          console.error('Error exporting payments to Excel:', error);
+                          toast({
+                            title: t('common.messages.toast.error'),
+                            description: t('payments.messages.exportError'),
+                            status: 'error',
+                            duration: 3000
+                          });
+                        }
+                      }}>
+                        {t('payments.exportExcelReport')}
+                      </MenuItem>
+                    </MenuList>
+                  </Menu>
+                )}
+                {canCreate && (
+                  <Menu>
+                    <MenuButton
+                      as={Button}
+                      leftIcon={<FiPlus />}
+                      rightIcon={<FiChevronDown />}
+                      colorScheme="blue"
+                      size="md"
+                    >
+                      {t('payments.createPayment')}
+                    </MenuButton>
+                    <MenuList>
+                      <MenuItem
+                        icon={<FiArrowDown />}
+                        onClick={() => handleNewPayment('receivable')}
+                      >
+                        {t('payments.receivablePayment')}
+                      </MenuItem>
+                      <MenuItem
+                        icon={<FiArrowRight />}
+                        onClick={() => handleNewPayment('payable')}
+                      >
+                        {t('payments.payablePayment')}
+                      </MenuItem>
+                      <MenuDivider />
+                      <MenuItem
+                        icon={<FiDollarSign />}
+                        onClick={() => handlePPNPayment()}
+                      >
+                        {t('payments.setorPPN')}
+                      </MenuItem>
+                      <MenuItem
+                        icon={<FiBriefcase />}
+                        onClick={() => setShowExpensePayment(true)}
+                      >
+                        {t('payments.expensePayment')}
+                      </MenuItem>
+                    </MenuList>
+                  </Menu>
+                )}
+              </HStack>
             </Flex>
-          </CardHeader>
-          <CardBody>
-            {loading ? (
-              <Flex justify="center" py={10}>
-                <Spinner size="lg" />
-              </Flex>
-            ) : (
-              <DataTable 
-                columns={columns} 
-                data={payments || []} 
-                keyField="id"
-                searchable={false}
-                pagination={true}
-                pageSize={ITEMS_PER_PAGE}
-              />
+
+            {/* Search and Filters */}
+            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+              <CardBody>
+                <HStack spacing={4} wrap="wrap">
+                  <InputGroup maxW="400px">
+                    <InputLeftElement pointerEvents="none">
+                      <FiSearch color={searchIconColor} />
+                    </InputLeftElement>
+                    <Input
+                      placeholder={t('payments.searchPlaceholder')}
+                      value={searchInput}
+                      onChange={(e) => handleSearch(e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
+                    />
+                  </InputGroup>
+
+                  <Select
+                    maxW="200px"
+                    placeholder={t('payments.filters.allStatus')}
+                    value={statusFilter}
+                    onChange={(e) => handleFilterChange('status', e.target.value)}
+                    bg={inputBg}
+                    borderColor={borderColor}
+                  >
+                    <option value="PENDING">{t('payments.filters.pending')}</option>
+                    <option value="COMPLETED">{t('payments.filters.completed')}</option>
+                    <option value="FAILED">{t('payments.filters.failed')}</option>
+                  </Select>
+
+                  <Select
+                    maxW="200px"
+                    placeholder={t('payments.filters.allMethods')}
+                    value={methodFilter}
+                    onChange={(e) => handleFilterChange('method', e.target.value)}
+                    bg={inputBg}
+                    borderColor={borderColor}
+                  >
+                    <option value="CASH">{t('payments.filters.cash')}</option>
+                    <option value="BANK_TRANSFER">{t('payments.filters.bankTransfer')}</option>
+                    <option value="CHECK">{t('payments.filters.check')}</option>
+                    <option value="CREDIT_CARD">{t('payments.filters.creditCard')}</option>
+                    <option value="DEBIT_CARD">{t('payments.filters.debitCard')}</option>
+                  </Select>
+
+                  <Input
+                    type="date"
+                    maxW="200px"
+                    placeholder={t('payments.filters.startDate')}
+                    value={startDate}
+                    onChange={(e) => handleFilterChange('start_date', e.target.value)}
+                    bg={inputBg}
+                    borderColor={borderColor}
+                  />
+
+                  <Input
+                    type="date"
+                    maxW="200px"
+                    placeholder={t('payments.filters.endDate')}
+                    value={endDate}
+                    onChange={(e) => handleFilterChange('end_date', e.target.value)}
+                    bg={inputBg}
+                    borderColor={borderColor}
+                  />
+
+                  <Button
+                    leftIcon={<FiFilter />}
+                    variant="outline"
+                    onClick={resetFilters}
+                    colorScheme="gray"
+                  >
+                    {t('payments.clearFilters')}
+                  </Button>
+                </HStack>
+              </CardBody>
+            </Card>
+
+            {/* Error Alert */}
+            {error && (
+              <Alert status="error">
+                <AlertIcon />
+                {error}
+              </Alert>
             )}
-          </CardBody>
-        </Card>
-      </VStack>
 
-      {/* Payment Form Modal */}
-      <AdvancedPaymentForm
-        isOpen={showPaymentForm}
-        onClose={handleFormCancel}
-        type={paymentType}
-        onSuccess={handleFormSave}
-        preSelectedContact={selectedPayment ? { 
-          id: selectedPayment.contact_id,
-          name: selectedPayment.contact?.name || 'Unknown'
-        } : undefined}
-      />
+            {/* Payments Table */}
+            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+              <CardHeader>
+                <Flex justify="space-between" align="center">
+                  <Heading size="md" color={headingColor}>{t('payments.paymentTransactions')} ({payments?.length || 0})</Heading>
+                </Flex>
+              </CardHeader>
+              <CardBody>
+                {loading ? (
+                  <Flex justify="center" py={10}>
+                    <Spinner size="lg" />
+                  </Flex>
+                ) : (
+                  <DataTable
+                    columns={columns}
+                    data={payments || []}
+                    keyField="id"
+                    searchable={false}
+                    pagination={true}
+                    pageSize={ITEMS_PER_PAGE}
+                  />
+                )}
+              </CardBody>
+            </Card>
+          </VStack>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog
-        isOpen={showConfirmDelete}
-        leastDestructiveRef={undefined}
-        onClose={() => setShowConfirmDelete(false)}
-      >
-        <AlertDialogOverlay>
-          <AlertDialogContent bg={cardBg}>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold" color={headingColor}>
-              {t('payments.deletePayment')}
-            </AlertDialogHeader>
+          {/* Payment Form Modal */}
+          <AdvancedPaymentForm
+            isOpen={showPaymentForm}
+            onClose={handleFormCancel}
+            type={paymentType}
+            onSuccess={handleFormSave}
+            preSelectedContact={selectedPayment ? {
+              id: selectedPayment.contact_id,
+              name: selectedPayment.contact?.name || 'Unknown'
+            } : undefined}
+          />
 
-            <AlertDialogBody color={textPrimary}>
-              {t('payments.deleteConfirmation')}
-              {selectedPayment && (
-                <Box mt={3} p={3} bg={alertBg} borderRadius="md">
-                  <Text fontSize="sm" fontWeight="bold" color={textPrimary}>{t('payments.code')}: {selectedPayment.code}</Text>
-                  <Text fontSize="sm" color={textPrimary}>{t('payments.amount')}: {formatCurrency(selectedPayment.amount)}</Text>
-                  <Text fontSize="sm" color={alertTextColor}>{t('payments.deleteWarning')}</Text>
-                </Box>
-              )}
-            </AlertDialogBody>
+          {/* Delete Confirmation Dialog */}
+          <AlertDialog
+            isOpen={showConfirmDelete}
+            leastDestructiveRef={undefined}
+            onClose={() => setShowConfirmDelete(false)}
+          >
+            <AlertDialogOverlay>
+              <AlertDialogContent bg={cardBg}>
+                <AlertDialogHeader fontSize="lg" fontWeight="bold" color={headingColor}>
+                  {t('payments.deletePayment')}
+                </AlertDialogHeader>
 
-            <AlertDialogFooter>
-              <Button onClick={() => setShowConfirmDelete(false)}>
-                {t('payments.cancel')}
-              </Button>
-              <Button colorScheme="red" onClick={confirmDeletePayment} ml={3}>
-                {t('payments.delete')}
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
-      {/* Payment Detail Modal */}
-      <PaymentDetailModal
-        payment={selectedPayment}
-        isOpen={showPaymentDetail}
-        onClose={() => {
-          setShowPaymentDetail(false);
-          setSelectedPayment(null);
-        }}
-      />
-      
-      {/* PPN Payment Modal */}
-      <PPNPaymentModal
-        isOpen={showPPNPayment}
-        onClose={() => setShowPPNPayment(false)}
-        ppnType={ppnPaymentType}
-        onSuccess={() => {
-          setShowPPNPayment(false);
-          loadPayments();
-          toast({
-            title: t('common.messages.toast.success'),
-            description: t('payments.messages.ppnSuccess'),
-            status: 'success',
-            duration: 3000,
-          });
-        }}
-      />
-      
-      {/* Expense Payment Modal */}
-      <ExpensePaymentForm
-        isOpen={showExpensePayment}
-        onClose={() => setShowExpensePayment(false)}
-        onSuccess={() => {
-          setShowExpensePayment(false);
-          loadPayments();
-          toast({
-            title: t('common.messages.toast.success'),
-            description: t('payments.messages.expenseSuccess'),
-            status: 'success',
-            duration: 3000,
-          });
-        }}
-      />
-      </Box>
-    </SimpleLayout>
+                <AlertDialogBody color={textPrimary}>
+                  {t('payments.deleteConfirmation')}
+                  {selectedPayment && (
+                    <Box mt={3} p={3} bg={alertBg} borderRadius="md">
+                      <Text fontSize="sm" fontWeight="bold" color={textPrimary}>{t('payments.code')}: {selectedPayment.code}</Text>
+                      <Text fontSize="sm" color={textPrimary}>{t('payments.amount')}: {formatCurrency(selectedPayment.amount)}</Text>
+                      <Text fontSize="sm" color={alertTextColor}>{t('payments.deleteWarning')}</Text>
+                    </Box>
+                  )}
+                </AlertDialogBody>
+
+                <AlertDialogFooter>
+                  <Button onClick={() => setShowConfirmDelete(false)}>
+                    {t('payments.cancel')}
+                  </Button>
+                  <Button colorScheme="red" onClick={confirmDeletePayment} ml={3}>
+                    {t('payments.delete')}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialogOverlay>
+          </AlertDialog>
+          {/* Payment Detail Modal */}
+          <PaymentDetailModal
+            payment={selectedPayment}
+            isOpen={showPaymentDetail}
+            onClose={() => {
+              setShowPaymentDetail(false);
+              setSelectedPayment(null);
+            }}
+          />
+
+          {/* PPN Payment Modal */}
+          <PPNPaymentModal
+            isOpen={showPPNPayment}
+            onClose={() => setShowPPNPayment(false)}
+            ppnType={ppnPaymentType}
+            onSuccess={() => {
+              setShowPPNPayment(false);
+              loadPayments();
+              toast({
+                title: t('common.messages.toast.success'),
+                description: t('payments.messages.ppnSuccess'),
+                status: 'success',
+                duration: 3000,
+              });
+            }}
+          />
+
+          {/* Expense Payment Modal */}
+          <ExpensePaymentForm
+            isOpen={showExpensePayment}
+            onClose={() => setShowExpensePayment(false)}
+            onSuccess={() => {
+              setShowExpensePayment(false);
+              loadPayments();
+              toast({
+                title: t('common.messages.toast.success'),
+                description: t('payments.messages.expenseSuccess'),
+                status: 'success',
+                duration: 3000,
+              });
+            }}
+          />
+        </Box>
+      </SimpleLayout>
+    </ProtectedModule>
   );
 };
 

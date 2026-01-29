@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 	"app-sistem-akuntansi/config"
+	"app-sistem-akuntansi/database"
 	"app-sistem-akuntansi/models"
 	"gorm.io/gorm"
 )
@@ -18,6 +19,43 @@ import (
 type SettingsService struct {
 	db *gorm.DB
 }
+
+// InitializeCOA sets the company type and triggers account seeding
+func (s *SettingsService) InitializeCOA(companyType string, userID uint) error {
+	var settings models.Settings
+	if err := s.db.First(&settings).Error; err != nil {
+		return fmt.Errorf("failed to get settings: %v", err)
+	}
+
+	// Double check if already set
+	if settings.CompanyType != "" {
+		return errors.New("company type is already set and cannot be changed")
+	}
+
+	// Update CompanyType
+	updates := map[string]interface{}{
+		"company_type": companyType,
+		"updated_by":   userID,
+	}
+
+	if err := s.db.Model(&settings).Updates(updates).Error; err != nil {
+		return fmt.Errorf("failed to update company type: %v", err)
+	}
+	
+	// Invalidate cache
+	settingsCacheMutex.Lock()
+	settingsCache = nil
+	settingsCacheMutex.Unlock()
+
+	// Trigger seeding
+	log.Printf("🚀 Initializing COA used type: %s", companyType)
+	if err := database.SeedAccountsImproved(s.db); err != nil {
+		return fmt.Errorf("failed to seed accounts: %v", err)
+	}
+
+	return nil
+}
+
 
 // Simple in-memory cache for settings (process-local)
 var (

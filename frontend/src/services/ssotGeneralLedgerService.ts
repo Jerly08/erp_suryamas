@@ -37,18 +37,21 @@ export interface AccountInfo {
 }
 
 export interface GeneralLedgerEntry {
-  journal_id: number;
-  entry_number: string;
-  entry_date: string;
+  // Fields returned by backend GeneralLedgerEntry struct
+  date: string;
+  journal_code: string;
   description: string;
   reference: string;
-  account_code?: string;
-  account_name?: string;
   debit_amount: number;
   credit_amount: number;
-  running_balance: number;
-  status: string;
-  source_type?: string;
+  balance: number;
+  entry_type: string;
+
+  // Optional/Legacy fields that might not be present or named differently
+  journal_id?: number;
+  account_code?: string;
+  account_name?: string;
+  status?: string;
 }
 
 export interface SSOTGeneralLedgerParams {
@@ -111,7 +114,7 @@ class SSOTGeneralLedgerService {
     let runningBalance = 0;
     return entries.map(entry => {
       runningBalance += entry.debit_amount - entry.credit_amount;
-      return { ...entry, running_balance: runningBalance };
+      return { ...entry, balance: runningBalance };
     });
   }
 
@@ -131,7 +134,7 @@ class SSOTGeneralLedgerService {
       }
 
       const url = `${API_ENDPOINTS.SSOT_REPORTS.GENERAL_LEDGER}?${queryParams.toString()}`;
-      
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -156,7 +159,7 @@ class SSOTGeneralLedgerService {
       }
 
       const filename = `General_Ledger_${params.start_date}_to_${params.end_date}.pdf`;
-      
+
       // Trigger download
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -189,7 +192,7 @@ class SSOTGeneralLedgerService {
       }
 
       const url = `${API_ENDPOINTS.SSOT_REPORTS.GENERAL_LEDGER}?${queryParams.toString()}`;
-      
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -214,7 +217,7 @@ class SSOTGeneralLedgerService {
       }
 
       const filename = `General_Ledger_${params.start_date}_to_${params.end_date}.csv`;
-      
+
       // Trigger download
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');

@@ -48,7 +48,7 @@ type ModulePermission struct {
 // GetDefaultPermissions returns default permissions based on role
 func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	permissions := make(map[string]*ModulePermission)
-	modules := []string{"accounts", "products", "contacts", "assets", "sales", "purchases", "payments", "cash_bank", "reports", "settings"}
+	modules := []string{"accounts", "products", "contacts", "assets", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings"}
 	
 	switch role {
 	case "admin":
@@ -66,7 +66,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		}
 	case "finance", "finance_manager":
 		// Finance and Finance Manager have full access to financial modules
-		financialModules := []string{"accounts", "payments", "cash_bank", "sales", "purchases"}
+		financialModules := []string{"accounts", "payments", "cash_bank", "sales", "purchases", "journal"}
 		for _, module := range modules {
 			if contains(financialModules, module) {
 				permissions[module] = &ModulePermission{
@@ -89,6 +89,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 					CanExport:  true,
 					CanMenu:    true,
 				}
+			} else if module == "users" {
+				// Users module is admin-only - no access for other roles
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
 			} else {
 				permissions[module] = &ModulePermission{
 					CanView:    true,
@@ -105,7 +116,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		// Inventory manager has comprehensive access to inventory and related operations
 		coreInventoryModules := []string{"products", "purchases", "sales"}
 		supportingModules := []string{"contacts", "assets", "reports"}
-		financialSupportModules := []string{"accounts", "payments", "cash_bank"}
+		financialSupportModules := []string{"accounts", "payments", "cash_bank", "journal"}
 		
 		for _, module := range modules {
 			if contains(coreInventoryModules, module) {
@@ -140,6 +151,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 					CanApprove: false, // Financial approvals remain with finance team
 					CanExport:  true,  // Can export for reporting
 					CanMenu:    false, // No menu access to financial modules
+				}
+			} else if module == "users" {
+				// Users module is admin-only - no access for other roles
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
 				}
 			} else {
 				// View-only access to other modules
@@ -201,6 +223,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 					CanExport:  false,
 					CanMenu:    true, // Can access purchases menu
 				}
+			} else if module == "users" {
+				// Users module is admin-only - no access for employees
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
 			} else {
 				permissions[module] = &ModulePermission{
 					CanView:    true,
@@ -216,7 +249,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	case "director":
 		// Director has view, approve, and limited create/edit access
 		for _, module := range modules {
-			if module == "purchases" || module == "sales" || module == "payments" || module == "cash_bank" {
+			if module == "purchases" || module == "sales" || module == "payments" || module == "cash_bank" || module == "journal" {
 				// Directors need create/edit access for purchases to create receipts,
 				// and for sales/payments for operational oversight
 				permissions[module] = &ModulePermission{
@@ -238,6 +271,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 					CanApprove: true,
 					CanExport:  true,
 					CanMenu:    false, // Directors don't need settings menu access
+				}
+			} else if module == "users" {
+				// Users module is admin-only - no access for directors
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
 				}
 			} else {
 				// For other modules, keep view/approve only access

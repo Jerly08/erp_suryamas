@@ -65,6 +65,7 @@ const getMenuGroups = (t) => [
       { name: t('navigation.purchases'), icon: FiShoppingCart, href: '/purchases', module: 'purchases', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
       { name: t('navigation.payments'), icon: FiTrendingUp, href: '/payments', module: 'payments', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
       { name: t('navigation.cashBank'), icon: FiCompass, href: '/cash-bank', module: 'cash_bank', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+      { name: t('navigation.journal'), icon: FiFileText, href: '/journal', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
     ]
   },
   {
@@ -99,13 +100,13 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
     ...group,
     items: group.items.filter(item => {
       if (!user) return false;
-      
+
       // For modules with permission checking, use canMenu for menu visibility
       // but still check canView for data access requirements
       if (item.module && item.permission) {
         return canView(item.module) && canMenu(item.module);
       }
-      
+
       // For system pages (users, settings) and dashboard, use role-based checking
       return item.roles.some(role => normalizeRole(role) === userRoleNormalized);
     })
@@ -116,7 +117,7 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
     const sidebarBg = useColorModeValue('white', 'var(--bg-primary)');
     const sidebarBorder = useColorModeValue('gray.200', 'var(--border-color)');
     const sidebarShadow = useColorModeValue('sm', 'var(--shadow)');
-    
+
     return (
       <Box
         transition="all 0.3s ease"
@@ -132,24 +133,24 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
         boxShadow={sidebarShadow}
         {...rest}>
         <Flex h="20" alignItems="center" mx="8" justifyContent="space-between">
-          <Text 
-            fontSize="xl" 
-            fontFamily="Inter" 
-            fontWeight="bold" 
+          <Text
+            fontSize="xl"
+            fontFamily="Inter"
+            fontWeight="bold"
             color='var(--accent-color)'
             letterSpacing="tight"
           >
             {t('navigation.sidebar.appTitle')}
           </Text>
-          <CloseButton 
-            display={{ base: 'flex', md: 'none' }} 
-            onClick={onClose} 
+          <CloseButton
+            display={{ base: 'flex', md: 'none' }}
+            onClick={onClose}
             color={useColorModeValue('gray.600', 'var(--text-secondary)')}
             _hover={{ bg: useColorModeValue('gray.100', 'var(--bg-tertiary)') }}
             aria-label={t('navigation.navbar.closeMenu')}
           />
         </Flex>
-        
+
         {filteredGroups.map((group, index) => (
           <Box key={group.title} mb={6}>
             <Text
@@ -181,7 +182,7 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
       console.log('NavItem clicked:', href);
       router.push(href);
     };
-    
+
     // Theme-aware colors for nav items
     const activeBg = 'var(--accent-color)';
     const activeColor = 'white';

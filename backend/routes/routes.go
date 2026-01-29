@@ -362,8 +362,11 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			unifiedJournals.POST("", permMiddleware.CanCreate("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.CreateJournalEntry)
 			unifiedJournals.GET("", permMiddleware.CanView("reports"), unifiedJournalController.GetJournalEntries)
 			unifiedJournals.GET("/:id", permMiddleware.CanView("reports"), unifiedJournalController.GetJournalEntry)
+			unifiedJournals.PUT("/:id", permMiddleware.CanEdit("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.UpdateJournalEntry)
+			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("reports"), unifiedJournalController.DeleteJournalEntry)
 			
-			// Status operations - removed unused endpoints
+			// Status operations
+			unifiedJournals.PUT("/:id/post", permMiddleware.CanEdit("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.PostJournalEntry)
 			
 			// Balance management
 			unifiedJournals.GET("/account-balances", permMiddleware.CanView("reports"), unifiedJournalController.GetAccountBalances)
@@ -780,6 +783,9 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 			ultraFastRoutes := NewUltraFastPaymentRoutes(db)
 			ultraFastRoutes.SetupUltraFastPaymentRoutes(r)
 			
+			// ⚙️ Setup Settings routes
+			SetupSettingsRoutes(protected, db)
+			
 			// 🔄 Setup CashBank SSOT Integration routes (NEW - Phase 1 Implementation)
 			// This provides unified view of CashBank data integrated with SSOT Journal system
 			SetupCashBankIntegratedRoutes(protected, db, jwtManager)
@@ -916,9 +922,6 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 			
 			// 🔧 SIMPLIFIED: Use only Enhanced Report Service and Controller with PDF service
 			enhancedReportController := controllers.NewEnhancedReportController(db)
-			
-			// Setup Settings routes
-			SetupSettingsRoutes(protected, db)
 			
 		// 🏁 Fiscal Year-End Closing routes (USING UNIFIED SYSTEM)
 		fiscalClosing := protected.Group("/fiscal-closing")

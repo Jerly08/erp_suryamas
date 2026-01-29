@@ -128,11 +128,12 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 	
 	// Handle enhanced tax configuration
 	ppnPercent := request.PPNPercent
-	if ppnPercent == nil || *ppnPercent == 0 {
+	if ppnPercent == nil {
 		// Use PPNRate if PPNPercent is not provided
-		if request.PPNRate > 0 {
-			ppnPercent = &request.PPNRate
+		if request.PPNRate != nil {
+			ppnPercent = request.PPNRate
 		} else {
+			// Only default to 11 if absolutely no PPN info is provided
 			defaultPPN := 11.0
 			ppnPercent = &defaultPPN
 		}
@@ -157,8 +158,8 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		PPNPercent:        *ppnPercent,
 		PPhPercent:        request.PPhPercent,
 		PPhType:           request.PPhType,
-		// Enhanced tax fields
-		PPNRate:           request.PPNRate,
+            // Enhanced tax fields
+            PPNRate:           *ppnPercent,
 		OtherTaxAdditions: request.OtherTaxAdditions,
 		PPh21Rate:         request.PPh21Rate,
 		PPh23Rate:         request.PPh23Rate,

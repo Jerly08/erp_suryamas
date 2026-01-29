@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   Modal,
   ModalOverlay,
@@ -35,11 +36,11 @@ import {
   Badge,
 } from '@chakra-ui/react';
 import { useForm, Controller } from 'react-hook-form';
-import { 
-  FiCreditCard, 
-  FiDollarSign, 
-  FiCalendar, 
-  FiFileText, 
+import {
+  FiCreditCard,
+  FiDollarSign,
+  FiCalendar,
+  FiFileText,
   FiInfo,
   FiBookOpen,
   FiBriefcase
@@ -83,14 +84,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 }) => {
   const { token } = useAuth();
   const toast = useToast();
-  
+  const { t } = useTranslation();
+
   // Color mode values
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
   const textColor = useColorModeValue('gray.600', 'gray.300');
   const labelColor = useColorModeValue('gray.700', 'gray.200');
   const selectedAccountBg = useColorModeValue('gray.50', 'gray.700');
-  
+
   const [loading, setLoading] = useState(false);
   const [contacts, setContacts] = useState<SelectContact[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
@@ -268,11 +270,11 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         <ModalHeader>
           <HStack>
             <Icon as={FiBriefcase} />
-            <Text>Create Expense Payment</Text>
+            <Text>{t('payments.form.createExpensePayment')}</Text>
           </HStack>
         </ModalHeader>
         <ModalCloseButton />
-        
+
         <form onSubmit={handleSubmit(onSubmit)}>
           <ModalBody>
             <VStack spacing={4}>
@@ -280,14 +282,14 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               <Alert status="info" borderRadius="md">
                 <AlertIcon />
                 <AlertDescription fontSize="sm">
-                  Use this form to record direct expense payments or liability settlements from your cash/bank accounts
+                  {t('payments.form.expensePaymentDescription')}
                 </AlertDescription>
               </Alert>
 
               {loadingAccounts ? (
                 <Box py={8} textAlign="center" width="full">
                   <Spinner size="lg" />
-                  <Text mt={2} color={textColor}>Loading accounts...</Text>
+                  <Text mt={2} color={textColor}>{t('common.loading')}</Text>
                 </Box>
               ) : (
                 <>
@@ -296,8 +298,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiCreditCard} />
-                        <Text>Contact</Text>
-                        <Tooltip label="Select the vendor or contact this expense is paid to">
+                        <Text>{t('payments.form.contact')}</Text>
+                        <Tooltip label={t('payments.form.contactTooltip')}>
                           <Icon as={FiInfo} boxSize={3} color={textColor} />
                         </Tooltip>
                       </HStack>
@@ -305,11 +307,11 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <Controller
                       name="contact_id"
                       control={control}
-                      rules={{ required: 'Please select a contact' }}
+                      rules={{ required: t('payments.form.contactRequired') }}
                       render={({ field }) => (
                         <Select
                           {...field}
-                          placeholder="Select contact"
+                          placeholder={t('payments.form.selectContact')}
                           borderColor={borderColor}
                         >
                           {contacts.map(contact => (
@@ -321,7 +323,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       )}
                     />
                     <FormHelperText color={textColor}>
-                      Choose vendor/contact to track who this expense is paid to
+                      {t('payments.form.contactHelper')}
                     </FormHelperText>
                     <FormErrorMessage>{errors.contact_id?.message}</FormErrorMessage>
                   </FormControl>
@@ -331,8 +333,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiBookOpen} />
-                        <Text>Expense/Liability Account</Text>
-                        <Tooltip label="Select the expense or liability account from COA">
+                        <Text>{t('payments.form.expenseAccount')}</Text>
+                        <Tooltip label={t('payments.form.expenseAccountTooltip')}>
                           <Icon as={FiInfo} boxSize={3} color={textColor} />
                         </Tooltip>
                       </HStack>
@@ -340,17 +342,17 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <Controller
                       name="expense_account_id"
                       control={control}
-                      rules={{ required: 'Please select an account' }}
+                      rules={{ required: t('payments.form.accountRequired') }}
                       render={({ field }) => (
                         <Select
                           {...field}
-                          placeholder="Select account from COA"
+                          placeholder={t('payments.form.selectAccount')}
                           borderColor={borderColor}
                         >
                           {expenseAccounts.length > 0 && (
                             <>
                               <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
-                                ── Expense Accounts ──
+                                ── {t('payments.form.expenseAccounts')} ──
                               </option>
                               {expenseAccounts.map(account => (
                                 <option key={account.id} value={account.id}>
@@ -362,7 +364,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                           {liabilityAccounts.length > 0 && (
                             <>
                               <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
-                                ── Liability Accounts ──
+                                ── {t('payments.form.liabilityAccounts')} ──
                               </option>
                               {liabilityAccounts.map(account => (
                                 <option key={account.id} value={account.id}>
@@ -382,8 +384,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiCreditCard} />
-                        <Text>Payment From (Cash/Bank)</Text>
-                        <Tooltip label="Select the cash or bank account to pay from">
+                        <Text>{t('payments.form.paymentFrom')}</Text>
+                        <Tooltip label={t('payments.form.paymentFromTooltip')}>
                           <Icon as={FiInfo} boxSize={3} color={textColor} />
                         </Tooltip>
                       </HStack>
@@ -391,9 +393,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <Controller
                       name="cash_bank_id"
                       control={control}
-                      rules={{ required: 'Please select a cash/bank account' }}
+                      rules={{ required: t('payments.form.paymentFromRequired') }}
                       render={({ field }) => (
-                        <Select {...field} placeholder="Select cash/bank account" borderColor={borderColor}>
+                        <Select {...field} placeholder={t('payments.form.selectAccount')} borderColor={borderColor}>
                           {filteredCashBanks.map(cb => (
                             <option key={cb.id} value={cb.id}>
                               {cb.name} ({cb.type}) - Balance: {new Intl.NumberFormat('id-ID', {
@@ -415,30 +417,30 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       <FormLabel color={labelColor}>
                         <HStack spacing={1}>
                           <Icon as={FiCalendar} />
-                          <Text>Payment Date</Text>
+                          <Text>{t('payments.form.paymentDate')}</Text>
                         </HStack>
                       </FormLabel>
                       <Input
                         type="date"
-                        {...register('date', { required: 'Payment date is required' })}
+                        {...register('date', { required: t('payments.form.dateRequired') })}
                         borderColor={borderColor}
                         isDisabled={checkingClosedPeriod}
                       />
                       <FormErrorMessage>
                         {errors.date?.message ||
                           (isDateClosed
-                            ? 'Tanggal pembayaran berada pada periode yang sudah ditutup. Silakan pilih tanggal di periode yang masih terbuka.'
+                            ? t('common.dateClosed')
                             : '')}
                       </FormErrorMessage>
                     </FormControl>
 
                     {/* Payment Method */}
                     <FormControl isInvalid={!!errors.method} isRequired flex={1}>
-                      <FormLabel color={labelColor}>Payment Method</FormLabel>
+                      <FormLabel color={labelColor}>{t('payments.form.paymentMethod')}</FormLabel>
                       <Controller
                         name="method"
                         control={control}
-                        rules={{ required: 'Payment method is required' }}
+                        rules={{ required: t('payments.form.methodRequired') }}
                         render={({ field }) => (
                           <Select
                             {...field}
@@ -554,7 +556,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={handleClose} isDisabled={loading}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               type="submit"
@@ -563,7 +565,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               isDisabled={loadingAccounts || isDateClosed || checkingClosedPeriod}
               leftIcon={<FiDollarSign />}
             >
-              Create Payment
+              {t('payments.form.createExpensePayment')}
             </Button>
           </ModalFooter>
         </form>

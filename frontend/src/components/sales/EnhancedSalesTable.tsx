@@ -36,6 +36,9 @@ import {
   FiDollarSign,
   FiDownload,
   FiTrash2,
+  FiXCircle,
+  FiPrinter,
+  FiCopy
 } from 'react-icons/fi';
 import { Sale } from '@/services/salesService';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -51,6 +54,7 @@ interface SalesTableProps {
   onDelete?: (sale: Sale) => void;
   onDownloadInvoice?: (sale: Sale) => void;
   onCreateReceipt?: (sale: Sale) => void;
+  onDuplicate?: (sale: Sale) => void;
   title?: string;
   formatCurrency: (amount: number) => string;
   formatDate: (date: string) => string;
@@ -69,6 +73,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
   onDelete,
   onDownloadInvoice,
   onCreateReceipt,
+  onDuplicate,
   title,
   formatCurrency,
   formatDate,
@@ -77,14 +82,14 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
 }) => {
   const { t } = useTranslation();
   const displayTitle = title || t('sales.title');
-  
+
   // Get status label with translation
   const getStatusLabel = (status: string) => {
     const statusKey = status.toLowerCase();
     const translationKey = `sales.statuses.${statusKey}`;
     return t(translationKey);
   };
-  
+
   // Debug logging for props
   console.log('EnhancedSalesTable props:', {
     salesCount: sales?.length,
@@ -152,7 +157,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
               </Thead>
               <Tbody>
                 {sales.map((sale, index) => (
-                  <Tr 
+                  <Tr
                     key={sale.id}
                     _hover={{ bg: hoverBg }}
                     transition="all 0.2s ease"
@@ -180,17 +185,17 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                       </Text>
                     </Td>
                     <Td borderColor={borderColor} py={3}>
-                      <Text 
-                        fontWeight="medium" 
-                        fontSize="sm" 
+                      <Text
+                        fontWeight="medium"
+                        fontSize="sm"
                         color={sale.outstanding_amount > 0 ? 'orange.600' : 'green.600'}
                       >
                         {formatCurrency(sale.outstanding_amount)}
                       </Text>
                     </Td>
                     <Td borderColor={borderColor} py={3}>
-                      <Badge 
-                        colorScheme={getStatusColor(sale.status)} 
+                      <Badge
+                        colorScheme={getStatusColor(sale.status)}
                         variant="subtle"
                         px={2}
                         py={1}
@@ -217,8 +222,8 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                         />
                         <MenuList zIndex={9999} bg={tableBg} border="1px solid" borderColor={borderColor}>
                           {/* View Details - Always Available */}
-                          <MenuItem 
-                            icon={<FiEye />} 
+                          <MenuItem
+                            icon={<FiEye />}
                             onClick={() => {
                               console.log('View Details clicked for sale:', sale.id);
                               onViewDetails(sale);
@@ -226,16 +231,24 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                           >
                             {t('common.buttons.viewDetails')}
                           </MenuItem>
-                          
-                          {/* Debug: Show permissions */}
-                          {process.env.NODE_ENV === 'development' && (
-                            <MenuItem isDisabled fontSize="xs" color="gray.500">
-                              Debug: canEdit={String(canEdit)}, canDelete={String(canDelete)}
+
+                          {/* Duplicate Action */}
+                          {onDuplicate && (
+                            <MenuItem
+                              icon={<FiCopy />}
+                              onClick={() => {
+                                console.log('Duplicate clicked for sale:', sale.id);
+                                onDuplicate(sale);
+                              }}
+                            >
+                              {t('common.duplicate')}
                             </MenuItem>
                           )}
+
+
                           {sale.status === 'DRAFT' && canEdit && onEdit && (
-                            <MenuItem 
-                              icon={<FiEdit />} 
+                            <MenuItem
+                              icon={<FiEdit />}
                               onClick={() => {
                                 console.log('Edit clicked for sale:', sale.id, 'canEdit:', canEdit);
                                 onEdit(sale);
@@ -245,8 +258,8 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                             </MenuItem>
                           )}
                           {sale.status === 'DRAFT' && canEdit && onConfirm && (
-                            <MenuItem 
-                              icon={<FiCheck />} 
+                            <MenuItem
+                              icon={<FiCheck />}
                               onClick={() => {
                                 console.log('Create Invoice clicked for sale:', sale.id);
                                 onConfirm(sale);
@@ -266,8 +279,8 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                             </MenuItem>
                           )}
                           {onDownloadInvoice && (
-                            <MenuItem 
-                              icon={<FiDownload />} 
+                            <MenuItem
+                              icon={<FiDownload />}
                               onClick={() => {
                                 console.log('Download Invoice clicked for sale:', sale.id);
                                 onDownloadInvoice(sale);
@@ -291,9 +304,9 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                           {canDelete && onDelete && (
                             <>
                               <MenuDivider />
-                              <MenuItem 
-                                icon={<FiTrash2 />} 
-                                color="red.500" 
+                              <MenuItem
+                                icon={<FiTrash2 />}
+                                color="red.500"
                                 onClick={() => {
                                   console.log('Delete clicked for sale:', sale.id, 'canDelete:', canDelete);
                                   onDelete(sale);
@@ -303,7 +316,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                               </MenuItem>
                             </>
                           )}
-                          
+
                           {/* Fallback if no actions available */}
                           {!canEdit && !canDelete && !onDownloadInvoice && (
                             <>

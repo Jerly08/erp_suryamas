@@ -669,6 +669,8 @@ func (s *UnifiedJournalService) GetJournalEntry(entryID uint64) (*models.SSOTJou
 	if err := s.db.
 		Preload("Lines").
 		Preload("Lines.Account").
+		Preload("Creator").
+		Preload("Poster").
 		First(&entry, entryID).Error; err != nil {
 		return nil, fmt.Errorf("journal entry not found: %w", err)
 	}
@@ -832,6 +834,7 @@ func (s *UnifiedJournalService) GetJournalEntries(filters interface{}) (*Journal
 	if err := query.
 		Preload("Lines").
 		Preload("Lines.Account").
+		Preload("Creator").
 		Order("entry_date DESC, id DESC").
 		Limit(limit).
 		Offset(offset).
@@ -846,6 +849,142 @@ func (s *UnifiedJournalService) GetJournalEntries(filters interface{}) (*Journal
 		Limit:      limit,
 		TotalPages: int((total + int64(limit) - 1) / int64(limit)),
 	}, nil
+}
+
+// UpdateJournalEntry updates an existing journal entry
+func (s *UnifiedJournalService) UpdateJournalEntry(id uint64, req *JournalEntryRequest) (*models.SSOTJournalEntry, error) {
+	var entry models.SSOTJournalEntry
+	if err := s.db.First(&entry, id).Error; err != nil {
+		return nil, fmt.Errorf("journal entry not found")
+	}
+
+	if entry.Status != models.SSOTStatusDraft {
+		return nil, fmt.Errorf("only draft entries can be updated")
+	}
+
+	// Validate lines
+	if len(req.Lines) < 2 {
+		return nil, fmt.Errorf("at least two journal lines are required")
+	}
+
+	var totalDebit, totalCredit decimal.Decimal
+	for _, l := range req.Lines {
+		totalDebit = totalDebit.Add(l.DebitAmount)
+		totalCredit = totalCredit.Add(l.CreditAmount)
+	}
+
+	if !totalDebit.Equal(totalCredit) {
+		return nil, fmt.Errorf("journal entry is not balanced")
+	}
+
+	return &entry, s.db.Transaction(func(tx *gorm.DB) error {
+		// Update header
+		entry.EntryDate = req.EntryDate
+		entry.Description = req.Description
+		entry.Reference = req.Reference
+		entry.TotalDebit = totalDebit
+		entry.TotalCredit = totalCredit
+		// Don't change CreatedBy, but maybe UpdatedAt is handled by GORM
+
+		if err := tx.Save(&entry).Error; err != nil {
+			return err
+		}
+
+		// Replace lines: Delete old ones
+		if err := tx.Where("journal_id = ?", entry.ID).Delete(&models.SSOTJournalLine{}).Error; err != nil {
+			return err
+		}
+
+		// Create new lines
+		for i, l := range req.Lines {
+			line := &models.SSOTJournalLine{
+				JournalID:   entry.ID,
+				AccountID:   l.AccountID,
+				LineNumber:  i + 1,
+				Description: l.Description,
+				DebitAmount: l.DebitAmount,
+				CreditAmount:l.CreditAmount,
+			}
+			if err := tx.Create(line).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// DeleteJournalEntry deletes a journal entry
+func (s *UnifiedJournalService) DeleteJournalEntry(id uint64) error {
+	var entry models.SSOTJournalEntry
+	if err := s.db.First(&entry, id).Error; err != nil {
+		return fmt.Errorf("journal entry not found")
+	}
+
+	if entry.Status != models.SSOTStatusDraft {
+		return fmt.Errorf("only draft entries can be deleted")
+	}
+
+	// Hard delete for draft is acceptable, or soft delete if model supports it
+	// Attempt soft delete first if DeletedAt exists
+	return s.db.Delete(&entry).Error
+}
+
+// PostJournalEntry posts a draft journal entry and updates balances
+func (s *UnifiedJournalService) PostJournalEntry(id uint64, userID uint64) (*models.SSOTJournalEntry, error) {
+	var entry models.SSOTJournalEntry
+	if err := s.db.Preload("Lines").First(&entry, id).Error; err != nil {
+		return nil, fmt.Errorf("journal entry not found")
+	}
+
+	if entry.Status != models.SSOTStatusDraft {
+		return nil, fmt.Errorf("journal entry is not in DRAFT status")
+	}
+
+	// Validate balance again just in case
+	if !entry.TotalDebit.Equal(entry.TotalCredit) {
+		return nil, fmt.Errorf("journal entry is not balanced")
+	}
+
+	return &entry, s.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		updates := map[string]interface{}{
+			"status":    models.SSOTStatusPosted,
+			"posted_at": now,
+			"posted_by": userID,
+		}
+		
+		if err := tx.Model(&entry).Updates(updates).Error; err != nil {
+			return err
+		}
+		
+		// Update in-memory object
+		entry.Status = models.SSOTStatusPosted
+		entry.PostedAt = &now
+		postedByUser := userID
+		entry.PostedBy = &postedByUser
+
+		// Update account balances
+		log.Printf("🔄 Posting Journal ID=%d: Updating account balances", entry.ID)
+		for _, line := range entry.Lines {
+			var account models.Account
+			if err := tx.First(&account, line.AccountID).Error; err != nil {
+				return fmt.Errorf("account not found: %d", line.AccountID)
+			}
+
+			var balanceChange float64
+			if account.Type == models.AccountTypeAsset || account.Type == models.AccountTypeExpense {
+				balanceChange = line.DebitAmount.InexactFloat64() - line.CreditAmount.InexactFloat64()
+			} else {
+				balanceChange = line.CreditAmount.InexactFloat64() - line.DebitAmount.InexactFloat64()
+			}
+
+			if err := tx.Model(&models.Account{}).Where("id = ?", line.AccountID).
+				UpdateColumn("balance", gorm.Expr("balance + ?", balanceChange)).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *UnifiedJournalService) RefreshAccountBalances() error {
@@ -876,21 +1015,21 @@ func (s *UltraFastPostingService) CreateJournalEntryAsyncWithType(payment interf
 
 // Missing journal request types
 type JournalLineRequest struct {
-	AccountID   uint64
-	DebitAmount decimal.Decimal
-	CreditAmount decimal.Decimal
-	Description string
+	AccountID    uint64          `json:"account_id"`
+	DebitAmount  decimal.Decimal `json:"debit_amount"`
+	CreditAmount decimal.Decimal `json:"credit_amount"`
+	Description  string          `json:"description"`
 }
 
 type JournalEntryRequest struct {
-	EntryDate   time.Time
-	Reference   string
-	Description string
-	Lines       []JournalLineRequest
-	CreatedBy   uint64
-	SourceType  string
-	SourceID    uint64
-	AutoPost    bool
+	EntryDate   time.Time            `json:"entry_date"`
+	Reference   string               `json:"reference"`
+	Description string               `json:"description"`
+	Lines       []JournalLineRequest `json:"lines"`
+	CreatedBy   uint64               `json:"created_by"`
+	SourceType  string               `json:"source_type"`
+	SourceID    uint64               `json:"source_id"`
+	AutoPost    bool                 `json:"auto_post"`
 }
 
 // Helpers to resolve default accounts for cash/bank journals
@@ -961,21 +1100,21 @@ type UltraFastPaymentRequest struct {
 
 // Missing types for controllers
 type JournalFilters struct {
-	StartDate   time.Time
-	EndDate     time.Time
-	DateFrom    *time.Time  // Add missing DateFrom field
-	DateTo      *time.Time  // Add missing DateTo field  
-	AccountID   uint
-	SourceType  string
-	SourceID    *uint64
-	Page        int
-	Limit       int
+	StartDate   time.Time   `json:"start_date"`
+	EndDate     time.Time   `json:"end_date"`
+	DateFrom    *time.Time  `json:"date_from"`
+	DateTo      *time.Time  `json:"date_to"`
+	AccountID   uint        `form:"account_id" json:"account_id"`
+	SourceType  string      `form:"source_type" json:"source_type"`
+	SourceID    *uint64     `form:"source_id" json:"source_id"`
+	Page        int         `form:"page" json:"page"`
+	Limit       int         `form:"limit" json:"limit"`
 }
 
 type JournalResponse struct {
-	Data       []models.SSOTJournalEntry
-	Total      int64
-	Page       int
-	Limit      int
-	TotalPages int
+	Data       []models.SSOTJournalEntry `json:"data"`
+	Total      int64                     `json:"total"`
+	Page       int                       `json:"page"`
+	Limit      int                       `json:"limit"`
+	TotalPages int                       `json:"total_pages"`
 }

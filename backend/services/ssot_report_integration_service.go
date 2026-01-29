@@ -1054,6 +1054,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	
 	for _, row := range rows {
 		entry := GeneralLedgerEntry{
+			JournalID:    row.JournalID,
 			Date:         row.EntryDate,
 			JournalCode:  row.EntryNumber,
 			Description:  row.Description,

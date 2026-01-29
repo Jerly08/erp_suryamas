@@ -38,6 +38,7 @@ func main() {
 	fmt.Printf("   - Existing Journal Entries in unified_journal_ledger: %d\n\n", existingJournalCount)
 
 	// Confirm before proceeding
+	/*
 	fmt.Print("⚠️  Do you want to regenerate journal entries? This will create missing entries. (yes/no): ")
 	var confirm string
 	fmt.Scanln(&confirm)
@@ -45,6 +46,7 @@ func main() {
 		fmt.Println("❌ Operation cancelled.")
 		return
 	}
+	*/
 
 	// Initialize SSOT journal services
 	coaService := services.NewCOAService(db)
