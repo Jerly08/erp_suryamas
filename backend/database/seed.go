@@ -1,11 +1,13 @@
 package database
 
 import (
-	"log"
 	"app-sistem-akuntansi/models"
+	"log"
+
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
 func SeedData(db *gorm.DB) {
 	log.Println("Starting database seeding...")
 
@@ -24,35 +26,41 @@ func SeedData(db *gorm.DB) {
 		log.Println("✅ Accounts seeded successfully with duplicate protection")
 	}
 	// Note: FixAccountHierarchies not needed - SeedAccountsImproved handles parent relationships
-	
+
+	// ✅ CRITICAL: Ensure PPh prepaid tax accounts exist (required for sales with tax deductions)
+	// This migration is idempotent and safe to run on every startup
+	if err := MigratePPhPrepaidAccounts(db); err != nil {
+		log.Printf("Error migrating PPh prepaid accounts: %v", err)
+	}
+
 	// Seed Contacts
 	SeedContacts(db)
-	
+
 	// Seed Product Categories
 	seedProductCategories(db)
-	
+
 	// Seed Product Units
 	seedProductUnits(db)
-	
+
 	// Seed Products
 	seedProducts(db)
-	
+
 	// Seed Expense Categories
 	seedExpenseCategories(db)
-	
-// Seed Cash & Bank accounts (start with zero balances)
-// Disabled per request: do not create default Cash & Bank records during seed
-// seedCashBankAccounts(db)
 
-// Seed Company Profile
+	// Seed Cash & Bank accounts (start with zero balances)
+	// Disabled per request: do not create default Cash & Bank records during seed
+	// seedCashBankAccounts(db)
+
+	// Seed Company Profile
 	seedCompanyProfile(db)
-	
+
 	// Seed Report Templates
 	seedReportTemplates(db)
-	
+
 	// Seed Permissions
 	seedPermissions(db)
-	
+
 	// Seed Role Permissions
 	seedRolePermissions(db)
 
@@ -68,7 +76,7 @@ func SeedData(db *gorm.DB) {
 
 func seedUsers(db *gorm.DB) {
 	log.Println("🔄 Starting user seeding with robust UPSERT...")
-	
+
 	// Seed all users for all roles
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 
@@ -130,7 +138,7 @@ func seedUsers(db *gorm.DB) {
 			log.Printf("⏭️  User %s already exists, skipping", user.Username)
 			continue
 		}
-		
+
 		// User doesn't exist, create it
 		query := `
 			INSERT INTO users (
@@ -140,11 +148,11 @@ func seedUsers(db *gorm.DB) {
 			) VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', 0, ?, NOW(), NOW())
 			ON CONFLICT (username) DO NOTHING
 		`
-		
-		result := db.Exec(query, 
+
+		result := db.Exec(query,
 			user.Username, user.Email, user.Password, user.Role,
 			user.FirstName, user.LastName, user.IsActive)
-		
+
 		if result.Error != nil {
 			log.Printf("⚠️  Warning: Failed to create user %s: %v", user.Username, result.Error)
 		} else if result.RowsAffected > 0 {
@@ -152,10 +160,9 @@ func seedUsers(db *gorm.DB) {
 			successCount++
 		}
 	}
-	
+
 	log.Printf("📊 User seeding completed: %d/%d users processed successfully", successCount, len(allUsers))
 }
-
 
 func seedProductCategories(db *gorm.DB) {
 	// Check if product categories already exist
@@ -249,7 +256,7 @@ func seedProducts(db *gorm.DB) {
 			log.Printf("Product %s already exists, skipping", product.Code)
 			continue
 		}
-		
+
 		// Product doesn't exist, create it
 		if err := db.Create(&product).Error; err != nil {
 			log.Printf("Error seeding product %s: %v", product.Code, err)
@@ -329,22 +336,22 @@ func seedCompanyProfile(db *gorm.DB) {
 	}
 
 	company := models.CompanyProfile{
-		Name:            "PT Contoh Perusahaan",
-		LegalName:       "PT Contoh Perusahaan Tbk",
-		TaxNumber:       "01.234.567.8-901.000",
+		Name:               "PT Contoh Perusahaan",
+		LegalName:          "PT Contoh Perusahaan Tbk",
+		TaxNumber:          "01.234.567.8-901.000",
 		RegistrationNumber: "AHU-123456789",
-		Industry:        "Perdagangan",
-		Address:         "Jl. Contoh No. 123, Jakarta Selatan",
-		City:           "Jakarta",
-		State:          "DKI Jakarta",
-		PostalCode:     "12345",
-		Country:        "Indonesia",
-		Phone:          "021-12345678",
-		Email:          "info@perusahaan.com",
-		Website:        "www.perusahaan.com",
-		FiscalYearStart: "01-01",
-		Currency:       "IDR",
-		IsActive:       true,
+		Industry:           "Perdagangan",
+		Address:            "Jl. Contoh No. 123, Jakarta Selatan",
+		City:               "Jakarta",
+		State:              "DKI Jakarta",
+		PostalCode:         "12345",
+		Country:            "Indonesia",
+		Phone:              "021-12345678",
+		Email:              "info@perusahaan.com",
+		Website:            "www.perusahaan.com",
+		FiscalYearStart:    "01-01",
+		Currency:           "IDR",
+		IsActive:           true,
 	}
 
 	db.Create(&company)
@@ -478,7 +485,7 @@ func seedPermissions(db *gorm.DB) {
 			VALUES (?, ?, ?, ?, NOW(), NOW())
 			ON CONFLICT (name) DO NOTHING
 		`
-		
+
 		result := db.Exec(query, permission.Name, permission.Resource, permission.Action, permission.Description)
 		if result.Error != nil {
 			log.Printf("Error seeding permission %s: %v", permission.Name, result.Error)
@@ -780,7 +787,7 @@ func seedSampleSales(db *gorm.DB) {
 
 	for _, sale := range sales {
 		db.Create(&sale)
-		
+
 		// Create sample sale items for each sale
 		saleItem := models.SaleItem{
 			SaleID:        sale.ID,
@@ -887,7 +894,7 @@ func seedSamplePurchases(db *gorm.DB) {
 
 	for _, purchase := range purchases {
 		db.Create(&purchase)
-		
+
 		// Create sample purchase items for each purchase
 		purchaseItem := models.PurchaseItem{
 			PurchaseID:    purchase.ID,

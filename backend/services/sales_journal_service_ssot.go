@@ -401,51 +401,62 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	// Later we can use this to offset our tax obligations
 	
 	// Legacy PPh field - use configured account
+	// ✅ CRITICAL FIX: PPh account MUST exist if PPh > 0, otherwise journal won't balance
 	if sale.PPh > 0 {
 		pphAccount, err := s.taxAccountHelper.GetWithholdingTax21Account(dbToUse)
-		if err == nil {
-			lines = append(lines, SalesJournalLineRequest{
-				AccountID:    uint64(pphAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(sale.PPh),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("PPh Dibayar Dimuka - %s", sale.InvoiceNumber),
-			})
-			log.Printf("💰 [PPh] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh)
-		} else {
-			log.Printf("⚠️ PPh prepaid account not found, skipping PPh entry: %v", err)
+		if err != nil {
+			log.Printf("❌ [CRITICAL] PPh prepaid account not found but PPh=%.2f is applied to Sale #%d", 
+				sale.PPh, sale.ID)
+			return fmt.Errorf("PPh prepaid account not found (code 1114): %v. Please configure the account in Tax Account Settings", err)
 		}
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(pphAccount.ID),
+			DebitAmount:  decimal.NewFromFloat(sale.PPh),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("PPh Dibayar Dimuka - %s", sale.InvoiceNumber),
+		})
+		log.Printf("💰 [PPh] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh)
 	}
 	
 	// PPh 21 - use configured account
+	// ✅ CRITICAL FIX: PPh21 account MUST exist if PPh21Amount > 0, otherwise journal won't balance
 	if sale.PPh21Amount > 0 {
 		pph21Account, err := s.taxAccountHelper.GetWithholdingTax21Account(dbToUse)
 		if err != nil {
-			log.Printf("⚠️ PPh21 prepaid account not found, skipping: %v", err)
-		} else {
-			lines = append(lines, SalesJournalLineRequest{
-				AccountID:    uint64(pph21Account.ID),
-				DebitAmount:  decimal.NewFromFloat(sale.PPh21Amount),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("PPh 21 Dibayar Dimuka - %s", sale.InvoiceNumber),
-			})
-			log.Printf("💰 [PPh21] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh21Amount)
+			log.Printf("❌ [CRITICAL] PPh21 prepaid account not found but PPh21Amount=%.2f is applied to Sale #%d", 
+				sale.PPh21Amount, sale.ID)
+			return fmt.Errorf("PPh21 prepaid account not found (code 1114): %v. Please configure the account in Tax Account Settings", err)
 		}
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(pph21Account.ID),
+			DebitAmount:  decimal.NewFromFloat(sale.PPh21Amount),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("PPh 21 Dibayar Dimuka - %s", sale.InvoiceNumber),
+		})
+		log.Printf("💰 [PPh21] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh21Amount)
 	}
 	
 	// PPh 23 - use configured account
+	// ✅ CRITICAL FIX: PPh23 account MUST exist if PPh23Amount > 0, otherwise journal won't balance
+	// Because grossAmount already has PPh23 subtracted, we MUST create the debit entry for prepaid tax
 	if sale.PPh23Amount > 0 {
 		pph23Account, err := s.taxAccountHelper.GetWithholdingTax23Account(dbToUse)
 		if err != nil {
-			log.Printf("⚠️ PPh23 prepaid account not found, skipping: %v", err)
-		} else {
-			lines = append(lines, SalesJournalLineRequest{
-				AccountID:    uint64(pph23Account.ID),
-				DebitAmount:  decimal.NewFromFloat(sale.PPh23Amount),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("PPh 23 Dibayar Dimuka - %s", sale.InvoiceNumber),
-			})
-			log.Printf("💰 [PPh23] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh23Amount)
+			// ✅ FIX: Return error instead of silently skipping
+			// If PPh23 is applied to sale, the account MUST exist
+			// Otherwise grossAmount is reduced but no corresponding debit entry exists = imbalance
+			log.Printf("❌ [CRITICAL] PPh23 prepaid account not found but PPh23Amount=%.2f is applied to Sale #%d", 
+				sale.PPh23Amount, sale.ID)
+			log.Printf("❌ This would cause journal imbalance. Please configure PPh23 account in Tax Settings or create account code 1115")
+			return fmt.Errorf("PPh23 prepaid account not found (code 1115): %v. Please configure the account in Tax Account Settings or create account with code 1115", err)
 		}
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(pph23Account.ID),
+			DebitAmount:  decimal.NewFromFloat(sale.PPh23Amount),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("PPh 23 Dibayar Dimuka - %s", sale.InvoiceNumber),
+		})
+		log.Printf("💰 [PPh23] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh23Amount)
 	}
 	
 	// Other Tax Deductions (if exists)
