@@ -28,6 +28,11 @@
       "director": "Direktur",
       "inventoryManager": "Manajer Inventaris"
     },
+    "admin": "Administrator",
+    "finance": "Keuangan",
+    "director": "Direktur",
+    "employee": "Karyawan",
+    "inventoryManager": "Manajer Inventaris",
     "placeholders": {
       "enterFirstName": "Masukkan nama depan",
       "enterLastName": "Masukkan nama belakang",
@@ -1253,6 +1258,10 @@
   "reports": {
     "settings": "Pengaturan",
     "users": "Pengguna",
+    "inventory": {
+      "totalValue": "Nilai Total Inventaris",
+      "lowStockAlerts": "Stok Menipis"
+    },
     "sidebar": {
       "masterData": "Data Master",
       "financial": "Keuangan",

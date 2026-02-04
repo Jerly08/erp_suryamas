@@ -28,6 +28,11 @@
       "director": "Director",
       "inventoryManager": "Inventory Manager"
     },
+    "admin": "Administrator",
+    "finance": "Finance",
+    "director": "Director",
+    "employee": "Employee",
+    "inventoryManager": "Inventory Manager",
     "placeholders": {
       "enterFirstName": "Enter first name",
       "enterLastName": "Enter last name",
@@ -1250,6 +1255,10 @@
   },
   "reports": {
     "title": "Reports",
+    "inventory": {
+      "totalValue": "Total Inventory Value",
+      "lowStockAlerts": "Low Stock Alerts"
+    },
     "exportPDF": "Export PDF",
     "exportCSV": "Export CSV",
     "close": "Close",
