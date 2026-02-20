@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"app-sistem-akuntansi/models"
+
 	"gorm.io/gorm"
 )
 
@@ -48,7 +49,7 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchaseJournal(purchase *models.
 		return nil
 	}
 
-	log.Printf("📝 Creating enhanced journal entries for Purchase #%d (Status: %s, Payment Method: %s)", 
+	log.Printf("📝 Creating enhanced journal entries for Purchase #%d (Status: %s, Payment Method: %s)",
 		purchase.ID, purchase.Status, purchase.PaymentMethod)
 
 	// Tentukan database yang akan digunakan
@@ -123,8 +124,8 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchaseJournal(purchase *models.
 		accountID, err := s.taxAccountService.GetAccountID("purchase_input_vat")
 		if err != nil {
 			log.Printf("⚠️ Failed to get purchase input VAT account from settings: %v", err)
-			// Fallback to hardcoded (1240 is the standard PPN Masukan account)
-			accountID, err = s.taxAccountService.GetAccountByCode("1240")
+			// Fallback: 2102-002 = PPN MASUKAN (under UTANG PAJAK)
+			accountID, err = s.taxAccountService.GetAccountByCode("2102-002")
 			if err != nil {
 				return fmt.Errorf("failed to find input VAT account: %v", err)
 			}
@@ -194,8 +195,8 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchaseJournal(purchase *models.
 			accountID, err = s.taxAccountService.GetAccountID("purchase_bank")
 			if err != nil {
 				log.Printf("⚠️ Failed to get purchase bank account from settings: %v", err)
-				// Fallback to hardcoded
-				accountID, err = s.taxAccountService.GetAccountByCode("1102")
+				// Fallback: 1101-003 = BANK GIRO (under KAS DAN SETARA KAS)
+				accountID, err = s.taxAccountService.GetAccountByCode("1101-003")
 				if err != nil {
 					return fmt.Errorf("failed to find bank account: %v", err)
 				}
@@ -260,6 +261,10 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchaseJournal(purchase *models.
 			log.Printf("⚠️ Warning: Failed to update COA balance for account %d: %v", item.AccountID, err)
 			// Continue processing, don't fail the entire transaction
 		}
+		// Update parent account balances after each account balance change
+		if err := s.updateParentAccountBalances(dbToUse, item.AccountID); err != nil {
+			log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", item.AccountID, err)
+		}
 	}
 
 	log.Printf("✅ Successfully created enhanced journal entries for Purchase #%d", purchase.ID)
@@ -288,12 +293,12 @@ func (s *PurchaseJournalServiceEnhanced) UpdatePurchaseJournal(purchase *models.
 	} else if oldShouldPost && newShouldPost {
 		// Both statuses require journal - Update existing
 		log.Printf("🔄 Updating existing enhanced journal entries for Purchase #%d", purchase.ID)
-		
+
 		// Delete old entries
 		if err := s.DeletePurchaseJournal(purchase.ID, dbToUse); err != nil {
 			return err
 		}
-		
+
 		// Create new entries
 		return s.CreatePurchaseJournal(purchase, dbToUse)
 	}
@@ -414,7 +419,7 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchasePaymentJournal(payment *m
 	// CREDIT: Cash/Bank based on payment method using tax account settings
 	method := strings.ToUpper(strings.TrimSpace(payment.Method))
 	var creditAccountID uint
-	
+
 	if payment.CashBankID != nil && *payment.CashBankID > 0 {
 		// Use specific cash/bank account when provided
 		var cashBank models.CashBank
@@ -422,7 +427,7 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchasePaymentJournal(payment *m
 			creditAccountID = cashBank.AccountID
 		}
 	}
-	
+
 	if creditAccountID == 0 {
 		// Use tax account settings
 		var err error
@@ -430,8 +435,8 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchasePaymentJournal(payment *m
 			// Use bank account from settings
 			creditAccountID, err = s.taxAccountService.GetAccountID("purchase_bank")
 			if err != nil {
-				// Fallback to hardcoded
-				creditAccountID, err = s.taxAccountService.GetAccountByCode("1102")
+				// Fallback: 1101-003 = BANK GIRO
+				creditAccountID, err = s.taxAccountService.GetAccountByCode("1101-003")
 			}
 		} else {
 			// Use cash account from settings
@@ -441,7 +446,7 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchasePaymentJournal(payment *m
 				creditAccountID, err = s.taxAccountService.GetAccountByCode("1101")
 			}
 		}
-		
+
 		if err != nil {
 			return fmt.Errorf("failed to find payment account: %v", err)
 		}
@@ -475,6 +480,10 @@ func (s *PurchaseJournalServiceEnhanced) CreatePurchasePaymentJournal(payment *m
 		if err := s.updateCOABalance(dbToUse, item.AccountID, item.Debit, item.Credit); err != nil {
 			log.Printf("⚠️ Warning: Failed to update COA balance for account %d: %v", item.AccountID, err)
 		}
+		// Update parent account balances after each account balance change
+		if err := s.updateParentAccountBalances(dbToUse, item.AccountID); err != nil {
+			log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", item.AccountID, err)
+		}
 	}
 
 	log.Printf("✅ Created enhanced purchase payment journal for Payment #%d (Amount: %.2f)", payment.ID, payment.Amount)
@@ -490,7 +499,7 @@ func (s *PurchaseJournalServiceEnhanced) updateCOABalance(db *gorm.DB, accountID
 
 	// Update balance based on account type
 	netChange := debit - credit
-	
+
 	switch coa.Type {
 	case "ASSET", "EXPENSE":
 		// Assets and Expenses increase with debit
@@ -501,4 +510,39 @@ func (s *PurchaseJournalServiceEnhanced) updateCOABalance(db *gorm.DB, accountID
 	}
 
 	return db.Save(&coa).Error
+}
+
+// updateParentAccountBalances updates parent account balances for a given account
+func (s *PurchaseJournalServiceEnhanced) updateParentAccountBalances(db *gorm.DB, accountID uint) error {
+	var parentID *uint
+
+	// Get parent ID
+	if err := db.Raw("SELECT parent_id FROM accounts WHERE id = ? AND deleted_at IS NULL", accountID).Scan(&parentID).Error; err != nil {
+		return fmt.Errorf("failed to get parent ID for account %d: %w", accountID, err)
+	}
+
+	// If has parent, update parent and continue up the chain
+	if parentID != nil {
+		// Calculate parent balance as sum of children
+		var parentBalance float64
+		if err := db.Raw(`
+			SELECT COALESCE(SUM(balance), 0)
+			FROM accounts 
+			WHERE parent_id = ? AND deleted_at IS NULL
+		`, *parentID).Scan(&parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to calculate parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Update parent balance
+		if err := db.Model(&models.Account{}).
+			Where("id = ? AND deleted_at IS NULL", *parentID).
+			Update("balance", parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to update parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Recursively update grandparent chain
+		return s.updateParentAccountBalances(db, *parentID)
+	}
+
+	return nil
 }

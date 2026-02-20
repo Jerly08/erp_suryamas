@@ -3,42 +3,43 @@ package services
 import (
 	"fmt"
 	"log"
-	"time"
 	"strings"
+	"time"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
 // EnhancedPaymentServiceWithJournal extends payment service with SSOT journal integration
 type EnhancedPaymentServiceWithJournal struct {
-	db               *gorm.DB
-	paymentRepo      repositories.PaymentRepository
-	contactRepo      repositories.ContactRepository
-	cashBankRepo     *repositories.CashBankRepository
-	salesRepo        *repositories.SalesRepository
-	purchaseRepo     *repositories.PurchaseRepository
-	journalFactory   *PaymentJournalFactory
-	journalService   *UnifiedJournalService
-	statusValidator  *StatusValidationHelper // NEW: Konsistensi dengan SalesJournalServiceV2
+	db              *gorm.DB
+	paymentRepo     repositories.PaymentRepository
+	contactRepo     repositories.ContactRepository
+	cashBankRepo    *repositories.CashBankRepository
+	salesRepo       *repositories.SalesRepository
+	purchaseRepo    *repositories.PurchaseRepository
+	journalFactory  *PaymentJournalFactory
+	journalService  *UnifiedJournalService
+	statusValidator *StatusValidationHelper // NEW: Konsistensi dengan SalesJournalServiceV2
 }
 
 // ExpensePaymentRequest represents a direct expense payment mapped from COA.
 // Contact must be explicitly selected (no more fallback to system contact).
 type ExpensePaymentRequest struct {
-	ContactID          uint      `json:"contact_id" binding:"required"`
-	ExpenseAccountID   uint      `json:"expense_account_id" binding:"required"`
-	CashBankID         uint      `json:"cash_bank_id" binding:"required"`
-	Date               time.Time `json:"date" binding:"required"`
-	Amount             float64   `json:"amount" binding:"required,min=0.01"`
-	Method             string    `json:"method" binding:"required"`
-	Reference          string    `json:"reference"`
-	Notes              string    `json:"notes"`
-	Description        string    `json:"description"`
-	AutoCreateJournal  bool      `json:"auto_create_journal"`
-	UserID             uint      `json:"user_id"`
+	ContactID         uint      `json:"contact_id" binding:"required"`
+	ExpenseAccountID  uint      `json:"expense_account_id" binding:"required"`
+	CashBankID        uint      `json:"cash_bank_id" binding:"required"`
+	Date              time.Time `json:"date" binding:"required"`
+	Amount            float64   `json:"amount" binding:"required,min=0.01"`
+	Method            string    `json:"method" binding:"required"`
+	Reference         string    `json:"reference"`
+	Notes             string    `json:"notes"`
+	Description       string    `json:"description"`
+	AutoCreateJournal bool      `json:"auto_create_journal"`
+	UserID            uint      `json:"user_id"`
 }
 
 // ListPayments returns paginated payments with filters (SSOT-compatible)
@@ -73,28 +74,28 @@ func NewEnhancedPaymentServiceWithJournal(
 
 // PaymentWithJournalRequest extends payment request with journal integration options
 type PaymentWithJournalRequest struct {
-	ContactID         uint      `json:"contact_id" binding:"required"`
-	CashBankID        uint      `json:"cash_bank_id" binding:"required"`
-	Date              time.Time `json:"date" binding:"required"`
-	Amount            float64   `json:"amount" binding:"required,min=0.01"`
-	Method            string    `json:"method" binding:"required"`
-	Reference         string    `json:"reference"`
-	Notes             string    `json:"notes"`
-	
+	ContactID  uint      `json:"contact_id" binding:"required"`
+	CashBankID uint      `json:"cash_bank_id" binding:"required"`
+	Date       time.Time `json:"date" binding:"required"`
+	Amount     float64   `json:"amount" binding:"required,min=0.01"`
+	Method     string    `json:"method" binding:"required"`
+	Reference  string    `json:"reference"`
+	Notes      string    `json:"notes"`
+
 	// Journal integration options
-	AutoCreateJournal bool      `json:"auto_create_journal" default:"true"`
-	PreviewJournal    bool      `json:"preview_journal" default:"false"`
-	
+	AutoCreateJournal bool `json:"auto_create_journal" default:"true"`
+	PreviewJournal    bool `json:"preview_journal" default:"false"`
+
 	// Allocation options (single target - legacy)
-	TargetInvoiceID   *uint     `json:"target_invoice_id,omitempty"`
-	TargetBillID      *uint     `json:"target_bill_id,omitempty"`
-	
+	TargetInvoiceID *uint `json:"target_invoice_id,omitempty"`
+	TargetBillID    *uint `json:"target_bill_id,omitempty"`
+
 	// Allocation arrays (multiple targets - preferred)
 	InvoiceAllocations []AllocationItem `json:"invoice_allocations,omitempty"`
 	BillAllocations    []AllocationItem `json:"bill_allocations,omitempty"`
-	
+
 	// User context
-	UserID            uint      `json:"user_id"`
+	UserID uint `json:"user_id"`
 }
 
 // AllocationItem represents a single allocation to an invoice or bill
@@ -106,31 +107,33 @@ type AllocationItem struct {
 
 // PaymentWithJournalResponse extends payment response with journal information
 type PaymentWithJournalResponse struct {
-	Payment         *models.Payment                 `json:"payment"`
-	JournalResult   *PaymentJournalResult           `json:"journal_result,omitempty"`
-	Contact         *models.Contact                 `json:"contact"`
-	CashBank        *models.CashBank                `json:"cash_bank"`
-	Allocations     []models.PaymentAllocation      `json:"allocations,omitempty"`
-	Summary         *PaymentProcessingSummary       `json:"summary"`
-	Success         bool                            `json:"success"`
-	Message         string                          `json:"message"`
-	Warnings        []string                        `json:"warnings,omitempty"`
+	Payment       *models.Payment            `json:"payment"`
+	JournalResult *PaymentJournalResult      `json:"journal_result,omitempty"`
+	Contact       *models.Contact            `json:"contact"`
+	CashBank      *models.CashBank           `json:"cash_bank"`
+	Allocations   []models.PaymentAllocation `json:"allocations,omitempty"`
+	Summary       *PaymentProcessingSummary  `json:"summary"`
+	Success       bool                       `json:"success"`
+	Message       string                     `json:"message"`
+	Warnings      []string                   `json:"warnings,omitempty"`
 }
 
 // PaymentProcessingSummary provides comprehensive processing information
 type PaymentProcessingSummary struct {
-	TotalAmount           decimal.Decimal `json:"total_amount"`
-	ProcessingTime        string          `json:"processing_time"`
-	JournalEntryCreated   bool            `json:"journal_entry_created"`
-	AccountBalancesUpdated bool           `json:"account_balances_updated"`
-	AllocationsCreated    int             `json:"allocations_created"`
-	TransactionID         string          `json:"transaction_id"`
+	TotalAmount            decimal.Decimal `json:"total_amount"`
+	ProcessingTime         string          `json:"processing_time"`
+	JournalEntryCreated    bool            `json:"journal_entry_created"`
+	AccountBalancesUpdated bool            `json:"account_balances_updated"`
+	AllocationsCreated     int             `json:"allocations_created"`
+	TransactionID          string          `json:"transaction_id"`
 }
 
 // CreateExpensePayment creates a direct expense payment (Expense/Liability from COA) with SSOT journal integration.
 // It records a row in payments table (PaymentTypeExpense) AND posts a journal entry:
-//   Debit:  expense account (from COA)
-//   Credit: cash/bank GL account linked to selected CashBank.
+//
+//	Debit:  expense account (from COA)
+//	Credit: cash/bank GL account linked to selected CashBank.
+//
 // It also updates CashBank balance & history via applyCashBankMovement.
 func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpensePaymentRequest) (*models.Payment, error) {
 	// Basic validation
@@ -216,16 +219,16 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		// Prepare journal entry: Debit Expense, Credit Cash/Bank
 		journalLines := []JournalLineRequest{
 			{
-				AccountID:   uint64(expenseAccount.ID),
-				DebitAmount: decimal.NewFromFloat(req.Amount),
+				AccountID:    uint64(expenseAccount.ID),
+				DebitAmount:  decimal.NewFromFloat(req.Amount),
 				CreditAmount: decimal.Zero,
-				Description: fmt.Sprintf("Expense Payment %s - %s", payment.Code, req.Description),
+				Description:  fmt.Sprintf("Expense Payment %s - %s", payment.Code, req.Description),
 			},
 			{
-				AccountID:   uint64(cashBank.AccountID),
-				DebitAmount: decimal.Zero,
+				AccountID:    uint64(cashBank.AccountID),
+				DebitAmount:  decimal.Zero,
 				CreditAmount: decimal.NewFromFloat(req.Amount),
-				Description: fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
+				Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
 			},
 		}
 
@@ -236,7 +239,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			EntryDate:   payment.Date,
 			Description: req.Description,
 			Lines:       journalLines,
-			AutoPost:    req.AutoCreateJournal || true,
+			AutoPost:    req.AutoCreateJournal,
 			CreatedBy:   uint64(req.UserID),
 		}
 
@@ -325,14 +328,14 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 
 		// Step 4: Create payment record
 		payment = &models.Payment{
-			ContactID:   req.ContactID,
-			UserID:      req.UserID,
-			Date:        req.Date,
-			Amount:      req.Amount,
-			Method:      req.Method,
-			Reference:   req.Reference,
-			Notes:       req.Notes,
-			Status:      models.PaymentStatusPending,
+			ContactID: req.ContactID,
+			UserID:    req.UserID,
+			Date:      req.Date,
+			Amount:    req.Amount,
+			Method:    req.Method,
+			Reference: req.Reference,
+			Notes:     req.Notes,
+			Status:    models.PaymentStatusPending,
 		}
 
 		// Generate payment code
@@ -534,6 +537,49 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 			return fmt.Errorf("failed to update payment status: %w", err)
 		}
 
+		// Reverse Cash & Bank movement to keep balances in sync.
+		// The Payment model does not store CashBankID, so we look up the
+		// original CashBankTransaction that was recorded during payment creation.
+		var originalCBTx models.CashBankTransaction
+		cbTxErr := tx.Where("reference_id = ? AND reference_type IN (?)", payment.ID,
+			[]string{"PAYMENT", "PAYMENT_RECEIVED", "PAYMENT_MADE"}).
+			Order("id DESC").First(&originalCBTx).Error
+		if cbTxErr != nil {
+			log.Printf("⚠️ Warning: Could not find original CashBankTransaction for payment %d: %v", payment.ID, cbTxErr)
+		} else {
+			var cashBank models.CashBank
+			if err := tx.First(&cashBank, originalCBTx.CashBankID).Error; err != nil {
+				log.Printf("⚠️ Warning: Could not find cash/bank account %d for reversal: %v", originalCBTx.CashBankID, err)
+			} else {
+				// The original movement amount is stored on the CashBankTransaction.
+				// To reverse, we simply negate it.
+				reverseMovement := -originalCBTx.Amount
+				refType := "PAYMENT_REVERSAL"
+
+				newBalance := cashBank.Balance + reverseMovement
+				cashBank.Balance = newBalance
+				if err := tx.Save(&cashBank).Error; err != nil {
+					return fmt.Errorf("failed to reverse cash/bank balance: %w", err)
+				}
+
+				// Insert reversal transaction row for Cash & Bank UI/history
+				txRow := &models.CashBankTransaction{
+					CashBankID:      cashBank.ID,
+					ReferenceType:   refType,
+					ReferenceID:     payment.ID,
+					Amount:          reverseMovement,
+					BalanceAfter:    newBalance,
+					TransactionDate: time.Now(),
+					Notes:           fmt.Sprintf("%s %s - Reversal: %s", refType, payment.Code, reason),
+				}
+				if err := tx.Create(txRow).Error; err != nil {
+					return fmt.Errorf("failed to create reversal cashbank transaction: %w", err)
+				}
+
+				log.Printf("✅ Cash/Bank balance reversed for account %d: movement=%.2f, newBalance=%.2f", cashBank.ID, reverseMovement, newBalance)
+			}
+		}
+
 		response = &PaymentWithJournalResponse{
 			Payment:       &payment,
 			JournalResult: journalResult,
@@ -633,9 +679,9 @@ func (eps *EnhancedPaymentServiceWithJournal) generatePaymentCode(tx *gorm.DB, m
 
 // createPaymentAllocations creates payment allocations to invoices/bills
 func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
-	tx *gorm.DB, 
-	payment *models.Payment, 
-	req *PaymentWithJournalRequest, 
+	tx *gorm.DB,
+	payment *models.Payment,
+	req *PaymentWithJournalRequest,
 	contactType string,
 ) ([]models.PaymentAllocation, error) {
 	var allocations []models.PaymentAllocation
@@ -646,30 +692,30 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 		if len(req.InvoiceAllocations) > 0 {
 			log.Printf("📝 Processing %d invoice allocations", len(req.InvoiceAllocations))
 			remainingAmount := payment.Amount
-			
+
 			for i, alloc := range req.InvoiceAllocations {
 				if alloc.InvoiceID == nil {
 					log.Printf("⚠️ Skipping allocation %d: no invoice ID", i)
 					continue
 				}
-				
+
 				if remainingAmount <= 0 {
 					log.Printf("⚠️ No remaining amount for allocation %d", i)
 					break
 				}
-				
+
 				// Validate invoice
 				var sale models.Sale
 				if err := tx.First(&sale, *alloc.InvoiceID).Error; err != nil {
 					return nil, fmt.Errorf("invoice %d not found: %w", *alloc.InvoiceID, err)
 				}
-				
+
 				// Validate status
 				if err := eps.statusValidator.ValidatePaymentAllocation(sale.Status, *alloc.InvoiceID); err != nil {
 					log.Printf("❌ Payment allocation blocked: %v", err)
 					return nil, err
 				}
-				
+
 				// Calculate allocated amount
 				allocatedAmount := alloc.Amount
 				if allocatedAmount > remainingAmount {
@@ -680,25 +726,25 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 					allocatedAmount = sale.OutstandingAmount
 					log.Printf("⚠️ Adjusting amount to outstanding: %.2f -> %.2f", allocatedAmount, sale.OutstandingAmount)
 				}
-				
+
 				// Create allocation
 				allocation := models.PaymentAllocation{
 					PaymentID:       uint64(payment.ID),
 					InvoiceID:       alloc.InvoiceID,
 					AllocatedAmount: allocatedAmount,
 				}
-				
+
 				if err := tx.Create(&allocation).Error; err != nil {
 					return nil, fmt.Errorf("failed to create invoice allocation: %w", err)
 				}
-				
+
 				allocations = append(allocations, allocation)
-				
+
 				// Update sale outstanding
 				if err := eps.updateSaleOutstanding(tx, *alloc.InvoiceID, allocatedAmount); err != nil {
 					log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
 				}
-				
+
 				remainingAmount -= allocatedAmount
 				log.Printf("✅ Invoice allocation %d complete. Remaining: %.2f", i+1, remainingAmount)
 			}
@@ -709,24 +755,24 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 			if err := tx.First(&sale, *req.TargetInvoiceID).Error; err != nil {
 				return nil, fmt.Errorf("invoice not found: %w", err)
 			}
-			
+
 			if err := eps.statusValidator.ValidatePaymentAllocation(sale.Status, *req.TargetInvoiceID); err != nil {
 				log.Printf("❌ Payment allocation blocked: %v", err)
 				return nil, err
 			}
-			
+
 			allocation := models.PaymentAllocation{
 				PaymentID:       uint64(payment.ID),
 				InvoiceID:       req.TargetInvoiceID,
 				AllocatedAmount: payment.Amount,
 			}
-			
+
 			if err := tx.Create(&allocation).Error; err != nil {
 				return nil, fmt.Errorf("failed to create invoice allocation: %w", err)
 			}
-			
+
 			allocations = append(allocations, allocation)
-			
+
 			if err := eps.updateSaleOutstanding(tx, *req.TargetInvoiceID, payment.Amount); err != nil {
 				log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
 			}
@@ -736,29 +782,29 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 		if len(req.BillAllocations) > 0 {
 			log.Printf("📝 Processing %d bill allocations", len(req.BillAllocations))
 			remainingAmount := payment.Amount
-			
+
 			for i, alloc := range req.BillAllocations {
 				if alloc.BillID == nil {
 					log.Printf("⚠️ Skipping allocation %d: no bill ID", i)
 					continue
 				}
-				
+
 				if remainingAmount <= 0 {
 					log.Printf("⚠️ No remaining amount for allocation %d", i)
 					break
 				}
-				
+
 				// Validate purchase
 				var purchase models.Purchase
 				if err := tx.First(&purchase, *alloc.BillID).Error; err != nil {
 					return nil, fmt.Errorf("bill %d not found: %w", *alloc.BillID, err)
 				}
-				
+
 				// Validate ownership
 				if purchase.VendorID != req.ContactID {
 					return nil, fmt.Errorf("bill %d does not belong to this vendor", *alloc.BillID)
 				}
-				
+
 				// Calculate allocated amount
 				allocatedAmount := alloc.Amount
 				if allocatedAmount > remainingAmount {
@@ -769,27 +815,27 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 					allocatedAmount = purchase.OutstandingAmount
 					log.Printf("⚠️ Adjusting amount to outstanding: %.2f -> %.2f", allocatedAmount, purchase.OutstandingAmount)
 				}
-				
+
 				// Create allocation
 				allocation := models.PaymentAllocation{
 					PaymentID:       uint64(payment.ID),
 					BillID:          alloc.BillID,
 					AllocatedAmount: allocatedAmount,
 				}
-				
+
 				if err := tx.Create(&allocation).Error; err != nil {
 					return nil, fmt.Errorf("failed to create bill allocation: %w", err)
 				}
-				
+
 				allocations = append(allocations, allocation)
-				
+
 				// 🔥 FIX: Update purchase outstanding
 				if err := eps.updatePurchaseOutstanding(tx, *alloc.BillID, allocatedAmount); err != nil {
 					log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
 					return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
 				}
 				log.Printf("✅ Purchase outstanding updated for bill %d", *alloc.BillID)
-				
+
 				remainingAmount -= allocatedAmount
 				log.Printf("✅ Bill allocation %d complete. Remaining: %.2f", i+1, remainingAmount)
 			}
@@ -801,13 +847,13 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 				BillID:          req.TargetBillID,
 				AllocatedAmount: payment.Amount,
 			}
-			
+
 			if err := tx.Create(&allocation).Error; err != nil {
 				return nil, fmt.Errorf("failed to create bill allocation: %w", err)
 			}
-			
+
 			allocations = append(allocations, allocation)
-			
+
 			if err := eps.updatePurchaseOutstanding(tx, *req.TargetBillID, payment.Amount); err != nil {
 				log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
 				return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
@@ -845,9 +891,9 @@ func (eps *EnhancedPaymentServiceWithJournal) updatePurchaseOutstanding(tx *gorm
 		return fmt.Errorf("purchase not found: %w", err)
 	}
 
-	log.Printf("📝 Updating purchase amounts: PaidAmount %.2f -> %.2f, Outstanding %.2f -> %.2f", 
-		purchase.PaidAmount, purchase.PaidAmount + paidAmount,
-		purchase.OutstandingAmount, purchase.OutstandingAmount - paidAmount)
+	log.Printf("📝 Updating purchase amounts: PaidAmount %.2f -> %.2f, Outstanding %.2f -> %.2f",
+		purchase.PaidAmount, purchase.PaidAmount+paidAmount,
+		purchase.OutstandingAmount, purchase.OutstandingAmount-paidAmount)
 
 	// Update amounts
 	purchase.PaidAmount += paidAmount
@@ -921,8 +967,8 @@ func (eps *EnhancedPaymentServiceWithJournal) GetAccountBalanceUpdates(paymentID
 		var updates []AccountBalanceUpdate
 		for _, line := range journalEntry.Lines {
 			update := AccountBalanceUpdate{
-				AccountID:    line.AccountID,
-				Change:       line.DebitAmount.Sub(line.CreditAmount),
+				AccountID: line.AccountID,
+				Change:    line.DebitAmount.Sub(line.CreditAmount),
 			}
 
 			if line.DebitAmount.GreaterThan(decimal.Zero) {

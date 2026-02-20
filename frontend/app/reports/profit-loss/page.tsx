@@ -382,19 +382,57 @@ const ProfitLossPage: React.FC = () => {
                 { type: 'add', label: 'Total Pendapatan', items: getSectionItems(revenueSection, data.revenue_details), total: revenueSection?.total || data.total_revenue || 0 },
                 { type: 'subtract', label: 'Harga Pokok Penjualan', items: getSectionItems(cogsSection), total: cogsSection?.total || 0 },
             ];
-        } else if (itemName.toLowerCase().includes('laba operasional') || itemName.toLowerCase().includes('operating')) {
-            const grossProfitSection = findSectionByKeyword('laba kotor') || findSectionByKeyword('gross profit');
-            const opexSection = findSectionByKeyword('operasional') || findSectionByKeyword('operating') || findSectionByKeyword('beban usaha');
+        } else if (itemName.toLowerCase().includes('laba operasional') || itemName.toLowerCase().includes('operating income')) {
+            // For Operating Income, use REVENUE items for Laba Kotor and OPERATING EXPENSE items for Beban Operasional
+            const revenueSection = findSectionByKeyword('pendapatan') || findSectionByKeyword('revenue');
+            const cogsSection = findSectionByKeyword('hpp') || findSectionByKeyword('cogs') || findSectionByKeyword('harga pokok');
+            const opexSection = findSectionByKeyword('beban') || findSectionByKeyword('operating expense') || findSectionByKeyword('biaya operasional');
+
+            // Get actual account-level items, not computed subtotals
+            const revenueItems = getSectionItems(revenueSection, data.revenue_details);
+            const cogsItems = getSectionItems(cogsSection);
+
+            // For opex, try subsections first (administrative, selling, general)
+            let opexItems: any[] = [];
+            if (opexSection?.subsections && opexSection.subsections.length > 0) {
+                for (const sub of opexSection.subsections) {
+                    if (sub.items && sub.items.length > 0) {
+                        opexItems = opexItems.concat(sub.items);
+                    }
+                }
+            }
+            if (opexItems.length === 0) {
+                opexItems = getSectionItems(opexSection, data.expense_details);
+            }
+
+            const grossProfit = data.financialMetrics?.grossProfit || (revenueSection?.total || 0) - (cogsSection?.total || 0);
+
             formula = 'Laba Kotor - Beban Operasional';
             components = [
-                { type: 'add', label: 'Laba Kotor', items: getSectionItems(grossProfitSection, data.revenue_details), total: grossProfitSection?.total || data.financialMetrics?.grossProfit || 0 },
-                { type: 'subtract', label: 'Beban Operasional', items: getSectionItems(opexSection, data.expense_details), total: opexSection?.total || data.total_expenses || 0 },
+                { type: 'add', label: 'Laba Kotor', items: revenueItems, total: grossProfit },
+                { type: 'subtract', label: 'Beban Operasional', items: opexItems, total: opexSection?.total || data.total_expenses || 0 },
             ];
         } else if (itemName.toLowerCase().includes('laba bersih') || itemName.toLowerCase().includes('net income')) {
-            const netIncomeSection = findSectionByKeyword('laba bersih') || findSectionByKeyword('net income');
+            const revenueSection = findSectionByKeyword('pendapatan') || findSectionByKeyword('revenue');
+            const opexSection = findSectionByKeyword('beban') || findSectionByKeyword('operating expense') || findSectionByKeyword('biaya operasional');
+
+            let allItems: any[] = [];
+            // Gather revenue items
+            const revItems = getSectionItems(revenueSection, data.revenue_details);
+            if (revItems.length > 0) allItems = allItems.concat(revItems);
+
+            // Gather opex items from subsections
+            if (opexSection?.subsections && opexSection.subsections.length > 0) {
+                for (const sub of opexSection.subsections) {
+                    if (sub.items && sub.items.length > 0) {
+                        allItems = allItems.concat(sub.items.map((it: any) => ({ ...it, amount: -(it.amount || 0) })));
+                    }
+                }
+            }
+
             formula = 'Laba Sebelum Pajak - Beban Pajak';
             components = [
-                { type: 'result', label: 'Laba Bersih', items: getSectionItems(netIncomeSection), total: data.financialMetrics?.netIncome || 0 },
+                { type: 'result', label: 'Laba Bersih', items: allItems, total: data.financialMetrics?.netIncome || 0 },
             ];
         } else if (itemName.toLowerCase().includes('laba sebelum pajak') || itemName.toLowerCase().includes('before tax')) {
             formula = 'Laba Operasional + Pendapatan Lainnya - Beban Lainnya';

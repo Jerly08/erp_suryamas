@@ -1,15 +1,16 @@
 package main
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/services"
 	"context"
 	"fmt"
 	"log"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/repositories"
-	"app-sistem-akuntansi/services"
-	"gorm.io/gorm"
+
 	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // TestInvoicedOnlyLogic tests the complete DRAFT->CONFIRMED->INVOICED workflow
@@ -32,7 +33,7 @@ func main() {
 	journalRepo := repositories.NewJournalEntryRepository(db)
 
 	// Initialize services - use simpler approach
-	pdfService := &MockPDFService{} // Dummy implementation
+	pdfService := &MockPDFService{}         // Dummy implementation
 	journalService := &MockJournalService{} // Dummy implementation
 	salesService := services.NewSalesService(db, salesRepo, productRepo, contactRepo, accountRepo, journalService, pdfService)
 
@@ -61,11 +62,11 @@ func runComprehensiveTest(db *gorm.DB, salesService *services.SalesService, acco
 	log.Println("\n🔸 STEP 1: Creating sale in DRAFT status")
 	saleRequest := models.SaleCreateRequest{
 		CustomerID:        testCustomer.ID,
-		Type:             models.SaleTypeInvoice,
-		Date:             time.Now(),
-		DueDate:          time.Now().Add(30 * 24 * time.Hour),
-		PaymentTerms:     "NET_30",
-		PaymentMethod:    "CREDIT",
+		Type:              models.SaleTypeInvoice,
+		Date:              time.Now(),
+		DueDate:           time.Now().Add(30 * 24 * time.Hour),
+		PaymentTerms:      "NET_30",
+		PaymentMethod:     "CREDIT",
 		PaymentMethodType: "CREDIT",
 		Items: []models.SaleItemRequest{
 			{
@@ -173,14 +174,14 @@ func runComprehensiveTest(db *gorm.DB, salesService *services.SalesService, acco
 
 	// Step 4: Test different payment methods
 	log.Println("\n🔸 STEP 4: Testing different payment methods")
-	
+
 	// Test CASH payment method
 	err = testCashPaymentMethod(db, salesService, testCustomer, testProduct, userID)
 	if err != nil {
 		return fmt.Errorf("cash payment method test failed: %v", err)
 	}
-	
-	// Test BANK payment method  
+
+	// Test BANK payment method
 	err = testBankPaymentMethod(db, salesService, testCustomer, testProduct, userID)
 	if err != nil {
 		return fmt.Errorf("bank payment method test failed: %v", err)
@@ -202,11 +203,11 @@ func testCashPaymentMethod(db *gorm.DB, salesService *services.SalesService, cus
 
 	saleRequest := models.SaleCreateRequest{
 		CustomerID:        customer.ID,
-		Type:             models.SaleTypeInvoice,
-		Date:             time.Now(),
-		PaymentMethod:    "CASH",
+		Type:              models.SaleTypeInvoice,
+		Date:              time.Now(),
+		PaymentMethod:     "CASH",
 		PaymentMethodType: "CASH",
-		CashBankID:       &cashAccount.ID,
+		CashBankID:        &cashAccount.ID,
 		Items: []models.SaleItemRequest{
 			{
 				ProductID: product.ID,
@@ -255,11 +256,11 @@ func testBankPaymentMethod(db *gorm.DB, salesService *services.SalesService, cus
 
 	saleRequest := models.SaleCreateRequest{
 		CustomerID:        customer.ID,
-		Type:             models.SaleTypeInvoice,
-		Date:             time.Now(),
-		PaymentMethod:    "BANK",
+		Type:              models.SaleTypeInvoice,
+		Date:              time.Now(),
+		PaymentMethod:     "BANK",
 		PaymentMethodType: "BANK",
-		CashBankID:       &bankAccount.ID,
+		CashBankID:        &bankAccount.ID,
 		Items: []models.SaleItemRequest{
 			{
 				ProductID: product.ID,
@@ -312,10 +313,10 @@ func setupTestData(db *gorm.DB) (*models.Contact, *models.Product, error) {
 
 	// Create test product
 	product := &models.Product{
-		Name:     "Test Product for INVOICED Logic",
-		Code:     "TEST-INV-LOGIC",
+		Name:      "Test Product for INVOICED Logic",
+		Code:      "TEST-INV-LOGIC",
 		SellPrice: 100000,
-		IsActive: true,
+		IsActive:  true,
 	}
 	if err := db.Create(product).Error; err != nil {
 		return nil, nil, err
@@ -410,7 +411,7 @@ func compareBalances(before, after map[string]float64) bool {
 	if len(before) != len(after) {
 		return false
 	}
-	
+
 	for code, beforeBalance := range before {
 		afterBalance, exists := after[code]
 		if !exists || beforeBalance != afterBalance {
@@ -432,7 +433,7 @@ func cleanupSale(db *gorm.DB, saleID uint) {
 	db.Where("sale_id = ?", saleID).Delete(&models.SaleItem{})
 	db.Where("sale_id = ?", saleID).Delete(&models.SalePayment{})
 	db.Where("reference_type = ? AND reference_id = ?", models.JournalRefSale, saleID).Delete(&models.JournalEntry{})
-	
+
 	// Delete sale
 	db.Delete(&models.Sale{}, saleID)
 }
@@ -496,7 +497,7 @@ func (m *MockPDFService) GenerateJournalAnalysisPDF(journalData interface{}, sta
 	return []byte("mock pdf content"), nil
 }
 
-func (m *MockPDFService) GenerateSSOTProfitLossPDF(ssotData interface{}) ([]byte, error) {
+func (m *MockPDFService) GenerateSSOTProfitLossPDF(ssotData interface{}, language string) ([]byte, error) {
 	return []byte("mock pdf content"), nil
 }
 

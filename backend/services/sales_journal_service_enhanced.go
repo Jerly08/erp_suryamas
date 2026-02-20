@@ -8,15 +8,16 @@ import (
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+
 	"gorm.io/gorm"
 )
 
 // SalesJournalServiceEnhanced handles sales journal entries using configurable tax account settings
 // Now also supports TaxConfig for tax rates and calculation rules
 type SalesJournalServiceEnhanced struct {
-	db               *gorm.DB
-	journalRepo      repositories.JournalEntryRepository
-	coaService       *COAService
+	db                *gorm.DB
+	journalRepo       repositories.JournalEntryRepository
+	coaService        *COAService
 	taxAccountService *TaxAccountService
 }
 
@@ -55,7 +56,7 @@ func (s *SalesJournalServiceEnhanced) CreateSalesJournal(sale *models.Sale, tx *
 		return nil
 	}
 
-	log.Printf("📝 Creating enhanced journal entries for Sale #%d (Status: %s, Payment Method: %s)", 
+	log.Printf("📝 Creating enhanced journal entries for Sale #%d (Status: %s, Payment Method: %s)",
 		sale.ID, sale.Status, sale.PaymentMethodType)
 
 	// Tentukan database yang akan digunakan
@@ -100,7 +101,7 @@ func (s *SalesJournalServiceEnhanced) CreateSalesJournal(sale *models.Sale, tx *
 				return fmt.Errorf("failed to find cash account: %v", err)
 			}
 		}
-		
+
 		var account models.Account
 		if err := dbToUse.First(&account, accountID).Error; err != nil {
 			return fmt.Errorf("failed to load cash account: %v", err)
@@ -127,21 +128,21 @@ func (s *SalesJournalServiceEnhanced) CreateSalesJournal(sale *models.Sale, tx *
 				accountID = cashBank.AccountID
 			}
 		}
-		
+
 		if accountID == 0 {
 			// Use default bank account from settings
 			var err error
 			accountID, err = s.taxAccountService.GetAccountID("sales_bank")
 			if err != nil {
 				log.Printf("⚠️ Failed to get sales bank account from settings: %v", err)
-				// Fallback to hardcoded value
-				accountID, err = s.taxAccountService.GetAccountByCode("1102")
+				// Fallback: 1101-003 = BANK GIRO (under KAS DAN SETARA KAS)
+				accountID, err = s.taxAccountService.GetAccountByCode("1101-003")
 				if err != nil {
 					return fmt.Errorf("failed to find bank account: %v", err)
 				}
 			}
 		}
-		
+
 		var account models.Account
 		if err := dbToUse.First(&account, accountID).Error; err != nil {
 			return fmt.Errorf("failed to load bank account: %v", err)
@@ -169,7 +170,7 @@ func (s *SalesJournalServiceEnhanced) CreateSalesJournal(sale *models.Sale, tx *
 				return fmt.Errorf("failed to find receivable account: %v", err)
 			}
 		}
-		
+
 		var account models.Account
 		if err := dbToUse.First(&account, accountID).Error; err != nil {
 			return fmt.Errorf("failed to load receivable account: %v", err)
@@ -188,50 +189,122 @@ func (s *SalesJournalServiceEnhanced) CreateSalesJournal(sale *models.Sale, tx *
 	}
 
 	// CREDIT SIDE - Revenue dan PPN using tax account settings
-	// Revenue (from settings) - Credit
-	if sale.Subtotal > 0 {
-		accountID, err := s.taxAccountService.GetAccountID("sales_revenue")
-		if err != nil {
-			log.Printf("⚠️ Failed to get sales revenue account from settings: %v", err)
-			// Fallback to hardcoded value
-			accountID, err = s.taxAccountService.GetAccountByCode("4101")
-			if err != nil {
-				return fmt.Errorf("failed to find revenue account: %v", err)
-			}
+	// ✅ FIX: Revenue per SaleItem based on RevenueAccountID (same as SSOT/V2 services)
+	// Previously posted ALL revenue to a single account from taxAccountService settings,
+	// which was set to header 4101 — causing balance to be overwritten by RecalculateAllParentBalances
+	if len(sale.SaleItems) == 0 {
+		// Safety: preload SaleItems if not loaded
+		var saleWithItems models.Sale
+		if err := dbToUse.Preload("SaleItems").First(&saleWithItems, sale.ID).Error; err == nil {
+			sale.SaleItems = saleWithItems.SaleItems
+		} else {
+			log.Printf("⚠️ Failed to preload SaleItems for Sale #%d: %v", sale.ID, err)
 		}
-		
-		var account models.Account
-		if err := dbToUse.First(&account, accountID).Error; err != nil {
-			return fmt.Errorf("failed to load revenue account: %v", err)
+	}
+
+	// Group revenue totals per account
+	revenueTotals := make(map[uint]float64)
+	var defaultRevenueAcc *models.Account
+
+	for _, item := range sale.SaleItems {
+		amount := item.LineTotal
+		if amount == 0 {
+			continue
 		}
 
+		accID := item.RevenueAccountID
+		if accID != 0 {
+			// ✅ FIX: Check if the account is a header, redirect to leaf child
+			var acc models.Account
+			if err := dbToUse.First(&acc, accID).Error; err == nil && acc.IsHeader {
+				log.Printf("⚠️ [Enhanced] SaleItem #%d has header account %s (ID=%d), finding leaf child", item.ID, acc.Code, acc.ID)
+				var leaf models.Account
+				if err := dbToUse.Where("parent_id = ? AND is_header = false AND deleted_at IS NULL", acc.ID).First(&leaf).Error; err == nil {
+					accID = leaf.ID
+					log.Printf("✅ [Enhanced] Redirected to leaf account %s (ID=%d)", leaf.Code, leaf.ID)
+				} else {
+					log.Printf("⚠️ [Enhanced] No leaf child found for header %s, using default", acc.Code)
+					accID = 0 // Force fallback
+				}
+			}
+		}
+
+		if accID == 0 {
+			// Fallback: use LEAF account 4101-001 (NOT header 4101)
+			if defaultRevenueAcc == nil {
+				var acc models.Account
+				if err := dbToUse.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&acc).Error; err != nil {
+					// Last resort: try any non-header REVENUE account
+					if err := dbToUse.Where("type = ? AND is_header = false AND deleted_at IS NULL", "REVENUE").First(&acc).Error; err != nil {
+						log.Printf("⚠️ [Enhanced] No revenue account found!")
+						continue
+					}
+				}
+				defaultRevenueAcc = &acc
+			}
+			accID = defaultRevenueAcc.ID
+		}
+
+		revenueTotals[accID] += amount
+	}
+
+	// If no SaleItems found, fall back to subtotal on single account
+	if len(revenueTotals) == 0 && sale.Subtotal > 0 {
+		if defaultRevenueAcc == nil {
+			var acc models.Account
+			if err := dbToUse.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&acc).Error; err == nil {
+				defaultRevenueAcc = &acc
+			}
+		}
+		if defaultRevenueAcc != nil {
+			revenueTotals[defaultRevenueAcc.ID] = sale.Subtotal
+		}
+	}
+
+	// Create journal items for each revenue account
+	for accID, total := range revenueTotals {
+		var account models.Account
+		if err := dbToUse.First(&account, accID).Error; err != nil {
+			log.Printf("⚠️ [Enhanced] Failed to load revenue account %d: %v", accID, err)
+			continue
+		}
 		journalItems = append(journalItems, models.SimpleSSOTJournalItem{
 			JournalID:   ssotEntry.ID,
 			AccountID:   account.ID,
 			AccountCode: account.Code,
 			AccountName: account.Name,
 			Debit:       0,
-			Credit:      sale.Subtotal,
+			Credit:      total,
 			Description: fmt.Sprintf("Sales revenue for Invoice #%s", sale.InvoiceNumber),
 		})
-		log.Printf("💰 Revenue: Credit to %s (%s) = %.2f", account.Name, account.Code, sale.Subtotal)
+		log.Printf("💰 Revenue: Credit to %s (%s) = %.2f", account.Name, account.Code, total)
 	}
 
 	// PPN Keluaran (from settings) - Credit jika ada
-	// Note: PPN can now be calculated using TaxConfig:
-	//   ppnRate, _ := s.taxAccountService.GetSalesTaxRate("ppn")
-	//   calculatedPPN := s.taxAccountService.CalculateTax(sale.Subtotal, ppnRate, discountBeforeTax, discount)
-	if sale.PPN > 0 {
+	// ✅ FIX: Safety net — recalculate PPN if sale.PPN=0 but PPNPercent > 0
+	ppnValue := sale.PPN
+	if ppnValue == 0 && sale.PPNPercent > 0 {
+		taxableAmt := sale.TaxableAmount
+		if taxableAmt == 0 {
+			taxableAmt = sale.Subtotal - sale.DiscountAmount
+		}
+		if taxableAmt > 0 {
+			ppnValue = taxableAmt * (sale.PPNPercent / 100)
+			log.Printf("⚠️ [Enhanced] PPN was 0 but PPNPercent=%.2f, recalculated PPN=%.2f", sale.PPNPercent, ppnValue)
+		}
+	}
+
+	if ppnValue > 0 {
 		accountID, err := s.taxAccountService.GetAccountID("sales_output_vat")
 		if err != nil {
 			log.Printf("⚠️ Failed to get sales output VAT account from settings: %v", err)
-			// Fallback to hardcoded value
-			accountID, err = s.taxAccountService.GetAccountByCode("2103")
+			// Fallback: 2102-001 = PPN KELUARAN (under UTANG PAJAK)
+			accountID, err = s.taxAccountService.GetAccountByCode("2102-001")
 			if err != nil {
 				return fmt.Errorf("failed to find output VAT account: %v", err)
 			}
 		}
-		
+
 		var account models.Account
 		if err := dbToUse.First(&account, accountID).Error; err != nil {
 			return fmt.Errorf("failed to load output VAT account: %v", err)
@@ -243,10 +316,10 @@ func (s *SalesJournalServiceEnhanced) CreateSalesJournal(sale *models.Sale, tx *
 			AccountCode: account.Code,
 			AccountName: account.Name,
 			Debit:       0,
-			Credit:      sale.PPN,
+			Credit:      ppnValue,
 			Description: fmt.Sprintf("Output VAT for Invoice #%s", sale.InvoiceNumber),
 		})
-		log.Printf("📊 PPN: Credit to %s (%s) = %.2f", account.Name, account.Code, sale.PPN)
+		log.Printf("📊 PPN: Credit to %s (%s) = %.2f", account.Name, account.Code, ppnValue)
 	}
 
 	// Create all journal items
@@ -261,6 +334,10 @@ func (s *SalesJournalServiceEnhanced) CreateSalesJournal(sale *models.Sale, tx *
 		if err := s.updateCOABalance(dbToUse, item.AccountID, item.Debit, item.Credit); err != nil {
 			log.Printf("⚠️ Warning: Failed to update COA balance for account %d: %v", item.AccountID, err)
 			// Continue processing, don't fail the entire transaction
+		}
+		// Update parent account balances after each account balance change
+		if err := s.updateParentAccountBalances(dbToUse, item.AccountID); err != nil {
+			log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", item.AccountID, err)
 		}
 	}
 
@@ -290,12 +367,12 @@ func (s *SalesJournalServiceEnhanced) UpdateSalesJournal(sale *models.Sale, oldS
 	} else if oldShouldPost && newShouldPost {
 		// Both statuses require journal - Update existing
 		log.Printf("🔄 Updating existing enhanced journal entries for Sale #%d", sale.ID)
-		
+
 		// Delete old entries
 		if err := s.DeleteSalesJournal(sale.ID, dbToUse); err != nil {
 			return err
 		}
-		
+
 		// Create new entries
 		return s.CreateSalesJournal(sale, dbToUse)
 	}
@@ -390,7 +467,7 @@ func (s *SalesJournalServiceEnhanced) CreateSalesPaymentJournal(payment *models.
 	// DEBIT: Cash/Bank based on payment method using tax account settings
 	method := strings.ToUpper(strings.TrimSpace(payment.PaymentMethod))
 	var debitAccountID uint
-	
+
 	if payment.CashBankID != nil && *payment.CashBankID > 0 {
 		// Use specific cash/bank account when provided
 		var cashBank models.CashBank
@@ -398,7 +475,7 @@ func (s *SalesJournalServiceEnhanced) CreateSalesPaymentJournal(payment *models.
 			debitAccountID = cashBank.AccountID
 		}
 	}
-	
+
 	if debitAccountID == 0 {
 		// Use tax account settings
 		var err error
@@ -406,8 +483,8 @@ func (s *SalesJournalServiceEnhanced) CreateSalesPaymentJournal(payment *models.
 			// Use bank account from settings
 			debitAccountID, err = s.taxAccountService.GetAccountID("sales_bank")
 			if err != nil {
-				// Fallback to hardcoded
-				debitAccountID, err = s.taxAccountService.GetAccountByCode("1102")
+				// Fallback: 1101-003 = BANK GIRO
+				debitAccountID, err = s.taxAccountService.GetAccountByCode("1101-003")
 			}
 		} else {
 			// Use cash account from settings
@@ -417,7 +494,7 @@ func (s *SalesJournalServiceEnhanced) CreateSalesPaymentJournal(payment *models.
 				debitAccountID, err = s.taxAccountService.GetAccountByCode("1101")
 			}
 		}
-		
+
 		if err != nil {
 			return fmt.Errorf("failed to find payment account: %v", err)
 		}
@@ -477,6 +554,10 @@ func (s *SalesJournalServiceEnhanced) CreateSalesPaymentJournal(payment *models.
 		if err := s.updateCOABalance(dbToUse, item.AccountID, item.Debit, item.Credit); err != nil {
 			log.Printf("⚠️ Warning: Failed to update COA balance for account %d: %v", item.AccountID, err)
 		}
+		// Update parent account balances after each account balance change
+		if err := s.updateParentAccountBalances(dbToUse, item.AccountID); err != nil {
+			log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", item.AccountID, err)
+		}
 	}
 
 	log.Printf("✅ Created enhanced payment journal for Payment #%d (Amount: %.2f)", payment.ID, payment.Amount)
@@ -492,7 +573,7 @@ func (s *SalesJournalServiceEnhanced) updateCOABalance(db *gorm.DB, accountID ui
 
 	// Update balance based on account type
 	netChange := debit - credit
-	
+
 	switch coa.Type {
 	case "ASSET", "EXPENSE":
 		// Assets and Expenses increase with debit
@@ -512,11 +593,46 @@ func (s *SalesJournalServiceEnhanced) GetDisplayBalance(accountID uint) (float64
 		return 0, err
 	}
 
-	// For REVENUE and LIABILITY accounts (like PPN Keluaran), 
+	// For REVENUE and LIABILITY accounts (like PPN Keluaran),
 	// return positive value for display
 	if coa.Type == "REVENUE" || coa.Type == "LIABILITY" {
 		return -coa.Balance, nil // Convert negative to positive for display
 	}
 
 	return coa.Balance, nil
+}
+
+// updateParentAccountBalances updates parent account balances for a given account
+func (s *SalesJournalServiceEnhanced) updateParentAccountBalances(db *gorm.DB, accountID uint) error {
+	var parentID *uint
+
+	// Get parent ID
+	if err := db.Raw("SELECT parent_id FROM accounts WHERE id = ? AND deleted_at IS NULL", accountID).Scan(&parentID).Error; err != nil {
+		return fmt.Errorf("failed to get parent ID for account %d: %w", accountID, err)
+	}
+
+	// If has parent, update parent and continue up the chain
+	if parentID != nil {
+		// Calculate parent balance as sum of children
+		var parentBalance float64
+		if err := db.Raw(`
+			SELECT COALESCE(SUM(balance), 0)
+			FROM accounts 
+			WHERE parent_id = ? AND deleted_at IS NULL
+		`, *parentID).Scan(&parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to calculate parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Update parent balance
+		if err := db.Model(&models.Account{}).
+			Where("id = ? AND deleted_at IS NULL", *parentID).
+			Update("balance", parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to update parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Recursively update grandparent chain
+		return s.updateParentAccountBalances(db, *parentID)
+	}
+
+	return nil
 }

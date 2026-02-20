@@ -135,6 +135,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const [cashBankAccounts, setCashBankAccounts] = useState<any[]>([]);
   const [invoiceTypes, setInvoiceTypes] = useState<InvoiceType[]>([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [defaultTaxRate, setDefaultTaxRate] = useState<number>(0);
   const [validationError, setValidationError] = useState<ParsedValidationError | null>(null);
   const toast = useToast();
   const { user, token } = useAuth();
@@ -199,11 +200,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
       currency: 'IDR',
       exchange_rate: 1,
       discount_percent: 0,
-      // Legacy tax fields
-      ppn_percent: 11,
+      // Legacy tax fields — will be overridden by system settings in loadFormData
+      ppn_percent: 0,
       pph_percent: 0,
-      // Enhanced tax configuration
-      ppn_rate: 11,
+      // Enhanced tax configuration — will be overridden by system settings in loadFormData
+      ppn_rate: 0,
       other_tax_additions: 0,
       pph21_rate: 0,
       pph23_rate: 0,
@@ -335,7 +336,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       console.log('SalesForm: Starting to load form data...');
 
       // Load all data concurrently with proper error handling
-      const [customersResult, productsResult, salesPersonsResult, accountsResult, cashBankResult, invoiceTypesResult] = await Promise.allSettled([
+      const [customersResult, productsResult, salesPersonsResult, accountsResult, cashBankResult, invoiceTypesResult, settingsResult] = await Promise.allSettled([
         // Load customers
         (async () => {
           console.log('SalesForm: Loading customers...');
@@ -394,6 +395,15 @@ const SalesForm: React.FC<SalesFormProps> = ({
           const result = await invoiceTypeService.default.getInvoiceTypes();
           console.log('SalesForm: Invoice types loaded:', result?.length || 0);
           return result;
+        })(),
+
+        // Load system settings for default tax rate
+        (async () => {
+          console.log('SalesForm: Loading system settings...');
+          const api = (await import('@/services/api')).default;
+          const response = await api.get('/api/v1/settings/public');
+          console.log('SalesForm: System settings loaded');
+          return response.data;
         })()
       ]);
 
@@ -449,6 +459,22 @@ const SalesForm: React.FC<SalesFormProps> = ({
       } else {
         console.warn('Failed to load invoice types:', invoiceTypesResult.status === 'rejected' ? invoiceTypesResult.reason : 'No data');
         setInvoiceTypes([]);
+      }
+
+      // Process system settings — extract default tax rate
+      if (settingsResult.status === 'fulfilled' && settingsResult.value?.data) {
+        const settingsData = settingsResult.value.data;
+        const configuredTaxRate = settingsData.default_tax_rate ?? 0;
+        console.log('SalesForm: Using default tax rate from settings:', configuredTaxRate);
+        setDefaultTaxRate(configuredTaxRate);
+        // Apply to form if creating new sale (no existing sale/initialData)
+        if (!sale && !initialData) {
+          setValue('ppn_rate', configuredTaxRate);
+          setValue('ppn_percent', configuredTaxRate);
+        }
+      } else {
+        console.warn('Failed to load system settings, using default tax rate: 0');
+        setDefaultTaxRate(0);
       }
 
     } catch (error: any) {
@@ -532,11 +558,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
       currency: 'IDR',
       exchange_rate: 1,
       discount_percent: 0,
-      // Legacy tax fields
-      ppn_percent: 11,
+      // Legacy tax fields — use system configured rate
+      ppn_percent: defaultTaxRate,
       pph_percent: 0,
-      // Enhanced tax configuration
-      ppn_rate: 11,
+      // Enhanced tax configuration — use system configured rate
+      ppn_rate: defaultTaxRate,
       other_tax_additions: 0,
       pph21_rate: 0,
       pph23_rate: 0,
@@ -618,7 +644,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
 
     // Tax calculations using enhanced fields (same as Tax Summary)
     // Use explicit check to allow 0 as valid value
-    const ppnRate = watchPPNRate ?? watchPPNPercent ?? 11;
+    const ppnRate = watchPPNRate ?? watchPPNPercent ?? defaultTaxRate;
     const ppnAmount = afterDiscount * (ppnRate / 100);
     const otherAdditions = watchOtherTaxAdditions || 0;
     const totalAdditions = ppnAmount + otherAdditions;
@@ -1603,7 +1629,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
 
                               // Tax calculations using enhanced fields
                               // Use nullish coalescing to allow 0 as valid value
-                              const ppnRate = watchPPNRate ?? watchPPNPercent ?? 11;
+                              const ppnRate = watchPPNRate ?? watchPPNPercent ?? defaultTaxRate;
                               const ppnAmount = afterDiscount * (ppnRate / 100);
                               const otherAdditions = watchOtherTaxAdditions || 0;
                               const totalAdditions = ppnAmount + otherAdditions;

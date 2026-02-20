@@ -5,6 +5,7 @@ import (
 	"app-sistem-akuntansi/middleware"
 	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -38,7 +39,7 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 
 	// Initialize SSOT Payment Controller
 	ssotPaymentController := controllers.NewSSOTPaymentController(enhancedPaymentService)
-	
+
 	// Initialize Tax Payment Service and Controller
 	taxPaymentService := services.NewTaxPaymentService(db)
 	taxPaymentController := controllers.NewTaxPaymentController(taxPaymentService)
@@ -46,47 +47,47 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 	// Initialize permission middleware
 	permissionMiddleware := middleware.NewPermissionMiddleware(db)
 
-		// SSOT Payment routes - replaces legacy payment routes
-		ssotPayments := router.Group("/payments/ssot")
-		ssotPayments.Use(middleware.PaymentRateLimit())                    // Apply rate limiting
-		ssotPayments.Use(periodValidationMiddleware.ValidateTransactionPeriod()) // Block transactions in closed periods
-		if middleware.GlobalAuditLogger != nil {
-			ssotPayments.Use(middleware.GlobalAuditLogger.PaymentAuditMiddleware()) // Apply audit logging
-		}
-		{
-			// SSOT Payment CRUD operations with journal integration
-			ssotPayments.POST("/receivable", permissionMiddleware.CanCreate("payments"), ssotPaymentController.CreateReceivablePayment)
-			ssotPayments.POST("/payable", permissionMiddleware.CanCreate("payments"), ssotPaymentController.CreatePayablePayment)
-			ssotPayments.POST("/expense", permissionMiddleware.CanCreate("payments"), ssotPaymentController.CreateExpensePayment)
-			ssotPayments.GET("/:id", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentWithJournal)
-			ssotPayments.POST("/:id/reverse", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ReversePayment)
-			
-			// Journal integration endpoints
-			ssotPayments.POST("/preview-journal", permissionMiddleware.CanView("payments"), ssotPaymentController.PreviewPaymentJournal)
-			ssotPayments.GET("/:id/balance-updates", permissionMiddleware.CanView("payments"), ssotPaymentController.GetAccountBalanceUpdates)
-			
-			// Legacy compatibility (deprecated - returns guidance)
-			ssotPayments.GET("", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPayments)
-		}
-		
-		// Tax Payment routes (PPN Masukan & Keluaran)
-			taxPayments := router.Group("/tax-payments")
-			taxPayments.Use(middleware.PaymentRateLimit())                    // Apply rate limiting
-			taxPayments.Use(periodValidationMiddleware.ValidateTransactionPeriod()) // Block PPN payments in closed periods
-			if middleware.GlobalAuditLogger != nil {
-				taxPayments.Use(middleware.GlobalAuditLogger.PaymentAuditMiddleware()) // Apply audit logging
-			}
-			{
-			// PPN Payment CRUD operations with journal integration
-			taxPayments.POST("/ppn", permissionMiddleware.CanCreate("payments"), taxPaymentController.CreatePPNPayment)
-			taxPayments.GET("/ppn", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNPayments)
-			taxPayments.GET("/ppn/summary", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNPaymentSummary)
-			taxPayments.GET("/ppn/masukan", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNMasukanPayments)
-			taxPayments.GET("/ppn/keluaran", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNKeluaranPayments)
-			taxPayments.GET("/ppn/balance", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNBalance)
-		}
+	// SSOT Payment routes - replaces legacy payment routes
+	ssotPayments := router.Group("/payments/ssot")
+	ssotPayments.Use(middleware.PaymentRateLimit())                          // Apply rate limiting
+	ssotPayments.Use(periodValidationMiddleware.ValidateTransactionPeriod()) // Block transactions in closed periods
+	if middleware.GlobalAuditLogger != nil {
+		ssotPayments.Use(middleware.GlobalAuditLogger.PaymentAuditMiddleware()) // Apply audit logging
+	}
+	{
+		// SSOT Payment CRUD operations with journal integration
+		ssotPayments.POST("/receivable", permissionMiddleware.CanCreate("payments"), ssotPaymentController.CreateReceivablePayment)
+		ssotPayments.POST("/payable", permissionMiddleware.CanCreate("payments"), ssotPaymentController.CreatePayablePayment)
+		ssotPayments.POST("/expense", permissionMiddleware.CanCreate("payments"), ssotPaymentController.CreateExpensePayment)
+		ssotPayments.GET("/:id", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentWithJournal)
+		ssotPayments.POST("/:id/reverse", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ReversePayment)
 
-		// Backward-compatibility route to match Swagger-documented path
+		// Journal integration endpoints
+		ssotPayments.POST("/preview-journal", permissionMiddleware.CanView("payments"), ssotPaymentController.PreviewPaymentJournal)
+		ssotPayments.GET("/:id/balance-updates", permissionMiddleware.CanView("payments"), ssotPaymentController.GetAccountBalanceUpdates)
+
+		// Legacy compatibility (deprecated - returns guidance)
+		ssotPayments.GET("", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPayments)
+	}
+
+	// Tax Payment routes (PPN Masukan & Keluaran)
+	taxPayments := router.Group("/tax-payments")
+	taxPayments.Use(middleware.PaymentRateLimit())                          // Apply rate limiting
+	taxPayments.Use(periodValidationMiddleware.ValidateTransactionPeriod()) // Block PPN payments in closed periods
+	if middleware.GlobalAuditLogger != nil {
+		taxPayments.Use(middleware.GlobalAuditLogger.PaymentAuditMiddleware()) // Apply audit logging
+	}
+	{
+		// PPN Payment CRUD operations with journal integration
+		taxPayments.POST("/ppn", permissionMiddleware.CanCreate("payments"), taxPaymentController.CreatePPNPayment)
+		taxPayments.GET("/ppn", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNPayments)
+		taxPayments.GET("/ppn/summary", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNPaymentSummary)
+		taxPayments.GET("/ppn/masukan", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNMasukanPayments)
+		taxPayments.GET("/ppn/keluaran", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNKeluaranPayments)
+		taxPayments.GET("/ppn/balance", permissionMiddleware.CanView("payments"), taxPaymentController.GetPPNBalance)
+	}
+
+	// Backward-compatibility route to match Swagger-documented path
 	router.POST("/payments/preview-journal", permissionMiddleware.CanView("payments"), ssotPaymentController.PreviewPaymentJournal)
 	// Aliases for with-journal and account updates
 	router.GET("/payments/:id/with-journal", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentWithJournal)
@@ -99,7 +100,7 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 	{
 		legacyPayments.GET("/deprecated-notice", func(c *gin.Context) {
 			c.JSON(200, gin.H{
-				"notice": "Legacy payment endpoints are deprecated",
+				"notice":    "Legacy payment endpoints are deprecated",
 				"migration": "Please use /api/v1/payments/ssot/* endpoints for full SSOT journal integration",
 				"warnings": []string{
 					"Legacy endpoints may cause double posting",
@@ -108,7 +109,7 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 				},
 				"available_endpoints": []string{
 					"POST /api/v1/payments/ssot/receivable - Create customer payment with journal",
-					"POST /api/v1/payments/ssot/payable - Create vendor payment with journal", 
+					"POST /api/v1/payments/ssot/payable - Create vendor payment with journal",
 					"GET /api/v1/payments/ssot/:id - Get payment with journal details",
 					"POST /api/v1/payments/ssot/:id/reverse - Reverse payment with journal",
 					"POST /api/v1/payments/ssot/preview-journal - Preview journal entry",

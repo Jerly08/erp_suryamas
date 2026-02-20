@@ -60,8 +60,11 @@ import {
   FiRefreshCw,
   FiCheck,
   FiActivity,
-  FiLock
+  FiLock,
+  FiAlertTriangle,
+  FiPackage
 } from 'react-icons/fi';
+import { API_ENDPOINTS } from '@/config/api';
 
 interface AccountOption {
   id: number;
@@ -196,6 +199,9 @@ const TaxAccountSettingsPage: React.FC = () => {
   // Form state
   const [formData, setFormData] = useState<any>({});
 
+  // Company type from main settings
+  const [companyType, setCompanyType] = useState<string | null>(null);
+
   // Modal for suggestions
   const { isOpen: isSuggestionsOpen, onOpen: onSuggestionsOpen, onClose: onSuggestionsClose } = useDisclosure();
 
@@ -209,12 +215,10 @@ const TaxAccountSettingsPage: React.FC = () => {
     const criticalAccounts = [
       'sales_receivable',     // 1201 - Used in ALL credit sales
       'sales_revenue',        // 4101 - Used in ALL sales
-      'sales_output_vat',     // 2103 - Tax regulation (DJP)
-      'purchase_input_vat',   // 1240 - Tax regulation (DJP)
       'purchase_payable',     // 2001 - Used in ALL credit purchases
     ];
-    // Withholding tax dan inventory accounts TIDAK critical, bisa diubah
-    // PPh 21, PPh 23, PPh 25, Tax Payable, Inventory, COGS adalah optional
+    // PPN, Withholding tax, dan inventory accounts TIDAK critical, bisa diubah
+    // PPN Masukan, PPN Keluaran, PPh 21, PPh 23, PPh 25, Tax Payable, Inventory, COGS
     return criticalAccounts.includes(fieldName);
   };
 
@@ -313,6 +317,18 @@ const TaxAccountSettingsPage: React.FC = () => {
 
   useEffect(() => {
     fetchSettings();
+    // Fetch company type from main settings
+    const fetchCompanyType = async () => {
+      try {
+        const res = await api.get(API_ENDPOINTS.SETTINGS);
+        if (res.data.success && res.data.data?.company_type) {
+          setCompanyType(res.data.data.company_type);
+        }
+      } catch (err) {
+        console.error('Failed to fetch company type:', err);
+      }
+    };
+    fetchCompanyType();
   }, []);
 
   const handleAccountChange = (fieldName: string, accountId: string) => {
@@ -342,19 +358,26 @@ const TaxAccountSettingsPage: React.FC = () => {
     // Sales and purchase accounts are configured elsewhere and already exist in settings
     // So we don't validate them here - they should already be set
 
-    // No required fields to validate on this page
-    // All fields (PPh 21, 23, 25, Tax Payable, Inventory, COGS) are optional
+    // Required fields based on company type
+    if (companyType === 'TRADING' || companyType === 'MANUFACTURING') {
+      if (!formData.inventory_account_id) {
+        errors['inventory'] = 'Inventory account wajib untuk perusahaan ' + (companyType === 'TRADING' ? 'dagang' : 'manufaktur');
+      }
+      if (!formData.cogs_account_id) {
+        errors['cogs'] = 'COGS account wajib untuk perusahaan ' + (companyType === 'TRADING' ? 'dagang' : 'manufaktur');
+      }
+    }
 
     setValidationErrors(errors);
-    return true; // Always valid since all fields are optional
+    return Object.keys(errors).length === 0;
   };
 
   const handleSave = async () => {
     // Validate form (currently always returns true since all fields are optional)
     if (!validateForm()) {
       toast({
-        title: 'Validation Error',
-        description: 'Please check your input',
+        title: t('settings.taxAccounts.messages.validationError'),
+        description: t('settings.taxAccounts.messages.checkInput'),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -401,13 +424,12 @@ const TaxAccountSettingsPage: React.FC = () => {
       }
 
       if (response.data.success) {
-        setSettings(response.data.data);
-        setFormData(response.data.data);
-        setHasChanges(false);
+        // Reload all data to show current account names correctly
+        await fetchSettings();
 
         toast({
-          title: 'Success',
-          description: 'Tax account settings saved successfully',
+          title: t('common.success'),
+          description: t('settings.taxAccounts.messages.saveSuccess'),
           status: 'success',
           duration: 3000,
           isClosable: true,
@@ -415,7 +437,7 @@ const TaxAccountSettingsPage: React.FC = () => {
       }
     } catch (error: any) {
       toast({
-        title: 'Save Error',
+        title: t('settings.taxAccounts.messages.saveError'),
         description: error.response?.data?.details || error.message,
         status: 'error',
         duration: 5000,
@@ -497,15 +519,15 @@ const TaxAccountSettingsPage: React.FC = () => {
   const handleRefresh = async () => {
     await fetchSettings();
     toast({
-      title: 'Refreshed',
-      description: 'Settings and accounts list refreshed',
+      title: t('settings.taxAccounts.messages.refreshed'),
+      description: t('settings.taxAccounts.messages.refreshedDesc'),
       status: 'success',
       duration: 2000,
       isClosable: true,
     });
   };
 
-  const getAccountOptions = (accountTypes: string[] = [], categories: string[] = []) => {
+  const getAccountOptions = (accountTypes: string[] = [], categories: string[] = [], suggestedCodes: string[] = []) => {
     let filtered = availableAccounts;
 
     if (accountTypes.length > 0) {
@@ -516,7 +538,17 @@ const TaxAccountSettingsPage: React.FC = () => {
       filtered = filtered.filter(acc => categories.includes(acc.category));
     }
 
-    return filtered.sort((a, b) => a.code.localeCompare(b.code));
+    const sorted = filtered.sort((a, b) => a.code.localeCompare(b.code));
+
+    if (suggestedCodes.length > 0) {
+      // Only show accounts that match the suggested codes — no irrelevant accounts
+      const recommended = sorted.filter(acc =>
+        suggestedCodes.some(code => acc.code.startsWith(code))
+      );
+      return { recommended, others: [] };
+    }
+
+    return { recommended: [], others: sorted };
   };
 
   const renderAccountSelect = (
@@ -526,12 +558,13 @@ const TaxAccountSettingsPage: React.FC = () => {
     accountTypes: string[] = [],
     categories: string[] = [],
     description?: string,
-    tooltipInfo?: string
+    tooltipInfo?: string,
+    suggestedCodes: string[] = []
   ) => {
     const currentValue = formData[`${fieldName}_account_id`] || '';
     const currentAccount = formData[`${fieldName}_account`];
     const hasError = validationErrors[fieldName];
-    const options = getAccountOptions(accountTypes, categories);
+    const { recommended, others } = getAccountOptions(accountTypes, categories, suggestedCodes);
 
     // Check if critical from field name OR from selected account's database flag
     const isCritical = isCriticalAccount(fieldName);
@@ -568,7 +601,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         <Select
           value={currentValue}
           onChange={(e) => handleAccountChange(fieldName, e.target.value)}
-          placeholder={`Select ${label.toLowerCase()}`}
+          placeholder={`${t('settings.taxAccounts.renderSelect.selectPlaceholder', { label })}`}
           variant="filled"
           isDisabled={isCritical || isSelectedCritical}
           bg={(isCritical || isSelectedCritical) ? 'gray.200' : undefined}
@@ -577,11 +610,19 @@ const TaxAccountSettingsPage: React.FC = () => {
           _hover={{ bg: (isCritical || isSelectedCritical) ? 'gray.200' : 'gray.100' }}
           _focus={{ bg: 'white', borderColor: 'blue.500' }}
         >
-          {options.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.code} - {account.name} ({account.type})
-            </option>
-          ))}
+          {recommended.length > 0 ? (
+            recommended.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.code} - {account.name}
+              </option>
+            ))
+          ) : (
+            others.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.code} - {account.name} ({account.type})
+              </option>
+            ))
+          )}
         </Select>
         {hasError && <FormErrorMessage>{hasError}</FormErrorMessage>}
         {currentAccount && currentValue && (
@@ -589,7 +630,7 @@ const TaxAccountSettingsPage: React.FC = () => {
             <HStack spacing={1}>
               <Icon as={FiCheck} color="green.500" boxSize={3} />
               <Text>
-                Current: {currentAccount.code} - {currentAccount.name}
+                {t('settings.taxAccounts.renderSelect.current')}: {currentAccount.code} - {currentAccount.name}
               </Text>
             </HStack>
           </FormHelperText>
@@ -599,9 +640,8 @@ const TaxAccountSettingsPage: React.FC = () => {
             <HStack spacing={1}>
               <Icon as={FiInfo} />
               <Text>
-                🔒 This account is system critical and locked to ensure data integrity.
-                Changing it would break journal entries and reports.
-                {isSelectedCritical && ' (Locked in database)'}
+                {t('settings.taxAccounts.renderSelect.lockedInfo')}
+                {isSelectedCritical && ` ${t('settings.taxAccounts.renderSelect.lockedInDb')}`}
               </Text>
             </HStack>
           </FormHelperText>
@@ -636,7 +676,24 @@ const TaxAccountSettingsPage: React.FC = () => {
           {/* Header */}
           <HStack justify="space-between" width="full">
             <VStack alignItems="start" spacing={2}>
-              <Heading as="h1" size="xl">{t('settings.taxAccounts.title')}</Heading>
+              <HStack spacing={3}>
+                <Heading as="h1" size="xl">{t('settings.taxAccounts.title')}</Heading>
+                {companyType && (
+                  <Badge
+                    colorScheme={
+                      companyType === 'SERVICE' ? 'purple' :
+                        companyType === 'TRADING' ? 'teal' : 'blue'
+                    }
+                    fontSize="sm"
+                    px={3}
+                    py={1}
+                    borderRadius="full"
+                  >
+                    {companyType === 'SERVICE' ? '🏢 Jasa' :
+                      companyType === 'TRADING' ? '🏪 Dagang' : '🏭 Manufaktur'}
+                  </Badge>
+                )}
+              </HStack>
               <Text color="gray.600" fontSize="sm">
                 {t('settings.taxAccounts.subtitle')}
               </Text>
@@ -715,7 +772,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                   <HStack spacing={3}>
                     <Icon as={FiCreditCard} boxSize={5} color={purpleColor} />
                     <Heading size="md">{t('settings.taxAccounts.vatAccounts')}</Heading>
-                    <Badge colorScheme="red" size="sm">{t('settings.taxAccounts.status.criticalLocked')}</Badge>
+                    <Badge colorScheme="green" size="sm">{t('settings.taxAccounts.status.configurable')}</Badge>
                   </HStack>
                   <Tooltip
                     label={t('settings.taxAccounts.tooltips.vat')}
@@ -743,90 +800,61 @@ const TaxAccountSettingsPage: React.FC = () => {
                   </Box>
                 </Alert>
                 <SimpleGrid columns={[1, 1, 2]} spacing={6}>
-                  <Box>
-                    <FormControl isReadOnly>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                        <HStack>
-                          <Text>{t('settings.taxAccounts.vatInput')}</Text>
-                          <Badge colorScheme="red" size="sm">{t('settings.taxAccounts.status.locked')}</Badge>
-                          <Icon as={FiLock} color="red.500" boxSize={3} />
-                        </HStack>
-                      </FormLabel>
-                      {settings?.purchase_input_vat_account ? (
-                        <Box
-                          p={3}
-                          bg="gray.100"
-                          borderRadius="md"
-                          borderWidth="1px"
-                          borderColor="gray.300"
-                        >
-                          <HStack spacing={2}>
-                            <Icon as={FiCheck} color="green.500" />
-                            <Text fontSize="md" fontWeight="medium">
-                              {settings.purchase_input_vat_account.code} - {settings.purchase_input_vat_account.name}
-                            </Text>
-                          </HStack>
-                          <Text fontSize="xs" color="gray.600" mt={1}>
-                            {settings.purchase_input_vat_account.type} • {t('settings.taxAccounts.messages.hardcoded')}
-                          </Text>
-                        </Box>
-                      ) : (
-                        <Box p={3} bg="red.50" borderRadius="md" borderWidth="1px" borderColor="red.200">
-                          <HStack spacing={2}>
-                            <Icon as={FiInfo} color="red.500" />
-                            <Text fontSize="sm" color="red.600">{t('settings.taxAccounts.errors.accountNotFound', { code: '1240' })}</Text>
-                          </HStack>
-                        </Box>
-                      )}
-                      <FormHelperText fontSize="xs" color="gray.500">
-                        {t('settings.taxAccounts.descriptions.vatInput')}
-                      </FormHelperText>
-                    </FormControl>
-                  </Box>
+                  {renderAccountSelect(
+                    'purchase_input_vat',
+                    t('settings.taxAccounts.vatInput'),
+                    false,
+                    ['LIABILITY'],
+                    ['CURRENT_LIABILITY'],
+                    t('settings.taxAccounts.descriptions.vatInput'),
+                    t('settings.taxAccounts.tooltips.vat'),
+                    ['2102-002', '2102']
+                  )}
 
-                  <Box>
-                    <FormControl isReadOnly>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                        <HStack>
-                          <Text>{t('settings.taxAccounts.vatOutput')}</Text>
-                          <Badge colorScheme="red" size="sm">{t('settings.taxAccounts.status.locked')}</Badge>
-                          <Icon as={FiLock} color="red.500" boxSize={3} />
-                        </HStack>
-                      </FormLabel>
-                      {settings?.sales_output_vat_account ? (
-                        <Box
-                          p={3}
-                          bg="gray.100"
-                          borderRadius="md"
-                          borderWidth="1px"
-                          borderColor="gray.300"
-                        >
-                          <HStack spacing={2}>
-                            <Icon as={FiCheck} color="green.500" />
-                            <Text fontSize="md" fontWeight="medium">
-                              {settings.sales_output_vat_account.code} - {settings.sales_output_vat_account.name}
-                            </Text>
-                          </HStack>
-                          <Text fontSize="xs" color="gray.600" mt={1}>
-                            {settings.sales_output_vat_account.type} • {t('settings.taxAccounts.messages.hardcoded')}
-                          </Text>
-                        </Box>
-                      ) : (
-                        <Box p={3} bg="red.50" borderRadius="md" borderWidth="1px" borderColor="red.200">
-                          <HStack spacing={2}>
-                            <Icon as={FiInfo} color="red.500" />
-                            <Text fontSize="sm" color="red.600">{t('settings.taxAccounts.errors.accountNotFound', { code: '2103' })}</Text>
-                          </HStack>
-                        </Box>
-                      )}
-                      <FormHelperText fontSize="xs" color="gray.500">
-                        {t('settings.taxAccounts.descriptions.vatOutput')}
-                      </FormHelperText>
-                    </FormControl>
-                  </Box>
+                  {renderAccountSelect(
+                    'sales_output_vat',
+                    t('settings.taxAccounts.vatOutput'),
+                    false,
+                    ['LIABILITY'],
+                    ['CURRENT_LIABILITY'],
+                    t('settings.taxAccounts.descriptions.vatOutput'),
+                    t('settings.taxAccounts.tooltips.vat'),
+                    ['2102-001', '2102']
+                  )}
                 </SimpleGrid>
               </CardBody>
             </Card>
+
+            {/* Company-type-specific alert for withholding taxes */}
+            {companyType === 'SERVICE' && (
+              <Alert status="info" variant="subtle" borderRadius="md" mb={6}>
+                <AlertIcon />
+                <Box>
+                  <AlertTitle fontSize="sm">{t('settings.taxAccounts.companyAlerts.serviceTitle')}</AlertTitle>
+                  <AlertDescription fontSize="xs">
+                    {t('settings.taxAccounts.companyAlerts.serviceDesc')}
+                  </AlertDescription>
+                </Box>
+              </Alert>
+            )}
+            {companyType === 'TRADING' && (
+              <Alert status="warning" variant="subtle" borderRadius="md" mb={6}>
+                <AlertIcon />
+                <Box>
+                  <AlertTitle fontSize="sm">{t('settings.taxAccounts.companyAlerts.tradingTitle')}</AlertTitle>
+                  <AlertDescription fontSize="xs" dangerouslySetInnerHTML={{ __html: t('settings.taxAccounts.companyAlerts.tradingDesc') }} />
+                </Box>
+              </Alert>
+            )}
+            {companyType === 'MANUFACTURING' && (
+              <Alert status="warning" variant="subtle" borderRadius="md" mb={6}>
+                <AlertIcon />
+                <Box>
+                  <AlertTitle fontSize="sm">{t('settings.taxAccounts.companyAlerts.manufacturingTitle')}</AlertTitle>
+                  <AlertDescription fontSize="xs" dangerouslySetInnerHTML={{ __html: t('settings.taxAccounts.companyAlerts.manufacturingDesc') }} />
+                </Box>
+              </Alert>
+            )}
 
             {/* Withholding Tax Accounts */}
             <Card mb={6}>
@@ -861,7 +889,8 @@ const TaxAccountSettingsPage: React.FC = () => {
                     ['ASSET'],
                     ['CURRENT_ASSET'],
                     t('settings.taxAccounts.pph21.desc'),
-                    t('settings.taxAccounts.pph21.tooltip')
+                    t('settings.taxAccounts.pph21.tooltip'),
+                    ['1105-001', '1105']
                   )}
 
                   {renderAccountSelect(
@@ -871,7 +900,8 @@ const TaxAccountSettingsPage: React.FC = () => {
                     ['ASSET'],
                     ['CURRENT_ASSET'],
                     t('settings.taxAccounts.pph23.desc'),
-                    t('settings.taxAccounts.pph23.tooltip')
+                    t('settings.taxAccounts.pph23.tooltip'),
+                    ['1105-002', '1105']
                   )}
 
                   {renderAccountSelect(
@@ -881,7 +911,8 @@ const TaxAccountSettingsPage: React.FC = () => {
                     ['ASSET'],
                     ['CURRENT_ASSET'],
                     t('settings.taxAccounts.pph25.desc'),
-                    t('settings.taxAccounts.pph25.tooltip')
+                    t('settings.taxAccounts.pph25.tooltip'),
+                    ['1105-003', '1105']
                   )}
 
                   {renderAccountSelect(
@@ -891,60 +922,77 @@ const TaxAccountSettingsPage: React.FC = () => {
                     ['LIABILITY'],
                     ['CURRENT_LIABILITY'],
                     t('settings.taxAccounts.taxPayable.desc'),
-                    t('settings.taxAccounts.taxPayable.tooltip')
+                    t('settings.taxAccounts.taxPayable.tooltip'),
+                    ['2102', '2102-003', '2102-004']
                   )}
                 </SimpleGrid>
               </CardBody>
             </Card>
 
-            {/* Inventory & COGS Accounts */}
-            <Card>
-              <CardHeader>
-                <HStack spacing={3} justify="space-between">
-                  <HStack spacing={3}>
-                    <Icon as={FiShoppingCart} boxSize={5} color={blueColor} />
-                    <Heading size="md">{t('settings.taxAccounts.inventoryAccounts')}</Heading>
-                    <Badge colorScheme="blue" size="sm">{t('settings.taxAccounts.status.configurable')}</Badge>
+            {/* Inventory & COGS Accounts - Hidden for SERVICE companies */}
+            {companyType !== 'SERVICE' && (
+              <Card>
+                <CardHeader>
+                  <HStack spacing={3} justify="space-between">
+                    <HStack spacing={3}>
+                      <Icon as={FiPackage} boxSize={5} color={blueColor} />
+                      <Heading size="md">{t('settings.taxAccounts.inventoryAccounts')}</Heading>
+                      {(companyType === 'TRADING' || companyType === 'MANUFACTURING') ? (
+                        <Badge colorScheme="red" size="sm">{t('settings.taxAccounts.status.required')}</Badge>
+                      ) : (
+                        <Badge colorScheme="blue" size="sm">{t('settings.taxAccounts.status.configurable')}</Badge>
+                      )}
+                    </HStack>
+                    <Tooltip
+                      label={t('settings.taxAccounts.descriptions.inventory')}
+                      placement="left"
+                      hasArrow
+                    >
+                      <IconButton
+                        aria-label="Info"
+                        icon={<FiInfo />}
+                        size="sm"
+                        variant="ghost"
+                        colorScheme="blue"
+                      />
+                    </Tooltip>
                   </HStack>
-                  <Tooltip
-                    label={t('settings.taxAccounts.descriptions.inventory')}
-                    placement="left"
-                    hasArrow
-                  >
-                    <IconButton
-                      aria-label="Info"
-                      icon={<FiInfo />}
-                      size="sm"
-                      variant="ghost"
-                      colorScheme="blue"
-                    />
-                  </Tooltip>
-                </HStack>
-              </CardHeader>
-              <CardBody>
-                <SimpleGrid columns={[1, 1, 2]} spacing={6}>
-                  {renderAccountSelect(
-                    'inventory',
-                    t('settings.taxAccounts.inventory.label'),
-                    false,
-                    ['ASSET'],
-                    ['CURRENT_ASSET'],
-                    t('settings.taxAccounts.inventory.desc'),
-                    t('settings.taxAccounts.inventory.tooltip')
+                </CardHeader>
+                <CardBody>
+                  {(companyType === 'TRADING' || companyType === 'MANUFACTURING') && (
+                    <Alert status="warning" mb={4} variant="left-accent" borderRadius="md">
+                      <AlertIcon />
+                      <AlertDescription fontSize="xs">
+                        ⚠️ {t('settings.taxAccounts.companyAlerts.inventoryRequired')} {companyType === 'TRADING' ? t('settings.taxAccounts.companyAlerts.tradingType') : t('settings.taxAccounts.companyAlerts.manufacturingType')}.
+                      </AlertDescription>
+                    </Alert>
                   )}
+                  <SimpleGrid columns={[1, 1, 2]} spacing={6}>
+                    {renderAccountSelect(
+                      'inventory',
+                      t('settings.taxAccounts.inventory.label'),
+                      companyType === 'TRADING' || companyType === 'MANUFACTURING',
+                      ['ASSET'],
+                      ['CURRENT_ASSET'],
+                      t('settings.taxAccounts.inventory.desc'),
+                      t('settings.taxAccounts.inventory.tooltip'),
+                      ['1103', '1103-001', '1103-002', '1103-003']
+                    )}
 
-                  {renderAccountSelect(
-                    'cogs',
-                    t('settings.taxAccounts.cogs.label'),
-                    false,
-                    ['EXPENSE'],
-                    ['COST_OF_GOODS_SOLD', 'OPERATING_EXPENSE'],
-                    t('settings.taxAccounts.cogs.desc'),
-                    t('settings.taxAccounts.cogs.tooltip')
-                  )}
-                </SimpleGrid>
-              </CardBody>
-            </Card>
+                    {renderAccountSelect(
+                      'cogs',
+                      t('settings.taxAccounts.cogs.label'),
+                      companyType === 'TRADING' || companyType === 'MANUFACTURING',
+                      ['EXPENSE'],
+                      ['COST_OF_GOODS_SOLD', 'OPERATING_EXPENSE'],
+                      t('settings.taxAccounts.cogs.desc'),
+                      t('settings.taxAccounts.cogs.tooltip'),
+                      ['5000', '5101', '5102']
+                    )}
+                  </SimpleGrid>
+                </CardBody>
+              </Card>
+            )}
           </Box>
 
           {/* Current Status */}
@@ -953,45 +1001,45 @@ const TaxAccountSettingsPage: React.FC = () => {
               <CardHeader>
                 <HStack spacing={2}>
                   <Icon as={FiCheck} color="green.500" />
-                  <Heading size="sm">Current Tax Configuration Status</Heading>
+                  <Heading size="sm">{t('settings.taxAccounts.statusSection.title')}</Heading>
                 </HStack>
               </CardHeader>
               <CardBody>
                 <VStack spacing={6} alignItems="start" width="full">
                   {/* VAT/PPN Status */}
                   <Box width="full">
-                    <Text fontSize="sm" fontWeight="bold" mb={3} color="purple.600">VAT/PPN Accounts</Text>
+                    <Text fontSize="sm" fontWeight="bold" mb={3} color="purple.600">{t('settings.taxAccounts.statusSection.vatAccounts')}</Text>
                     <SimpleGrid columns={[1, 2]} spacing={4}>
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPN Masukan (Input VAT)</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.ppnMasukan')}</Text>
                         {settings.purchase_input_vat_account ? (
                           <HStack spacing={2}>
-                            <Badge colorScheme="green">Configured</Badge>
+                            <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
                             <Text fontSize="sm">
                               {settings.purchase_input_vat_account?.code} - {settings.purchase_input_vat_account?.name}
                             </Text>
                           </HStack>
                         ) : (
                           <HStack spacing={2}>
-                            <Badge colorScheme="red">Not Set</Badge>
-                            <Text fontSize="xs" color="red.500">Required for Setor PPN</Text>
+                            <Badge colorScheme="red">{t('settings.taxAccounts.status.notSet')}</Badge>
+                            <Text fontSize="xs" color="red.500">{t('settings.taxAccounts.status.requiredForSetorPPN')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPN Keluaran (Output VAT)</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.ppnKeluaran')}</Text>
                         {settings.sales_output_vat_account ? (
                           <HStack spacing={2}>
-                            <Badge colorScheme="green">Configured</Badge>
+                            <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
                             <Text fontSize="sm">
                               {settings.sales_output_vat_account?.code} - {settings.sales_output_vat_account?.name}
                             </Text>
                           </HStack>
                         ) : (
                           <HStack spacing={2}>
-                            <Badge colorScheme="red">Not Set</Badge>
-                            <Text fontSize="xs" color="red.500">Required for Setor PPN</Text>
+                            <Badge colorScheme="red">{t('settings.taxAccounts.status.notSet')}</Badge>
+                            <Text fontSize="xs" color="red.500">{t('settings.taxAccounts.status.requiredForSetorPPN')}</Text>
                           </HStack>
                         )}
                       </VStack>
@@ -1002,88 +1050,88 @@ const TaxAccountSettingsPage: React.FC = () => {
 
                   {/* Withholding Tax Status */}
                   <Box width="full">
-                    <Text fontSize="sm" fontWeight="bold" mb={3} color="green.600">Withholding Tax Accounts (Optional)</Text>
+                    <Text fontSize="sm" fontWeight="bold" mb={3} color="green.600">{t('settings.taxAccounts.statusSection.withholdingTitle')}</Text>
                     <SimpleGrid columns={[1, 2, 3]} spacing={6}>
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 21 (Employee Tax)</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.pph21Label')}</Text>
                         {settings.withholding_tax21_account ? (
                           <HStack spacing={2}>
-                            <Badge colorScheme="green">Configured</Badge>
+                            <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
                             <Text fontSize="sm">
                               {settings.withholding_tax21_account?.code} - {settings.withholding_tax21_account?.name}
                             </Text>
                           </HStack>
                         ) : (
                           <HStack spacing={2}>
-                            <Badge colorScheme="gray">Not Set</Badge>
-                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                            <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
+                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 23 (Vendor Tax)</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.pph23Label')}</Text>
                         {settings.withholding_tax23_account ? (
                           <HStack spacing={2}>
-                            <Badge colorScheme="green">Configured</Badge>
+                            <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
                             <Text fontSize="sm">
                               {settings.withholding_tax23_account?.code} - {settings.withholding_tax23_account?.name}
                             </Text>
                           </HStack>
                         ) : (
                           <HStack spacing={2}>
-                            <Badge colorScheme="gray">Not Set</Badge>
-                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                            <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
+                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">PPh 25 (Installment Tax)</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.pph25Label')}</Text>
                         {settings.withholding_tax25_account ? (
                           <HStack spacing={2}>
-                            <Badge colorScheme="green">Configured</Badge>
+                            <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
                             <Text fontSize="sm">
                               {settings.withholding_tax25_account?.code} - {settings.withholding_tax25_account?.name}
                             </Text>
                           </HStack>
                         ) : (
                           <HStack spacing={2}>
-                            <Badge colorScheme="gray">Not Set</Badge>
-                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                            <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
+                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">Tax Payable</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.taxPayable')}</Text>
                         {settings.tax_payable_account ? (
                           <HStack spacing={2}>
-                            <Badge colorScheme="green">Configured</Badge>
+                            <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
                             <Text fontSize="sm">
                               {settings.tax_payable_account?.code} - {settings.tax_payable_account?.name}
                             </Text>
                           </HStack>
                         ) : (
                           <HStack spacing={2}>
-                            <Badge colorScheme="gray">Not Set</Badge>
-                            <Text fontSize="xs" color="gray.500">Optional</Text>
+                            <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
+                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">Configuration Status</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.configStatus')}</Text>
                         <Badge colorScheme={settings.is_active ? 'green' : 'gray'} fontSize="sm">
-                          {settings.is_active ? 'Active' : 'Inactive'}
+                          {settings.is_active ? t('settings.taxAccounts.status.active') : t('settings.taxAccounts.status.inactive')}
                         </Badge>
                         <Text fontSize="xs" color="gray.500">
-                          Last updated: {new Date(settings.updated_at).toLocaleDateString()}
+                          {t('settings.taxAccounts.statusSection.lastUpdated')}: {new Date(settings.updated_at).toLocaleDateString()}
                         </Text>
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">Updated By</Text>
+                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.updatedBy')}</Text>
                         <Text fontSize="sm">{settings.updated_by_user?.name || 'System'}</Text>
                         <Text fontSize="xs" color="gray.500">
                           {new Date(settings.updated_at).toLocaleTimeString()}
@@ -1104,81 +1152,216 @@ const TaxAccountSettingsPage: React.FC = () => {
             <ModalHeader>
               <HStack spacing={3}>
                 <Icon as={FiInfo} color="blue.500" />
-                <Text>Withholding Tax Account Suggestions</Text>
+                <Text>{t('settings.taxAccounts.suggestions.title')}</Text>
               </HStack>
             </ModalHeader>
             <ModalCloseButton />
             <ModalBody>
-              {suggestions && suggestions.tax && (
+              {suggestions && (
                 <VStack spacing={6} alignItems="start" width="full">
                   <Alert status="info" variant="left-accent">
                     <AlertIcon />
                     <Box>
-                      <AlertTitle fontSize="sm">Account Configuration Guide</AlertTitle>
+                      <AlertTitle fontSize="sm">{t('settings.taxAccounts.suggestions.guide')}</AlertTitle>
                       <AlertDescription fontSize="xs">
-                        Use these recommendations to help configure your withholding tax accounts. All accounts are optional.
+                        {t('settings.taxAccounts.suggestions.guideDesc')}
                       </AlertDescription>
                     </Box>
                   </Alert>
 
-                  <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
-                    {Object.entries(suggestions.tax || {}).map(([key, suggestion]) => (
-                      <Card key={key} size="sm" variant="outline" borderWidth="2px">
-                        <CardHeader pb={2}>
-                          <HStack spacing={2}>
-                            <Icon as={FiDollarSign} color="green.500" />
-                            <Text fontWeight="bold" fontSize="md">
-                              {key.replace(/_/g, ' ').toUpperCase()}
-                            </Text>
-                          </HStack>
-                        </CardHeader>
-                        <CardBody pt={0}>
-                          <VStack spacing={3} alignItems="start">
-                            <Text fontSize="sm" color="gray.600">
-                              {suggestion.description}
-                            </Text>
-                            <Divider />
-                            <Box width="full">
-                              <Text fontSize="xs" fontWeight="semibold" mb={1}>Suggested Account Codes:</Text>
-                              <HStack spacing={2} wrap="wrap">
-                                {suggestion.suggested_codes.map((code) => (
-                                  <Badge key={code} colorScheme="blue" fontSize="xs" px={2} py={1}>
-                                    {code}
-                                  </Badge>
-                                ))}
+                  {/* Sales Section */}
+                  {suggestions.sales && (
+                    <Box width="full">
+                      <Text fontSize="md" fontWeight="bold" mb={3} color="blue.600">💰 Akun Penjualan</Text>
+                      <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
+                        {Object.entries(suggestions.sales || {}).map(([key, suggestion]) => (
+                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="blue.100">
+                            <CardHeader pb={2}>
+                              <HStack spacing={2}>
+                                <Icon as={FiDollarSign} color="blue.500" />
+                                <Text fontWeight="bold" fontSize="md">
+                                  {key.replace(/_/g, ' ').toUpperCase()}
+                                </Text>
                               </HStack>
-                            </Box>
-                            <Box width="full">
-                              <Text fontSize="xs" fontWeight="semibold" mb={1}>Account Types:</Text>
-                              <HStack spacing={2} wrap="wrap">
-                                {suggestion.recommended_types.map((type) => (
-                                  <Badge key={type} colorScheme="purple" fontSize="xs" px={2} py={1}>
-                                    {type}
-                                  </Badge>
-                                ))}
+                            </CardHeader>
+                            <CardBody pt={0}>
+                              <VStack spacing={3} alignItems="start">
+                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
+                                <Divider />
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.suggested_codes.map((code) => (
+                                      <Badge key={code} colorScheme="blue" fontSize="xs" px={2} py={1}>{code}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.accountTypes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.recommended_types.map((type) => (
+                                      <Badge key={type} colorScheme="purple" fontSize="xs" px={2} py={1}>{type}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                              </VStack>
+                            </CardBody>
+                          </Card>
+                        ))}
+                      </SimpleGrid>
+                    </Box>
+                  )}
+
+                  {/* Purchase Section */}
+                  {suggestions.purchase && (
+                    <Box width="full">
+                      <Text fontSize="md" fontWeight="bold" mb={3} color="orange.600">🛒 Akun Pembelian</Text>
+                      <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
+                        {Object.entries(suggestions.purchase || {}).map(([key, suggestion]) => (
+                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="orange.100">
+                            <CardHeader pb={2}>
+                              <HStack spacing={2}>
+                                <Icon as={FiDollarSign} color="orange.500" />
+                                <Text fontWeight="bold" fontSize="md">
+                                  {key.replace(/_/g, ' ').toUpperCase()}
+                                </Text>
                               </HStack>
-                            </Box>
-                            <Box width="full">
-                              <Text fontSize="xs" fontWeight="semibold" mb={1}>Categories:</Text>
-                              <HStack spacing={2} wrap="wrap">
-                                {suggestion.recommended_categories.map((cat) => (
-                                  <Badge key={cat} colorScheme="gray" fontSize="xs" px={2} py={1}>
-                                    {cat}
-                                  </Badge>
-                                ))}
+                            </CardHeader>
+                            <CardBody pt={0}>
+                              <VStack spacing={3} alignItems="start">
+                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
+                                <Divider />
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.suggested_codes.map((code) => (
+                                      <Badge key={code} colorScheme="orange" fontSize="xs" px={2} py={1}>{code}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.accountTypes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.recommended_types.map((type) => (
+                                      <Badge key={type} colorScheme="purple" fontSize="xs" px={2} py={1}>{type}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                              </VStack>
+                            </CardBody>
+                          </Card>
+                        ))}
+                      </SimpleGrid>
+                    </Box>
+                  )}
+
+                  {/* Tax Section */}
+                  {suggestions.tax && (
+                    <Box width="full">
+                      <Text fontSize="md" fontWeight="bold" mb={3} color="green.600">🏛️ Akun Pajak Penghasilan</Text>
+                      <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
+                        {Object.entries(suggestions.tax || {}).map(([key, suggestion]) => (
+                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="green.100">
+                            <CardHeader pb={2}>
+                              <HStack spacing={2}>
+                                <Icon as={FiDollarSign} color="green.500" />
+                                <Text fontWeight="bold" fontSize="md">
+                                  {key.replace(/_/g, ' ').toUpperCase()}
+                                </Text>
                               </HStack>
-                            </Box>
-                          </VStack>
-                        </CardBody>
-                      </Card>
-                    ))}
-                  </SimpleGrid>
+                            </CardHeader>
+                            <CardBody pt={0}>
+                              <VStack spacing={3} alignItems="start">
+                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
+                                <Divider />
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.suggested_codes.map((code) => (
+                                      <Badge key={code} colorScheme="blue" fontSize="xs" px={2} py={1}>{code}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.accountTypes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.recommended_types.map((type) => (
+                                      <Badge key={type} colorScheme="purple" fontSize="xs" px={2} py={1}>{type}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.categories')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.recommended_categories.map((cat) => (
+                                      <Badge key={cat} colorScheme="gray" fontSize="xs" px={2} py={1}>{cat}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                              </VStack>
+                            </CardBody>
+                          </Card>
+                        ))}
+                      </SimpleGrid>
+                    </Box>
+                  )}
+
+                  {/* Inventory Section */}
+                  {suggestions.inventory && (
+                    <Box width="full">
+                      <Text fontSize="md" fontWeight="bold" mb={3} color="purple.600">📦 Persediaan & HPP</Text>
+                      <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
+                        {Object.entries(suggestions.inventory || {}).map(([key, suggestion]) => (
+                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="purple.100">
+                            <CardHeader pb={2}>
+                              <HStack spacing={2}>
+                                <Icon as={FiDollarSign} color="purple.500" />
+                                <Text fontWeight="bold" fontSize="md">
+                                  {key.replace(/_/g, ' ').toUpperCase()}
+                                </Text>
+                              </HStack>
+                            </CardHeader>
+                            <CardBody pt={0}>
+                              <VStack spacing={3} alignItems="start">
+                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
+                                <Divider />
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.suggested_codes.map((code) => (
+                                      <Badge key={code} colorScheme="purple" fontSize="xs" px={2} py={1}>{code}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.accountTypes')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.recommended_types.map((type) => (
+                                      <Badge key={type} colorScheme="purple" fontSize="xs" px={2} py={1}>{type}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                                <Box width="full">
+                                  <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.categories')}</Text>
+                                  <HStack spacing={2} wrap="wrap">
+                                    {suggestion.recommended_categories.map((cat) => (
+                                      <Badge key={cat} colorScheme="gray" fontSize="xs" px={2} py={1}>{cat}</Badge>
+                                    ))}
+                                  </HStack>
+                                </Box>
+                              </VStack>
+                            </CardBody>
+                          </Card>
+                        ))}
+                      </SimpleGrid>
+                    </Box>
+                  )}
 
                   <Alert status="warning" variant="left-accent">
                     <AlertIcon />
                     <Box>
                       <AlertDescription fontSize="xs">
-                        💡 <strong>Note:</strong> These are optional configurations. Only configure the tax accounts that are relevant to your business operations.
+                        💡 <strong>{t('settings.taxAccounts.suggestions.note')}</strong> {t('settings.taxAccounts.suggestions.noteDesc')}
                       </AlertDescription>
                     </Box>
                   </Alert>
@@ -1186,7 +1369,7 @@ const TaxAccountSettingsPage: React.FC = () => {
               )}
             </ModalBody>
             <ModalFooter>
-              <Button colorScheme="blue" onClick={onSuggestionsClose}>Close</Button>
+              <Button colorScheme="blue" onClick={onSuggestionsClose}>{t('common.close')}</Button>
             </ModalFooter>
           </ModalContent>
         </Modal>

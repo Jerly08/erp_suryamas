@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/utils"
+
 	"github.com/jung-kurt/gofpdf"
 	"gorm.io/gorm"
 )
@@ -64,7 +63,9 @@ func (s *PurchaseReportExportService) ExportToCSV(data *PurchaseReportData, user
 		headers := utils.GetCSVHeaders("purchase_report", language)
 		w.Write(headers)
 		limit := len(data.PurchasesByVendor)
-		if limit > 20 { limit = 20 }
+		if limit > 20 {
+			limit = 20
+		}
 		for i := 0; i < limit; i++ {
 			v := data.PurchasesByVendor[i]
 			w.Write([]string{
@@ -88,16 +89,16 @@ func (s *PurchaseReportExportService) ExportToCSV(data *PurchaseReportData, user
 			break
 		}
 	}
-	
+
 	if hasItems {
 		w.Write([]string{"Items Purchased"})
 		w.Write([]string{"Vendor", "Product Code", "Product Name", "Quantity", "Unit", "Unit Price", "Total Price", "Purchase Date", "Invoice"})
-		
+
 		for _, vendor := range data.PurchasesByVendor {
 			if len(vendor.Items) == 0 {
 				continue
 			}
-			
+
 			for _, item := range vendor.Items {
 				w.Write([]string{
 					vendor.VendorName,
@@ -111,7 +112,7 @@ func (s *PurchaseReportExportService) ExportToCSV(data *PurchaseReportData, user
 					item.InvoiceNumber,
 				})
 			}
-			
+
 			// Vendor subtotal
 			w.Write([]string{
 				fmt.Sprintf("Subtotal (%s)", vendor.VendorName),
@@ -139,98 +140,59 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 	pdf.SetAutoPageBreak(true, 15)
 	pdf.AddPage()
 
-	lm, tm, rm, _ := pdf.GetMargins()
-	pageW, _ := pdf.GetPageSize()
+	lm, _, _, _ := pdf.GetMargins()
+	pageW, pageH := pdf.GetPageSize()
+	rm := float64(15)
 	contentW := pageW - lm - rm
 
 	// Company settings for consistent letterhead
 	settings := s.getCompanyInfo()
 
-	// Try to render real logo at top-left
-	logoW := 35.0
-	logoPath := strings.TrimSpace(settings.CompanyLogo)
-	logoDrawn := false
-	if logoPath != "" {
-		if strings.HasPrefix(logoPath, "/") { logoPath = "." + logoPath }
-		if _, err := os.Stat(logoPath); err != nil {
-			alt := filepath.Clean("./" + strings.TrimPrefix(settings.CompanyLogo, "/"))
-			if _, err2 := os.Stat(alt); err2 == nil { logoPath = alt } else { logoPath = "" }
-		}
-		if logoPath != "" {
-			if imgType := detectImageType(logoPath); imgType != "" {
-				pdf.ImageOptions(logoPath, lm, tm, logoW, 0, false, gofpdf.ImageOptions{ImageType: imgType, ReadDpi: true}, 0, "")
-				logoDrawn = true
-			}
-		}
-	}
-	if !logoDrawn {
-		pdf.SetDrawColor(220, 220, 220)
-		pdf.SetFillColor(248, 249, 250)
-		pdf.SetLineWidth(0.3)
-		pdf.Rect(lm, tm, logoW, logoW, "FD")
-		pdf.SetFont("Arial", "B", 16)
-		pdf.SetTextColor(120, 120, 120)
-		pdf.SetXY(lm+8, tm+19)
-		pdf.CellFormat(19, 8, "</>", "", 0, "C", false, 0, "")
-		pdf.SetTextColor(0, 0, 0)
-	}
+	// Unified letterhead: logo left, company info right, separator
+	contentY := drawUnifiedLetterhead(pdf, settings, 35)
 
-	// Company info (right-aligned)
-	companyName := strings.TrimSpace(settings.CompanyName)
-	if companyName == "" { companyName = data.Company.Name }
-	pdf.SetFont("Arial", "B", 12)
-	w := pdf.GetStringWidth(companyName)
-	pdf.SetXY(pageW-rm-w, tm)
-	pdf.Cell(w, 6, companyName)
-	pdf.SetFont("Arial", "", 9)
-	addr := strings.TrimSpace(settings.CompanyAddress)
-	if addr == "" { addr = strings.TrimSpace(data.Company.Address) }
-	if addr != "" {
-		pdf.SetXY(pageW-rm-pdf.GetStringWidth(addr), tm+8)
-		pdf.Cell(0, 4, addr)
-	}
-	phoneVal := strings.TrimSpace(settings.CompanyPhone)
-	if phoneVal == "" { phoneVal = strings.TrimSpace(data.Company.Phone) }
-	if phoneVal != "" {
-		phone := fmt.Sprintf("Phone: %s", phoneVal)
-		pdf.SetXY(pageW-rm-pdf.GetStringWidth(phone), tm+14)
-		pdf.Cell(0, 4, phone)
-	}
-	emailVal := strings.TrimSpace(settings.CompanyEmail)
-	if emailVal == "" { emailVal = strings.TrimSpace(data.Company.Email) }
-	if emailVal != "" {
-		email := fmt.Sprintf("Email: %s", emailVal)
-		pdf.SetXY(pageW-rm-pdf.GetStringWidth(email), tm+20)
-		pdf.Cell(0, 4, email)
-	}
-
-	// Separator
-	pdf.SetDrawColor(238, 238, 238)
-	pdf.SetLineWidth(0.2)
-	pdf.Line(lm, tm+45, pageW-rm, tm+45)
-
-	// Title and period with localization
-	pdf.SetY(tm + 55)
-	pdf.SetFont("Arial", "B", 18)
-	pdf.SetTextColor(51, 51, 51)
-	pdf.Cell(contentW, 10, utils.T("purchase_report", language))
+	// Title (matching sales report style)
+	pdf.SetY(contentY)
+	pdf.SetFont("Arial", "B", 14)
+	pdf.SetTextColor(25, 55, 109)
+	title := utils.T("purchase_report", language)
+	pdf.Cell(contentW, 8, title)
 	pdf.SetTextColor(0, 0, 0)
 	pdf.Ln(8)
-	pdf.SetFont("Arial", "", 11)
-	pdf.Cell(contentW, 6, fmt.Sprintf("%s: %s %s %s", utils.T("period", language), data.StartDate.Format("2006-01-02"), utils.T("to", language), data.EndDate.Format("2006-01-02")))
-	pdf.Ln(6)
-	pdf.Cell(contentW, 6, fmt.Sprintf("%s: %s", utils.T("generated_on", language), data.GeneratedAt.In(time.Local).Format("2006-01-02 15:04")))
-	pdf.Ln(10)
 
-	// Summary block with localization
+	// Period (matching sales report date format dd/mm/yyyy)
+	pdf.SetFont("Arial", "", 10)
+	period := fmt.Sprintf("%s: %s %s %s",
+		utils.T("period", language),
+		data.StartDate.Format("02/01/2006"),
+		utils.T("to", language),
+		data.EndDate.Format("02/01/2006"))
+	pdf.Cell(contentW, 5, period)
+	pdf.Ln(5)
+
+	// Generated at (italic gray, matching sales report)
+	pdf.SetFont("Arial", "I", 8)
+	pdf.SetTextColor(128, 128, 128)
+	generated := fmt.Sprintf("%s: %s", utils.T("generated_on", language), time.Now().Format("02/01/2006 15:04"))
+	pdf.Cell(contentW, 4, generated)
+	pdf.Ln(8)
+	pdf.SetTextColor(0, 0, 0)
+
+	// Divider (matching sales report)
+	pdf.SetDrawColor(200, 200, 200)
+	pdf.SetLineWidth(0.3)
+	pdf.Line(lm, pdf.GetY(), pageW-rm, pdf.GetY())
+	pdf.Ln(6)
+
+	// Summary Section
 	pdf.SetFont("Arial", "B", 11)
 	pdf.Cell(contentW, 6, utils.T("summary", language))
 	pdf.Ln(7)
-	
+
 	pdf.SetFont("Arial", "", 9)
-	pdf.SetFillColor(245, 245, 245) // Light gray background for better visibility
-	
-	// Summary items dengan background
+	pdf.SetFillColor(245, 245, 245)
+
+	// Summary table
 	summaryItems := []struct {
 		label string
 		value string
@@ -241,45 +203,59 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 		{utils.T("total_paid", language), formatRupiahSimple(data.TotalPaid)},
 		{utils.T("outstanding_payables", language), formatRupiahSimple(data.OutstandingPayables)},
 	}
-	
+
 	for _, item := range summaryItems {
 		pdf.CellFormat(contentW*0.6, 6, item.label, "1", 0, "L", true, 0, "")
 		pdf.CellFormat(contentW*0.4, 6, item.value, "1", 1, "R", true, 0, "")
 	}
-	
+
 	pdf.Ln(8)
 
-	// Top vendors table with localization (limit to fit one page)
+	// Purchases by Vendor section (matching sales report column layout: 55+25+35+40=155mm)
 	if len(data.PurchasesByVendor) > 0 {
-		pdf.SetFont("Arial", "B", 11)
-		pdf.Cell(contentW, 6, utils.T("top_vendors", language))
+		pdf.SetFont("Arial", "B", 10)
+		pdf.Cell(contentW, 6, utils.T("purchases_by_vendor", language))
 		pdf.Ln(8)
-		
-		// Table header dengan background yang lebih jelas - reduced widths for safety
-		// Total: 45 + 20 + 30 + 30 + 30 = 155mm (safe for 160mm content width)
+
+		// Table header
 		pdf.SetX(lm)
 		pdf.SetFont("Arial", "B", 7.5)
 		pdf.SetFillColor(245, 245, 245)
-		pdf.CellFormat(45, 6, utils.T("vendor", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(20, 6, utils.T("orders", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(30, 6, utils.T("amount", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(30, 6, utils.T("paid", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(30, 6, utils.T("outstanding", language), "1", 1, "C", true, 0, "")
-		
+		pdf.CellFormat(55, 6, utils.T("vendor", language), "1", 0, "C", true, 0, "")
+		pdf.CellFormat(25, 6, utils.T("orders", language), "1", 0, "C", true, 0, "")
+		pdf.CellFormat(35, 6, utils.T("total_amount", language), "1", 0, "C", true, 0, "")
+		pdf.CellFormat(40, 6, utils.T("outstanding", language), "1", 1, "C", true, 0, "")
+
+		// Vendor rows
 		pdf.SetFont("Arial", "", 7.5)
 		limit := len(data.PurchasesByVendor)
-		if limit > 20 { limit = 20 }
+		if limit > 20 {
+			limit = 20
+		}
 		for i := 0; i < limit; i++ {
 			v := data.PurchasesByVendor[i]
-			name := v.VendorName
-			if len(name) > 28 { name = name[:25] + "..." }
+
+			// Check if we need a new page
+			if pdf.GetY() > pageH-30 {
+				pdf.AddPage()
+				// Reprint header
+				pdf.SetX(lm)
+				pdf.SetFont("Arial", "B", 7.5)
+				pdf.SetFillColor(245, 245, 245)
+				pdf.CellFormat(55, 6, utils.T("vendor", language), "1", 0, "C", true, 0, "")
+				pdf.CellFormat(25, 6, utils.T("orders", language), "1", 0, "C", true, 0, "")
+				pdf.CellFormat(35, 6, utils.T("total_amount", language), "1", 0, "C", true, 0, "")
+				pdf.CellFormat(40, 6, utils.T("outstanding", language), "1", 1, "C", true, 0, "")
+				pdf.SetFont("Arial", "", 7.5)
+			}
+
 			pdf.SetX(lm)
-			pdf.CellFormat(45, 6, name, "1", 0, "L", false, 0, "")
-			pdf.CellFormat(20, 6, fmt.Sprintf("%d", v.TotalPurchases), "1", 0, "C", false, 0, "")
-			pdf.CellFormat(30, 6, formatRupiahSimple(v.TotalAmount), "1", 0, "R", false, 0, "")
-			pdf.CellFormat(30, 6, formatRupiahSimple(v.TotalPaid), "1", 0, "R", false, 0, "")
-			pdf.CellFormat(30, 6, formatRupiahSimple(v.Outstanding), "1", 1, "R", false, 0, "")
+			pdf.CellFormat(55, 6, v.VendorName, "1", 0, "L", false, 0, "")
+			pdf.CellFormat(25, 6, fmt.Sprintf("%d", v.TotalPurchases), "1", 0, "C", false, 0, "")
+			pdf.CellFormat(35, 6, formatRupiahSimple(v.TotalAmount), "1", 0, "R", false, 0, "")
+			pdf.CellFormat(40, 6, formatRupiahSimple(v.Outstanding), "1", 1, "R", false, 0, "")
 		}
+
 		pdf.Ln(6)
 	}
 
@@ -291,43 +267,36 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 			break
 		}
 	}
-	
+
 	if hasItems {
 		// Check if we need a new page for items section
-		_, pageH := pdf.GetPageSize()
-		_, y := pdf.GetXY()
-		if y > pageH-80 {
+		if pdf.GetY() > pageH-80 {
 			pdf.AddPage()
 		}
-		
+
 		pdf.SetFont("Arial", "B", 12)
 		pdf.Cell(0, 8, utils.T("items_purchased", language))
 		pdf.Ln(10)
-		
+
 		// Loop through vendors and their items
 		for _, vendor := range data.PurchasesByVendor {
 			if len(vendor.Items) == 0 {
 				continue
 			}
-			
+
 			// Check if we need a new page for this vendor
-			_, y := pdf.GetXY()
-			if y > pageH-60 {
+			if pdf.GetY() > pageH-60 {
 				pdf.AddPage()
 			}
-			
-			// Vendor name header - reduced width for safety: 105 + 50 = 155mm
+
+			// Vendor name header - reduced width: 105 + 50 = 155mm
 			pdf.SetX(lm)
 			pdf.SetFont("Arial", "B", 9)
-			pdf.SetFillColor(230, 245, 255) // Light blue background (same as sales summary)
-			vendorName := vendor.VendorName
-			if len(vendorName) > 35 {
-				vendorName = vendorName[:32] + "..."
-			}
-			pdf.CellFormat(105, 7, vendorName, "1", 0, "L", true, 0, "")
+			pdf.SetFillColor(230, 245, 255)
+			pdf.CellFormat(105, 7, vendor.VendorName, "1", 0, "L", true, 0, "")
 			pdf.CellFormat(50, 7, fmt.Sprintf("%d items", len(vendor.Items)), "1", 1, "R", true, 0, "")
-			
-			// Items table header - reduced widths: 55 + 18 + 30 + 30 + 22 = 155mm
+
+			// Items table header - Total: 55 + 18 + 30 + 30 + 22 = 155mm
 			pdf.SetX(lm)
 			pdf.SetFont("Arial", "B", 7.5)
 			pdf.SetFillColor(245, 245, 245)
@@ -336,13 +305,12 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 			pdf.CellFormat(30, 6, utils.T("unit_price", language), "1", 0, "C", true, 0, "")
 			pdf.CellFormat(30, 6, utils.T("total", language), "1", 0, "C", true, 0, "")
 			pdf.CellFormat(22, 6, utils.T("date", language), "1", 1, "C", true, 0, "")
-			
+
 			// Items rows
 			pdf.SetFont("Arial", "", 7.5)
 			for _, item := range vendor.Items {
 				// Check if we need a new page
-				_, y := pdf.GetXY()
-				if y > pageH-25 {
+				if pdf.GetY() > pageH-25 {
 					pdf.AddPage()
 					// Reprint header
 					pdf.SetX(lm)
@@ -355,17 +323,17 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 					pdf.CellFormat(22, 6, utils.T("date", language), "1", 1, "C", true, 0, "")
 					pdf.SetFont("Arial", "", 7.5)
 				}
-				
+
 				productName := item.ProductName
 				if len(productName) > 32 {
 					productName = productName[:29] + "..."
 				}
-				
+
 				qtyStr := fmt.Sprintf("%.0f %s", item.Quantity, item.Unit)
 				if len(qtyStr) > 12 {
 					qtyStr = qtyStr[:10] + ".."
 				}
-				
+
 				pdf.SetX(lm)
 				pdf.CellFormat(55, 6, productName, "1", 0, "L", false, 0, "")
 				pdf.CellFormat(18, 6, qtyStr, "1", 0, "R", false, 0, "")
@@ -373,15 +341,12 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 				pdf.CellFormat(30, 6, formatRupiahSimple(item.TotalPrice), "1", 0, "R", false, 0, "")
 				pdf.CellFormat(22, 6, item.PurchaseDate.Format("02/01/06"), "1", 1, "C", false, 0, "")
 			}
-			
-			// Vendor subtotal - light blue background (same as sales summary)
+
+			// Vendor subtotal - light blue background
 			pdf.SetX(lm)
 			pdf.SetFont("Arial", "B", 8)
 			pdf.SetFillColor(230, 245, 255)
 			vendorSubName := vendor.VendorName
-			if len(vendorSubName) > 25 {
-				vendorSubName = vendorSubName[:22] + "..."
-			}
 			pdf.CellFormat(103, 6, fmt.Sprintf("Subtotal (%s)", vendorSubName), "1", 0, "R", true, 0, "")
 			pdf.CellFormat(52, 6, formatRupiahSimple(vendor.TotalAmount), "1", 1, "R", true, 0, "")
 			pdf.Ln(4)
@@ -392,18 +357,21 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 	if err := pdf.Output(&out); err != nil {
 		return nil, fmt.Errorf("failed to generate purchase report PDF: %v", err)
 	}
-return out.Bytes(), nil
+	return out.Bytes(), nil
 }
-
 
 // formatRupiahSimple formats a number as Indonesian Rupiah (no decimals)
 func formatRupiahSimple(amount float64) string {
 	// Round to integer and format with thousand separators using simple logic
 	s := fmt.Sprintf("%.0f", amount)
-	if s == "0" { return "Rp 0" }
+	if s == "0" {
+		return "Rp 0"
+	}
 	var parts []string
 	for i, r := range reverseString(s) {
-		if i > 0 && i%3 == 0 { parts = append(parts, ".") }
+		if i > 0 && i%3 == 0 {
+			parts = append(parts, ".")
+		}
 		parts = append(parts, string(r))
 	}
 	formatted := reverseString(strings.Join(parts, ""))
@@ -419,4 +387,3 @@ func reverseString(s string) string {
 }
 
 // detectImageType function is defined in pdf_service.go and uses file headers for more accurate detection
-

@@ -1718,7 +1718,7 @@ const ReportsPage: React.FC = () => {
     }
   };
 
-  // Quick download function for PDF and CSV
+  // Quick download function for PDF and CSV — uses SSOT services directly
   const handleQuickDownload = async (report: any, format: 'pdf' | 'csv') => {
     setLoading(true);
 
@@ -1736,72 +1736,107 @@ const ReportsPage: React.FC = () => {
         return;
       }
 
-      // Set default parameters based on report type
-      let params: any = { format };
+      console.log('Quick downloading report:', report.id, 'format:', format);
 
-      if (report.id === 'balance-sheet' || report.id === 'trial-balance') {
-        params.as_of_date = new Date().toISOString().split('T')[0];
-      } else if (['profit-loss', 'cash-flow', 'sales-summary', 'purchase-report', 'general-ledger'].includes(report.id)) {
-        const today = new Date();
-        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-        params.start_date = firstDayOfMonth.toISOString().split('T')[0];
-        params.end_date = today.toISOString().split('T')[0];
+      // Helper to trigger blob download
+      const downloadBlob = (blob: Blob, fileName: string) => {
+        if (blob.size === 0) throw new Error('Empty file received from server');
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      };
 
-        if (report.id === 'general-ledger') {
-          params.account_id = 'all';
-        }
-      }
+      const dateStr = new Date().toISOString().split('T')[0];
 
-      console.log('Downloading report:', report.id, 'with params:', params);
-
-      // Generate and download the report
-      const result = await reportService.generateReport(report.id, params);
-
-      console.log('Report result type:', typeof result, 'isBlob:', result instanceof Blob);
-      console.log('Report result:', result);
-
-      if (result instanceof Blob) {
-        if (result.size === 0) {
-          throw new Error('Empty file received from server');
+      // Dispatch to the correct SSOT service for each report type
+      switch (report.id) {
+        case 'profit-loss': {
+          const blob = format === 'pdf'
+            ? await ssotProfitLossService.generateSSOTProfitLossPDF({ start_date: ssotStartDate, end_date: ssotEndDate, format: 'pdf' })
+            : await ssotProfitLossService.generateSSOTProfitLossCSV({ start_date: ssotStartDate, end_date: ssotEndDate, format: 'csv' });
+          downloadBlob(blob, `Profit_Loss_${ssotStartDate}_to_${ssotEndDate}.${format}`);
+          break;
         }
 
-        const fileName = `${report.id}_${format}_${new Date().toISOString().split('T')[0]}.${format}`;
-        await reportService.downloadReport(result, fileName);
-
-        toast({
-          title: t('reports.messages.downloadSuccessful'),
-          description: t('reports.messages.reportDownloaded', { reportName: report.name, format: format.toUpperCase() }),
-          status: 'success',
-          duration: 3000,
-          isClosable: true,
-        });
-      } else if (typeof result === 'object' && result !== null) {
-        // If it's JSON data, create a manual download
-        if (format === 'csv') {
-          // Convert JSON to CSV
-          const csvContent = convertJSONToCSV(result, report.id);
-          const blob = new Blob([csvContent], { type: 'text/csv' });
-          const fileName = `${report.id}_${format}_${new Date().toISOString().split('T')[0]}.${format}`;
-          await reportService.downloadReport(blob, fileName);
-
-          toast({
-            title: 'Download Successful',
-            description: `${report.name} has been downloaded as CSV`,
-            status: 'success',
-            duration: 3000,
-            isClosable: true,
-          });
-        } else {
-          // For PDF requests, provide specific guidance
+        case 'cash-flow': {
           if (format === 'pdf') {
-            throw new Error(`PDF export for ${report.name} is not yet implemented. Please use the "View Report" button to access the SSOT version with export options.`);
+            await cashFlowExportService.exportToPDF({ start_date: ssotCFStartDate, end_date: ssotCFEndDate });
           } else {
-            throw new Error(`${format.toUpperCase()} export is not yet supported for ${report.name}. Please use the "View Report" button for available export options.`);
+            await cashFlowExportService.exportToCSV({ start_date: ssotCFStartDate, end_date: ssotCFEndDate });
           }
+          // cashFlowExportService handles its own download
+          break;
         }
-      } else {
-        throw new Error(`Invalid response format from server: ${typeof result}`);
+
+        case 'trial-balance': {
+          if (format === 'pdf') {
+            await ssotTrialBalanceService.exportToPDF({ as_of_date: ssotTBAsOfDate });
+          } else {
+            await ssotTrialBalanceService.exportToCSV({ as_of_date: ssotTBAsOfDate });
+          }
+          // ssotTrialBalanceService handles its own download
+          break;
+        }
+
+        case 'sales-summary': {
+          // Use SSOT sales summary endpoint with format param
+          const queryParams = new URLSearchParams({
+            start_date: ssotSSStartDate,
+            end_date: ssotSSEndDate,
+            format
+          });
+          const response = await api.get(
+            API_ENDPOINTS.SSOT_REPORTS.SALES_SUMMARY + `?${queryParams}`,
+            { responseType: 'blob' }
+          );
+          const blob = response.data as Blob;
+          downloadBlob(blob, `Sales_Summary_${ssotSSStartDate}_to_${ssotSSEndDate}.${format}`);
+          break;
+        }
+
+        case 'purchase-report': {
+          const blob = format === 'pdf'
+            ? await ssotPurchaseReportService.exportToPDF({ start_date: ssotPRStartDate, end_date: ssotPREndDate, format: 'pdf' })
+            : await ssotPurchaseReportService.exportToCSV({ start_date: ssotPRStartDate, end_date: ssotPREndDate, format: 'csv' });
+          downloadBlob(blob, `Purchase_Report_${ssotPRStartDate}_to_${ssotPREndDate}.${format}`);
+          break;
+        }
+
+        default: {
+          // Fallback to old reportService for any unlisted report types
+          let params: any = { format };
+          if (report.id === 'balance-sheet') {
+            params.as_of_date = dateStr;
+          } else {
+            params.start_date = ssotStartDate;
+            params.end_date = ssotEndDate;
+          }
+          const result = await reportService.generateReport(report.id, params);
+          if (result instanceof Blob) {
+            downloadBlob(result, `${report.id}_${dateStr}.${format}`);
+          } else if (format === 'csv' && typeof result === 'object') {
+            const csvContent = convertJSONToCSV(result, report.id);
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            downloadBlob(blob, `${report.id}_${dateStr}.csv`);
+          } else {
+            throw new Error(`${format.toUpperCase()} export is not available for ${report.name}. Please use "Lihat Laporan" for export options.`);
+          }
+          break;
+        }
       }
+
+      toast({
+        title: t('reports.messages.downloadSuccessful'),
+        description: t('reports.messages.reportDownloaded', { reportName: report.name, format: format.toUpperCase() }),
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      });
 
     } catch (error) {
       console.error('Quick download failed:', error);
@@ -1811,13 +1846,8 @@ const ReportsPage: React.FC = () => {
         errorMessage = error.message;
       }
 
-      // Provide user-friendly error messages
-      if (errorMessage.includes('Unknown report type') || errorMessage.includes('endpoint not found')) {
-        errorMessage = `${format.toUpperCase()} export is not yet supported for ${report.name}. Please use the "More..." option for available formats.`;
-      }
-
       toast({
-        title: 'Download Failed',
+        title: t('reports.messages.exportFailed'),
         description: errorMessage,
         status: 'error',
         duration: 8000,
@@ -2202,57 +2232,19 @@ const ReportsPage: React.FC = () => {
                         {report.description}
                       </Text>
 
-                      {/* Action Buttons */}
-                      <HStack spacing={2} width="full" mt={2} align="flex-start">
-                        <Button
-                          colorScheme="blue"
-                          size="md"
-                          flex="1"
-                          onClick={() => {
-                            // Navigate to dedicated report pages
-                            router.push(`/reports/${report.id}`);
-                          }}
-                          isLoading={loading}
-                          leftIcon={<FiEye />}
-                        >
-                          {t('reports.viewReport')}
-                        </Button>
-                        <VStack spacing={1} flex="1">
-                          <Button
-                            colorScheme="red"
-                            variant="outline"
-                            size="sm"
-                            width="full"
-                            isLoading={loading}
-                            leftIcon={<FiFilePlus />}
-                            onClick={() => handleQuickDownload(report, 'pdf')}
-                          >
-                            {t('reports.pdf')}
-                          </Button>
-                          <Button
-                            colorScheme="green"
-                            variant="outline"
-                            size="sm"
-                            width="full"
-                            isLoading={loading}
-                            leftIcon={<FiFileText />}
-                            onClick={() => handleQuickDownload(report, 'csv')}
-                          >
-                            {t('reports.csvLabel')}
-                          </Button>
-                          <Button
-                            colorScheme="gray"
-                            variant="outline"
-                            size="sm"
-                            width="full"
-                            isLoading={loading}
-                            leftIcon={<FiDownload />}
-                            onClick={() => handleGenerateReport(report)}
-                          >
-                            {t('reports.more')}
-                          </Button>
-                        </VStack>
-                      </HStack>
+                      {/* Action Button */}
+                      <Button
+                        colorScheme="blue"
+                        size="md"
+                        width="full"
+                        mt={2}
+                        onClick={() => {
+                          router.push(`/reports/${report.id}`);
+                        }}
+                        leftIcon={<FiEye />}
+                      >
+                        {t('reports.viewReport')}
+                      </Button>
                     </VStack>
                   </VStack>
                 </CardBody>
@@ -2396,10 +2388,11 @@ const ReportsPage: React.FC = () => {
                         onChange={handleInputChange}
                       >
                         <option value="all">All Accounts</option>
-                        <option value="1101">Cash Account</option>
-                        <option value="1102">Bank BCA</option>
-                        <option value="1104">Bank Mandiri</option>
-                        <option value="1201">Accounts Receivable</option>
+                        <option value="1101">Cash (KAS DAN SETARA KAS)</option>
+                        <option value="1101-001">Petty Cash (KAS KECIL)</option>
+                        <option value="1101-003">Bank Giro (BANK-GIRO)</option>
+                        <option value="1101-004">Bank Tabungan (BANK-TABUNGAN)</option>
+                        <option value="1102">Accounts Receivable (PIUTANG USAHA)</option>
                         <option value="2101">Accounts Payable</option>
                         <option value="4101">Sales Revenue</option>
                         <option value="5101">Cost of Goods Sold</option>

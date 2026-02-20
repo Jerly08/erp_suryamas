@@ -74,7 +74,7 @@ export interface ReportData {
 // Function to fetch company settings from API
 export const fetchCompanySettings = async (): Promise<SystemSettings | null> => {
   try {
-    const response = await api.get('/api/v1/settings');
+    const response = await api.get('/api/v1/settings/public');
     if (response.data.success) {
       return response.data.data;
     }
@@ -102,10 +102,10 @@ const imageToBase64 = async (imagePath: string): Promise<string | null> => {
   try {
     const imageUrl = getImageUrl(imagePath);
     if (!imageUrl) return null;
-    
+
     const response = await fetch(imageUrl);
     const blob = await response.blob();
-    
+
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
@@ -143,10 +143,10 @@ export class PDFReportGenerator {
    */
   private async addCompanyHeader(config: ReportConfig): Promise<number> {
     let yPos = this.margin;
-    
+
     // Logo section (left side)
     let logoBase64: string | null = null;
-    
+
     if (config.companyInfo.logo) {
       // If logo is already base64, use it directly
       if (config.companyInfo.logo.startsWith('data:')) {
@@ -156,16 +156,16 @@ export class PDFReportGenerator {
         logoBase64 = await imageToBase64(config.companyInfo.logo);
       }
     }
-    
+
     if (logoBase64) {
       try {
         // Add logo - adjust size as needed
         this.doc.addImage(
-          logoBase64, 
+          logoBase64,
           'JPEG', // Changed to JPEG as it's more compatible
-          this.margin, 
-          yPos, 
-          40, 
+          this.margin,
+          yPos,
+          40,
           40
         );
       } catch (error) {
@@ -185,7 +185,7 @@ export class PDFReportGenerator {
 
     this.doc.setFontSize(10);
     this.doc.setFont('helvetica', 'normal');
-    
+
     // Handle multi-line address
     const addressLines = this.splitTextIntoLines(config.companyInfo.address, 35);
     let addressY = yPos + 25;
@@ -196,13 +196,13 @@ export class PDFReportGenerator {
 
     this.doc.text(`Phone: ${config.companyInfo.phone}`, companyInfoX, addressY);
     this.doc.text(`Email: ${config.companyInfo.email}`, companyInfoX, addressY + 5);
-    
+
     // Add website if available
     if (config.companyInfo.website) {
       this.doc.text(`Website: ${config.companyInfo.website}`, companyInfoX, addressY + 10);
       addressY += 5;
     }
-    
+
     // Add tax number if available
     if (config.companyInfo.tax_number) {
       this.doc.text(`Tax No: ${config.companyInfo.tax_number}`, companyInfoX, addressY + 10);
@@ -219,7 +219,7 @@ export class PDFReportGenerator {
     this.doc.setDrawColor(200);
     this.doc.setFillColor(240, 240, 240);
     this.doc.roundedRect(this.margin, yPos, 40, 40, 5, 5, 'FD');
-    
+
     // Add coding icon placeholder (similar to invoice)
     this.doc.setFontSize(20);
     this.doc.setTextColor(100);
@@ -231,11 +231,11 @@ export class PDFReportGenerator {
    */
   private splitTextIntoLines(text: string, maxLength: number): string[] {
     if (!text) return [''];
-    
+
     const words = text.split(' ');
     const lines: string[] = [];
     let currentLine = '';
-    
+
     words.forEach(word => {
       if ((currentLine + word).length <= maxLength) {
         currentLine += (currentLine ? ' ' : '') + word;
@@ -246,11 +246,11 @@ export class PDFReportGenerator {
         currentLine = word;
       }
     });
-    
+
     if (currentLine) {
       lines.push(currentLine);
     }
-    
+
     return lines.length ? lines : [''];
   }
 
@@ -303,13 +303,13 @@ export class PDFReportGenerator {
     const tableConfig = {
       startY: startY,
       head: [data.columns.map(col => col.header)],
-      body: data.data.map(row => 
+      body: data.data.map(row =>
         data.columns.map(col => {
           const value = row[col.dataKey];
           // Format currency values
-          if (typeof value === 'number' && col.dataKey.toLowerCase().includes('price') || 
-              col.dataKey.toLowerCase().includes('total') ||
-              col.dataKey.toLowerCase().includes('amount')) {
+          if (typeof value === 'number' && col.dataKey.toLowerCase().includes('price') ||
+            col.dataKey.toLowerCase().includes('total') ||
+            col.dataKey.toLowerCase().includes('amount')) {
             return new Intl.NumberFormat('id-ID', {
               style: 'currency',
               currency: 'IDR',
@@ -375,7 +375,7 @@ export class PDFReportGenerator {
       // Draw line above total
       this.doc.setDrawColor(0);
       this.doc.line(summaryX - 30, yPos - 2, summaryX + 50, yPos - 2);
-      
+
       this.doc.setFont('helvetica', 'bold');
       this.doc.setFontSize(12);
       this.doc.text('TOTAL:', summaryX - 30, yPos + 5);
@@ -392,7 +392,7 @@ export class PDFReportGenerator {
     const currency = this.settings?.currency || 'IDR';
     const locale = this.settings?.language === 'en' ? 'en-US' : 'id-ID';
     const decimalPlaces = this.settings?.decimal_places ?? 0;
-    
+
     return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: currency,
@@ -409,15 +409,15 @@ export class PDFReportGenerator {
     this.doc.setFontSize(8);
     this.doc.setTextColor(128);
     this.doc.setFont('helvetica', 'italic');
-    
+
     const generateTime = new Date().toLocaleString('id-ID', {
       day: '2-digit',
-      month: '2-digit', 
+      month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     });
-    
+
     this.doc.text(`Generated on ${generateTime}`, this.margin, footerY);
   }
 
@@ -429,24 +429,24 @@ export class PDFReportGenerator {
     if (!this.settings) {
       await this.loadSettings();
     }
-    
+
     // Add company header
     let currentY = await this.addCompanyHeader(config);
-    
+
     // Add report title
     currentY = this.addReportTitle(config, currentY);
-    
+
     // Add table
     currentY = this.addTable(data, currentY);
-    
+
     // Add summary if provided
     if (data.summary) {
       currentY = this.addSummary(data.summary, currentY);
     }
-    
+
     // Add footer
     this.addFooter();
-    
+
     return this.doc;
   }
 
@@ -454,8 +454,8 @@ export class PDFReportGenerator {
    * Generate report from system settings (convenience method)
    */
   public static async generateFromSettings(
-    reportTitle: string, 
-    data: ReportData, 
+    reportTitle: string,
+    data: ReportData,
     options?: {
       reportNumber?: string;
       subtitle?: string;
@@ -468,11 +468,11 @@ export class PDFReportGenerator {
     if (!settings) {
       throw new Error('Could not load company settings');
     }
-    
+
     // Create PDF generator
     const generator = new PDFReportGenerator(options?.orientation);
     generator.settings = settings;
-    
+
     // Create config from settings
     const config: ReportConfig = {
       title: reportTitle,
@@ -481,7 +481,7 @@ export class PDFReportGenerator {
       reportNumber: options?.reportNumber,
       companyInfo: settingsToCompanyInfo(settings)
     };
-    
+
     return generator.generateReport(config, data);
   }
 
@@ -527,14 +527,14 @@ export const generateReportNumber = async (type: 'invoice' | 'quote' | 'purchase
     const randomNum = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
     return `${type.toUpperCase()}/${year}/${month}/${randomNum}`;
   }
-  
+
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
-  
+
   let prefix: string;
   let nextNumber: number;
-  
+
   switch (type) {
     case 'quote':
       prefix = settings.quote_prefix || 'QUO';
@@ -548,7 +548,7 @@ export const generateReportNumber = async (type: 'invoice' | 'quote' | 'purchase
       prefix = settings.invoice_prefix || 'INV';
       nextNumber = settings.invoice_next_number || 1;
   }
-  
+
   const paddedNumber = nextNumber.toString().padStart(4, '0');
   return `${prefix}/${year}/${month}/${paddedNumber}`;
 };

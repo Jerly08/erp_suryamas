@@ -1,37 +1,37 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/services"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type DashboardController struct {
-	DB                     *gorm.DB
-	stockMonitoringService *services.StockMonitoringService
-	dashboardService       *services.DashboardService
+	DB                       *gorm.DB
+	stockMonitoringService   *services.StockMonitoringService
+	dashboardService         *services.DashboardService
 	employeeDashboardService *services.EmployeeDashboardService
 }
 
 func NewDashboardController(db *gorm.DB, stockMonitoringService *services.StockMonitoringService) *DashboardController {
 	return &DashboardController{
-		DB:                     db,
-		stockMonitoringService: stockMonitoringService,
-		dashboardService:       services.NewDashboardService(db),
+		DB:                       db,
+		stockMonitoringService:   stockMonitoringService,
+		dashboardService:         services.NewDashboardService(db),
 		employeeDashboardService: services.NewEmployeeDashboardService(db),
 	}
 }
 
-
 // GetStockAlertsBanner returns stock alerts specifically for banner display
 func (dc *DashboardController) GetStockAlertsBanner(c *gin.Context) {
 	userRole := c.GetString("user_role")
-	
+
 	// Only for authorized roles
 	userRoleLower := strings.ToLower(userRole)
 	if userRoleLower != "admin" && userRoleLower != "inventory_manager" && userRoleLower != "director" {
@@ -49,14 +49,14 @@ func (dc *DashboardController) GetStockAlertsBanner(c *gin.Context) {
 	if err := dc.stockMonitoringService.ResolveStockAlerts(); err != nil {
 		fmt.Printf("Warning: ResolveStockAlerts failed: %v\n", err)
 	}
-	
+
 	// Get active stock alerts
 	activeAlerts, err := dc.stockMonitoringService.GetActiveStockAlerts()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get stock alerts"})
 		return
 	}
-	
+
 	// Format alerts for banner display
 	var bannerAlerts []map[string]interface{}
 	for _, alert := range activeAlerts {
@@ -71,14 +71,14 @@ func (dc *DashboardController) GetStockAlertsBanner(c *gin.Context) {
 			"urgency":         dc.getUrgencyLevel(alert),
 			"message":         dc.formatAlertMessage(alert),
 		}
-		
+
 		if alert.Product.Category != nil {
 			bannerAlert["category_name"] = alert.Product.Category.Name
 		}
-		
+
 		bannerAlerts = append(bannerAlerts, bannerAlert)
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Stock alerts retrieved successfully",
 		"data": gin.H{
@@ -93,25 +93,25 @@ func (dc *DashboardController) GetStockAlertsBanner(c *gin.Context) {
 func (dc *DashboardController) DismissStockAlert(c *gin.Context) {
 	alertID := c.Param("id")
 	userRole := c.GetString("user_role")
-	
+
 	userRoleLower := strings.ToLower(userRole)
 	if userRoleLower != "admin" && userRoleLower != "inventory_manager" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to dismiss alerts"})
 		return
 	}
-	
+
 	var alert models.StockAlert
 	if err := dc.DB.First(&alert, alertID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Alert not found"})
 		return
 	}
-	
+
 	alert.Status = models.StockAlertStatusDismissed
 	if err := dc.DB.Save(&alert).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to dismiss alert"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "Alert dismissed successfully"})
 }
 
@@ -129,24 +129,24 @@ func (dc *DashboardController) DismissStockAlert(c *gin.Context) {
 // @Router /dashboard/analytics [get]
 func (dc *DashboardController) GetAnalytics(c *gin.Context) {
 	userRole := c.GetString("user_role")
-	
+
 	// Only allow admin, finance, and director roles
 	userRoleLower := strings.ToLower(userRole)
 	if userRoleLower != "admin" && userRoleLower != "finance" && userRoleLower != "director" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to view analytics"})
 		return
 	}
-	
+
 	// Get comprehensive analytics with real growth calculations
 	analytics, err := dc.dashboardService.GetDashboardAnalyticsForRole(userRoleLower)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch dashboard analytics",
+			"error":   "Failed to fetch dashboard analytics",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, analytics)
 }
 
@@ -164,46 +164,46 @@ func (dc *DashboardController) GetAnalytics(c *gin.Context) {
 // @Router /dashboard/finance [get]
 func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 	userRole := c.GetString("user_role")
-	
+
 	// Only allow finance and admin roles
 	userRoleLower := strings.ToLower(userRole)
 	if userRoleLower != "finance" && userRoleLower != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied - Finance role required"})
 		return
 	}
-	
+
 	financeData := make(map[string]interface{})
-	
+
 	// Invoices pending payment (outstanding sales)
 	var invoicesPendingPayment int64
 	dc.DB.Model(&models.Sale{}).
-		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", 
+		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL",
 			[]string{"INVOICED", "PENDING", "OVERDUE"}).
 		Count(&invoicesPendingPayment)
 	financeData["invoices_pending_payment"] = invoicesPendingPayment
-	
+
 	// Invoices not yet paid (outstanding purchases)
 	var invoicesNotPaid int64
 	dc.DB.Model(&models.Purchase{}).
-		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", 
+		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL",
 			[]string{"APPROVED", "COMPLETED", "PENDING"}).
 		Count(&invoicesNotPaid)
 	financeData["invoices_not_paid"] = invoicesNotPaid
-	
+
 	// Journal entries requiring posting (unposted)
 	var journalsNeedPosting int64
 	dc.DB.Model(&models.JournalEntry{}).
 		Where("status = ? AND deleted_at IS NULL", "DRAFT").
 		Count(&journalsNeedPosting)
 	financeData["journals_need_posting"] = journalsNeedPosting
-	
+
 	// Bank reconciliation status
 	type BankReconciliation struct {
 		LastReconciled *time.Time `json:"last_reconciled"`
 		DaysAgo        int        `json:"days_ago"`
 		Status         string     `json:"status"`
 	}
-	
+
 	// Get most recent bank reconciliation from journal entries
 	var lastReconciliation time.Time
 	err := dc.DB.Model(&models.JournalEntry{}).
@@ -211,7 +211,7 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 		Order("created_at DESC").
 		Select("created_at").
 		Scan(&lastReconciliation).Error
-	
+
 	bankRecon := BankReconciliation{}
 	if err == nil && !lastReconciliation.IsZero() {
 		bankRecon.LastReconciled = &lastReconciliation
@@ -228,7 +228,7 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 		bankRecon.DaysAgo = -1
 	}
 	financeData["bank_reconciliation"] = bankRecon
-	
+
 	// Outstanding receivables amount
 	var outstandingReceivables float64
 	dc.DB.Model(&models.Sale{}).
@@ -236,7 +236,7 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 		Select("COALESCE(SUM(outstanding_amount), 0)").
 		Scan(&outstandingReceivables)
 	financeData["outstanding_receivables"] = outstandingReceivables
-	
+
 	// Outstanding payables amount
 	var outstandingPayables float64
 	dc.DB.Model(&models.Purchase{}).
@@ -244,7 +244,21 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 		Select("COALESCE(SUM(outstanding_amount), 0)").
 		Scan(&outstandingPayables)
 	financeData["outstanding_payables"] = outstandingPayables
-	
+
+	// Purchases pending approval
+	var purchasesPendingApproval int64
+	dc.DB.Model(&models.Purchase{}).
+		Where("approval_status = ? AND deleted_at IS NULL", models.PurchaseApprovalPending).
+		Count(&purchasesPendingApproval)
+	financeData["purchases_pending_approval"] = purchasesPendingApproval
+
+	// Sales pending approval (status = PENDING)
+	var salesPendingApproval int64
+	dc.DB.Model(&models.Sale{}).
+		Where("status = ? AND deleted_at IS NULL", "PENDING").
+		Count(&salesPendingApproval)
+	financeData["sales_pending_approval"] = salesPendingApproval
+
 	// Cash and bank balance
 	var cashBankBalance float64
 	dc.DB.Model(&models.Account{}).
@@ -253,7 +267,7 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 		Select("COALESCE(SUM(balance), 0)").
 		Scan(&cashBankBalance)
 	financeData["cash_bank_balance"] = cashBankBalance
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Finance dashboard data retrieved successfully",
 		"data":    financeData,
@@ -274,17 +288,17 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 func (dc *DashboardController) GetEmployeeDashboardData(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	userRole := c.GetString("user_role")
-	
+
 	// Get employee dashboard data
 	data, err := dc.employeeDashboardService.GetEmployeeDashboardData(userID, userRole)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch employee dashboard data",
+			"error":   "Failed to fetch employee dashboard data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Employee dashboard data retrieved successfully",
 		"data":    data,
@@ -304,17 +318,17 @@ func (dc *DashboardController) GetEmployeeDashboardData(c *gin.Context) {
 // @Router /dashboard/employee/workflows [get]
 func (dc *DashboardController) GetEmployeeApprovalWorkflows(c *gin.Context) {
 	userRole := c.GetString("user_role")
-	
+
 	// Get workflows relevant to this employee role
 	workflows, err := dc.employeeDashboardService.GetEmployeeApprovalWorkflows(userRole)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch approval workflows",
+			"error":   "Failed to fetch approval workflows",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Employee approval workflows retrieved successfully",
 		"data": gin.H{
@@ -338,17 +352,17 @@ func (dc *DashboardController) GetEmployeeApprovalWorkflows(c *gin.Context) {
 // @Router /dashboard/employee/purchase-requests [get]
 func (dc *DashboardController) GetEmployeePurchaseRequests(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
-	
+
 	// Get purchase requests for this employee
 	purchaseRequests, err := dc.employeeDashboardService.GetPurchaseRequestsForEmployee(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch purchase requests",
+			"error":   "Failed to fetch purchase requests",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Employee purchase requests retrieved successfully",
 		"data": gin.H{
@@ -371,23 +385,23 @@ func (dc *DashboardController) GetEmployeePurchaseRequests(c *gin.Context) {
 // @Router /dashboard/employee/notifications-summary [get]
 func (dc *DashboardController) GetEmployeeNotificationsSummary(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
-	
+
 	// Get recent notifications
 	recentNotifications, err := dc.employeeDashboardService.GetRecentNotifications(userID, 20)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch notifications",
+			"error":   "Failed to fetch notifications",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Count unread notifications
 	var unreadCount int64
 	dc.DB.Model(&models.Notification{}).
 		Where("user_id = ? AND is_read = false AND deleted_at IS NULL", userID).
 		Count(&unreadCount)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Employee notifications summary retrieved successfully",
 		"data": gin.H{
@@ -411,17 +425,17 @@ func (dc *DashboardController) GetEmployeeNotificationsSummary(c *gin.Context) {
 // @Router /dashboard/employee/approval-notifications [get]
 func (dc *DashboardController) GetEmployeeApprovalNotifications(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
-	
+
 	// Get approval notifications
 	notifications, err := dc.employeeDashboardService.GetApprovalNotifications(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch approval notifications",
+			"error":   "Failed to fetch approval notifications",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Employee approval notifications retrieved successfully",
 		"data":    notifications,
@@ -441,17 +455,17 @@ func (dc *DashboardController) GetEmployeeApprovalNotifications(c *gin.Context) 
 // @Router /dashboard/employee/purchase-approval-status [get]
 func (dc *DashboardController) GetEmployeePurchaseApprovalStatus(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
-	
+
 	// Get purchase approval status
 	approvalStatus, err := dc.employeeDashboardService.GetPurchaseApprovalStatus(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to fetch purchase approval status",
+			"error":   "Failed to fetch purchase approval status",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Employee purchase approval status retrieved successfully",
 		"data":    approvalStatus,
@@ -475,12 +489,12 @@ func (dc *DashboardController) GetEmployeePurchaseApprovalStatus(c *gin.Context)
 func (dc *DashboardController) MarkNotificationAsRead(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	notificationID := c.Param("id")
-	
+
 	if notificationID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Notification ID is required"})
 		return
 	}
-	
+
 	// Verify notification belongs to user and update
 	var notification models.Notification
 	err := dc.DB.Where("id = ? AND user_id = ?", notificationID, userID).First(&notification).Error
@@ -492,14 +506,14 @@ func (dc *DashboardController) MarkNotificationAsRead(c *gin.Context) {
 		}
 		return
 	}
-	
+
 	// Update notification as read
 	notification.IsRead = true
 	if err := dc.DB.Save(&notification).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to mark notification as read"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Notification marked as read successfully",
 		"data": gin.H{
@@ -509,72 +523,71 @@ func (dc *DashboardController) MarkNotificationAsRead(c *gin.Context) {
 	})
 }
 
-
 // Private helper methods
 
 func (dc *DashboardController) getGeneralStatistics(role string) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
-	
+
 	// Product statistics
 	var totalProducts, activeProducts, inactiveProducts int64
 	dc.DB.Model(&models.Product{}).Count(&totalProducts)
 	dc.DB.Model(&models.Product{}).Where("is_active = ?", true).Count(&activeProducts)
 	dc.DB.Model(&models.Product{}).Where("is_active = ?", false).Count(&inactiveProducts)
-	
+
 	stats["products"] = map[string]int64{
 		"total":    totalProducts,
 		"active":   activeProducts,
 		"inactive": inactiveProducts,
 	}
-	
+
 	// Contact statistics
 	var totalContacts, customers, vendors int64
 	dc.DB.Model(&models.Contact{}).Count(&totalContacts)
 	dc.DB.Model(&models.Contact{}).Where("type = ?", models.ContactTypeCustomer).Count(&customers)
 	dc.DB.Model(&models.Contact{}).Where("type = ?", models.ContactTypeVendor).Count(&vendors)
-	
+
 	stats["contacts"] = map[string]int64{
 		"total":     totalContacts,
 		"customers": customers,
 		"vendors":   vendors,
 	}
-	
+
 	return stats, nil
 }
 
 func (dc *DashboardController) getRecentActivities(userID uint, role string) ([]map[string]interface{}, error) {
 	var activities []map[string]interface{}
-	
+
 	// Get recent audit logs
 	var auditLogs []models.AuditLog
 	query := dc.DB.Order("created_at DESC").Limit(10)
-	
+
 	if role != "admin" {
 		query = query.Where("user_id = ?", userID)
 	}
-	
+
 	if err := query.Find(&auditLogs).Error; err != nil {
 		return activities, err
 	}
-	
+
 	for _, log := range auditLogs {
 		activity := map[string]interface{}{
-			"id":          log.ID,
-			"action":      log.Action,
-			"table_name":  log.TableName,
-			"record_id":   log.RecordID,
-			"user_id":     log.UserID,
-			"created_at":  log.CreatedAt,
+			"id":         log.ID,
+			"action":     log.Action,
+			"table_name": log.TableName,
+			"record_id":  log.RecordID,
+			"user_id":    log.UserID,
+			"created_at": log.CreatedAt,
 		}
 		activities = append(activities, activity)
 	}
-	
+
 	return activities, nil
 }
 
 func (dc *DashboardController) getUrgencyLevel(alert models.StockAlert) string {
 	percentageOfMin := float64(alert.CurrentStock) / float64(alert.ThresholdStock) * 100
-	
+
 	if percentageOfMin <= 25 {
 		return "critical"
 	} else if percentageOfMin <= 50 {
@@ -604,7 +617,7 @@ func (dc *DashboardController) getMonthlySalesData() []map[string]interface{} {
 		Month string  `json:"month"`
 		Value float64 `json:"value"`
 	}
-	
+
 	var results []MonthlyData
 	dc.DB.Raw(`
 		SELECT 
@@ -616,7 +629,7 @@ func (dc *DashboardController) getMonthlySalesData() []map[string]interface{} {
 		GROUP BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date), TO_CHAR(date, 'Mon')
 		ORDER BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
 	`).Scan(&results)
-	
+
 	// Convert to interface{} slice
 	var data []map[string]interface{}
 	for _, result := range results {
@@ -625,9 +638,9 @@ func (dc *DashboardController) getMonthlySalesData() []map[string]interface{} {
 			"value": result.Value,
 		})
 	}
-	
+
 	// Return only real data from database - no dummy data
-	
+
 	return data
 }
 
@@ -637,7 +650,7 @@ func (dc *DashboardController) getMonthlyPurchasesData() []map[string]interface{
 		Month string  `json:"month"`
 		Value float64 `json:"value"`
 	}
-	
+
 	var results []MonthlyData
 	dc.DB.Raw(`
 		SELECT 
@@ -650,7 +663,7 @@ func (dc *DashboardController) getMonthlyPurchasesData() []map[string]interface{
 		GROUP BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date), TO_CHAR(date, 'Mon')
 		ORDER BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
 	`).Scan(&results)
-	
+
 	// Convert to interface{} slice
 	var data []map[string]interface{}
 	for _, result := range results {
@@ -659,39 +672,39 @@ func (dc *DashboardController) getMonthlyPurchasesData() []map[string]interface{
 			"value": result.Value,
 		})
 	}
-	
+
 	// Return only real data from database - no dummy data
-	
+
 	return data
 }
 
 // calculateCashFlow calculates cash flow from sales and purchases data
 func (dc *DashboardController) calculateCashFlow(sales, purchases []map[string]interface{}) []map[string]interface{} {
 	var cashFlow []map[string]interface{}
-	
+
 	maxLen := len(sales)
 	if len(purchases) > maxLen {
 		maxLen = len(purchases)
 	}
-	
+
 	for i := 0; i < maxLen; i++ {
 		var month string
 		var salesValue, purchasesValue, balance float64
-		
+
 		if i < len(sales) {
 			month = sales[i]["month"].(string)
 			salesValue = sales[i]["value"].(float64)
 		}
-		
+
 		if i < len(purchases) {
 			if month == "" {
 				month = purchases[i]["month"].(string)
 			}
 			purchasesValue = purchases[i]["value"].(float64)
 		}
-		
+
 		balance = salesValue - purchasesValue
-		
+
 		cashFlow = append(cashFlow, map[string]interface{}{
 			"month":   month,
 			"inflow":  salesValue,
@@ -699,7 +712,7 @@ func (dc *DashboardController) calculateCashFlow(sales, purchases []map[string]i
 			"balance": balance,
 		})
 	}
-	
+
 	return cashFlow
 }
 
@@ -743,19 +756,19 @@ func (dc *DashboardController) getTopAccounts() []map[string]interface{} {
 // getRecentTransactions gets recent transactions based on user role
 func (dc *DashboardController) getRecentTransactions(userRole string) []map[string]interface{} {
 	type TransactionData struct {
-		ID             uint    `json:"id"`
-		TransactionID  string  `json:"transaction_id"`
-		Description    string  `json:"description"`
-		Amount         float64 `json:"amount"`
-		Date           string  `json:"date"`
-		Type           string  `json:"type"`
-		AccountName    string  `json:"account_name"`
-		ContactName    *string `json:"contact_name"`
-		Status         string  `json:"status"`
+		ID            uint    `json:"id"`
+		TransactionID string  `json:"transaction_id"`
+		Description   string  `json:"description"`
+		Amount        float64 `json:"amount"`
+		Date          string  `json:"date"`
+		Type          string  `json:"type"`
+		AccountName   string  `json:"account_name"`
+		ContactName   *string `json:"contact_name"`
+		Status        string  `json:"status"`
 	}
 
 	var results []TransactionData
-	
+
 	// Get recent sales data
 	dc.DB.Raw(`
 		SELECT 

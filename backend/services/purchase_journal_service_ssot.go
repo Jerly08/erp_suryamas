@@ -1,11 +1,12 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
 	"log"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -15,14 +16,16 @@ import (
 type PurchaseJournalServiceSSOT struct {
 	db               *gorm.DB
 	coaService       *COAService
+	settingsService  *SettingsService
 	taxAccountHelper *TaxAccountHelper
 }
 
 // NewPurchaseJournalServiceSSOT creates a new instance
-func NewPurchaseJournalServiceSSOT(db *gorm.DB, coaService *COAService) *PurchaseJournalServiceSSOT {
+func NewPurchaseJournalServiceSSOT(db *gorm.DB, coaService *COAService, settingsService *SettingsService) *PurchaseJournalServiceSSOT {
 	return &PurchaseJournalServiceSSOT{
 		db:               db,
 		coaService:       coaService,
+		settingsService:  settingsService,
 		taxAccountHelper: NewTaxAccountHelper(db),
 	}
 }
@@ -43,14 +46,14 @@ func (s *PurchaseJournalServiceSSOT) ShouldPostToJournal(status string) bool {
 func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purchase, tx *gorm.DB) error {
 	// VALIDASI STATUS
 	if !s.ShouldPostToJournal(purchase.Status) {
-		log.Printf("⚠️ [SSOT] Skipping purchase journal creation for Purchase #%d with status: %s (only APPROVED/COMPLETED/PAID allowed)", 
+		log.Printf("⚠️ [SSOT] Skipping purchase journal creation for Purchase #%d with status: %s (only APPROVED/COMPLETED/PAID allowed)",
 			purchase.ID, purchase.Status)
 		return nil
 	}
 
-	log.Printf("📝 [SSOT] Creating unified journal entries for Purchase #%d (Status: %s, Payment Method: '%s')", 
+	log.Printf("📝 [SSOT] Creating unified journal entries for Purchase #%d (Status: %s, Payment Method: '%s')",
 		purchase.ID, purchase.Status, purchase.PaymentMethod)
-	
+
 	// ✅ FIX: Don't fail if payment method is empty, use default CREDIT
 	// This prevents blocking journal creation for valid purchases
 	if strings.TrimSpace(purchase.PaymentMethod) == "" {
@@ -69,7 +72,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 	if err := dbToUse.Model(&models.SSOTJournalEntry{}).
 		Where("source_type = ? AND source_id = ?", "PURCHASE", purchase.ID).
 		Count(&existingCount).Error; err == nil && existingCount > 0 {
-		log.Printf("⚠️ [SSOT] Journal already exists for Purchase #%d (found %d entries), skipping", 
+		log.Printf("⚠️ [SSOT] Journal already exists for Purchase #%d (found %d entries), skipping",
 			purchase.ID, existingCount)
 		return nil
 	}
@@ -115,45 +118,89 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 
 		// Jika bukan fixed asset, pakai aturan persediaan/beban seperti biasa
 		if debitAccount == nil {
+			// Check company type
+			settings, err := s.settingsService.GetSettings()
+			isServiceCompany := false
+			if err == nil && settings.CompanyType == "SERVICE" {
+				isServiceCompany = true
+			}
+
 			// Treat physical goods (non-service products) as inventory purchases
 			isInventoryItem := item.Product.ID != 0 && !item.Product.IsService
 
-			if isInventoryItem {
-				// For stock items, ALWAYS use configured inventory account so purchase debits
-				// match the same account that COGS will credit later (keeps 1301 in sync)
-				invAcc, err := s.taxAccountHelper.GetInventoryAccount(dbToUse)
-				if err != nil {
-					return fmt.Errorf("inventory account not found: %v", err)
-				}
-				debitAccount = invAcc
+			if isServiceCompany {
+				// ✅ SERVICE COMPANY LOGIC:
+				// Everything is an expense. No inventory tracking.
+				// If specific expense account provided, use it.
+				// If not, fallback to Cost of Services (5000) or Project Cost (5102)
 
-				// If an expense account was configured for an inventory product, ignore it but log for visibility
-				if item.ExpenseAccountID != 0 {
-					log.Printf("⚠️ [SSOT] Inventory product '%s' (item %d) has ExpenseAccountID=%d configured; ignoring it and using inventory account %s (%s) to keep COGS in sync",
-						item.Product.Name, item.ID, item.ExpenseAccountID, invAcc.Code, invAcc.Name)
-				}
-			} else {
-				// Non-stock / service purchases: respect explicit expense account when provided
 				if item.ExpenseAccountID != 0 {
 					var expenseAcc models.Account
-					if err := dbToUse.First(&expenseAcc, item.ExpenseAccountID).Error; err != nil {
-						log.Printf("⚠️ Expense account ID %d not found for item %d, falling back to inventory account",
-							item.ExpenseAccountID, item.ID)
-						invAcc, err := s.taxAccountHelper.GetInventoryAccount(dbToUse)
-						if err != nil {
-							return fmt.Errorf("inventory account not found: %v", err)
-						}
-						debitAccount = invAcc
-					} else {
+					if err := dbToUse.First(&expenseAcc, item.ExpenseAccountID).Error; err == nil {
 						debitAccount = &expenseAcc
 					}
-				} else {
-					// Default to inventory account when no specific expense account configured
-					invAcc, err := s.taxAccountHelper.GetInventoryAccount(dbToUse)
+				}
+
+				if debitAccount == nil {
+					// Fallback: 5102-001 (Biaya Proyek) or 5000 (Beban Pokok Jasa)
+					// Try to find a suitable expense account
+					var fallbackAcc models.Account
+					// Try "5102-001" (Biaya Proyek) first
+					if err := dbToUse.Where("code = ?", "5102-001").First(&fallbackAcc).Error; err == nil {
+						debitAccount = &fallbackAcc
+					} else {
+						// Try "5000" (Header - Beban Pokok Jasa) as last resort
+						if err := dbToUse.Where("code = ?", "5000").First(&fallbackAcc).Error; err == nil {
+							debitAccount = &fallbackAcc
+						} else {
+							// If all else fails, log warning and use 1103 (Inventory) just to allow transaction
+							// but this shouldn't happen with proper COA
+							log.Printf("⚠️ [SSOT] Service company but could not find expense account for purchase. Falling back to default logic.")
+						}
+					}
+				}
+			}
+
+			// If still nil (Trading/Mfg OR Service fallback failed), run standard inventory logic
+			if debitAccount == nil {
+				if isInventoryItem {
+					// For stock items, ALWAYS use configured inventory account so purchase debits
+					// match the same account that COGS will credit later
+					invAcc, err := s.getInventoryAccount(dbToUse)
 					if err != nil {
 						return fmt.Errorf("inventory account not found: %v", err)
 					}
 					debitAccount = invAcc
+
+					// If an expense account was configured for an inventory product, ignore it but log for visibility
+					if item.ExpenseAccountID != 0 {
+						log.Printf("⚠️ [SSOT] Inventory product '%s' (item %d) has ExpenseAccountID=%d configured; ignoring it and using inventory account %s (%s) to keep COGS in sync",
+							item.Product.Name, item.ID, item.ExpenseAccountID, invAcc.Code, invAcc.Name)
+					}
+				} else {
+					// Non-stock / service purchases: respect explicit expense account when provided
+					if item.ExpenseAccountID != 0 {
+						var expenseAcc models.Account
+						if err := dbToUse.First(&expenseAcc, item.ExpenseAccountID).Error; err != nil {
+							log.Printf("⚠️ Expense account ID %d not found for item %d, falling back to inventory account",
+								item.ExpenseAccountID, item.ID)
+							invAcc, err := s.getInventoryAccount(dbToUse)
+							if err != nil {
+								return fmt.Errorf("inventory account not found: %v", err)
+							}
+							debitAccount = invAcc
+						} else {
+							debitAccount = &expenseAcc
+						}
+					} else {
+						// Default to inventory account when no specific expense account configured
+						// Try standard template code first (1103 Persediaan)
+						invAcc, err := s.getInventoryAccount(dbToUse)
+						if err != nil {
+							return fmt.Errorf("inventory account not found: %v", err)
+						}
+						debitAccount = invAcc
+					}
 				}
 			}
 		}
@@ -168,9 +215,15 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 
 	// 2. DEBIT SIDE - PPN Masukan (Input VAT) if exists
 	if purchase.PPNAmount > 0 {
-		ppnMasukanAccount, err := resolveByCode("1240") // PPN Masukan (Fixed: was 1116, now using correct code 1240)
+		// Try standard template code first (2102-002 PPN Masukan)
+		ppnMasukanAccount, err := resolveByCode("2102-002")
 		if err != nil {
-			log.Printf("⚠️ PPN Masukan account (1240) not found, skipping PPN entry: %v", err)
+			// Fallback to legacy code (1240 PPN Masukan)
+			ppnMasukanAccount, err = resolveByCode("2102-002")
+		}
+
+		if err != nil {
+			log.Printf("⚠️ PPN Masukan account (2102-002/1240) not found, skipping PPN entry: %v", err)
 		} else {
 			lines = append(lines, PurchaseJournalLineRequest{
 				AccountID:    uint64(ppnMasukanAccount.ID),
@@ -184,14 +237,15 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 	// 3. CREDIT SIDE - Based on payment method
 	var creditAccount *models.Account
 	var err error
-	
+
 	paymentMethod := strings.ToUpper(strings.TrimSpace(purchase.PaymentMethod))
-	
+
 	// Normalize payment method using domain constants to avoid mismatches
 	switch paymentMethod {
 	// Immediate cash payments -> always use default Kas (1101)
 	case strings.ToUpper(models.PurchasePaymentCash), "TUNAI", "CASH":
-		creditAccount, err = resolveByCode("1101") // Kas
+		creditAccount, err = resolveByCode("1101-002") // Kas Besar (Leaf)
+
 		if err != nil {
 			return fmt.Errorf("cash account not found: %v", err)
 		}
@@ -210,9 +264,10 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 				log.Printf("⚠️ [SSOT] Failed to load CashBank ID %d for Purchase #%d: %v", *purchase.BankAccountID, purchase.ID, err)
 			}
 		}
-		// Fallback: gunakan akun BANK default 1102 bila tidak berhasil resolve dari CashBank
+		// Fallback: gunakan akun BANK default 1101-004 bila tidak berhasil resolve dari CashBank
 		if creditAccount == nil {
-			creditAccount, err = resolveByCode("1102") // Bank
+			creditAccount, err = resolveByCode("1101-004") // Bank Tabungan (Leaf)
+
 			if err != nil {
 				return fmt.Errorf("bank account not found: %v", err)
 			}
@@ -220,15 +275,17 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 		}
 	// Credit purchases / payables
 	case strings.ToUpper(models.PurchasePaymentCredit), "KREDIT", "CREDIT", "HUTANG":
-		creditAccount, err = resolveByCode("2101") // Hutang Usaha
+		creditAccount, err = resolveByCode("2101-001") // Hutang Usaha - Lokal (Leaf)
+
 		if err != nil {
 			return fmt.Errorf("payables account not found: %v", err)
 		}
 	default:
 		// ✅ SAFE DEFAULT: Treat unknown methods as CREDIT (AP) to avoid mis-posting to cash/bank
-		log.Printf("⚠️ [SSOT] Warning: Unknown payment method '%s' for Purchase #%d, defaulting to CREDIT (Hutang)", 
+		log.Printf("⚠️ [SSOT] Warning: Unknown payment method '%s' for Purchase #%d, defaulting to CREDIT (Hutang)",
 			purchase.PaymentMethod, purchase.ID)
-		creditAccount, err = resolveByCode("2101")
+		creditAccount, err = resolveByCode("2101-001") // Hutang Usaha - Lokal (Leaf)
+
 		if err != nil {
 			return fmt.Errorf("payables account not found: %v", err)
 		}
@@ -285,7 +342,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 
 	// Verify balanced
 	if !totalDebit.Equal(totalCreditCalc) {
-		return fmt.Errorf("journal entry not balanced: debit=%.2f, credit=%.2f", 
+		return fmt.Errorf("journal entry not balanced: debit=%.2f, credit=%.2f",
 			totalDebit.InexactFloat64(), totalCreditCalc.InexactFloat64())
 	}
 
@@ -294,7 +351,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 	sourceID := uint64(purchase.ID)
 	now := time.Now()
 	postedBy := uint64(purchase.UserID)
-	
+
 	journalEntry := &models.SSOTJournalEntry{
 		EntryNumber:     fmt.Sprintf("PURCHASE-%d-%d", purchase.ID, now.Unix()),
 		SourceType:      "PURCHASE",
@@ -352,7 +409,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 	}
 	journalEntry.Status = "POSTED" // Update in-memory object
 
-	log.Printf("✅ [SSOT] Created and posted purchase journal entry #%d with %d lines (Debit: %.2f, Credit: %.2f)", 
+	log.Printf("✅ [SSOT] Created and posted purchase journal entry #%d with %d lines (Debit: %.2f, Credit: %.2f)",
 		journalEntry.ID, len(lines), totalDebit.InexactFloat64(), totalCreditCalc.InexactFloat64())
 
 	return nil
@@ -361,7 +418,8 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 // updateAccountBalance updates account.balance field for COA tree view display
 // RE-ENABLED: COA Tree View needs this field updated
 // Note: P&L Report calculates balance from journal entries (real-time, always correct)
-//       COA Tree View reads from account.balance field (needs manual update)
+//
+//	COA Tree View reads from account.balance field (needs manual update)
 func (s *PurchaseJournalServiceSSOT) updateAccountBalance(db *gorm.DB, accountID uint64, debitAmount, creditAmount decimal.Decimal) error {
 	var account models.Account
 	if err := db.First(&account, accountID).Error; err != nil {
@@ -387,7 +445,7 @@ func (s *PurchaseJournalServiceSSOT) updateAccountBalance(db *gorm.DB, accountID
 		return fmt.Errorf("failed to save account balance: %v", err)
 	}
 
-	log.Printf("💰 [SSOT] Updated account %s (%s) balance: Dr=%.2f, Cr=%.2f, Change=%.2f, New Balance=%.2f", 
+	log.Printf("💰 [SSOT] Updated account %s (%s) balance: Dr=%.2f, Cr=%.2f, Change=%.2f, New Balance=%.2f",
 		account.Code, account.Name, debit, credit, netChange, account.Balance)
 
 	return nil
@@ -414,11 +472,11 @@ func (s *PurchaseJournalServiceSSOT) UpdatePurchaseJournal(purchase *models.Purc
 	} else if oldShouldPost && newShouldPost {
 		// Update existing
 		log.Printf("🔄 [SSOT] Updating purchase journal entries for Purchase #%d", purchase.ID)
-		
+
 		if err := s.DeletePurchaseJournal(purchase.ID, dbToUse); err != nil {
 			return err
 		}
-		
+
 		return s.CreatePurchaseJournal(purchase, dbToUse)
 	}
 
@@ -465,3 +523,24 @@ type PurchaseJournalLineRequest struct {
 	Description  string
 }
 
+// getInventoryAccount attempts to resolve inventory account using template code (1103) then legacy (1301)
+func (s *PurchaseJournalServiceSSOT) getInventoryAccount(db *gorm.DB) (*models.Account, error) {
+	// 1. Try TaxAccountHelper (Configured)
+	acc, err := s.taxAccountHelper.GetInventoryAccount(db)
+	if err == nil {
+		return acc, nil
+	}
+
+	// 2. Try Standard Template Code (1103)
+	var account models.Account
+	if err := db.Where("code LIKE ? AND is_active = ?", "1103%", true).First(&account).Error; err == nil {
+		return &account, nil
+	}
+
+	// 3. Try Legacy Code (1301)
+	if err := db.Where("code = ? AND is_active = ?", "1103-001", true).First(&account).Error; err == nil {
+		return &account, nil
+	}
+
+	return nil, fmt.Errorf("inventory account not found (tried configured, 1103*, 1301)")
+}

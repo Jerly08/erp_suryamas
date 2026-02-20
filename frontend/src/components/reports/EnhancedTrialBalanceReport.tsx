@@ -113,7 +113,7 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
     // Convert to positive for revenue and liability accounts for user-friendly display
     if (accountType === 'REVENUE' || accountType === 'LIABILITY' ||
       accountCode?.startsWith('4') || // Revenue accounts
-      accountCode?.startsWith('2103') || accountCode?.startsWith('2203')) { // PPN accounts
+      accountCode?.startsWith('2102') || accountCode?.startsWith('2203')) { // PPN accounts (2102-001 Keluaran, 2102-002 Masukan)
       displayAmount = Math.abs(displayAmount);
       console.log(`[EnhancedTrialBalanceReport] Converted ${accountCode} (${accountType}) balance ${amount} to positive ${displayAmount}`);
     }

@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/utils"
 	"bytes"
 	"encoding/csv"
 	"fmt"
@@ -8,8 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
-	"app-sistem-akuntansi/services"
-	"app-sistem-akuntansi/utils"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -74,7 +75,7 @@ func (c *SSOTProfitLossController) GetSSOTProfitLoss(ctx *gin.Context) {
 
 	// Send data in the format the frontend expects (sections format)
 	responseData := c.TransformToFrontendFormat(ssotData, language)
-	
+
 	// Log response data for debugging
 	log.Printf("P&L Response data: %+v", responseData)
 
@@ -86,7 +87,7 @@ func (c *SSOTProfitLossController) GetSSOTProfitLoss(ctx *gin.Context) {
 		})
 	case "pdf":
 		// Generate actual PDF using the PDF service
-		pdfBytes, err := c.pdfService.GenerateSSOTProfitLossPDF(ssotData)
+		pdfBytes, err := c.pdfService.GenerateSSOTProfitLossPDF(ssotData, language)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "error",
@@ -95,18 +96,18 @@ func (c *SSOTProfitLossController) GetSSOTProfitLoss(ctx *gin.Context) {
 			})
 			return
 		}
-		
+
 		// Set headers for PDF download
-		filename := fmt.Sprintf("SSOT_ProfitLoss_%s_to_%s.pdf", 
-			ssotData.StartDate.Format("2006-01-02"), 
+		filename := fmt.Sprintf("SSOT_ProfitLoss_%s_to_%s.pdf",
+			ssotData.StartDate.Format("2006-01-02"),
 			ssotData.EndDate.Format("2006-01-02"))
-		
+
 		ctx.Header("Content-Type", "application/pdf")
 		ctx.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		ctx.Header("Content-Length", fmt.Sprintf("%d", len(pdfBytes)))
-		
+
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
-case "excel", "csv":
+	case "excel", "csv":
 		if format == "csv" {
 			// Build CSV on the fly from responseData sections
 			var buf bytes.Buffer
@@ -154,9 +155,9 @@ case "excel", "csv":
 		responseData["export_format"] = format
 		responseData["export_ready"] = true
 		ctx.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data":   responseData,
-			"format": format,
+			"status":  "success",
+			"data":    responseData,
+			"format":  format,
 			"message": "P&L data formatted for " + format + " export",
 		})
 	default:
@@ -170,11 +171,11 @@ case "excel", "csv":
 // TransformToFrontendFormat transforms SSOT data to the format expected by EnhancedProfitLossModal
 func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.SSOTProfitLossData, language string) gin.H {
 	sections := []gin.H{}
-	
+
 	// 1. REVENUE Section
 	if ssotData.Revenue.TotalRevenue != 0 || len(ssotData.Revenue.Items) > 0 {
 		revenueItems := []gin.H{}
-		
+
 		// If we have detailed items, use them
 		if len(ssotData.Revenue.Items) > 0 {
 			// Deduplicate by account code and sum amounts
@@ -197,7 +198,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 					}
 				}
 			}
-			
+
 			// Convert map to slice
 			for _, item := range itemsByCode {
 				revenueItems = append(revenueItems, item)
@@ -210,16 +211,16 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				"account_code": "4101",
 			})
 		}
-		
+
 		// Recalculate total from deduplicated items to ensure consistency
 		actualTotal := 0.0
 		for _, item := range revenueItems {
 			actualTotal += item["amount"].(float64)
 		}
-		
+
 		sections = append(sections, gin.H{
 			"name":  utils.T("revenue", language),
-			"total": actualTotal,  // Use actual total from deduplicated items
+			"total": actualTotal, // Use actual total from deduplicated items
 			"items": revenueItems,
 		})
 	}
@@ -227,7 +228,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 	// 2. COST OF GOODS SOLD Section
 	if ssotData.COGS.TotalCOGS != 0 || len(ssotData.COGS.Items) > 0 {
 		cogsSubsections := []gin.H{}
-		
+
 		if ssotData.COGS.DirectMaterials != 0 {
 			materialItems := c.filterItemsByPrefix(ssotData.COGS.Items, "510")
 			if len(materialItems) > 0 {
@@ -238,7 +239,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				})
 			}
 		}
-		
+
 		if ssotData.COGS.DirectLabor != 0 {
 			laborItems := c.filterItemsByPrefix(ssotData.COGS.Items, "511")
 			if len(laborItems) > 0 {
@@ -249,7 +250,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				})
 			}
 		}
-		
+
 		if ssotData.COGS.Manufacturing != 0 {
 			mfgItems := c.filterItemsByPrefix(ssotData.COGS.Items, "512")
 			if len(mfgItems) > 0 {
@@ -260,7 +261,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				})
 			}
 		}
-		
+
 		if ssotData.COGS.OtherCOGS != 0 {
 			// Deduplicate other COGS items
 			itemsByCode := make(map[string]gin.H)
@@ -282,13 +283,13 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 					}
 				}
 			}
-			
+
 			// Convert map to slice
 			otherItems := []gin.H{}
 			for _, item := range itemsByCode {
 				otherItems = append(otherItems, item)
 			}
-			
+
 			if len(otherItems) > 0 {
 				cogsSubsections = append(cogsSubsections, gin.H{
 					"name":  utils.T("other_cogs", language),
@@ -297,7 +298,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				})
 			}
 		}
-		
+
 		sections = append(sections, gin.H{
 			"name":        utils.T("cost_of_goods_sold", language),
 			"total":       ssotData.COGS.TotalCOGS,
@@ -327,7 +328,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 	// 4. OPERATING EXPENSES Section
 	if ssotData.OperatingExpenses.TotalOpEx != 0 {
 		opexSubsections := []gin.H{}
-		
+
 		if ssotData.OperatingExpenses.Administrative.Subtotal != 0 {
 			adminItems := c.deduplicateItems(ssotData.OperatingExpenses.Administrative.Items)
 			opexSubsections = append(opexSubsections, gin.H{
@@ -336,7 +337,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				"items": adminItems,
 			})
 		}
-		
+
 		if ssotData.OperatingExpenses.SellingMarketing.Subtotal != 0 {
 			sellItems := c.deduplicateItems(ssotData.OperatingExpenses.SellingMarketing.Items)
 			opexSubsections = append(opexSubsections, gin.H{
@@ -345,7 +346,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				"items": sellItems,
 			})
 		}
-		
+
 		if ssotData.OperatingExpenses.General.Subtotal != 0 {
 			genItems := c.deduplicateItems(ssotData.OperatingExpenses.General.Items)
 			opexSubsections = append(opexSubsections, gin.H{
@@ -354,7 +355,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				"items": genItems,
 			})
 		}
-		
+
 		sections = append(sections, gin.H{
 			"name":        utils.T("operating_expenses", language),
 			"total":       ssotData.OperatingExpenses.TotalOpEx,
@@ -396,7 +397,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				"amount": ssotData.OtherExpenses,
 			})
 		}
-		
+
 		sections = append(sections, gin.H{
 			"name":  utils.T("other_income_expenses", language),
 			"total": ssotData.OtherIncome - ssotData.OtherExpenses,
@@ -434,7 +435,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 	// Prepare account details for other income and expenses
 	otherIncomeItems := []gin.H{}
 	otherExpenseItems := []gin.H{}
-	
+
 	for _, item := range ssotData.OtherIncomeItems {
 		otherIncomeItems = append(otherIncomeItems, gin.H{
 			"account_code": item.AccountCode,
@@ -442,7 +443,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 			"amount":       item.Amount,
 		})
 	}
-	
+
 	for _, item := range ssotData.OtherExpenseItems {
 		otherExpenseItems = append(otherExpenseItems, gin.H{
 			"account_code": item.AccountCode,
@@ -453,7 +454,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 
 	// Calculate total expenses for summary
 	totalExpenses := ssotData.COGS.TotalCOGS + ssotData.OperatingExpenses.TotalOpEx + ssotData.OtherExpenses
-	
+
 	// Calculate net profit and net loss (mutually exclusive)
 	var netProfit, netLoss float64
 	if ssotData.NetIncome > 0 {
@@ -463,11 +464,11 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		netProfit = 0
 		netLoss = -ssotData.NetIncome
 	}
-	
+
 	// Create the frontend-compatible response
 	return gin.H{
-		"title":   utils.T("enhanced_profit_loss", language),
-		"period":  ssotData.StartDate.Format("2006-01-02") + " - " + ssotData.EndDate.Format("2006-01-02"),
+		"title":  utils.T("enhanced_profit_loss", language),
+		"period": ssotData.StartDate.Format("2006-01-02") + " - " + ssotData.EndDate.Format("2006-01-02"),
 		"company": gin.H{
 			"name":    ssotData.Company.Name,
 			"address": ssotData.Company.Address,
@@ -480,14 +481,14 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		"enhanced": ssotData.Enhanced,
 		"hasData":  len(sections) > 0,
 		"financialMetrics": gin.H{
-			"grossProfit":        ssotData.GrossProfit,
-			"grossProfitMargin":  ssotData.GrossProfitMargin,
-			"operatingIncome":    ssotData.OperatingIncome,
-			"operatingMargin":    ssotData.OperatingMargin,
-			"ebitda":             ssotData.EBITDA,
-			"ebitdaMargin":       ssotData.EBITDAMargin,
-			"netIncome":          ssotData.NetIncome,
-			"netIncomeMargin":    ssotData.NetIncomeMargin,
+			"grossProfit":       ssotData.GrossProfit,
+			"grossProfitMargin": ssotData.GrossProfitMargin,
+			"operatingIncome":   ssotData.OperatingIncome,
+			"operatingMargin":   ssotData.OperatingMargin,
+			"ebitda":            ssotData.EBITDA,
+			"ebitdaMargin":      ssotData.EBITDAMargin,
+			"netIncome":         ssotData.NetIncome,
+			"netIncomeMargin":   ssotData.NetIncomeMargin,
 		},
 		// Summary fields for frontend display
 		"total_revenue":  ssotData.Revenue.TotalRevenue,
@@ -508,7 +509,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 			}
 			return "Accounts Balance Fallback"
 		}(),
-		"message":         c.generateAnalysisMessage(ssotData),
+		"message": c.generateAnalysisMessage(ssotData),
 		// Add account details for other income and expenses
 		"other_income_items":  otherIncomeItems,
 		"other_expense_items": otherExpenseItems,
@@ -518,7 +519,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 // deduplicateItems deduplicates items by account code and sums amounts
 func (c *SSOTProfitLossController) deduplicateItems(items []services.PLSectionItem) []gin.H {
 	itemsByCode := make(map[string]gin.H)
-	
+
 	for _, item := range items {
 		if existing, found := itemsByCode[item.AccountCode]; found {
 			// Account code already exists, sum the amounts
@@ -537,13 +538,13 @@ func (c *SSOTProfitLossController) deduplicateItems(items []services.PLSectionIt
 			}
 		}
 	}
-	
+
 	// Convert map to slice
 	var result []gin.H
 	for _, item := range itemsByCode {
 		result = append(result, item)
 	}
-	
+
 	return result
 }
 
@@ -551,7 +552,7 @@ func (c *SSOTProfitLossController) deduplicateItems(items []services.PLSectionIt
 func (c *SSOTProfitLossController) filterItemsByPrefix(items []services.PLSectionItem, prefix string) []gin.H {
 	// Use map to deduplicate by account code
 	itemsByCode := make(map[string]gin.H)
-	
+
 	for _, item := range items {
 		if len(item.AccountCode) >= len(prefix) && item.AccountCode[:len(prefix)] == prefix {
 			if existing, found := itemsByCode[item.AccountCode]; found {
@@ -572,13 +573,13 @@ func (c *SSOTProfitLossController) filterItemsByPrefix(items []services.PLSectio
 			}
 		}
 	}
-	
+
 	// Convert map to slice
 	var filtered []gin.H
 	for _, item := range itemsByCode {
 		filtered = append(filtered, item)
 	}
-	
+
 	return filtered
 }
 
@@ -590,19 +591,19 @@ func (c *SSOTProfitLossController) generateAnalysisMessage(ssotData *services.SS
 		}
 		return "No revenue or expense transactions found for this period. The report shows data from SSOT journal system but no income-generating or cost activities were recorded."
 	}
-	
+
 	if ssotData.COGS.TotalCOGS == 0 && ssotData.OperatingExpenses.TotalOpEx == 0 {
 		return "Revenue recorded but no costs or expenses found. This indicates either a service business model or missing cost allocation in the journal entries."
 	}
-	
+
 	if ssotData.NetIncomeMargin > 50 {
 		return "Exceptional profitability detected. Net income margin exceeds 50%, indicating very strong financial performance."
 	}
-	
+
 	if ssotData.NetIncome < 0 {
 		return "The company shows a net loss for this period. Review operating expenses and cost structure for optimization opportunities."
 	}
-	
+
 	return "P&L statement successfully generated from SSOT journal system with complete financial analysis."
 }
 
@@ -617,36 +618,36 @@ func (c *SSOTProfitLossController) transformToEnhancedFormat(ssotData *services.
 			"phone":   ssotData.Company.Phone,
 			"email":   ssotData.Company.Email,
 		},
-		"start_date": ssotData.StartDate.Format("2006-01-02"),
-		"end_date":   ssotData.EndDate.Format("2006-01-02"),
+		"start_date":   ssotData.StartDate.Format("2006-01-02"),
+		"end_date":     ssotData.EndDate.Format("2006-01-02"),
 		"generated_at": ssotData.GeneratedAt.Format(time.RFC3339),
-		
+
 		// Revenue section in the format frontend expects
 		"revenue": c.transformRevenueSection(ssotData),
-		
+
 		// Cost of goods sold section
 		"cost_of_goods_sold": gin.H{
 			"total_cogs": ssotData.COGS.TotalCOGS,
-			"items": c.transformItemsToFrontendFormat(ssotData.COGS.Items),
+			"items":      c.transformItemsToFrontendFormat(ssotData.COGS.Items),
 		},
-		
+
 		// Operating expenses section
 		"operating_expenses": gin.H{
 			"total_opex": ssotData.OperatingExpenses.TotalOpEx,
 			"administrative": gin.H{
 				"subtotal": ssotData.OperatingExpenses.Administrative.Subtotal,
-				"items": c.transformItemsToFrontendFormat(ssotData.OperatingExpenses.Administrative.Items),
+				"items":    c.transformItemsToFrontendFormat(ssotData.OperatingExpenses.Administrative.Items),
 			},
 			"selling_marketing": gin.H{
 				"subtotal": ssotData.OperatingExpenses.SellingMarketing.Subtotal,
-				"items": c.transformItemsToFrontendFormat(ssotData.OperatingExpenses.SellingMarketing.Items),
+				"items":    c.transformItemsToFrontendFormat(ssotData.OperatingExpenses.SellingMarketing.Items),
 			},
 			"general": gin.H{
 				"subtotal": ssotData.OperatingExpenses.General.Subtotal,
-				"items": c.transformItemsToFrontendFormat(ssotData.OperatingExpenses.General.Items),
+				"items":    c.transformItemsToFrontendFormat(ssotData.OperatingExpenses.General.Items),
 			},
 		},
-		
+
 		// Financial metrics
 		"gross_profit":        ssotData.GrossProfit,
 		"gross_profit_margin": ssotData.GrossProfitMargin,
@@ -659,7 +660,7 @@ func (c *SSOTProfitLossController) transformToEnhancedFormat(ssotData *services.
 		"net_income":          ssotData.NetIncome,
 		"net_income_margin":   ssotData.NetIncomeMargin,
 	}
-	
+
 	return response
 }
 
@@ -681,7 +682,7 @@ func (c *SSOTProfitLossController) transformRevenueSection(ssotData *services.SS
 	revenueSection := gin.H{
 		"total_revenue": ssotData.Revenue.TotalRevenue,
 	}
-	
+
 	// Check if we have individual revenue items
 	if len(ssotData.Revenue.Items) > 0 {
 		// Transform items to the format frontend expects
@@ -706,6 +707,6 @@ func (c *SSOTProfitLossController) transformRevenueSection(ssotData *services.SS
 			}
 		}
 	}
-	
+
 	return revenueSection
 }

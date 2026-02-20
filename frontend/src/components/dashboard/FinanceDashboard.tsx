@@ -1,11 +1,11 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  Box, 
-  Flex, 
-  Heading, 
-  Text, 
+import {
+  Box,
+  Flex,
+  Heading,
+  Text,
   Card,
   CardHeader,
   CardBody,
@@ -33,6 +33,8 @@ interface FinanceDashboardData {
   journals_need_posting: number;
   outstanding_receivables: number;
   outstanding_payables: number;
+  purchases_pending_approval: number;
+  sales_pending_approval: number;
 }
 
 export const FinanceDashboard = () => {
@@ -58,6 +60,8 @@ export const FinanceDashboard = () => {
         journals_need_posting: d.journals_need_posting ?? 0,
         outstanding_receivables: d.outstanding_receivables ?? 0,
         outstanding_payables: d.outstanding_payables ?? 0,
+        purchases_pending_approval: d.purchases_pending_approval ?? 0,
+        sales_pending_approval: d.sales_pending_approval ?? 0,
       });
     } catch (error: any) {
       console.error('Error fetching finance dashboard data:', error);
@@ -115,13 +119,13 @@ export const FinanceDashboard = () => {
       </Box>
     );
   }
-  
+
   return (
     <Box>
       <Heading as="h2" size="xl" mb={6} color="gray.800">
         {t('navigation.dashboard')} - {t('users.finance')}
       </Heading>
-    
+
       <Flex gap={4} flexWrap="wrap" mt={4}>
         <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="220px">
           <Heading as="h3" size="sm" mb={2} color="orange.600">{t('dashboard.stats.accountsReceivable')}</Heading>
@@ -130,7 +134,7 @@ export const FinanceDashboard = () => {
             {t('common.labels.total')}: {formatCurrency(data.outstanding_receivables)}
           </Text>
         </Box>
-        
+
         <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="220px">
           <Heading as="h3" size="sm" mb={2} color="red.600">{t('dashboard.stats.accountsPayable')}</Heading>
           <Text fontSize="2xl" fontWeight="bold" color="red.600">{data.invoices_not_paid}</Text>
@@ -138,11 +142,16 @@ export const FinanceDashboard = () => {
             {t('common.labels.total')}: {formatCurrency(data.outstanding_payables)}
           </Text>
         </Box>
-        
+
         <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="220px">
           <Heading as="h3" size="sm" mb={2} color="blue.600">{t('dashboard.pendingApprovals')}</Heading>
-          <Text fontSize="2xl" fontWeight="bold" color="blue.600">{data.journals_need_posting}</Text>
-          <Text fontSize="sm" color="gray.500" mt={1}>{t('sales.draft')}</Text>
+          <Text fontSize="2xl" fontWeight="bold" color="blue.600">{data.purchases_pending_approval + data.sales_pending_approval}</Text>
+          <Text fontSize="sm" color="gray.500" mt={1}>
+            {data.purchases_pending_approval > 0 && `${data.purchases_pending_approval} ${t('purchases.title')}`}
+            {data.purchases_pending_approval > 0 && data.sales_pending_approval > 0 && ', '}
+            {data.sales_pending_approval > 0 && `${data.sales_pending_approval} ${t('sales.title')}`}
+            {data.purchases_pending_approval === 0 && data.sales_pending_approval === 0 && t('sales.draft')}
+          </Text>
         </Box>
       </Flex>
 

@@ -1,12 +1,13 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
 	"fmt"
 	"log"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/repositories"
+
 	"gorm.io/gorm"
 )
 
@@ -24,9 +25,9 @@ func NewPurchaseJournalServiceV2(
 	coaService *COAService,
 ) *PurchaseJournalServiceV2 {
 	return &PurchaseJournalServiceV2{
-		db:              db,
-		journalRepo:     journalRepo,
-		coaService:      coaService,
+		db:          db,
+		journalRepo: journalRepo,
+		coaService:  coaService,
 	}
 }
 
@@ -51,7 +52,7 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 		return nil // Return nil karena ini bukan error, tapi by design
 	}
 
-	log.Printf("📝 Creating journal entries for Purchase #%d (Status: %s, Payment Method: %s)", 
+	log.Printf("📝 Creating journal entries for Purchase #%d (Status: %s, Payment Method: %s)",
 		purchase.ID, purchase.Status, purchase.PaymentMethod)
 
 	// Tentukan database yang akan digunakan
@@ -93,7 +94,7 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 	var journalItems []models.SimpleSSOTJournalItem
 
 	// DEBIT SIDE - Inventory/Expense accounts and PPN Masukan
-	
+
 	// 1. Debit Inventory/Expense/Fixed Asset accounts for each item
 	for _, item := range purchase.PurchaseItems {
 		var acc models.Account
@@ -122,7 +123,7 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 
 			if isInventoryItem {
 				// Always use inventory account 1301 for stock items
-				if invAcc, err := resolveByCode("1301"); err == nil {
+				if invAcc, err := resolveByCode("1103-001"); err == nil {
 					acc = *invAcc
 					if item.ExpenseAccountID != 0 {
 						log.Printf("⚠️ Inventory product '%s' (item %d) has ExpenseAccountID=%d configured; ignoring it and using inventory account %s (%s) for legacy journal",
@@ -140,7 +141,7 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 				}
 			} else {
 				// Fallback: use inventory account when nothing specified
-				if invAcc, err := resolveByCode("1301"); err == nil {
+				if invAcc, err := resolveByCode("1103-001"); err == nil {
 					acc = *invAcc
 				} else {
 					log.Printf("⚠️ Missing inventory account 1301: %v", err)
@@ -166,9 +167,9 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 		}
 	}
 
-	// 2. Debit PPN Masukan (1240) - Input VAT jika ada
+	// 2. Debit PPN Masukan (2102-002) - Input VAT jika ada
 	if purchase.PPNAmount > 0 {
-		if acc, err := resolveByCode("1240"); err == nil {
+		if acc, err := resolveByCode("2102-002"); err == nil {
 			journalItems = append(journalItems, models.SimpleSSOTJournalItem{
 				JournalID:   ssotEntry.ID,
 				AccountID:   acc.ID,
@@ -180,14 +181,14 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 			})
 			log.Printf("📊 Input VAT: Debit to %s (%s) = %.2f", acc.Name, acc.Code, purchase.PPNAmount)
 		} else {
-			log.Printf("⚠️ Missing PPN Masukan account 1240: %v", err)
+			log.Printf("⚠️ Missing PPN Masukan account 2102-002: %v", err)
 		}
 	}
 
 	// CREDIT SIDE - Based on payment method
 	// Calculate net amount after withholdings (for cash/bank/AP credit)
 	netAmount := purchase.TotalAmount - purchase.PPh21Amount - purchase.PPh23Amount - purchase.OtherTaxDeductions
-	
+
 	// Determine CREDIT side based on payment method
 	switch strings.ToUpper(strings.TrimSpace(purchase.PaymentMethod)) {
 	case "CASH":
@@ -207,7 +208,7 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 			log.Printf("⚠️ Missing cash account 1101: %v", err)
 		}
 	case "BANK_TRANSFER", "BANK":
-		// BANK → Credit ke Bank (specific cash_bank account if available, otherwise 1102) with net amount
+		// BANK → Credit ke Bank (specific cash_bank account if available, otherwise 1101-003 BANK GIRO)
 		var acc *models.Account
 		if purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
 			var cashBank models.CashBank
@@ -220,10 +221,11 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 			}
 		}
 		if acc == nil {
-			if resolved, err := resolveByCode("1102"); err == nil {
+			// Fallback: 1101-003 = BANK GIRO (under KAS DAN SETARA KAS)
+			if resolved, err := resolveByCode("1101-003"); err == nil {
 				acc = resolved
 			} else {
-				log.Printf("⚠️ Default bank account 1102 not found: %v", err)
+				log.Printf("⚠️ Default bank account 1101-003 not found: %v", err)
 			}
 		}
 		if acc != nil {
@@ -256,17 +258,17 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 		}
 	default:
 		// ❌ FIX: NO DEFAULT! Force explicit payment method
-		log.Printf("❌ CRITICAL ERROR: Invalid payment method '%s' for Purchase #%s. Journal NOT created!", 
+		log.Printf("❌ CRITICAL ERROR: Invalid payment method '%s' for Purchase #%s. Journal NOT created!",
 			purchase.PaymentMethod, purchase.Code)
-		return fmt.Errorf("invalid payment method '%s' for Purchase #%s. Valid: TUNAI/CASH, TRANSFER/BANK, KREDIT/CREDIT", 
+		return fmt.Errorf("invalid payment method '%s' for Purchase #%s. Valid: TUNAI/CASH, TRANSFER/BANK, KREDIT/CREDIT",
 			purchase.PaymentMethod, purchase.Code)
 	}
 
 	// Handle tax withholdings if any
-	
+
 	// PPh 21 Payable (2111) - Credit jika ada
 	if purchase.PPh21Amount > 0 {
-		if acc, err := resolveByCode("2111"); err == nil {
+		if acc, err := resolveByCode("2102-003"); err == nil {
 			journalItems = append(journalItems, models.SimpleSSOTJournalItem{
 				JournalID:   ssotEntry.ID,
 				AccountID:   acc.ID,
@@ -284,7 +286,7 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 
 	// PPh 23 Payable (2112) - Credit jika ada
 	if purchase.PPh23Amount > 0 {
-		if acc, err := resolveByCode("2112"); err == nil {
+		if acc, err := resolveByCode("2102-004"); err == nil {
 			journalItems = append(journalItems, models.SimpleSSOTJournalItem{
 				JournalID:   ssotEntry.ID,
 				AccountID:   acc.ID,
@@ -312,6 +314,10 @@ func (s *PurchaseJournalServiceV2) CreatePurchaseJournal(purchase *models.Purcha
 		if err := s.updateCOABalance(dbToUse, item.AccountID, item.Debit, item.Credit); err != nil {
 			log.Printf("⚠️ Warning: Failed to update COA balance for account %d: %v", item.AccountID, err)
 			// Continue processing, don't fail the entire transaction
+		}
+		// Update parent account balances after each account balance change
+		if err := s.updateParentAccountBalances(dbToUse, item.AccountID); err != nil {
+			log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", item.AccountID, err)
 		}
 	}
 
@@ -341,12 +347,12 @@ func (s *PurchaseJournalServiceV2) UpdatePurchaseJournal(purchase *models.Purcha
 	} else if oldShouldPost && newShouldPost {
 		// Both statuses require journal - Update existing
 		log.Printf("🔄 Updating existing journal entries for Purchase #%d", purchase.ID)
-		
+
 		// Delete old entries
 		if err := s.DeletePurchaseJournal(purchase.ID, dbToUse); err != nil {
 			return err
 		}
-		
+
 		// Create new entries
 		return s.CreatePurchaseJournal(purchase, dbToUse)
 	}
@@ -461,7 +467,7 @@ func (s *PurchaseJournalServiceV2) CreatePurchasePaymentJournal(payment *models.
 	// CREDIT: Cash/Bank based on payment method
 	var creditAcc *models.Account
 	method := strings.ToUpper(strings.TrimSpace(payment.Method))
-	
+
 	if payment.CashBankID != nil && *payment.CashBankID > 0 {
 		// Use specific cash/bank account when provided
 		var cashBank models.CashBank
@@ -475,10 +481,14 @@ func (s *PurchaseJournalServiceV2) CreatePurchasePaymentJournal(payment *models.
 	if creditAcc == nil {
 		if method == "BANK" || strings.HasPrefix(method, "BANK") {
 			// Default bank account if method indicates bank but cash_bank_id missing
-			if acc, err := resolveByCode("1102"); err == nil { creditAcc = acc }
+			if acc, err := resolveByCode("1101-003"); err == nil {
+				creditAcc = acc
+			}
 		} else {
 			// Default cash account
-			if acc, err := resolveByCode("1101"); err == nil { creditAcc = acc }
+			if acc, err := resolveByCode("1101"); err == nil {
+				creditAcc = acc
+			}
 		}
 	}
 	if creditAcc != nil {
@@ -505,6 +515,10 @@ func (s *PurchaseJournalServiceV2) CreatePurchasePaymentJournal(payment *models.
 		if err := s.updateCOABalance(dbToUse, item.AccountID, item.Debit, item.Credit); err != nil {
 			log.Printf("⚠️ Warning: Failed to update COA balance for account %d: %v", item.AccountID, err)
 		}
+		// Update parent account balances after each account balance change
+		if err := s.updateParentAccountBalances(dbToUse, item.AccountID); err != nil {
+			log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", item.AccountID, err)
+		}
 	}
 
 	log.Printf("✅ Created payment journal for Purchase Payment #%d (Amount: %.2f)", payment.ID, payment.Amount)
@@ -520,7 +534,7 @@ func (s *PurchaseJournalServiceV2) updateCOABalance(db *gorm.DB, accountID uint,
 
 	// Update balance based on account type
 	netChange := debit - credit
-	
+
 	switch coa.Type {
 	case "ASSET", "EXPENSE":
 		// Assets and Expenses increase with debit
@@ -540,11 +554,46 @@ func (s *PurchaseJournalServiceV2) GetDisplayBalance(accountID uint) (float64, e
 		return 0, err
 	}
 
-	// For LIABILITY accounts (like Hutang Usaha), 
+	// For LIABILITY accounts (like Hutang Usaha),
 	// return positive value for display
 	if coa.Type == "LIABILITY" {
 		return -coa.Balance, nil // Convert negative to positive for display
 	}
 
 	return coa.Balance, nil
+}
+
+// updateParentAccountBalances updates parent account balances for a given account
+func (s *PurchaseJournalServiceV2) updateParentAccountBalances(db *gorm.DB, accountID uint) error {
+	var parentID *uint
+
+	// Get parent ID
+	if err := db.Raw("SELECT parent_id FROM accounts WHERE id = ? AND deleted_at IS NULL", accountID).Scan(&parentID).Error; err != nil {
+		return fmt.Errorf("failed to get parent ID for account %d: %w", accountID, err)
+	}
+
+	// If has parent, update parent and continue up the chain
+	if parentID != nil {
+		// Calculate parent balance as sum of children
+		var parentBalance float64
+		if err := db.Raw(`
+			SELECT COALESCE(SUM(balance), 0)
+			FROM accounts 
+			WHERE parent_id = ? AND deleted_at IS NULL
+		`, *parentID).Scan(&parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to calculate parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Update parent balance
+		if err := db.Model(&models.Account{}).
+			Where("id = ? AND deleted_at IS NULL", *parentID).
+			Update("balance", parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to update parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Recursively update grandparent chain
+		return s.updateParentAccountBalances(db, *parentID)
+	}
+
+	return nil
 }

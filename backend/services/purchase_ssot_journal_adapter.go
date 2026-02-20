@@ -7,6 +7,7 @@ import (
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -61,8 +62,8 @@ func (adapter *PurchaseSSOTJournalAdapter) CreatePurchaseJournalEntry(
 			"Purchase Order %s - %s",
 			purchase.Code, purchase.Vendor.Name,
 		),
-		Lines:    adapter.buildPurchaseJournalLines(purchase, accountIDs),
-		AutoPost: true,
+		Lines:     adapter.buildPurchaseJournalLines(purchase, accountIDs),
+		AutoPost:  true,
 		CreatedBy: userID,
 	}
 
@@ -238,39 +239,39 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 	// Calculate net amount after withholdings
 	netAmount := purchase.TotalAmount - purchase.PPh21Amount - purchase.PPh23Amount - purchase.OtherTaxDeductions
 
-    // Credit side based on payment method
-    if purchase.PaymentMethod == models.PurchasePaymentCash ||
-        purchase.PaymentMethod == models.PurchasePaymentTransfer ||
-        purchase.PaymentMethod == models.PurchasePaymentCheck {
-        // Immediate payment: credit cash/bank
-        // Prefer the actual bank account linked to the purchase when available
-        var creditAccountID uint64
-        if purchase.BankAccountID != nil && *purchase.BankAccountID != 0 {
-            if resolvedID, err := adapter.resolveCashBankAccountID(uint64(*purchase.BankAccountID)); err == nil {
-                creditAccountID = resolvedID
-            } else {
-                // Fallback to default Cash account (1101) if resolution fails
-                creditAccountID, _ = adapter.resolveCashBankAccountID(0)
-            }
-        } else {
-            // Fallback to default Cash account (1101) when bank account is not provided
-            creditAccountID, _ = adapter.resolveCashBankAccountID(0)
-        }
-        lines = append(lines, JournalLineRequest{
-            AccountID:    creditAccountID,
-            Description:  fmt.Sprintf("%s Payment - %s", purchase.PaymentMethod, purchase.Vendor.Name),
-            DebitAmount:  decimal.Zero,
-            CreditAmount: decimal.NewFromFloat(netAmount),
-        })
-    } else {
-        // Credit purchase: credit AP (net of withholdings)
-        lines = append(lines, JournalLineRequest{
-            AccountID:    accountIDs.AccountsPayableID,
-            Description:  fmt.Sprintf("Accounts Payable - %s", purchase.Vendor.Name),
-            DebitAmount:  decimal.Zero,
-            CreditAmount: decimal.NewFromFloat(netAmount),
-        })
-    }
+	// Credit side based on payment method
+	if purchase.PaymentMethod == models.PurchasePaymentCash ||
+		purchase.PaymentMethod == models.PurchasePaymentTransfer ||
+		purchase.PaymentMethod == models.PurchasePaymentCheck {
+		// Immediate payment: credit cash/bank
+		// Prefer the actual bank account linked to the purchase when available
+		var creditAccountID uint64
+		if purchase.BankAccountID != nil && *purchase.BankAccountID != 0 {
+			if resolvedID, err := adapter.resolveCashBankAccountID(uint64(*purchase.BankAccountID)); err == nil {
+				creditAccountID = resolvedID
+			} else {
+				// Fallback to default Cash account (1101) if resolution fails
+				creditAccountID, _ = adapter.resolveCashBankAccountID(0)
+			}
+		} else {
+			// Fallback to default Cash account (1101) when bank account is not provided
+			creditAccountID, _ = adapter.resolveCashBankAccountID(0)
+		}
+		lines = append(lines, JournalLineRequest{
+			AccountID:    creditAccountID,
+			Description:  fmt.Sprintf("%s Payment - %s", purchase.PaymentMethod, purchase.Vendor.Name),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(netAmount),
+		})
+	} else {
+		// Credit purchase: credit AP (net of withholdings)
+		lines = append(lines, JournalLineRequest{
+			AccountID:    accountIDs.AccountsPayableID,
+			Description:  fmt.Sprintf("Accounts Payable - %s", purchase.Vendor.Name),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(netAmount),
+		})
+	}
 
 	// Optional withholdings
 	if purchase.PPh21Amount > 0 && accountIDs.PPh21PayableID != 0 {
@@ -319,17 +320,17 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 
 	// Fallback by standard codes when settings not available
 	if ids.InventoryAccountID == 0 {
-		inv, err := adapter.accountRepo.FindByCode(nil, "1301")
+		inv, err := adapter.accountRepo.FindByCode(nil, "1103-001")
 		if err != nil {
-			return nil, fmt.Errorf("inventory account 1301 not found: %v", err)
+			return nil, fmt.Errorf("inventory account 1103-001 not found: %v", err)
 		}
 		ids.InventoryAccountID = uint64(inv.ID)
 		ids.PrimaryAccountID = uint64(inv.ID)
 	}
 	if ids.PPNInputAccountID == 0 {
-		ppn, err := adapter.accountRepo.FindByCode(nil, "1240")
+		ppn, err := adapter.accountRepo.FindByCode(nil, "2102-002")
 		if err != nil {
-			return nil, fmt.Errorf("PPN input account 1240 not found: %v", err)
+			return nil, fmt.Errorf("PPN input account 2102-002 not found: %v", err)
 		}
 		ids.PPNInputAccountID = uint64(ppn.ID)
 	}
@@ -342,12 +343,12 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 	}
 	// Optional withholdings fallback
 	if ids.PPh21PayableID == 0 {
-		if p21, err := adapter.accountRepo.FindByCode(nil, "2111"); err == nil {
+		if p21, err := adapter.accountRepo.FindByCode(nil, "2102-003"); err == nil {
 			ids.PPh21PayableID = uint64(p21.ID)
 		}
 	}
 	if ids.PPh23PayableID == 0 {
-		if p23, err := adapter.accountRepo.FindByCode(nil, "2112"); err == nil {
+		if p23, err := adapter.accountRepo.FindByCode(nil, "2102-004"); err == nil {
 			ids.PPh23PayableID = uint64(p23.ID)
 		}
 	}
@@ -357,9 +358,9 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 // SSOTPurchaseAccountIDs represents required account IDs for purchases
 type SSOTPurchaseAccountIDs struct {
 	PrimaryAccountID   uint64
-	InventoryAccountID uint64 // 1301
-	PPNInputAccountID  uint64 // 2102
-	AccountsPayableID  uint64 // 2101
-	PPh21PayableID     uint64 // 2111 (optional)
-	PPh23PayableID     uint64 // 2112 (optional)
+	InventoryAccountID uint64 // 1103-001 (from settings or COA template)
+	PPNInputAccountID  uint64 // 2102-002 PPN MASUKAN (from settings or COA template)
+	AccountsPayableID  uint64 // 2101-001 (from settings or COA template)
+	PPh21PayableID     uint64 // 2102-003 PPH PASAL 21 (optional, from settings)
+	PPh23PayableID     uint64 // 2102-004 PPH PASAL 23 (optional, from settings)
 }

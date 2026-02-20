@@ -1,15 +1,15 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/services"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/services"
-	"app-sistem-akuntansi/repositories"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -61,7 +61,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 	endDate := c.Query("end_date")
 	search := c.Query("search")
 	approvalStatus := c.Query("approval_status")
-	
+
 	var requiresApproval *bool
 	if reqApp := c.Query("requires_approval"); reqApp != "" {
 		val := reqApp == "true"
@@ -71,7 +71,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 	// Get user role and ID from context
 	userRole, _ := c.Get("role")
 	userID, _ := c.Get("user_id")
-	
+
 	filter := models.PurchaseFilter{
 		Status:           status,
 		VendorID:         vendorID,
@@ -83,7 +83,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 		Page:             page,
 		Limit:            limit,
 	}
-	
+
 	// RBAC: Employee role can only see their own purchases
 	if userRole != nil && userRole.(string) == models.RoleEmployee {
 		if userID != nil {
@@ -254,14 +254,14 @@ func (pc *PurchaseController) DeletePurchase(c *gin.Context) {
 	// Get user role and ID from context
 	userRole := c.MustGet("user_role").(string)
 	userID := c.MustGet("user_id").(uint)
-	
+
 	// Check if purchase exists and get its status
 	purchase, err := pc.purchaseService.GetPurchaseByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
 		return
 	}
-	
+
 	// RBAC: Employee role can only delete their own purchases
 	if userRole == models.RoleEmployee && purchase.UserID != userID {
 		c.JSON(http.StatusForbidden, gin.H{
@@ -270,14 +270,14 @@ func (pc *PurchaseController) DeletePurchase(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Check if user has permission to delete this purchase
 	// For APPROVED purchases, only ADMIN can delete
 	if purchase.Status == models.PurchaseStatusApproved && userRole != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can delete approved purchases"})
 		return
 	}
-	
+
 	// For other non-draft purchases, admin and director can delete
 	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusApproved && userRole != "admin" && userRole != "director" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions to delete this purchase"})
@@ -346,18 +346,18 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(uint)
 	userRole := c.MustGet("user_role").(string)
-	
+
 	// SAFETY CHECK: Ensure purchase is not in DRAFT status
 	purchase, err := pc.purchaseService.GetPurchaseByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
 		return
 	}
-	
+
 	if purchase.Status == models.PurchaseStatusDraft {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Cannot approve DRAFT purchase - please submit for approval first",
-			"current_status": purchase.Status,
+			"error":           "Cannot approve DRAFT purchase - please submit for approval first",
+			"current_status":  purchase.Status,
 			"required_action": "Use 'Submit for Approval' button first",
 		})
 		return
@@ -365,16 +365,16 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 
 	// Parse request body to check for escalation
 	var request struct {
-		Comments            string `json:"comments"`
-		EscalateToDirector  bool   `json:"escalate_to_director"`
+		Comments           string `json:"comments"`
+		EscalateToDirector bool   `json:"escalate_to_director"`
 	}
 	c.ShouldBindJSON(&request)
 
 	// Process approval with escalation logic
 	result, err := pc.purchaseService.ProcessPurchaseApprovalWithEscalation(
-		uint(id), 
-		true, 
-		userID, 
+		uint(id),
+		true,
+		userID,
 		userRole,
 		request.Comments,
 		request.EscalateToDirector,
@@ -420,9 +420,9 @@ func (pc *PurchaseController) RejectPurchase(c *gin.Context) {
 
 	// Process rejection with escalation logic (similar to approve but with rejection)
 	result, err := pc.purchaseService.ProcessPurchaseApprovalWithEscalation(
-		uint(id), 
+		uint(id),
 		false, // false = reject
-		userID, 
+		userID,
 		userRole,
 		request.Comments,
 		false, // no escalation for rejection
@@ -442,7 +442,7 @@ func (pc *PurchaseController) CreatePurchaseReceipt(c *gin.Context) {
 	var request models.PurchaseReceiptRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
@@ -453,54 +453,54 @@ func (pc *PurchaseController) CreatePurchaseReceipt(c *gin.Context) {
 	if !exists {
 		log.Printf("Error: user_id not found in context for receipt creation")
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "User not authenticated",
+			"error":   "User not authenticated",
 			"details": "user_id not found in context",
 		})
 		return
 	}
-	
+
 	userID, ok := userIDInterface.(uint)
 	if !ok {
 		log.Printf("Error: user_id has invalid type for receipt creation: %T", userIDInterface)
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid user authentication",
+			"error":   "Invalid user authentication",
 			"details": "user_id has invalid type",
 		})
 		return
 	}
-	
+
 	log.Printf("Creating receipt for purchase %d with user ID %d", request.PurchaseID, userID)
 
 	receipt, err := pc.purchaseService.CreatePurchaseReceipt(request, userID)
 	if err != nil {
 		log.Printf("Error creating receipt: %v", err)
-		
+
 		// Check for specific error types
 		errorMessage := err.Error()
 		if strings.Contains(errorMessage, "fk_purchase_receipts_receiver") {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Invalid user reference",
+				"error":   "Invalid user reference",
 				"details": "The user ID in your session is not valid. Please log out and log in again.",
 				"user_id": userID,
 			})
 			return
 		}
-		
+
 		if strings.Contains(errorMessage, "foreign key constraint") {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Database constraint violation",
+				"error":   "Database constraint violation",
 				"details": "There is a reference issue in the database. Please contact administrator.",
 			})
 			return
 		}
-		
+
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to create receipt",
+			"error":   "Failed to create receipt",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	log.Printf("Receipt created successfully: ID=%d, Number=%s", receipt.ID, receipt.ReceiptNumber)
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
@@ -528,15 +528,15 @@ func (pc *PurchaseController) GetPurchaseReceipts(c *gin.Context) {
 		// Get all receipts
 		receipts, err = pc.purchaseService.GetPurchaseReceipts(uint(id))
 	}
-	
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data": receipts,
-		"count": len(receipts),
+		"data":           receipts,
+		"count":          len(receipts),
 		"completed_only": completedOnly,
 	})
 }
@@ -755,8 +755,8 @@ func (pc *PurchaseController) GetPendingApprovals(c *gin.Context) {
 	// Filter purchases requiring approval that user can approve
 	filter := models.PurchaseFilter{
 		ApprovalStatus: models.PurchaseApprovalPending,
-		Page:          1,
-		Limit:         100,
+		Page:           1,
+		Limit:          100,
 	}
 
 	result, err := pc.purchaseService.GetPurchases(filter)
@@ -779,8 +779,8 @@ func (pc *PurchaseController) GetPendingApprovals(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data": filteredPurchases,
-		"total": len(filteredPurchases),
+		"data":      filteredPurchases,
+		"total":     len(filteredPurchases),
 		"user_role": userRole,
 	})
 }
@@ -812,25 +812,25 @@ func (pc *PurchaseController) GetPurchaseForPayment(c *gin.Context) {
 	}
 
 	// Check if purchase can receive payment
-	canReceivePayment := purchase.Status == models.PurchaseStatusApproved && 
-						 purchase.PaymentMethod == "CREDIT" && 
-						 purchase.OutstandingAmount > 0
+	canReceivePayment := purchase.Status == models.PurchaseStatusApproved &&
+		purchase.PaymentMethod == "CREDIT" &&
+		purchase.OutstandingAmount > 0
 
 	// Format response for payment processing
 	response := gin.H{
-		"purchase_id":        purchase.ID,
-		"bill_number":        purchase.Code,
+		"purchase_id": purchase.ID,
+		"bill_number": purchase.Code,
 		"vendor": gin.H{
 			"id":   purchase.Vendor.ID,
 			"name": purchase.Vendor.Name,
 			"type": "VENDOR",
 		},
-		"total_amount":       purchase.TotalAmount,
-		"paid_amount":        purchase.PaidAmount,
-		"outstanding_amount": purchase.OutstandingAmount,
-		"status":             purchase.Status,
-		"payment_method":     purchase.PaymentMethod,
-		"date":               purchase.Date.Format("2006-01-02"),
+		"total_amount":        purchase.TotalAmount,
+		"paid_amount":         purchase.PaidAmount,
+		"outstanding_amount":  purchase.OutstandingAmount,
+		"status":              purchase.Status,
+		"payment_method":      purchase.PaymentMethod,
+		"date":                purchase.Date.Format("2006-01-02"),
 		"can_receive_payment": canReceivePayment,
 	}
 
@@ -864,12 +864,12 @@ func (pc *PurchaseController) CreateIntegratedPayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Amount      float64 `json:"amount" binding:"required,gt=0"`
-		Date        string  `json:"date" binding:"required"`
-		Method      string  `json:"method" binding:"required"`
-		CashBankID  *uint   `json:"cash_bank_id"`
-		Reference   string  `json:"reference"`
-		Notes       string  `json:"notes"`
+		Amount     float64 `json:"amount" binding:"required,gt=0"`
+		Date       string  `json:"date" binding:"required"`
+		Method     string  `json:"method" binding:"required"`
+		CashBankID *uint   `json:"cash_bank_id"`
+		Reference  string  `json:"reference"`
+		Notes      string  `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -903,7 +903,7 @@ func (pc *PurchaseController) CreateIntegratedPayment(c *gin.Context) {
 	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to create payment",
+			"error":   "Failed to create payment",
 			"details": err.Error(),
 		})
 		return
@@ -947,26 +947,26 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Amount        float64 `json:"amount" binding:"required,gt=0"`
-		Date          string  `json:"date" binding:"required"`
-		Method        string  `json:"method" binding:"required"`
-		CashBankID    uint    `json:"cash_bank_id" binding:"required"`
-		Reference     string  `json:"reference"`
-		Notes         string  `json:"notes"`
+		Amount     float64 `json:"amount" binding:"required,gt=0"`
+		Date       string  `json:"date" binding:"required"`
+		Method     string  `json:"method" binding:"required"`
+		CashBankID uint    `json:"cash_bank_id" binding:"required"`
+		Reference  string  `json:"reference"`
+		Notes      string  `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("Payment creation validation error for purchase %d: %v", purchaseID, err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 			"expected_fields": map[string]string{
-				"amount": "number (required, min=0)",
-				"date": "datetime string (required, ISO format)",
-				"method": "string (required)",
+				"amount":       "number (required, min=0)",
+				"date":         "datetime string (required, ISO format)",
+				"method":       "string (required)",
 				"cash_bank_id": "number (required)",
-				"reference": "string (optional)",
-				"notes": "string (optional)",
+				"reference":    "string (optional)",
+				"notes":        "string (optional)",
 			},
 		})
 		return
@@ -974,7 +974,7 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 
 	// Log successful request parsing
 	log.Printf("Received payment request for purchase %d: amount=%.2f, method=%s, cash_bank_id=%d, date=%s", purchaseID, request.Amount, request.Method, request.CashBankID, request.Date)
-	
+
 	// Parse date - support both RFC3339 and YYYY-MM-DD formats
 	paymentDate, err := time.Parse(time.RFC3339, request.Date)
 	if err != nil {
@@ -983,8 +983,8 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		if err != nil {
 			log.Printf("Date parsing error for purchase %d: %v, date=%s", purchaseID, err, request.Date)
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Invalid date format",
-				"details": "Date must be in RFC3339 format (2006-01-02T15:04:05Z) or YYYY-MM-DD format",
+				"error":         "Invalid date format",
+				"details":       "Date must be in RFC3339 format (2006-01-02T15:04:05Z) or YYYY-MM-DD format",
 				"received_date": request.Date,
 			})
 			return
@@ -993,12 +993,12 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		paymentDate = time.Date(paymentDate.Year(), paymentDate.Month(), paymentDate.Day(), 0, 0, 0, 0, time.UTC)
 	}
 	log.Printf("Parsed payment date: %v", paymentDate)
-	
+
 	// Get purchase details to validate and get vendor ID
 	purchase, err := pc.purchaseService.GetPurchaseByID(uint(purchaseID))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Purchase not found",
+			"error":   "Purchase not found",
 			"details": err.Error(),
 		})
 		return
@@ -1007,15 +1007,15 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	// Validate purchase status - allow APPROVED, COMPLETED, or PAID (still requires CREDIT and outstanding > 0)
 	if !(purchase.Status == models.PurchaseStatusApproved || purchase.Status == models.PurchaseStatusCompleted || purchase.Status == models.PurchaseStatusPaid) {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Purchase must be approved or completed to receive payments",
+			"error":           "Purchase must be approved or completed to receive payments",
 			"purchase_status": purchase.Status,
 		})
 		return
 	}
-	
+
 	if purchase.PaymentMethod != models.PurchasePaymentCredit {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Only credit purchases can receive payments",
+			"error":          "Only credit purchases can receive payments",
 			"payment_method": purchase.PaymentMethod,
 		})
 		return
@@ -1024,9 +1024,9 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	// Validate payment amount
 	if request.Amount > purchase.OutstandingAmount {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Payment amount exceeds outstanding amount",
+			"error":              "Payment amount exceeds outstanding amount",
 			"outstanding_amount": purchase.OutstandingAmount,
-			"requested_amount": request.Amount,
+			"requested_amount":   request.Amount,
 		})
 		return
 	}
@@ -1036,7 +1036,7 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	if !exists {
 		log.Printf("Error: user_id not found in context for purchase %d payment", purchaseID)
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "User not authenticated",
+			"error":   "User not authenticated",
 			"details": "user_id not found in context",
 		})
 		return
@@ -1045,7 +1045,7 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	if !ok {
 		log.Printf("Error: user_id has invalid type for purchase %d payment: %T", purchaseID, userIDInterface)
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid user authentication",
+			"error":   "Invalid user authentication",
 			"details": "user_id has invalid type",
 		})
 		return
@@ -1053,13 +1053,13 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 
 	// Create payment request for Payment Management service
 	paymentRequest := services.PaymentCreateRequest{
-		ContactID:   purchase.VendorID,
-		CashBankID:  request.CashBankID,
-		Date:        paymentDate, // Use the parsed paymentDate
-		Amount:      request.Amount,
-		Method:      request.Method,
-		Reference:   request.Reference,
-		Notes:       fmt.Sprintf("Payment for Purchase %s - %s", purchase.Code, request.Notes),
+		ContactID:  purchase.VendorID,
+		CashBankID: request.CashBankID,
+		Date:       paymentDate, // Use the parsed paymentDate
+		Amount:     request.Amount,
+		Method:     request.Method,
+		Reference:  request.Reference,
+		Notes:      fmt.Sprintf("Payment for Purchase %s - %s", purchase.Code, request.Notes),
 		Allocations: []services.InvoiceAllocation{
 			{
 				InvoiceID: uint(purchaseID),
@@ -1073,81 +1073,47 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	payment, err := pc.paymentService.CreatePayablePayment(paymentRequest, userID)
 	if err != nil {
 		log.Printf("Error in CreatePayablePayment for purchase %d: %v", purchaseID, err)
-		
+
 		// Check if this is an insufficient balance error
 		errorMessage := err.Error()
 		if strings.Contains(errorMessage, "insufficient balance") {
 			// Extract available balance from error message
 			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error": "Saldo rekening tidak mencukupi",
-				"error_type": "INSUFFICIENT_BALANCE",
-				"details": errorMessage,
+				"success":          false,
+				"error":            "Saldo rekening tidak mencukupi",
+				"error_type":       "INSUFFICIENT_BALANCE",
+				"details":          errorMessage,
 				"requested_amount": request.Amount,
-				"status": "error",
-				"message": "Saldo di rekening bank yang dipilih tidak mencukupi untuk melakukan pembayaran ini",
+				"status":           "error",
+				"message":          "Saldo di rekening bank yang dipilih tidak mencukupi untuk melakukan pembayaran ini",
 			})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
-				"error": "Failed to create payment",
+				"error":   "Failed to create payment",
 				"details": err.Error(),
-				"status": "error",
+				"status":  "error",
 			})
 		}
 		return
 	}
 	log.Printf("✅ Payment created successfully: ID=%d, Code=%s", payment.ID, payment.Code)
 
-	// 🔥 NEW: Create SSOT journal entry for purchase payment
-	log.Printf("🧾 Creating SSOT journal entry for purchase payment...")
-	err = pc.purchaseService.CreatePurchasePaymentJournal(
-		uint(purchaseID),
-		request.Amount,
-		request.CashBankID,
-		fmt.Sprintf("PAY-%s", purchase.Code),
-		fmt.Sprintf("Payment for Purchase %s", purchase.Code),
-		userID,
-	)
-	if err != nil {
-		log.Printf("⚠️ Warning: Failed to create SSOT journal entry for payment: %v", err)
-		// Don't fail the payment process, but log the issue
-	} else {
-	log.Printf("✅ SSOT journal entry created for purchase payment")
-	}
-
-	// 🔧 NEW: Ensure COA balance is synchronized after payment
-	log.Printf("🔧 Ensuring COA balance sync after payment...")
-	if pc.accountRepo != nil {
-		// Initialize COA sync service
-		coaSyncService := services.NewPurchasePaymentCOASyncService(pc.db, pc.accountRepo)
-		
-		// Ensure COA balance is updated
-		err = coaSyncService.SyncCOABalanceAfterPayment(
-			uint(purchaseID),
-			request.Amount,
-			request.CashBankID,
-			userID,
-			fmt.Sprintf("PAY-%s", purchase.Code),
-			fmt.Sprintf("Payment for Purchase %s", purchase.Code),
-		)
-		if err != nil {
-			log.Printf("⚠️ Warning: Failed to sync COA balance: %v", err)
-			// Don't fail the payment, just log the warning
-		} else {
-			log.Printf("✅ COA balance synchronized successfully")
-		}
-	} else {
-		log.Printf("⚠️ Warning: Account repository not available for COA sync")
-	}
+	// 🛑 REMOVED: The duplicate SSOT journal call that was causing DOUBLE POSTING
+	// CreatePayablePayment (called above at line 1073) already:
+	//   1. Updates cash_banks.balance via updateCashBankBalance
+	//   2. Creates journal entries AND updates accounts.balance via
+	//      purchasePaymentJournalService.CreatePaymentJournalEntryWithTx → createLegacyPaymentJournalWithTx
+	// Calling CreatePurchasePaymentJournal here would create a SECOND balance update = double deduction!
+	log.Printf("✅ Journal entries and COA balance already handled by CreatePayablePayment")
 
 	// CRITICAL FIX: Update purchase payment amounts after successful payment
 	log.Printf("🔄 Updating purchase payment amounts for purchase %d...", purchaseID)
-	
+
 	// Calculate new paid and outstanding amounts
 	newPaidAmount := purchase.PaidAmount + request.Amount
 	newOutstandingAmount := purchase.TotalAmount - newPaidAmount
-	
+
 	// DO NOT change status to PAID automatically when payment is made
 	// The purchase should remain APPROVED to allow receipt creation
 	// Only change to COMPLETED when both payment AND receipt are complete
@@ -1156,28 +1122,28 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		newOutstandingAmount = 0 // Ensure it doesn't go negative
 	}
 	// Status remains APPROVED - will be changed to COMPLETED only when receipt is created
-	
-	log.Printf("📊 Payment amounts: Paid %.2f → %.2f, Outstanding %.2f → %.2f, Status %s → %s", 
+
+	log.Printf("📊 Payment amounts: Paid %.2f → %.2f, Outstanding %.2f → %.2f, Status %s → %s",
 		purchase.PaidAmount, newPaidAmount, purchase.OutstandingAmount, newOutstandingAmount, purchase.Status, newStatus)
-	
+
 	// Update purchase in database
 	err = pc.purchaseService.UpdatePurchasePaymentAmounts(uint(purchaseID), newPaidAmount, newOutstandingAmount, newStatus)
 	if err != nil {
 		log.Printf("❌ Critical error: Failed to update purchase payment amounts: %v", err)
 		// Payment was created successfully, but purchase amounts weren't updated
 		c.JSON(http.StatusCreated, gin.H{
-			"success": true,
-			"payment": payment,
-			"warning": "Payment created but purchase amounts could not be updated",
+			"success":       true,
+			"payment":       payment,
+			"warning":       "Payment created but purchase amounts could not be updated",
 			"error_details": err.Error(),
-			"status": "partial_success",
-			"message": "Payment recorded but purchase status may not reflect the payment. Please refresh the page.",
+			"status":        "partial_success",
+			"message":       "Payment recorded but purchase status may not reflect the payment. Please refresh the page.",
 		})
 		return
 	}
-	
+
 	log.Printf("✅ Purchase payment amounts updated successfully")
-	
+
 	// Return response with both payment info and updated purchase status
 	updatedPurchase, err := pc.purchaseService.GetPurchaseByID(uint(purchaseID))
 	if err != nil {
@@ -1187,28 +1153,28 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 			"success": true,
 			"payment": payment,
 			"updated_purchase": gin.H{
-				"id": uint(purchaseID),
-				"status": newStatus,
-				"paid_amount": newPaidAmount,
+				"id":                 uint(purchaseID),
+				"status":             newStatus,
+				"paid_amount":        newPaidAmount,
 				"outstanding_amount": newOutstandingAmount,
 			},
 			"message": "Payment created successfully via Payment Management",
-			"status": "success",
+			"status":  "success",
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"payment": payment,
 		"updated_purchase": gin.H{
-			"id": updatedPurchase.ID,
-			"status": updatedPurchase.Status,
-			"paid_amount": updatedPurchase.PaidAmount,
+			"id":                 updatedPurchase.ID,
+			"status":             updatedPurchase.Status,
+			"paid_amount":        updatedPurchase.PaidAmount,
 			"outstanding_amount": updatedPurchase.OutstandingAmount,
 		},
 		"message": "Payment created successfully via Payment Management",
-		"status": "success",
+		"status":  "success",
 	})
 }
 
@@ -1227,8 +1193,8 @@ func (pc *PurchaseController) GetPurchaseDashboard(c *gin.Context) {
 	// Get pending approvals count
 	pendingFilter := models.PurchaseFilter{
 		ApprovalStatus: models.PurchaseApprovalPending,
-		Page:          1,
-		Limit:         1000,
+		Page:           1,
+		Limit:          1000,
 	}
 
 	pendingResult, err := pc.purchaseService.GetPurchases(pendingFilter)
@@ -1238,10 +1204,10 @@ func (pc *PurchaseController) GetPurchaseDashboard(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"summary":         summary,
-		"pending_count":   len(pendingResult.Data),
-		"user_role":       userRole,
-		"can_approve":     userRole == "finance" || userRole == "director" || userRole == "admin",
+		"summary":       summary,
+		"pending_count": len(pendingResult.Data),
+		"user_role":     userRole,
+		"can_approve":   userRole == "finance" || userRole == "director" || userRole == "admin",
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -1259,20 +1225,20 @@ func (pc *PurchaseController) GetPurchaseJournalEntries(c *gin.Context) {
 	entries, err := pc.purchaseService.GetPurchaseJournalEntries(uint(id))
 	if err != nil {
 		log.Printf("⚠️ GetPurchaseJournalEntries failed for purchase %d: %v. Returning empty result.", id, err)
-	c.JSON(http.StatusOK, gin.H{
-			"purchase_id": id,
+		c.JSON(http.StatusOK, gin.H{
+			"purchase_id":     id,
 			"journal_entries": []interface{}{},
-			"count": 0,
-			"status": "empty",
-			"message": "No journal entries available or journal system disabled",
+			"count":           0,
+			"status":          "empty",
+			"message":         "No journal entries available or journal system disabled",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"purchase_id": id,
+		"purchase_id":     id,
 		"journal_entries": entries,
-		"count": len(entries),
+		"count":           len(entries),
 	})
 }
 
@@ -1297,14 +1263,14 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 
 	// Build filter with all parameters to match current filtering behavior
 	filter := models.PurchaseFilter{
-		Status:           status,
-		VendorID:         vendorID,
-		StartDate:        startDate,
-		EndDate:          endDate,
-		Search:           search,
-		ApprovalStatus:   approvalStatus,
-		Page:             1,
-		Limit:            10000, // Large limit for export
+		Status:         status,
+		VendorID:       vendorID,
+		StartDate:      startDate,
+		EndDate:        endDate,
+		Search:         search,
+		ApprovalStatus: approvalStatus,
+		Page:           1,
+		Limit:          10000, // Large limit for export
 	}
 
 	// Get filtered purchases
@@ -1319,7 +1285,7 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 	exportService := services.NewPurchaseReportExportService(pc.purchaseService.GetDB())
 
 	// Convert purchases to report data format
-reportData := &services.PurchaseReportData{
+	reportData := &services.PurchaseReportData{
 		Company: services.CompanyInfo{
 			Name:    "PT. Sistem Akuntansi Indonesia",
 			Address: "Jakarta, Indonesia",
@@ -1372,14 +1338,14 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 
 	// Build filter with all parameters to match current filtering behavior
 	filter := models.PurchaseFilter{
-		Status:           status,
-		VendorID:         vendorID,
-		StartDate:        startDate,
-		EndDate:          endDate,
-		Search:           search,
-		ApprovalStatus:   approvalStatus,
-		Page:             1,
-		Limit:            10000, // Large limit for export
+		Status:         status,
+		VendorID:       vendorID,
+		StartDate:      startDate,
+		EndDate:        endDate,
+		Search:         search,
+		ApprovalStatus: approvalStatus,
+		Page:           1,
+		Limit:          10000, // Large limit for export
 	}
 
 	// Get filtered purchases
@@ -1394,7 +1360,7 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 	exportService := services.NewPurchaseReportExportService(pc.purchaseService.GetDB())
 
 	// Convert purchases to report data format
-reportData := &services.PurchaseReportData{
+	reportData := &services.PurchaseReportData{
 		Company: services.CompanyInfo{
 			Name:    "PT. Sistem Akuntansi Indonesia",
 			Address: "Jakarta, Indonesia",
@@ -1482,16 +1448,16 @@ func calculateOutstandingPayables(purchases []models.Purchase) float64 {
 
 // groupPurchasesByVendor groups purchases by vendor for reporting
 func groupPurchasesByVendor(purchases []models.Purchase) []services.VendorPurchaseSummary {
-vendorMap := make(map[uint64]*services.VendorPurchaseSummary)
-	
+	vendorMap := make(map[uint64]*services.VendorPurchaseSummary)
+
 	for _, p := range purchases {
 		if p.Vendor.ID == 0 {
 			continue
 		}
-		
-vendorID := uint64(p.Vendor.ID)
+
+		vendorID := uint64(p.Vendor.ID)
 		if existing, ok := vendorMap[vendorID]; ok {
-existing.TotalPurchases += 1
+			existing.TotalPurchases += 1
 			existing.TotalAmount += p.TotalAmount
 			existing.TotalPaid += p.PaidAmount
 			existing.Outstanding += p.OutstandingAmount
@@ -1499,25 +1465,25 @@ existing.TotalPurchases += 1
 				existing.LastPurchaseDate = p.Date
 			}
 		} else {
-vendorMap[vendorID] = &services.VendorPurchaseSummary{
-				VendorID:          vendorID,
-				VendorName:        p.Vendor.Name,
-TotalPurchases:    1, // int64 will be set below
-				TotalAmount:       p.TotalAmount,
-				TotalPaid:         p.PaidAmount,
-				Outstanding:       p.OutstandingAmount,
-				LastPurchaseDate:  p.Date,
-				PaymentMethod:     p.PaymentMethod,
-				Status:            p.Status,
+			vendorMap[vendorID] = &services.VendorPurchaseSummary{
+				VendorID:         vendorID,
+				VendorName:       p.Vendor.Name,
+				TotalPurchases:   1, // int64 will be set below
+				TotalAmount:      p.TotalAmount,
+				TotalPaid:        p.PaidAmount,
+				Outstanding:      p.OutstandingAmount,
+				LastPurchaseDate: p.Date,
+				PaymentMethod:    p.PaymentMethod,
+				Status:           p.Status,
 			}
 		}
 	}
-	
+
 	// Convert map to slice
-result := make([]services.VendorPurchaseSummary, 0, len(vendorMap))
+	result := make([]services.VendorPurchaseSummary, 0, len(vendorMap))
 	for _, vendor := range vendorMap {
 		result = append(result, *vendor)
 	}
-	
+
 	return result
 }

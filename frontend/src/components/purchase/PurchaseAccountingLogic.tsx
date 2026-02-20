@@ -132,13 +132,13 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
     const orderDiscountRate = parseFloat(purchaseData.discount || 0);
     const orderDiscountAmount = (subtotalBeforeDiscount - itemDiscountAmount) * orderDiscountRate / 100;
     const netBeforeTax = subtotalBeforeDiscount - itemDiscountAmount - orderDiscountAmount;
-    
+
     // Calculate tax additions (Penambahan)
-    const ppnRate = parseFloat(purchaseData.ppn_rate || 11);
+    const ppnRate = parseFloat(purchaseData.ppn_rate || 0);
     const ppnAmount = netBeforeTax * ppnRate / 100;
     const otherTaxAdditions = parseFloat(purchaseData.other_tax_additions || 0);
     const totalTaxAdditions = ppnAmount + otherTaxAdditions;
-    
+
     // Calculate tax deductions (Pemotongan)
     const pph21Rate = parseFloat(purchaseData.pph21_rate || 0);
     const pph23Rate = parseFloat(purchaseData.pph23_rate || 0);
@@ -146,7 +146,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
     const pph23Amount = netBeforeTax * pph23Rate / 100;
     const otherTaxDeductions = parseFloat(purchaseData.other_tax_deductions || 0);
     const totalTaxDeductions = pph21Amount + pph23Amount + otherTaxDeductions;
-    
+
     // Final total amount
     const totalCost = netBeforeTax + totalTaxAdditions - totalTaxDeductions;
 
@@ -201,7 +201,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
     if (accountingImpact.ppnAmount > 0) {
       entries.push({
         account: 'PPN Masukan (Input VAT)',
-        accountCode: '1240',
+        accountCode: '2102-002',
         debit: accountingImpact.ppnAmount,
         credit: 0,
         description: 'VAT paid on purchases (recoverable)',
@@ -239,7 +239,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
       const product = products.find(p => p.id === parseInt(item.product_id));
       if (product) {
         const accountCode = item.expense_account_id?.toString() || '';
-        
+
         if (product.type === 'SERVICE' && !accountCode.startsWith('5')) {
           warnings.push(`Item ${index + 1}: Service items typically use expense accounts (5xxx series)`);
         } else if (product.type === 'PRODUCT' && !accountCode.startsWith('1') && !accountCode.startsWith('5')) {
@@ -250,11 +250,11 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
       // Check for unusual quantities or prices
       const quantity = parseFloat(item.quantity || 0);
       const unitPrice = parseFloat(item.unit_price || 0);
-      
+
       if (quantity > 10000) {
         warnings.push(`Item ${index + 1}: Unusually high quantity (${quantity}). Please verify.`);
       }
-      
+
       if (unitPrice > 100000000) { // 100 million per unit
         warnings.push(`Item ${index + 1}: Unusually high unit price. Please verify.`);
       }
@@ -359,7 +359,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
               </StatNumber>
               <StatHelpText>Asset increase</StatHelpText>
             </Stat>
-            
+
             <Stat>
               <StatLabel>Expense Impact</StatLabel>
               <StatNumber color="orange.500">
@@ -367,7 +367,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
               </StatNumber>
               <StatHelpText>Operating costs</StatHelpText>
             </Stat>
-            
+
             <Stat>
               <StatLabel>Tax Deductible</StatLabel>
               <StatNumber color="blue.500">
@@ -375,7 +375,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
               </StatNumber>
               <StatHelpText>Potential tax benefit</StatHelpText>
             </Stat>
-            
+
             <Stat>
               <StatLabel>Total Cost</StatLabel>
               <StatNumber color="purple.600">
@@ -389,19 +389,19 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
             <HStack justify="space-between">
               <Text fontSize="sm" color="gray.600">Tax Deductibility Ratio:</Text>
               <Text fontSize="sm" fontWeight="medium">
-                {accountingImpact.totalAmount > 0 
+                {accountingImpact.totalAmount > 0
                   ? `${((accountingImpact.taxDeductible / accountingImpact.totalAmount) * 100).toFixed(1)}%`
                   : '0%'
                 }
               </Text>
             </HStack>
-            <Progress 
-              value={accountingImpact.totalAmount > 0 
-                ? (accountingImpact.taxDeductible / accountingImpact.totalAmount) * 100 
+            <Progress
+              value={accountingImpact.totalAmount > 0
+                ? (accountingImpact.taxDeductible / accountingImpact.totalAmount) * 100
                 : 0
-              } 
-              colorScheme="blue" 
-              size="sm" 
+              }
+              colorScheme="blue"
+              size="sm"
               mt={2}
             />
           </Box>
@@ -419,7 +419,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
           <Text fontSize="sm" color="gray.600" mb={4}>
             These journal entries will be automatically created when the purchase is saved:
           </Text>
-          
+
           <TableContainer>
             <Table variant="simple" size="sm">
               <Thead>
@@ -435,8 +435,8 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
                   <Tr key={index}>
                     <Td>
                       <HStack>
-                        <Icon 
-                          as={getJournalEntryIcon(entry.type)} 
+                        <Icon
+                          as={getJournalEntryIcon(entry.type)}
                           color={`${getJournalEntryColor(entry.type)}.500`}
                           boxSize={4}
                         />
@@ -444,8 +444,8 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
                           <Text fontWeight="medium" fontSize="sm">
                             {entry.accountCode} - {entry.account}
                           </Text>
-                          <Badge 
-                            size="xs" 
+                          <Badge
+                            size="xs"
                             colorScheme={getJournalEntryColor(entry.type)}
                             variant="subtle"
                           >
@@ -460,7 +460,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
                       </Text>
                     </Td>
                     <Td isNumeric>
-                      <Text 
+                      <Text
                         fontWeight={entry.debit > 0 ? "bold" : "normal"}
                         color={entry.debit > 0 ? "green.600" : "gray.400"}
                       >
@@ -468,7 +468,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
                       </Text>
                     </Td>
                     <Td isNumeric>
-                      <Text 
+                      <Text
                         fontWeight={entry.credit > 0 ? "bold" : "normal"}
                         color={entry.credit > 0 ? "red.600" : "gray.400"}
                       >
@@ -482,7 +482,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
           </TableContainer>
 
           <Divider my={4} />
-          
+
           <HStack justify="space-between">
             <Text fontSize="sm" fontWeight="bold">Total:</Text>
             <HStack spacing={8}>
@@ -504,7 +504,7 @@ export default PurchaseAccountingLogic;
 
 // Utility functions for external use
 export const validatePurchaseAccountingRules = (
-  purchaseData: any, 
+  purchaseData: any,
   products: any[]
 ): { errors: string[], warnings: string[] } => {
   const errors: string[] = [];
@@ -523,7 +523,7 @@ export const validatePurchaseAccountingRules = (
     const product = products.find(p => p.id === parseInt(item.product_id));
     if (product) {
       const accountCode = item.expense_account_id?.toString() || '';
-      
+
       if (product.type === 'SERVICE' && !accountCode.startsWith('5')) {
         warnings.push(`Item ${index + 1}: Service items typically use expense accounts (5xxx series)`);
       }
@@ -534,7 +534,7 @@ export const validatePurchaseAccountingRules = (
 };
 
 export const calculatePurchaseAccountingImpact = (
-  purchaseData: any, 
+  purchaseData: any,
   products: any[]
 ): AccountingImpact | null => {
   if (!purchaseData.items || purchaseData.items.length === 0) {

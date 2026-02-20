@@ -1,6 +1,6 @@
-import { 
-  Account, 
-  AccountCreateRequest, 
+import {
+  Account,
+  AccountCreateRequest,
   AccountUpdateRequest,
   AccountImportRequest,
   AccountSummaryResponse,
@@ -19,11 +19,11 @@ class AccountService {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
     };
-    
+
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    
+
     return headers;
   }
 
@@ -41,7 +41,7 @@ class AccountService {
 
       throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
-    
+
     return response.json();
   }
 
@@ -52,13 +52,13 @@ class AccountService {
     if (type) params.set('type', type);
     params.set('_t', Date.now().toString());
     url += `?${params.toString()}`;
-    
+
     const response = await fetch(url, {
       method: 'GET',
       headers: { ...this.getHeaders(token), 'Cache-Control': 'no-store' },
       cache: 'no-store',
     });
-    
+
     const result: ApiResponse<Account[]> = await this.handleResponse(response);
     return result.data;
   }
@@ -70,7 +70,7 @@ class AccountService {
     if (type) params.set('type', type);
     params.set('_t', Date.now().toString());
     url += `?${params.toString()}`;
-    
+
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -79,20 +79,20 @@ class AccountService {
       },
       cache: 'no-store',
     });
-    
+
     const result: ApiResponse<AccountCatalogItem[]> = await this.handleResponse(response);
     return result.data;
   }
-  
+
   // Get expense accounts specifically for purchase items - PUBLIC ENDPOINT (no auth required)
   async getExpenseAccounts(token?: string): Promise<AccountCatalogItem[]> {
     return this.getAccountCatalog(undefined, 'EXPENSE');
   }
-  
+
   // Get liability accounts for credit payment methods - PUBLIC ENDPOINT (no auth required)
   async getCreditAccounts(token?: string): Promise<AccountCatalogItem[]> {
     const url = `${API_ENDPOINTS.ACCOUNTS.CREDIT}?type=LIABILITY&_t=${Date.now()}`;
-    
+
     const response = await fetch(url, {
       method: 'GET',
       headers: {
@@ -101,7 +101,7 @@ class AccountService {
       },
       cache: 'no-store',
     });
-    
+
     const result: ApiResponse<AccountCatalogItem[]> = await this.handleResponse(response);
     return result.data;
   }
@@ -121,7 +121,7 @@ class AccountService {
       method: 'GET',
       headers: this.getHeaders(token),
     });
-    
+
     const result = await this.handleResponse<{
       success: boolean;
       data: {
@@ -136,7 +136,7 @@ class AccountService {
       }[];
       message: string;
     }>(response);
-    
+
     return result.data;
   }
 
@@ -148,7 +148,7 @@ class AccountService {
       headers: { ...this.getHeaders(token), 'Cache-Control': 'no-store' },
       cache: 'no-store',
     });
-    
+
     const result: ApiResponse<Account> = await this.handleResponse(response);
     return result.data;
   }
@@ -160,7 +160,7 @@ class AccountService {
       headers: this.getHeaders(token),
       body: JSON.stringify(accountData),
     });
-    
+
     const result: ApiResponse<Account> = await this.handleResponse(response);
     return result.data;
   }
@@ -172,7 +172,7 @@ class AccountService {
       headers: this.getHeaders(token),
       body: JSON.stringify(accountData),
     });
-    
+
     const result: ApiResponse<Account> = await this.handleResponse(response);
     return result.data;
   }
@@ -183,8 +183,19 @@ class AccountService {
       method: 'DELETE',
       headers: this.getHeaders(token),
     });
-    
+
     await this.handleResponse(response);
+  }
+
+  // Recalculate all parent/header account balances from children
+  async recalculateParentBalances(token: string): Promise<{ message: string; headers_updated: number }> {
+    const response = await fetch(API_ENDPOINTS.ACCOUNTS.RECALCULATE_PARENT_BALANCES, {
+      method: 'POST',
+      headers: this.getHeaders(token),
+    });
+
+    const result: any = await this.handleResponse(response);
+    return result.data || result;
   }
 
   // Admin delete account with cascade options
@@ -197,7 +208,7 @@ class AccountService {
       headers: this.getHeaders(token),
       body: JSON.stringify(options),
     });
-    
+
     return this.handleResponse(response);
   }
 
@@ -209,7 +220,7 @@ class AccountService {
       headers: { ...this.getHeaders(token), 'Cache-Control': 'no-store' },
       cache: 'no-store',
     });
-    
+
     const result: ApiResponse<Account[] | null | undefined> = await this.handleResponse(response);
     // Go will encode a nil slice as null; normalize to [] for frontend safety
     const data = Array.isArray(result?.data) ? result!.data! : [];
@@ -228,11 +239,11 @@ class AccountService {
   }[]> {
     const params = new URLSearchParams();
     if (asOfDate) params.set('as_of_date', asOfDate);
-    
+
     // 🗏 Add filter to ensure only POSTED journal entries (from INVOICED sales)
     params.set('status_filter', 'POSTED');
     params.set('source_filter', 'INVOICED_ONLY'); // Backend should understand this
-    
+
     params.set('_t', Date.now().toString());
     const url = `${API_ENDPOINTS.SSOT_REPORTS.ACCOUNT_BALANCES}${params.toString() ? `?${params.toString()}` : ''}`;
 
@@ -245,14 +256,14 @@ class AccountService {
     });
 
     const result = await this.handleResponse<{ status: string; data: any[] }>(response);
-    
+
     // Validate that we're getting INVOICED-only data
     console.log('✅ SSOT Account Balances fetched:', {
       count: result.data?.length || 0,
       filter: 'INVOICED_ONLY',
       as_of_date: asOfDate || 'latest'
     });
-    
+
     return result.data as any[];
   }
 
@@ -282,7 +293,7 @@ class AccountService {
       method: 'GET',
       headers: this.getHeaders(token),
     });
-    
+
     const result: ApiResponse<AccountSummaryResponse[]> = await this.handleResponse(response);
     return result.data;
   }
@@ -291,18 +302,18 @@ class AccountService {
   async importAccounts(token: string, file: File): Promise<{ message: string; count: number }> {
     const formData = new FormData();
     formData.append('file', file);
-    
+
     const headers: HeadersInit = {};
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    
+
     const response = await fetch(API_ENDPOINTS.ACCOUNTS.IMPORT, {
       method: 'POST',
       headers,
       body: formData,
     });
-    
+
     return this.handleResponse(response);
   }
 
@@ -311,11 +322,11 @@ class AccountService {
     const response = await fetch(API_ENDPOINTS.ACCOUNTS.TEMPLATE, {
       method: 'GET',
     });
-    
+
     if (!response.ok) {
       throw new Error('Failed to download template');
     }
-    
+
     return response.blob();
   }
 
@@ -325,7 +336,7 @@ class AccountService {
       method: 'GET',
       headers: this.getHeaders(token),
     });
-    
+
     if (!response.ok) {
       let errorData: ApiError;
       try {
@@ -336,11 +347,11 @@ class AccountService {
           code: 'NETWORK_ERROR',
         };
       }
-      
-      
+
+
       throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
-    
+
     return response.blob();
   }
 
@@ -350,7 +361,7 @@ class AccountService {
       method: 'GET',
       headers: this.getHeaders(token),
     });
-    
+
     if (!response.ok) {
       let errorData: ApiError;
       try {
@@ -361,11 +372,11 @@ class AccountService {
           code: 'NETWORK_ERROR',
         };
       }
-      
-      
+
+
       throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
-    
+
     return response.blob();
   }
 
@@ -374,19 +385,19 @@ class AccountService {
     // ✅ FIXED: Show ACTUAL balance, including negatives for error detection
     // For ASSET accounts (like 1301 Persediaan), negative balance = ERROR that must be visible!
     const displayBalance = balance;
-    
+
     // 🚨 Log warning for negative ASSET/EXPENSE balances (unusual situation)
     if (balance < 0 && (accountType === 'ASSET' || accountType === 'EXPENSE')) {
       console.warn(`⚠️ WARNING: ${accountCode} (${accountType}) has NEGATIVE balance: ${balance}! This may indicate an error.`);
     }
-    
+
     // For LIABILITY/EQUITY/REVENUE, negative balance might be normal in some cases
     if (balance < 0 && (accountType === 'LIABILITY' || accountType === 'EQUITY' || accountType === 'REVENUE')) {
       console.log(`ℹ️ Note: ${accountCode} (${accountType}) has negative balance: ${balance}`);
     }
-    
+
     console.log(`💡 Displaying ${accountCode} balance: ${displayBalance} (type: ${accountType})`);
-    
+
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: currency,
@@ -394,27 +405,27 @@ class AccountService {
       maximumFractionDigits: 0,
     }).format(displayBalance);
   }
-  
+
   // Helper: Determine if account should be displayed as positive
   private shouldDisplayAsPositive(accountCode?: string, accountType?: string): boolean {
     if (!accountCode) return false;
-    
+
     // Revenue accounts (4xxx) should display as positive
     if (accountCode.startsWith('4') || accountType === 'REVENUE') {
       return true;
     }
-    
-    // PPN Keluaran accounts (2103, 21xx tax-related) should display as positive 
-    if (accountCode === '2103' || accountCode.startsWith('210')) {
+
+    // PPN & tax accounts (2102-001 PPN Keluaran, 2102-002 PPN Masukan, etc.) should display as positive 
+    if (accountCode.startsWith('2102') || accountCode.startsWith('2103')) {
       return true;
     }
-    
+
     // Other specific tax accounts that should display positive
-    const positiveTaxAccounts = ['2102', '2104', '2105']; // Common tax payable accounts
+    const positiveTaxAccounts = ['2104', '2105']; // Common tax payable accounts
     if (positiveTaxAccounts.includes(accountCode)) {
       return true;
     }
-    
+
     return false;
   }
 
@@ -454,7 +465,7 @@ class AccountService {
           return type;
       }
     }
-    
+
     switch (type) {
       case 'ASSET':
         return 'Aktiva';

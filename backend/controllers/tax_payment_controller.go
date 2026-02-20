@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -66,21 +67,21 @@ func (c *TaxPaymentController) CreatePPNPayment(ctx *gin.Context) {
 	payment, err := c.taxPaymentService.CreatePPNPayment(req, userID.(uint))
 	if err != nil {
 		log.Printf("❌ Failed to create PPN payment: %v", err)
-		
+
 		// Check if it's a validation error (user-friendly errors)
 		errMsg := err.Error()
-		if contains(errMsg, "tidak ada PPN yang harus dibayar") || 
-		   contains(errMsg, "PPN Terutang: 0") ||
-		   contains(errMsg, "cannot exceed PPN Terutang") ||
-		   contains(errMsg, "insufficient cash/bank balance") {
+		if contains(errMsg, "tidak ada PPN yang harus dibayar") ||
+			contains(errMsg, "PPN Terutang: 0") ||
+			contains(errMsg, "cannot exceed PPN Terutang") ||
+			contains(errMsg, "insufficient cash/bank balance") {
 			// Return 400 for validation errors (not server errors)
 			ctx.JSON(http.StatusBadRequest, gin.H{
 				"error": err.Error(),
-				"type": "validation_error",
+				"type":  "validation_error",
 			})
 			return
 		}
-		
+
 		// Return 500 for actual server errors
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -280,13 +281,13 @@ func (c *TaxPaymentController) GetPPNKeluaranPayments(ctx *gin.Context) {
 // @Router /api/v1/tax-payments/ppn/balance [get]
 func (c *TaxPaymentController) GetPPNBalance(ctx *gin.Context) {
 	ppnType := ctx.Query("type")
-	
+
 	// Validate PPN type
 	if ppnType != "INPUT" && ppnType != "OUTPUT" {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "type must be INPUT or OUTPUT"})
 		return
 	}
-	
+
 	// Get balance from service
 	balance, err := c.taxPaymentService.GetPPNBalance(ppnType)
 	if err != nil {
@@ -294,7 +295,7 @@ func (c *TaxPaymentController) GetPPNBalance(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"balance": balance,

@@ -3,6 +3,7 @@ import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useCompanyType } from '@/hooks/useCompanyType';
 import {
   Box,
   Button,
@@ -60,12 +61,13 @@ import { getProductImageUrl, debugImageUrl } from '@/utils/imageUrl';
 const ProductCatalog: React.FC = () => {
   const { user } = useAuth();
   const { t } = useTranslation();
-  const { 
-    canView, 
-    canCreate, 
-    canEdit, 
-    canDelete, 
-    canExport 
+  const { isService, hasInventory, getLabel } = useCompanyType();
+  const {
+    canView,
+    canCreate,
+    canEdit,
+    canDelete,
+    canExport
   } = useModulePermissions('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -79,7 +81,7 @@ const ProductCatalog: React.FC = () => {
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [pendingUpload, setPendingUpload] = useState<{productId: number, file: File} | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<{ productId: number, file: File } | null>(null);
   const { isOpen: isAlertOpen, onOpen: onAlertOpen, onClose: onAlertClose } = useDisclosure();
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
   const { isOpen: isManagementModalOpen, onOpen: onManagementModalOpen, onClose: onManagementModalClose } = useDisclosure();
@@ -120,7 +122,7 @@ const ProductCatalog: React.FC = () => {
       const params: any = {};
       if (searchTerm) params.search = searchTerm;
       if (categoryFilter) params.category = categoryFilter;
-      
+
       const data = await ProductService.getProducts(params);
       setProducts(data.data);
     } catch (error) {
@@ -149,7 +151,7 @@ const ProductCatalog: React.FC = () => {
     try {
       const data = await ProductService.getWarehouseLocations();
       setWarehouseLocations(data.data);
-      
+
       // Show info message if using mock data
       if (data.message && data.message.includes('mock')) {
         console.info('Using mock warehouse locations data - implement backend API for full functionality');
@@ -161,7 +163,7 @@ const ProductCatalog: React.FC = () => {
     }
   };
 
-const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
   };
 
@@ -178,7 +180,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   const handleSaveProduct = (product: Product) => {
     if (selectedProduct) {
       // Update existing product in list
-      setProducts(prevProducts => 
+      setProducts(prevProducts =>
         prevProducts.map(p => p.id === product.id ? product : p)
       );
     } else {
@@ -230,7 +232,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       const product = products.find(p => p.id === productId);
-      
+
       if (product && product.image_path) {
         // Product already has an image, show confirmation
         setPendingUpload({ productId, file });
@@ -253,22 +255,22 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   const handleUpload = async (productId: number, file: File) => {
     try {
       const response = await ProductService.uploadProductImage(productId, file);
-      
+
       // Update the product in the list with the new image path
-      setProducts(prevProducts => 
-        prevProducts.map(p => 
-          p.id === productId 
+      setProducts(prevProducts =>
+        prevProducts.map(p =>
+          p.id === productId
             ? { ...p, image_path: response.path }
             : p
         )
       );
-      
+
       toast({
         title: 'Image uploaded successfully',
         status: 'success',
         isClosable: true,
       });
-      
+
       // Reset file input
       const fileInput = document.getElementById(`file-upload-${productId}`) as HTMLInputElement;
       if (fileInput) {
@@ -294,14 +296,14 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   const filteredAndSortedProducts = useMemo(() => {
     return products
       .filter(product => {
-        const matchesSearch = searchTerm ? 
-          product.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        const matchesSearch = searchTerm ?
+          product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
           product.code.toLowerCase().includes(searchTerm.toLowerCase()) : true;
-        const matchesCategory = categoryFilter ? 
+        const matchesCategory = categoryFilter ?
           product.category?.id === Number(categoryFilter) : true;
-        const matchesWarehouseLocation = warehouseLocationFilter ? 
+        const matchesWarehouseLocation = warehouseLocationFilter ?
           product.warehouse_location?.id === Number(warehouseLocationFilter) : true;
-        const matchesStatus = statusFilter ? 
+        const matchesStatus = statusFilter ?
           (statusFilter === 'active' ? product.is_active : !product.is_active) : true;
         return matchesSearch && matchesCategory && matchesWarehouseLocation && matchesStatus;
       })
@@ -325,27 +327,27 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       <Box>
         <Flex justify="space-between" align="center" mb={6}>
           <Box>
-            <Heading as="h1" size="xl" mb={2}>{t('products.productCatalog')}</Heading>
+            <Heading as="h1" size="xl" mb={2}>{getLabel('products')} - {t('products.productCatalog')}</Heading>
           </Box>
-          
+
           {/* Management Buttons */}
           <HStack spacing={3}>
             {canCreate && (
               <>
-                <Button 
-                  leftIcon={<FiSettings />} 
+                <Button
+                  leftIcon={<FiSettings />}
                   rightIcon={<FiChevronDown />}
-                  colorScheme="teal" 
-                  size="lg" 
+                  colorScheme="teal"
+                  size="lg"
                   onClick={handleOpenManagement}
                   variant="outline"
                 >
                   {t('products.management.title')}
                 </Button>
-                <Button 
-                  leftIcon={<FiPlus />} 
-                  colorScheme="brand" 
-                  size="lg" 
+                <Button
+                  leftIcon={<FiPlus />}
+                  colorScheme="brand"
+                  size="lg"
                   onClick={handleAddProductClick}
                 >
                   {t('products.addProduct')}
@@ -369,7 +371,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 onChange={handleSearchChange}
               />
             </InputGroup>
-            
+
             {/* Category Filter */}
             <Select
               placeholder={t('common.filters.allCategories')}
@@ -384,20 +386,22 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
               ))}
             </Select>
 
-            {/* Warehouse Location Filter */}
-            <Select
-              placeholder={t('common.filters.allLocations')}
-              value={warehouseLocationFilter}
-              onChange={(e) => setWarehouseLocationFilter(e.target.value)}
-              maxW="200px"
-            >
-              {warehouseLocations.map(location => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </Select>
-            
+            {/* Warehouse Location Filter - hidden for SERVICE companies */}
+            {hasInventory && (
+              <Select
+                placeholder={t('common.filters.allLocations')}
+                value={warehouseLocationFilter}
+                onChange={(e) => setWarehouseLocationFilter(e.target.value)}
+                maxW="200px"
+              >
+                {warehouseLocations.map(location => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+
             {/* Status Filter */}
             <Select
               placeholder={t('common.filters.allStatus')}
@@ -408,7 +412,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
               <option value="active">{t('products.active')}</option>
               <option value="inactive">{t('products.inactive')}</option>
             </Select>
-            
+
             {/* Sort Options */}
             <Select
               value={`${sortBy}-${sortOrder}`}
@@ -429,7 +433,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
               <option value="sale_price-desc">{t('products.sort.priceHighLow')}</option>
               <option value="sale_price-asc">{t('products.sort.priceLowHigh')}</option>
             </Select>
-            
+
             {/* Clear Filters */}
             <Button
               onClick={() => {
@@ -446,11 +450,11 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
               {t('common.filters.clearFilters')}
             </Button>
           </Flex>
-          
+
           {/* Results Summary */}
           <Text fontSize="sm" color="gray.600">
-{t('products.showing')} {filteredAndSortedProducts.length} {filteredAndSortedProducts.length !== 1 ? t('products.productsPlural') : t('products.product')}
-{(searchTerm || categoryFilter || warehouseLocationFilter || statusFilter) ? ` ${t('products.filtered')}` : ''}
+            {t('products.showing')} {filteredAndSortedProducts.length} {filteredAndSortedProducts.length !== 1 ? t('products.productsPlural') : t('products.product')}
+            {(searchTerm || categoryFilter || warehouseLocationFilter || statusFilter) ? ` ${t('products.filtered')}` : ''}
           </Text>
         </Box>
 
@@ -472,10 +476,10 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 <Td>{product.category?.name}</Td>
                 <Td>{product.warehouse_location?.name || t('products.table.noLocation')}</Td>
                 <Td>
-                  <Button 
-                    size="sm" 
-                    variant="ghost" 
-                    leftIcon={<FiEye />} 
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    leftIcon={<FiEye />}
                     mr={2}
                     onClick={() => handleViewDetails(product)}
                   >
@@ -483,20 +487,20 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   </Button>
                   {canEdit && (
                     <>
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
-                        leftIcon={<FiEdit />} 
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        leftIcon={<FiEdit />}
                         mr={2}
                         onClick={() => handleEditProduct(product)}
                       >
                         {t('common.edit')}
                       </Button>
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
-                        colorScheme="red" 
-                        leftIcon={<FiTrash2 />} 
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        colorScheme="red"
+                        leftIcon={<FiTrash2 />}
                         mr={2}
                         onClick={() => handleDeleteProduct(product)}
                       >
@@ -530,23 +534,23 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         {/* Add/Edit Product Modal */}
         {canEdit && (
           <Modal isOpen={isModalOpen || !!selectedProduct} onClose={handleCloseModal} size="6xl">
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
-              {selectedProduct ? t('products.editProduct') : t('products.addProduct')}
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody pb={6}>
-              <ProductForm 
-                product={selectedProduct || undefined} 
-                onSave={handleSaveProduct} 
-                onCancel={handleCloseModal} 
-              />
-            </ModalBody>
-          </ModalContent>
+            <ModalOverlay />
+            <ModalContent>
+              <ModalHeader>
+                {selectedProduct ? t('products.editProduct') : t('products.addProduct')}
+              </ModalHeader>
+              <ModalCloseButton />
+              <ModalBody pb={6}>
+                <ProductForm
+                  product={selectedProduct || undefined}
+                  onSave={handleSaveProduct}
+                  onCancel={handleCloseModal}
+                />
+              </ModalBody>
+            </ModalContent>
           </Modal>
         )}
-        
+
         {/* Product Details Modal */}
         <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="4xl">
           <ModalOverlay />
@@ -561,8 +565,8 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   {/* Product Image */}
                   <Flex justify="center" mb={6}>
                     {detailProduct.image_path ? (
-                      <Image 
-                        src={getProductImageUrl(detailProduct.image_path) || ''} 
+                      <Image
+                        src={getProductImageUrl(detailProduct.image_path) || ''}
                         alt={detailProduct.name}
                         maxH="250px"
                         maxW="350px"
@@ -581,15 +585,15 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                         }}
                       />
                     ) : (
-                      <Box 
-                        w="350px" 
-                        h="250px" 
-                        bg="gray.50" 
-                        borderRadius="lg" 
+                      <Box
+                        w="350px"
+                        h="250px"
+                        bg="gray.50"
+                        borderRadius="lg"
                         border="2px"
                         borderColor="gray.200"
-                        display="flex" 
-                        alignItems="center" 
+                        display="flex"
+                        alignItems="center"
                         justifyContent="center"
                         boxShadow="sm"
                       >
@@ -662,16 +666,28 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                     </Grid>
                   </Box>
 
-                  {/* Pricing */}
+                  {/* Pricing & Margin Analysis */}
                   <Box mb={4}>
                     <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.pricing')}</Text>
-                    <Grid templateColumns="repeat(3, 1fr)" gap={4}>
-                      <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.purchasePrice')}</Text>
-                        <Text fontSize="md" color="green.600" fontWeight="bold">
-                          {formatCurrencyDetailed(detailProduct.purchase_price || 0)}
-                        </Text>
-                      </Box>
+                    <Grid templateColumns={hasInventory ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)'} gap={4}>
+                      {/* Purchase Price - hidden for SERVICE companies */}
+                      {hasInventory && (
+                        <Box>
+                          <Text fontWeight="semibold" color="gray.600">{t('products.details.purchasePrice')}</Text>
+                          <Text fontSize="md" color="green.600" fontWeight="bold">
+                            {formatCurrencyDetailed(detailProduct.purchase_price || 0)}
+                          </Text>
+                        </Box>
+                      )}
+                      {/* Cost Price / HPP */}
+                      {hasInventory && (
+                        <Box>
+                          <Text fontWeight="semibold" color="gray.600">Harga Pokok (HPP/COGS)</Text>
+                          <Text fontSize="md" color="orange.600" fontWeight="bold">
+                            {formatCurrencyDetailed(detailProduct.cost_price || 0)}
+                          </Text>
+                        </Box>
+                      )}
                       <Box>
                         <Text fontWeight="semibold" color="gray.600">{t('products.details.salePrice')}</Text>
                         <Text fontSize="md" color="blue.600" fontWeight="bold">
@@ -683,30 +699,67 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                         <Text fontSize="md">{detailProduct.pricing_tier || t('products.details.standard')}</Text>
                       </Box>
                     </Grid>
+
+                    {/* Margin Analysis - only for inventory companies with valid prices */}
+                    {hasInventory && (detailProduct.cost_price || 0) > 0 && (detailProduct.sale_price || 0) > 0 && (
+                      <Box mt={4} p={3} bg="gray.50" borderRadius="md" border="1px" borderColor="gray.200">
+                        <Text fontWeight="bold" color="gray.700" mb={2}>📊 Analisis Margin</Text>
+                        <Grid templateColumns="repeat(3, 1fr)" gap={4}>
+                          <Box>
+                            <Text fontSize="sm" color="gray.500">Laba Kotor per Unit</Text>
+                            <Text fontSize="md" fontWeight="bold" color={
+                              (detailProduct.sale_price || 0) - (detailProduct.cost_price || 0) > 0 ? 'green.600' : 'red.600'
+                            }>
+                              {formatCurrencyDetailed((detailProduct.sale_price || 0) - (detailProduct.cost_price || 0))}
+                            </Text>
+                          </Box>
+                          <Box>
+                            <Text fontSize="sm" color="gray.500">Gross Margin</Text>
+                            <Text fontSize="md" fontWeight="bold" color={
+                              ((detailProduct.sale_price || 0) - (detailProduct.cost_price || 0)) / (detailProduct.sale_price || 1) * 100 > 0
+                                ? 'green.600' : 'red.600'
+                            }>
+                              {(((detailProduct.sale_price || 0) - (detailProduct.cost_price || 0)) / (detailProduct.sale_price || 1) * 100).toFixed(1)}%
+                            </Text>
+                          </Box>
+                          <Box>
+                            <Text fontSize="sm" color="gray.500">Markup</Text>
+                            <Text fontSize="md" fontWeight="bold" color={
+                              ((detailProduct.sale_price || 0) - (detailProduct.cost_price || 0)) / (detailProduct.cost_price || 1) * 100 > 0
+                                ? 'green.600' : 'red.600'
+                            }>
+                              {(((detailProduct.sale_price || 0) - (detailProduct.cost_price || 0)) / (detailProduct.cost_price || 1) * 100).toFixed(1)}%
+                            </Text>
+                          </Box>
+                        </Grid>
+                      </Box>
+                    )}
                   </Box>
 
-                  {/* Inventory */}
-                  <Box mb={4}>
-                    <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.inventory')}</Text>
-                    <Grid templateColumns="repeat(4, 1fr)" gap={4}>
-                      <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.currentStock')}</Text>
-                        <Text fontSize="md" fontWeight="bold">{detailProduct.stock}</Text>
-                      </Box>
-                      <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.minStock')}</Text>
-                        <Text fontSize="md">{detailProduct.min_stock}</Text>
-                      </Box>
-                      <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.maxStock')}</Text>
-                        <Text fontSize="md">{detailProduct.max_stock}</Text>
-                      </Box>
-                      <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.reorderLevel')}</Text>
-                        <Text fontSize="md">{detailProduct.reorder_level}</Text>
-                      </Box>
-                    </Grid>
-                  </Box>
+                  {/* Inventory - hidden for SERVICE companies */}
+                  {hasInventory && (
+                    <Box mb={4}>
+                      <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.inventory')}</Text>
+                      <Grid templateColumns="repeat(4, 1fr)" gap={4}>
+                        <Box>
+                          <Text fontWeight="semibold" color="gray.600">{t('products.details.currentStock')}</Text>
+                          <Text fontSize="md" fontWeight="bold">{detailProduct.stock}</Text>
+                        </Box>
+                        <Box>
+                          <Text fontWeight="semibold" color="gray.600">{t('products.details.minStock')}</Text>
+                          <Text fontSize="md">{detailProduct.min_stock}</Text>
+                        </Box>
+                        <Box>
+                          <Text fontWeight="semibold" color="gray.600">{t('products.details.maxStock')}</Text>
+                          <Text fontSize="md">{detailProduct.max_stock}</Text>
+                        </Box>
+                        <Box>
+                          <Text fontWeight="semibold" color="gray.600">{t('products.details.reorderLevel')}</Text>
+                          <Text fontSize="md">{detailProduct.reorder_level}</Text>
+                        </Box>
+                      </Grid>
+                    </Box>
+                  )}
 
                   {/* Settings */}
                   <Box mb={4}>

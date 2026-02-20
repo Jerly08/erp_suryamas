@@ -6,6 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
+import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
 import { DataTable } from '@/components/common/DataTable';
 import {
   Box,
@@ -407,20 +408,22 @@ const PaymentsPage: React.FC = () => {
   // Load payment summary
   const loadPaymentSummary = async () => {
     try {
-      const totalAmount = payments.reduce((sum, payment) => sum + payment.amount, 0);
-      const completedPayments = payments.filter(p => p.status === 'COMPLETED');
-      const pendingPayments = payments.filter(p => p.status === 'PENDING');
+      // Use allPayments (full page data) to calculate summary
+      const dataSource = allPayments.length > 0 ? allPayments : payments;
+      const totalAmount = dataSource.reduce((sum, payment) => sum + payment.amount, 0);
+      const completedPayments = dataSource.filter(p => p.status === 'COMPLETED');
+      const pendingPayments = dataSource.filter(p => p.status === 'PENDING');
       const completedAmount = completedPayments.reduce((sum, payment) => sum + payment.amount, 0);
       const pendingAmount = pendingPayments.reduce((sum, payment) => sum + payment.amount, 0);
 
       setSummary({
-        total_payments: payments.length,
+        total_payments: pagination.totalItems || dataSource.length,
         total_amount: totalAmount,
         completed_amount: completedAmount,
         pending_amount: pendingAmount,
         completed_count: completedPayments.length,
         pending_count: pendingPayments.length,
-        avg_payment_value: payments.length > 0 ? totalAmount / payments.length : 0
+        avg_payment_value: dataSource.length > 0 ? totalAmount / dataSource.length : 0
       });
     } catch (error) {
       console.error('Failed to calculate payment summary:', error);
@@ -438,8 +441,19 @@ const PaymentsPage: React.FC = () => {
   useEffect(() => {
     if (payments.length > 0) {
       loadPaymentSummary();
+    } else {
+      // Reset summary when no payments match
+      setSummary({
+        total_payments: 0,
+        total_amount: 0,
+        completed_amount: 0,
+        pending_amount: 0,
+        completed_count: 0,
+        pending_count: 0,
+        avg_payment_value: 0
+      });
     }
-  }, [payments]);
+  }, [payments, allPayments, pagination.totalItems]);
 
   // Handle filters change - trigger API call
   useEffect(() => {
@@ -490,6 +504,7 @@ const PaymentsPage: React.FC = () => {
       ...prev,
       page: page
     }));
+    loadPayments({ page });
   };
 
   // Client-side search handler (instant, no API call)
@@ -547,28 +562,7 @@ const PaymentsPage: React.FC = () => {
     loadPayments({ page: 1 });
   };
 
-  // Handle delete payment
-  const handleDelete = async (payment: Payment) => {
-    if (!window.confirm('Are you sure you want to delete this payment?')) return;
-
-    try {
-      await paymentService.deletePayment(payment.id);
-      toast({
-        title: 'Success',
-        description: 'Payment has been deleted successfully',
-        status: 'success',
-        duration: 3000
-      });
-      loadPayments();
-    } catch (error: any) {
-      toast({
-        title: 'Error deleting payment',
-        description: error.message || 'Failed to delete payment',
-        status: 'error',
-        duration: 3000
-      });
-    }
-  };
+  // Note: handleDelete (window.confirm) removed — delete uses AlertDialog flow via handleDeletePayment + confirmDeletePayment
 
   // Confirm delete
   const confirmDeletePayment = async () => {
@@ -705,377 +699,381 @@ const PaymentsPage: React.FC = () => {
 
   if (loading && (!payments || payments.length === 0)) {
     return (
-      <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
-        <Box display="flex" justifyContent="center" alignItems="center" height="400px">
-          <Spinner size="xl" thickness="4px" speed="0.65s" color="brand.500" />
-          <Text ml={4} fontSize="lg">{t('payments.loading')}</Text>
-        </Box>
-      </SimpleLayout>
+      <CompanyTypeGuard>
+        <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
+          <Box display="flex" justifyContent="center" alignItems="center" height="400px">
+            <Spinner size="xl" thickness="4px" speed="0.65s" color="brand.500" />
+            <Text ml={4} fontSize="lg">{t('payments.loading')}</Text>
+          </Box>
+        </SimpleLayout>
+      </CompanyTypeGuard>
     );
   }
 
   return (
     <ProtectedModule module="payments">
-      <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
-        <Box bg={bgColor} minH="100vh" p={6}>
-          <VStack spacing={6} align="stretch">
-            {/* Summary Cards */}
-            {summary && (
-              <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={4}>
-                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-                  <CardBody>
-                    <Stat>
-                      <StatLabel>{t('payments.summary.totalPayments')}</StatLabel>
-                      <StatNumber>{summary.total_payments}</StatNumber>
-                      <StatHelpText>{t('payments.summary.thisPeriod')}</StatHelpText>
-                    </Stat>
-                  </CardBody>
-                </Card>
-                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-                  <CardBody>
-                    <Stat>
-                      <StatLabel>{t('payments.summary.totalAmount')}</StatLabel>
-                      <StatNumber>{formatCurrency(summary.total_amount)}</StatNumber>
-                      <StatHelpText>{t('payments.summary.grossAmount')}</StatHelpText>
-                    </Stat>
-                  </CardBody>
-                </Card>
-                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-                  <CardBody>
-                    <Stat>
-                      <StatLabel>{t('payments.summary.completed')}</StatLabel>
-                      <StatNumber color={statColors.green}>
-                        {formatCurrency(summary.completed_amount)}
-                      </StatNumber>
-                      <StatHelpText>{summary.completed_count} {t('payments.summary.payments')}</StatHelpText>
-                    </Stat>
-                  </CardBody>
-                </Card>
-                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-                  <CardBody>
-                    <Stat>
-                      <StatLabel>{t('payments.summary.avgPaymentValue')}</StatLabel>
-                      <StatNumber>{formatCurrency(summary.avg_payment_value)}</StatNumber>
-                      <StatHelpText>{t('payments.summary.perTransaction')}</StatHelpText>
-                    </Stat>
-                  </CardBody>
-                </Card>
-              </SimpleGrid>
-            )}
+      <CompanyTypeGuard>
+        <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
+          <Box bg={bgColor} minH="100vh" p={6}>
+            <VStack spacing={6} align="stretch">
+              {/* Summary Cards */}
+              {summary && (
+                <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={4}>
+                  <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                    <CardBody>
+                      <Stat>
+                        <StatLabel>{t('payments.summary.totalPayments')}</StatLabel>
+                        <StatNumber>{summary.total_payments}</StatNumber>
+                        <StatHelpText>{t('payments.summary.thisPeriod')}</StatHelpText>
+                      </Stat>
+                    </CardBody>
+                  </Card>
+                  <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                    <CardBody>
+                      <Stat>
+                        <StatLabel>{t('payments.summary.totalAmount')}</StatLabel>
+                        <StatNumber>{formatCurrency(summary.total_amount)}</StatNumber>
+                        <StatHelpText>{t('payments.summary.grossAmount')}</StatHelpText>
+                      </Stat>
+                    </CardBody>
+                  </Card>
+                  <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                    <CardBody>
+                      <Stat>
+                        <StatLabel>{t('payments.summary.completed')}</StatLabel>
+                        <StatNumber color={statColors.green}>
+                          {formatCurrency(summary.completed_amount)}
+                        </StatNumber>
+                        <StatHelpText>{summary.completed_count} {t('payments.summary.payments')}</StatHelpText>
+                      </Stat>
+                    </CardBody>
+                  </Card>
+                  <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                    <CardBody>
+                      <Stat>
+                        <StatLabel>{t('payments.summary.avgPaymentValue')}</StatLabel>
+                        <StatNumber>{formatCurrency(summary.avg_payment_value)}</StatNumber>
+                        <StatHelpText>{t('payments.summary.perTransaction')}</StatHelpText>
+                      </Stat>
+                    </CardBody>
+                  </Card>
+                </SimpleGrid>
+              )}
 
-            {/* Header */}
-            <Flex justify="space-between" align="center">
-              <Box>
-                <Heading as="h1" size="xl" mb={2} color={headingColor}>{t('payments.title')}</Heading>
-                <Text color={textSecondary}>{t('payments.managePayments')}</Text>
-              </Box>
-              <HStack spacing={3}>
-                <Button
-                  leftIcon={<FiRefreshCw />}
-                  variant="ghost"
-                  size="md"
-                  onClick={handleRefreshData}
-                  isLoading={loading}
-                >
-                  {t('payments.refresh')}
-                </Button>
-                {canExport && (
-                  <Menu>
-                    <MenuButton
-                      as={Button}
-                      leftIcon={<FiDownload />}
-                      colorScheme="green"
-                      variant="outline"
-                      size="md"
+              {/* Header */}
+              <Flex justify="space-between" align="center">
+                <Box>
+                  <Heading as="h1" size="xl" mb={2} color={headingColor}>{t('payments.title')}</Heading>
+                  <Text color={textSecondary}>{t('payments.managePayments')}</Text>
+                </Box>
+                <HStack spacing={3}>
+                  <Button
+                    leftIcon={<FiRefreshCw />}
+                    variant="ghost"
+                    size="md"
+                    onClick={handleRefreshData}
+                    isLoading={loading}
+                  >
+                    {t('payments.refresh')}
+                  </Button>
+                  {canExport && (
+                    <Menu>
+                      <MenuButton
+                        as={Button}
+                        leftIcon={<FiDownload />}
+                        colorScheme="green"
+                        variant="outline"
+                        size="md"
+                      >
+                        {t('payments.exportReport')}
+                      </MenuButton>
+                      <MenuList>
+                        <MenuItem icon={<FiFileText />} onClick={handleBulkExport}>
+                          {t('payments.exportPDFReport')}
+                        </MenuItem>
+                        <MenuItem icon={<FiDownload />} onClick={async () => {
+                          try {
+                            // Prepare current filters for export
+                            const exportFilters: any = {};
+                            if (statusFilter !== 'ALL') exportFilters.status = statusFilter;
+                            if (methodFilter !== 'ALL') exportFilters.method = methodFilter;
+                            if (startDate) exportFilters.start_date = startDate;
+                            if (endDate) exportFilters.end_date = endDate;
+
+                            // Call Excel export API
+                            await paymentService.downloadPaymentReportExcel(
+                              startDate || undefined,
+                              endDate || undefined,
+                              exportFilters.status,
+                              exportFilters.method
+                            );
+
+                            toast({
+                              title: t('common.messages.toast.success'),
+                              description: t('payments.messages.exportSuccess'),
+                              status: 'success',
+                              duration: 3000
+                            });
+                          } catch (error: any) {
+                            console.error('Error exporting payments to Excel:', error);
+                            toast({
+                              title: t('common.messages.toast.error'),
+                              description: t('payments.messages.exportError'),
+                              status: 'error',
+                              duration: 3000
+                            });
+                          }
+                        }}>
+                          {t('payments.exportExcelReport')}
+                        </MenuItem>
+                      </MenuList>
+                    </Menu>
+                  )}
+                  {canCreate && (
+                    <Menu>
+                      <MenuButton
+                        as={Button}
+                        leftIcon={<FiPlus />}
+                        rightIcon={<FiChevronDown />}
+                        colorScheme="blue"
+                        size="md"
+                      >
+                        {t('payments.createPayment')}
+                      </MenuButton>
+                      <MenuList>
+                        <MenuItem
+                          icon={<FiArrowDown />}
+                          onClick={() => handleNewPayment('receivable')}
+                        >
+                          {t('payments.receivablePayment')}
+                        </MenuItem>
+                        <MenuItem
+                          icon={<FiArrowRight />}
+                          onClick={() => handleNewPayment('payable')}
+                        >
+                          {t('payments.payablePayment')}
+                        </MenuItem>
+                        <MenuDivider />
+                        <MenuItem
+                          icon={<FiDollarSign />}
+                          onClick={() => handlePPNPayment()}
+                        >
+                          {t('payments.setorPPN')}
+                        </MenuItem>
+                        <MenuItem
+                          icon={<FiBriefcase />}
+                          onClick={() => setShowExpensePayment(true)}
+                        >
+                          {t('payments.expensePayment')}
+                        </MenuItem>
+                      </MenuList>
+                    </Menu>
+                  )}
+                </HStack>
+              </Flex>
+
+              {/* Search and Filters */}
+              <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                <CardBody>
+                  <HStack spacing={4} wrap="wrap">
+                    <InputGroup maxW="400px">
+                      <InputLeftElement pointerEvents="none">
+                        <FiSearch color={searchIconColor} />
+                      </InputLeftElement>
+                      <Input
+                        placeholder={t('payments.searchPlaceholder')}
+                        value={searchInput}
+                        onChange={(e) => handleSearch(e.target.value)}
+                        bg={inputBg}
+                        borderColor={borderColor}
+                      />
+                    </InputGroup>
+
+                    <Select
+                      maxW="200px"
+                      placeholder={t('payments.filters.allStatus')}
+                      value={statusFilter}
+                      onChange={(e) => handleFilterChange('status', e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
                     >
-                      {t('payments.exportReport')}
-                    </MenuButton>
-                    <MenuList>
-                      <MenuItem icon={<FiFileText />} onClick={handleBulkExport}>
-                        {t('payments.exportPDFReport')}
-                      </MenuItem>
-                      <MenuItem icon={<FiDownload />} onClick={async () => {
-                        try {
-                          // Prepare current filters for export
-                          const exportFilters: any = {};
-                          if (statusFilter !== 'ALL') exportFilters.status = statusFilter;
-                          if (methodFilter !== 'ALL') exportFilters.method = methodFilter;
-                          if (startDate) exportFilters.start_date = startDate;
-                          if (endDate) exportFilters.end_date = endDate;
+                      <option value="PENDING">{t('payments.filters.pending')}</option>
+                      <option value="COMPLETED">{t('payments.filters.completed')}</option>
+                      <option value="FAILED">{t('payments.filters.failed')}</option>
+                    </Select>
 
-                          // Call Excel export API
-                          await paymentService.downloadPaymentReportExcel(
-                            startDate || undefined,
-                            endDate || undefined,
-                            exportFilters.status,
-                            exportFilters.method
-                          );
-
-                          toast({
-                            title: t('common.messages.toast.success'),
-                            description: t('payments.messages.exportSuccess'),
-                            status: 'success',
-                            duration: 3000
-                          });
-                        } catch (error: any) {
-                          console.error('Error exporting payments to Excel:', error);
-                          toast({
-                            title: t('common.messages.toast.error'),
-                            description: t('payments.messages.exportError'),
-                            status: 'error',
-                            duration: 3000
-                          });
-                        }
-                      }}>
-                        {t('payments.exportExcelReport')}
-                      </MenuItem>
-                    </MenuList>
-                  </Menu>
-                )}
-                {canCreate && (
-                  <Menu>
-                    <MenuButton
-                      as={Button}
-                      leftIcon={<FiPlus />}
-                      rightIcon={<FiChevronDown />}
-                      colorScheme="blue"
-                      size="md"
+                    <Select
+                      maxW="200px"
+                      placeholder={t('payments.filters.allMethods')}
+                      value={methodFilter}
+                      onChange={(e) => handleFilterChange('method', e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
                     >
-                      {t('payments.createPayment')}
-                    </MenuButton>
-                    <MenuList>
-                      <MenuItem
-                        icon={<FiArrowDown />}
-                        onClick={() => handleNewPayment('receivable')}
-                      >
-                        {t('payments.receivablePayment')}
-                      </MenuItem>
-                      <MenuItem
-                        icon={<FiArrowRight />}
-                        onClick={() => handleNewPayment('payable')}
-                      >
-                        {t('payments.payablePayment')}
-                      </MenuItem>
-                      <MenuDivider />
-                      <MenuItem
-                        icon={<FiDollarSign />}
-                        onClick={() => handlePPNPayment()}
-                      >
-                        {t('payments.setorPPN')}
-                      </MenuItem>
-                      <MenuItem
-                        icon={<FiBriefcase />}
-                        onClick={() => setShowExpensePayment(true)}
-                      >
-                        {t('payments.expensePayment')}
-                      </MenuItem>
-                    </MenuList>
-                  </Menu>
-                )}
-              </HStack>
-            </Flex>
+                      <option value="CASH">{t('payments.filters.cash')}</option>
+                      <option value="BANK_TRANSFER">{t('payments.filters.bankTransfer')}</option>
+                      <option value="CHECK">{t('payments.filters.check')}</option>
+                      <option value="CREDIT_CARD">{t('payments.filters.creditCard')}</option>
+                      <option value="DEBIT_CARD">{t('payments.filters.debitCard')}</option>
+                    </Select>
 
-            {/* Search and Filters */}
-            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-              <CardBody>
-                <HStack spacing={4} wrap="wrap">
-                  <InputGroup maxW="400px">
-                    <InputLeftElement pointerEvents="none">
-                      <FiSearch color={searchIconColor} />
-                    </InputLeftElement>
                     <Input
-                      placeholder={t('payments.searchPlaceholder')}
-                      value={searchInput}
-                      onChange={(e) => handleSearch(e.target.value)}
+                      type="date"
+                      maxW="200px"
+                      placeholder={t('payments.filters.startDate')}
+                      value={startDate}
+                      onChange={(e) => handleFilterChange('start_date', e.target.value)}
                       bg={inputBg}
                       borderColor={borderColor}
                     />
-                  </InputGroup>
 
-                  <Select
-                    maxW="200px"
-                    placeholder={t('payments.filters.allStatus')}
-                    value={statusFilter}
-                    onChange={(e) => handleFilterChange('status', e.target.value)}
-                    bg={inputBg}
-                    borderColor={borderColor}
-                  >
-                    <option value="PENDING">{t('payments.filters.pending')}</option>
-                    <option value="COMPLETED">{t('payments.filters.completed')}</option>
-                    <option value="FAILED">{t('payments.filters.failed')}</option>
-                  </Select>
+                    <Input
+                      type="date"
+                      maxW="200px"
+                      placeholder={t('payments.filters.endDate')}
+                      value={endDate}
+                      onChange={(e) => handleFilterChange('end_date', e.target.value)}
+                      bg={inputBg}
+                      borderColor={borderColor}
+                    />
 
-                  <Select
-                    maxW="200px"
-                    placeholder={t('payments.filters.allMethods')}
-                    value={methodFilter}
-                    onChange={(e) => handleFilterChange('method', e.target.value)}
-                    bg={inputBg}
-                    borderColor={borderColor}
-                  >
-                    <option value="CASH">{t('payments.filters.cash')}</option>
-                    <option value="BANK_TRANSFER">{t('payments.filters.bankTransfer')}</option>
-                    <option value="CHECK">{t('payments.filters.check')}</option>
-                    <option value="CREDIT_CARD">{t('payments.filters.creditCard')}</option>
-                    <option value="DEBIT_CARD">{t('payments.filters.debitCard')}</option>
-                  </Select>
+                    <Button
+                      leftIcon={<FiFilter />}
+                      variant="outline"
+                      onClick={resetFilters}
+                      colorScheme="gray"
+                    >
+                      {t('payments.clearFilters')}
+                    </Button>
+                  </HStack>
+                </CardBody>
+              </Card>
 
-                  <Input
-                    type="date"
-                    maxW="200px"
-                    placeholder={t('payments.filters.startDate')}
-                    value={startDate}
-                    onChange={(e) => handleFilterChange('start_date', e.target.value)}
-                    bg={inputBg}
-                    borderColor={borderColor}
-                  />
+              {/* Error Alert */}
+              {error && (
+                <Alert status="error">
+                  <AlertIcon />
+                  {error}
+                </Alert>
+              )}
 
-                  <Input
-                    type="date"
-                    maxW="200px"
-                    placeholder={t('payments.filters.endDate')}
-                    value={endDate}
-                    onChange={(e) => handleFilterChange('end_date', e.target.value)}
-                    bg={inputBg}
-                    borderColor={borderColor}
-                  />
-
-                  <Button
-                    leftIcon={<FiFilter />}
-                    variant="outline"
-                    onClick={resetFilters}
-                    colorScheme="gray"
-                  >
-                    {t('payments.clearFilters')}
-                  </Button>
-                </HStack>
-              </CardBody>
-            </Card>
-
-            {/* Error Alert */}
-            {error && (
-              <Alert status="error">
-                <AlertIcon />
-                {error}
-              </Alert>
-            )}
-
-            {/* Payments Table */}
-            <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
-              <CardHeader>
-                <Flex justify="space-between" align="center">
-                  <Heading size="md" color={headingColor}>{t('payments.paymentTransactions')} ({payments?.length || 0})</Heading>
-                </Flex>
-              </CardHeader>
-              <CardBody>
-                {loading ? (
-                  <Flex justify="center" py={10}>
-                    <Spinner size="lg" />
+              {/* Payments Table */}
+              <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                <CardHeader>
+                  <Flex justify="space-between" align="center">
+                    <Heading size="md" color={headingColor}>{t('payments.paymentTransactions')} ({payments?.length || 0})</Heading>
                   </Flex>
-                ) : (
-                  <DataTable
-                    columns={columns}
-                    data={payments || []}
-                    keyField="id"
-                    searchable={false}
-                    pagination={true}
-                    pageSize={ITEMS_PER_PAGE}
-                  />
-                )}
-              </CardBody>
-            </Card>
-          </VStack>
-
-          {/* Payment Form Modal */}
-          <AdvancedPaymentForm
-            isOpen={showPaymentForm}
-            onClose={handleFormCancel}
-            type={paymentType}
-            onSuccess={handleFormSave}
-            preSelectedContact={selectedPayment ? {
-              id: selectedPayment.contact_id,
-              name: selectedPayment.contact?.name || 'Unknown'
-            } : undefined}
-          />
-
-          {/* Delete Confirmation Dialog */}
-          <AlertDialog
-            isOpen={showConfirmDelete}
-            leastDestructiveRef={undefined}
-            onClose={() => setShowConfirmDelete(false)}
-          >
-            <AlertDialogOverlay>
-              <AlertDialogContent bg={cardBg}>
-                <AlertDialogHeader fontSize="lg" fontWeight="bold" color={headingColor}>
-                  {t('payments.deletePayment')}
-                </AlertDialogHeader>
-
-                <AlertDialogBody color={textPrimary}>
-                  {t('payments.deleteConfirmation')}
-                  {selectedPayment && (
-                    <Box mt={3} p={3} bg={alertBg} borderRadius="md">
-                      <Text fontSize="sm" fontWeight="bold" color={textPrimary}>{t('payments.code')}: {selectedPayment.code}</Text>
-                      <Text fontSize="sm" color={textPrimary}>{t('payments.amount')}: {formatCurrency(selectedPayment.amount)}</Text>
-                      <Text fontSize="sm" color={alertTextColor}>{t('payments.deleteWarning')}</Text>
-                    </Box>
+                </CardHeader>
+                <CardBody>
+                  {loading ? (
+                    <Flex justify="center" py={10}>
+                      <Spinner size="lg" />
+                    </Flex>
+                  ) : (
+                    <DataTable
+                      columns={columns}
+                      data={payments || []}
+                      keyField="id"
+                      searchable={false}
+                      pagination={true}
+                      pageSize={ITEMS_PER_PAGE}
+                    />
                   )}
-                </AlertDialogBody>
+                </CardBody>
+              </Card>
+            </VStack>
 
-                <AlertDialogFooter>
-                  <Button onClick={() => setShowConfirmDelete(false)}>
-                    {t('payments.cancel')}
-                  </Button>
-                  <Button colorScheme="red" onClick={confirmDeletePayment} ml={3}>
-                    {t('payments.delete')}
-                  </Button>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialogOverlay>
-          </AlertDialog>
-          {/* Payment Detail Modal */}
-          <PaymentDetailModal
-            payment={selectedPayment}
-            isOpen={showPaymentDetail}
-            onClose={() => {
-              setShowPaymentDetail(false);
-              setSelectedPayment(null);
-            }}
-          />
+            {/* Payment Form Modal */}
+            <AdvancedPaymentForm
+              isOpen={showPaymentForm}
+              onClose={handleFormCancel}
+              type={paymentType}
+              onSuccess={handleFormSave}
+              preSelectedContact={selectedPayment ? {
+                id: selectedPayment.contact_id,
+                name: selectedPayment.contact?.name || 'Unknown'
+              } : undefined}
+            />
 
-          {/* PPN Payment Modal */}
-          <PPNPaymentModal
-            isOpen={showPPNPayment}
-            onClose={() => setShowPPNPayment(false)}
-            ppnType={ppnPaymentType}
-            onSuccess={() => {
-              setShowPPNPayment(false);
-              loadPayments();
-              toast({
-                title: t('common.messages.toast.success'),
-                description: t('payments.messages.ppnSuccess'),
-                status: 'success',
-                duration: 3000,
-              });
-            }}
-          />
+            {/* Delete Confirmation Dialog */}
+            <AlertDialog
+              isOpen={showConfirmDelete}
+              leastDestructiveRef={undefined}
+              onClose={() => setShowConfirmDelete(false)}
+            >
+              <AlertDialogOverlay>
+                <AlertDialogContent bg={cardBg}>
+                  <AlertDialogHeader fontSize="lg" fontWeight="bold" color={headingColor}>
+                    {t('payments.deletePayment')}
+                  </AlertDialogHeader>
 
-          {/* Expense Payment Modal */}
-          <ExpensePaymentForm
-            isOpen={showExpensePayment}
-            onClose={() => setShowExpensePayment(false)}
-            onSuccess={() => {
-              setShowExpensePayment(false);
-              loadPayments();
-              toast({
-                title: t('common.messages.toast.success'),
-                description: t('payments.messages.expenseSuccess'),
-                status: 'success',
-                duration: 3000,
-              });
-            }}
-          />
-        </Box>
-      </SimpleLayout>
+                  <AlertDialogBody color={textPrimary}>
+                    {t('payments.deleteConfirmation')}
+                    {selectedPayment && (
+                      <Box mt={3} p={3} bg={alertBg} borderRadius="md">
+                        <Text fontSize="sm" fontWeight="bold" color={textPrimary}>{t('payments.code')}: {selectedPayment.code}</Text>
+                        <Text fontSize="sm" color={textPrimary}>{t('payments.amount')}: {formatCurrency(selectedPayment.amount)}</Text>
+                        <Text fontSize="sm" color={alertTextColor}>{t('payments.deleteWarning')}</Text>
+                      </Box>
+                    )}
+                  </AlertDialogBody>
+
+                  <AlertDialogFooter>
+                    <Button onClick={() => setShowConfirmDelete(false)}>
+                      {t('payments.cancel')}
+                    </Button>
+                    <Button colorScheme="red" onClick={confirmDeletePayment} ml={3}>
+                      {t('payments.delete')}
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialogOverlay>
+            </AlertDialog>
+            {/* Payment Detail Modal */}
+            <PaymentDetailModal
+              payment={selectedPayment}
+              isOpen={showPaymentDetail}
+              onClose={() => {
+                setShowPaymentDetail(false);
+                setSelectedPayment(null);
+              }}
+            />
+
+            {/* PPN Payment Modal */}
+            <PPNPaymentModal
+              isOpen={showPPNPayment}
+              onClose={() => setShowPPNPayment(false)}
+              ppnType={ppnPaymentType}
+              onSuccess={() => {
+                setShowPPNPayment(false);
+                loadPayments();
+                toast({
+                  title: t('common.messages.toast.success'),
+                  description: t('payments.messages.ppnSuccess'),
+                  status: 'success',
+                  duration: 3000,
+                });
+              }}
+            />
+
+            {/* Expense Payment Modal */}
+            <ExpensePaymentForm
+              isOpen={showExpensePayment}
+              onClose={() => setShowExpensePayment(false)}
+              onSuccess={() => {
+                setShowExpensePayment(false);
+                loadPayments();
+                toast({
+                  title: t('common.messages.toast.success'),
+                  description: t('payments.messages.expenseSuccess'),
+                  status: 'success',
+                  duration: 3000,
+                });
+              }}
+            />
+          </Box>
+        </SimpleLayout>
+      </CompanyTypeGuard>
     </ProtectedModule>
   );
 };

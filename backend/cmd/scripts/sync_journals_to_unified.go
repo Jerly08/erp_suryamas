@@ -39,24 +39,25 @@ func main() {
 
 	// Confirm before proceeding
 	/*
-	fmt.Print("⚠️  Do you want to regenerate journal entries? This will create missing entries. (yes/no): ")
-	var confirm string
-	fmt.Scanln(&confirm)
-	if confirm != "yes" {
-		fmt.Println("❌ Operation cancelled.")
-		return
-	}
+		fmt.Print("⚠️  Do you want to regenerate journal entries? This will create missing entries. (yes/no): ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if confirm != "yes" {
+			fmt.Println("❌ Operation cancelled.")
+			return
+		}
 	*/
 
 	// Initialize SSOT journal services
 	coaService := services.NewCOAService(db)
-	salesJournalService := services.NewSalesJournalServiceSSOT(db, coaService)
-	purchaseJournalService := services.NewPurchaseJournalServiceSSOT(db, coaService)
+	settingsService := services.NewSettingsService(db)
+	salesJournalService := services.NewSalesJournalServiceSSOT(db, coaService, settingsService)
+	purchaseJournalService := services.NewPurchaseJournalServiceSSOT(db, coaService, settingsService)
 
 	// Process Sales Transactions
 	fmt.Println("\n📝 Processing Sales Transactions...")
 	fmt.Println("-----------------------------------")
-	
+
 	var sales []models.Sale
 	db.Preload("Customer").
 		Preload("SaleItems.Product").
@@ -95,7 +96,7 @@ func main() {
 	// Process Purchase Transactions
 	fmt.Println("\n🛒 Processing Purchase Transactions...")
 	fmt.Println("--------------------------------------")
-	
+
 	var purchases []models.Purchase
 	db.Preload("Vendor").
 		Preload("PurchaseItems.Product").
@@ -189,4 +190,3 @@ func connectDB() (*gorm.DB, error) {
 
 	return db, nil
 }
-

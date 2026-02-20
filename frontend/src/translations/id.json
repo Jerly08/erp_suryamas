@@ -49,6 +49,7 @@
     "success": "Berhasil",
     "error": "Kesalahan",
     "save": "Simpan",
+    "saveChanges": "Simpan Perubahan",
     "cancel": "Batal",
     "edit": "Ubah",
     "delete": "Hapus",
@@ -97,6 +98,26 @@
     "exportReady": "Siap Ekspor",
     "realTime": "Real-time",
     "liveData": "Data Langsung",
+    "transactionHistory": "Riwayat Transaksi",
+    "itemsPerPage": "Item per halaman",
+    "clear": "Hapus",
+    "refreshTransactions": "Refresh transaksi",
+    "loadingTransactions": "Memuat transaksi...",
+    "noTransactionsFound": "Tidak ada transaksi ditemukan untuk akun ini",
+    "noTransactionsHint": "Coba sesuaikan filter atau refresh data",
+    "currentBalance": "Saldo Saat Ini",
+    "pageOf": "Halaman {{current}} dari {{total}}",
+    "transactionTypes": {
+      "deposit": "Setoran",
+      "withdrawal": "Penarikan",
+      "transfer": "Transfer",
+      "openingBalance": "Saldo Awal",
+      "adjustment": "Penyesuaian",
+      "sale": "Penjualan",
+      "purchase": "Pembelian",
+      "salesPayment": "Pembayaran Penjualan",
+      "purchasePayment": "Pembayaran Pembelian"
+    },
     "item": "item",
     "items": "item",
     "filters": {
@@ -152,7 +173,8 @@
       "dueDate": "Jatuh Tempo",
       "description": "Deskripsi",
       "code": "Kode",
-      "balance": "Saldo"
+      "balance": "Saldo",
+      "type": "Tipe"
     },
     "buttons": {
       "save": "Simpan",
@@ -305,6 +327,7 @@
       "account": "Akun",
       "startDate": "Tanggal Mulai",
       "endDate": "Tanggal Akhir",
+      "asOfDate": "Per Tanggal",
       "generate": "Tampilkan",
       "apply": "Terapkan",
       "number": "Nomor",
@@ -417,7 +440,9 @@
     "purchaseNextNumber": "Nomor Purchase Order Berikutnya",
     "paymentReceivablePrefix": "Prefix Pembayaran Masuk",
     "paymentPayablePrefix": "Prefix Pembayaran Keluar",
+    "lastUpdated": "Terakhir Diperbarui",
     "taxAccountConfig": "Konfigurasi Akun Pajak",
+    "notSet": "Belum Diatur",
     "updateSuccess": "Pengaturan berhasil diperbarui",
     "updateError": "Gagal memperbarui pengaturan",
     "taxAccountConfiguration": "Konfigurasi Akun Pajak",
@@ -462,6 +487,28 @@
     "periodClosingHelper": {
       "autoStart": "Otomatis diisi dari tutup buku terakhir. Tanggal mulai harus 1 hari setelahnya.",
       "manualStart": "Pilih tanggal awal periode yang akan ditutup (first closing - gunakan tanggal transaksi pertama)"
+    },
+    "companyTypeHelperText": "Silakan atur di halaman Akun.",
+    "companyTypeLocked": "Tipe Perusahaan dikunci untuk menjaga konsistensi data.",
+    "companyTypes": {
+      "service": "Jasa",
+      "trading": "Dagang",
+      "manufacturing": "Manufaktur"
+    },
+    "companyTypeBadges": {
+      "service": "🏢 Jasa",
+      "trading": "🏪 Dagang",
+      "manufacturing": "🏭 Manufaktur"
+    },
+    "taxRecommendations": {
+      "ppnLabel": "PPN (Pajak Pertambahan Nilai)",
+      "service": "Perusahaan Jasa: PPh 21 & PPh 23 adalah pajak utama. Inventory & COGS tidak diperlukan.",
+      "trading": "Perusahaan Dagang: Inventory & COGS <strong>wajib</strong> dikonfigurasi untuk pencatatan persediaan.",
+      "manufacturing": "Perusahaan Manufaktur: Inventory, COGS & PPh 23 (subkontraktor) <strong>wajib</strong> dikonfigurasi.",
+      "noType": "Tipe perusahaan belum diatur. Silakan set tipe perusahaan di pengaturan umum untuk rekomendasi pajak yang akurat.",
+      "required": "Wajib",
+      "primary": "Utama",
+      "optional": "opsional"
     },
     "taxAccountConfigDesc": "Konfigurasi pemetaan akun untuk transaksi penjualan dan pembelian, termasuk akun pajak dan metode pembayaran.",
     "taxAccountConfigAlert": "Atur pemetaan akun yang tepat untuk memastikan pelaporan keuangan dan perhitungan pajak yang akurat.",
@@ -508,7 +555,34 @@
         "required": "Wajib",
         "active": "Aktif",
         "inactive": "Tidak Aktif",
-        "notSet": "Belum Diset"
+        "notSet": "Belum Diset",
+        "optional": "Opsional",
+        "requiredForSetorPPN": "Wajib untuk Setor PPN"
+      },
+      "statusSection": {
+        "title": "Status Konfigurasi Pajak Saat Ini",
+        "vatAccounts": "Akun PPN",
+        "ppnMasukan": "PPN Masukan (Input VAT)",
+        "ppnKeluaran": "PPN Keluaran (Output VAT)",
+        "withholdingTitle": "Akun Pajak Penghasilan (Opsional)",
+        "pph21Label": "PPh 21 (Pajak Karyawan)",
+        "pph23Label": "PPh 23 (Pajak Vendor)",
+        "pph25Label": "PPh 25 (Angsuran Pajak)",
+        "taxPayable": "Utang Pajak",
+        "configStatus": "Status Konfigurasi",
+        "lastUpdated": "Terakhir diperbarui",
+        "updatedBy": "Diperbarui Oleh"
+      },
+      "companyAlerts": {
+        "serviceTitle": "🏢 Perusahaan Jasa",
+        "serviceDesc": "PPh 21 (gaji/jasa perorangan) dan PPh 23 (jasa/sewa) adalah pajak utama untuk perusahaan jasa. Pastikan kedua akun ini dikonfigurasi. Inventory & COGS tidak diperlukan.",
+        "tradingTitle": "🏪 Perusahaan Dagang",
+        "tradingDesc": "Inventory dan COGS <strong>wajib</strong> dikonfigurasi untuk pencatatan persediaan barang dagangan. Withholding tax bersifat opsional.",
+        "manufacturingTitle": "🏭 Perusahaan Manufaktur",
+        "manufacturingDesc": "Inventory, COGS, dan PPh 23 (subkontraktor) <strong>wajib</strong> dikonfigurasi. Pastikan semua akun produksi telah diatur.",
+        "inventoryRequired": "⚠️ Akun Inventory dan COGS <strong>wajib</strong> dikonfigurasi untuk perusahaan",
+        "tradingType": "dagang",
+        "manufacturingType": "manufaktur"
       },
       "errors": {
         "accountNotFound": "Akun {{code}} tidak ditemukan di database"
@@ -567,7 +641,21 @@
         "criticalLocked": "Akun ini sangat penting bagi sistem dan dikunci untuk memastikan integritas data. Mengubahnya akan merusak entri jurnal dan laporan.",
         "lockedInDb": "(Dikunci di database)",
         "hardcoded": "Ditetapkan oleh sistem",
-        "saveSuccess": "Pengaturan akun pajak berhasil disimpan"
+        "saveSuccess": "Pengaturan akun pajak berhasil disimpan",
+        "saveError": "Gagal menyimpan pengaturan",
+        "validationError": "Kesalahan Validasi",
+        "checkInput": "Silakan periksa input Anda",
+        "logoUpdated": "Logo berhasil diperbarui",
+        "uploadSuccessNoPath": "Unggah berhasil tetapi tidak ada path yang dikembalikan",
+        "logoUploadFailed": "Gagal mengunggah logo",
+        "refreshed": "Data Diperbarui",
+        "refreshedDesc": "Pengaturan dan daftar akun berhasil dimuat ulang"
+      },
+      "renderSelect": {
+        "selectPlaceholder": "-- Pilih {{label}} --",
+        "current": "Saat ini",
+        "lockedInfo": "🔒 Akun ini penting untuk sistem dan dikunci untuk memastikan integritas data. Mengubahnya akan merusak entri jurnal dan laporan.",
+        "lockedInDb": "(Dikunci di database)"
       }
     }
   },
@@ -626,7 +714,8 @@
       "totalSales": "Total Penjualan",
       "totalExpenses": "Total Pengeluaran",
       "netProfit": "Laba Bersih",
-      "cashBalance": "Saldo Kas"
+      "cashBalance": "Saldo Kas",
+      "totalTransactions": "Total Transaksi"
     },
     "quickAccess": {
       "title": "Akses Cepat",
@@ -736,7 +825,14 @@
       "smartCategory": "Penugasan Kategori Otomatis",
       "categoryWillBe": "Kategori akan menjadi:",
       "whatIsCategory": "Apa itu Kategori?",
-      "categoryTooltip": "Kategori membantu mengorganisir akun untuk pelaporan keuangan. Kategori ditetapkan secara otomatis berdasarkan tipe akun dan akun induk untuk memastikan konsistensi."
+      "categoryTooltip": "Kategori membantu mengorganisir akun untuk pelaporan keuangan. Kategori ditetapkan secara otomatis berdasarkan tipe akun dan akun induk untuk memastikan konsistensi.",
+      "currentCompanyType": "Jenis Perusahaan",
+      "companyTypeMismatch": "Peringatan Jenis Perusahaan",
+      "companyTypeWarning": {
+        "inventoryForService": "Akun PERSEDIAAN biasanya untuk perusahaan Trading/Manufacturing, bukan Jasa.",
+        "cogsForService": "Akun HPP Barang Dagang biasanya untuk perusahaan Trading.",
+        "serviceForTrading": "Akun Pendapatan Jasa biasanya untuk perusahaan Jasa."
+      }
     },
     "validation": {
       "codeRequired": "Kode akun wajib diisi",
@@ -778,9 +874,9 @@
       "recreate5": "Jangan centang \"Is Header\" (kecuali untuk kategori besar)",
       "proTip": "Pro Tip: Gunakan tombol \"Add Header Account\" untuk membuat kategori besar, lalu \"Add Account\" untuk detail akun di dalamnya.",
       "headerTooltip": "Buat kategori besar (Header) seperti ASSETS, CURRENT ASSETS, LIABILITIES, dll. Header tidak bisa digunakan untuk transaksi langsung, hanya untuk mengelompokkan akun.",
-      "accountTooltip": "Buat akun detail seperti KAS (1101), BANK (1102), PIUTANG USAHA (1201) yang bisa digunakan untuk mencatat transaksi. WAJIB: KAS, BANK, PPN MASUKAN (1240), PPN KELUARAN (2103) di-hardcode di backend!",
+      "accountTooltip": "Buat akun detail seperti KAS KECIL (1101-001), PIUTANG USAHA (1102-001) yang bisa digunakan untuk mencatat transaksi. WAJIB: KAS (1101-001), PPN MASUKAN (2102-002), PPN KELUARAN (2102-001) di-hardcode di backend!",
       "warningTitle": "Akun-Akun Wajib (Hardcoded di Backend)",
-      "warningDesc": "Akun berikut WAJIB ADA dan di-hardcode di backend: KAS (1101), BANK (1102), PPN MASUKAN (1240), PPN KELUARAN (2103), PENDAPATAN PENJUALAN (4101), HARGA POKOK PENJUALAN (5101). Jika terhapus, HARUS dibuat ulang dengan kode, nama UPPERCASE, dan type yang PERSIS sama! Klik ikon 📚 untuk panduan lengkap."
+      "warningDesc": "Akun berikut WAJIB ADA dan di-hardcode di backend: KAS KECIL (1101-001), PIUTANG USAHA (1102-001), PPN MASUKAN (2102-002), PPN KELUARAN (2102-001), UTANG USAHA (2101-001), PENDAPATAN (4101), HPP/BEBAN POKOK (5000). Jika terhapus, HARUS dibuat ulang dengan kode, nama UPPERCASE, dan type yang PERSIS sama! Klik ikon 📚 untuk panduan lengkap."
     }
   },
   "products": {
@@ -1881,6 +1977,18 @@
       "accountIdOptional": "ID Akun (Opsional)",
       "accountIdPlaceholder": "contoh: 1101 atau kosongkan untuk semua"
     },
+    "salesSummary": {
+      "totalSales": "Total Penjualan",
+      "totalTransactions": "Total Transaksi",
+      "totalTax": "Total Pajak",
+      "totalDiscount": "Total Diskon",
+      "salesDetails": "Detail Penjualan",
+      "date": "Tanggal",
+      "code": "Kode",
+      "customer": "Pelanggan",
+      "amount": "Jumlah",
+      "status": "Status"
+    },
     "export": {
       "successful": "Ekspor Berhasil",
       "failed": "Ekspor Gagal",
@@ -2303,13 +2411,16 @@
       "glAccountRequired": "Pemilihan Akun GL wajib",
       "glAccountHelp": "Hanya akun Aset aktif (kategori Aset Lancar) yang ditampilkan. Jika tidak ada akun yang tersedia, silakan buat terlebih dahulu di halaman Chart of Accounts.",
       "selectCashGLAccount": "Pilih Akun GL Kas",
-      "selectBankGLAccount": "Pilih Akun GL Bank",
       "selectCashGLPlaceholder": "Pilih akun GL Kas...",
+      "selectBankGLAccount": "Pilih Akun GL Bank",
       "selectBankGLPlaceholder": "Pilih akun GL Bank...",
       "noCashGLAvailable": "Tidak ada akun GL Kas yang tersedia. Semua akun GL Kas sudah digunakan atau belum dibuat.",
-      "noBankGLAvailable": "Tidak ada akun GL Bank yang tersedia. Semua akun GL Bank sudah digunakan atau belum dibuat.",
       "cashGLHelp": "Hanya menampilkan akun GL dengan nama mengandung \"KAS\" yang belum digunakan",
       "bankGLHelp": "Hanya menampilkan akun GL dengan nama mengandung \"BANK\" yang belum digunakan",
+      "sourceAccount": "Sumber Dana (Akun Modal)",
+      "selectEquityPlaceholder": "Pilih akun Modal (contoh: 3101 - Modal Disetor)",
+      "equityAccountRequired": "Akun Modal wajib dipilih untuk Saldo Awal",
+      "equityAccountHelp": "Pilih akun Ekuitas/Modal sebagai penyeimbang (Kredit) untuk Saldo Awal Kas/Bank (Debit).",
       "coaBenefits": "Manfaat Integrasi COA",
       "coaBenefit1": "Entri jurnal otomatis untuk semua transaksi",
       "coaBenefit2": "Pelaporan neraca dan laporan laba rugi yang tepat",
@@ -2405,14 +2516,29 @@
     },
     "form": {
       "contact": "Kontak",
+      "contactTooltip": "Pilih vendor atau kontak untuk pembayaran ini",
+      "contactHelper": "Pilih vendor untuk pembayaran beban ini",
+      "contactRequired": "Kontak wajib dipilih",
       "paymentDate": "Tanggal Pembayaran",
+      "dateRequired": "Tanggal wajib diisi",
+      "dateNotFuture": "Tanggal tidak boleh di masa depan",
       "amount": "Jumlah Pembayaran",
       "paymentMethod": "Metode Pembayaran",
+      "methodRequired": "Metode pembayaran wajib dipilih",
       "referenceNumber": "Nomor Referensi",
       "notes": "Catatan",
       "description": "Deskripsi",
       "paymentFrom": "Pembayaran Dari",
+      "paymentFromTooltip": "Pilih akun kas atau bank untuk membayar",
+      "paymentFromRequired": "Akun pembayaran wajib dipilih",
+      "paymentAccount": "Akun Pembayaran",
+      "cashAccount": "Akun Kas",
       "expenseAccount": "Akun Beban",
+      "expenseAccountTooltip": "Pilih akun beban yang akan didebit untuk pembayaran ini",
+      "accountRequired": "Akun wajib dipilih",
+      "expenseAccounts": "Akun Beban",
+      "liabilityAccounts": "Akun Kewajiban",
+      "expensePaymentDescription": "Pembayaran beban langsung untuk pengeluaran operasional",
       "allocation": "Alokasi",
       "paymentDetails": "Detail Pembayaran",
       "selectContact": "Pilih kontak",
@@ -3055,6 +3181,32 @@
         "outstanding": "Sisa",
         "status": "Status"
       }
+    }
+  },
+  "companyType": {
+    "SERVICE": {
+      "sales": "Invoice Jasa",
+      "purchases": "Pengeluaran Operasional",
+      "products": "Layanan",
+      "revenue": "Pendapatan Jasa",
+      "cogs": "Beban Pokok Jasa",
+      "inventory": "Tidak Tersedia (Perusahaan Jasa)"
+    },
+    "TRADING": {
+      "sales": "Penjualan",
+      "purchases": "Pembelian",
+      "products": "Produk",
+      "revenue": "Penjualan Barang",
+      "cogs": "Harga Pokok Penjualan",
+      "inventory": "Persediaan Barang Dagang"
+    },
+    "MANUFACTURING": {
+      "sales": "Penjualan",
+      "purchases": "Pembelian",
+      "products": "Produk",
+      "revenue": "Penjualan Produk",
+      "cogs": "Harga Pokok Produksi",
+      "inventory": "Persediaan Bahan & Produk"
     }
   }
 }

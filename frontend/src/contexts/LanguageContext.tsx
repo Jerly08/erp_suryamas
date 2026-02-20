@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import idTranslations from '../translations/id.json';
 import enTranslations from '../translations/en.json';
+// Translation files updated: 2026-02-19
 
 export type Language = 'id' | 'en';
 
@@ -56,7 +57,7 @@ export const LanguageProvider: React.FC<LanguageProviderProps> = ({ children }) 
     // Support nested keys with dot notation
     const keys = key.split('.');
     let value: any = translations;
-    
+
     for (const k of keys) {
       if (value && typeof value === 'object' && k in value) {
         value = value[k];
@@ -66,16 +67,16 @@ export const LanguageProvider: React.FC<LanguageProviderProps> = ({ children }) 
         return key;
       }
     }
-    
+
     let result = typeof value === 'string' ? value : key;
-    
+
     // Apply interpolations if provided
     if (interpolations && typeof result === 'string') {
       Object.entries(interpolations).forEach(([placeholder, replacement]) => {
         result = result.replace(new RegExp(`{{${placeholder}}}`, 'g'), String(replacement));
       });
     }
-    
+
     return result;
   };
 

@@ -65,6 +65,7 @@ import { Account, AccountCreateRequest, AccountUpdateRequest } from '@/types/acc
 import accountService from '@/services/accountService';
 import { API_ENDPOINTS, API_BASE_URL } from '@/config/api'; // Ensure API_BASE_URL is imported or use relative path
 import CompanyTypeSelection from '@/components/onboarding/CompanyTypeSelection';
+import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
 import axios from 'axios';
 
 const AccountsPage = () => {
@@ -87,9 +88,8 @@ const AccountsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
 
-  // New state for Company Type check
-  const [checkingSettings, setCheckingSettings] = useState(true);
-  const [companyType, setCompanyType] = useState<string | null>(null);
+
+  // Company Type is now handled by CompanyTypeGuard and AuthContext
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
@@ -150,6 +150,14 @@ const AccountsPage = () => {
 
     setIsLoading(true);
     try {
+      // Silently recalculate parent balances before fetching
+      try {
+        await accountService.recalculateParentBalances(token);
+        console.log('✅ Parent balances recalculated');
+      } catch (recalcErr) {
+        console.warn('⚠️ Parent balance recalculation skipped:', recalcErr);
+      }
+
       const hierarchyData = await accountService.getAccountHierarchy(token);
       const safeHierarchy: Account[] = Array.isArray(hierarchyData) ? hierarchyData : [];
       console.log('📊 Raw Backend Data:', safeHierarchy);
@@ -171,39 +179,13 @@ const AccountsPage = () => {
   // Load accounts on component mount
   useEffect(() => {
     if (token) {
-      checkCompanySettings();
+      fetchAccountData();
     }
   }, [token]);
 
-  const checkCompanySettings = async () => {
-    setCheckingSettings(true);
-    try {
-      // Fetch settings to check company_type
-      const response = await axios.get(`${API_BASE_URL || 'http://localhost:8080/api/v1'}/settings`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      const settings = response.data.data;
-      if (settings.company_type) {
-        setCompanyType(settings.company_type);
-        fetchAccountData(); // Only fetch accounts if type is set
-      } else {
-        setCompanyType(null);
-        setIsLoading(false); // Stop loading accounts main spinner
-      }
-    } catch (err) {
-      console.error('Failed to fetch settings:', err);
-      // Fallback: try fetching accounts anyway? No, safer to fail or assume established.
-      // But for robust UX, let's assume if it fails, maybe we just show empty or error.
-      setError('Failed to check company configuration.');
-      setIsLoading(false);
-    } finally {
-      setCheckingSettings(false);
-    }
-  };
-
   const handleSetupSuccess = () => {
-    checkCompanySettings(); // Re-check settings to proceed
+    // Refresh page to pick up new settings in AuthContext
+    window.location.reload();
   };
 
   // Handle fix account header status
@@ -502,338 +484,338 @@ const AccountsPage = () => {
   const hierarchicalAccounts = filteredAccounts;
 
   // Show loading while checking permissions
-  if (permissionLoading || checkingSettings) {
+  if (permissionLoading) {
     return (
-      <SimpleLayout>
-        <Flex justify="center" align="center" minH="60vh">
-          <VStack spacing={4}>
-            <Spinner size="xl" color="blue.500" thickness="4px" />
-            <Text>{checkingSettings ? 'Checking company configuration...' : 'Checking permissions...'}</Text>
-          </VStack>
-        </Flex>
-      </SimpleLayout>
+      <CompanyTypeGuard moduleName="Accounts">
+        <SimpleLayout>
+          <Flex justify="center" align="center" minH="60vh">
+            <VStack spacing={4}>
+              <Spinner size="xl" color="blue.500" thickness="4px" />
+              <Text>Checking permissions...</Text>
+            </VStack>
+          </Flex>
+        </SimpleLayout>
+      </CompanyTypeGuard>
     );
   }
 
-  // Show Setup Wizard if company type not set
-  if (!companyType && canView) { // Only show if they have view permission, effectively "access"
-    return (
-      <SimpleLayout>
-        <CompanyTypeSelection onSuccess={handleSetupSuccess} />
-      </SimpleLayout>
-    );
-  }
+
 
   // If user doesn't have view permission, show access denied
   if (!canView) {
     return (
-      <SimpleLayout>
-        <Alert status="error" borderRadius="md">
-          <AlertIcon />
-          <AlertTitle mr={2}>Access Denied!</AlertTitle>
-          <AlertDescription>
-            You don't have permission to view Chart of Accounts. Please contact your administrator.
-          </AlertDescription>
-        </Alert>
-      </SimpleLayout>
+      <CompanyTypeGuard moduleName="Accounts">
+        <SimpleLayout>
+          <Alert status="error" borderRadius="md">
+            <AlertIcon />
+            <AlertTitle mr={2}>Access Denied!</AlertTitle>
+            <AlertDescription>
+              You don't have permission to view Chart of Accounts. Please contact your administrator.
+            </AlertDescription>
+          </Alert>
+        </SimpleLayout>
+      </CompanyTypeGuard>
     );
   }
 
   return (
-    <SimpleLayout>
-      <Box>
-        <Flex justify="space-between" align="center" mb={6}>
-          <HStack spacing={3}>
-            <Heading size="xl" color={headingColor} fontWeight="600">{t('accounts.chartOfAccounts')}</Heading>
-            <Popover placement="bottom-start">
-              <PopoverTrigger>
-                <IconButton
-                  aria-label="COA Information"
-                  icon={<FiHelpCircle />}
-                  size="sm"
-                  variant="ghost"
-                  colorScheme="blue"
-                  _hover={{ bg: 'blue.50' }}
-                />
-              </PopoverTrigger>
-              <PopoverContent maxW="500px" boxShadow="xl">
-                <PopoverArrow />
-                <PopoverCloseButton />
-                <PopoverHeader fontWeight="bold" fontSize="lg">
-                  📚 {t('accounts.guide.title')}
-                </PopoverHeader>
-                <PopoverBody>
-                  <VStack align="stretch" spacing={3}>
-                    <Box>
-                      <Text fontWeight="semibold" color="blue.600" mb={2}>🏷️ {t('accounts.guide.codeStructure')}</Text>
-                      <UnorderedList spacing={1} fontSize="sm">
-                        <ListItem><Code>1xxx</Code> - {t('accounts.guide.assets')}</ListItem>
-                        <ListItem><Code>2xxx</Code> - {t('accounts.guide.liabilities')}</ListItem>
-                        <ListItem><Code>3xxx</Code> - {t('accounts.guide.equity')}</ListItem>
-                        <ListItem><Code>4xxx</Code> - {t('accounts.guide.revenue')}</ListItem>
-                        <ListItem><Code>5xxx</Code> - {t('accounts.guide.expenses')}</ListItem>
-                      </UnorderedList>
-                    </Box>
-
-                    <Divider />
-
-                    <Box>
-                      <Text fontWeight="semibold" color="green.600" mb={2}>✅ {t('accounts.guide.requiredAccounts')}</Text>
-                      <UnorderedList spacing={1} fontSize="sm">
-                        <ListItem><Code>1101</Code> - {t('accounts.guide.cash')}</ListItem>
-                        <ListItem><Code>1102</Code> - {t('accounts.guide.bank')}</ListItem>
-                        <ListItem><Code>1201</Code> - {t('accounts.guide.accountsReceivable')}</ListItem>
-                        <ListItem><Code>2101</Code> - {t('accounts.guide.accountsPayable')}</ListItem>
-                        <ListItem><Code>2103</Code> - {t('accounts.guide.vatOutput')}</ListItem>
-                        <ListItem><Code>1240</Code> - {t('accounts.guide.vatInput')}</ListItem>
-                        <ListItem><Code>4101</Code> - {t('accounts.guide.salesRevenue')}</ListItem>
-                        <ListItem><Code>5101</Code> - {t('accounts.guide.costOfGoodsSold')}</ListItem>
-                      </UnorderedList>
-                    </Box>
-
-                    <Divider />
-
-                    <Box>
-                      <Text fontWeight="semibold" color="orange.600" mb={2}>⚠️ {t('accounts.guide.importantTips')}</Text>
-                      <UnorderedList spacing={1} fontSize="sm">
-                        <ListItem>{t('accounts.guide.tip1')}</ListItem>
-                        <ListItem>{t('accounts.guide.tip2')}</ListItem>
-                        <ListItem>{t('accounts.guide.tip3')}</ListItem>
-                        <ListItem>{t('accounts.guide.tip4')}</ListItem>
-                      </UnorderedList>
-                    </Box>
-
-                    <Divider />
-
-                    <Box>
-                      <Text fontWeight="semibold" color="purple.600" mb={2}>🔧 {t('accounts.guide.ifDeleted')}</Text>
-                      <Text fontSize="sm" mb={2} color="red.600">
-                        ⚠️ <strong>{t('accounts.guide.hardcodedWarning')}</strong>
-                      </Text>
-                      <Text fontSize="sm" fontWeight="semibold" mb={1}>{t('accounts.guide.hardcodedAccounts')}</Text>
-                      <UnorderedList spacing={1} fontSize="sm" mb={2}>
-                        <ListItem><Code>1101 - {t('accounts.guide.cash')}</Code> (Asset, type: Asset)</ListItem>
-                        <ListItem><Code>1102 - {t('accounts.guide.bank')}</Code> (Asset, type: Asset)</ListItem>
-                        <ListItem><Code>1240 - {t('accounts.guide.vatInput')}</Code> (Asset, type: Asset)</ListItem>
-                        <ListItem><Code>2103 - {t('accounts.guide.vatOutput')}</Code> (Liability, type: Liability)</ListItem>
-                        <ListItem><Code>4101 - {t('accounts.guide.salesRevenue')}</Code> (Revenue, type: Revenue)</ListItem>
-                        <ListItem><Code>5101 - {t('accounts.guide.costOfGoodsSold')}</Code> (Expense, type: Expense)</ListItem>
-                      </UnorderedList>
-                      <Text fontSize="sm" fontWeight="semibold" mb={1}>{t('accounts.guide.howToRecreate')}</Text>
-                      <UnorderedList spacing={1} fontSize="sm" mt={1}>
-                        <ListItem>{t('accounts.guide.recreate1')}</ListItem>
-                        <ListItem>{t('accounts.guide.recreate2')}</ListItem>
-                        <ListItem>{t('accounts.guide.recreate3')}</ListItem>
-                        <ListItem>{t('accounts.guide.recreate4')}</ListItem>
-                        <ListItem>{t('accounts.guide.recreate5')}</ListItem>
-                      </UnorderedList>
-                    </Box>
-
-                    <Box bg="blue.50" p={3} borderRadius="md">
-                      <Text fontSize="xs" color="blue.800">
-                        💡 <strong>{t('accounts.guide.proTip')}</strong>
-                      </Text>
-                    </Box>
-                  </VStack>
-                </PopoverBody>
-              </PopoverContent>
-            </Popover>
-          </HStack>
-          {canCreate && (
+    <CompanyTypeGuard moduleName="Accounts">
+      <SimpleLayout>
+        <Box>
+          <Flex justify="space-between" align="center" mb={6}>
             <HStack spacing={3}>
-              <Tooltip
-                label={t('accounts.guide.headerTooltip')}
-                placement="bottom"
-                hasArrow
-              >
-                <Button
-                  variant="outline"
-                  colorScheme="blue"
-                  leftIcon={<FiPlus />}
-                  onClick={handleCreateHeader}
-                  size="md"
-                  px={6}
-                  py={2}
-                  borderRadius="md"
-                  fontWeight="medium"
-                  _hover={{
-                    transform: 'translateY(-1px)',
-                    boxShadow: 'md'
-                  }}
-                >
-                  {t('accounts.addHeaderAccount')}
-                </Button>
-              </Tooltip>
-              <Tooltip
-                label={t('accounts.guide.accountTooltip')}
-                placement="bottom"
-                hasArrow
-              >
-                <Button
-                  colorScheme="blue"
-                  leftIcon={<FiPlus />}
-                  onClick={handleCreate}
-                  size="md"
-                  px={6}
-                  py={2}
-                  borderRadius="md"
-                  fontWeight="medium"
-                  _hover={{
-                    transform: 'translateY(-1px)',
-                    boxShadow: 'lg'
-                  }}
-                >
-                  {t('accounts.addAccount')}
-                </Button>
-              </Tooltip>
+              <Heading size="xl" color={headingColor} fontWeight="600">{t('accounts.chartOfAccounts')}</Heading>
+              <Popover placement="bottom-start">
+                <PopoverTrigger>
+                  <IconButton
+                    aria-label="COA Information"
+                    icon={<FiHelpCircle />}
+                    size="sm"
+                    variant="ghost"
+                    colorScheme="blue"
+                    _hover={{ bg: 'blue.50' }}
+                  />
+                </PopoverTrigger>
+                <PopoverContent maxW="500px" boxShadow="xl">
+                  <PopoverArrow />
+                  <PopoverCloseButton />
+                  <PopoverHeader fontWeight="bold" fontSize="lg">
+                    📚 {t('accounts.guide.title')}
+                  </PopoverHeader>
+                  <PopoverBody>
+                    <VStack align="stretch" spacing={3}>
+                      <Box>
+                        <Text fontWeight="semibold" color="blue.600" mb={2}>🏷️ {t('accounts.guide.codeStructure')}</Text>
+                        <UnorderedList spacing={1} fontSize="sm">
+                          <ListItem><Code>1xxx</Code> - {t('accounts.guide.assets')}</ListItem>
+                          <ListItem><Code>2xxx</Code> - {t('accounts.guide.liabilities')}</ListItem>
+                          <ListItem><Code>3xxx</Code> - {t('accounts.guide.equity')}</ListItem>
+                          <ListItem><Code>4xxx</Code> - {t('accounts.guide.revenue')}</ListItem>
+                          <ListItem><Code>5xxx</Code> - {t('accounts.guide.expenses')}</ListItem>
+                        </UnorderedList>
+                      </Box>
+
+                      <Divider />
+
+                      <Box>
+                        <Text fontWeight="semibold" color="green.600" mb={2}>✅ {t('accounts.guide.requiredAccounts')}</Text>
+                        <UnorderedList spacing={1} fontSize="sm">
+                          <ListItem><Code>1101</Code> - {t('accounts.guide.cash')}</ListItem>
+                          <ListItem><Code>1101-003</Code> - BANK GIRO</ListItem>
+                          <ListItem><Code>1102</Code> - {t('accounts.guide.accountsReceivable')} (PIUTANG USAHA)</ListItem>
+                          <ListItem><Code>2101</Code> - {t('accounts.guide.accountsPayable')}</ListItem>
+                          <ListItem><Code>2102-001</Code> - {t('accounts.guide.vatOutput')}</ListItem>
+                          <ListItem><Code>2102-002</Code> - {t('accounts.guide.vatInput')}</ListItem>
+                          <ListItem><Code>4101</Code> - {t('accounts.guide.salesRevenue')}</ListItem>
+                          <ListItem><Code>5101</Code> - {t('accounts.guide.costOfGoodsSold')}</ListItem>
+                        </UnorderedList>
+                      </Box>
+
+                      <Divider />
+
+                      <Box>
+                        <Text fontWeight="semibold" color="orange.600" mb={2}>⚠️ {t('accounts.guide.importantTips')}</Text>
+                        <UnorderedList spacing={1} fontSize="sm">
+                          <ListItem>{t('accounts.guide.tip1')}</ListItem>
+                          <ListItem>{t('accounts.guide.tip2')}</ListItem>
+                          <ListItem>{t('accounts.guide.tip3')}</ListItem>
+                          <ListItem>{t('accounts.guide.tip4')}</ListItem>
+                        </UnorderedList>
+                      </Box>
+
+                      <Divider />
+
+                      <Box>
+                        <Text fontWeight="semibold" color="purple.600" mb={2}>🔧 {t('accounts.guide.ifDeleted')}</Text>
+                        <Text fontSize="sm" mb={2} color="red.600">
+                          ⚠️ <strong>{t('accounts.guide.hardcodedWarning')}</strong>
+                        </Text>
+                        <Text fontSize="sm" fontWeight="semibold" mb={1}>{t('accounts.guide.hardcodedAccounts')}</Text>
+                        <UnorderedList spacing={1} fontSize="sm" mb={2}>
+                          <ListItem><Code>1101 - {t('accounts.guide.cash')}</Code> (Asset, type: Asset)</ListItem>
+                          <ListItem><Code>1101-003 - BANK GIRO</Code> (Asset, type: Asset)</ListItem>
+                          <ListItem><Code>1102 - PIUTANG USAHA</Code> (Asset, type: Asset)</ListItem>
+                          <ListItem><Code>2102-002 - {t('accounts.guide.vatInput')}</Code> (Liability, type: Liability)</ListItem>
+                          <ListItem><Code>2102-001 - {t('accounts.guide.vatOutput')}</Code> (Liability, type: Liability)</ListItem>
+                          <ListItem><Code>4101 - {t('accounts.guide.salesRevenue')}</Code> (Revenue, type: Revenue)</ListItem>
+                          <ListItem><Code>5101 - {t('accounts.guide.costOfGoodsSold')}</Code> (Expense, type: Expense)</ListItem>
+                        </UnorderedList>
+                        <Text fontSize="sm" fontWeight="semibold" mb={1}>{t('accounts.guide.howToRecreate')}</Text>
+                        <UnorderedList spacing={1} fontSize="sm" mt={1}>
+                          <ListItem>{t('accounts.guide.recreate1')}</ListItem>
+                          <ListItem>{t('accounts.guide.recreate2')}</ListItem>
+                          <ListItem>{t('accounts.guide.recreate3')}</ListItem>
+                          <ListItem>{t('accounts.guide.recreate4')}</ListItem>
+                          <ListItem>{t('accounts.guide.recreate5')}</ListItem>
+                        </UnorderedList>
+                      </Box>
+
+                      <Box bg="blue.50" p={3} borderRadius="md">
+                        <Text fontSize="xs" color="blue.800">
+                          💡 <strong>{t('accounts.guide.proTip')}</strong>
+                        </Text>
+                      </Box>
+                    </VStack>
+                  </PopoverBody>
+                </PopoverContent>
+              </Popover>
             </HStack>
-          )}
-        </Flex>
+            {canCreate && (
+              <HStack spacing={3}>
+                <Tooltip
+                  label={t('accounts.guide.headerTooltip')}
+                  placement="bottom"
+                  hasArrow
+                >
+                  <Button
+                    variant="outline"
+                    colorScheme="blue"
+                    leftIcon={<FiPlus />}
+                    onClick={handleCreateHeader}
+                    size="md"
+                    px={6}
+                    py={2}
+                    borderRadius="md"
+                    fontWeight="medium"
+                    _hover={{
+                      transform: 'translateY(-1px)',
+                      boxShadow: 'md'
+                    }}
+                  >
+                    {t('accounts.addHeaderAccount')}
+                  </Button>
+                </Tooltip>
+                <Tooltip
+                  label={t('accounts.guide.accountTooltip')}
+                  placement="bottom"
+                  hasArrow
+                >
+                  <Button
+                    colorScheme="blue"
+                    leftIcon={<FiPlus />}
+                    onClick={handleCreate}
+                    size="md"
+                    px={6}
+                    py={2}
+                    borderRadius="md"
+                    fontWeight="medium"
+                    _hover={{
+                      transform: 'translateY(-1px)',
+                      boxShadow: 'lg'
+                    }}
+                  >
+                    {t('accounts.addAccount')}
+                  </Button>
+                </Tooltip>
+              </HStack>
+            )}
+          </Flex>
 
-        {/* Info Banner */}
-        <Alert status="warning" mb={4} borderRadius="md" variant="left-accent">
-          <AlertIcon />
-          <Box flex="1">
-            <AlertTitle fontSize="sm" mb={1}>⚠️ {t('accounts.guide.warningTitle')}</AlertTitle>
-            <AlertDescription fontSize="xs">
-              {t('accounts.guide.warningDesc')}
-            </AlertDescription>
-          </Box>
-        </Alert>
-
-        {error && (
-          <Alert status="error" mb={4}>
+          {/* Info Banner */}
+          <Alert status="warning" mb={4} borderRadius="md" variant="left-accent">
             <AlertIcon />
-            <AlertTitle mr={2}>Error!</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
+            <Box flex="1">
+              <AlertTitle fontSize="sm" mb={1}>⚠️ {t('accounts.guide.warningTitle')}</AlertTitle>
+              <AlertDescription fontSize="xs">
+                {t('accounts.guide.warningDesc')}
+              </AlertDescription>
+            </Box>
           </Alert>
-        )}
 
-        <Box
-          bg={cardBg}
-          borderRadius="lg"
-          boxShadow={cardShadow}
-          overflow="hidden"
-          border="1px"
-          borderColor={borderColor}
-          className="table-container"
-          transition="all 0.3s ease"
-        >
-          <Tabs
-            index={tabIndex}
-            onChange={setTabIndex}
-            variant="unstyled"
+          {error && (
+            <Alert status="error" mb={4}>
+              <AlertIcon />
+              <AlertTitle mr={2}>Error!</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          <Box
+            bg={cardBg}
+            borderRadius="lg"
+            boxShadow={cardShadow}
+            overflow="hidden"
+            border="1px"
+            borderColor={borderColor}
+            className="table-container"
+            transition="all 0.3s ease"
           >
-            <TabList borderBottom="1px" borderColor={tabBorderColor} px={4}>
-              <Tab
-                _selected={{
-                  color: 'blue.500',
-                  borderBottom: '2px solid',
-                  borderColor: 'blue.500'
-                }}
-                pb={4}
-                pt={4}
-                fontWeight="medium"
-                fontSize="sm"
-              >
-                {t('accounts.listView')}
-              </Tab>
-              <Tab
-                _selected={{
-                  color: 'blue.500',
-                  borderBottom: '2px solid',
-                  borderColor: 'blue.500'
-                }}
-                pb={4}
-                pt={4}
-                fontWeight="medium"
-                fontSize="sm"
-              >
-                {t('accounts.treeView')}
-              </Tab>
-            </TabList>
+            <Tabs
+              index={tabIndex}
+              onChange={setTabIndex}
+              variant="unstyled"
+            >
+              <TabList borderBottom="1px" borderColor={tabBorderColor} px={4}>
+                <Tab
+                  _selected={{
+                    color: 'blue.500',
+                    borderBottom: '2px solid',
+                    borderColor: 'blue.500'
+                  }}
+                  pb={4}
+                  pt={4}
+                  fontWeight="medium"
+                  fontSize="sm"
+                >
+                  {t('accounts.listView')}
+                </Tab>
+                <Tab
+                  _selected={{
+                    color: 'blue.500',
+                    borderBottom: '2px solid',
+                    borderColor: 'blue.500'
+                  }}
+                  pb={4}
+                  pt={4}
+                  fontWeight="medium"
+                  fontSize="sm"
+                >
+                  {t('accounts.treeView')}
+                </Tab>
+              </TabList>
 
-            <TabPanels>
-              <TabPanel px={0} py={0}>
+              <TabPanels>
+                <TabPanel px={0} py={0}>
 
-                {isLoading ? (
-                  <Flex justify="center" py={10}>
-                    <Spinner size="lg" color="blue.500" />
-                  </Flex>
-                ) : hierarchicalAccounts.length === 0 ? (
-                  <Box textAlign="center" py={10}>
-                    <Text color={emptyStateColor} mb={4}>
-                      {flatAccounts.length === 0 ? 'No accounts found. Try creating one!' : 'No accounts match your search criteria.'}
-                    </Text>
-                    {flatAccounts.length === 0 && (
-                      <Button colorScheme="blue" onClick={handleCreate}>
-                        Create First Account
-                      </Button>
-                    )}
-                  </Box>
-                ) : (
-                  <AccountsTable
-                    accounts={hierarchicalAccounts}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onAdminDelete={handleAdminDelete}
-                  />
-                )}
-              </TabPanel>
+                  {isLoading ? (
+                    <Flex justify="center" py={10}>
+                      <Spinner size="lg" color="blue.500" />
+                    </Flex>
+                  ) : hierarchicalAccounts.length === 0 ? (
+                    <Box textAlign="center" py={10}>
+                      <Text color={emptyStateColor} mb={4}>
+                        {flatAccounts.length === 0 ? 'No accounts found. Try creating one!' : 'No accounts match your search criteria.'}
+                      </Text>
+                      {flatAccounts.length === 0 && (
+                        <Button colorScheme="blue" onClick={handleCreate}>
+                          Create First Account
+                        </Button>
+                      )}
+                    </Box>
+                  ) : (
+                    <AccountsTable
+                      accounts={hierarchicalAccounts}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      onAdminDelete={handleAdminDelete}
+                    />
+                  )}
+                </TabPanel>
 
-              <TabPanel px={0}>
-                {isLoading ? (
-                  <Flex justify="center" py={10}>
-                    <Spinner size="lg" />
-                  </Flex>
-                ) : (
-                  <AccountTreeView
-                    accounts={hierarchyAccounts}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onAdminDelete={handleAdminDelete}
-                    showActions={true}
-                    showBalance={true}
-                  />
-                )}
-              </TabPanel>
+                <TabPanel px={0}>
+                  {isLoading ? (
+                    <Flex justify="center" py={10}>
+                      <Spinner size="lg" />
+                    </Flex>
+                  ) : (
+                    <AccountTreeView
+                      accounts={hierarchyAccounts}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      onAdminDelete={handleAdminDelete}
+                      showActions={true}
+                      showBalance={true}
+                    />
+                  )}
+                </TabPanel>
 
-            </TabPanels>
-          </Tabs>
+              </TabPanels>
+            </Tabs>
+          </Box>
+
+          <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} size="lg">
+            <ModalOverlay />
+            <ModalContent>
+              <ModalHeader>
+                {selectedAccount ? t('accounts.editAccount') : (isHeaderMode ? t('accounts.createHeaderAccount') : t('accounts.createAccount'))}
+              </ModalHeader>
+              <ModalCloseButton />
+              <ModalBody pb={6}>
+                <AccountForm
+                  account={selectedAccount || undefined}
+                  parentAccounts={flatAccounts.filter(a => a.id !== selectedAccount?.id)}
+                  onSubmit={handleSubmit}
+                  onCancel={() => setIsModalOpen(false)}
+                  isSubmitting={isSubmitting}
+                  isHeaderMode={isHeaderMode}
+                />
+              </ModalBody>
+            </ModalContent>
+          </Modal>
+
+          {/* Admin Delete Dialog */}
+          <AdminDeleteDialog
+            isOpen={isAdminDeleteOpen}
+            onClose={() => setIsAdminDeleteOpen(false)}
+            account={accountToDelete}
+            parentAccounts={flatAccounts.filter(a => a.is_header)}
+            children={accountToDelete ? getAccountChildren(accountToDelete.id) : []}
+            onConfirm={performAdminDelete}
+            isSubmitting={isSubmitting}
+          />
         </Box>
-
-        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} size="lg">
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
-              {selectedAccount ? t('accounts.editAccount') : (isHeaderMode ? t('accounts.createHeaderAccount') : t('accounts.createAccount'))}
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody pb={6}>
-              <AccountForm
-                account={selectedAccount || undefined}
-                parentAccounts={flatAccounts.filter(a => a.id !== selectedAccount?.id)}
-                onSubmit={handleSubmit}
-                onCancel={() => setIsModalOpen(false)}
-                isSubmitting={isSubmitting}
-                isHeaderMode={isHeaderMode}
-              />
-            </ModalBody>
-          </ModalContent>
-        </Modal>
-
-        {/* Admin Delete Dialog */}
-        <AdminDeleteDialog
-          isOpen={isAdminDeleteOpen}
-          onClose={() => setIsAdminDeleteOpen(false)}
-          account={accountToDelete}
-          parentAccounts={flatAccounts.filter(a => a.is_header)}
-          children={accountToDelete ? getAccountChildren(accountToDelete.id) : []}
-          onConfirm={performAdminDelete}
-          isSubmitting={isSubmitting}
-        />
-      </Box>
-    </SimpleLayout>
+      </SimpleLayout>
+    </CompanyTypeGuard>
   );
 };
 

@@ -11,22 +11,25 @@ import (
 	"app-sistem-akuntansi/config"
 	"app-sistem-akuntansi/database"
 	"app-sistem-akuntansi/models"
+
 	"gorm.io/gorm"
 )
 
 func main() {
 	fmt.Println("=== SISTEM AKUNTANSI - RESET DATA ===")
 	fmt.Println("")
-fmt.Println("Pilih mode operasi yang diinginkan:")
+	fmt.Println("Pilih mode operasi yang diinginkan:")
 	fmt.Println("  1) Reset TRANSAKSI (hard delete) — mempertahankan master (DEFAULT)")
 	fmt.Println("  2) Soft Delete SEMUA data — menandai semua record (deleted_at)")
 	fmt.Println("  3) RECOVERY — kembalikan semua soft deleted data")
-fmt.Println("  4) RESET SALDO MASTER — Reset balance COA & Cash Bank (tanpa hapus akun)")
+	fmt.Println("  4) RESET SALDO MASTER — Reset balance COA & Cash Bank (tanpa hapus akun)")
 	fmt.Println("  5) HAPUS PERIODE CLOSING — Hapus semua periode closing yang sudah pernah di-close")
+	fmt.Println("  6) RESET COMPANY TYPE — Set company_type ke NULL (untuk test onboarding flow)")
+	fmt.Println("  7) TRUNCATE & RESET ID — Hapus SEMUA data transaksi + reset semua ID dari 1")
 	fmt.Println("")
 	mode := askResetMode()
 
-if mode == 1 {
+	if mode == 1 {
 		fmt.Println("⚠️  PERINGATAN: Mode 1 akan menghapus SEMUA data transaksi!")
 		fmt.Println("✅ Yang akan DIPERTAHANKAN:")
 		fmt.Println("   - Chart of Accounts (COA)")
@@ -45,7 +48,7 @@ if mode == 1 {
 		fmt.Println("   - Data ditandai 'deleted_at = NOW()' tapi TIDAK dihapus permanen")
 		fmt.Println("   - Dapat dipulihkan dengan Mode 3 (Recovery)")
 		fmt.Println("   - Tabel sistem/backup akan dilewati")
-} else if mode == 4 {
+	} else if mode == 4 {
 		fmt.Println("🧹 MODE RESET SALDO MASTER: Reset balance COA & CASH BANK (tanpa hapus akun)")
 		fmt.Println("   - Menghapus SEMUA transaksi & jurnal (sama seperti Mode 1)")
 		fmt.Println("   - Menetapkan saldo accounts.balance & cash_banks.balance = 0 (TANPA TRUNCATE akun)")
@@ -56,6 +59,17 @@ if mode == 1 {
 		fmt.Println("   - Termasuk periode yang sudah di-close sebelumnya")
 		fmt.Println("   - TIDAK menghapus transaksi atau jurnal, hanya data periode closing saja")
 		fmt.Println("   - Gunakan jika ingin reset fitur period closing dari awal")
+	} else if mode == 6 {
+		fmt.Println("⚙️  MODE RESET COMPANY TYPE: Reset konfigurasi jenis perusahaan")
+		fmt.Println("   - Mengatur kolom 'company_type' di tabel settings menjadi NULL")
+		fmt.Println("   - Memungkinkan Anda mentest flow 'First Login' / pemilihan jenis usaha")
+		fmt.Println("   - Data lain TIDAK akan dihapus")
+	} else if mode == 7 {
+		fmt.Println("🔥 MODE TRUNCATE & RESET ID: HAPUS TOTAL + RESET ID")
+		fmt.Println("   - Melakukan TRUNCATE CASCADE pada SEMUA tabel transaksi")
+		fmt.Println("   - Reset SEMUA sequence ID dari 1 (ID baru akan mulai dari 1)")
+		fmt.Println("   - COA, Products, Contacts, Cash Banks TETAP ADA (hanya balance/stock direset)")
+		fmt.Println("   - ⚠️  PERINGATAN: Ini operasi yang sangat merusak!")
 	} else {
 		fmt.Println("🔄 MODE RECOVERY: Akan mengembalikan semua soft deleted data")
 		fmt.Println("   - Set kolom 'deleted_at = NULL' untuk semua record yang soft deleted")
@@ -85,7 +99,7 @@ if mode == 1 {
 	}
 	fmt.Println("✅ Backup COA berhasil")
 
-// Step 2: Show current data summary
+	// Step 2: Show current data summary
 	fmt.Println("\n📊 STEP 2: Summary data saat ini...")
 	if mode == 3 {
 		showSoftDeletedDataSummary(db)
@@ -107,42 +121,54 @@ if mode == 1 {
 		return
 	}
 
-// Step 3: Execute reset/recovery
-if mode == 1 {
-	fmt.Println("\n🔄 STEP 3: Mengeksekusi reset data transaksi (HARD DELETE)...")
-	if err := executeTransactionResetWithGORM(db); err != nil {
-		log.Printf("❌ Gagal reset data transaksi: %v", err)
-		return
+	// Step 3: Execute reset/recovery
+	if mode == 1 {
+		fmt.Println("\n🔄 STEP 3: Mengeksekusi reset data transaksi (HARD DELETE)...")
+		if err := executeTransactionResetWithGORM(db); err != nil {
+			log.Printf("❌ Gagal reset data transaksi: %v", err)
+			return
+		}
+	} else if mode == 2 {
+		fmt.Println("\n🔄 STEP 3: Mengeksekusi SOFT DELETE ke semua tabel...")
+		if err := executeSoftDeleteAllWithGORM(db); err != nil {
+			log.Printf("❌ Gagal soft delete semua data: %v", err)
+			return
+		}
+	} else if mode == 4 {
+		fmt.Println("\n🧹 STEP 3: RESET SALDO MASTER — Hapus transaksi lalu reset saldo COA & Cash Bank (tanpa hapus akun)...")
+		if err := executeMasterPurgeWithGORM(db); err != nil {
+			log.Printf("❌ Gagal reset saldo master: %v", err)
+			return
+		}
+	} else if mode == 5 {
+		fmt.Println("\n🗑️  STEP 3: Menghapus semua periode closing...")
+		if err := executeDeletePeriodClosingWithGORM(db); err != nil {
+			log.Printf("❌ Gagal hapus periode closing: %v", err)
+			return
+		}
+	} else if mode == 6 {
+		fmt.Println("\n⚙️  STEP 3: Resetting company type...")
+		if err := executeResetCompanyTypeWithGORM(db); err != nil {
+			log.Printf("❌ Gagal reset company type: %v", err)
+			return
+		}
+	} else if mode == 7 {
+		fmt.Println("\n🔥 STEP 3: TRUNCATE & RESET ID...")
+		if err := executeTruncateAndResetIDWithGORM(db); err != nil {
+			log.Printf("❌ Gagal truncate & reset ID: %v", err)
+			return
+		}
+	} else {
+		fmt.Println("\n🔄 STEP 3: Mengeksekusi RECOVERY soft deleted data...")
+		if err := executeRecoveryAllWithGORM(db); err != nil {
+			log.Printf("❌ Gagal recovery data: %v", err)
+			return
+		}
 	}
-} else if mode == 2 {
-	fmt.Println("\n🔄 STEP 3: Mengeksekusi SOFT DELETE ke semua tabel...")
-	if err := executeSoftDeleteAllWithGORM(db); err != nil {
-		log.Printf("❌ Gagal soft delete semua data: %v", err)
-		return
-	}
-} else if mode == 4 {
-	fmt.Println("\n🧹 STEP 3: RESET SALDO MASTER — Hapus transaksi lalu reset saldo COA & Cash Bank (tanpa hapus akun)...")
-	if err := executeMasterPurgeWithGORM(db); err != nil {
-		log.Printf("❌ Gagal reset saldo master: %v", err)
-		return
-	}
-} else if mode == 5 {
-	fmt.Println("\n🗑️  STEP 3: Menghapus semua periode closing...")
-	if err := executeDeletePeriodClosingWithGORM(db); err != nil {
-		log.Printf("❌ Gagal hapus periode closing: %v", err)
-		return
-	}
-} else {
-	fmt.Println("\n🔄 STEP 3: Mengeksekusi RECOVERY soft deleted data...")
-	if err := executeRecoveryAllWithGORM(db); err != nil {
-		log.Printf("❌ Gagal recovery data: %v", err)
-		return
-	}
-}
 
-// Step 4: Verify reset
-fmt.Println("\n✅ STEP 4: Verifikasi hasil reset...")
-showPostResetSummary(db)
+	// Step 4: Verify reset
+	fmt.Println("\n✅ STEP 4: Verifikasi hasil reset...")
+	showPostResetSummary(db)
 
 	if mode == 1 {
 		fmt.Println("\n🎉 HARD DELETE RESET SELESAI!")
@@ -153,7 +179,7 @@ showPostResetSummary(db)
 		fmt.Println("Semua data telah ditandai sebagai deleted (deleted_at = NOW()).")
 		fmt.Println("Data TIDAK dihapus permanen dan dapat dipulihkan dengan Mode 3 (Recovery).")
 		fmt.Println("\nUntuk recovery: go run scripts/maintenance/reset_transaction_data_gorm.go (pilih opsi 3)")
-} else if mode == 4 {
+	} else if mode == 4 {
 		fmt.Println("\n🎉 RESET SALDO MASTER SELESAI!")
 		fmt.Println("Saldo COA & Cash Bank telah direset ke 0 dan semua transaksi/jurnal telah dibersihkan.")
 		fmt.Println("Akun COA & Cash Bank tetap ada (tidak dihapus).")
@@ -162,6 +188,15 @@ showPostResetSummary(db)
 		fmt.Println("Semua data periode closing telah dihapus dari tabel accounting_periods.")
 		fmt.Println("Anda dapat memulai period closing dari awal.")
 		fmt.Println("CATATAN: Transaksi dan jurnal TIDAK terpengaruh, hanya data periode closing yang dihapus.")
+	} else if mode == 6 {
+		fmt.Println("\n🎉 RESET COMPANY TYPE SELESAI!")
+		fmt.Println("Company Type telah di-set ke NULL.")
+		fmt.Println("Silakan login kembali untuk melihat tampilan pemilihan jenis perusahaan.")
+	} else if mode == 7 {
+		fmt.Println("\n🎉 TRUNCATE & RESET ID SELESAI!")
+		fmt.Println("Semua tabel transaksi telah di-TRUNCATE dan ID direset dari 1.")
+		fmt.Println("COA, Products, Contacts, Cash Banks tetap ada dengan balance/stock = 0.")
+		fmt.Println("Transaksi baru akan dimulai dari ID = 1.")
 	} else {
 		fmt.Println("\n🎉 RECOVERY SELESAI!")
 		fmt.Println("Semua data yang soft deleted telah dipulihkan (deleted_at = NULL).")
@@ -171,7 +206,7 @@ showPostResetSummary(db)
 
 func askResetMode() int {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Masukkan pilihan [1/2/3/4/5] (default 1): ")
+	fmt.Print("Masukkan pilihan [1/2/3/4/5/6/7] (default 1): ")
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "2" {
@@ -182,6 +217,10 @@ func askResetMode() int {
 		return 4
 	} else if input == "5" {
 		return 5
+	} else if input == "6" {
+		return 6
+	} else if input == "7" {
+		return 7
 	}
 	return 1
 }
@@ -191,13 +230,13 @@ func confirmReset() bool {
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(strings.ToLower(input))
-	
+
 	return input == "ya" || input == "y" || input == "yes"
 }
 
 func backupCOAWithGORM(db *gorm.DB) error {
 	fmt.Println("   📊 Membuat backup tabel accounts...")
-	
+
 	// Create backup table using raw SQL (safer approach)
 	err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS accounts_backup AS 
@@ -208,13 +247,13 @@ func backupCOAWithGORM(db *gorm.DB) error {
 		FROM accounts 
 		WHERE deleted_at IS NULL
 	`).Error
-	
+
 	if err != nil {
 		return fmt.Errorf("gagal membuat backup accounts: %v", err)
 	}
 
 	fmt.Println("   📈 Membuat backup hierarki accounts...")
-	
+
 	// Create hierarchy backup
 	err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS accounts_hierarchy_backup AS
@@ -238,13 +277,13 @@ func backupCOAWithGORM(db *gorm.DB) error {
 		)
 		SELECT * FROM account_tree
 	`).Error
-	
+
 	if err != nil {
 		fmt.Printf("   ⚠️  Warning: Gagal backup hierarki: %v\n", err)
 	}
 
 	fmt.Println("   💰 Membuat backup balance asli...")
-	
+
 	// Create balance backup
 	err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS accounts_original_balances AS
@@ -255,7 +294,7 @@ func backupCOAWithGORM(db *gorm.DB) error {
 		FROM accounts 
 		WHERE deleted_at IS NULL AND balance != 0
 	`).Error
-	
+
 	if err != nil {
 		fmt.Printf("   ⚠️  Warning: Gagal backup balance: %v\n", err)
 	}
@@ -477,7 +516,7 @@ func resetMainSequences(db *gorm.DB) {
 	sequences := []string{
 		// Transaction sequences
 		"sales_id_seq",
-		"sale_items_id_seq", 
+		"sale_items_id_seq",
 		"purchases_id_seq",
 		"purchase_items_id_seq",
 		"purchase_receipts_id_seq",
@@ -504,7 +543,7 @@ func resetMainSequences(db *gorm.DB) {
 		// Check if sequence exists before resetting
 		var exists bool
 		db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = ? AND relkind = 'S')", seq).Scan(&exists)
-		
+
 		if exists {
 			if err := db.Exec(fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH 1", seq)).Error; err != nil {
 				fmt.Printf("   ⚠️  Warning: Gagal reset sequence %s: %v\n", seq, err)
@@ -554,18 +593,18 @@ func executeMasterPurgeWithGORM(db *gorm.DB) error {
 
 func logResetActivity(db *gorm.DB) {
 	fmt.Println("   📝 Logging reset activity...")
-	
+
 	// Try to log to audit_logs
 	err := db.Exec(`
 		INSERT INTO audit_logs (action, table_name, record_id, old_values, new_values, user_id, created_at)
 		VALUES ('DELETE', 'ALL_TRANSACTION_TABLES', 0, '', 'Reset semua data transaksi dengan GORM + SSOT Journal System', 1, CURRENT_TIMESTAMP)
 	`).Error
-	
+
 	if err != nil {
 		fmt.Printf("   ⚠️  Warning: Gagal log ke audit_logs: %v\n", err)
 		fmt.Println("   ℹ️  Reset tetap berhasil, hanya logging yang gagal")
 	}
-	
+
 	// Also refresh materialized view if it exists
 	fmt.Println("   🔄 Refreshing account_balances materialized view...")
 	if err := db.Exec("REFRESH MATERIALIZED VIEW account_balances").Error; err != nil {
@@ -573,26 +612,96 @@ func logResetActivity(db *gorm.DB) {
 	}
 }
 
+func executeResetCompanyTypeWithGORM(db *gorm.DB) error {
+	fmt.Println("   ⚙️  Mengupdate tabel settings (company_type -> NULL)...")
+
+	// Execute raw SQL update
+	// Note: We use raw SQL because GORM might have issues updating to NULL if the model field isn't a pointer
+	if err := db.Exec("UPDATE settings SET company_type = NULL").Error; err != nil {
+		return fmt.Errorf("gagal update database: %v", err)
+	}
+
+	// Clean up legacy/unused accounts
+	if err := cleanUnusedAccounts(db); err != nil {
+		fmt.Printf("   ⚠️  Warning: Gagal membersihkan akun lama: %v\n", err)
+	}
+
+	fmt.Println("   ✅ Berhasil reset company_type")
+	return nil
+}
+
+func cleanUnusedAccounts(db *gorm.DB) error {
+	fmt.Println("   🧹 Cleaning up unused/legacy accounts...")
+
+	// List of accounts to always remove (Legacy/Invalid/Duplicate)
+	// ⚠️ IMPORTANT: Do NOT include accounts that are part of any active template!
+	// Valid template accounts: 2000, 2100, 2200, 4102, 5000, 5101, 5102, 5103, etc.
+	legacyAccounts := []string{
+		"1301", // Legacy Inventory (replaced by 1103)
+		"292",  // PENAMBAHAN PAJAK LAINNYA (SALES) - Invalid format
+		"293",  // PENDAPATAN ONGKIR (SHIPPING) - Invalid format
+		"1240", // PPN MASUKAN - Legacy, replaced by 2102-002
+		"1114", // PPH 21 DIBAYAR DIMUKA - Duplicate/Legacy
+		"1115", // PPH 23 DIBAYAR DIMUKA - Duplicate/Legacy
+		"1116", // POTONGAN PAJAK LAINNYA - Duplicate/Legacy
+		"1500", // FIXED ASSETS - Legacy header
+		"1501", // PERALATAN KANTOR - Legacy
+		"1502", // KENDARAAN - Legacy
+		"1503", // BANGUNAN - Legacy
+		"1509", // TRUK - Legacy
+		"3201", // LABA DITAHAN - Duplicate of 3102
+		"2104", "2107", "2108", "2111", "2112", // Legacy Tax Payables
+		"4900", // OTHER INCOME - Legacy English
+		"5900", // GENERAL EXPENSE - Legacy English
+		"5200", "5201", "5202", "5203", "5204", // Legacy Expenses (using 5xxx instead of 6xxx)
+		"4201", // PENDAPATAN LAIN-LAIN - Duplicate of 7101
+	}
+
+	// Use a transaction with FK constraints deferred for safety
+	tx := db.Begin()
+	if err := tx.Exec("SET LOCAL session_replication_role = 'replica'").Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Gagal set session_replication_role=replica: %v\n", err)
+	}
+
+	// Delete legacy accounts (only those NOT in any template)
+	query := "DELETE FROM accounts WHERE code IN ? AND balance = 0"
+	result := tx.Exec(query, legacyAccounts)
+
+	if result.Error != nil {
+		fmt.Printf("   ⚠️  Warning: Failed to delete legacy accounts: %v\n", result.Error)
+	} else {
+		fmt.Printf("   ✨ Legacy accounts cleaned: %d accounts removed\n", result.RowsAffected)
+	}
+
+	// Commit — SET LOCAL automatically reverts session_replication_role
+	if err := tx.Commit().Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal commit cleanup: %v", err)
+	}
+
+	return nil
+}
+
 func showCurrentDataSummary(db *gorm.DB) {
 	type DataSummary struct {
-		TotalAccounts        int64 `json:"total_accounts"`
-		TotalSales           int64 `json:"total_sales"`
-		TotalPurchases       int64 `json:"total_purchases"`
-		TotalTransactions    int64 `json:"total_transactions"`
-		TotalJournals        int64 `json:"total_journals"`
-		TotalJournalEntries  int64 `json:"total_journal_entries"`
-		TotalJournalLines    int64 `json:"total_journal_lines"`
-		TotalSSOTJournals    int64 `json:"total_ssot_journals"`
-		TotalSSOTLines       int64 `json:"total_ssot_lines"`
-		TotalSSOTEventLogs   int64 `json:"total_ssot_event_logs"`
-		TotalExpenses        int64 `json:"total_expenses"`
-		TotalPayments        int64 `json:"total_payments"`
-		TotalInventory       int64 `json:"total_inventory"`
-		TotalNotifications   int64 `json:"total_notifications"`
-		TotalStockAlerts     int64 `json:"total_stock_alerts"`
-		TotalProducts        int64 `json:"total_products"`
-		TotalContacts        int64 `json:"total_contacts"`
-		TotalCashBanks       int64 `json:"total_cash_banks"`
+		TotalAccounts       int64 `json:"total_accounts"`
+		TotalSales          int64 `json:"total_sales"`
+		TotalPurchases      int64 `json:"total_purchases"`
+		TotalTransactions   int64 `json:"total_transactions"`
+		TotalJournals       int64 `json:"total_journals"`
+		TotalJournalEntries int64 `json:"total_journal_entries"`
+		TotalJournalLines   int64 `json:"total_journal_lines"`
+		TotalSSOTJournals   int64 `json:"total_ssot_journals"`
+		TotalSSOTLines      int64 `json:"total_ssot_lines"`
+		TotalSSOTEventLogs  int64 `json:"total_ssot_event_logs"`
+		TotalExpenses       int64 `json:"total_expenses"`
+		TotalPayments       int64 `json:"total_payments"`
+		TotalInventory      int64 `json:"total_inventory"`
+		TotalNotifications  int64 `json:"total_notifications"`
+		TotalStockAlerts    int64 `json:"total_stock_alerts"`
+		TotalProducts       int64 `json:"total_products"`
+		TotalContacts       int64 `json:"total_contacts"`
+		TotalCashBanks      int64 `json:"total_cash_banks"`
 	}
 
 	var summary DataSummary
@@ -660,11 +769,11 @@ func executeSoftDeleteAllWithGORM(db *gorm.DB) error {
 
 	// Daftar pengecualian (tabel sistem/backup)
 	exclude := map[string]bool{
-		"accounts_backup":                 true,
-		"accounts_hierarchy_backup":       true,
-		"accounts_original_balances":      true,
-		"schema_migrations":               true,
-		"gorm_migrations":                 true,
+		"accounts_backup":            true,
+		"accounts_hierarchy_backup":  true,
+		"accounts_original_balances": true,
+		"schema_migrations":          true,
+		"gorm_migrations":            true,
 	}
 
 	processed := 0
@@ -714,11 +823,11 @@ func executeRecoveryAllWithGORM(db *gorm.DB) error {
 
 	// Daftar pengecualian (tabel sistem/backup)
 	exclude := map[string]bool{
-		"accounts_backup":                 true,
-		"accounts_hierarchy_backup":       true,
-		"accounts_original_balances":      true,
-		"schema_migrations":               true,
-		"gorm_migrations":                 true,
+		"accounts_backup":            true,
+		"accounts_hierarchy_backup":  true,
+		"accounts_original_balances": true,
+		"schema_migrations":          true,
+		"gorm_migrations":            true,
 	}
 
 	processed := 0
@@ -759,24 +868,24 @@ func executeRecoveryAllWithGORM(db *gorm.DB) error {
 
 func showPostResetSummary(db *gorm.DB) {
 	type PostResetSummary struct {
-		TotalAccounts        int64 `json:"total_accounts"`
-		TotalProducts        int64 `json:"total_products"`  
-		TotalContacts        int64 `json:"total_contacts"`
-		TotalCashBanks       int64 `json:"total_cash_banks"`
-		RemainingSales       int64 `json:"remaining_sales"`
-		RemainingPurchases   int64 `json:"remaining_purchases"`
-		RemainingTransactions int64 `json:"remaining_transactions"`
-		RemainingJournals    int64 `json:"remaining_journals"`
+		TotalAccounts           int64 `json:"total_accounts"`
+		TotalProducts           int64 `json:"total_products"`
+		TotalContacts           int64 `json:"total_contacts"`
+		TotalCashBanks          int64 `json:"total_cash_banks"`
+		RemainingSales          int64 `json:"remaining_sales"`
+		RemainingPurchases      int64 `json:"remaining_purchases"`
+		RemainingTransactions   int64 `json:"remaining_transactions"`
+		RemainingJournals       int64 `json:"remaining_journals"`
 		RemainingJournalEntries int64 `json:"remaining_journal_entries"`
-		RemainingJournalLines int64 `json:"remaining_journal_lines"`
-		RemainingSSOTJournals int64 `json:"remaining_ssot_journals"`
-		RemainingSSOTLines   int64 `json:"remaining_ssot_lines"`
-		RemainingSSOTEventLogs int64 `json:"remaining_ssot_event_logs"`
-		RemainingNotifications int64 `json:"remaining_notifications"`
-		RemainingStockAlerts int64 `json:"remaining_stock_alerts"`
-		AccountsWithBalance  int64 `json:"accounts_with_balance"`
-		ProductsWithStock    int64 `json:"products_with_stock"`
-		CashBanksWithBalance int64 `json:"cash_banks_with_balance"`
+		RemainingJournalLines   int64 `json:"remaining_journal_lines"`
+		RemainingSSOTJournals   int64 `json:"remaining_ssot_journals"`
+		RemainingSSOTLines      int64 `json:"remaining_ssot_lines"`
+		RemainingSSOTEventLogs  int64 `json:"remaining_ssot_event_logs"`
+		RemainingNotifications  int64 `json:"remaining_notifications"`
+		RemainingStockAlerts    int64 `json:"remaining_stock_alerts"`
+		AccountsWithBalance     int64 `json:"accounts_with_balance"`
+		ProductsWithStock       int64 `json:"products_with_stock"`
+		CashBanksWithBalance    int64 `json:"cash_banks_with_balance"`
 	}
 
 	var summary PostResetSummary
@@ -812,13 +921,13 @@ func showPostResetSummary(db *gorm.DB) {
 	fmt.Printf("   - Contacts: %d\n", summary.TotalContacts)
 	fmt.Printf("   - Cash Banks: %d\n", summary.TotalCashBanks)
 	fmt.Printf("\n")
-	
-	if summary.RemainingSales == 0 && summary.RemainingPurchases == 0 && 
-	   summary.RemainingTransactions == 0 && summary.RemainingJournals == 0 &&
-	   summary.RemainingJournalEntries == 0 && summary.RemainingJournalLines == 0 &&
-	   summary.RemainingSSOTJournals == 0 && summary.RemainingSSOTLines == 0 &&
-	   summary.RemainingSSOTEventLogs == 0 && summary.RemainingNotifications == 0 &&
-	   summary.RemainingStockAlerts == 0 {
+
+	if summary.RemainingSales == 0 && summary.RemainingPurchases == 0 &&
+		summary.RemainingTransactions == 0 && summary.RemainingJournals == 0 &&
+		summary.RemainingJournalEntries == 0 && summary.RemainingJournalLines == 0 &&
+		summary.RemainingSSOTJournals == 0 && summary.RemainingSSOTLines == 0 &&
+		summary.RemainingSSOTEventLogs == 0 && summary.RemainingNotifications == 0 &&
+		summary.RemainingStockAlerts == 0 {
 		fmt.Printf("✅ Data transaksi berhasil dihapus:\n")
 		fmt.Printf("   - Sales: %d\n", summary.RemainingSales)
 		fmt.Printf("   - Purchases: %d\n", summary.RemainingPurchases)
@@ -847,9 +956,9 @@ func showPostResetSummary(db *gorm.DB) {
 	}
 
 	fmt.Printf("\n")
-	
-	if summary.AccountsWithBalance == 0 && summary.ProductsWithStock == 0 && 
-	   summary.CashBanksWithBalance == 0 {
+
+	if summary.AccountsWithBalance == 0 && summary.ProductsWithStock == 0 &&
+		summary.CashBanksWithBalance == 0 {
 		fmt.Printf("✅ Balance berhasil direset:\n")
 		fmt.Printf("   - Accounts dengan balance > 0: %d\n", summary.AccountsWithBalance)
 		fmt.Printf("   - Products dengan stock > 0: %d\n", summary.ProductsWithStock)
@@ -884,11 +993,11 @@ func showSoftDeletedDataSummary(db *gorm.DB) {
 
 	// Daftar pengecualian (tabel sistem/backup)
 	exclude := map[string]bool{
-		"accounts_backup":                 true,
-		"accounts_hierarchy_backup":       true,
-		"accounts_original_balances":      true,
-		"schema_migrations":               true,
-		"gorm_migrations":                 true,
+		"accounts_backup":            true,
+		"accounts_hierarchy_backup":  true,
+		"accounts_original_balances": true,
+		"schema_migrations":          true,
+		"gorm_migrations":            true,
 	}
 
 	totalSoftDeleted := 0
@@ -917,14 +1026,14 @@ func showSoftDeletedDataSummary(db *gorm.DB) {
 
 func showBackupInfo(db *gorm.DB) {
 	fmt.Println("\n📦 Tabel backup yang dibuat:")
-	
+
 	// Check backup tables safely
 	backupTables := []string{"accounts_backup", "accounts_hierarchy_backup", "accounts_original_balances"}
-	
+
 	for _, tableName := range backupTables {
 		var count int64
 		err := db.Raw(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&count).Error
-		
+
 		if err != nil {
 			fmt.Printf("   - %s: ⚠️  tidak dapat dihitung (mungkin tidak ada)\n", tableName)
 		} else {
@@ -938,21 +1047,21 @@ func showPeriodClosingSummary(db *gorm.DB) {
 	var totalPeriods int64
 	var closedPeriods int64
 	var lockedPeriods int64
-	
+
 	db.Model(&models.AccountingPeriod{}).Count(&totalPeriods)
 	db.Model(&models.AccountingPeriod{}).Where("is_closed = ?", true).Count(&closedPeriods)
 	db.Model(&models.AccountingPeriod{}).Where("is_locked = ?", true).Count(&lockedPeriods)
-	
+
 	fmt.Printf("📊 Data Periode Closing saat ini:\n")
 	fmt.Printf("   Total Periode: %d\n", totalPeriods)
 	fmt.Printf("   Periode yang sudah di-close: %d\n", closedPeriods)
 	fmt.Printf("   Periode yang di-lock: %d\n", lockedPeriods)
-	
+
 	if totalPeriods > 0 {
 		fmt.Println("\n📋 Detail periode closing:")
 		var periods []models.AccountingPeriod
 		db.Order("start_date DESC").Limit(10).Find(&periods)
-		
+
 		for _, period := range periods {
 			status := "Open"
 			if period.IsClosed {
@@ -961,14 +1070,14 @@ func showPeriodClosingSummary(db *gorm.DB) {
 			if period.IsLocked {
 				status = "Locked"
 			}
-			fmt.Printf("   - ID %d: %s s/d %s [%s] - %s\n", 
+			fmt.Printf("   - ID %d: %s s/d %s [%s] - %s\n",
 				period.ID,
 				period.StartDate.Format("2006-01-02"),
 				period.EndDate.Format("2006-01-02"),
 				status,
 				period.Description)
 		}
-		
+
 		if totalPeriods > 10 {
 			fmt.Printf("   ... dan %d periode lainnya\n", totalPeriods-10)
 		}
@@ -979,41 +1088,41 @@ func showPeriodClosingSummary(db *gorm.DB) {
 func executeDeletePeriodClosingWithGORM(db *gorm.DB) error {
 	start := time.Now()
 	fmt.Printf("⏳ Menghapus semua data periode closing... (dimulai: %s)\n", start.Format("15:04:05"))
-	
+
 	tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
-	
+
 	// Count dulu sebelum dihapus
 	var countBefore int64
 	tx.Model(&models.AccountingPeriod{}).Count(&countBefore)
 	fmt.Printf("   📊 Total periode closing yang akan dihapus: %d\n", countBefore)
-	
+
 	// Hapus dengan Unscoped (hard delete)
 	if err := tx.Unscoped().Where("1 = 1").Delete(&models.AccountingPeriod{}).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("gagal hapus accounting_periods: %v", err)
 	}
-	
+
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("gagal commit hapus periode closing: %v", err)
 	}
-	
+
 	// Reset sequence
 	fmt.Println("   🔢 Reset sequence accounting_periods...")
 	var exists bool
 	db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'accounting_periods_id_seq' AND relkind = 'S')").Scan(&exists)
-	
+
 	if exists {
 		if err := db.Exec("ALTER SEQUENCE accounting_periods_id_seq RESTART WITH 1").Error; err != nil {
 			fmt.Printf("   ⚠️  Warning: Gagal reset sequence accounting_periods_id_seq: %v\n", err)
 		}
 	}
-	
+
 	duration := time.Since(start)
 	fmt.Printf("✅ Hapus periode closing selesai dalam waktu: %s\n", duration.String())
 	fmt.Printf("   📊 Jumlah periode yang dihapus: %d\n", countBefore)
-	
+
 	// Verify
 	var countAfter int64
 	db.Model(&models.AccountingPeriod{}).Count(&countAfter)
@@ -1022,6 +1131,195 @@ func executeDeletePeriodClosingWithGORM(db *gorm.DB) error {
 	} else {
 		fmt.Printf("   ⚠️  Warning: Masih ada %d periode tersisa\n", countAfter)
 	}
-	
+
 	return nil
+}
+
+// executeTruncateAndResetIDWithGORM melakukan TRUNCATE CASCADE pada semua tabel transaksi
+// dan mereset semua sequence ID dari 1
+func executeTruncateAndResetIDWithGORM(db *gorm.DB) error {
+	start := time.Now()
+	fmt.Printf("⏳ Melakukan TRUNCATE & RESET ID... (dimulai: %s)\n", start.Format("15:04:05"))
+
+	// Daftar tabel yang akan di-TRUNCATE (urutan tidak penting karena CASCADE)
+	tablesToTruncate := []string{
+		// SSOT Journal System
+		"journal_event_log",
+		"unified_journal_lines",
+		"unified_journal_ledger",
+		"simple_ssot_journal_items",
+		"simple_ssot_journals",
+		// Classic Journal System
+		"journal_lines",
+		"journal_entries",
+		"journals",
+		// Sales related
+		"sale_return_items",
+		"sale_returns",
+		"sale_payments",
+		"sale_items",
+		"sales",
+		// Purchase related
+		"purchase_receipt_items",
+		"purchase_receipts",
+		"purchase_documents",
+		"purchase_items",
+		"purchases",
+		// Other transactions
+		"payment_allocations",
+		"cash_bank_transactions",
+		"transactions",
+		"payments",
+		"expenses",
+		"inventories",
+		// Support data
+		"notifications",
+		"stock_alerts",
+		"activity_logs",
+		"error_logs",
+		// Security & Auth Logs (Must be cleared if sequences are reset)
+		"user_sessions",
+		"auth_attempts",
+		"security_incidents",
+		"refresh_tokens",
+		"blacklisted_tokens",
+		// Approval system
+		"approval_histories",
+		"approval_actions",
+		"approval_requests",
+		// Accounting periods
+		"accounting_periods",
+	}
+
+	// Disable triggers and FK checks
+	fmt.Println("   🔧 Disabling triggers and FK constraints...")
+	if err := db.Exec("SET session_replication_role = 'replica'").Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Gagal disable triggers: %v\n", err)
+	}
+
+	// TRUNCATE each table
+	truncatedCount := 0
+	for _, table := range tablesToTruncate {
+		// Check if table exists first
+		var exists bool
+		db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?)", table).Scan(&exists)
+
+		if exists {
+			fmt.Printf("   🗑️  TRUNCATE: %s...\n", table)
+			if err := db.Exec(fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)).Error; err != nil {
+				fmt.Printf("   ⚠️  Warning: Gagal truncate %s: %v\n", table, err)
+			} else {
+				truncatedCount++
+			}
+		} else {
+			fmt.Printf("   ⏭️  Skip (not exists): %s\n", table)
+		}
+	}
+
+	// Re-enable triggers
+	fmt.Println("   🔧 Re-enabling triggers and FK constraints...")
+	if err := db.Exec("SET session_replication_role = 'origin'").Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Gagal re-enable triggers: %v\n", err)
+	}
+
+	// Reset balances on master tables
+	fmt.Println("   🔄 Reset balance accounts ke 0...")
+	if err := db.Model(&models.Account{}).Where("id > 0").Update("balance", 0).Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Reset balance accounts gagal: %v\n", err)
+	}
+
+	fmt.Println("   🔄 Reset balance cash banks ke 0...")
+	if err := db.Model(&models.CashBank{}).Where("id > 0").Update("balance", 0).Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Reset balance cash_banks gagal: %v\n", err)
+	}
+
+	fmt.Println("   🔄 Reset stock products ke 0...")
+	if err := db.Model(&models.Product{}).Where("id > 0").Update("stock", 0).Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Reset stock products gagal: %v\n", err)
+	}
+
+	// Reset ALL sequences
+	fmt.Println("   🔢 Reset ALL sequences dari 1...")
+	resetAllSequences(db)
+
+	duration := time.Since(start)
+	fmt.Printf("✅ TRUNCATE & RESET ID selesai dalam waktu: %s\n", duration.String())
+	fmt.Printf("   📊 Jumlah tabel di-truncate: %d\n", truncatedCount)
+
+	// Clean up legacy accounts as well
+	if err := cleanUnusedAccounts(db); err != nil {
+		fmt.Printf("   ⚠️  Warning: Gagal membersihkan akun lama: %v\n", err)
+	}
+
+	// Log activity
+	logResetActivity(db)
+
+	return nil
+}
+
+// resetAllSequences resets ALL sequences in the database to 1
+func resetAllSequences(db *gorm.DB) {
+	// Get all sequences in public schema
+	type seqInfo struct {
+		SeqName string
+	}
+	var sequences []seqInfo
+	db.Raw(`
+		SELECT c.relname as seq_name
+		FROM pg_class c
+		WHERE c.relkind = 'S'
+		  AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+	`).Scan(&sequences)
+
+	resetCount := 0
+	for _, seq := range sequences {
+		// Skip master tables (accounts, products, contacts, cash_banks, users, etc.)
+		if shouldSkipSequence(seq.SeqName) {
+			fmt.Printf("   ⏭️  Skip master: %s\n", seq.SeqName)
+			continue
+		}
+
+		if err := db.Exec(fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH 1", seq.SeqName)).Error; err != nil {
+			fmt.Printf("   ⚠️  Warning: Gagal reset sequence %s: %v\n", seq.SeqName, err)
+		} else {
+			fmt.Printf("   ✅ Reset: %s\n", seq.SeqName)
+			resetCount++
+		}
+	}
+
+	fmt.Printf("   📊 Total sequences direset: %d\n", resetCount)
+}
+
+// shouldSkipSequence returns true if the sequence should not be reset (master tables)
+func shouldSkipSequence(seqName string) bool {
+	// Master tables that should NOT have their sequences reset
+	masterSequences := []string{
+		"accounts_id_seq",
+		"products_id_seq",
+		"contacts_id_seq",
+		"cash_banks_id_seq",
+		"users_id_seq",
+		"roles_id_seq",
+		"permissions_id_seq",
+		"role_permissions_id_seq",
+		"user_roles_id_seq",
+		"settings_id_seq",
+		"categories_id_seq",
+		"units_id_seq",
+		"warehouses_id_seq",
+		"tax_settings_id_seq",
+		"tax_account_settings_id_seq",
+		"audit_logs_id_seq",
+		// Backup tables
+		"accounts_backup_id_seq",
+		"accounts_hierarchy_backup_id_seq",
+		"accounts_original_balances_id_seq",
+	}
+
+	for _, master := range masterSequences {
+		if seqName == master {
+			return true
+		}
+	}
+	return false
 }

@@ -1,12 +1,13 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/middleware"
+	"app-sistem-akuntansi/models"
 	"log"
 	"net/http"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/middleware"
-	"app-sistem-akuntansi/models"
+
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -150,10 +151,10 @@ func (ac *AuthController) Login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
-	
+
 	// Debug logging
 	log.Printf("Login attempt - Email: %s, Password length: %d", req.Email, len(req.Password))
-	
+
 	// Use email as identifier
 	identifier := req.Email
 	password := req.Password
@@ -184,7 +185,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	// Check for existing active sessions and limit them
 	var existingSessions []models.UserSession
 	ac.DB.Where("user_id = ? AND is_active = ?", user.ID, true).Order("created_at DESC").Find(&existingSessions)
-	
+
 	// If user has more than 5 active sessions, deactivate the oldest ones (increased from 3)
 	if len(existingSessions) > 5 {
 		oldSessions := existingSessions[5:]
@@ -205,16 +206,23 @@ func (ac *AuthController) Login(c *gin.Context) {
 	}
 
 	ac.logAuthAttempt(identifier, true, "", c.ClientIP(), c.Request.UserAgent())
-	
+
+	// Fetch settings to get company_type
+	var settings models.Settings
+	if err := ac.DB.First(&settings).Error; err != nil {
+		log.Printf("Warning: Failed to fetch settings during login: %v", err)
+	}
+
 	// Return response in format expected by frontend
 	c.JSON(http.StatusOK, gin.H{
-		"success":      true,
-		"access_token": tokens.AccessToken,
-		"token":        tokens.AccessToken, // Compatibility field
+		"success":       true,
+		"access_token":  tokens.AccessToken,
+		"token":         tokens.AccessToken, // Compatibility field
 		"refresh_token": tokens.RefreshToken,
-		"refreshToken": tokens.RefreshToken, // Compatibility field
-		"user":         tokens.User,
-		"message":      "Login successful",
+		"refreshToken":  tokens.RefreshToken, // Compatibility field
+		"user":          tokens.User,
+		"company_type":  settings.CompanyType,
+		"message":       "Login successful",
 	})
 }
 
@@ -229,7 +237,7 @@ func (ac *AuthController) logAuthAttempt(identifier string, success bool, reason
 		UserAgent:     userAgent,
 		AttemptedAt:   time.Now(),
 	}
-	
+
 	ac.DB.Create(&authAttempt)
 }
 
@@ -258,6 +266,12 @@ func (ac *AuthController) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	// Fetch settings to get company_type
+	var settings models.Settings
+	if err := ac.DB.First(&settings).Error; err != nil {
+		log.Printf("Warning: Failed to fetch settings during refresh: %v", err)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success":       true,
 		"access_token":  tokens.AccessToken,
@@ -265,6 +279,7 @@ func (ac *AuthController) RefreshToken(c *gin.Context) {
 		"refresh_token": tokens.RefreshToken,
 		"refreshToken":  tokens.RefreshToken, // Compatibility field
 		"user":          tokens.User,
+		"company_type":  settings.CompanyType,
 		"message":       "Token refreshed successfully",
 	})
 }
@@ -282,16 +297,23 @@ func (ac *AuthController) RefreshToken(c *gin.Context) {
 // @Router /profile [get]
 func (ac *AuthController) Profile(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	
+
 	var user models.User
 	if err := ac.DB.First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 
+	// Fetch settings to get company_type
+	var settings models.Settings
+	if err := ac.DB.First(&settings).Error; err != nil {
+		log.Printf("Warning: Failed to fetch settings during profile fetch: %v", err)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Profile retrieved successfully",
-		"data":    user,
+		"message":      "Profile retrieved successfully",
+		"data":         user,
+		"company_type": settings.CompanyType,
 	})
 }
 
@@ -317,7 +339,7 @@ func (ac *AuthController) ValidateToken(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Double-check that the user still exists and is active
 	var user models.User
 	if err := ac.DB.First(&user, userID).Error; err != nil {
@@ -328,7 +350,7 @@ func (ac *AuthController) ValidateToken(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Check if user is still active
 	if !user.IsActive {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -338,11 +360,18 @@ func (ac *AuthController) ValidateToken(c *gin.Context) {
 		})
 		return
 	}
-	
+
+	// Fetch settings to get company_type
+	var settings models.Settings
+	if err := ac.DB.First(&settings).Error; err != nil {
+		log.Printf("Warning: Failed to fetch settings during token validation: %v", err)
+	}
+
 	// Token is valid
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Token is valid",
-		"valid":   true,
+		"message":      "Token is valid",
+		"valid":        true,
+		"company_type": settings.CompanyType,
 		"user": gin.H{
 			"id":       user.ID,
 			"username": user.Username,
@@ -365,7 +394,7 @@ func (ac *AuthController) ValidateToken(c *gin.Context) {
 func (ac *AuthController) GetSessionInfo(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	sessionID, _ := c.Get("session_id")
-	
+
 	// Get session details
 	var session models.UserSession
 	if err := ac.DB.Where("session_id = ?", sessionID).First(&session).Error; err != nil {
@@ -375,7 +404,7 @@ func (ac *AuthController) GetSessionInfo(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Get user details
 	var user models.User
 	if err := ac.DB.First(&user, userID).Error; err != nil {
@@ -385,9 +414,14 @@ func (ac *AuthController) GetSessionInfo(c *gin.Context) {
 		})
 		return
 	}
-	
+
+	// Fetch settings
+	var settings models.Settings
+	ac.DB.First(&settings)
+
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
+		"success":      true,
+		"company_type": settings.CompanyType,
 		"session": gin.H{
 			"session_id":    session.SessionID,
 			"is_active":     session.IsActive,
@@ -398,10 +432,10 @@ func (ac *AuthController) GetSessionInfo(c *gin.Context) {
 			"device_info":   session.DeviceInfo,
 		},
 		"user": gin.H{
-			"id":       user.ID,
-			"username": user.Username,
-			"email":    user.Email,
-			"role":     user.Role,
+			"id":        user.ID,
+			"username":  user.Username,
+			"email":     user.Email,
+			"role":      user.Role,
 			"is_active": user.IsActive,
 		},
 		"timestamp": time.Now(),

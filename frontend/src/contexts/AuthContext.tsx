@@ -12,6 +12,7 @@ export interface User {
   name: string;
   role: UserRole;
   active: boolean;
+  company_type?: string;
 }
 
 // Define auth context type
@@ -44,7 +45,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const initializeAuth = async () => {
       setIsClient(true);
-      
+
       // Only access localStorage on client-side
       if (typeof window !== 'undefined') {
         try {
@@ -52,11 +53,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const storedRefreshToken = localStorage.getItem('refreshToken');
           const storedUser = localStorage.getItem('user');
           const lastLogoutTime = localStorage.getItem('lastLogoutTime');
-          
+
           // Check if user explicitly logged out recently (within last 5 minutes)
-          const isRecentLogout = lastLogoutTime && 
+          const isRecentLogout = lastLogoutTime &&
             (Date.now() - parseInt(lastLogoutTime)) < 5 * 60 * 1000; // 5 minutes
-          
+
           if (isRecentLogout) {
             console.log('Recent logout detected, clearing any remaining auth data');
             // Clear any remaining auth data from recent logout
@@ -67,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } else if (storedToken && storedUser) {
             // Validate token before auto-login
             const userData = JSON.parse(storedUser);
-            
+
             // Check if token is expired by parsing JWT
             let isTokenExpired = false;
             try {
@@ -84,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               console.log('Error parsing token, treating as expired');
               isTokenExpired = true;
             }
-            
+
             if (isTokenExpired) {
               localStorage.removeItem('token');
               localStorage.removeItem('refreshToken');
@@ -99,12 +100,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     'Content-Type': 'application/json',
                   },
                 });
-                
+
                 if (response.ok) {
+                  const validateData = await response.json();
+                  const validatedUser = {
+                    ...userData,
+                    company_type: validateData.company_type || userData.company_type
+                  };
+
                   setToken(storedToken);
                   setRefreshToken(storedRefreshToken);
-                  setUser(userData);
-                  console.log('Auth initialized from localStorage - token validated:', { user: userData, hasToken: !!storedToken });
+                  setUser(validatedUser);
+                  console.log('Auth initialized from localStorage - token validated:', { user: validatedUser, hasToken: !!storedToken });
                 } else if (response.status === 401 || response.status === 403) {
                   console.log('Stored token is invalid (401/403), clearing auth data');
                   localStorage.removeItem('token');
@@ -142,7 +149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.removeItem('lastLogoutTime');
         }
       }
-      
+
       setIsLoading(false);
     };
 
@@ -153,10 +160,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     try {
       setIsLoading(true);
-      
+
       const loginUrl = `${API_BASE_URL}${API_ENDPOINTS.LOGIN}`;
       console.log('Login URL:', loginUrl);
-      
+
       const response = await fetch(loginUrl, {
         method: 'POST',
         headers: {
@@ -190,23 +197,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Failed to parse login response as JSON:', jsonError);
         throw new Error('Invalid response from server');
       }
-      
+
       // Validate response structure
       if (!data || !data.user || !data.access_token && !data.token) {
         console.error('Invalid login response structure:', data);
         throw new Error('Invalid response from server');
       }
-      
+
       // Save auth data - ensure role is lowercase
-      const userData = {
+      const userData: User = {
         ...data.user,
-        role: data.user.role.toLowerCase() // Ensure role is lowercase
+        role: data.user.role.toLowerCase(), // Ensure role is lowercase
+        company_type: data.company_type
       };
-      
+
       setToken(data.access_token || data.token);
       setRefreshToken(data.refresh_token || data.refreshToken);
       setUser(userData);
-      
+
       // Store in localStorage (client-side only)
       if (typeof window !== 'undefined') {
         localStorage.setItem('token', data.access_token || data.token);
@@ -230,7 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, password: string) => {
     try {
       setIsLoading(true);
-      
+
       const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.REGISTER}`, {
         method: 'POST',
         headers: {
@@ -258,12 +266,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Failed to parse registration response as JSON:', jsonError);
         throw new Error('Invalid response from server');
       }
-      
+
       // Save auth data
       setToken(data.token);
       setRefreshToken(data.refreshToken);
       setUser(data.user);
-      
+
       // Store in localStorage (client-side only)
       if (typeof window !== 'undefined') {
         localStorage.setItem('token', data.token);
@@ -284,7 +292,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
     setRefreshToken(null);
     setUser(null);
-    
+
     // Clear localStorage (client-side only)
     if (typeof window !== 'undefined') {
       localStorage.removeItem('token');
@@ -293,7 +301,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Also clear any other auth-related items
       localStorage.removeItem('authData');
       localStorage.removeItem('userData');
-      
+
       // Set logout timestamp to prevent auto-login for a few minutes
       if (setLogoutTimestamp) {
         localStorage.setItem('lastLogoutTime', Date.now().toString());
@@ -302,7 +310,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-// Handle unauthorized access (e.g., invalid token)
+  // Handle unauthorized access (e.g., invalid token)
   const handleUnauthorized = () => {
     console.warn('Unauthorized access detected');
     // Don't auto-logout immediately, let components handle 401s gracefully
@@ -330,7 +338,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Check if user is authenticated
   const checkAuth = async (): Promise<boolean> => {
     if (!token) return false;
-    
+
     try {
       // Try to refresh the token if it's about to expire
       if (refreshToken) {
@@ -344,27 +352,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (response.ok) {
           const data = await response.json();
-          
+
           // Handle different possible response field names
           const accessToken = data.access_token || data.token;
           const newRefreshToken = data.refresh_token || data.refreshToken;
-          const userData = {
+          const userData: User = {
             ...data.user,
-            role: data.user.role.toLowerCase() // Ensure role is lowercase
+            role: data.user.role.toLowerCase(), // Ensure role is lowercase
+            company_type: data.company_type
           };
-          
+
           // Update auth data
           setToken(accessToken);
           setRefreshToken(newRefreshToken);
           setUser(userData);
-          
+
           // Update localStorage (client-side only)
           if (typeof window !== 'undefined') {
             localStorage.setItem('token', accessToken);
             localStorage.setItem('refreshToken', newRefreshToken);
             localStorage.setItem('user', JSON.stringify(userData));
           }
-          
+
           return true;
         } else {
           // If refresh fails, clear auth data
@@ -372,7 +381,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return false;
         }
       }
-      
+
       return !!token;
     } catch (error) {
       console.error('Token refresh error:', error);

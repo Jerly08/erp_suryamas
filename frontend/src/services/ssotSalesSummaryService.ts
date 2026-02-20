@@ -8,13 +8,25 @@ export interface SSOTSalesSummaryData {
   currency: string;
   total_revenue: number;
   total_sales: number;
+  total_transactions?: number;
+  total_tax?: number;
+  total_discount?: number;
   total_discounts: number;
   total_returns: number;
   net_revenue: number;
   sales_by_customer: CustomerSalesData[];
   sales_by_product: ProductSalesData[];
   sales_by_period: PeriodSalesData[];
+  items?: SalesSummaryItem[];
   generated_at: string;
+}
+
+export interface SalesSummaryItem {
+  date: string;
+  code: string;
+  customer_name: string;
+  total_amount: number;
+  status: string;
 }
 
 export interface CompanyInfo {

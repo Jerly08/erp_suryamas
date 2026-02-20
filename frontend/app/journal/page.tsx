@@ -19,6 +19,8 @@ import GeneralJournalView from '@/components/journal/GeneralJournalView';
 import GeneralLedgerView from '@/components/journal/GeneralLedgerView';
 import BalanceSheetView from '@/components/journal/BalanceSheetView';
 
+import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
+
 export default function JournalPage() {
     const { t } = useTranslation();
     const bg = useColorModeValue('white', 'gray.800');
@@ -28,30 +30,32 @@ export default function JournalPage() {
 
     return (
         <ProtectedModule module="journal">
-            <SimpleLayout>
-                <Box bg={bg} borderRadius="lg" p={4} shadow="sm">
-                    <Heading size="lg" mb={6}>{t('navigation.journal') || 'Jurnal'}</Heading>
-                    <Tabs variant="enclosed" colorScheme="blue" isLazy>
-                        <TabList>
-                            <Tab>{t('journal.generalJournal') || 'Jurnal Umum'}</Tab>
-                            <Tab>{t('journal.generalLedger') || 'Buku Besar'}</Tab>
-                            <Tab>{t('journal.balanceSheet') || 'Neraca'}</Tab>
-                        </TabList>
+            <CompanyTypeGuard>
+                <SimpleLayout>
+                    <Box bg={bg} borderRadius="lg" p={4} shadow="sm">
+                        <Heading size="lg" mb={6}>{t('navigation.journal') || 'Jurnal'}</Heading>
+                        <Tabs variant="enclosed" colorScheme="blue" isLazy>
+                            <TabList>
+                                <Tab>{t('journal.generalJournal') || 'Jurnal Umum'}</Tab>
+                                <Tab>{t('journal.generalLedger') || 'Buku Besar'}</Tab>
+                                <Tab>{t('journal.balanceSheet') || 'Neraca'}</Tab>
+                            </TabList>
 
-                        <TabPanels>
-                            <TabPanel px={0}>
-                                <GeneralJournalView />
-                            </TabPanel>
-                            <TabPanel px={0}>
-                                <GeneralLedgerView />
-                            </TabPanel>
-                            <TabPanel px={0}>
-                                <BalanceSheetView />
-                            </TabPanel>
-                        </TabPanels>
-                    </Tabs>
-                </Box>
-            </SimpleLayout>
+                            <TabPanels>
+                                <TabPanel px={0}>
+                                    <GeneralJournalView />
+                                </TabPanel>
+                                <TabPanel px={0}>
+                                    <GeneralLedgerView />
+                                </TabPanel>
+                                <TabPanel px={0}>
+                                    <BalanceSheetView />
+                                </TabPanel>
+                            </TabPanels>
+                        </Tabs>
+                    </Box>
+                </SimpleLayout>
+            </CompanyTypeGuard>
         </ProtectedModule>
     );
 }

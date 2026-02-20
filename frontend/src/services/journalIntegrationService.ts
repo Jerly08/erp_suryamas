@@ -69,7 +69,7 @@ class JournalIntegrationService {
 
   private buildQueryString(params: Record<string, any>): string {
     const searchParams = new URLSearchParams();
-    
+
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '' && value !== 'ALL') {
         searchParams.append(key, value.toString());
@@ -99,7 +99,7 @@ class JournalIntegrationService {
 
     const queryString = this.buildQueryString(queryParams);
     const url = `${API_V1_BASE}/journals${queryString ? '?' + queryString : ''}`;
-    
+
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });
@@ -109,10 +109,10 @@ class JournalIntegrationService {
     }
 
     const result = await response.json();
-    
+
     // Also fetch accounts for categorization
     const accounts = await this.getAccounts();
-    
+
     return {
       entries: result.data || [],
       accounts,
@@ -175,7 +175,7 @@ class JournalIntegrationService {
   // Convert journal entries to Balance Sheet format
   private convertJournalsToBalanceSheet(journalData: JournalBasedReportData, asOfDate?: string): any {
     const accountBalances = this.calculateAccountBalances(journalData.entries, journalData.accounts);
-    
+
     const assets = this.categorizeAccounts(accountBalances, ['1']); // 1xxx accounts
     const liabilities = this.categorizeAccounts(accountBalances, ['2']); // 2xxx accounts  
     const equity = this.categorizeAccounts(accountBalances, ['3']); // 3xxx accounts
@@ -190,7 +190,7 @@ class JournalIntegrationService {
           total: assets.reduce((sum, item) => sum + item.amount, 0)
         },
         {
-          name: 'LIABILITIES', 
+          name: 'LIABILITIES',
           items: liabilities,
           total: liabilities.reduce((sum, item) => sum + item.amount, 0)
         },
@@ -207,20 +207,20 @@ class JournalIntegrationService {
 
   // Convert journal entries to Cash Flow format
   private convertJournalsToCashFlow(journalData: JournalBasedReportData): any {
-    const cashAccounts = ['1101', '1102', '1103']; // Cash and bank accounts
-    
+    const cashAccounts = ['1101', '1101-001', '1101-002', '1101-003', '1101-004']; // Cash and bank accounts (all under 1101 KAS DAN SETARA KAS)
+
     const operatingActivities = this.categorizeCashFlowActivities(
-      journalData.entries, 
+      journalData.entries,
       ['SALE', 'PURCHASE', 'PAYMENT'], // Operating activities
       cashAccounts
     );
-    
+
     const investingActivities = this.categorizeCashFlowActivities(
       journalData.entries,
       ['ASSET_PURCHASE', 'ASSET_SALE'], // Investing activities 
       cashAccounts
     );
-    
+
     const financingActivities = this.categorizeCashFlowActivities(
       journalData.entries,
       ['LOAN', 'EQUITY', 'DIVIDEND'], // Financing activities
@@ -255,7 +255,7 @@ class JournalIntegrationService {
   // Convert journal entries to Trial Balance format
   private convertJournalsToTrialBalance(journalData: JournalBasedReportData, asOfDate?: string): any {
     const accountBalances = this.calculateAccountBalances(journalData.entries, journalData.accounts);
-    
+
     const accounts = accountBalances
       .filter(account => account.debit_balance !== 0 || account.credit_balance !== 0)
       .map(account => ({
@@ -367,7 +367,7 @@ class JournalIntegrationService {
     const totalDebit = entries.reduce((sum, entry) => sum + (entry.total_debit || 0), 0);
     const totalCredit = entries.reduce((sum, entry) => sum + (entry.total_credit || 0), 0);
     const balancedEntries = entries.filter(entry => entry.is_balanced).length;
-    
+
     return {
       total_debit: totalDebit,
       total_credit: totalCredit,
@@ -387,7 +387,7 @@ class JournalIntegrationService {
   }): Promise<any> {
     const queryString = this.buildQueryString(params);
     const url = `${API_V1_BASE}/reports/enhanced/journal/pl-line${queryString ? '?' + queryString : ''}`;
-    
+
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });

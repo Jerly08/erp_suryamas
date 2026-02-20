@@ -4,22 +4,24 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"app-sistem-akuntansi/models"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
 // SSOTReportIntegrationService integrates SSOT journal with all financial reports
 type SSOTReportIntegrationService struct {
-	db                   *gorm.DB
+	db                    *gorm.DB
 	unifiedJournalService *UnifiedJournalService
 	enhancedReportService *EnhancedReportService
-	mu                   sync.RWMutex
-	lastRefreshTime      time.Time
+	mu                    sync.RWMutex
+	lastRefreshTime       time.Time
 }
 
 // NewSSOTReportIntegrationService creates a new SSOT report integration service
@@ -29,16 +31,16 @@ func NewSSOTReportIntegrationService(
 	enhancedReportService *EnhancedReportService,
 ) *SSOTReportIntegrationService {
 	return &SSOTReportIntegrationService{
-		db:                   db,
+		db:                    db,
 		unifiedJournalService: unifiedJournalService,
 		enhancedReportService: enhancedReportService,
-		lastRefreshTime:      time.Now(),
+		lastRefreshTime:       time.Now(),
 	}
 }
 
 // ReportUpdateEvent represents real-time report updates via websocket
 type ReportUpdateEvent struct {
-	Type        string                 `json:"type"`        // PROFIT_LOSS, BALANCE_SHEET, CASH_FLOW, etc.
+	Type        string                 `json:"type"` // PROFIT_LOSS, BALANCE_SHEET, CASH_FLOW, etc.
 	ReportData  map[string]interface{} `json:"report_data"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 	TriggeredBy string                 `json:"triggered_by"` // JOURNAL_POSTED, TRANSACTION_CREATED, etc.
@@ -47,16 +49,16 @@ type ReportUpdateEvent struct {
 
 // IntegratedFinancialReports represents all reports integrated with SSOT journal
 type IntegratedFinancialReports struct {
-	ProfitLoss        *ProfitLossData        `json:"profit_loss"`
-	BalanceSheet      *BalanceSheetData      `json:"balance_sheet"`
-	CashFlow          *CashFlowData          `json:"cash_flow"`
-	SalesSummary      *SalesSummaryData      `json:"sales_summary"`
-	VendorAnalysis    *VendorAnalysisData    `json:"vendor_analysis"`
-	TrialBalance      *TrialBalanceData      `json:"trial_balance"`
-	GeneralLedger     *GeneralLedgerData     `json:"general_ledger"`
-	JournalAnalysis   *JournalAnalysisData   `json:"journal_analysis"`
-	GeneratedAt       time.Time              `json:"generated_at"`
-	DataSourceInfo    DataSourceInfo         `json:"data_source_info"`
+	ProfitLoss      *ProfitLossData      `json:"profit_loss"`
+	BalanceSheet    *BalanceSheetData    `json:"balance_sheet"`
+	CashFlow        *CashFlowData        `json:"cash_flow"`
+	SalesSummary    *SalesSummaryData    `json:"sales_summary"`
+	VendorAnalysis  *VendorAnalysisData  `json:"vendor_analysis"`
+	TrialBalance    *TrialBalanceData    `json:"trial_balance"`
+	GeneralLedger   *GeneralLedgerData   `json:"general_ledger"`
+	JournalAnalysis *JournalAnalysisData `json:"journal_analysis"`
+	GeneratedAt     time.Time            `json:"generated_at"`
+	DataSourceInfo  DataSourceInfo       `json:"data_source_info"`
 }
 
 // DataSourceInfo provides information about the SSOT integration
@@ -73,21 +75,21 @@ type DataSourceInfo struct {
 
 // JournalAnalysisData represents comprehensive journal entry analysis
 type JournalAnalysisData struct {
-	Company                 CompanyInfo            `json:"company"`
-	StartDate               time.Time              `json:"start_date"`
-	EndDate                 time.Time              `json:"end_date"`
-	Currency                string                 `json:"currency"`
-	TotalEntries            int64                  `json:"total_entries"`
-	PostedEntries           int64                  `json:"posted_entries"`
-	DraftEntries            int64                  `json:"draft_entries"`
-	ReversedEntries         int64                  `json:"reversed_entries"`
-	TotalAmount             decimal.Decimal        `json:"total_amount"`
-	EntriesByType           []EntryTypeBreakdown   `json:"entries_by_type"`
-	EntriesByAccount        []AccountBreakdown     `json:"entries_by_account"`
-	EntriesByPeriod         []PeriodBreakdown      `json:"entries_by_period"`
-	ComplianceCheck         ComplianceReport       `json:"compliance_check"`
-	DataQualityMetrics      DataQualityMetrics     `json:"data_quality_metrics"`
-	GeneratedAt             time.Time              `json:"generated_at"`
+	Company            CompanyInfo          `json:"company"`
+	StartDate          time.Time            `json:"start_date"`
+	EndDate            time.Time            `json:"end_date"`
+	Currency           string               `json:"currency"`
+	TotalEntries       int64                `json:"total_entries"`
+	PostedEntries      int64                `json:"posted_entries"`
+	DraftEntries       int64                `json:"draft_entries"`
+	ReversedEntries    int64                `json:"reversed_entries"`
+	TotalAmount        decimal.Decimal      `json:"total_amount"`
+	EntriesByType      []EntryTypeBreakdown `json:"entries_by_type"`
+	EntriesByAccount   []AccountBreakdown   `json:"entries_by_account"`
+	EntriesByPeriod    []PeriodBreakdown    `json:"entries_by_period"`
+	ComplianceCheck    ComplianceReport     `json:"compliance_check"`
+	DataQualityMetrics DataQualityMetrics   `json:"data_quality_metrics"`
+	GeneratedAt        time.Time            `json:"generated_at"`
 }
 
 // Supporting data structures
@@ -103,11 +105,11 @@ type VendorDetail struct {
 }
 
 type PaymentAnalysis struct {
-	OnTimePayments  int64           `json:"on_time_payments"`
-	LatePayments    int64           `json:"late_payments"`
-	AveragePayDays  float64         `json:"average_pay_days"`
-	TotalDiscounts  decimal.Decimal `json:"total_discounts"`
-	PenaltyFees     decimal.Decimal `json:"penalty_fees"`
+	OnTimePayments int64           `json:"on_time_payments"`
+	LatePayments   int64           `json:"late_payments"`
+	AveragePayDays float64         `json:"average_pay_days"`
+	TotalDiscounts decimal.Decimal `json:"total_discounts"`
+	PenaltyFees    decimal.Decimal `json:"penalty_fees"`
 }
 
 type AgingBucket struct {
@@ -121,31 +123,31 @@ type AgingBucket struct {
 // Using existing types from enhanced_report_service.go
 // SSOTTrialBalanceAccount extends TrialBalanceItem
 type SSOTTrialBalanceAccount struct {
-	AccountID       uint64          `json:"account_id"`
-	AccountCode     string          `json:"account_code"`
-	AccountName     string          `json:"account_name"`
-	AccountType     string          `json:"account_type"`
-	DebitBalance    decimal.Decimal `json:"debit_balance"`
-	CreditBalance   decimal.Decimal `json:"credit_balance"`
-	NormalBalance   string          `json:"normal_balance"`
-	SSOTBalance     decimal.Decimal `json:"ssot_balance"`
-	LastUpdated     time.Time       `json:"last_updated"`
+	AccountID     uint64          `json:"account_id"`
+	AccountCode   string          `json:"account_code"`
+	AccountName   string          `json:"account_name"`
+	AccountType   string          `json:"account_type"`
+	DebitBalance  decimal.Decimal `json:"debit_balance"`
+	CreditBalance decimal.Decimal `json:"credit_balance"`
+	NormalBalance string          `json:"normal_balance"`
+	SSOTBalance   decimal.Decimal `json:"ssot_balance"`
+	LastUpdated   time.Time       `json:"last_updated"`
 }
 
 // SSOTGeneralLedgerEntry extends GeneralLedgerEntry
 type SSOTGeneralLedgerEntry struct {
-	JournalID       uint64          `json:"journal_id"`
-	EntryNumber     string          `json:"entry_number"`
-	EntryDate       time.Time       `json:"entry_date"`
-	Description     string          `json:"description"`
-	Reference       string          `json:"reference"`
-	DebitAmount     decimal.Decimal `json:"debit_amount"`
-	CreditAmount    decimal.Decimal `json:"credit_amount"`
-	RunningBalance  decimal.Decimal `json:"running_balance"`
-	Status          string          `json:"status"`
-	SourceType      string          `json:"source_type"`
-	SSOTJournalID   uint64          `json:"ssot_journal_id"`
-	SSOTLineID      uint64          `json:"ssot_line_id"`
+	JournalID      uint64          `json:"journal_id"`
+	EntryNumber    string          `json:"entry_number"`
+	EntryDate      time.Time       `json:"entry_date"`
+	Description    string          `json:"description"`
+	Reference      string          `json:"reference"`
+	DebitAmount    decimal.Decimal `json:"debit_amount"`
+	CreditAmount   decimal.Decimal `json:"credit_amount"`
+	RunningBalance decimal.Decimal `json:"running_balance"`
+	Status         string          `json:"status"`
+	SourceType     string          `json:"source_type"`
+	SSOTJournalID  uint64          `json:"ssot_journal_id"`
+	SSOTLineID     uint64          `json:"ssot_line_id"`
 }
 
 type EntryTypeBreakdown struct {
@@ -173,12 +175,12 @@ type PeriodBreakdown struct {
 }
 
 type ComplianceReport struct {
-	TotalChecks       int                 `json:"total_checks"`
-	PassedChecks      int                 `json:"passed_checks"`
-	FailedChecks      int                 `json:"failed_checks"`
-	ComplianceScore   float64             `json:"compliance_score"`
-	Issues            []ComplianceIssue   `json:"issues"`
-	Recommendations   []string            `json:"recommendations"`
+	TotalChecks     int               `json:"total_checks"`
+	PassedChecks    int               `json:"passed_checks"`
+	FailedChecks    int               `json:"failed_checks"`
+	ComplianceScore float64           `json:"compliance_score"`
+	Issues          []ComplianceIssue `json:"issues"`
+	Recommendations []string          `json:"recommendations"`
 }
 
 type ComplianceIssue struct {
@@ -189,12 +191,12 @@ type ComplianceIssue struct {
 }
 
 type DataQualityMetrics struct {
-	OverallScore        float64                    `json:"overall_score"`
-	CompletenessScore   float64                    `json:"completeness_score"`
-	AccuracyScore       float64                    `json:"accuracy_score"`
-	ConsistencyScore    float64                    `json:"consistency_score"`
-	Issues              []DataQualityIssue         `json:"issues"`
-	DetailedMetrics     map[string]interface{}     `json:"detailed_metrics"`
+	OverallScore      float64                `json:"overall_score"`
+	CompletenessScore float64                `json:"completeness_score"`
+	AccuracyScore     float64                `json:"accuracy_score"`
+	ConsistencyScore  float64                `json:"consistency_score"`
+	Issues            []DataQualityIssue     `json:"issues"`
+	DetailedMetrics   map[string]interface{} `json:"detailed_metrics"`
 }
 
 type DataQualityIssue struct {
@@ -415,9 +417,9 @@ func (s *SSOTReportIntegrationService) OnTransactionCreated(transactionType stri
 
 func (s *SSOTReportIntegrationService) generateDataSourceInfo(ctx context.Context) (*DataSourceInfo, error) {
 	var stats struct {
-		TotalEntries int64 `json:"total_entries"`
+		TotalEntries  int64 `json:"total_entries"`
 		PostedEntries int64 `json:"posted_entries"`
-		DraftEntries int64 `json:"draft_entries"`
+		DraftEntries  int64 `json:"draft_entries"`
 	}
 
 	// Get journal statistics
@@ -483,7 +485,7 @@ func (s *SSOTReportIntegrationService) mapSourceTypeToFriendlyName(sourceType st
 // generateAccountBreakdown creates account-wise breakdown of journal entries
 func (s *SSOTReportIntegrationService) generateAccountBreakdown(ctx context.Context, startDate, endDate time.Time) []AccountBreakdown {
 	var accountBreakdown []AccountBreakdown
-	
+
 	query := `
 		SELECT 
 			a.id as account_id,
@@ -503,20 +505,20 @@ func (s *SSOTReportIntegrationService) generateAccountBreakdown(ctx context.Cont
 		ORDER BY total_debit + total_credit DESC
 		LIMIT 20
 	`
-	
+
 	s.db.WithContext(ctx).Raw(query, startDate, endDate, models.SSOTStatusPosted).Scan(&accountBreakdown)
-	
+
 	return accountBreakdown
 }
 
 // generatePeriodBreakdown creates period-wise breakdown of journal entries
 func (s *SSOTReportIntegrationService) generatePeriodBreakdown(ctx context.Context, startDate, endDate time.Time) []PeriodBreakdown {
 	var periodBreakdown []PeriodBreakdown
-	
+
 	// Determine period type based on date range
 	daysDiff := int(endDate.Sub(startDate).Hours() / 24)
 	var groupBy, dateFormat string
-	
+
 	if daysDiff <= 31 {
 		// Daily breakdown for month or less
 		groupBy = "DATE(entry_date)"
@@ -530,7 +532,7 @@ func (s *SSOTReportIntegrationService) generatePeriodBreakdown(ctx context.Conte
 		groupBy = "DATE_TRUNC('month', entry_date)"
 		dateFormat = "2006-01"
 	}
-	
+
 	query := fmt.Sprintf(`
 		SELECT 
 			%s as period,
@@ -543,7 +545,7 @@ func (s *SSOTReportIntegrationService) generatePeriodBreakdown(ctx context.Conte
 		GROUP BY %s
 		ORDER BY %s
 	`, groupBy, groupBy, groupBy, groupBy, groupBy)
-	
+
 	type periodResult struct {
 		Period      time.Time       `json:"period"`
 		StartDate   time.Time       `json:"start_date"`
@@ -551,10 +553,10 @@ func (s *SSOTReportIntegrationService) generatePeriodBreakdown(ctx context.Conte
 		Count       int64           `json:"count"`
 		TotalAmount decimal.Decimal `json:"total_amount"`
 	}
-	
+
 	var results []periodResult
 	s.db.WithContext(ctx).Raw(query, startDate, endDate, models.SSOTStatusPosted).Scan(&results)
-	
+
 	for _, result := range results {
 		periodBreakdown = append(periodBreakdown, PeriodBreakdown{
 			Period:      result.Period.Format(dateFormat),
@@ -564,25 +566,25 @@ func (s *SSOTReportIntegrationService) generatePeriodBreakdown(ctx context.Conte
 			TotalAmount: result.TotalAmount,
 		})
 	}
-	
+
 	return periodBreakdown
 }
 
 // generateComplianceCheck creates basic compliance reporting
 func (s *SSOTReportIntegrationService) generateComplianceCheck(ctx context.Context, startDate, endDate time.Time) ComplianceReport {
 	var totalEntries, balancedEntries, unbalancedEntries int64
-	
+
 	// Check for balanced entries
 	s.db.WithContext(ctx).Model(&models.SSOTJournalEntry{}).
 		Where("entry_date >= ? AND entry_date <= ? AND status = ?", startDate, endDate, models.SSOTStatusPosted).
 		Count(&totalEntries)
-	
+
 	s.db.WithContext(ctx).Model(&models.SSOTJournalEntry{}).
 		Where("entry_date >= ? AND entry_date <= ? AND status = ? AND is_balanced = ?", startDate, endDate, models.SSOTStatusPosted, true).
 		Count(&balancedEntries)
-	
+
 	unbalancedEntries = totalEntries - balancedEntries
-	
+
 	var issues []ComplianceIssue
 	if unbalancedEntries > 0 {
 		issues = append(issues, ComplianceIssue{
@@ -591,15 +593,15 @@ func (s *SSOTReportIntegrationService) generateComplianceCheck(ctx context.Conte
 			Severity:    "HIGH",
 		})
 	}
-	
+
 	passedChecks := 1
 	totalChecks := 1
 	if unbalancedEntries > 0 {
 		passedChecks = 0
 	}
-	
+
 	complianceScore := float64(passedChecks) / float64(totalChecks) * 100
-	
+
 	return ComplianceReport{
 		TotalChecks:     totalChecks,
 		PassedChecks:    passedChecks,
@@ -613,32 +615,32 @@ func (s *SSOTReportIntegrationService) generateComplianceCheck(ctx context.Conte
 // generateDataQualityMetrics creates data quality assessment
 func (s *SSOTReportIntegrationService) generateDataQualityMetrics(ctx context.Context, startDate, endDate time.Time) DataQualityMetrics {
 	var totalEntries, entriesWithDescription, entriesWithReference int64
-	
+
 	// Get total entries
 	s.db.WithContext(ctx).Model(&models.SSOTJournalEntry{}).
 		Where("entry_date >= ? AND entry_date <= ? AND status = ?", startDate, endDate, models.SSOTStatusPosted).
 		Count(&totalEntries)
-	
+
 	// Check entries with descriptions
 	s.db.WithContext(ctx).Model(&models.SSOTJournalEntry{}).
 		Where("entry_date >= ? AND entry_date <= ? AND status = ? AND description != '' AND description IS NOT NULL", startDate, endDate, models.SSOTStatusPosted).
 		Count(&entriesWithDescription)
-	
+
 	// Check entries with references
 	s.db.WithContext(ctx).Model(&models.SSOTJournalEntry{}).
 		Where("entry_date >= ? AND entry_date <= ? AND status = ? AND reference != '' AND reference IS NOT NULL", startDate, endDate, models.SSOTStatusPosted).
 		Count(&entriesWithReference)
-	
+
 	var issues []DataQualityIssue
 	completenessScore := 100.0
 	accuracyScore := 100.0
 	consistencyScore := 100.0
-	
+
 	if totalEntries > 0 {
 		descriptionCompleteness := float64(entriesWithDescription) / float64(totalEntries) * 100
 		referenceCompleteness := float64(entriesWithReference) / float64(totalEntries) * 100
 		completenessScore = (descriptionCompleteness + referenceCompleteness) / 2
-		
+
 		if descriptionCompleteness < 80 {
 			issues = append(issues, DataQualityIssue{
 				Type:        "MISSING_DESCRIPTION",
@@ -647,7 +649,7 @@ func (s *SSOTReportIntegrationService) generateDataQualityMetrics(ctx context.Co
 				Count:       totalEntries - entriesWithDescription,
 			})
 		}
-		
+
 		if referenceCompleteness < 60 {
 			issues = append(issues, DataQualityIssue{
 				Type:        "MISSING_REFERENCE",
@@ -657,9 +659,9 @@ func (s *SSOTReportIntegrationService) generateDataQualityMetrics(ctx context.Co
 			})
 		}
 	}
-	
+
 	overallScore := (completenessScore + accuracyScore + consistencyScore) / 3
-	
+
 	return DataQualityMetrics{
 		OverallScore:      overallScore,
 		CompletenessScore: completenessScore,
@@ -667,7 +669,7 @@ func (s *SSOTReportIntegrationService) generateDataQualityMetrics(ctx context.Co
 		ConsistencyScore:  consistencyScore,
 		Issues:            issues,
 		DetailedMetrics: map[string]interface{}{
-			"total_entries":           totalEntries,
+			"total_entries":            totalEntries,
 			"entries_with_description": entriesWithDescription,
 			"entries_with_reference":   entriesWithReference,
 			"description_completeness": float64(entriesWithDescription) / float64(totalEntries) * 100,
@@ -721,15 +723,15 @@ func (s *SSOTReportIntegrationService) getCurrencyFromSettings() string {
 // Implementation of report generation methods
 func (s *SSOTReportIntegrationService) generateVendorAnalysis(ctx context.Context, startDate, endDate time.Time) (*VendorAnalysisData, error) {
 	var result VendorAnalysisData
-result.Company = s.getCompanyInfo()
-result.StartDate = startDate
-result.EndDate = endDate
-result.Currency = s.getCurrencyFromSettings()
-result.GeneratedAt = time.Now()
+	result.Company = s.getCompanyInfo()
+	result.StartDate = startDate
+	result.EndDate = endDate
+	result.Currency = s.getCurrencyFromSettings()
+	result.GeneratedAt = time.Now()
 
 	// Get vendor analysis from SSOT journal data
 	vendorStats := make(map[uint64]*VendorDetail)
-	
+
 	// Query vendor transactions from SSOT journal entries with account information
 	type VendorJournalLine struct {
 		JournalID    uint64
@@ -779,12 +781,12 @@ result.GeneratedAt = time.Now()
 			vendorID := *line.SourceID
 			if _, exists := vendorStats[vendorID]; !exists {
 				vendorStats[vendorID] = &VendorDetail{
-					VendorID:   vendorID,
-					VendorName: line.Description,
+					VendorID:            vendorID,
+					VendorName:          line.Description,
 					LastTransactionDate: line.EntryDate,
 				}
 			}
-			
+
 			vendor := vendorStats[vendorID]
 			// For accounts payable: Credit increases payable (purchases), Debit decreases payable (payments)
 			if line.CreditAmount.GreaterThan(decimal.Zero) {
@@ -792,7 +794,7 @@ result.GeneratedAt = time.Now()
 			} else if line.DebitAmount.GreaterThan(decimal.Zero) {
 				vendor.TotalPayments = vendor.TotalPayments.Add(line.DebitAmount)
 			}
-			
+
 			// Update last transaction date
 			if line.EntryDate.After(vendor.LastTransactionDate) {
 				vendor.LastTransactionDate = line.EntryDate
@@ -803,7 +805,7 @@ result.GeneratedAt = time.Now()
 	// Calculate totals and convert to slice
 	var vendors []VendorDetail
 	var totalPurchases, totalPayments decimal.Decimal
-	
+
 	for _, vendor := range vendorStats {
 		vendor.Outstanding = vendor.TotalPurchases.Sub(vendor.TotalPayments)
 		vendors = append(vendors, *vendor)
@@ -823,16 +825,16 @@ result.GeneratedAt = time.Now()
 		purchases, _ := vendor.TotalPurchases.Float64()
 		payments, _ := vendor.TotalPayments.Float64()
 		outstanding, _ := vendor.Outstanding.Float64()
-		
+
 		perfData := VendorPerformanceData{
-			VendorID:          uint(vendor.VendorID),
-			VendorName:        vendor.VendorName,
-			TotalPurchases:    purchases,
-			TotalPayments:     payments,
-			Outstanding:       outstanding,
-			AveragePaymentDays: 30.0, // Default value
-			PaymentScore:      85.0, // Default score
-			Rating:           "Good", // Default rating
+			VendorID:           uint(vendor.VendorID),
+			VendorName:         vendor.VendorName,
+			TotalPurchases:     purchases,
+			TotalPayments:      payments,
+			Outstanding:        outstanding,
+			AveragePaymentDays: 30.0,   // Default value
+			PaymentScore:       85.0,   // Default score
+			Rating:             "Good", // Default rating
 		}
 		result.VendorsByPerformance = append(result.VendorsByPerformance, perfData)
 	}
@@ -871,6 +873,10 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 				WHEN a.code LIKE '3%' THEN 'Equity'
 				WHEN a.code LIKE '4%' THEN 'Revenue'
 				WHEN a.code LIKE '5%' THEN 'Expense'
+				WHEN a.code LIKE '6%' THEN 'Expense'
+				WHEN a.code LIKE '7%' THEN 'Revenue'
+				WHEN a.code LIKE '8%' THEN 'Expense'
+				WHEN a.code LIKE '9%' THEN 'Expense'
 				ELSE 'Other'
 			END as account_type,
 			COALESCE(SUM(sjl.debit_amount), 0) as total_debit,
@@ -903,10 +909,10 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 			DebitBalance:  bal.TotalDebit.InexactFloat64(),
 			CreditBalance: bal.TotalCredit.InexactFloat64(),
 		}
-		
+
 		// Calculate net balance based on account type
 		netBalance := bal.TotalDebit.Sub(bal.TotalCredit)
-		
+
 		// For display purposes, show balance in normal side
 		switch bal.AccountType {
 		case "Asset", "Expense":
@@ -929,7 +935,7 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 				item.DebitBalance = netBalance.Abs().InexactFloat64()
 			}
 		}
-		
+
 		totalDebits = totalDebits.Add(bal.TotalDebit)
 		totalCredits = totalCredits.Add(bal.TotalCredit)
 		accounts = append(accounts, item)
@@ -946,17 +952,17 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 
 func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context, startDate, endDate time.Time, accountID *uint64) (*GeneralLedgerData, error) {
 	result := &GeneralLedgerData{
-		Company:           s.getCompanyInfo(),
-		StartDate:         startDate,
-		EndDate:           endDate,
-		Currency:          "IDR",
-		OpeningBalance:    0.0,
-		ClosingBalance:    0.0,
-		TotalDebits:       0.0,
-		TotalCredits:      0.0,
-		Transactions:      []GeneralLedgerEntry{},
-		MonthlySummary:    []MonthlyLedgerSummary{},
-		GeneratedAt:       time.Now(),
+		Company:        s.getCompanyInfo(),
+		StartDate:      startDate,
+		EndDate:        endDate,
+		Currency:       "IDR",
+		OpeningBalance: 0.0,
+		ClosingBalance: 0.0,
+		TotalDebits:    0.0,
+		TotalCredits:   0.0,
+		Transactions:   []GeneralLedgerEntry{},
+		MonthlySummary: []MonthlyLedgerSummary{},
+		GeneratedAt:    time.Now(),
 	}
 
 	// Build query for general ledger
@@ -977,8 +983,10 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 
 	var query string
 	var args []interface{}
-	
+
 	if accountID != nil {
+		// Query ALL lines from journals that have entries for the selected account
+		// This ensures complete journal entries (debit AND credit pairs) are shown
 		query = `
 			SELECT 
 				sje.id as journal_id,
@@ -998,8 +1006,12 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			LEFT JOIN accounts a ON a.id = sjl.account_id
 			WHERE sje.status = ? 
 				AND sje.entry_date BETWEEN ? AND ?
-				AND sjl.account_id = ?
 				AND UPPER(sje.source_type) != 'CLOSING'
+				AND sje.id IN (
+					SELECT DISTINCT sjl2.journal_id 
+					FROM unified_journal_lines sjl2 
+					WHERE sjl2.account_id = ?
+				)
 			ORDER BY sje.entry_date, sje.id, sjl.line_number
 		`
 		args = []interface{}{models.SSOTStatusPosted, startDate, endDate, *accountID}
@@ -1028,13 +1040,13 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 		`
 		args = []interface{}{models.SSOTStatusPosted, startDate, endDate}
 	}
-	
+
 	var rows []ledgerRow
 	err := s.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query general ledger: %w", err)
 	}
-	
+
 	// DEBUG LOGGING
 	log.Printf("[DEBUG GL] Query executed - Rows returned: %d", len(rows))
 	log.Printf("[DEBUG GL] Date range: %s to %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
@@ -1051,7 +1063,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	// Group by account for organized display
 	accountEntries := make(map[uint64][]GeneralLedgerEntry)
 	accountInfo := make(map[uint64]struct{ Code, Name string })
-	
+
 	for _, row := range rows {
 		entry := GeneralLedgerEntry{
 			JournalID:    row.JournalID,
@@ -1063,7 +1075,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			CreditAmount: row.CreditAmount.InexactFloat64(),
 			EntryType:    row.SourceType,
 		}
-		
+
 		accountEntries[row.AccountID] = append(accountEntries[row.AccountID], entry)
 		accountInfo[row.AccountID] = struct{ Code, Name string }{
 			Code: row.AccountCode,
@@ -1075,7 +1087,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	var openingBalance decimal.Decimal
 	var openingQuery string
 	var openingArgs []interface{}
-	
+
 	if accountID != nil {
 		// Opening balance for specific account
 		openingQuery = `
@@ -1100,7 +1112,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 		`
 		openingArgs = []interface{}{models.SSOTStatusPosted, startDate}
 	}
-	
+
 	var openingBalanceFloat float64
 	if err := s.db.WithContext(ctx).Raw(openingQuery, openingArgs...).Scan(&openingBalanceFloat).Error; err != nil {
 		log.Printf("[DEBUG GL] Warning: Failed to calculate opening balance: %v", err)
@@ -1109,12 +1121,12 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 		openingBalance = decimal.NewFromFloat(openingBalanceFloat)
 		log.Printf("[DEBUG GL] Opening balance calculated: %s", openingBalance.String())
 	}
-	
+
 	// Calculate running balances, organize entries, and compute totals
 	var totalDebits, totalCredits decimal.Decimal
-	accountBalances := make(map[uint64]decimal.Decimal) // Track final balance per account
+	accountBalances := make(map[uint64]decimal.Decimal)        // Track final balance per account
 	accountOpeningBalances := make(map[uint64]decimal.Decimal) // Track opening balance per account
-	
+
 	// Calculate opening balance for each account if showing all accounts
 	if accountID == nil {
 		for accID := range accountEntries {
@@ -1135,41 +1147,62 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			}
 		}
 	}
-	
+
 	for accID, entries := range accountEntries {
 		info := accountInfo[accID]
 		runningBalance := accountOpeningBalances[accID] // Start with opening balance for this account
-		
+
 		for i, entry := range entries {
 			// Add to overall totals
 			totalDebits = totalDebits.Add(decimal.NewFromFloat(entry.DebitAmount))
 			totalCredits = totalCredits.Add(decimal.NewFromFloat(entry.CreditAmount))
-			
+
 			// Calculate running balance for this entry
 			runningBalance = runningBalance.Add(decimal.NewFromFloat(entry.DebitAmount)).Sub(decimal.NewFromFloat(entry.CreditAmount))
 			entries[i].Balance = runningBalance.InexactFloat64()
 		}
-		
+
 		// Store final balance for this account
 		accountBalances[accID] = runningBalance
-		
+
 		// Add account header info to description if needed
 		if len(entries) > 0 {
 			accountHeader := fmt.Sprintf("Account: %s - %s", info.Code, info.Name)
 			entries[0].Description = accountHeader + " | " + entries[0].Description
 		}
-		
+
 		result.Transactions = append(result.Transactions, entries...)
 	}
-	
+
+	// Sort transactions by date, then by journal_id to ensure same journal entries are grouped together
+	sort.Slice(result.Transactions, func(i, j int) bool {
+		// First, sort by date
+		if !result.Transactions[i].Date.Equal(result.Transactions[j].Date) {
+			return result.Transactions[i].Date.Before(result.Transactions[j].Date)
+		}
+		// Then by journal_id to group same journal entries together
+		if result.Transactions[i].JournalID != result.Transactions[j].JournalID {
+			return result.Transactions[i].JournalID < result.Transactions[j].JournalID
+		}
+		// Finally by debit (debit first, then credit) for proper journal display
+		return result.Transactions[i].DebitAmount > result.Transactions[j].DebitAmount
+	})
+
+	// Recalculate running balance after sorting
+	runningBalance := openingBalance
+	for i := range result.Transactions {
+		runningBalance = runningBalance.Add(decimal.NewFromFloat(result.Transactions[i].DebitAmount)).Sub(decimal.NewFromFloat(result.Transactions[i].CreditAmount))
+		result.Transactions[i].Balance = runningBalance.InexactFloat64()
+	}
+
 	// Calculate enhanced UI metrics
 	var totalAccountBalances decimal.Decimal
 	var cashAccountBalance decimal.Decimal
-	
+
 	// Sum all account balances and calculate cash impact
 	for accID, balance := range accountBalances {
 		totalAccountBalances = totalAccountBalances.Add(balance)
-		
+
 		// Calculate cash impact (accounts starting with 11xx are typically cash accounts)
 		if info, exists := accountInfo[accID]; exists {
 			if strings.HasPrefix(info.Code, "11") { // Cash and cash equivalents
@@ -1177,14 +1210,14 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			}
 		}
 	}
-	
+
 	// Calculate proper balances
 	netChange := totalDebits.Sub(totalCredits)
 	closingBalance := openingBalance.Add(netChange)
 	totalTransactionVolume := totalDebits.InexactFloat64() // Total transaction activity
 	cashImpact := cashAccountBalance.InexactFloat64()
 	isBalanced := totalDebits.Equal(totalCredits)
-	
+
 	// Determine status messages
 	var netPositionStatus string
 	if netChange.IsZero() {
@@ -1194,7 +1227,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	} else {
 		netPositionStatus = "Net Credit Position"
 	}
-	
+
 	var cashImpactStatus string
 	if cashImpact > 0 {
 		cashImpactStatus = "Cash Increased"
@@ -1203,7 +1236,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	} else {
 		cashImpactStatus = "No Cash Impact"
 	}
-	
+
 	// Update result with calculated totals and enhanced UI fields
 	result.TotalDebits = totalDebits.InexactFloat64()
 	result.TotalCredits = totalCredits.InexactFloat64()
@@ -1215,7 +1248,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	result.CashImpact = cashImpact
 	result.CashImpactStatus = cashImpactStatus
 	result.IsBalanced = isBalanced
-	
+
 	log.Printf("[DEBUG GL] Calculated balances - Opening: %s, Debits: %s, Credits: %s, Net: %s, Closing: %s",
 		openingBalance.String(), totalDebits.String(), totalCredits.String(), netChange.String(), closingBalance.String())
 
@@ -1251,7 +1284,7 @@ func (s *SSOTReportIntegrationService) generateJournalAnalysis(ctx context.Conte
 		Count       int64           `json:"count"`
 		TotalAmount decimal.Decimal `json:"total_amount"`
 	}
-	
+
 	s.db.WithContext(ctx).Model(&models.SSOTJournalEntry{}).
 		Select("source_type, COUNT(*) as count, COALESCE(SUM(total_debit), 0) as total_amount").
 		Where("entry_date >= ? AND entry_date <= ? AND status = ?", startDate, endDate, models.SSOTStatusPosted).
@@ -1266,7 +1299,7 @@ func (s *SSOTReportIntegrationService) generateJournalAnalysis(ctx context.Conte
 		if stats.TotalAmount.GreaterThan(decimal.Zero) {
 			percentage = entry.TotalAmount.Div(stats.TotalAmount).Mul(decimal.NewFromInt(100)).InexactFloat64()
 		}
-		
+
 		entriesByType = append(entriesByType, EntryTypeBreakdown{
 			SourceType:  friendlyType,
 			Count:       entry.Count,
@@ -1277,10 +1310,10 @@ func (s *SSOTReportIntegrationService) generateJournalAnalysis(ctx context.Conte
 
 	// Get entries by account (implement the missing feature)
 	entriesByAccount := s.generateAccountBreakdown(ctx, startDate, endDate)
-	
+
 	// Get entries by period (implement the missing feature)
 	entriesByPeriod := s.generatePeriodBreakdown(ctx, startDate, endDate)
-	
+
 	// Generate compliance and quality checks
 	complianceCheck := s.generateComplianceCheck(ctx, startDate, endDate)
 	dataQualityMetrics := s.generateDataQualityMetrics(ctx, startDate, endDate)

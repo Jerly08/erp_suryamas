@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
-	
-	"github.com/gin-gonic/gin"
+
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type SettingsController struct {
@@ -30,18 +31,53 @@ func (sc *SettingsController) GetSettings(c *gin.Context) {
 	settings, err := sc.settingsService.GetSettings()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve settings",
+			"error":   "Failed to retrieve settings",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Convert to response format (without sensitive data)
 	response := settings.ToResponse()
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": response,
+		"data":    response,
+	})
+}
+
+// GetPublicSettings handles GET /api/v1/settings/public
+// Returns only non-sensitive settings accessible to all authenticated users
+func (sc *SettingsController) GetPublicSettings(c *gin.Context) {
+	settings, err := sc.settingsService.GetSettings()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to retrieve settings",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Return only public, non-sensitive fields
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"company_name":       settings.CompanyName,
+			"company_address":    settings.CompanyAddress,
+			"company_phone":      settings.CompanyPhone,
+			"company_email":      settings.CompanyEmail,
+			"company_logo":       settings.CompanyLogo,
+			"company_type":       settings.CompanyType,
+			"currency":           settings.Currency,
+			"date_format":        settings.DateFormat,
+			"fiscal_year_start":  settings.FiscalYearStart,
+			"default_tax_rate":   settings.DefaultTaxRate,
+			"language":           settings.Language,
+			"timezone":           settings.Timezone,
+			"thousand_separator": settings.ThousandSeparator,
+			"decimal_separator":  settings.DecimalSeparator,
+			"decimal_places":     settings.DecimalPlaces,
+		},
 	})
 }
 
@@ -55,7 +91,7 @@ func (sc *SettingsController) UpdateSettings(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Check if user has admin role
 	userRole, _ := c.Get("role")
 	if userRole != "admin" {
@@ -64,23 +100,23 @@ func (sc *SettingsController) UpdateSettings(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Parse request body
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
+			"error":   "Invalid request format",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Remove any sensitive fields that shouldn't be updated directly
 	delete(updates, "id")
 	delete(updates, "created_at")
 	delete(updates, "updated_at")
 	delete(updates, "deleted_at")
-	
+
 	// Convert userID to uint
 	uid, ok := userID.(uint)
 	if !ok {
@@ -94,30 +130,30 @@ func (sc *SettingsController) UpdateSettings(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Update settings through service
 	if err := sc.settingsService.UpdateSettings(updates, uid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to update settings",
+			"error":   "Failed to update settings",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Get updated settings
 	settings, err := sc.settingsService.GetSettings()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve updated settings",
+			"error":   "Failed to retrieve updated settings",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Settings updated successfully",
-		"data": settings.ToResponse(),
+		"data":    settings.ToResponse(),
 	})
 }
 
@@ -131,7 +167,7 @@ func (sc *SettingsController) UpdateCompanyInfo(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Check if user has admin role
 	userRole, _ := c.Get("role")
 	if userRole != "admin" {
@@ -140,7 +176,7 @@ func (sc *SettingsController) UpdateCompanyInfo(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Parse request body
 	var companyInfo struct {
 		CompanyName    string `json:"company_name"`
@@ -150,15 +186,15 @@ func (sc *SettingsController) UpdateCompanyInfo(c *gin.Context) {
 		CompanyWebsite string `json:"company_website"`
 		TaxNumber      string `json:"tax_number"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&companyInfo); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
+			"error":   "Invalid request format",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Convert to map for update
 	updates := map[string]interface{}{
 		"company_name":    companyInfo.CompanyName,
@@ -168,14 +204,14 @@ func (sc *SettingsController) UpdateCompanyInfo(c *gin.Context) {
 		"company_website": companyInfo.CompanyWebsite,
 		"tax_number":      companyInfo.TaxNumber,
 	}
-	
+
 	// Remove empty values
 	for key, value := range updates {
 		if str, ok := value.(string); ok && str == "" {
 			delete(updates, key)
 		}
 	}
-	
+
 	// Convert userID to uint
 	uid, ok := userID.(uint)
 	if !ok {
@@ -188,16 +224,16 @@ func (sc *SettingsController) UpdateCompanyInfo(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Update settings
 	if err := sc.settingsService.UpdateSettings(updates, uid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to update company information",
+			"error":   "Failed to update company information",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Company information updated successfully",
@@ -214,7 +250,7 @@ func (sc *SettingsController) UpdateSystemConfig(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Check if user has admin role
 	userRole, _ := c.Get("role")
 	if userRole != "admin" {
@@ -223,7 +259,7 @@ func (sc *SettingsController) UpdateSystemConfig(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Parse request body
 	var systemConfig struct {
 		Currency          string  `json:"currency"`
@@ -236,18 +272,18 @@ func (sc *SettingsController) UpdateSystemConfig(c *gin.Context) {
 		DecimalSeparator  string  `json:"decimal_separator"`
 		DecimalPlaces     int     `json:"decimal_places"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&systemConfig); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
+			"error":   "Invalid request format",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Convert to map for update
 	updates := make(map[string]interface{})
-	
+
 	if systemConfig.Currency != "" {
 		updates["currency"] = systemConfig.Currency
 	}
@@ -275,7 +311,7 @@ func (sc *SettingsController) UpdateSystemConfig(c *gin.Context) {
 	if systemConfig.DecimalPlaces >= 0 {
 		updates["decimal_places"] = systemConfig.DecimalPlaces
 	}
-	
+
 	// Convert userID to uint
 	uid, ok := userID.(uint)
 	if !ok {
@@ -288,16 +324,16 @@ func (sc *SettingsController) UpdateSystemConfig(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Update settings
 	if err := sc.settingsService.UpdateSettings(updates, uid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to update system configuration",
+			"error":   "Failed to update system configuration",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "System configuration updated successfully",
@@ -314,7 +350,7 @@ func (sc *SettingsController) InitializeCOA(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Check if user has admin role
 	userRole, _ := c.Get("role")
 	if userRole != "admin" {
@@ -323,30 +359,30 @@ func (sc *SettingsController) InitializeCOA(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Parse request body
 	var request struct {
 		CompanyType string `json:"company_type" binding:"required"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request format",
+			"error":   "Invalid request format",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Validate type
-	if request.CompanyType != models.CompanyTypeService && 
-	   request.CompanyType != models.CompanyTypeTrading && 
-	   request.CompanyType != models.CompanyTypeManufacturing {
+	if request.CompanyType != models.CompanyTypeService &&
+		request.CompanyType != models.CompanyTypeTrading &&
+		request.CompanyType != models.CompanyTypeManufacturing {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Invalid company type. Must be SERVICE, TRADING, or MANUFACTURING.",
 		})
 		return
 	}
-	
+
 	// Convert userID to uint
 	uid, ok := userID.(uint)
 	if !ok {
@@ -359,22 +395,21 @@ func (sc *SettingsController) InitializeCOA(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Initialize COA
 	if err := sc.settingsService.InitializeCOA(request.CompanyType, uid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to initialize COA",
+			"error":   "Failed to initialize COA",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Chart of Accounts initialized successfully",
 	})
 }
-
 
 // ResetToDefaults handles POST /api/v1/settings/reset
 func (sc *SettingsController) ResetToDefaults(c *gin.Context) {
@@ -386,7 +421,7 @@ func (sc *SettingsController) ResetToDefaults(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Check if user has admin role
 	userRole, _ := c.Get("role")
 	if userRole != "admin" {
@@ -395,7 +430,7 @@ func (sc *SettingsController) ResetToDefaults(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Convert userID to uint
 	uid, ok := userID.(uint)
 	if !ok {
@@ -408,40 +443,40 @@ func (sc *SettingsController) ResetToDefaults(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	// Reset settings to defaults
 	if err := sc.settingsService.ResetToDefaults(uid); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to reset settings to defaults",
+			"error":   "Failed to reset settings to defaults",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Get updated settings
 	settings, err := sc.settingsService.GetSettings()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve updated settings",
+			"error":   "Failed to retrieve updated settings",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Settings reset to defaults successfully",
-		"data": settings.ToResponse(),
+		"data":    settings.ToResponse(),
 	})
 }
 
 // GetValidationRules handles GET /api/v1/settings/validation-rules
 func (sc *SettingsController) GetValidationRules(c *gin.Context) {
 	rules := sc.settingsService.GetValidationRules()
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": rules,
+		"data":    rules,
 	})
 }
 
@@ -455,7 +490,7 @@ func (sc *SettingsController) GetSettingsHistory(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Parse query parameters
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
@@ -464,7 +499,7 @@ func (sc *SettingsController) GetSettingsHistory(c *gin.Context) {
 	changedBy := c.Query("changed_by")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
-	
+
 	filter := models.SettingsHistoryFilter{
 		Field:     field,
 		Action:    action,
@@ -474,19 +509,19 @@ func (sc *SettingsController) GetSettingsHistory(c *gin.Context) {
 		Page:      page,
 		Limit:     limit,
 	}
-	
+
 	result, err := sc.settingsService.GetSettingsHistory(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve settings history",
+			"error":   "Failed to retrieve settings history",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data": result,
+		"data":    result,
 	})
 }
 

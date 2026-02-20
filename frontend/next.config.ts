@@ -20,7 +20,7 @@ const nextConfig: NextConfig = {
 					fs: false,
 					path: false,
 				};
-				
+
 				// Handle jsPDF ES modules
 				config.module.rules.push({
 					test: /\.m?js$/,
@@ -39,6 +39,11 @@ const nextConfig: NextConfig = {
 			{
 				source: '/api/:path*',
 				destination: `${apiBaseUrl}/api/:path*`,
+			},
+			{
+				// Proxy /uploads/ to backend so static files (logos, etc.) are accessible
+				source: '/uploads/:path*',
+				destination: `${apiBaseUrl}/uploads/:path*`,
 			},
 		];
 	},

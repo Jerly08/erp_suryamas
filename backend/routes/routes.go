@@ -1,18 +1,19 @@
 package routes
 
 import (
+	"app-sistem-akuntansi/config"
+	"app-sistem-akuntansi/controllers"
+	"app-sistem-akuntansi/handlers"
+	"app-sistem-akuntansi/middleware"
+	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/services"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"app-sistem-akuntansi/config"
-	"app-sistem-akuntansi/controllers"
-	"app-sistem-akuntansi/handlers"
-	"app-sistem-akuntansi/repositories"
-	"app-sistem-akuntansi/services"
-	"app-sistem-akuntansi/middleware"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -165,50 +166,50 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	assetController := controllers.NewAssetController(db)
 	debugController := controllers.NewDebugController()
 	monitoringController := controllers.NewMonitoringController()
-	
+
 	// Initialize repositories, services and handlers
 	accountRepo := repositories.NewAccountRepository(db)
 	exportService := services.NewExportService(accountRepo, db)
 	accountHandler := handlers.NewAccountHandler(accountRepo, exportService)
-	
+
 	// Initialize startup handler for startup service monitoring
 	startupHandler := handlers.NewStartupHandler(startupService)
-	
+
 	// Contact repositories, services and controllers
 	contactRepo := repositories.NewContactRepository(db)
 	contactService := services.NewContactService(contactRepo)
 	contactController := controllers.NewContactController(contactService)
-	
-// Notification repositories, services and handlers
+
+	// Notification repositories, services and handlers
 	notificationRepo := repositories.NewNotificationRepository(db)
 	notificationService := services.NewNotificationService(db, notificationRepo)
 	// Initialize Stock Monitoring service and Dashboard controller
 	stockMonitoringService := services.NewStockMonitoringService(db, notificationService)
 	notificationHandler := handlers.NewNotificationHandler(notificationService, stockMonitoringService)
 	dashboardController := controllers.NewDashboardController(db, stockMonitoringService)
-	
+
 	// Update ProductController with stockMonitoringService
 	productController := controllers.NewProductController(db, stockMonitoringService)
-	
+
 	// Initialize WarehouseLocationController
 	warehouseLocationController := controllers.NewWarehouseLocationController(db)
-	
+
 	// Fiscal Year Closing Service removed - now using Unified Period Closing Service
 	// which provides more flexibility and consistent closing logic
-	
+
 	// Initialize SSOT Unified Journal Service first (needed by period closing)
 	unifiedJournalService := services.NewUnifiedJournalService(db)
-	
+
 	// Initialize Period Closing Service and Controller (Unified Journal-based)
 	unifiedPeriodClosingService := services.NewUnifiedPeriodClosingService(db)
 	periodClosingController := controllers.NewPeriodClosingController(unifiedPeriodClosingService)
-	
+
 	// Initialize Unified Closing History Controller (combines all closing sources)
 	unifiedClosingHistoryController := controllers.NewUnifiedClosingHistoryController(db)
-	
+
 	// Initialize Period Validation Middleware
 	periodValidationMiddleware := middleware.NewPeriodValidationMiddleware(unifiedPeriodClosingService)
-	
+
 	// Purchase repositories, services and controllers
 	purchaseRepo := repositories.NewPurchaseRepository(db)
 	productRepo := repositories.NewProductRepository(db)
@@ -217,22 +218,25 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	journalRepo := repositories.NewJournalEntryRepository(db)
 	pdfService := services.NewPDFService(db)
 	coaService := services.NewCOAService(db)
-	
+
+	// Initialize Settings Service earlier (needed for Sales/Purchase journal services)
+	settingsService := services.NewSettingsService(db)
+
 	// Initialize Purchase Journal Service SSOT (unified_journal_ledger - for Balance Sheet integration)
-	purchaseJournalServiceSSOT := services.NewPurchaseJournalServiceSSOT(db, coaService)
-	
+	purchaseJournalServiceSSOT := services.NewPurchaseJournalServiceSSOT(db, coaService, settingsService)
+
 	purchaseService := services.NewPurchaseService(
 		db,
 		purchaseRepo,
-		productRepo, 
+		productRepo,
 		contactRepo,
 		accountRepo,
 		approvalService,
 		nil, // journal service - can be nil for now
 		journalRepo,
 		pdfService,
-		unifiedJournalService, // Add unified journal service for SSOT integration
-		coaService, // Add COA service for journal V2 integration
+		unifiedJournalService,      // Add unified journal service for SSOT integration
+		coaService,                 // Add COA service for journal V2 integration
 		purchaseJournalServiceSSOT, // NEW: SSOT service for Balance Sheet integration
 	)
 	// Handlers that depend on services (purchaseController will be initialized later)
@@ -240,57 +244,57 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	// Employee approval handler
 	employeeDashboardService := services.NewEmployeeDashboardService(db)
 	employeeApprovalHandler := handlers.NewEmployeeApprovalHandler(approvalService, employeeDashboardService)
-	
+
 	// Initialize security middleware
-	middleware.InitAuditLogger(db)       // Initialize audit logging
-	middleware.InitTokenMonitor(db)      // Initialize token monitoring
-	
+	middleware.InitAuditLogger(db)  // Initialize audit logging
+	middleware.InitTokenMonitor(db) // Initialize token monitoring
+
 	// 📝 Initialize Activity Logger Service and Middleware
 	activityLoggerService := services.NewActivityLoggerService(db, "./logs")
 	middleware.InitActivityLogger(activityLoggerService)
 	log.Println("✅ Activity Logger initialized successfully")
-	
+
 	// Initialize Activity Log Controller
 	activityLogController := controllers.NewActivityLogController()
-	
+
 	// Initialize Security controller for security dashboard
 	securityController := controllers.NewSecurityController(db)
-	
+
 	// Initialize Journal Drilldown controller
 	journalDrilldownController := controllers.NewJournalDrilldownController(db)
-	
+
 	// Journal Entry controller removed - migrated to SSOT unified system
-	
+
 	// Initialize SSOT Unified Journal Controller (service already initialized above)
 	unifiedJournalController := controllers.NewUnifiedJournalController(unifiedJournalService)
-	
+
 	// Initialize JWT Manager
 	jwtManager := middleware.NewJWTManager(db)
-	
+
 	// Initialize Session Cleanup Service and Controller
 	sessionCleanupService := services.NewSessionCleanupService(db)
 	sessionController := controllers.NewSessionController(sessionCleanupService)
-	
+
 	// Initialize Debug Auth Controller
 	debugAuthController := controllers.NewDebugAuthController()
-	
+
 	// Initialize Permission Middleware
 	permMiddleware := middleware.NewPermissionMiddleware(db)
 	// 🔒 Initialize Enhanced Security Middleware
 	enhancedSecurity := middleware.NewEnhancedSecurityMiddleware(db)
-	
+
 	// 🛡️ Apply panic recovery middleware FIRST to catch all panics
-	r.Use(middleware.RecoverPanic())              // 🛡️ Recover from panics and return proper error responses
-	
+	r.Use(middleware.RecoverPanic()) // 🛡️ Recover from panics and return proper error responses
+
 	// 🎛️ Apply global security middleware
-	r.Use(enhancedSecurity.SecurityHeaders())     // Security headers pada semua requests
-	r.Use(enhancedSecurity.RequestMonitoring())   // Monitor semua requests untuk threats
-	r.Use(middleware.APIUsageMiddleware())        // 📊 Track API usage for optimization
-	r.Use(middleware.ActivityLoggerMiddleware())  // 📝 Log all user activities
-	
+	r.Use(enhancedSecurity.SecurityHeaders())    // Security headers pada semua requests
+	r.Use(enhancedSecurity.RequestMonitoring())  // Monitor semua requests untuk threats
+	r.Use(middleware.APIUsageMiddleware())       // 📊 Track API usage for optimization
+	r.Use(middleware.ActivityLoggerMiddleware()) // 📝 Log all user activities
+
 	// 📋 Apply audit logging middleware for financial transactions
 	if middleware.GlobalAuditLogger != nil {
-		r.Use(middleware.GlobalAuditLogger.AuditMiddleware())  // 📋 Audit critical transactions
+		r.Use(middleware.GlobalAuditLogger.AuditMiddleware()) // 📋 Audit critical transactions
 	}
 
 	// API v1 routes
@@ -301,7 +305,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	{
 		// 🔐 Auth routes (minimal public access)
 		auth := v1.Group("/auth")
-		auth.Use(middleware.AuthRateLimit()) // Apply auth rate limiting
+		auth.Use(middleware.AuthRateLimit())         // Apply auth rate limiting
 		auth.Use(enhancedSecurity.SecurityHeaders()) // Extra security for auth endpoints
 		{
 			auth.POST("/login", authController.Login)
@@ -310,12 +314,12 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				auth.POST("/register", authController.Register)
 			}
 			auth.POST("/refresh", authController.RefreshToken)
-			
+
 			// Token validation endpoint (requires auth)
 			auth.GET("/validate-token", jwtManager.AuthRequired(), authController.ValidateToken)
 			auth.GET("/session-info", jwtManager.AuthRequired(), authController.GetSessionInfo)
 		}
-		
+
 		// 🔍 Debug auth routes (development only)
 		if isDevelopmentMode() {
 			debugAuth := v1.Group("/debug-auth")
@@ -326,7 +330,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				debugAuth.GET("/session", jwtManager.AuthRequired(), debugAuthController.DebugSessionValidation)
 			}
 		}
-		
+
 		// 📊 Journal Entry Drilldown routes at API level (accessible by finance, admin, director)
 		// These routes are at /api/v1/journal-drilldown to match frontend expectations
 		journalDrilldownAPI := v1.Group("/journal-drilldown")
@@ -334,26 +338,26 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 		{
 			// Main drill-down endpoint for POST requests with detailed filtering
 			journalDrilldownAPI.POST("", permMiddleware.CanView("reports"), journalDrilldownController.GetJournalDrilldown)
-			
-			// Alternative GET endpoint for simpler URL-based filtering  
+
+			// Alternative GET endpoint for simpler URL-based filtering
 			journalDrilldownAPI.GET("/entries", permMiddleware.CanView("reports"), journalDrilldownController.GetJournalDrilldownByParams)
-			
+
 			// Get detailed information for a specific journal entry
 			journalDrilldownAPI.GET("/entries/:id", permMiddleware.CanView("reports"), journalDrilldownController.GetJournalEntryDetail)
-			
+
 			// Get accounts that have activity in a period (useful for filters)
 			journalDrilldownAPI.GET("/accounts", permMiddleware.CanView("reports"), journalDrilldownController.GetAccountsForPeriod)
 		}
-		
+
 		// 📋 Journal Entry Management routes (accessible by finance, admin, director)
 		journalEntriesAPI := v1.Group("/journal-entries")
 		journalEntriesAPI.Use(jwtManager.AuthRequired())
 		{
 			// CRUD operations for journal entries
-			
+
 			// Summary endpoint - MISSING ROUTE ADDED
 		}
-		
+
 		// 📓 SSOT Journal System routes (NEW - unified journal management)
 		unifiedJournals := v1.Group("/journals")
 		unifiedJournals.Use(jwtManager.AuthRequired())
@@ -364,38 +368,37 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			unifiedJournals.GET("/:id", permMiddleware.CanView("reports"), unifiedJournalController.GetJournalEntry)
 			unifiedJournals.PUT("/:id", permMiddleware.CanEdit("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.UpdateJournalEntry)
 			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("reports"), unifiedJournalController.DeleteJournalEntry)
-			
+
 			// Status operations
 			unifiedJournals.PUT("/:id/post", permMiddleware.CanEdit("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.PostJournalEntry)
-			
+
 			// Balance management
 			unifiedJournals.GET("/account-balances", permMiddleware.CanView("reports"), unifiedJournalController.GetAccountBalances)
 			unifiedJournals.POST("/account-balances/refresh", permMiddleware.CanEdit("reports"), unifiedJournalController.RefreshAccountBalances)
-			
+
 			// Summary and reporting
 			unifiedJournals.GET("/summary", permMiddleware.CanView("reports"), unifiedJournalController.GetJournalSummary)
 		}
-
 
 		// 🔒 SECURITY: Secure debug routes (development only dengan multiple security layers)
 		if shouldEnableDebugRoutes() {
 			debugAuth := v1.Group("/debug")
 			debugAuth.Use(enhancedSecurity.EnvironmentGate("development", "dev")) // ✅ Environment restriction
-			debugAuth.Use(enhancedSecurity.IPWhitelist())                        // ✅ IP whitelisting
-			debugAuth.Use(jwtManager.AuthRequired())                            // ✅ Authentication required
-			debugAuth.Use(middleware.RoleRequired("admin"))                     // ✅ Admin only access
-			debugAuth.Use(middleware.RateLimit())                               // ✅ Rate limiting
+			debugAuth.Use(enhancedSecurity.IPWhitelist())                         // ✅ IP whitelisting
+			debugAuth.Use(jwtManager.AuthRequired())                              // ✅ Authentication required
+			debugAuth.Use(middleware.RoleRequired("admin"))                       // ✅ Admin only access
+			debugAuth.Use(middleware.RateLimit())                                 // ✅ Rate limiting
 			{
 				// 🔍 Read-only endpoints untuk debugging (safe)
 				debugAuth.GET("/contacts", contactController.GetContacts)
 				debugAuth.GET("/contacts/:id", contactController.GetContact)
 				debugAuth.GET("/contacts/type/:type", contactController.GetContactsByType)
 				debugAuth.GET("/contacts/search", contactController.SearchContacts)
-				
+
 				// 📊 Debug system information
 				// debugAuth.GET("/system/info", debugController.GetSystemInfo)
 				// debugAuth.GET("/database/health", debugController.GetDatabaseHealth)
-				
+
 				// ⚠️  ALL WRITE OPERATIONS COMPLETELY REMOVED FOR SECURITY
 				// No CREATE/UPDATE/DELETE operations allowed in any debug route
 			}
@@ -405,7 +408,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 		// These endpoints are needed for dropdown population in purchase forms
 		v1.GET("/accounts/catalog", accountHandler.GetAccountCatalog)
 		v1.GET("/accounts/credit", accountHandler.GetAccountCatalog)
-		
+
 		// Protected routes (auth required)
 		protected := v1.Group("")
 		protected.Use(jwtManager.AuthRequired())
@@ -422,7 +425,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				users.PUT("/:id", middleware.RoleRequired("admin"), userController.UpdateUser)
 				users.DELETE("/:id", middleware.RoleRequired("admin"), userController.DeleteUser)
 			}
-			
+
 			// Permission management routes
 			permissions := protected.Group("/permissions")
 			{
@@ -431,9 +434,9 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				permissions.GET("/users/:userId", middleware.RoleRequired("admin"), permissionController.GetUserPermissions)
 				permissions.PUT("/users/:userId", middleware.RoleRequired("admin"), permissionController.UpdateUserPermissions)
 				permissions.POST("/users/:userId/reset", middleware.RoleRequired("admin"), permissionController.ResetToDefaultPermissions)
-				
+
 				// Self permission routes (any authenticated user)
-				permissions.GET("/me", permissionController.GetMyPermissions) // User can get their own permissions
+				permissions.GET("/me", permissionController.GetMyPermissions)       // User can get their own permissions
 				permissions.GET("/check", permissionController.CheckUserPermission) // User can check their own permission
 			}
 
@@ -444,7 +447,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				dashboard.GET("/finance", middleware.RoleRequired("admin", "finance"), dashboardController.GetFinanceDashboardData)
 				dashboard.GET("/stock-alerts", middleware.RoleRequired("admin", "inventory_manager", "director"), dashboardController.GetStockAlertsBanner)
 				dashboard.POST("/stock-alerts/:id/dismiss", middleware.RoleRequired("admin", "inventory_manager"), dashboardController.DismissStockAlert)
-				
+
 				// Employee dashboard routes
 				dashboard.GET("/employee", dashboardController.GetEmployeeDashboardData)
 				dashboard.GET("/employee/workflows", dashboardController.GetEmployeeApprovalWorkflows)
@@ -457,10 +460,10 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// 📦 Product routes with enhanced permission checks dan inventory monitoring
 			products := protected.Group("/products")
-		products.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
-		// if middleware.GlobalAuditLogger != nil {
-		//	products.Use(middleware.GlobalAuditLogger.InventoryAuditMiddleware()) // 📋 Inventory audit
-		// }
+			products.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
+			// if middleware.GlobalAuditLogger != nil {
+			//	products.Use(middleware.GlobalAuditLogger.InventoryAuditMiddleware()) // 📋 Inventory audit
+			// }
 			{
 				// Basic CRUD operations dengan enhanced security
 				products.GET("", permMiddleware.CanView("products"), productController.GetProducts)
@@ -468,7 +471,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				products.POST("", permMiddleware.CanCreate("products"), productController.CreateProduct)
 				products.PUT("/:id", permMiddleware.CanEdit("products"), productController.UpdateProduct)
 				products.DELETE("/:id", permMiddleware.CanDelete("products"), productController.DeleteProduct)
-				
+
 				// 📊 Critical inventory operations dengan extra monitoring
 				products.POST("/adjust-stock", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), productController.AdjustStock)
 				products.POST("/opname", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), productController.Opname)
@@ -509,20 +512,34 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// 📊 Account routes (Chart of Accounts) dengan enhanced security
 			accounts := protected.Group("/accounts")
-	accounts.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
-	// if middleware.GlobalAuditLogger != nil {
-	//	accounts.Use(middleware.GlobalAuditLogger.AccountAuditMiddleware()) // 📋 Financial audit
-	// }
+			accounts.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
+			// if middleware.GlobalAuditLogger != nil {
+			//	accounts.Use(middleware.GlobalAuditLogger.AccountAuditMiddleware()) // 📋 Financial audit
+			// }
 			{
 				accounts.GET("", permMiddleware.CanView("accounts"), accountHandler.ListAccounts)
-				
+
 				accounts.GET("/hierarchy", permMiddleware.CanView("accounts"), accountHandler.GetAccountHierarchy)
 				accounts.GET("/balance-summary", permMiddleware.CanView("accounts"), accountHandler.GetBalanceSummary)
 				accounts.GET("/validate-code", permMiddleware.CanView("accounts"), accountHandler.ValidateAccountCode)
-				
+
 				// Fix account header status
 				accounts.POST("/fix-header-status", middleware.RoleRequired("admin"), accountHandler.FixAccountHeaderStatus)
-				
+
+				// Recalculate all parent/header account balances from children
+				accounts.POST("/recalculate-parent-balances", permMiddleware.CanEdit("accounts"), func(c *gin.Context) {
+					balanceSyncSvc := services.NewBalanceSyncService(db)
+					count, err := balanceSyncSvc.RecalculateAllParentBalances()
+					if err != nil {
+						c.JSON(500, gin.H{"error": "Failed to recalculate parent balances: " + err.Error()})
+						return
+					}
+					c.JSON(200, gin.H{
+						"message":         "Parent balances recalculated successfully",
+						"headers_updated": count,
+					})
+				})
+
 				accounts.GET("/:code", permMiddleware.CanView("accounts"), accountHandler.GetAccount)
 				accounts.POST("", permMiddleware.CanCreate("accounts"), accountHandler.CreateAccount)
 				accounts.PUT("/:code", permMiddleware.CanEdit("accounts"), accountHandler.UpdateAccount)
@@ -530,17 +547,17 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				// Admin-only delete with cascade options
 				accounts.DELETE("/admin/:code", middleware.RoleRequired("admin"), accountHandler.AdminDeleteAccount)
 				accounts.POST("/import", permMiddleware.CanCreate("accounts"), accountHandler.ImportAccounts)
-				
-			// Export routes
-			accounts.GET("/export/pdf", permMiddleware.CanExport("accounts"), accountHandler.ExportAccountsPDF)
-			accounts.GET("/export/excel", permMiddleware.CanExport("accounts"), accountHandler.ExportAccountsExcel)
-		}
-		
-// 📊 COA Display routes (V2 with proper balance display)
+
+				// Export routes
+				accounts.GET("/export/pdf", permMiddleware.CanExport("accounts"), accountHandler.ExportAccountsPDF)
+				accounts.GET("/export/excel", permMiddleware.CanExport("accounts"), accountHandler.ExportAccountsExcel)
+			}
+
+			// 📊 COA Display routes (V2 with proper balance display)
 			coaDisplayServiceV2 := services.NewCOADisplayServiceV2(db)
 			coaControllerV2 := controllers.NewCOAControllerV2(coaDisplayServiceV2)
 			postedCOAController := controllers.NewCOAPostedController(db)
-			
+
 			coadisplay := protected.Group("/coa-display")
 			{
 				coadisplay.GET("", permMiddleware.CanView("accounts"), coaControllerV2.GetCOAWithDisplay)
@@ -558,10 +575,10 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// 📞 Contact routes with enhanced permission checks dan audit logging
 			contacts := protected.Group("/contacts")
-		contacts.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
-		// if middleware.GlobalAuditLogger != nil {
-		//	contacts.Use(middleware.GlobalAuditLogger.ContactAuditMiddleware()) // 📋 Audit logging
-		// }
+			contacts.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
+			// if middleware.GlobalAuditLogger != nil {
+			//	contacts.Use(middleware.GlobalAuditLogger.ContactAuditMiddleware()) // 📋 Audit logging
+			// }
 			{
 				// Basic CRUD operations dengan enhanced security
 				contacts.GET("", permMiddleware.CanView("contacts"), contactController.GetContacts)
@@ -569,15 +586,15 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				contacts.POST("", permMiddleware.CanCreate("contacts"), contactController.CreateContact)
 				contacts.PUT("/:id", permMiddleware.CanEdit("contacts"), contactController.UpdateContact)
 				contacts.DELETE("/:id", permMiddleware.CanDelete("contacts"), contactController.DeleteContact)
-				
+
 				// Advanced operations
 				contacts.GET("/type/:type", permMiddleware.CanView("contacts"), contactController.GetContactsByType)
 				contacts.GET("/search", permMiddleware.CanView("contacts"), contactController.SearchContacts)
-				
+
 				// Import/Export operations
 				contacts.POST("/import", permMiddleware.CanCreate("contacts"), contactController.ImportContacts)
 				contacts.GET("/export", permMiddleware.CanExport("contacts"), contactController.ExportContacts)
-				
+
 				// Address management
 				contacts.POST("/:id/addresses", permMiddleware.CanEdit("contacts"), contactController.AddContactAddress)
 				contacts.PUT("/:id/addresses/:address_id", permMiddleware.CanEdit("contacts"), contactController.UpdateContactAddress)
@@ -587,52 +604,52 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			// Sales repositories, services and controllers
 			salesRepo := repositories.NewSalesRepository(db)
 			productRepo := repositories.NewProductRepository(db)
-			
-// Initialize services for Sales V2
+
+			// Initialize services for Sales V2
 			coaService := services.NewCOAService(db)
-			
+
 			// Initialize Sales Journal Service V2 (clean implementation)
 			salesJournalServiceV2 := services.NewSalesJournalServiceV2(db, journalRepo, coaService)
-			
+
 			// Initialize Sales Journal Service SSOT (unified_journal_ledger - for Balance Sheet integration)
-			salesJournalServiceSSOT := services.NewSalesJournalServiceSSOT(db, coaService)
-			
+			salesJournalServiceSSOT := services.NewSalesJournalServiceSSOT(db, coaService, settingsService)
+
 			// Initialize Stock Service (can be nil if not available)
 			stockService := services.NewStockService(db)
-			
-			// Initialize Settings Service for sales code generation
-			settingsService := services.NewSettingsService(db)
-			
+
+			// Initialize Settings Service for sales code generation - ALREADY INITIALIZED ABOVE
+			// settingsService := services.NewSettingsService(db)
+
 			// Initialize Invoice services
 			invoiceNumberService := services.NewInvoiceNumberService(db)
 			invoiceTypeService := services.NewInvoiceTypeService(db)
-			
+
 			// Initialize Sales Service V2 (clean implementation with proper status-based journal posting)
 			salesServiceV2 := services.NewSalesServiceV2(db, salesRepo, salesJournalServiceV2, salesJournalServiceSSOT, stockService, notificationService, settingsService, invoiceNumberService)
 
-// Initialize Payment repositories, services and controllers
-	paymentRepo := repositories.NewPaymentRepository(db)
-	cashBankRepo := repositories.NewCashBankRepository(db)
-	
-	// Initialize PurchasePaymentJournalService for SSOT payment journal integration  
-	// Note: PurchaseService will be injected later if needed for SSOT integration
-	purchasePaymentJournalService := services.NewPurchasePaymentJournalService(db, accountRepo, unifiedJournalService, nil)
-	
-	// Initialize PaymentService with PurchasePaymentJournalService for proper credit purchase payment handling
-	paymentService := services.NewPaymentService(db, paymentRepo, salesRepo, purchaseRepo, cashBankRepo, accountRepo, contactRepo, purchasePaymentJournalService)
-	paymentController := controllers.NewPaymentController(paymentService)
-	cashBankService := services.NewCashBankService(db, cashBankRepo, accountRepo)
-	accountService := services.NewAccountService(accountRepo)
-	cashBankController := controllers.NewCashBankController(cashBankService, accountService)
+			// Initialize Payment repositories, services and controllers
+			paymentRepo := repositories.NewPaymentRepository(db)
+			cashBankRepo := repositories.NewCashBankRepository(db)
 
-	// Initialize additional Sales Payment services required by SalesController
-unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
-	
-	// Initialize SalesController with new V2 Sales Service (inject pdfService)
-	salesController := controllers.NewSalesController(salesServiceV2, paymentService, unifiedSalesPaymentService, pdfService, db, accountRepo)
-	
-	// Initialize PurchaseController with PaymentService integration (moved here after paymentService is available)
-	purchaseController := controllers.NewPurchaseController(purchaseService, paymentService, db, accountRepo)
+			// Initialize PurchasePaymentJournalService for SSOT payment journal integration
+			// Note: PurchaseService will be injected later if needed for SSOT integration
+			purchasePaymentJournalService := services.NewPurchasePaymentJournalService(db, accountRepo, unifiedJournalService, nil)
+
+			// Initialize PaymentService with PurchasePaymentJournalService for proper credit purchase payment handling
+			paymentService := services.NewPaymentService(db, paymentRepo, salesRepo, purchaseRepo, cashBankRepo, accountRepo, contactRepo, purchasePaymentJournalService)
+			paymentController := controllers.NewPaymentController(paymentService)
+			cashBankService := services.NewCashBankService(db, cashBankRepo, accountRepo)
+			accountService := services.NewAccountService(accountRepo)
+			cashBankController := controllers.NewCashBankController(cashBankService, accountService)
+
+			// Initialize additional Sales Payment services required by SalesController
+			unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
+
+			// Initialize SalesController with new V2 Sales Service (inject pdfService)
+			salesController := controllers.NewSalesController(salesServiceV2, paymentService, unifiedSalesPaymentService, pdfService, db, accountRepo)
+
+			// Initialize PurchaseController with PaymentService integration (moved here after paymentService is available)
+			purchaseController := controllers.NewPurchaseController(purchaseService, paymentService, db, accountRepo)
 
 			// 🔔 Notification routes (accessible by all authenticated users)
 			notifs := protected.Group("/notifications")
@@ -647,7 +664,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 			}
 
 			// Sales routes with permission checks
-				sales := protected.Group("/sales")
+			sales := protected.Group("/sales")
 			{
 				// Basic CRUD operations
 				sales.GET("", permMiddleware.CanView("sales"), salesController.GetSales)
@@ -666,7 +683,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				// Payment management
 				sales.GET("/:id/payments", middleware.RoleRequired("admin", "finance", "director", "employee"), salesController.GetSalePayments)
 				sales.POST("/:id/payments", middleware.RoleRequired("admin", "finance", "director"), salesController.CreateSalePayment)
-				
+
 				// Integrated Payment Management routes
 				sales.GET("/:id/for-payment", middleware.RoleRequired("admin", "finance", "director"), salesController.GetSaleForPayment)
 				sales.POST("/:id/integrated-payment", middleware.RoleRequired("admin", "finance", "director"), salesController.CreateIntegratedPayment)
@@ -693,7 +710,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 
 			// Initialize Invoice Type Controller
 			invoiceTypeController := controllers.NewInvoiceTypeController(invoiceTypeService, invoiceNumberService)
-			
+
 			// Invoice Types Management routes
 			invoiceTypes := protected.Group("/invoice-types")
 			{
@@ -704,38 +721,38 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				invoiceTypes.POST("", middleware.RoleRequired("admin", "finance", "director"), invoiceTypeController.CreateInvoiceType)
 				invoiceTypes.PUT("/:id", middleware.RoleRequired("admin", "finance", "director"), invoiceTypeController.UpdateInvoiceType)
 				invoiceTypes.DELETE("/:id", middleware.RoleRequired("admin"), invoiceTypeController.DeleteInvoiceType)
-				
+
 				// Status management
 				invoiceTypes.POST("/:id/toggle", middleware.RoleRequired("admin", "finance", "director"), invoiceTypeController.ToggleInvoiceType)
-				
+
 				// Invoice numbering utilities
 				invoiceTypes.POST("/preview-number", middleware.RoleRequired("admin", "finance", "director"), invoiceTypeController.PreviewInvoiceNumber)
 				invoiceTypes.GET("/:id/preview", middleware.RoleRequired("admin", "finance", "director"), invoiceTypeController.PreviewInvoiceNumberByID)
 				invoiceTypes.GET("/:id/counter-history", middleware.RoleRequired("admin", "finance", "director"), invoiceTypeController.GetCounterHistory)
-				
+
 				// Counter management (admin-only for safety)
 				invoiceTypes.POST("/:id/reset-counter", middleware.RoleRequired("admin"), invoiceTypeController.ResetCounterForYear)
 			}
-			
+
 			// 📄 Setup Invoice routes
 			SetupInvoiceRoutes(protected, db)
 
-	// Initialize Balance Monitoring service and controller
-	balanceMonitoringService := services.NewBalanceMonitoringService(db)
-	balanceMonitoringController := controllers.NewBalanceMonitoringController(balanceMonitoringService)
-	
-	// Initialize Balance Health controller
-	balanceHealthController := controllers.NewBalanceHealthController(db)
-	
-	// Initialize FixCashBankController (using existing cashBankService)
-	fixCashBankController := controllers.NewFixCashBankController(db, cashBankService)
-	
-	// Initialize API Usage Monitoring controller
-	apiUsageController := controllers.NewAPIUsageController()
-	
-	// Initialize Performance Monitoring controller
-	performanceController := controllers.NewPerformanceController(db)
-			
+			// Initialize Balance Monitoring service and controller
+			balanceMonitoringService := services.NewBalanceMonitoringService(db)
+			balanceMonitoringController := controllers.NewBalanceMonitoringController(balanceMonitoringService)
+
+			// Initialize Balance Health controller
+			balanceHealthController := controllers.NewBalanceHealthController(db)
+
+			// Initialize FixCashBankController (using existing cashBankService)
+			fixCashBankController := controllers.NewFixCashBankController(db, cashBankService)
+
+			// Initialize API Usage Monitoring controller
+			apiUsageController := controllers.NewAPIUsageController()
+
+			// Initialize Performance Monitoring controller
+			performanceController := controllers.NewPerformanceController(db)
+
 			// ⚠️  DEPRECATED: Setup legacy Payment routes (including cash bank routes with GL fix functionality)
 			// These routes may cause double posting - use SSOT routes instead
 			// 🔒 PRODUCTION GUARD: Only enable legacy routes in development with explicit flag
@@ -745,16 +762,16 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 			} else {
 				log.Printf("✅ Legacy payment routes disabled - using SalesJournalServiceV2 consistent flow only")
 			}
-			
-		// ✅ NEW: Setup SSOT Payment routes with journal integration (prevents double posting)
-		SetupSSOTPaymentRoutes(protected, db, jwtManager)
 
-		// 📄 Setup Receipt routes
-		SetupReceiptRoutes(protected, db, jwtManager)
+			// ✅ NEW: Setup SSOT Payment routes with journal integration (prevents double posting)
+			SetupSSOTPaymentRoutes(protected, db, jwtManager)
 
-		// 📄 Export-only compatibility routes for Payments (safe, read-only)
-		// These endpoints restore PDF/Excel exports without enabling legacy write routes
-		paymentExports := protected.Group("/payments")
+			// 📄 Setup Receipt routes
+			SetupReceiptRoutes(protected, db, jwtManager)
+
+			// 📄 Export-only compatibility routes for Payments (safe, read-only)
+			// These endpoints restore PDF/Excel exports without enabling legacy write routes
+			paymentExports := protected.Group("/payments")
 			{
 				paymentExports.GET("/report/pdf", permMiddleware.CanExport("payments"), paymentController.ExportPaymentReportPDF)
 				paymentExports.GET("/export/excel", permMiddleware.CanExport("payments"), paymentController.ExportPaymentReportExcel)
@@ -778,24 +795,24 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				// Unpaid bills for payable payment form
 				paymentsCompat.GET("/unpaid-bills/:vendor_id", permMiddleware.CanView("payments"), paymentController.GetUnpaidBills)
 			}
-			
+
 			// ⚡ ULTRA-FAST: Setup Ultra-Fast Payment routes with minimal operations
 			ultraFastRoutes := NewUltraFastPaymentRoutes(db)
 			ultraFastRoutes.SetupUltraFastPaymentRoutes(r)
-			
+
 			// ⚙️ Setup Settings routes
 			SetupSettingsRoutes(protected, db)
-			
+
 			// 🔄 Setup CashBank SSOT Integration routes (NEW - Phase 1 Implementation)
 			// This provides unified view of CashBank data integrated with SSOT Journal system
 			SetupCashBankIntegratedRoutes(protected, db, jwtManager)
-			
+
 			// 💰 Setup NEW Cash-Bank routes with SSOT integration
 			SetupCashBankSSOTRoutes(v1, db, jwtManager)
 
 			// 💰 Purchases routes with enhanced permission checks
 			purchases := protected.Group("/purchases")
-	purchases.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
+			purchases.Use(enhancedSecurity.RequestMonitoring()) // 📊 Enhanced monitoring
 			{
 				// Basic CRUD operations dengan enhanced security
 				purchases.GET("", permMiddleware.CanView("purchases"), purchaseController.GetPurchases)
@@ -805,7 +822,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
 				purchases.PUT("/:id", permMiddleware.CanEdit("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
 				purchases.DELETE("/:id", permMiddleware.CanDelete("purchases"), purchaseController.DeletePurchase)
-				
+
 				// Approval operations dengan permission checks
 				purchases.POST("/:id/submit-approval", permMiddleware.CanCreate("purchases"), purchaseController.SubmitForApproval)
 				purchases.POST("/:id/approve", permMiddleware.CanApprove("purchases"), purchaseController.ApprovePurchase)
@@ -814,42 +831,42 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				purchases.GET("/:id/approval-history", permMiddleware.CanView("purchases"), purchaseApprovalHandler.GetApprovalHistory)
 				// Pending approvals (for those who can approve)
 				purchases.GET("/pending-approval", permMiddleware.CanApprove("purchases"), purchaseApprovalHandler.GetPurchasesForApproval)
-				
+
 				// Document management dengan permission checks
 				purchases.POST("/:id/documents", permMiddleware.CanEdit("purchases"), purchaseController.UploadDocument)
 				purchases.GET("/:id/documents", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseDocuments)
 				purchases.DELETE("/documents/:document_id", permMiddleware.CanDelete("purchases"), purchaseController.DeleteDocument)
-				
+
 				// Receipt operations dengan permission checks
 				purchases.POST("/receipts", permMiddleware.CanEdit("purchases"), purchaseController.CreatePurchaseReceipt)
 				purchases.GET("/:id/receipts", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseReceipts)
-				
+
 				// Receipt PDF exports dengan permission checks
 				purchases.GET("/receipts/:receipt_id/pdf", permMiddleware.CanExport("purchases"), purchaseController.GetReceiptPDF)
 				purchases.GET("/:id/receipts/pdf", permMiddleware.CanExport("purchases"), purchaseController.GetAllReceiptsPDF)
-				
+
 				// Analytics and reporting dengan permission checks
 				purchases.GET("/summary", permMiddleware.CanView("purchases"), purchaseController.GetPurchasesSummary)
 				purchases.GET("/pending-approvals", permMiddleware.CanApprove("purchases"), purchaseController.GetPendingApprovals)
-				
+
 				// Export routes dengan permission checks
 				purchases.GET("/export/pdf", permMiddleware.CanExport("purchases"), purchaseController.ExportPurchasesReportPDF)
 				purchases.GET("/export/csv", permMiddleware.CanExport("purchases"), purchaseController.ExportPurchasesReportCSV)
 				purchases.GET("/dashboard", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseDashboard)
 				purchases.GET("/vendor/:vendor_id/summary", permMiddleware.CanView("purchases"), purchaseController.GetVendorPurchaseSummary)
-				
+
 				// Payment management (similar to sales payment management)
 				purchases.GET("/:id/payments", middleware.RoleRequired("admin", "finance", "director", "employee"), purchaseController.GetPurchasePayments)
 				purchases.POST("/:id/payments", middleware.RoleRequired("admin", "finance", "director"), purchaseController.CreatePurchasePayment)
-				
-				// Integrated Payment Management routes  
+
+				// Integrated Payment Management routes
 				purchases.GET("/:id/for-payment", middleware.RoleRequired("admin", "finance", "director"), purchaseController.GetPurchaseForPayment)
 				purchases.POST("/:id/integrated-payment", middleware.RoleRequired("admin", "finance", "director"), purchaseController.CreateIntegratedPayment)
-				
+
 				// Three-way matching dengan permission checks
 				purchases.GET("/:id/matching", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseMatching)
 				purchases.POST("/:id/validate-matching", permMiddleware.CanApprove("purchases"), purchaseController.ValidateThreeWayMatching)
-				
+
 				// Journal entries integration dengan SSOT Journal System
 				purchases.GET("/:id/journal-entries", permMiddleware.CanView("reports"), purchaseController.GetPurchaseJournalEntries)
 			}
@@ -867,24 +884,24 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				assets.PUT("/:id", permMiddleware.CanEdit("assets"), assetController.UpdateAsset)
 				assets.DELETE("/:id", permMiddleware.CanDelete("assets"), assetController.DeleteAsset)
 				assets.POST("/upload-image", permMiddleware.CanEdit("assets"), assetController.UploadAssetImage)
-				
+
 				// Manual capitalization endpoint
 				assets.POST("/:id/capitalize", permMiddleware.CanEdit("assets"), assetController.CapitalizeAsset)
-				
+
 				// Asset categories management
 				assets.GET("/categories", permMiddleware.CanView("assets"), assetController.GetAssetCategories)
 				assets.POST("/categories", permMiddleware.CanCreate("assets"), assetController.CreateAssetCategory)
-				
+
 				// 📊 Reports and calculations dengan permission checks
 				assets.GET("/summary", permMiddleware.CanView("assets"), assetController.GetAssetsSummary)
 				assets.GET("/depreciation-report", permMiddleware.CanView("assets"), assetController.GetDepreciationReport)
 				assets.GET("/:id/depreciation-schedule", permMiddleware.CanView("assets"), assetController.GetDepreciationSchedule)
 				assets.GET("/:id/calculate-depreciation", permMiddleware.CanView("assets"), assetController.CalculateCurrentDepreciation)
-				
+
 				// Export routes - REMOVED: Not implemented yet
 			}
 
-		// Note: CashBank routes are already set up via SetupPaymentRoutes
+			// Note: CashBank routes are already set up via SetupPaymentRoutes
 
 			// 📦 Inventory routes with enhanced permission checks
 			inventory := protected.Group("/inventory")
@@ -903,7 +920,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				workflows.GET("", purchaseApprovalHandler.GetApprovalWorkflows)
 				workflows.POST("", middleware.RoleRequired("admin"), purchaseApprovalHandler.CreateApprovalWorkflow)
 			}
-			
+
 			// Employee approval routes
 			employeeApprovals := protected.Group("/employee/approvals")
 			{
@@ -919,33 +936,33 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 			// ✅ CONSOLIDATED: Use only Enhanced Report Service as primary service with caching
 			cacheService := services.NewReportCacheService()
 			enhancedReportService := services.NewEnhancedReportService(db, accountRepo, salesRepo, purchaseRepo, productRepo, contactRepo, paymentRepo, cashBankRepo, cacheService)
-			
+
 			// 🔧 SIMPLIFIED: Use only Enhanced Report Service and Controller with PDF service
 			enhancedReportController := controllers.NewEnhancedReportController(db)
-			
-		// 🏁 Fiscal Year-End Closing routes (USING UNIFIED SYSTEM)
-		fiscalClosing := protected.Group("/fiscal-closing")
-		fiscalClosing.Use(middleware.RoleRequired("admin", "director", "finance")) // Finance can execute year-end closing
-		{
-			// Use period closing for preview and execute (more flexible)
-			fiscalClosing.GET("/preview", periodClosingController.PreviewClosing)
-			fiscalClosing.POST("/execute", periodClosingController.ExecuteClosing)
-			// Use unified history controller that checks all sources
-			fiscalClosing.GET("/history", unifiedClosingHistoryController.GetUnifiedClosingHistory)
-		}
-			
-		// 📅 Period Closing routes (Unified Period Closing System)
-		periodClosing := protected.Group("/period-closing")
-		periodClosing.Use(middleware.RoleRequired("admin", "director", "finance"))
-		{
-			periodClosing.GET("/last-info", periodClosingController.GetLastClosingInfo)        // Get last closing info
-			periodClosing.GET("/preview", periodClosingController.PreviewClosing)              // Preview period closing
-			periodClosing.POST("/execute", periodClosingController.ExecuteClosing)             // Execute period closing
-			periodClosing.POST("/reopen", periodClosingController.ReopenPeriod)                // Reopen closed period
-			periodClosing.GET("/history", unifiedClosingHistoryController.GetUnifiedClosingHistory) // Use unified history
-			periodClosing.GET("/check-date", periodClosingController.CheckDateInClosedPeriod) // Check if date is closed
-		}
-			
+
+			// 🏁 Fiscal Year-End Closing routes (USING UNIFIED SYSTEM)
+			fiscalClosing := protected.Group("/fiscal-closing")
+			fiscalClosing.Use(middleware.RoleRequired("admin", "director", "finance")) // Finance can execute year-end closing
+			{
+				// Use period closing for preview and execute (more flexible)
+				fiscalClosing.GET("/preview", periodClosingController.PreviewClosing)
+				fiscalClosing.POST("/execute", periodClosingController.ExecuteClosing)
+				// Use unified history controller that checks all sources
+				fiscalClosing.GET("/history", unifiedClosingHistoryController.GetUnifiedClosingHistory)
+			}
+
+			// 📅 Period Closing routes (Unified Period Closing System)
+			periodClosing := protected.Group("/period-closing")
+			periodClosing.Use(middleware.RoleRequired("admin", "director", "finance"))
+			{
+				periodClosing.GET("/last-info", periodClosingController.GetLastClosingInfo)             // Get last closing info
+				periodClosing.GET("/preview", periodClosingController.PreviewClosing)                   // Preview period closing
+				periodClosing.POST("/execute", periodClosingController.ExecuteClosing)                  // Execute period closing
+				periodClosing.POST("/reopen", periodClosingController.ReopenPeriod)                     // Reopen closed period
+				periodClosing.GET("/history", unifiedClosingHistoryController.GetUnifiedClosingHistory) // Use unified history
+				periodClosing.GET("/check-date", periodClosingController.CheckDateInClosedPeriod)       // Check if date is closed
+			}
+
 			// ✅ CONSOLIDATED ROUTES: Use only Enhanced Report Routes - UNDER V1
 			RegisterEnhancedReportRoutes(v1, enhancedReportController, jwtManager)
 
@@ -954,7 +971,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 
 			// 📋 CONTACT HISTORY REPORTS: Customer and Vendor transaction history reports
 			RegisterContactHistoryRoutes(r, db, pdfService)
-			
+
 			// 🔧 COMPATIBILITY ROUTES: Add root-level aliases for SSOT reports
 			// This provides backward compatibility for frontend requests to /ssot-reports/*
 			// These routes redirect to the proper /api/v1/ssot-reports/* endpoints
@@ -969,33 +986,33 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 					enhancedReportService,
 				)
 				ssotAliasReportController := controllers.NewSSOTReportIntegrationController(ssotAliasReportIntegrationService, db)
-				
+
 				// Route aliases that mirror the v1 endpoints
 				ssotAliasGroup.GET("/trial-balance", ssotAliasReportController.GetSSOTTrialBalance)
 				ssotAliasGroup.GET("/general-ledger", ssotAliasReportController.GetSSOTGeneralLedger)
 				ssotAliasGroup.GET("/journal-analysis", ssotAliasReportController.GetSSOTJournalAnalysis)
-				
+
 				// Purchase report alias (already working, but add for consistency)
 				purchaseReportController := controllers.NewSSOTPurchaseReportController(db)
 				ssotAliasGroup.GET("/purchase-report", purchaseReportController.GetPurchaseReport)
-				
+
 				// Info endpoint explaining the alias routes
 				ssotAliasGroup.GET("/info", func(c *gin.Context) {
 					c.JSON(200, gin.H{
-						"status":  "success",
-						"message": "SSOT Reports Compatibility Routes",
-						"note":    "These are alias routes for backward compatibility",
+						"status":         "success",
+						"message":        "SSOT Reports Compatibility Routes",
+						"note":           "These are alias routes for backward compatibility",
 						"recommendation": "Use /api/v1/ssot-reports/* for new implementations",
 						"available_endpoints": []string{
 							"/ssot-reports/trial-balance",
-							"/ssot-reports/general-ledger", 
+							"/ssot-reports/general-ledger",
 							"/ssot-reports/journal-analysis",
 							"/ssot-reports/purchase-report",
 						},
 						"proper_api_endpoints": []string{
 							"/api/v1/ssot-reports/trial-balance",
 							"/api/v1/ssot-reports/general-ledger",
-							"/api/v1/ssot-reports/journal-analysis", 
+							"/api/v1/ssot-reports/journal-analysis",
 							"/api/v1/ssot-reports/purchase-report",
 						},
 					})
@@ -1004,7 +1021,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 
 			// 📊 SSOT Profit & Loss Controller - Direct P&L endpoint for frontend
 			ssotPLController := controllers.NewSSOTProfitLossController(db)
-			
+
 			// SSOT Report routes for frontend integration
 			ssotReports := v1.Group("/reports")
 			ssotReports.Use(jwtManager.AuthRequired())
@@ -1020,18 +1037,18 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 			cogsRoutes.Use(jwtManager.AuthRequired())
 			cogsRoutes.Use(middleware.RoleRequired("finance", "admin", "director"))
 			{
-				cogsRoutes.GET("/summary", cogsController.GetCOGSSummary)           // Get COGS summary for period
-				cogsRoutes.GET("/missing", cogsController.GetSalesWithoutCOGS)      // Get sales without COGS entries
-				cogsRoutes.POST("/backfill", cogsController.BackfillCOGS)           // Backfill COGS for existing sales
+				cogsRoutes.GET("/summary", cogsController.GetCOGSSummary)             // Get COGS summary for period
+				cogsRoutes.GET("/missing", cogsController.GetSalesWithoutCOGS)        // Get sales without COGS entries
+				cogsRoutes.POST("/backfill", cogsController.BackfillCOGS)             // Backfill COGS for existing sales
 				cogsRoutes.POST("/record/:sale_id", cogsController.RecordCOGSForSale) // Record COGS for specific sale
 			}
 
 			// 📊 SSOT Balance Sheet Controller - Direct Balance Sheet endpoint for frontend
 			ssotBSController := controllers.NewSSOTBalanceSheetController(db)
-			
+
 			// 💰 SSOT Cash Flow Controller - Direct Cash Flow endpoint for frontend
 			ssotCFController := controllers.NewSSOTCashFlowController(db)
-			
+
 			// Balance Sheet Report routes for frontend integration
 			ssotBSReports := v1.Group("/reports/ssot")
 			ssotBSReports.Use(jwtManager.AuthRequired())
@@ -1042,7 +1059,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				ssotBSReports.GET("/balance-sheet/account-details", ssotBSController.GetSSOTBalanceSheetAccountDetails)
 				ssotBSReports.GET("/balance-sheet/validate", ssotBSController.ValidateSSOTBalanceSheet)
 				ssotBSReports.GET("/balance-sheet/comparison", ssotBSController.GetSSOTBalanceSheetComparison)
-				
+
 				// 💰 Cash Flow Statement endpoints for frontend - matches the format expected by SSOT Cash Flow Modal
 				ssotBSReports.GET("/cash-flow", ssotCFController.GetSSOTCashFlow)
 				ssotBSReports.GET("/cash-flow/summary", ssotCFController.GetSSOTCashFlowSummary)
@@ -1064,7 +1081,7 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				// Token monitoring
 				monitoring.GET("/token-stats", monitoringController.GetTokenStats)
 				monitoring.GET("/refresh-events", monitoringController.GetRecentRefreshEvents)
-				
+
 				// Session management
 				monitoring.GET("/sessions/stats", sessionController.GetSessionStats)
 				monitoring.POST("/sessions/cleanup", sessionController.ForceCleanup)
@@ -1072,25 +1089,25 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 
 				// User-specific monitoring
 				monitoring.GET("/users/:user_id/security-summary", monitoringController.GetUserSecuritySummary)
-				
+
 				// Startup service monitoring
 				monitoring.GET("/startup-status", startupHandler.GetStartupStatus)
 				monitoring.POST("/fix-account-headers", startupHandler.TriggerAccountHeaderFix)
-				
+
 				// Balance monitoring routes
 				monitoring.GET("/balance-sync", balanceMonitoringController.CheckBalanceSync)
 				monitoring.POST("/fix-discrepancies", balanceMonitoringController.FixBalanceDiscrepancies)
 				monitoring.GET("/balance-health", balanceMonitoringController.GetBalanceHealth)
 				monitoring.GET("/discrepancies", balanceMonitoringController.GetBalanceDiscrepancies)
 				monitoring.GET("/sync-status", balanceMonitoringController.GetSyncStatus)
-				
+
 				// 📊 API Usage monitoring routes
 				monitoring.GET("/api-usage/stats", apiUsageController.GetAPIUsageStats)
 				monitoring.GET("/api-usage/top", apiUsageController.GetTopEndpoints)
 				monitoring.GET("/api-usage/unused", apiUsageController.GetUnusedEndpoints)
 				monitoring.GET("/api-usage/analytics", apiUsageController.GetUsageAnalytics)
 				monitoring.POST("/api-usage/reset", apiUsageController.ResetUsageStats)
-				
+
 				// 🏁 Performance monitoring routes (admin only)
 				monitoring.GET("/performance/report", performanceController.GetPerformanceReport)
 				monitoring.GET("/performance/metrics", performanceController.GetQuickMetrics)
@@ -1099,72 +1116,72 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 				monitoring.GET("/performance/system", performanceController.GetSystemStatus)
 				monitoring.POST("/performance/metrics/clear", performanceController.ClearMetrics)
 				monitoring.GET("/performance/test", performanceController.TestUltraFastEndpoint)
-				
+
 				// 🚑 Payment timeout diagnostic routes (critical for troubleshooting)
 				monitoring.GET("/timeout/diagnostics", performanceController.RunTimeoutDiagnostics)
 				monitoring.GET("/timeout/health", performanceController.GetQuickHealthCheck)
 			}
-			
-			// 🔒 Security Dashboard routes (admin only) 
+
+			// 🔒 Security Dashboard routes (admin only)
 			security := protected.Group("/admin/security")
-			security.Use(middleware.RoleRequired("admin")) // Only admins can access security dashboard
+			security.Use(middleware.RoleRequired("admin"))     // Only admins can access security dashboard
 			security.Use(enhancedSecurity.RequestMonitoring()) // Enhanced monitoring for security routes
 			{
 				// Security Incident Management
 				security.GET("/incidents", securityController.GetSecurityIncidents)
 				security.GET("/incidents/:id", securityController.GetSecurityIncident)
 				security.PUT("/incidents/:id/resolve", securityController.ResolveSecurityIncident)
-				
+
 				// System Alerts Management
 				security.GET("/alerts", securityController.GetSystemAlerts)
 				security.PUT("/alerts/:id/acknowledge", securityController.AcknowledgeAlert)
-				
+
 				// Security Metrics & Analytics
 				security.GET("/metrics", securityController.GetSecurityMetrics)
-				
+
 				// IP Whitelist Management
 				security.GET("/ip-whitelist", securityController.GetIPWhitelist)
 				security.POST("/ip-whitelist", securityController.AddIPToWhitelist)
-				
+
 				// Security Configuration
 				security.GET("/config", securityController.GetSecurityConfig)
-				
+
 				// Maintenance Operations
 				security.POST("/cleanup", securityController.CleanupSecurityLogs)
-				
+
 			}
-			
-	// 🔧 Admin CashBank GL Links routes (admin only)
+
+			// 🔧 Admin CashBank GL Links routes (admin only)
 			adminRoutes := protected.Group("/admin")
-			adminRoutes.Use(middleware.RoleRequired("admin")) // Only admins can access admin routes
+			adminRoutes.Use(middleware.RoleRequired("admin"))     // Only admins can access admin routes
 			adminRoutes.Use(enhancedSecurity.RequestMonitoring()) // Enhanced monitoring for admin routes
 			{
 				// CashBank GL account links management
 				adminRoutes.GET("/check-cashbank-gl-links", fixCashBankController.CheckCashBankGLLinks)
 				adminRoutes.POST("/fix-cashbank-gl-links", fixCashBankController.FixCashBankGLLinks)
-				
+
 				// 🔧 Database Migration Management (Admin only)
 				adminMigrationController := controllers.NewAdminMigrationController(db)
 				adminRoutes.GET("/migrations/constraint-info", adminMigrationController.GetConstraintInfo)
 				adminRoutes.POST("/migrations/fix-date-constraint", adminMigrationController.ForceRunDateConstraintFix)
-				
+
 				// 📝 Activity Logs Management (Admin only)
 				adminRoutes.GET("/activity-logs", activityLogController.GetActivityLogs)
 				adminRoutes.GET("/activity-logs/summary", activityLogController.GetActivitySummary)
 				adminRoutes.GET("/activity-logs/stats", activityLogController.GetActivityStats)
 				adminRoutes.POST("/activity-logs/cleanup", activityLogController.CleanupOldLogs)
 			}
-			
+
 			// 📝 Activity Logs - User self-access routes (any authenticated user)
 			activityLogs := protected.Group("/activity-logs")
 			{
 				// Users can view their own activity logs
 				activityLogs.GET("/me", activityLogController.GetMyActivityLogs)
 			}
-			
+
 			// 🏥 Balance Health routes (admin only)
 			balanceHealth := protected.Group("/admin/balance-health")
-			balanceHealth.Use(middleware.RoleRequired("admin")) // Only admins can access balance health
+			balanceHealth.Use(middleware.RoleRequired("admin"))     // Only admins can access balance health
 			balanceHealth.Use(enhancedSecurity.RequestMonitoring()) // Enhanced monitoring for balance health routes
 			{
 				// Balance Health Management
@@ -1180,46 +1197,45 @@ unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 	r.Static("/templates", "./templates")
 	r.Static("/uploads", "./uploads")
 
-// Global favicon handler to avoid 404s in all contexts (Swagger and non-Swagger)
-r.GET("/favicon.ico", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	// Global favicon handler to avoid 404s in all contexts (Swagger and non-Swagger)
+	r.GET("/favicon.ico", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
-// Health check endpoint
-v1.GET("/health", func(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
-})
+	// Health check endpoint
+	v1.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
-
-// Swagger documentation endpoint (accessible in development or when ENABLE_SWAGGER=true)
-if isDevelopmentMode() || os.Getenv("ENABLE_SWAGGER") == "true" {
-	// Load the Swagger spec once and serve from memory to avoid path/cwd issues
-	swaggerBytes, pathUsed, err := loadSwaggerJSON()
-	if err != nil {
-		log.Printf("⚠️  Swagger spec not found: %v", err)
-		log.Printf("ℹ️  Serving minimal embedded spec so Swagger UI can still load. Run 'swag init' to generate full docs.")
-		swaggerBytes = minimalSwaggerJSON()
-		pathUsed = "embedded-minimal"
+	// Swagger documentation endpoint (accessible in development or when ENABLE_SWAGGER=true)
+	if isDevelopmentMode() || os.Getenv("ENABLE_SWAGGER") == "true" {
+		// Load the Swagger spec once and serve from memory to avoid path/cwd issues
+		swaggerBytes, pathUsed, err := loadSwaggerJSON()
+		if err != nil {
+			log.Printf("⚠️  Swagger spec not found: %v", err)
+			log.Printf("ℹ️  Serving minimal embedded spec so Swagger UI can still load. Run 'swag init' to generate full docs.")
+			swaggerBytes = minimalSwaggerJSON()
+			pathUsed = "embedded-minimal"
+		}
+		log.Printf("📄 Serving Swagger spec from: %s", pathUsed)
+		r.GET("/openapi/doc.json", func(c *gin.Context) {
+			c.Data(http.StatusOK, "application/json", swaggerBytes)
+		})
+		// Swagger UI endpoints using Enhanced Swagger content on legacy URLs
+		sg := r.Group("/")
+		sg.Use(swaggerCSPMiddleware()) // relax CSP for Swagger UI only
+		sg.GET("/swagger", func(c *gin.Context) { c.Redirect(http.StatusFound, "/swagger/index.html") })
+		sg.GET("/swagger/index.html", func(c *gin.Context) {
+			// Use Enhanced Swagger HTML instead of basic swaggerIndexHTML
+			html := config.GetEnhancedSwaggerHTML("/openapi/enhanced-doc.json")
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+		})
+		sg.GET("/docs", func(c *gin.Context) { c.Redirect(http.StatusFound, "/docs/index.html") })
+		sg.GET("/docs/index.html", func(c *gin.Context) {
+			// Use Enhanced Swagger HTML instead of basic swaggerIndexHTML
+			html := config.GetEnhancedSwaggerHTML("/openapi/enhanced-doc.json")
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+		})
+		// Avoid favicon 404s on Swagger pages (kept for completeness)
 	}
-	log.Printf("📄 Serving Swagger spec from: %s", pathUsed)
-	r.GET("/openapi/doc.json", func(c *gin.Context) {
-		c.Data(http.StatusOK, "application/json", swaggerBytes)
-	})
-	// Swagger UI endpoints using Enhanced Swagger content on legacy URLs
-	sg := r.Group("/")
-	sg.Use(swaggerCSPMiddleware()) // relax CSP for Swagger UI only
-	sg.GET("/swagger", func(c *gin.Context) { c.Redirect(http.StatusFound, "/swagger/index.html") })
-	sg.GET("/swagger/index.html", func(c *gin.Context) {
-		// Use Enhanced Swagger HTML instead of basic swaggerIndexHTML
-		html := config.GetEnhancedSwaggerHTML("/openapi/enhanced-doc.json")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
-	})
-	sg.GET("/docs", func(c *gin.Context) { c.Redirect(http.StatusFound, "/docs/index.html") })
-	sg.GET("/docs/index.html", func(c *gin.Context) {
-		// Use Enhanced Swagger HTML instead of basic swaggerIndexHTML
-		html := config.GetEnhancedSwaggerHTML("/openapi/enhanced-doc.json")
-		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
-	})
-	// Avoid favicon 404s on Swagger pages (kept for completeness)
-}
 
 	// Debug routes for development only
 	if gin.Mode() == gin.DebugMode {
@@ -1231,7 +1247,7 @@ if isDevelopmentMode() || os.Getenv("ENABLE_SWAGGER") == "true" {
 			{
 				debugWithAuth.GET("/context", debugController.TestJWTContext)
 				debugWithAuth.GET("/role", debugController.TestRolePermission)
-				
+
 				// Essential permission tests only
 				debugWithAuth.GET("/test-cashbank-permission", permMiddleware.CanView("cash_bank"), debugController.TestCashBankPermission)
 				debugWithAuth.GET("/test-payments-permission", permMiddleware.CanView("payments"), debugController.TestPaymentsPermission)
@@ -1244,341 +1260,340 @@ if isDevelopmentMode() || os.Getenv("ENABLE_SWAGGER") == "true" {
 // These routes proxy requests to the actual /api/v1 endpoints
 func setupFrontendCompatibilityRoutes(r *gin.Engine, v1 *gin.RouterGroup) {
 	log.Println("🔗 Setting up frontend compatibility routes...")
-	
+
 	// Root-level routes that proxy to /api/v1 endpoints
 	// These maintain the same authentication and permission requirements
-	
+
 	// Accounts compatibility routes
 	r.GET("/accounts", func(c *gin.Context) {
 		// Forward to the actual /api/v1/accounts endpoint
 		c.Request.URL.Path = "/api/v1/accounts"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/accounts", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/accounts"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/accounts/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/accounts/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/accounts/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/accounts/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/accounts/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/accounts/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	// Contacts compatibility routes
 	r.GET("/contacts", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/contacts"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/contacts", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/contacts"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/contacts/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/contacts/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/contacts/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/contacts/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/contacts/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/contacts/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	// Products compatibility routes
 	r.GET("/products", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/products"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/products", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/products"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/products/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/products/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/products/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/products/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/products/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/products/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	// Users compatibility routes
 	r.GET("/users", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/users"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/users", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/users"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/users/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/users/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/users/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/users/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/users/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/users/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	// Sales compatibility routes
 	r.GET("/sales", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/sales", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/sales/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/sales/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/sales/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/sales/:id/approve", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales/" + c.Param("id") + "/approve"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/sales/:id/invoice", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales/" + c.Param("id") + "/invoice"
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/sales/:id/cancel", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/sales/" + c.Param("id") + "/cancel"
 		r.HandleContext(c)
 	})
-	
+
 	// Purchase compatibility routes
 	r.GET("/purchases", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/purchases", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/purchases/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/purchases/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/purchases/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/purchases/:id/approve", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases/" + c.Param("id") + "/approve"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/purchases/:id/receive", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases/" + c.Param("id") + "/receive"
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/purchases/:id/cancel", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/purchases/" + c.Param("id") + "/cancel"
 		r.HandleContext(c)
 	})
-	
+
 	// Payments compatibility routes
 	r.GET("/payments", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/payments"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/payments", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/payments"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/payments/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/payments/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/payments/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/payments/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/payments/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/payments/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/payments/:id/approve", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/payments/" + c.Param("id") + "/approve"
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/payments/:id/cancel", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/payments/" + c.Param("id") + "/cancel"
 		r.HandleContext(c)
 	})
-	
+
 	// Cash & Bank compatibility routes
 	r.GET("/cash-bank", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/cash-bank"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/cash-bank", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/cash-bank"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/cash-bank/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/cash-bank/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/cash-bank/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/cash-bank/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/cash-bank/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/cash-bank/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/cash-bank/:id/confirm", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/cash-bank/" + c.Param("id") + "/confirm"
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/cash-bank/:id/cancel", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/cash-bank/" + c.Param("id") + "/cancel"
 		r.HandleContext(c)
 	})
-	
+
 	// Journals compatibility routes
 	r.GET("/journals", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/journals"
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/journals", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/journals"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/journals/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/journals/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.PUT("/journals/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/journals/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/journals/:id", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/journals/" + c.Param("id")
 		r.HandleContext(c)
 	})
-	
+
 	r.POST("/journals/:id/post", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/journals/" + c.Param("id") + "/post"
 		r.HandleContext(c)
 	})
-	
+
 	r.DELETE("/journals/:id/cancel", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/journals/" + c.Param("id") + "/cancel"
 		r.HandleContext(c)
 	})
-	
+
 	// Reports compatibility routes
 	r.GET("/reports/balance-sheet", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/reports/balance-sheet"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/reports/income-statement", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/reports/income-statement"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/reports/cash-flow", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/reports/cash-flow"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/reports/trial-balance", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/reports/trial-balance"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/reports/general-ledger", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/reports/general-ledger"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/reports/accounts-receivable", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/reports/accounts-receivable"
 		r.HandleContext(c)
 	})
-	
+
 	r.GET("/reports/accounts-payable", func(c *gin.Context) {
 		c.Request.URL.Path = "/api/v1/reports/accounts-payable"
 		r.HandleContext(c)
 	})
-	
+
 	log.Println("✅ Frontend compatibility routes configured successfully")
 }
-

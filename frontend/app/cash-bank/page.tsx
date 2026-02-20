@@ -6,6 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
+import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
 import { DataTable } from '@/components/common/DataTable';
 import {
   Box,
@@ -735,735 +736,742 @@ const CashBankPage: React.FC = () => {
   if (loading) {
     return (
       <ProtectedModule module="cash_bank">
-        <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
-          <Box>
-            <Text>{t('common.loading')}</Text>
-          </Box>
-        </SimpleLayout>
+        <CompanyTypeGuard>
+          <SimpleLayout>
+            <Box>
+              <Text>{t('common.loading')}</Text>
+            </Box>
+          </SimpleLayout>
+        </CompanyTypeGuard>
       </ProtectedModule>
     );
   }
 
   return (
     <ProtectedModule module="cash_bank">
-      <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
-        <Box>
-          <Flex justify="space-between" align="center" mb={6}>
-            <Heading size="lg">{t('cashBank.title')}</Heading>
-            <HStack spacing={3}>
-              <Button
-                colorScheme="blue"
-                leftIcon={<FiPlus />}
-                onClick={handleAddAccount}
-              >
-                {t('common.add')} {t('accounts.title')}
-              </Button>
-            </HStack>
-          </Flex>
-
-          {error && (
-            <Alert status="error" mb={6}>
-              <AlertIcon />
-              <AlertTitle mr={2}>Error!</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {/* COA Integration Information */}
-          <Alert status="info" mb={6} borderRadius="lg">
-            <AlertIcon />
-            <Box>
-              <AlertTitle>{t('cashBank.chartOfAccountsIntegration')}</AlertTitle>
-              <AlertDescription>
-                <Text fontSize="sm" mb={2}>
-                  {t('cashBank.integrationDesc')}
-                </Text>
-                <Flex gap={4} alignItems="center" flexWrap="wrap">
-                  <Text fontSize="xs" color="blue.600">
-                    🔄 {t('cashBank.autoCreatesGL')}
-                  </Text>
-                  <Text fontSize="xs" color="green.600">
-                    📋 {t('cashBank.linksToBalanceSheetShort')}
-                  </Text>
-                  <Text fontSize="xs" color="purple.600">
-                    🔍 {t('cashBank.fullAuditTrailShort')}
-                  </Text>
-                  <Button
-                    as="a"
-                    href="/accounts"
-                    target="_blank"
-                    size="xs"
-                    variant="outline"
-                    colorScheme="blue"
-                    leftIcon={<Text fontSize="xs">🔗</Text>}
-                  >
-                    {t('cashBank.viewChartOfAccounts')}
-                  </Button>
-                </Flex>
-              </AlertDescription>
-            </Box>
-          </Alert>
-
-          {/* COA Integration Status */}
-          {safeAccounts.length > 0 && (
-            <Card mb={6} borderLeft="4px" borderLeftColor={safeAccounts.some(acc => !acc.account) ? 'orange.400' : 'green.400'}>
-              <CardBody>
-                <Flex justify="space-between" align="center">
-                  <Box>
-                    <Text fontSize="sm" fontWeight="medium" mb={1}>
-                      {safeAccounts.some(acc => !acc.account) ? `⚠️ ${t('cashBank.coaIntegrationStatusDesc')}` : `✅ ${t('cashBank.coaIntegrationStatusDesc')}`}
-                    </Text>
-                    <Text fontSize="xs" color="gray.600">
-                      {safeAccounts.filter(acc => acc.account).length} of {safeAccounts.length} {t('cashBank.accountsLinkedToCOA')}
-                    </Text>
-                  </Box>
-                  {safeAccounts.some(acc => !acc.account) && (
-                    <Button
-                      size="xs"
-                      colorScheme="orange"
-                      variant="outline"
-                      onClick={handleFixGLLinks}
-                      isLoading={loading}
-                    >
-                      {t('cashBank.fixMissingLinks')}
-                    </Button>
-                  )}
-                </Flex>
-              </CardBody>
-            </Card>
-          )}
-
-          {/* Summary Cards */}
-          <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6} mb={8}>
-            <Card>
-              <CardBody>
-                <Stat>
-                  <StatLabel>{t('cashBank.totalBankBalance')}</StatLabel>
-                  <StatNumber color="blue.500">
-                    IDR {balanceSummary?.total_bank?.toLocaleString() || '0'}
-                  </StatNumber>
-                  <StatHelpText>{bankAccounts.length} {t('cashBank.accounts')}</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardBody>
-                <Stat>
-                  <StatLabel>{t('cashBank.totalCashBalance')}</StatLabel>
-                  <StatNumber color="green.500">
-                    IDR {balanceSummary?.total_cash?.toLocaleString() || '0'}
-                  </StatNumber>
-                  <StatHelpText>{cashAccounts.length} {t('cashBank.accounts')}</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardBody>
-                <Stat>
-                  <StatLabel>{t('cashBank.totalBalance')}</StatLabel>
-                  <StatNumber color="purple.500">
-                    IDR {balanceSummary?.total_balance?.toLocaleString() || '0'}
-                  </StatNumber>
-                  <StatHelpText>{t('cashBank.combinedTotal')}</StatHelpText>
-                </Stat>
-              </CardBody>
-            </Card>
-          </SimpleGrid>
-
-          {/* Bank Accounts Section */}
-          <Box mb={8}>
-            <Flex justify="space-between" align="center" mb={4}>
-              <Heading size="md">{t('cashBank.bankAccounts')}</Heading>
-              <Button
-                size="sm"
-                leftIcon={<FiCreditCard />}
-                colorScheme="blue"
-                onClick={handleAddAccount}
-              >
-                {t('cashBank.addBankAccount')}
-              </Button>
-            </Flex>
-            {bankAccounts.length > 0 ? (
-              <Box bg={bg} borderRadius="lg" overflow="hidden" boxShadow="sm">
-                <DataTable<CashBank>
-                  columns={accountColumns}
-                  data={bankAccounts}
-                  keyField="id"
-                  searchable={true}
-                  pagination={true}
-                  pageSize={5}
-                />
-              </Box>
-            ) : (
-              <Card>
-                <CardBody>
-                  <Text color={mutedTextColor} textAlign="center" py={8}>
-                    {t('cashBank.noBankAccountsFound')}
-                  </Text>
-                </CardBody>
-              </Card>
-            )}
-          </Box>
-
-          {/* Cash Accounts Section */}
-          <Box>
-            <Flex justify="space-between" align="center" mb={4}>
-              <Heading size="md">{t('cashBank.cashAccounts')}</Heading>
-              <Button
-                size="sm"
-                leftIcon={<FiDollarSign />}
-                colorScheme="green"
-                onClick={handleAddAccount}
-              >
-                {t('cashBank.addCashAccount')}
-              </Button>
-            </Flex>
-            {cashAccounts.length > 0 ? (
-              <Box bg={bg} borderRadius="lg" overflow="hidden" boxShadow="sm">
-                <DataTable<CashBank>
-                  columns={accountColumns}
-                  data={cashAccounts}
-                  keyField="id"
-                  searchable={true}
-                  pagination={true}
-                  pageSize={5}
-                />
-              </Box>
-            ) : (
-              <Card>
-                <CardBody>
-                  <Text color={mutedTextColor} textAlign="center" py={8}>
-                    {t('cashBank.noCashAccountsFound')}
-                  </Text>
-                </CardBody>
-              </Card>
-            )}
-          </Box>
-        </Box>
-
-        {/* Cash Bank Form Modal */}
-        <CashBankForm
-          isOpen={isOpen}
-          onClose={onClose}
-          onSuccess={handleFormSuccess}
-          account={selectedAccount}
-          mode={formMode}
-        />
-
-        {/* Withdrawal Modal - Using legacy form for withdrawal only */}
-        <DepositWithdrawalForm
-          isOpen={isTransactionModalOpen}
-          onClose={onTransactionModalClose}
-          onSuccess={handleTransactionSuccess}
-          account={transactionAccount}
-          mode={transactionMode}
-        />
-
-        {/* Transfer Modal */}
-        <TransferForm
-          isOpen={isTransferModalOpen}
-          onClose={onTransferModalClose}
-          onSuccess={handleTransactionSuccess}
-          sourceAccount={transactionAccount}
-        />
-
-        {/* Account Details Modal */}
-        <Modal isOpen={isDetailModalOpen} onClose={onDetailModalClose} size="4xl" scrollBehavior="inside">
-          <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(10px)" />
-          <ModalContent
-            maxH="90vh"
-            maxW={{ base: '95vw', md: '90vw', lg: '70vw' }}
-            mx={4}
-            bg={modalContentBg}
-            display="flex"
-            flexDirection="column"
-          >
-            {/* Payment Modal Style Header */}
-            <ModalHeader
-              bg="blue.500"
-              color="white"
-              borderTopRadius="md"
-              py={4}
-              px={6}
-            >
-              <Flex alignItems="center" gap={4}>
-                <Box
-                  p={3}
-                  bg="whiteAlpha.200"
-                  borderRadius="full"
-                  fontSize="2xl"
-                >
-                  {selectedAccount?.type === 'CASH' ? '💵' : '🏦'}
-                </Box>
-                <VStack align="start" spacing={1}>
-                  <Text fontSize="xl" fontWeight="bold">
-                    {selectedAccount?.name}
-                  </Text>
-                  <HStack spacing={3}>
-                    <Badge
-                      bg="whiteAlpha.200"
-                      color="white"
-                      px={2}
-                      py={1}
-                      borderRadius="md"
-                      fontSize="xs"
-                      fontWeight="medium"
-                    >
-                      {selectedAccount?.type}
-                    </Badge>
-                    <Text fontSize="sm" fontFamily="mono" opacity={0.9}>
-                      {selectedAccount?.code}
-                    </Text>
-                    <Badge
-                      bg={selectedAccount?.is_active ? 'green.500' : 'red.500'}
-                      color="white"
-                      px={2}
-                      py={1}
-                      borderRadius="md"
-                      fontSize="xs"
-                    >
-                      {selectedAccount?.is_active ? t('cashBank.active') : t('cashBank.inactive')}
-                    </Badge>
-                  </HStack>
-                </VStack>
-              </Flex>
-            </ModalHeader>
-            <ModalCloseButton color="white" />
-
-            <ModalBody p={6} overflowY="auto" flex="1">
-              {selectedAccount && (
-                <VStack spacing={6} align="stretch">
-                  {/* Balance Hero Section */}
-                  <Card
-                    bg="linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"
-                    color="white"
-                    shadow="lg"
-                    borderRadius="xl"
-                  >
-                    <CardBody p={6} textAlign="center">
-                      <VStack spacing={4}>
-                        <Text fontSize="md" fontWeight="medium" opacity={0.9}>{t('cashBank.currentBalance')}</Text>
-                        <Text
-                          fontSize="3xl"
-                          fontWeight="bold"
-                          fontFamily="mono"
-                          letterSpacing="tight"
-                        >
-                          {selectedAccount.currency} {Math.abs(selectedAccount.balance).toLocaleString('id-ID')}
-                        </Text>
-                        <Badge
-                          bg={selectedAccount.balance < 0 ? 'red.500' : selectedAccount.balance > 0 ? 'green.500' : 'gray.500'}
-                          color="white"
-                          px={3}
-                          py={1}
-                          borderRadius="full"
-                          fontSize="sm"
-                        >
-                          {selectedAccount.balance < 0 ? `⚠️ ${t('cashBank.overdraft')}` :
-                            selectedAccount.balance > 0 ? `✅ ${t('cashBank.positive')}` : `➖ ${t('cashBank.zeroBalance')}`}
-                        </Badge>
-                      </VStack>
-                    </CardBody>
-                  </Card>
-
-                  {/* Information Grid - Compact Layout */}
-                  <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-                    {/* Left Column */}
-                    <VStack spacing={4} align="stretch">
-                      {/* Account Information */}
-                      <Box>
-                        <HStack spacing={3} mb={3}>
-                          <Text fontSize="xl">📋</Text>
-                          <Text fontWeight="bold" fontSize="lg">{t('cashBank.accountInformation')}</Text>
-                        </HStack>
-
-                        <VStack spacing={3} align="stretch">
-                          <Box>
-                            <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountCode')}</Text>
-                            <Text fontWeight="bold" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
-                              {selectedAccount.code}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.currency')}</Text>
-                            <HStack spacing={2}>
-                              <Text fontWeight="bold">{selectedAccount.currency}</Text>
-                              <Badge colorScheme="blue" variant="subtle" fontSize="xs">
-                                {t('cashBank.indonesianRupiah')}
-                              </Badge>
-                            </HStack>
-                          </Box>
-                        </VStack>
-                      </Box>
-
-                      {/* Bank Details */}
-                      {selectedAccount.type === 'BANK' && (
-                        <Box>
-                          <HStack spacing={3} mb={3}>
-                            <Text fontSize="xl">🏦</Text>
-                            <Text fontWeight="bold" fontSize="lg">{t('cashBank.bankDetails')}</Text>
-                          </HStack>
-
-                          <VStack spacing={3} align="stretch">
-                            <Box>
-                              <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.bankName')}</Text>
-                              <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.bank_name ? textColor : 'orange.600'}>
-                                {selectedAccount.bank_name || t('cashBank.bankNameNotSpecified')}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountNumber')}</Text>
-                              <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" fontFamily="mono" color={selectedAccount.account_no ? textColor : 'orange.600'}>
-                                {selectedAccount.account_no || t('cashBank.accountNumberNotSpecified')}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.atasNama')}</Text>
-                              <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.account_holder_name ? textColor : 'orange.600'}>
-                                {selectedAccount.account_holder_name || t('cashBank.accountHolderNotSpecified')}
-                              </Text>
-                            </Box>
-                            <Box>
-                              <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.cabang')}</Text>
-                              <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.branch ? textColor : 'orange.600'}>
-                                {selectedAccount.branch || t('cashBank.branchNotSpecified')}
-                              </Text>
-                            </Box>
-                          </VStack>
-                        </Box>
-                      )}
-                    </VStack>
-
-                    {/* Right Column */}
-                    <VStack spacing={4} align="stretch">
-                      {/* COA Integration */}
-                      <Box>
-                        <HStack spacing={3} mb={3}>
-                          <Text fontSize="xl">📊</Text>
-                          <Text fontWeight="bold" fontSize="lg">{t('cashBank.chartOfAccounts')}</Text>
-                        </HStack>
-
-                        {selectedAccount.account ? (
-                          <Box bg="green.50" p={4} borderRadius="lg" borderLeft="4px" borderLeftColor="green.400">
-                            <HStack justify="space-between" align="center" mb={2}>
-                              <Badge colorScheme="blue" variant="solid" fontSize="sm" px={3} py={1}>
-                                {selectedAccount.account.code}
-                              </Badge>
-                              <Badge colorScheme="green" variant="solid" fontSize="xs" px={2} py={1}>
-                                {t('cashBank.asset')}
-                              </Badge>
-                            </HStack>
-                            <Text fontWeight="bold" mb={1}>
-                              {selectedAccount.account.name}
-                            </Text>
-                            <Text fontSize="sm" color="green.700">
-                              ✅ {t('cashBank.successfullyIntegrated')}
-                            </Text>
-                          </Box>
-                        ) : (
-                          <Alert status="warning" borderRadius="md" py={3}>
-                            <AlertIcon boxSize={4} />
-                            <Box>
-                              <AlertTitle fontSize="sm">{t('cashBank.coaIntegrationRequired')}</AlertTitle>
-                              <AlertDescription fontSize="xs">
-                                {t('cashBank.linkAccountToCOA')}
-                              </AlertDescription>
-                            </Box>
-                          </Alert>
-                        )}
-                      </Box>
-
-                      {/* Audit Information */}
-                      <Box>
-                        <HStack spacing={3} mb={3}>
-                          <Text fontSize="xl">📅</Text>
-                          <Text fontWeight="bold" fontSize="lg">{t('cashBank.auditInformation')}</Text>
-                        </HStack>
-
-                        <VStack spacing={3} align="stretch">
-                          <Box>
-                            <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.created')}</Text>
-                            <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
-                              {new Date(selectedAccount.created_at).toLocaleDateString('id-ID', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </Text>
-                          </Box>
-                          <Box>
-                            <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.lastUpdated')}</Text>
-                            <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
-                              {new Date(selectedAccount.updated_at).toLocaleDateString('id-ID', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </Text>
-                          </Box>
-                        </VStack>
-                      </Box>
-                    </VStack>
-                  </SimpleGrid>
-
-                  {/* Quick Actions - Compact */}
-                  <Box>
-                    <HStack spacing={3} mb={4}>
-                      <Text fontSize="xl">⚡</Text>
-                      <Text fontWeight="bold" fontSize="lg">{t('cashBank.quickActions')}</Text>
-                    </HStack>
-
-                    <SimpleGrid columns={{ base: 2, md: 4 }} spacing={3}>
-                      <Button
-                        leftIcon={<FiEdit2 />}
-                        colorScheme="blue"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          onDetailModalClose();
-                          handleEditAccount(selectedAccount);
-                        }}
-                      >
-                        {t('cashBank.edit')}
-                      </Button>
-
-                      <Button
-                        leftIcon={<FiEye />}
-                        colorScheme="purple"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          onDetailModalClose();
-                          setSelectedAccount(selectedAccount);
-                          onTransactionHistoryModalOpen();
-                        }}
-                      >
-                        {t('cashBank.history')}
-                      </Button>
-
-                      {selectedAccount.is_active && (
-                        <Button
-                          leftIcon={<FiTrendingUp />}
-                          colorScheme="green"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            onDetailModalClose();
-                            handleDeposit(selectedAccount);
-                          }}
-                        >
-                          {t('cashBank.deposit')}
-                        </Button>
-                      )}
-
-                      {selectedAccount.is_active && selectedAccount.balance > 0 && (
-                        <Button
-                          leftIcon={<FiArrowRight />}
-                          colorScheme="orange"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            onDetailModalClose();
-                            handleTransfer(selectedAccount);
-                          }}
-                        >
-                          {t('cashBank.transfer')}
-                        </Button>
-                      )}
-                    </SimpleGrid>
-                  </Box>
-                </VStack>
-              )}
-            </ModalBody>
-
-            {/* Modal Footer with Payment Modal Style */}
-            <ModalFooter
-              bg={modalFooterBg}
-              borderBottomRadius="md"
-              py={4}
-              px={6}
-              borderTop="1px"
-              borderColor={borderColor}
-            >
-              <HStack spacing={3} width="full" justify="space-between">
-                {/* Account Summary Info */}
-                {selectedAccount && (
-                  <Box flex="1" display={{ base: 'none', md: 'block' }}>
-                    <HStack spacing={4}>
-                      <Text fontSize="sm" color={mutedTextColor}>
-                        {t('cashBank.balance')}: <Text as="span" fontWeight="bold" color={selectedAccount.balance < 0 ? "red.600" : selectedAccount.balance > 0 ? "green.600" : "gray.600"}>
-                          {selectedAccount.currency} {Math.abs(selectedAccount.balance).toLocaleString('id-ID')}
-                        </Text>
-                      </Text>
-                      <Text fontSize="sm" color={mutedTextColor}>
-                        {t('cashBank.statusLabel')}: <Text as="span" fontWeight="bold" color={selectedAccount.is_active ? "green.600" : "red.600"}>
-                          {selectedAccount.is_active ? t('cashBank.active') : t('cashBank.inactive')}
-                        </Text>
-                      </Text>
-                    </HStack>
-                  </Box>
-                )}
-
-                {/* Action Buttons */}
+      <CompanyTypeGuard>
+        <SimpleLayout>
+          <Box bg={bg} minH="100vh" p={6}>
+            <VStack spacing={6} align="stretch">
+              {/* Header */}
+              <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
+                <Heading size="lg">{t('cashBank.title')}</Heading>
                 <HStack spacing={3}>
                   <Button
-                    variant="outline"
-                    onClick={onDetailModalClose}
-                    size={{ base: 'sm', md: 'md' }}
-                    minW="80px"
-                  >
-                    {t('cashBank.close')}
-                  </Button>
-                  <Button
                     colorScheme="blue"
-                    leftIcon={<FiEdit2 />}
-                    onClick={() => {
-                      onDetailModalClose();
-                      handleEditAccount(selectedAccount!);
-                    }}
-                    size={{ base: 'sm', md: 'md' }}
-                    minW="120px"
+                    leftIcon={<FiPlus />}
+                    onClick={handleAddAccount}
                   >
-                    {t('cashBank.editAccountButton')}
+                    {t('common.add')} {t('accounts.title')}
                   </Button>
                 </HStack>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
+              </Flex>
 
-        {/* Deposit Modal - New Improved Form */}
-        <DepositFormImproved
-          isOpen={isDepositModalOpen}
-          onClose={onDepositModalClose}
-          onSuccess={handleTransactionSuccess}
-          account={depositAccount}
-        />
-
-        {/* Transaction History Modal */}
-        <TransactionHistoryModal
-          isOpen={isTransactionHistoryModalOpen}
-          onClose={onTransactionHistoryModalClose}
-          account={selectedAccount}
-        />
-
-        {/* Reconciliation Modal */}
-        <Modal isOpen={isReconcileModalOpen} onClose={onReconcileModalClose} size="lg">
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
-              {reconcileAccount ? `Reconcile ${reconcileAccount.name}` : 'Bank Reconciliation Check'}
-            </ModalHeader>
-            <ModalCloseButton />
-
-            <ModalBody>
-              <VStack spacing={4} align="stretch">
-                <Alert status="info">
+              {error && (
+                <Alert status="error" mb={6}>
                   <AlertIcon />
-                  <Box>
-                    <AlertTitle fontSize="sm">Bank Reconciliation Status</AlertTitle>
-                    <AlertDescription fontSize="xs">
-                      Check the reconciliation status of your cash and bank accounts with the journal system.
-                    </AlertDescription>
-                  </Box>
+                  <AlertTitle mr={2}>Error!</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
                 </Alert>
+              )}
 
-                {reconcileAccount ? (
-                  <Box p={4} bg="gray.50" borderRadius="md">
-                    <Text fontWeight="bold" mb={2}>{reconcileAccount.name}</Text>
-                    <HStack justify="space-between" mb={1}>
-                      <Text fontSize="sm">Account Type:</Text>
-                      <Text fontSize="sm" fontWeight="bold">
-                        {reconcileAccount.type} Account
+              {/* COA Integration Information */}
+              <Alert status="info" mb={6} borderRadius="lg">
+                <AlertIcon />
+                <Box>
+                  <AlertTitle>{t('cashBank.chartOfAccountsIntegration')}</AlertTitle>
+                  <AlertDescription>
+                    <Text fontSize="sm" mb={2}>
+                      {t('cashBank.integrationDesc')}
+                    </Text>
+                    <Flex gap={4} alignItems="center" flexWrap="wrap">
+                      <Text fontSize="xs" color="blue.600">
+                        🔄 {t('cashBank.autoCreatesGL')}
                       </Text>
-                    </HStack>
-                    <HStack justify="space-between" mb={1}>
-                      <Text fontSize="sm">Current Balance:</Text>
-                      <Text fontSize="sm" fontWeight="bold">
-                        {reconcileAccount.currency} {reconcileAccount.balance.toLocaleString('id-ID')}
+                      <Text fontSize="xs" color="green.600">
+                        📋 {t('cashBank.linksToBalanceSheetShort')}
                       </Text>
-                    </HStack>
-                    <HStack justify="space-between">
-                      <Text fontSize="sm">Status:</Text>
-                      <Badge
-                        colorScheme={reconcileAccount.is_active ? 'green' : 'red'}
-                        variant="solid"
-                        fontSize="xs"
+                      <Text fontSize="xs" color="purple.600">
+                        🔍 {t('cashBank.fullAuditTrailShort')}
+                      </Text>
+                      <Button
+                        as="a"
+                        href="/accounts"
+                        target="_blank"
+                        size="xs"
+                        variant="outline"
+                        colorScheme="blue"
+                        leftIcon={<Text fontSize="xs">🔗</Text>}
                       >
-                        {reconcileAccount.is_active ? 'ACTIVE' : 'INACTIVE'}
-                      </Badge>
-                    </HStack>
+                        {t('cashBank.viewChartOfAccounts')}
+                      </Button>
+                    </Flex>
+                  </AlertDescription>
+                </Box>
+              </Alert>
+
+              {/* COA Integration Status */}
+              {safeAccounts.length > 0 && (
+                <Card mb={6} borderLeft="4px" borderLeftColor={safeAccounts.some(acc => !acc.account) ? 'orange.400' : 'green.400'}>
+                  <CardBody>
+                    <Flex justify="space-between" align="center">
+                      <Box>
+                        <Text fontSize="sm" fontWeight="medium" mb={1}>
+                          {safeAccounts.some(acc => !acc.account) ? `⚠️ ${t('cashBank.coaIntegrationStatusDesc')}` : `✅ ${t('cashBank.coaIntegrationStatusDesc')}`}
+                        </Text>
+                        <Text fontSize="xs" color="gray.600">
+                          {safeAccounts.filter(acc => acc.account).length} of {safeAccounts.length} {t('cashBank.accountsLinkedToCOA')}
+                        </Text>
+                      </Box>
+                      {safeAccounts.some(acc => !acc.account) && (
+                        <Button
+                          size="xs"
+                          colorScheme="orange"
+                          variant="outline"
+                          onClick={handleFixGLLinks}
+                          isLoading={loading}
+                        >
+                          {t('cashBank.fixMissingLinks')}
+                        </Button>
+                      )}
+                    </Flex>
+                  </CardBody>
+                </Card>
+              )}
+
+              {/* Summary Cards */}
+              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6} mb={8}>
+                <Card>
+                  <CardBody>
+                    <Stat>
+                      <StatLabel>{t('cashBank.totalBankBalance')}</StatLabel>
+                      <StatNumber color="blue.500">
+                        IDR {balanceSummary?.total_bank?.toLocaleString() || '0'}
+                      </StatNumber>
+                      <StatHelpText>{bankAccounts.length} {t('cashBank.accounts')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+
+                <Card>
+                  <CardBody>
+                    <Stat>
+                      <StatLabel>{t('cashBank.totalCashBalance')}</StatLabel>
+                      <StatNumber color="green.500">
+                        IDR {balanceSummary?.total_cash?.toLocaleString() || '0'}
+                      </StatNumber>
+                      <StatHelpText>{cashAccounts.length} {t('cashBank.accounts')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+
+                <Card>
+                  <CardBody>
+                    <Stat>
+                      <StatLabel>{t('cashBank.totalBalance')}</StatLabel>
+                      <StatNumber color="purple.500">
+                        IDR {balanceSummary?.total_balance?.toLocaleString() || '0'}
+                      </StatNumber>
+                      <StatHelpText>{t('cashBank.combinedTotal')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+              </SimpleGrid>
+
+              {/* Bank Accounts Section */}
+              <Box mb={8}>
+                <Flex justify="space-between" align="center" mb={4}>
+                  <Heading size="md">{t('cashBank.bankAccounts')}</Heading>
+                  <Button
+                    size="sm"
+                    leftIcon={<FiCreditCard />}
+                    colorScheme="blue"
+                    onClick={handleAddAccount}
+                  >
+                    {t('cashBank.addBankAccount')}
+                  </Button>
+                </Flex>
+                {bankAccounts.length > 0 ? (
+                  <Box bg={bg} borderRadius="lg" overflow="hidden" boxShadow="sm">
+                    <DataTable<CashBank>
+                      columns={accountColumns}
+                      data={bankAccounts}
+                      keyField="id"
+                      searchable={true}
+                      pagination={true}
+                      pageSize={5}
+                    />
                   </Box>
                 ) : (
-                  <Box p={4} bg="blue.50" borderRadius="md" borderLeft="4px" borderLeftColor="blue.400">
-                    <Text fontWeight="bold" mb={2} color="blue.800">Global Reconciliation Check</Text>
-                    <Text fontSize="sm" color="blue.700">
-                      This will check the reconciliation status for all cash and bank accounts in your system.
-                    </Text>
-                  </Box>
+                  <Card>
+                    <CardBody>
+                      <Text color={mutedTextColor} textAlign="center" py={8}>
+                        {t('cashBank.noBankAccountsFound')}
+                      </Text>
+                    </CardBody>
+                  </Card>
                 )}
+              </Box>
 
-                <Alert status="warning" size="sm">
-                  <AlertIcon />
-                  <AlertDescription fontSize="xs">
-                    <Text fontWeight="bold" mb={1}>Action Required:</Text>
-                    To perform actual reconciliation, please use the dedicated
-                    <Text as="span" fontWeight="bold" color="blue.600"> Cash & Bank Reconciliation </Text>
-                    module which provides advanced reconciliation tools.
-                  </AlertDescription>
-                </Alert>
-
-                <Text fontSize="sm" color="gray.600">
-                  Available actions:
-                </Text>
-
-                <VStack spacing={2} align="stretch">
+              {/* Cash Accounts Section */}
+              <Box>
+                <Flex justify="space-between" align="center" mb={4}>
+                  <Heading size="md">{t('cashBank.cashAccounts')}</Heading>
                   <Button
-                    leftIcon={<FiSettings />}
-                    variant="outline"
-                    colorScheme="purple"
-                    onClick={handleOpenReconciliationPage}
                     size="sm"
+                    leftIcon={<FiDollarSign />}
+                    colorScheme="green"
+                    onClick={handleAddAccount}
                   >
-                    Open Reconciliation Module
+                    {t('cashBank.addCashAccount')}
                   </Button>
-                  <Button
-                    leftIcon={<FiRefreshCw />}
-                    variant="outline"
-                    onClick={handleCheckReconciliationStatus}
-                    isLoading={reconciling}
-                    size="sm"
-                  >
-                    Check Current Status
-                  </Button>
-                </VStack>
-              </VStack>
-            </ModalBody>
+                </Flex>
+                {cashAccounts.length > 0 ? (
+                  <Box bg={bg} borderRadius="lg" overflow="hidden" boxShadow="sm">
+                    <DataTable<CashBank>
+                      columns={accountColumns}
+                      data={cashAccounts}
+                      keyField="id"
+                      searchable={true}
+                      pagination={true}
+                      pageSize={5}
+                    />
+                  </Box>
+                ) : (
+                  <Card>
+                    <CardBody>
+                      <Text color={mutedTextColor} textAlign="center" py={8}>
+                        {t('cashBank.noCashAccountsFound')}
+                      </Text>
+                    </CardBody>
+                  </Card>
+                )}
+              </Box>
 
-            <ModalFooter>
-              <HStack spacing={3}>
-                <Button variant="outline" onClick={onReconcileModalClose}>
-                  Close
-                </Button>
-                <Button
-                  colorScheme="purple"
-                  onClick={handleOpenReconciliationPage}
+              {/* Cash Bank Form Modal */}
+              <CashBankForm
+                isOpen={isOpen}
+                onClose={onClose}
+                onSuccess={handleFormSuccess}
+                account={selectedAccount}
+                mode={formMode}
+              />
+
+              {/* Withdrawal Modal - Using legacy form for withdrawal only */}
+              <DepositWithdrawalForm
+                isOpen={isTransactionModalOpen}
+                onClose={onTransactionModalClose}
+                onSuccess={handleTransactionSuccess}
+                account={transactionAccount}
+                mode={transactionMode}
+              />
+
+              {/* Transfer Modal */}
+              <TransferForm
+                isOpen={isTransferModalOpen}
+                onClose={onTransferModalClose}
+                onSuccess={handleTransactionSuccess}
+                sourceAccount={transactionAccount}
+              />
+
+              {/* Account Details Modal */}
+              <Modal isOpen={isDetailModalOpen} onClose={onDetailModalClose} size="4xl" scrollBehavior="inside">
+                <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(10px)" />
+                <ModalContent
+                  maxH="90vh"
+                  maxW={{ base: '95vw', md: '90vw', lg: '70vw' }}
+                  mx={4}
+                  bg={modalContentBg}
+                  display="flex"
+                  flexDirection="column"
                 >
-                  Go to Reconciliation
-                </Button>
-              </HStack>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-      </SimpleLayout>
+                  {/* Payment Modal Style Header */}
+                  <ModalHeader
+                    bg="blue.500"
+                    color="white"
+                    borderTopRadius="md"
+                    py={4}
+                    px={6}
+                  >
+                    <Flex alignItems="center" gap={4}>
+                      <Box
+                        p={3}
+                        bg="whiteAlpha.200"
+                        borderRadius="full"
+                        fontSize="2xl"
+                      >
+                        {selectedAccount?.type === 'CASH' ? '💵' : '🏦'}
+                      </Box>
+                      <VStack align="start" spacing={1}>
+                        <Text fontSize="xl" fontWeight="bold">
+                          {selectedAccount?.name}
+                        </Text>
+                        <HStack spacing={3}>
+                          <Badge
+                            bg="whiteAlpha.200"
+                            color="white"
+                            px={2}
+                            py={1}
+                            borderRadius="md"
+                            fontSize="xs"
+                            fontWeight="medium"
+                          >
+                            {selectedAccount?.type}
+                          </Badge>
+                          <Text fontSize="sm" fontFamily="mono" opacity={0.9}>
+                            {selectedAccount?.code}
+                          </Text>
+                          <Badge
+                            bg={selectedAccount?.is_active ? 'green.500' : 'red.500'}
+                            color="white"
+                            px={2}
+                            py={1}
+                            borderRadius="md"
+                            fontSize="xs"
+                          >
+                            {selectedAccount?.is_active ? t('cashBank.active') : t('cashBank.inactive')}
+                          </Badge>
+                        </HStack>
+                      </VStack>
+                    </Flex>
+                  </ModalHeader>
+                  <ModalCloseButton color="white" />
+
+                  <ModalBody p={6} overflowY="auto" flex="1">
+                    {selectedAccount && (
+                      <VStack spacing={6} align="stretch">
+                        {/* Balance Hero Section */}
+                        <Card
+                          bg="linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"
+                          color="white"
+                          shadow="lg"
+                          borderRadius="xl"
+                        >
+                          <CardBody p={6} textAlign="center">
+                            <VStack spacing={4}>
+                              <Text fontSize="md" fontWeight="medium" opacity={0.9}>{t('cashBank.currentBalance')}</Text>
+                              <Text
+                                fontSize="3xl"
+                                fontWeight="bold"
+                                fontFamily="mono"
+                                letterSpacing="tight"
+                              >
+                                {selectedAccount.currency} {Math.abs(selectedAccount.balance).toLocaleString('id-ID')}
+                              </Text>
+                              <Badge
+                                bg={selectedAccount.balance < 0 ? 'red.500' : selectedAccount.balance > 0 ? 'green.500' : 'gray.500'}
+                                color="white"
+                                px={3}
+                                py={1}
+                                borderRadius="full"
+                                fontSize="sm"
+                              >
+                                {selectedAccount.balance < 0 ? `⚠️ ${t('cashBank.overdraft')}` :
+                                  selectedAccount.balance > 0 ? `✅ ${t('cashBank.positive')}` : `➖ ${t('cashBank.zeroBalance')}`}
+                              </Badge>
+                            </VStack>
+                          </CardBody>
+                        </Card>
+
+                        {/* Information Grid - Compact Layout */}
+                        <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
+                          {/* Left Column */}
+                          <VStack spacing={4} align="stretch">
+                            {/* Account Information */}
+                            <Box>
+                              <HStack spacing={3} mb={3}>
+                                <Text fontSize="xl">📋</Text>
+                                <Text fontWeight="bold" fontSize="lg">{t('cashBank.accountInformation')}</Text>
+                              </HStack>
+
+                              <VStack spacing={3} align="stretch">
+                                <Box>
+                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountCode')}</Text>
+                                  <Text fontWeight="bold" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
+                                    {selectedAccount.code}
+                                  </Text>
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.currency')}</Text>
+                                  <HStack spacing={2}>
+                                    <Text fontWeight="bold">{selectedAccount.currency}</Text>
+                                    <Badge colorScheme="blue" variant="subtle" fontSize="xs">
+                                      {t('cashBank.indonesianRupiah')}
+                                    </Badge>
+                                  </HStack>
+                                </Box>
+                              </VStack>
+                            </Box>
+
+                            {/* Bank Details */}
+                            {selectedAccount.type === 'BANK' && (
+                              <Box>
+                                <HStack spacing={3} mb={3}>
+                                  <Text fontSize="xl">🏦</Text>
+                                  <Text fontWeight="bold" fontSize="lg">{t('cashBank.bankDetails')}</Text>
+                                </HStack>
+
+                                <VStack spacing={3} align="stretch">
+                                  <Box>
+                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.bankName')}</Text>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.bank_name ? textColor : 'orange.600'}>
+                                      {selectedAccount.bank_name || t('cashBank.bankNameNotSpecified')}
+                                    </Text>
+                                  </Box>
+                                  <Box>
+                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountNumber')}</Text>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" fontFamily="mono" color={selectedAccount.account_no ? textColor : 'orange.600'}>
+                                      {selectedAccount.account_no || t('cashBank.accountNumberNotSpecified')}
+                                    </Text>
+                                  </Box>
+                                  <Box>
+                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.atasNama')}</Text>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.account_holder_name ? textColor : 'orange.600'}>
+                                      {selectedAccount.account_holder_name || t('cashBank.accountHolderNotSpecified')}
+                                    </Text>
+                                  </Box>
+                                  <Box>
+                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.cabang')}</Text>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.branch ? textColor : 'orange.600'}>
+                                      {selectedAccount.branch || t('cashBank.branchNotSpecified')}
+                                    </Text>
+                                  </Box>
+                                </VStack>
+                              </Box>
+                            )}
+                          </VStack>
+
+                          {/* Right Column */}
+                          <VStack spacing={4} align="stretch">
+                            {/* COA Integration */}
+                            <Box>
+                              <HStack spacing={3} mb={3}>
+                                <Text fontSize="xl">📊</Text>
+                                <Text fontWeight="bold" fontSize="lg">{t('cashBank.chartOfAccounts')}</Text>
+                              </HStack>
+
+                              {selectedAccount.account ? (
+                                <Box bg="green.50" p={4} borderRadius="lg" borderLeft="4px" borderLeftColor="green.400">
+                                  <HStack justify="space-between" align="center" mb={2}>
+                                    <Badge colorScheme="blue" variant="solid" fontSize="sm" px={3} py={1}>
+                                      {selectedAccount.account.code}
+                                    </Badge>
+                                    <Badge colorScheme="green" variant="solid" fontSize="xs" px={2} py={1}>
+                                      {t('cashBank.asset')}
+                                    </Badge>
+                                  </HStack>
+                                  <Text fontWeight="bold" mb={1}>
+                                    {selectedAccount.account.name}
+                                  </Text>
+                                  <Text fontSize="sm" color="green.700">
+                                    ✅ {t('cashBank.successfullyIntegrated')}
+                                  </Text>
+                                </Box>
+                              ) : (
+                                <Alert status="warning" borderRadius="md" py={3}>
+                                  <AlertIcon boxSize={4} />
+                                  <Box>
+                                    <AlertTitle fontSize="sm">{t('cashBank.coaIntegrationRequired')}</AlertTitle>
+                                    <AlertDescription fontSize="xs">
+                                      {t('cashBank.linkAccountToCOA')}
+                                    </AlertDescription>
+                                  </Box>
+                                </Alert>
+                              )}
+                            </Box>
+
+                            {/* Audit Information */}
+                            <Box>
+                              <HStack spacing={3} mb={3}>
+                                <Text fontSize="xl">📅</Text>
+                                <Text fontWeight="bold" fontSize="lg">{t('cashBank.auditInformation')}</Text>
+                              </HStack>
+
+                              <VStack spacing={3} align="stretch">
+                                <Box>
+                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.created')}</Text>
+                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
+                                    {new Date(selectedAccount.created_at).toLocaleDateString('id-ID', {
+                                      weekday: 'long',
+                                      year: 'numeric',
+                                      month: 'long',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </Text>
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.lastUpdated')}</Text>
+                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
+                                    {new Date(selectedAccount.updated_at).toLocaleDateString('id-ID', {
+                                      weekday: 'long',
+                                      year: 'numeric',
+                                      month: 'long',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </Text>
+                                </Box>
+                              </VStack>
+                            </Box>
+                          </VStack>
+                        </SimpleGrid>
+
+                        {/* Quick Actions - Compact */}
+                        <Box>
+                          <HStack spacing={3} mb={4}>
+                            <Text fontSize="xl">⚡</Text>
+                            <Text fontWeight="bold" fontSize="lg">{t('cashBank.quickActions')}</Text>
+                          </HStack>
+
+                          <SimpleGrid columns={{ base: 2, md: 4 }} spacing={3}>
+                            <Button
+                              leftIcon={<FiEdit2 />}
+                              colorScheme="blue"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                onDetailModalClose();
+                                handleEditAccount(selectedAccount);
+                              }}
+                            >
+                              {t('cashBank.edit')}
+                            </Button>
+
+                            <Button
+                              leftIcon={<FiEye />}
+                              colorScheme="purple"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                onDetailModalClose();
+                                setSelectedAccount(selectedAccount);
+                                onTransactionHistoryModalOpen();
+                              }}
+                            >
+                              {t('cashBank.history')}
+                            </Button>
+
+                            {selectedAccount.is_active && (
+                              <Button
+                                leftIcon={<FiTrendingUp />}
+                                colorScheme="green"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  onDetailModalClose();
+                                  handleDeposit(selectedAccount);
+                                }}
+                              >
+                                {t('cashBank.deposit')}
+                              </Button>
+                            )}
+
+                            {selectedAccount.is_active && selectedAccount.balance > 0 && (
+                              <Button
+                                leftIcon={<FiArrowRight />}
+                                colorScheme="orange"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  onDetailModalClose();
+                                  handleTransfer(selectedAccount);
+                                }}
+                              >
+                                {t('cashBank.transfer')}
+                              </Button>
+                            )}
+                          </SimpleGrid>
+                        </Box>
+                      </VStack>
+                    )}
+                  </ModalBody>
+
+                  {/* Modal Footer with Payment Modal Style */}
+                  <ModalFooter
+                    bg={modalFooterBg}
+                    borderBottomRadius="md"
+                    py={4}
+                    px={6}
+                    borderTop="1px"
+                    borderColor={borderColor}
+                  >
+                    <HStack spacing={3} width="full" justify="space-between">
+                      {/* Account Summary Info */}
+                      {selectedAccount && (
+                        <Box flex="1" display={{ base: 'none', md: 'block' }}>
+                          <HStack spacing={4}>
+                            <Text fontSize="sm" color={mutedTextColor}>
+                              {t('cashBank.balance')}: <Text as="span" fontWeight="bold" color={selectedAccount.balance < 0 ? "red.600" : selectedAccount.balance > 0 ? "green.600" : "gray.600"}>
+                                {selectedAccount.currency} {Math.abs(selectedAccount.balance).toLocaleString('id-ID')}
+                              </Text>
+                            </Text>
+                            <Text fontSize="sm" color={mutedTextColor}>
+                              {t('cashBank.statusLabel')}: <Text as="span" fontWeight="bold" color={selectedAccount.is_active ? "green.600" : "red.600"}>
+                                {selectedAccount.is_active ? t('cashBank.active') : t('cashBank.inactive')}
+                              </Text>
+                            </Text>
+                          </HStack>
+                        </Box>
+                      )}
+
+                      {/* Action Buttons */}
+                      <HStack spacing={3}>
+                        <Button
+                          variant="outline"
+                          onClick={onDetailModalClose}
+                          size={{ base: 'sm', md: 'md' }}
+                          minW="80px"
+                        >
+                          {t('cashBank.close')}
+                        </Button>
+                        <Button
+                          colorScheme="blue"
+                          leftIcon={<FiEdit2 />}
+                          onClick={() => {
+                            onDetailModalClose();
+                            handleEditAccount(selectedAccount!);
+                          }}
+                          size={{ base: 'sm', md: 'md' }}
+                          minW="120px"
+                        >
+                          {t('cashBank.editAccountButton')}
+                        </Button>
+                      </HStack>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
+              {/* Deposit Modal - New Improved Form */}
+              <DepositFormImproved
+                isOpen={isDepositModalOpen}
+                onClose={onDepositModalClose}
+                onSuccess={handleTransactionSuccess}
+                account={depositAccount}
+              />
+
+              {/* Transaction History Modal */}
+              <TransactionHistoryModal
+                isOpen={isTransactionHistoryModalOpen}
+                onClose={onTransactionHistoryModalClose}
+                account={selectedAccount}
+              />
+
+              {/* Reconciliation Modal */}
+              <Modal isOpen={isReconcileModalOpen} onClose={onReconcileModalClose} size="lg">
+                <ModalOverlay />
+                <ModalContent>
+                  <ModalHeader>
+                    {reconcileAccount ? `Reconcile ${reconcileAccount.name}` : 'Bank Reconciliation Check'}
+                  </ModalHeader>
+                  <ModalCloseButton />
+
+                  <ModalBody>
+                    <VStack spacing={4} align="stretch">
+                      <Alert status="info">
+                        <AlertIcon />
+                        <Box>
+                          <AlertTitle fontSize="sm">Bank Reconciliation Status</AlertTitle>
+                          <AlertDescription fontSize="xs">
+                            Check the reconciliation status of your cash and bank accounts with the journal system.
+                          </AlertDescription>
+                        </Box>
+                      </Alert>
+
+                      {reconcileAccount ? (
+                        <Box p={4} bg="gray.50" borderRadius="md">
+                          <Text fontWeight="bold" mb={2}>{reconcileAccount.name}</Text>
+                          <HStack justify="space-between" mb={1}>
+                            <Text fontSize="sm">Account Type:</Text>
+                            <Text fontSize="sm" fontWeight="bold">
+                              {reconcileAccount.type} Account
+                            </Text>
+                          </HStack>
+                          <HStack justify="space-between" mb={1}>
+                            <Text fontSize="sm">Current Balance:</Text>
+                            <Text fontSize="sm" fontWeight="bold">
+                              {reconcileAccount.currency} {reconcileAccount.balance.toLocaleString('id-ID')}
+                            </Text>
+                          </HStack>
+                          <HStack justify="space-between">
+                            <Text fontSize="sm">Status:</Text>
+                            <Badge
+                              colorScheme={reconcileAccount.is_active ? 'green' : 'red'}
+                              variant="solid"
+                              fontSize="xs"
+                            >
+                              {reconcileAccount.is_active ? 'ACTIVE' : 'INACTIVE'}
+                            </Badge>
+                          </HStack>
+                        </Box>
+                      ) : (
+                        <Box p={4} bg="blue.50" borderRadius="md" borderLeft="4px" borderLeftColor="blue.400">
+                          <Text fontWeight="bold" mb={2} color="blue.800">Global Reconciliation Check</Text>
+                          <Text fontSize="sm" color="blue.700">
+                            This will check the reconciliation status for all cash and bank accounts in your system.
+                          </Text>
+                        </Box>
+                      )}
+
+                      <Alert status="warning" size="sm">
+                        <AlertIcon />
+                        <AlertDescription fontSize="xs">
+                          <Text fontWeight="bold" mb={1}>Action Required:</Text>
+                          To perform actual reconciliation, please use the dedicated
+                          <Text as="span" fontWeight="bold" color="blue.600"> Cash & Bank Reconciliation </Text>
+                          module which provides advanced reconciliation tools.
+                        </AlertDescription>
+                      </Alert>
+
+                      <Text fontSize="sm" color="gray.600">
+                        Available actions:
+                      </Text>
+
+                      <VStack spacing={2} align="stretch">
+                        <Button
+                          leftIcon={<FiSettings />}
+                          variant="outline"
+                          colorScheme="purple"
+                          onClick={handleOpenReconciliationPage}
+                          size="sm"
+                        >
+                          Open Reconciliation Module
+                        </Button>
+                        <Button
+                          leftIcon={<FiRefreshCw />}
+                          variant="outline"
+                          onClick={handleCheckReconciliationStatus}
+                          isLoading={reconciling}
+                          size="sm"
+                        >
+                          Check Current Status
+                        </Button>
+                      </VStack>
+                    </VStack>
+                  </ModalBody>
+
+                  <ModalFooter>
+                    <HStack spacing={3}>
+                      <Button variant="outline" onClick={onReconcileModalClose}>
+                        Close
+                      </Button>
+                      <Button
+                        colorScheme="purple"
+                        onClick={handleOpenReconciliationPage}
+                      >
+                        Go to Reconciliation
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+            </VStack>
+          </Box>
+        </SimpleLayout>
+      </CompanyTypeGuard>
     </ProtectedModule>
   );
 };

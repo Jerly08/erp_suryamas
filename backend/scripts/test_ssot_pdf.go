@@ -1,11 +1,11 @@
 package main
 
 import (
+	"app-sistem-akuntansi/services"
 	"fmt"
 	"log"
 	"os"
 	"time"
-	"app-sistem-akuntansi/services"
 )
 
 // SSOTProfitLossData for testing (simplified version)
@@ -14,33 +14,33 @@ type SSOTProfitLossData struct {
 	StartDate time.Time   `json:"start_date"`
 	EndDate   time.Time   `json:"end_date"`
 	Currency  string      `json:"currency"`
-	
+
 	Revenue struct {
 		TotalRevenue float64 `json:"total_revenue"`
 	} `json:"revenue"`
-	
+
 	COGS struct {
 		TotalCOGS float64 `json:"total_cogs"`
 	} `json:"cost_of_goods_sold"`
-	
+
 	GrossProfit       float64 `json:"gross_profit"`
 	GrossProfitMargin float64 `json:"gross_profit_margin"`
-	
+
 	OperatingExpenses struct {
 		TotalOpEx float64 `json:"total_opex"`
 	} `json:"operating_expenses"`
-	
-	OperatingIncome   float64 `json:"operating_income"`
-	OperatingMargin   float64 `json:"operating_margin"`
-	
-	OtherIncome       float64 `json:"other_income"`
-	OtherExpenses     float64 `json:"other_expenses"`
-	
-	IncomeBeforeTax   float64 `json:"income_before_tax"`
-	TaxExpense        float64 `json:"tax_expense"`
-	NetIncome         float64 `json:"net_income"`
-	NetIncomeMargin   float64 `json:"net_income_margin"`
-	
+
+	OperatingIncome float64 `json:"operating_income"`
+	OperatingMargin float64 `json:"operating_margin"`
+
+	OtherIncome   float64 `json:"other_income"`
+	OtherExpenses float64 `json:"other_expenses"`
+
+	IncomeBeforeTax float64 `json:"income_before_tax"`
+	TaxExpense      float64 `json:"tax_expense"`
+	NetIncome       float64 `json:"net_income"`
+	NetIncomeMargin float64 `json:"net_income_margin"`
+
 	GeneratedAt time.Time `json:"generated_at"`
 }
 
@@ -58,19 +58,19 @@ func main() {
 			Name: "PT. Test Company",
 		},
 		StartDate:         time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		EndDate:          time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
-		Currency:         "IDR",
-		GrossProfit:      50000000,
+		EndDate:           time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC),
+		Currency:          "IDR",
+		GrossProfit:       50000000,
 		GrossProfitMargin: 25.0,
-		OperatingIncome:  30000000,
-		OperatingMargin:  15.0,
-		NetIncome:        20000000,
-		NetIncomeMargin:  10.0,
-		IncomeBeforeTax:  25000000,
-		TaxExpense:       5000000,
-		GeneratedAt:      time.Now(),
+		OperatingIncome:   30000000,
+		OperatingMargin:   15.0,
+		NetIncome:         20000000,
+		NetIncomeMargin:   10.0,
+		IncomeBeforeTax:   25000000,
+		TaxExpense:        5000000,
+		GeneratedAt:       time.Now(),
 	}
-	
+
 	// Set revenue and expenses
 	sampleData.Revenue.TotalRevenue = 200000000
 	sampleData.COGS.TotalCOGS = 150000000
@@ -80,7 +80,7 @@ func main() {
 
 	// Generate PDF
 	fmt.Println("Generating SSOT P&L PDF...")
-	pdfBytes, err := pdfService.GenerateSSOTProfitLossPDF(sampleData)
+	pdfBytes, err := pdfService.GenerateSSOTProfitLossPDF(sampleData, "id")
 	if err != nil {
 		log.Fatal("Failed to generate PDF:", err)
 	}

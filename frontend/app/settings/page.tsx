@@ -53,9 +53,10 @@ import {
   ModalBody,
   ModalFooter,
   ModalCloseButton,
-  Tooltip
+  Tooltip,
+  Badge
 } from '@chakra-ui/react';
-import { FiHome, FiSettings, FiGlobe, FiCalendar, FiDollarSign, FiSave, FiX, FiCreditCard, FiTrendingUp, FiCheckCircle, FiInfo } from 'react-icons/fi';
+import { FiHome, FiSettings, FiGlobe, FiCalendar, FiDollarSign, FiSave, FiX, FiCreditCard, FiTrendingUp, FiCheckCircle, FiInfo, FiAlertTriangle, FiPackage } from 'react-icons/fi';
 import Link from 'next/link';
 
 // Helper for converting fiscal year formats between backend and date input
@@ -186,7 +187,6 @@ interface SystemSettings {
   company_phone: string;
   company_email: string;
   company_type?: string; // Added field
-  company_website?: string;
   company_website?: string;
   company_logo?: string;
   tax_number?: string;
@@ -632,7 +632,7 @@ const SettingsPage: React.FC = () => {
                       </FormLabel>
                       <HStack>
                         <Input
-                          value={formData?.company_type || t('settings.notSet') || 'Not Set'}
+                          value={formData?.company_type ? t(`settings.companyTypes.${formData.company_type.toLowerCase()}`) : t('settings.notSet')}
                           isReadOnly
                           variant="filled"
                           bg="gray.50"
@@ -642,7 +642,7 @@ const SettingsPage: React.FC = () => {
                           _focus={{ bg: 'gray.50', borderColor: 'gray.200' }}
                         />
                         {formData?.company_type && (
-                          <Tooltip label="Company Type is locked to ensure data consistency.">
+                          <Tooltip label={t('settings.companyTypeLocked')}>
                             <Box color="gray.400" cursor="help">
                               <Icon as={FiInfo} />
                             </Box>
@@ -651,7 +651,7 @@ const SettingsPage: React.FC = () => {
                       </HStack>
                       {!formData?.company_type && (
                         <FormHelperText fontSize="xs" color="orange.500">
-                          Please set this in the Accounts page.
+                          {t('settings.companyTypeHelperText')}
                         </FormHelperText>
                       )}
                     </FormControl>
@@ -959,9 +959,27 @@ const SettingsPage: React.FC = () => {
               {/* Tax Account Configuration Card */}
               <Card border="1px" borderColor="gray.200" boxShadow="md">
                 <CardHeader>
-                  <HStack spacing={3}>
-                    <Icon as={FiCreditCard} boxSize={6} color={orangeColor} />
-                    <Heading size="md">{t('settings.taxAccountConfig')}</Heading>
+                  <HStack spacing={3} justify="space-between">
+                    <HStack spacing={3}>
+                      <Icon as={FiCreditCard} boxSize={6} color={orangeColor} />
+                      <Heading size="md">{t('settings.taxAccountConfig')}</Heading>
+                    </HStack>
+                    {settings?.company_type && (
+                      <Badge
+                        colorScheme={
+                          settings.company_type === 'SERVICE' ? 'purple' :
+                            settings.company_type === 'TRADING' ? 'teal' : 'blue'
+                        }
+                        fontSize="xs"
+                        px={3}
+                        py={1}
+                        borderRadius="full"
+                        textTransform="uppercase"
+                      >
+                        {settings.company_type === 'SERVICE' ? t('settings.companyTypeBadges.service') :
+                          settings.company_type === 'TRADING' ? t('settings.companyTypeBadges.trading') : t('settings.companyTypeBadges.manufacturing')}
+                      </Badge>
+                    )}
                   </HStack>
                 </CardHeader>
                 <CardBody>
@@ -970,12 +988,52 @@ const SettingsPage: React.FC = () => {
                       {t('settings.taxAccountConfigDesc')}
                     </Text>
 
-                    <Alert status="info" variant="left-accent" size="sm">
-                      <AlertIcon />
-                      <AlertDescription fontSize="sm">
-                        {t('settings.taxAccountConfigAlert')}
-                      </AlertDescription>
-                    </Alert>
+                    {/* PPN Rate Display */}
+                    <Box width="full" p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      <HStack justify="space-between">
+                        <HStack spacing={2}>
+                          <Icon as={FiDollarSign} color="orange.600" boxSize={4} />
+                          <Text fontSize="sm" fontWeight="semibold" color="orange.800">{t('settings.taxRecommendations.ppnLabel')}</Text>
+                        </HStack>
+                        <Badge colorScheme="orange" fontSize="sm" px={2} py={1} borderRadius="md">
+                          {settings?.default_tax_rate ?? 11}%
+                        </Badge>
+                      </HStack>
+                    </Box>
+
+                    {/* Company-type-specific recommendation */}
+                    {settings?.company_type === 'SERVICE' && (
+                      <Alert status="info" variant="left-accent" size="sm" borderRadius="md">
+                        <AlertIcon />
+                        <AlertDescription fontSize="xs">
+                          💡 {t('settings.taxRecommendations.service')}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    {settings?.company_type === 'TRADING' && (
+                      <Alert status="warning" variant="left-accent" size="sm" borderRadius="md">
+                        <AlertIcon />
+                        <AlertDescription fontSize="xs">
+                          <Box dangerouslySetInnerHTML={{ __html: `📦 ${t('settings.taxRecommendations.trading')}` }} />
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    {settings?.company_type === 'MANUFACTURING' && (
+                      <Alert status="warning" variant="left-accent" size="sm" borderRadius="md">
+                        <AlertIcon />
+                        <AlertDescription fontSize="xs">
+                          <Box dangerouslySetInnerHTML={{ __html: `🏭 ${t('settings.taxRecommendations.manufacturing')}` }} />
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    {!settings?.company_type && (
+                      <Alert status="error" variant="left-accent" size="sm" borderRadius="md">
+                        <AlertIcon />
+                        <AlertDescription fontSize="xs">
+                          ⚠️ {t('settings.taxRecommendations.noType')}
+                        </AlertDescription>
+                      </Alert>
+                    )}
 
                     {loadingTaxAccounts ? (
                       <HStack width="full" justify="center" py={4}>
@@ -984,79 +1042,106 @@ const SettingsPage: React.FC = () => {
                       </HStack>
                     ) : taxAccountSettings ? (
                       <VStack spacing={3} width="full" alignItems="start">
+                        {/* Withholding Tax Section */}
                         <HStack justify="space-between" width="full">
                           <VStack alignItems="start" spacing={1}>
-                            <Text fontSize="sm" fontWeight="semibold" color="gray.700">
-                              {t('settings.taxAccountSections.withholding')}
-                            </Text>
+                            <HStack spacing={2}>
+                              <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+                                {t('settings.taxAccountSections.withholding')}
+                              </Text>
+                              {settings?.company_type === 'SERVICE' && (
+                                <Badge colorScheme="red" fontSize="2xs" variant="subtle">{t('settings.taxRecommendations.primary')}</Badge>
+                              )}
+                            </HStack>
                             <VStack spacing={1} alignItems="start" mt={2}>
                               {taxAccountSettings.withholding_tax21_account ? (
                                 <HStack spacing={1}>
-                                  <Icon as={FiDollarSign} color="green.500" boxSize={3} />
+                                  <Icon as={FiCheckCircle} color="green.500" boxSize={3} />
                                   <Text fontSize="xs" color="green.600" fontWeight="medium">
                                     PPh 21: {taxAccountSettings.withholding_tax21_account.code} - {taxAccountSettings.withholding_tax21_account.name}
                                   </Text>
                                 </HStack>
                               ) : (
-                                <Text fontSize="xs" color="gray.400">PPh 21: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                                <HStack spacing={1}>
+                                  <Icon as={settings?.company_type === 'SERVICE' ? FiAlertTriangle : FiInfo} color={settings?.company_type === 'SERVICE' ? 'orange.400' : 'gray.400'} boxSize={3} />
+                                  <Text fontSize="xs" color={settings?.company_type === 'SERVICE' ? 'orange.500' : 'gray.400'}>PPh 21: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                                </HStack>
                               )}
                               {taxAccountSettings.withholding_tax23_account ? (
                                 <HStack spacing={1}>
-                                  <Icon as={FiDollarSign} color="green.500" boxSize={3} />
+                                  <Icon as={FiCheckCircle} color="green.500" boxSize={3} />
                                   <Text fontSize="xs" color="green.600" fontWeight="medium">
                                     PPh 23: {taxAccountSettings.withholding_tax23_account.code} - {taxAccountSettings.withholding_tax23_account.name}
                                   </Text>
                                 </HStack>
                               ) : (
-                                <Text fontSize="xs" color="gray.400">PPh 23: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                                <HStack spacing={1}>
+                                  <Icon as={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? FiAlertTriangle : FiInfo} color={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? 'orange.400' : 'gray.400'} boxSize={3} />
+                                  <Text fontSize="xs" color={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? 'orange.500' : 'gray.400'}>PPh 23: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                                </HStack>
                               )}
                               {taxAccountSettings.withholding_tax25_account ? (
                                 <HStack spacing={1}>
-                                  <Icon as={FiDollarSign} color="green.500" boxSize={3} />
+                                  <Icon as={FiCheckCircle} color="green.500" boxSize={3} />
                                   <Text fontSize="xs" color="green.600" fontWeight="medium">
                                     PPh 25: {taxAccountSettings.withholding_tax25_account.code} - {taxAccountSettings.withholding_tax25_account.name}
                                   </Text>
                                 </HStack>
                               ) : (
-                                <Text fontSize="xs" color="gray.400">PPh 25: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                                <Text fontSize="xs" color="gray.400">PPh 25: {t('settings.taxAccountStatus.notConfigured')} ({t('settings.taxRecommendations.optional')})</Text>
                               )}
                             </VStack>
                           </VStack>
                           <Icon as={FiDollarSign} color="orange.500" boxSize={4} />
                         </HStack>
 
-                        <Divider />
-
-                        <HStack justify="space-between" width="full">
-                          <VStack alignItems="start" spacing={1}>
-                            <Text fontSize="sm" fontWeight="semibold" color="gray.700">
-                              {t('settings.taxAccountSections.inventoryCogs')}
-                            </Text>
-                            <VStack spacing={1} alignItems="start" mt={2}>
-                              {taxAccountSettings.inventory_account ? (
-                                <HStack spacing={1}>
-                                  <Icon as={FiTrendingUp} color="blue.500" boxSize={3} />
-                                  <Text fontSize="xs" color="blue.600" fontWeight="medium">
-                                    Inventory: {taxAccountSettings.inventory_account.code} - {taxAccountSettings.inventory_account.name}
+                        {/* Inventory & COGS Section - conditional based on company type */}
+                        {settings?.company_type !== 'SERVICE' && (
+                          <>
+                            <Divider />
+                            <HStack justify="space-between" width="full">
+                              <VStack alignItems="start" spacing={1}>
+                                <HStack spacing={2}>
+                                  <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+                                    {t('settings.taxAccountSections.inventoryCogs')}
                                   </Text>
+                                  {(settings?.company_type === 'TRADING' || settings?.company_type === 'MANUFACTURING') && (
+                                    <Badge colorScheme="red" fontSize="2xs" variant="subtle">{t('settings.taxRecommendations.required')}</Badge>
+                                  )}
                                 </HStack>
-                              ) : (
-                                <Text fontSize="xs" color="gray.400">Inventory: {t('settings.taxAccountStatus.notConfigured')}</Text>
-                              )}
-                              {taxAccountSettings.cogs_account ? (
-                                <HStack spacing={1}>
-                                  <Icon as={FiTrendingUp} color="blue.500" boxSize={3} />
-                                  <Text fontSize="xs" color="blue.600" fontWeight="medium">
-                                    COGS: {taxAccountSettings.cogs_account.code} - {taxAccountSettings.cogs_account.name}
-                                  </Text>
-                                </HStack>
-                              ) : (
-                                <Text fontSize="xs" color="gray.400">COGS: {t('settings.taxAccountStatus.notConfigured')}</Text>
-                              )}
-                            </VStack>
-                          </VStack>
-                          <Icon as={FiTrendingUp} color="blue.500" boxSize={4} />
-                        </HStack>
+                                <VStack spacing={1} alignItems="start" mt={2}>
+                                  {taxAccountSettings.inventory_account ? (
+                                    <HStack spacing={1}>
+                                      <Icon as={FiCheckCircle} color="green.500" boxSize={3} />
+                                      <Text fontSize="xs" color="green.600" fontWeight="medium">
+                                        Inventory: {taxAccountSettings.inventory_account.code} - {taxAccountSettings.inventory_account.name}
+                                      </Text>
+                                    </HStack>
+                                  ) : (
+                                    <HStack spacing={1}>
+                                      <Icon as={FiAlertTriangle} color="red.400" boxSize={3} />
+                                      <Text fontSize="xs" color="red.500" fontWeight="medium">Inventory: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
+                                    </HStack>
+                                  )}
+                                  {taxAccountSettings.cogs_account ? (
+                                    <HStack spacing={1}>
+                                      <Icon as={FiCheckCircle} color="green.500" boxSize={3} />
+                                      <Text fontSize="xs" color="green.600" fontWeight="medium">
+                                        COGS: {taxAccountSettings.cogs_account.code} - {taxAccountSettings.cogs_account.name}
+                                      </Text>
+                                    </HStack>
+                                  ) : (
+                                    <HStack spacing={1}>
+                                      <Icon as={FiAlertTriangle} color="red.400" boxSize={3} />
+                                      <Text fontSize="xs" color="red.500" fontWeight="medium">COGS: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
+                                    </HStack>
+                                  )}
+                                </VStack>
+                              </VStack>
+                              <Icon as={FiPackage} color="blue.500" boxSize={4} />
+                            </HStack>
+                          </>
+                        )}
                       </VStack>
                     ) : (
                       <VStack spacing={3} width="full" alignItems="start">

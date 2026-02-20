@@ -1,11 +1,11 @@
 package services
 
 import (
-	"context"
-	"fmt"
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/utils"
+	"context"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -64,7 +64,7 @@ func (s *AccountServiceImpl) CreateAccount(ctx context.Context, req *models.Acco
 			}
 			parentCode = parent.Code
 		}
-		
+
 		code, err := s.GenerateAccountCode(ctx, string(req.Type), parentCode)
 		if err != nil {
 			return nil, err
@@ -134,7 +134,7 @@ func (s *AccountServiceImpl) GetBalanceSummary(ctx context.Context) ([]models.Ac
 func (s *AccountServiceImpl) BulkImportAccounts(ctx context.Context, accounts []models.AccountImportRequest) error {
 	// Validate all accounts before importing
 	codeMap := make(map[string]bool)
-	
+
 	for i, account := range accounts {
 		// Check for duplicate codes in the import
 		if codeMap[account.Code] {
@@ -159,7 +159,7 @@ func (s *AccountServiceImpl) GenerateAccountCode(ctx context.Context, accountTyp
 	if parentCode == "" {
 		return s.generateMainAccountCode(ctx, accountType)
 	}
-	
+
 	// If parent code exists, generate child account code with PSAK format
 	return s.generateChildAccountCode(ctx, parentCode, accountType)
 }
@@ -167,7 +167,7 @@ func (s *AccountServiceImpl) GenerateAccountCode(ctx context.Context, accountTyp
 // generateMainAccountCode generates main account codes (4 digits) based on account type
 func (s *AccountServiceImpl) generateMainAccountCode(ctx context.Context, accountType string) (string, error) {
 	var startRange, endRange int
-	
+
 	// Define account type ranges following PSAK
 	switch accountType {
 	case models.AccountTypeAsset:
@@ -177,19 +177,19 @@ func (s *AccountServiceImpl) generateMainAccountCode(ctx context.Context, accoun
 	case models.AccountTypeEquity:
 		startRange, endRange = 3000, 3999
 	case models.AccountTypeRevenue:
-		startRange, endRange = 4000, 4999
+		startRange, endRange = 4000, 4999 // Auto-generate in primary range (4xxx)
 	case models.AccountTypeExpense:
-		startRange, endRange = 5000, 5999
+		startRange, endRange = 5000, 5999 // Auto-generate in primary range (5xxx)
 	default:
 		return "", utils.NewValidationError("Invalid account type for code generation", nil)
 	}
-	
+
 	// Get all accounts of this type to find the next available code
 	accounts, err := s.accountRepo.FindByType(ctx, accountType)
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Find the highest existing main account code
 	maxCode := startRange
 	for _, account := range accounts {
@@ -202,13 +202,13 @@ func (s *AccountServiceImpl) generateMainAccountCode(ctx context.Context, accoun
 			}
 		}
 	}
-	
+
 	// Generate next available main account code
 	nextCode := maxCode + 1
 	if nextCode > endRange {
 		return "", utils.NewValidationError(fmt.Sprintf("Account code range exhausted for type %s", accountType), nil)
 	}
-	
+
 	return fmt.Sprintf("%04d", nextCode), nil
 }
 
@@ -219,11 +219,11 @@ func (s *AccountServiceImpl) generateChildAccountCode(ctx context.Context, paren
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Find the highest existing child code for this parent
 	maxChildNumber := 0
 	childPrefix := parentCode + "-"
-	
+
 	for _, account := range accounts {
 		if strings.HasPrefix(account.Code, childPrefix) {
 			// Extract child number (e.g., "001" from "1101-001")
@@ -235,14 +235,70 @@ func (s *AccountServiceImpl) generateChildAccountCode(ctx context.Context, paren
 			}
 		}
 	}
-	
+
 	// Generate next child code with 3-digit format
 	nextChildNumber := maxChildNumber + 1
 	if nextChildNumber > 999 {
 		return "", utils.NewValidationError(fmt.Sprintf("Child account limit reached for parent %s", parentCode), nil)
 	}
-	
+
 	return fmt.Sprintf("%s-%03d", parentCode, nextChildNumber), nil
+}
+
+// getValidCodeRanges returns all valid code ranges for a given account type.
+// PSAK-compliant: 7xxx = Other Income (REVENUE), 8xxx = Other Expense, 9xxx = Tax.
+func getValidCodeRanges(accountType string) []struct{ Min, Max int } {
+	switch accountType {
+	case models.AccountTypeAsset:
+		return []struct{ Min, Max int }{{1000, 1999}}
+	case models.AccountTypeLiability:
+		return []struct{ Min, Max int }{{2000, 2999}}
+	case models.AccountTypeEquity:
+		return []struct{ Min, Max int }{{3000, 3999}}
+	case models.AccountTypeRevenue:
+		return []struct{ Min, Max int }{
+			{4000, 4999}, // Operating Revenue
+			{7000, 7999}, // Other Income (PENDAPATAN LAIN-LAIN)
+		}
+	case models.AccountTypeExpense:
+		return []struct{ Min, Max int }{
+			{5000, 5999}, // COGS / Beban Pokok
+			{6000, 6999}, // Operating Expenses
+			{8000, 8999}, // Other Expenses (BEBAN LAIN-LAIN)
+			{9000, 9999}, // Tax Expenses (PAJAK PENGHASILAN)
+		}
+	default:
+		return nil
+	}
+}
+
+// isCodeInValidRanges checks if a numeric code falls within any valid range for the account type
+func isCodeInValidRanges(codeNum int, accountType string) bool {
+	ranges := getValidCodeRanges(accountType)
+	for _, r := range ranges {
+		if codeNum >= r.Min && codeNum <= r.Max {
+			return true
+		}
+	}
+	return false
+}
+
+// getValidPrefixes returns all valid first-digit prefixes for an account type
+func getValidPrefixes(accountType string) []string {
+	switch accountType {
+	case models.AccountTypeAsset:
+		return []string{"1"}
+	case models.AccountTypeLiability:
+		return []string{"2"}
+	case models.AccountTypeEquity:
+		return []string{"3"}
+	case models.AccountTypeRevenue:
+		return []string{"4", "7"}
+	case models.AccountTypeExpense:
+		return []string{"5", "6", "8", "9"}
+	default:
+		return nil
+	}
 }
 
 // ValidateAccountCodeFormat validates account code format according to PSAK standards
@@ -251,29 +307,24 @@ func (s *AccountServiceImpl) ValidateAccountCodeFormat(code, accountType string)
 	if code == "" {
 		return utils.NewValidationError("Account code cannot be empty", nil)
 	}
-	
-	// Define account type prefixes
-	var expectedPrefix string
-	switch accountType {
-	case models.AccountTypeAsset:
-		expectedPrefix = "1"
-	case models.AccountTypeLiability:
-		expectedPrefix = "2"
-	case models.AccountTypeEquity:
-		expectedPrefix = "3"
-	case models.AccountTypeRevenue:
-		expectedPrefix = "4"
-	case models.AccountTypeExpense:
-		expectedPrefix = "5"
-	default:
+
+	// Check if code starts with a valid prefix for this account type
+	validPrefixes := getValidPrefixes(accountType)
+	if validPrefixes == nil {
 		return utils.NewValidationError("Invalid account type for code validation", nil)
 	}
-	
-	// Check if code starts with correct prefix
-	if !strings.HasPrefix(code, expectedPrefix) {
-		return utils.NewValidationError(fmt.Sprintf("Account code must start with %s for %s accounts", expectedPrefix, accountType), nil)
+
+	hasValidPrefix := false
+	for _, prefix := range validPrefixes {
+		if strings.HasPrefix(code, prefix) {
+			hasValidPrefix = true
+			break
+		}
 	}
-	
+	if !hasValidPrefix {
+		return utils.NewValidationError(fmt.Sprintf("Account code for %s must start with one of: %s", accountType, strings.Join(validPrefixes, ", ")), nil)
+	}
+
 	// Check format: either XXXX (main account) or XXXX-XXX (child account)
 	if strings.Contains(code, "-") {
 		// Child account format: XXXX-XXX
@@ -281,66 +332,67 @@ func (s *AccountServiceImpl) ValidateAccountCodeFormat(code, accountType string)
 		if len(parts) != 2 {
 			return utils.NewValidationError("Invalid child account code format. Expected: XXXX-XXX", nil)
 		}
-		
+
 		parentPart := parts[0]
 		childPart := parts[1]
-		
+
 		// Validate parent part (4 digits)
 		if len(parentPart) != 4 {
 			return utils.NewValidationError("Parent account code must be 4 digits", nil)
 		}
-		
-		if _, err := strconv.Atoi(parentPart); err != nil {
+
+		parentNum, err := strconv.Atoi(parentPart)
+		if err != nil {
 			return utils.NewValidationError("Parent account code must be numeric", nil)
 		}
-		
+
+		// Validate parent code is in a valid range for this account type
+		if !isCodeInValidRanges(parentNum, accountType) {
+			ranges := getValidCodeRanges(accountType)
+			rangeStrs := make([]string, len(ranges))
+			for i, r := range ranges {
+				rangeStrs[i] = fmt.Sprintf("%d-%d", r.Min, r.Max)
+			}
+			return utils.NewValidationError(fmt.Sprintf("%s account codes must be in ranges: %s", accountType, strings.Join(rangeStrs, ", ")), nil)
+		}
+
 		// Validate child part (3 digits)
 		if len(childPart) != 3 {
 			return utils.NewValidationError("Child account code must be 3 digits", nil)
 		}
-		
+
 		if _, err := strconv.Atoi(childPart); err != nil {
 			return utils.NewValidationError("Child account code must be numeric", nil)
 		}
-		
+
 		// Additional validation: child number should be > 0
 		childNum, _ := strconv.Atoi(childPart)
 		if childNum < 1 {
 			return utils.NewValidationError("Child account code must start from 001", nil)
 		}
-		
+
 	} else {
 		// Main account format: XXXX (4 digits)
 		if len(code) != 4 {
 			return utils.NewValidationError("Main account code must be 4 digits", nil)
 		}
-		
-		if _, err := strconv.Atoi(code); err != nil {
+
+		codeNum, err := strconv.Atoi(code)
+		if err != nil {
 			return utils.NewValidationError("Account code must be numeric", nil)
 		}
-		
-		// Validate range based on account type
-		codeNum, _ := strconv.Atoi(code)
-		var minRange, maxRange int
-		
-		switch accountType {
-		case models.AccountTypeAsset:
-			minRange, maxRange = 1000, 1999
-		case models.AccountTypeLiability:
-			minRange, maxRange = 2000, 2999
-		case models.AccountTypeEquity:
-			minRange, maxRange = 3000, 3999
-		case models.AccountTypeRevenue:
-			minRange, maxRange = 4000, 4999
-		case models.AccountTypeExpense:
-			minRange, maxRange = 5000, 5999
-		}
-		
-		if codeNum < minRange || codeNum > maxRange {
-			return utils.NewValidationError(fmt.Sprintf("%s account codes must be between %d-%d", accountType, minRange, maxRange), nil)
+
+		// Validate range based on account type (multi-range support)
+		if !isCodeInValidRanges(codeNum, accountType) {
+			ranges := getValidCodeRanges(accountType)
+			rangeStrs := make([]string, len(ranges))
+			for i, r := range ranges {
+				rangeStrs[i] = fmt.Sprintf("%d-%d", r.Min, r.Max)
+			}
+			return utils.NewValidationError(fmt.Sprintf("%s account codes must be in ranges: %s", accountType, strings.Join(rangeStrs, ", ")), nil)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -369,7 +421,7 @@ func (s *AccountServiceImpl) ValidateAccountHierarchy(ctx context.Context, paren
 	// Prevent creating deep hierarchies (max 4 levels)
 	if parent.Level >= 4 {
 		return utils.NewValidationError("Maximum account hierarchy depth exceeded", map[string]string{
-			"max_depth": "4",
+			"max_depth":    "4",
 			"parent_level": fmt.Sprintf("%d", parent.Level),
 		})
 	}

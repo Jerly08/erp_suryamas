@@ -1,30 +1,31 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/utils"
 	"context"
 	"fmt"
 	"math"
 	"sort"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/repositories"
-	"app-sistem-akuntansi/utils"
+
 	"gorm.io/gorm"
 )
 
 // EnhancedReportService provides comprehensive financial and operational reporting
 // with proper accounting logic and business analytics
 type EnhancedReportService struct {
-	db              *gorm.DB
-	accountRepo     repositories.AccountRepository
-	salesRepo       *repositories.SalesRepository
-	purchaseRepo    *repositories.PurchaseRepository
-	productRepo     *repositories.ProductRepository
-	contactRepo     repositories.ContactRepository
-	paymentRepo     *repositories.PaymentRepository
-	cashBankRepo    *repositories.CashBankRepository
-	companyProfile  *models.CompanyProfile
-	cacheService    *ReportCacheService
+	db                *gorm.DB
+	accountRepo       repositories.AccountRepository
+	salesRepo         *repositories.SalesRepository
+	purchaseRepo      *repositories.PurchaseRepository
+	productRepo       *repositories.ProductRepository
+	contactRepo       repositories.ContactRepository
+	paymentRepo       *repositories.PaymentRepository
+	cashBankRepo      *repositories.CashBankRepository
+	companyProfile    *models.CompanyProfile
+	cacheService      *ReportCacheService
 	validationService *ReportValidationService
 }
 
@@ -43,10 +44,10 @@ func NewEnhancedReportService(
 	// Get company profile
 	var companyProfile models.CompanyProfile
 	db.First(&companyProfile)
-	
+
 	// Initialize validation service
 	validationService := NewReportValidationService(db)
-	
+
 	return &EnhancedReportService{
 		db:                db,
 		accountRepo:       accountRepo,
@@ -64,56 +65,56 @@ func NewEnhancedReportService(
 
 // BalanceSheetData represents a comprehensive balance sheet structure
 type BalanceSheetData struct {
-	Company      CompanyInfo            `json:"company"`
-	AsOfDate     time.Time             `json:"as_of_date"`
-	Currency     string                `json:"currency"`
-	Assets       BalanceSheetSection   `json:"assets"`
-	Liabilities  BalanceSheetSection   `json:"liabilities"`
-	Equity       BalanceSheetSection   `json:"equity"`
-	TotalAssets  float64               `json:"total_assets"`
-	TotalEquity  float64               `json:"total_equity"`
-	IsBalanced   bool                  `json:"is_balanced"`
-	Difference   float64               `json:"difference"`
-	GeneratedAt  time.Time             `json:"generated_at"`
+	Company     CompanyInfo         `json:"company"`
+	AsOfDate    time.Time           `json:"as_of_date"`
+	Currency    string              `json:"currency"`
+	Assets      BalanceSheetSection `json:"assets"`
+	Liabilities BalanceSheetSection `json:"liabilities"`
+	Equity      BalanceSheetSection `json:"equity"`
+	TotalAssets float64             `json:"total_assets"`
+	TotalEquity float64             `json:"total_equity"`
+	IsBalanced  bool                `json:"is_balanced"`
+	Difference  float64             `json:"difference"`
+	GeneratedAt time.Time           `json:"generated_at"`
 }
 
 // ProfitLossData represents a comprehensive P&L statement structure
 type ProfitLossData struct {
-	Company               CompanyInfo          `json:"company"`
-	StartDate             time.Time            `json:"start_date"`
-	EndDate               time.Time            `json:"end_date"`
-	Currency              string               `json:"currency"`
-	Revenue               PLSection            `json:"revenue"`
-	CostOfGoodsSold       PLSection            `json:"cost_of_goods_sold"`
-	GrossProfit           float64              `json:"gross_profit"`
-	GrossProfitMargin     float64              `json:"gross_profit_margin"`
-	OperatingExpenses     PLSection            `json:"operating_expenses"`
-	OperatingIncome       float64              `json:"operating_income"`
-	OtherIncome           PLSection            `json:"other_income"`
-	OtherExpenses         PLSection            `json:"other_expenses"`
-	EBITDA                float64              `json:"ebitda"`
-	EBIT                  float64              `json:"ebit"`
-	NetIncomeBeforeTax    float64              `json:"net_income_before_tax"`
-	TaxExpense            float64              `json:"tax_expense"`
-	NetIncome             float64              `json:"net_income"`
-	NetIncomeMargin       float64              `json:"net_income_margin"`
-	EarningsPerShare      float64              `json:"earnings_per_share"`
-	DilutedEPS            float64              `json:"diluted_eps"`
-	SharesOutstanding     float64              `json:"shares_outstanding"`
-	GeneratedAt           time.Time            `json:"generated_at"`
+	Company            CompanyInfo `json:"company"`
+	StartDate          time.Time   `json:"start_date"`
+	EndDate            time.Time   `json:"end_date"`
+	Currency           string      `json:"currency"`
+	Revenue            PLSection   `json:"revenue"`
+	CostOfGoodsSold    PLSection   `json:"cost_of_goods_sold"`
+	GrossProfit        float64     `json:"gross_profit"`
+	GrossProfitMargin  float64     `json:"gross_profit_margin"`
+	OperatingExpenses  PLSection   `json:"operating_expenses"`
+	OperatingIncome    float64     `json:"operating_income"`
+	OtherIncome        PLSection   `json:"other_income"`
+	OtherExpenses      PLSection   `json:"other_expenses"`
+	EBITDA             float64     `json:"ebitda"`
+	EBIT               float64     `json:"ebit"`
+	NetIncomeBeforeTax float64     `json:"net_income_before_tax"`
+	TaxExpense         float64     `json:"tax_expense"`
+	NetIncome          float64     `json:"net_income"`
+	NetIncomeMargin    float64     `json:"net_income_margin"`
+	EarningsPerShare   float64     `json:"earnings_per_share"`
+	DilutedEPS         float64     `json:"diluted_eps"`
+	SharesOutstanding  float64     `json:"shares_outstanding"`
+	GeneratedAt        time.Time   `json:"generated_at"`
 	// Data Quality and Validation Fields
-	ValidationReport      *ValidationReport    `json:"validation_report,omitempty"`
-	DataQualityScore      float64              `json:"data_quality_score,omitempty"`
-	DataQualityWarnings   []string             `json:"data_quality_warnings,omitempty"`
+	ValidationReport    *ValidationReport `json:"validation_report,omitempty"`
+	DataQualityScore    float64           `json:"data_quality_score,omitempty"`
+	DataQualityWarnings []string          `json:"data_quality_warnings,omitempty"`
 }
 
 // ProfitLossComparative represents comparative P&L analysis
 type ProfitLossComparative struct {
-	CurrentPeriod    ProfitLossData    `json:"current_period"`
-	PriorPeriod      ProfitLossData    `json:"prior_period"`
-	Variances        PLVarianceData    `json:"variances"`
-	TrendAnalysis    PLTrendAnalysis   `json:"trend_analysis"`
-	GeneratedAt      time.Time         `json:"generated_at"`
+	CurrentPeriod ProfitLossData  `json:"current_period"`
+	PriorPeriod   ProfitLossData  `json:"prior_period"`
+	Variances     PLVarianceData  `json:"variances"`
+	TrendAnalysis PLTrendAnalysis `json:"trend_analysis"`
+	GeneratedAt   time.Time       `json:"generated_at"`
 }
 
 // PLVarianceData represents variance analysis between periods
@@ -150,134 +151,149 @@ type PLTrendAnalysis struct {
 
 // CashFlowData represents a comprehensive cash flow statement structure
 type CashFlowData struct {
-	Company              CompanyInfo     `json:"company"`
-	StartDate            time.Time       `json:"start_date"`
-	EndDate              time.Time       `json:"end_date"`
-	Currency             string          `json:"currency"`
-	OperatingActivities  CashFlowSection `json:"operating_activities"`
-	InvestingActivities  CashFlowSection `json:"investing_activities"`
-	FinancingActivities  CashFlowSection `json:"financing_activities"`
-	NetCashFlow          float64         `json:"net_cash_flow"`
-	BeginningCash        float64         `json:"beginning_cash"`
-	EndingCash           float64         `json:"ending_cash"`
-	GeneratedAt          time.Time       `json:"generated_at"`
+	Company             CompanyInfo     `json:"company"`
+	StartDate           time.Time       `json:"start_date"`
+	EndDate             time.Time       `json:"end_date"`
+	Currency            string          `json:"currency"`
+	OperatingActivities CashFlowSection `json:"operating_activities"`
+	InvestingActivities CashFlowSection `json:"investing_activities"`
+	FinancingActivities CashFlowSection `json:"financing_activities"`
+	NetCashFlow         float64         `json:"net_cash_flow"`
+	BeginningCash       float64         `json:"beginning_cash"`
+	EndingCash          float64         `json:"ending_cash"`
+	GeneratedAt         time.Time       `json:"generated_at"`
 }
 
 // SalesSummaryData represents comprehensive sales analytics
 type SalesSummaryData struct {
-	Company                CompanyInfo            `json:"company"`
-	StartDate              time.Time              `json:"start_date"`
-	EndDate                time.Time              `json:"end_date"`
-	Currency               string                 `json:"currency"`
-	TotalRevenue           float64                `json:"total_revenue"`
-	TotalTransactions      int64                  `json:"total_transactions"`
-	AverageOrderValue      float64                `json:"average_order_value"`
-	TotalCustomers         int64                  `json:"total_customers"`
-	NewCustomers           int64                  `json:"new_customers"`
-	ReturningCustomers     int64                  `json:"returning_customers"`
-	SalesByPeriod          []PeriodData           `json:"sales_by_period"`
-	SalesByCustomer        []CustomerSalesData    `json:"sales_by_customer"`
-	SalesByProduct         []ProductSalesData     `json:"sales_by_product"`
-	SalesByStatus          []StatusData           `json:"sales_by_status"`
-	TopPerformers          TopPerformersData      `json:"top_performers"`
-	GrowthAnalysis         GrowthAnalysisData     `json:"growth_analysis"`
-	GeneratedAt            time.Time              `json:"generated_at"`
+	Company            CompanyInfo         `json:"company"`
+	StartDate          time.Time           `json:"start_date"`
+	EndDate            time.Time           `json:"end_date"`
+	Currency           string              `json:"currency"`
+	TotalRevenue       float64             `json:"total_revenue"`
+	TotalSales         float64             `json:"total_sales"`
+	TotalTransactions  int64               `json:"total_transactions"`
+	TotalTax           float64             `json:"total_tax"`
+	TotalDiscount      float64             `json:"total_discount"`
+	TotalReturns       float64             `json:"total_returns"`
+	NetRevenue         float64             `json:"net_revenue"`
+	AverageOrderValue  float64             `json:"average_order_value"`
+	TotalCustomers     int64               `json:"total_customers"`
+	NewCustomers       int64               `json:"new_customers"`
+	ReturningCustomers int64               `json:"returning_customers"`
+	SalesByPeriod      []PeriodData        `json:"sales_by_period"`
+	SalesByCustomer    []CustomerSalesData `json:"sales_by_customer"`
+	SalesByProduct     []ProductSalesData  `json:"sales_by_product"`
+	SalesByStatus      []StatusData        `json:"sales_by_status"`
+	Items              []SalesSummaryItem  `json:"items"`
+	TopPerformers      TopPerformersData   `json:"top_performers"`
+	GrowthAnalysis     GrowthAnalysisData  `json:"growth_analysis"`
+	GeneratedAt        time.Time           `json:"generated_at"`
 	// Enhanced debugging and monitoring fields
-	DebugInfo              map[string]interface{} `json:"debug_info,omitempty"`
-	DataQualityScore       float64                `json:"data_quality_score,omitempty"`
-	ProcessingTime         string                 `json:"processing_time,omitempty"`
+	DebugInfo        map[string]interface{} `json:"debug_info,omitempty"`
+	DataQualityScore float64                `json:"data_quality_score,omitempty"`
+	ProcessingTime   string                 `json:"processing_time,omitempty"`
+}
+
+// SalesSummaryItem represents an individual sale transaction in the summary
+type SalesSummaryItem struct {
+	Date         string  `json:"date"`
+	Code         string  `json:"code"`
+	CustomerName string  `json:"customer_name"`
+	TotalAmount  float64 `json:"total_amount"`
+	Status       string  `json:"status"`
 }
 
 // PurchaseSummaryData represents comprehensive purchase analytics
 type PurchaseSummaryData struct {
-	Company                CompanyInfo            `json:"company"`
-	StartDate              time.Time              `json:"start_date"`
-	EndDate                time.Time              `json:"end_date"`
-	Currency               string                 `json:"currency"`
-	TotalPurchases         float64                `json:"total_purchases"`
-	TotalTransactions      int64                  `json:"total_transactions"`
-	AveragePurchaseValue   float64                `json:"average_purchase_value"`
-	TotalVendors           int64                  `json:"total_vendors"`
-	NewVendors             int64                  `json:"new_vendors"`
-	PurchasesByPeriod      []PeriodData           `json:"purchases_by_period"`
-	PurchasesByVendor      []VendorPurchaseData   `json:"purchases_by_vendor"`
-	PurchasesByCategory    []CategoryPurchaseData `json:"purchases_by_category"`
-	PurchasesByStatus      []StatusData           `json:"purchases_by_status"`
-	TopVendors             TopVendorsData         `json:"top_vendors"`
-	CostAnalysis           CostAnalysisData       `json:"cost_analysis"`
-	GeneratedAt            time.Time              `json:"generated_at"`
+	Company              CompanyInfo            `json:"company"`
+	StartDate            time.Time              `json:"start_date"`
+	EndDate              time.Time              `json:"end_date"`
+	Currency             string                 `json:"currency"`
+	TotalPurchases       float64                `json:"total_purchases"`
+	TotalTransactions    int64                  `json:"total_transactions"`
+	AveragePurchaseValue float64                `json:"average_purchase_value"`
+	TotalVendors         int64                  `json:"total_vendors"`
+	NewVendors           int64                  `json:"new_vendors"`
+	PurchasesByPeriod    []PeriodData           `json:"purchases_by_period"`
+	PurchasesByVendor    []VendorPurchaseData   `json:"purchases_by_vendor"`
+	PurchasesByCategory  []CategoryPurchaseData `json:"purchases_by_category"`
+	PurchasesByStatus    []StatusData           `json:"purchases_by_status"`
+	TopVendors           TopVendorsData         `json:"top_vendors"`
+	CostAnalysis         CostAnalysisData       `json:"cost_analysis"`
+	GeneratedAt          time.Time              `json:"generated_at"`
 }
 
 // Supporting data structures
 type CompanyInfo struct {
-	Name        string `json:"name"`
-	Address     string `json:"address"`
-	City        string `json:"city"`
-	State       string `json:"state"`
-	PostalCode  string `json:"postal_code"`
-	Phone       string `json:"phone"`
-	Email       string `json:"email"`
-	Website     string `json:"website"`
-	TaxNumber   string `json:"tax_number"`
+	Name       string `json:"name"`
+	Address    string `json:"address"`
+	City       string `json:"city"`
+	State      string `json:"state"`
+	PostalCode string `json:"postal_code"`
+	Phone      string `json:"phone"`
+	Email      string `json:"email"`
+	Website    string `json:"website"`
+	TaxNumber  string `json:"tax_number"`
 }
 
 // VendorAnalysisData represents comprehensive vendor analysis
 type VendorAnalysisData struct {
-	Company               CompanyInfo            `json:"company"`
-	StartDate             time.Time              `json:"start_date"`
-	EndDate               time.Time              `json:"end_date"`
-	Currency              string                 `json:"currency"`
-	TotalVendors          int64                  `json:"total_vendors"`
-	ActiveVendors         int64                  `json:"active_vendors"`
-	TotalPurchases        float64                `json:"total_purchases"`
-	TotalPayments         float64                `json:"total_payments"`
-	OutstandingPayables   float64                `json:"outstanding_payables"`
-	VendorsByPerformance  []VendorPerformanceData `json:"vendors_by_performance"`
-	PaymentAnalysis       PaymentAnalysisData     `json:"payment_analysis"`
-	TopVendorsBySpend     []VendorSpendData       `json:"top_vendors_by_spend"`
-	VendorPaymentHistory  []VendorPaymentHistory  `json:"vendor_payment_history"`
-	GeneratedAt           time.Time               `json:"generated_at"`
+	Company              CompanyInfo             `json:"company"`
+	StartDate            time.Time               `json:"start_date"`
+	EndDate              time.Time               `json:"end_date"`
+	Currency             string                  `json:"currency"`
+	TotalVendors         int64                   `json:"total_vendors"`
+	ActiveVendors        int64                   `json:"active_vendors"`
+	TotalPurchases       float64                 `json:"total_purchases"`
+	TotalPayments        float64                 `json:"total_payments"`
+	OutstandingPayables  float64                 `json:"outstanding_payables"`
+	VendorsByPerformance []VendorPerformanceData `json:"vendors_by_performance"`
+	PaymentAnalysis      PaymentAnalysisData     `json:"payment_analysis"`
+	TopVendorsBySpend    []VendorSpendData       `json:"top_vendors_by_spend"`
+	VendorPaymentHistory []VendorPaymentHistory  `json:"vendor_payment_history"`
+	GeneratedAt          time.Time               `json:"generated_at"`
 }
 
 // TrialBalanceData represents comprehensive trial balance
 type TrialBalanceData struct {
-	Company        CompanyInfo        `json:"company"`
-	AsOfDate       time.Time          `json:"as_of_date"`
-	Currency       string             `json:"currency"`
-	Accounts       []TrialBalanceItem `json:"accounts"`
-	TotalDebits    float64            `json:"total_debits"`
-	TotalCredits   float64            `json:"total_credits"`
-	IsBalanced     bool               `json:"is_balanced"`
-	Difference     float64            `json:"difference"`
-	AssetSummary   AccountTypeSummary `json:"asset_summary"`
+	Company          CompanyInfo        `json:"company"`
+	AsOfDate         time.Time          `json:"as_of_date"`
+	Currency         string             `json:"currency"`
+	Accounts         []TrialBalanceItem `json:"accounts"`
+	TotalDebits      float64            `json:"total_debits"`
+	TotalCredits     float64            `json:"total_credits"`
+	IsBalanced       bool               `json:"is_balanced"`
+	Difference       float64            `json:"difference"`
+	AssetSummary     AccountTypeSummary `json:"asset_summary"`
 	LiabilitySummary AccountTypeSummary `json:"liability_summary"`
-	EquitySummary  AccountTypeSummary `json:"equity_summary"`
-	RevenueSummary AccountTypeSummary `json:"revenue_summary"`
-	ExpenseSummary AccountTypeSummary `json:"expense_summary"`
-	GeneratedAt    time.Time          `json:"generated_at"`
+	EquitySummary    AccountTypeSummary `json:"equity_summary"`
+	RevenueSummary   AccountTypeSummary `json:"revenue_summary"`
+	ExpenseSummary   AccountTypeSummary `json:"expense_summary"`
+	GeneratedAt      time.Time          `json:"generated_at"`
 }
 
 // GeneralLedgerData represents detailed general ledger report
 type GeneralLedgerData struct {
-	Company              CompanyInfo            `json:"company"`
-	Account              models.Account         `json:"account"`
-	StartDate            time.Time              `json:"start_date"`
-	EndDate              time.Time              `json:"end_date"`
-	Currency             string                 `json:"currency"`
-	OpeningBalance       float64                `json:"opening_balance"`
-	ClosingBalance       float64                `json:"closing_balance"`
-	TotalDebits          float64                `json:"total_debits"`
-	TotalCredits         float64                `json:"total_credits"`
+	Company        CompanyInfo    `json:"company"`
+	Account        models.Account `json:"account"`
+	StartDate      time.Time      `json:"start_date"`
+	EndDate        time.Time      `json:"end_date"`
+	Currency       string         `json:"currency"`
+	OpeningBalance float64        `json:"opening_balance"`
+	ClosingBalance float64        `json:"closing_balance"`
+	TotalDebits    float64        `json:"total_debits"`
+	TotalCredits   float64        `json:"total_credits"`
 	// Enhanced UI fields
-	NetPositionChange    float64                `json:"net_position_change"`
-	NetPositionStatus    string                 `json:"net_position_status"`
-	TotalTransactionVol  float64                `json:"total_transaction_volume"`
+	NetPositionChange   float64                `json:"net_position_change"`
+	NetPositionStatus   string                 `json:"net_position_status"`
+	TotalTransactionVol float64                `json:"total_transaction_volume"`
 	CashImpact          float64                `json:"cash_impact"`
 	CashImpactStatus    string                 `json:"cash_impact_status"`
 	IsBalanced          bool                   `json:"is_balanced"`
-	Transactions         []GeneralLedgerEntry   `json:"transactions"`
-	MonthlySummary       []MonthlyLedgerSummary `json:"monthly_summary"`
-	GeneratedAt          time.Time              `json:"generated_at"`
+	Transactions        []GeneralLedgerEntry   `json:"transactions"`
+	MonthlySummary      []MonthlyLedgerSummary `json:"monthly_summary"`
+	GeneratedAt         time.Time              `json:"generated_at"`
 }
 
 // GeneralLedgerAllData represents general ledger report for all accounts
@@ -296,39 +312,39 @@ type GeneralLedgerAllData struct {
 
 // JournalEntryAnalysisData represents comprehensive journal entry analysis
 type JournalEntryAnalysisData struct {
-	Company             CompanyInfo            `json:"company"`
-	StartDate           time.Time              `json:"start_date"`
-	EndDate             time.Time              `json:"end_date"`
-	Currency            string                 `json:"currency"`
-	TotalEntries        int64                  `json:"total_entries"`
-	TotalDebitAmount    float64                `json:"total_debit_amount"`
-	TotalCreditAmount   float64                `json:"total_credit_amount"`
-	EntriesByType       []JournalTypeData      `json:"entries_by_type"`
-	EntriesByStatus     []JournalStatusData    `json:"entries_by_status"`
-	EntriesByUser       []JournalUserData      `json:"entries_by_user"`
-	RecentEntries       []JournalEntryDetail   `json:"recent_entries"`
-	LargestEntries      []JournalEntryDetail   `json:"largest_entries"`
-	UnbalancedEntries   []JournalEntryDetail   `json:"unbalanced_entries"`
-	ComplianceCheck     JournalComplianceData  `json:"compliance_check"`
-	GeneratedAt         time.Time              `json:"generated_at"`
+	Company           CompanyInfo           `json:"company"`
+	StartDate         time.Time             `json:"start_date"`
+	EndDate           time.Time             `json:"end_date"`
+	Currency          string                `json:"currency"`
+	TotalEntries      int64                 `json:"total_entries"`
+	TotalDebitAmount  float64               `json:"total_debit_amount"`
+	TotalCreditAmount float64               `json:"total_credit_amount"`
+	EntriesByType     []JournalTypeData     `json:"entries_by_type"`
+	EntriesByStatus   []JournalStatusData   `json:"entries_by_status"`
+	EntriesByUser     []JournalUserData     `json:"entries_by_user"`
+	RecentEntries     []JournalEntryDetail  `json:"recent_entries"`
+	LargestEntries    []JournalEntryDetail  `json:"largest_entries"`
+	UnbalancedEntries []JournalEntryDetail  `json:"unbalanced_entries"`
+	ComplianceCheck   JournalComplianceData `json:"compliance_check"`
+	GeneratedAt       time.Time             `json:"generated_at"`
 }
 
 // Supporting structures for new report types
 type VendorPerformanceData struct {
-	VendorID          uint    `json:"vendor_id"`
-	VendorName        string  `json:"vendor_name"`
-	TotalPurchases    float64 `json:"total_purchases"`
-	TotalPayments     float64 `json:"total_payments"`
-	Outstanding       float64 `json:"outstanding"`
+	VendorID           uint    `json:"vendor_id"`
+	VendorName         string  `json:"vendor_name"`
+	TotalPurchases     float64 `json:"total_purchases"`
+	TotalPayments      float64 `json:"total_payments"`
+	Outstanding        float64 `json:"outstanding"`
 	AveragePaymentDays float64 `json:"average_payment_days"`
-	PaymentScore      float64 `json:"payment_score"`
-	Rating            string  `json:"rating"`
+	PaymentScore       float64 `json:"payment_score"`
+	Rating             string  `json:"rating"`
 }
 
 type PaymentAnalysisData struct {
-	OnTimePayments    int64   `json:"on_time_payments"`
-	LatePayments      int64   `json:"late_payments"`
-	OverduePayments   int64   `json:"overdue_payments"`
+	OnTimePayments     int64   `json:"on_time_payments"`
+	LatePayments       int64   `json:"late_payments"`
+	OverduePayments    int64   `json:"overdue_payments"`
 	AveragePaymentDays float64 `json:"average_payment_days"`
 	PaymentEfficiency  float64 `json:"payment_efficiency"`
 }
@@ -342,10 +358,10 @@ type VendorSpendData struct {
 }
 
 type VendorPaymentHistory struct {
-	Month        string  `json:"month"`
-	Purchases    float64 `json:"purchases"`
-	Payments     float64 `json:"payments"`
-	Outstanding  float64 `json:"outstanding"`
+	Month       string  `json:"month"`
+	Purchases   float64 `json:"purchases"`
+	Payments    float64 `json:"payments"`
+	Outstanding float64 `json:"outstanding"`
 }
 
 type TrialBalanceItem struct {
@@ -361,11 +377,11 @@ type TrialBalanceItem struct {
 }
 
 type AccountTypeSummary struct {
-	AccountType   string  `json:"account_type"`
-	TotalDebits   float64 `json:"total_debits"`
-	TotalCredits  float64 `json:"total_credits"`
-	NetBalance    float64 `json:"net_balance"`
-	AccountCount  int64   `json:"account_count"`
+	AccountType  string  `json:"account_type"`
+	TotalDebits  float64 `json:"total_debits"`
+	TotalCredits float64 `json:"total_credits"`
+	NetBalance   float64 `json:"net_balance"`
+	AccountCount int64   `json:"account_count"`
 }
 
 type GeneralLedgerEntry struct {
@@ -381,12 +397,12 @@ type GeneralLedgerEntry struct {
 }
 
 type MonthlyLedgerSummary struct {
-	Month        string  `json:"month"`
-	Year         int     `json:"year"`
-	Debits       float64 `json:"debits"`
-	Credits      float64 `json:"credits"`
-	NetMovement  float64 `json:"net_movement"`
-	EndBalance   float64 `json:"end_balance"`
+	Month       string  `json:"month"`
+	Year        int     `json:"year"`
+	Debits      float64 `json:"debits"`
+	Credits     float64 `json:"credits"`
+	NetMovement float64 `json:"net_movement"`
+	EndBalance  float64 `json:"end_balance"`
 }
 
 type JournalTypeData struct {
@@ -412,41 +428,41 @@ type JournalUserData struct {
 }
 
 type JournalEntryDetail struct {
-	ID          uint      `json:"id"`
-	Code        string    `json:"code"`
-	Date        time.Time `json:"date"`
-	Description string    `json:"description"`
-	Reference   string    `json:"reference"`
-	DebitAmount float64   `json:"debit_amount"`
-	CreditAmount float64  `json:"credit_amount"`
-	Status      string    `json:"status"`
-	User        string    `json:"user"`
+	ID           uint      `json:"id"`
+	Code         string    `json:"code"`
+	Date         time.Time `json:"date"`
+	Description  string    `json:"description"`
+	Reference    string    `json:"reference"`
+	DebitAmount  float64   `json:"debit_amount"`
+	CreditAmount float64   `json:"credit_amount"`
+	Status       string    `json:"status"`
+	User         string    `json:"user"`
 }
 
 type JournalComplianceData struct {
-	BalancedEntries    int64   `json:"balanced_entries"`
-	UnbalancedEntries  int64   `json:"unbalanced_entries"`
-	ComplianceRate     float64 `json:"compliance_rate"`
-	MissingReferences  int64   `json:"missing_references"`
-	FutureDatedEntries int64   `json:"future_dated_entries"`
+	BalancedEntries    int64    `json:"balanced_entries"`
+	UnbalancedEntries  int64    `json:"unbalanced_entries"`
+	ComplianceRate     float64  `json:"compliance_rate"`
+	MissingReferences  int64    `json:"missing_references"`
+	FutureDatedEntries int64    `json:"future_dated_entries"`
 	ComplianceIssues   []string `json:"compliance_issues"`
 }
 
 type BalanceSheetSection struct {
-	Name       string                    `json:"name"`
-	Items      []BalanceSheetItem        `json:"items"`
-	Subtotals  []BalanceSheetSubtotal    `json:"subtotals"`
-	Total      float64                   `json:"total"`
+	Name      string                 `json:"name"`
+	Items     []BalanceSheetItem     `json:"items"`
+	Subtotals []BalanceSheetSubtotal `json:"subtotals"`
+	Total     float64                `json:"total"`
 }
 
 type BalanceSheetItem struct {
-	AccountID   uint    `json:"account_id"`
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	Balance     float64 `json:"balance"`
-	Category    string  `json:"category"`
-	Level       int     `json:"level"`
-	IsHeader    bool    `json:"is_header"`
+	AccountID uint    `json:"account_id"`
+	Code      string  `json:"code"`
+	Name      string  `json:"name"`
+	Balance   float64 `json:"balance"`
+	Category  string  `json:"category"`
+	Level     int     `json:"level"`
+	IsHeader  bool    `json:"is_header"`
 }
 
 type BalanceSheetSubtotal struct {
@@ -456,24 +472,24 @@ type BalanceSheetSubtotal struct {
 }
 
 type PLSection struct {
-	Name      string     `json:"name"`
-	Items     []PLItem   `json:"items"`
-	Subtotal  float64    `json:"subtotal"`
+	Name     string   `json:"name"`
+	Items    []PLItem `json:"items"`
+	Subtotal float64  `json:"subtotal"`
 }
 
 type PLItem struct {
-	AccountID   uint    `json:"account_id"`
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	Amount      float64 `json:"amount"`
-	Category    string  `json:"category"`
-	Percentage  float64 `json:"percentage"`
+	AccountID  uint    `json:"account_id"`
+	Code       string  `json:"code"`
+	Name       string  `json:"name"`
+	Amount     float64 `json:"amount"`
+	Category   string  `json:"category"`
+	Percentage float64 `json:"percentage"`
 }
 
 type CashFlowSection struct {
-	Name  string          `json:"name"`
-	Items []CashFlowItem  `json:"items"`
-	Total float64         `json:"total"`
+	Name  string         `json:"name"`
+	Items []CashFlowItem `json:"items"`
+	Total float64        `json:"total"`
 }
 
 type CashFlowItem struct {
@@ -483,23 +499,26 @@ type CashFlowItem struct {
 }
 
 type PeriodData struct {
-	Period        string    `json:"period"`
-	StartDate     time.Time `json:"start_date"`
-	EndDate       time.Time `json:"end_date"`
-	Amount        float64   `json:"amount"`
-	Transactions  int64     `json:"transactions"`
-	GrowthRate    float64   `json:"growth_rate"`
+	Period           string    `json:"period"`
+	StartDate        time.Time `json:"start_date"`
+	EndDate          time.Time `json:"end_date"`
+	Amount           float64   `json:"amount"`
+	TotalSales       float64   `json:"total_sales"`
+	Transactions     int64     `json:"transactions"`
+	TransactionCount int64     `json:"transaction_count"`
+	GrowthRate       float64   `json:"growth_rate"`
 }
 
 type CustomerSalesData struct {
-	CustomerID       uint              `json:"customer_id"`
-	CustomerName     string            `json:"customer_name"`
-	TotalAmount      float64           `json:"total_sales"`
-	TransactionCount int64             `json:"transaction_count"`
-	AverageOrder     float64           `json:"average_transaction"`
-	LastOrderDate    time.Time         `json:"last_order_date"`
-	FirstOrderDate   time.Time         `json:"first_order_date"`
-	Items            []SaleItemDetail  `json:"items,omitempty"`
+	CustomerID        uint             `json:"customer_id"`
+	CustomerName      string           `json:"customer_name"`
+	TotalAmount       float64          `json:"total_sales"`
+	TransactionCount  int64            `json:"transaction_count"`
+	AverageOrder      float64          `json:"average_transaction"`
+	PercentageOfTotal float64          `json:"percentage_of_total"`
+	LastOrderDate     time.Time        `json:"last_order_date"`
+	FirstOrderDate    time.Time        `json:"first_order_date"`
+	Items             []SaleItemDetail `json:"items,omitempty"`
 }
 
 type SaleItemDetail struct {
@@ -515,20 +534,22 @@ type SaleItemDetail struct {
 }
 
 type ProductSalesData struct {
-	ProductID        uint    `json:"product_id"`
-	ProductName      string  `json:"product_name"`
-	QuantitySold     int64   `json:"quantity_sold"`
-	TotalAmount      float64 `json:"total_amount"`
-	AveragePrice     float64 `json:"average_price"`
-	TransactionCount int64   `json:"transaction_count"`
+	ProductID         uint    `json:"product_id"`
+	ProductName       string  `json:"product_name"`
+	QuantitySold      int64   `json:"quantity_sold"`
+	TotalAmount       float64 `json:"total_amount"`
+	TotalRevenue      float64 `json:"total_revenue"`
+	AveragePrice      float64 `json:"average_price"`
+	PercentageOfTotal float64 `json:"percentage_of_total"`
+	TransactionCount  int64   `json:"transaction_count"`
 }
 
 type VendorPurchaseData struct {
-	VendorID         uint    `json:"vendor_id"`
-	VendorName       string  `json:"vendor_name"`
-	TotalAmount      float64 `json:"total_amount"`
-	TransactionCount int64   `json:"transaction_count"`
-	AverageOrder     float64 `json:"average_order"`
+	VendorID         uint      `json:"vendor_id"`
+	VendorName       string    `json:"vendor_name"`
+	TotalAmount      float64   `json:"total_amount"`
+	TransactionCount int64     `json:"transaction_count"`
+	AverageOrder     float64   `json:"average_order"`
 	LastOrderDate    time.Time `json:"last_order_date"`
 	FirstOrderDate   time.Time `json:"first_order_date"`
 }
@@ -542,22 +563,22 @@ type CategoryPurchaseData struct {
 }
 
 type StatusData struct {
-	Status      string `json:"status"`
-	Count       int64  `json:"count"`
-	Amount      float64 `json:"amount"`
-	Percentage  float64 `json:"percentage"`
+	Status     string  `json:"status"`
+	Count      int64   `json:"count"`
+	Amount     float64 `json:"amount"`
+	Percentage float64 `json:"percentage"`
 }
 
 type TopPerformersData struct {
-	TopCustomers []CustomerSalesData `json:"top_customers"`
-	TopProducts  []ProductSalesData  `json:"top_products"`
-	TopSalespeople []SalespersonData  `json:"top_salespeople"`
+	TopCustomers   []CustomerSalesData `json:"top_customers"`
+	TopProducts    []ProductSalesData  `json:"top_products"`
+	TopSalespeople []SalespersonData   `json:"top_salespeople"`
 }
 
 type TopVendorsData struct {
-	TopVendors     []VendorPurchaseData   `json:"top_vendors"`
-	TopCategories  []CategoryPurchaseData `json:"top_categories"`
-	TopProducts    []ProductPurchaseData  `json:"top_products"`
+	TopVendors    []VendorPurchaseData   `json:"top_vendors"`
+	TopCategories []CategoryPurchaseData `json:"top_categories"`
+	TopProducts   []ProductPurchaseData  `json:"top_products"`
 }
 
 type SalespersonData struct {
@@ -569,28 +590,27 @@ type SalespersonData struct {
 }
 
 type ProductPurchaseData struct {
-	ProductID        uint    `json:"product_id"`
-	ProductName      string  `json:"product_name"`
-	QuantityPurchased int64  `json:"quantity_purchased"`
-	TotalAmount      float64 `json:"total_amount"`
-	AveragePrice     float64 `json:"average_price"`
+	ProductID         uint    `json:"product_id"`
+	ProductName       string  `json:"product_name"`
+	QuantityPurchased int64   `json:"quantity_purchased"`
+	TotalAmount       float64 `json:"total_amount"`
+	AveragePrice      float64 `json:"average_price"`
 }
 
 type GrowthAnalysisData struct {
-	MonthOverMonth   float64 `json:"month_over_month"`
+	MonthOverMonth     float64 `json:"month_over_month"`
 	QuarterOverQuarter float64 `json:"quarter_over_quarter"`
-	YearOverYear     float64 `json:"year_over_year"`
-	TrendDirection   string  `json:"trend_direction"`
-	SeasonalityIndex float64 `json:"seasonality_index"`
+	YearOverYear       float64 `json:"year_over_year"`
+	TrendDirection     string  `json:"trend_direction"`
+	SeasonalityIndex   float64 `json:"seasonality_index"`
 }
 
 type CostAnalysisData struct {
-	TotalCostOfGoods float64 `json:"total_cost_of_goods"`
+	TotalCostOfGoods   float64 `json:"total_cost_of_goods"`
 	AverageCostPerUnit float64 `json:"average_cost_per_unit"`
-	CostVariance     float64 `json:"cost_variance"`
-	InflationImpact  float64 `json:"inflation_impact"`
+	CostVariance       float64 `json:"cost_variance"`
+	InflationImpact    float64 `json:"inflation_impact"`
 }
-
 
 // loadCompanyProfile loads the company profile for report headers
 func (ers *EnhancedReportService) loadCompanyProfile() {
@@ -602,7 +622,7 @@ func (ers *EnhancedReportService) loadCompanyProfile() {
 		// 2. Load from initial setup wizard data
 		// 3. Load from user registration information
 		// 4. Provide a setup interface for users to configure
-		
+
 		// Create default profile using environment variables or fallbacks
 		profile = models.CompanyProfile{
 			Name:            ers.getDefaultCompanyName(),
@@ -618,7 +638,7 @@ func (ers *EnhancedReportService) loadCompanyProfile() {
 			FiscalYearStart: "01-01", // January 1st (standard in Indonesia)
 			TaxNumber:       ers.getDefaultTaxNumber(),
 		}
-		
+
 		// Save the default profile to database
 		ers.db.Create(&profile)
 	}
@@ -694,9 +714,13 @@ func (ers *EnhancedReportService) GenerateBalanceSheet(asOfDate time.Time) (*Bal
 		if !account.IsActive {
 			continue
 		}
+		// Skip header/parent accounts - reports should only show detail accounts
+		if account.IsHeader {
+			continue
+		}
 
 		balance := ers.calculateAccountBalance(account.ID, asOfDate)
-		
+
 		// Skip accounts with zero balance (optional - can be configurable)
 		if balance == 0 {
 			continue
@@ -731,10 +755,10 @@ func (ers *EnhancedReportService) GenerateBalanceSheet(asOfDate time.Time) (*Bal
 
 	// Build assets section with subtotals
 	balanceSheet.Assets = ers.buildAssetsSection(assets)
-	
+
 	// Build liabilities section with subtotals
 	balanceSheet.Liabilities = ers.buildLiabilitiesSection(liabilities)
-	
+
 	// Build equity section
 	balanceSheet.Equity = ers.buildEquitySection(equity)
 
@@ -758,20 +782,20 @@ func (ers *EnhancedReportService) GenerateProfitLoss(startDate, endDate time.Tim
 			"end_date":   endDate.Format("2006-01-02"),
 		}
 		cacheKey := ers.cacheService.GenerateCacheKey("profit-loss", cacheParams)
-		
+
 		// Try to get from cache first
 		if cachedData, found := ers.cacheService.Get(cacheKey); found {
 			if profitLoss, ok := cachedData.(*ProfitLossData); ok {
 				return profitLoss, nil
 			}
 		}
-		
+
 		// Generate report
 		profitLoss, err := ers.generateProfitLossData(startDate, endDate)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		// Add validation warnings if validation service is available
 		if ers.validationService != nil {
 			validationReport, err := ers.validationService.ValidateReportData(startDate, endDate)
@@ -782,12 +806,12 @@ func (ers *EnhancedReportService) GenerateProfitLoss(startDate, endDate time.Tim
 				profitLoss.DataQualityWarnings = validationReport.Recommendations
 			}
 		}
-		
+
 		// Cache the result
 		ers.cacheService.Set(cacheKey, "profit-loss", profitLoss)
 		return profitLoss, nil
 	}
-	
+
 	// Fallback without caching
 	return ers.generateProfitLossData(startDate, endDate)
 }
@@ -820,10 +844,14 @@ func (ers *EnhancedReportService) generateProfitLossData(startDate, endDate time
 		if !account.IsActive {
 			continue
 		}
+		// Skip header/parent accounts - reports should only show detail accounts
+		if account.IsHeader {
+			continue
+		}
 
 		// Calculate activity for the period
 		balance := ers.calculateAccountBalanceForPeriod(account.ID, startDate, endDate)
-		
+
 		// Skip accounts with no activity
 		if balance == 0 {
 			continue
@@ -913,7 +941,7 @@ func (ers *EnhancedReportService) generateProfitLossData(startDate, endDate time
 
 	// Calculate EBITDA (approximation without depreciation detail)
 	profitLoss.EBITDA = profitLoss.GrossProfit - totalOperatingExpenses + totalNonOperatingRevenue - totalNonOperatingExpenses
-	
+
 	// Calculate EBIT
 	profitLoss.EBIT = profitLoss.EBITDA // Simplified - would subtract depreciation and amortization
 
@@ -959,7 +987,7 @@ func (ers *EnhancedReportService) GenerateCashFlow(startDate, endDate time.Time)
 
 	// Get cash and cash equivalent accounts
 	cashAccounts := ers.getCashAccounts()
-	
+
 	// Calculate beginning and ending cash balances
 	prevDay := startDate.AddDate(0, 0, -1)
 	cashFlow.BeginningCash = ers.calculateTotalCashBalance(cashAccounts, prevDay)
@@ -973,7 +1001,7 @@ func (ers *EnhancedReportService) GenerateCashFlow(startDate, endDate time.Time)
 		Total: ers.sumCashFlowItems(operatingItems),
 	}
 
-	// Build investing activities section  
+	// Build investing activities section
 	investingItems := ers.calculateInvestingCashFlow(startDate, endDate)
 	cashFlow.InvestingActivities = CashFlowSection{
 		Name:  "Investing Activities",
@@ -984,15 +1012,15 @@ func (ers *EnhancedReportService) GenerateCashFlow(startDate, endDate time.Time)
 	// Build financing activities section
 	financingItems := ers.calculateFinancingCashFlow(startDate, endDate)
 	cashFlow.FinancingActivities = CashFlowSection{
-		Name:  "Financing Activities", 
+		Name:  "Financing Activities",
 		Items: financingItems,
 		Total: ers.sumCashFlowItems(financingItems),
 	}
 
 	// Calculate net cash flow
-	cashFlow.NetCashFlow = cashFlow.OperatingActivities.Total + 
-						   cashFlow.InvestingActivities.Total + 
-						   cashFlow.FinancingActivities.Total
+	cashFlow.NetCashFlow = cashFlow.OperatingActivities.Total +
+		cashFlow.InvestingActivities.Total +
+		cashFlow.FinancingActivities.Total
 
 	return cashFlow, nil
 }
@@ -1001,7 +1029,7 @@ func (ers *EnhancedReportService) GenerateCashFlow(startDate, endDate time.Time)
 func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.Time, groupBy string) (*SalesSummaryData, error) {
 	// Enhanced date handling with timezone awareness
 	dateUtils := utils.NewDateUtils()
-	
+
 	// Log the operation start
 	startTime := time.Now()
 	utils.ReportLog.WithFields(utils.Fields{
@@ -1010,16 +1038,16 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		"end_date":   endDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 		"group_by":   groupBy,
 	}).Info("Starting sales summary generation with timezone awareness")
-	
+
 	// Log input parameters for debugging
 	utils.ReportLog.WithFields(utils.Fields{
 		"input_start_date_utc": startDate.UTC().Format("2006-01-02 15:04:05 UTC"),
 		"input_end_date_utc":   endDate.UTC().Format("2006-01-02 15:04:05 UTC"),
 		"input_start_date_jkt": startDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 		"input_end_date_jkt":   endDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
-		"formatted_range":     dateUtils.FormatDateRange(startDate, endDate),
+		"formatted_range":      dateUtils.FormatDateRange(startDate, endDate),
 	}).Debug("Sales summary date parameter details")
-	
+
 	// Validate date range
 	if err := dateUtils.ValidateDateRange(startDate, endDate); err != nil {
 		utils.ReportLog.LogReportError("GenerateSalesSummary", err, utils.Fields{
@@ -1028,41 +1056,41 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		})
 		return nil, fmt.Errorf("invalid date range: %v", err)
 	}
-	
+
 	// Query sales data with detailed logging and enhanced timezone handling
 	var sales []models.Sale
 	queryStartTime := time.Now()
-	
+
 	query := ers.db.Preload("Customer").
 		Preload("SaleItems").
 		Preload("SaleItems.Product").
 		Preload("SalesPerson")
-	
+
 	// Log the exact query parameters
 	utils.ReportLog.WithFields(utils.Fields{
 		"query_start_date": startDate.Format("2006-01-02 15:04:05"),
 		"query_end_date":   endDate.Format("2006-01-02 15:04:05"),
-		"query_sql_filter": fmt.Sprintf("date >= '%s' AND date <= '%s'", 
-			startDate.Format("2006-01-02 15:04:05"), 
+		"query_sql_filter": fmt.Sprintf("date >= '%s' AND date <= '%s'",
+			startDate.Format("2006-01-02 15:04:05"),
 			endDate.Format("2006-01-02 15:04:05")),
 	}).Debug("Executing sales data query")
-	
+
 	// Use timezone-aware date range for better accuracy
 	queryResult := query.Where("date >= ? AND date <= ?", startDate, endDate).Find(&sales)
-	
+
 	queryDuration := time.Since(queryStartTime)
 	utils.ReportLog.LogQueryPerformance("SalesQuery", queryDuration, len(sales))
-	
+
 	if queryResult.Error != nil {
 		utils.ReportLog.LogReportError("GenerateSalesSummary", queryResult.Error, utils.Fields{
-			"start_date": startDate.In(utils.JakartaTZ).Format("2006-01-02"),
-			"end_date":   endDate.In(utils.JakartaTZ).Format("2006-01-02"),
-			"group_by":   groupBy,
+			"start_date":     startDate.In(utils.JakartaTZ).Format("2006-01-02"),
+			"end_date":       endDate.In(utils.JakartaTZ).Format("2006-01-02"),
+			"group_by":       groupBy,
 			"query_duration": queryDuration.String(),
 		})
 		return nil, fmt.Errorf("failed to fetch sales data: %v", queryResult.Error)
 	}
-	
+
 	// Log query results with detailed analysis
 	totalAmount := float64(0)
 	uniqueCustomers := make(map[uint]bool)
@@ -1072,15 +1100,15 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		uniqueCustomers[sale.CustomerID] = true
 		statusBreakdown[sale.Status]++
 	}
-	
+
 	utils.ReportLog.LogSalesQuery("SalesDataQuery", startDate, endDate, groupBy, len(sales), totalAmount)
-	
+
 	// Log additional insights about the data retrieved
 	utils.ReportLog.WithFields(utils.Fields{
-		"total_records":     len(sales),
-		"total_amount":      totalAmount,
-		"unique_customers":  len(uniqueCustomers),
-		"status_breakdown": statusBreakdown,
+		"total_records":      len(sales),
+		"total_amount":       totalAmount,
+		"unique_customers":   len(uniqueCustomers),
+		"status_breakdown":   statusBreakdown,
 		"data_quality_score": calculateDataQualityScore(sales),
 	}).Info("Sales data query completed with analysis")
 
@@ -1091,7 +1119,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			"end_date":   endDate.Format("2006-01-02"),
 			"group_by":   groupBy,
 		}).Warn("No sales data found for the specified period")
-		
+
 		// Return empty but valid response with helpful message
 		emptySummary := &SalesSummaryData{
 			Company:           ers.getCompanyInfo(),
@@ -1108,11 +1136,11 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			SalesByStatus:     make([]StatusData, 0),
 			GeneratedAt:       time.Now().In(utils.JakartaTZ),
 		}
-		
+
 		// Add helpful debugging information
 		emptySummary.DebugInfo = map[string]interface{}{
-			"message": fmt.Sprintf("No sales data found for period %s to %s", 
-				startDate.In(utils.JakartaTZ).Format("2006-01-02"), 
+			"message": fmt.Sprintf("No sales data found for period %s to %s",
+				startDate.In(utils.JakartaTZ).Format("2006-01-02"),
 				endDate.In(utils.JakartaTZ).Format("2006-01-02")),
 			"suggestions": []string{
 				"Check if there are any sales records in the database for this period",
@@ -1123,29 +1151,29 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			"date_range_info": map[string]interface{}{
 				"start_date_jakarta": startDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 				"end_date_jakarta":   endDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
-				"query_used": fmt.Sprintf("date >= '%s' AND date <= '%s'", 
-					startDate.Format("2006-01-02 15:04:05"), 
+				"query_used": fmt.Sprintf("date >= '%s' AND date <= '%s'",
+					startDate.Format("2006-01-02 15:04:05"),
 					endDate.Format("2006-01-02 15:04:05")),
 				"timezone": "Asia/Jakarta (WIB)",
 			},
 			"query_performance": map[string]interface{}{
 				"query_duration": queryDuration.String(),
-				"records_found": 0,
+				"records_found":  0,
 			},
 		}
-		
+
 		processingTime := time.Since(startTime)
 		utils.ReportLog.LogReportGeneration("SalesSummary", utils.Fields{
-			"start_date": startDate.Format("2006-01-02"),
-			"end_date":   endDate.Format("2006-01-02"),
-			"group_by":   groupBy,
+			"start_date":    startDate.Format("2006-01-02"),
+			"end_date":      endDate.Format("2006-01-02"),
+			"group_by":      groupBy,
 			"records_found": 0,
-			"has_data": false,
+			"has_data":      false,
 		}, processingTime, true)
-		
+
 		return emptySummary, nil
 	}
-	
+
 	// Initialize sales summary with data
 	summary := &SalesSummaryData{
 		Company:           ers.getCompanyInfo(),
@@ -1165,6 +1193,20 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 
 	for _, sale := range sales {
 		summary.TotalRevenue += sale.TotalAmount
+		// Sum tax: prioritize PPNAmount, fallback to TotalTax, then Tax/PPN
+		taxForSale := sale.PPNAmount
+		if taxForSale == 0 {
+			taxForSale = sale.TotalTax
+		}
+		if taxForSale == 0 {
+			taxForSale = sale.PPN
+		}
+		if taxForSale == 0 {
+			taxForSale = sale.Tax
+		}
+		summary.TotalTax += taxForSale
+		// Sum discount
+		summary.TotalDiscount += sale.DiscountAmount
 		customerSet[sale.CustomerID] = true
 
 		// Process customer data
@@ -1241,20 +1283,40 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		summary.AverageOrderValue = summary.TotalRevenue / float64(summary.TotalTransactions)
 	}
 
+	// Calculate TotalSales (bruto = includes tax) and NetRevenue (after tax+discount)
+	summary.TotalSales = summary.TotalRevenue
+	summary.NetRevenue = summary.TotalRevenue - summary.TotalTax - summary.TotalDiscount
+
 	// Calculate average prices and order values
 	for _, customerData := range customerMap {
 		if customerData.TransactionCount > 0 {
 			customerData.AverageOrder = customerData.TotalAmount / float64(customerData.TransactionCount)
 		}
+		// Calculate percentage of total
+		if summary.TotalRevenue > 0 {
+			customerData.PercentageOfTotal = (customerData.TotalAmount / summary.TotalRevenue) * 100
+		}
+	}
+
+	// Calculate total product amount for percentage denominator (line totals, before tax)
+	totalProductAmount := float64(0)
+	for _, productData := range productMap {
+		totalProductAmount += productData.TotalAmount
 	}
 
 	for _, productData := range productMap {
 		if productData.QuantitySold > 0 {
 			productData.AveragePrice = productData.TotalAmount / float64(productData.QuantitySold)
 		}
+		// Sync TotalRevenue with TotalAmount
+		productData.TotalRevenue = productData.TotalAmount
+		// Calculate percentage of total (against sum of all product line totals, not total revenue with tax)
+		if totalProductAmount > 0 {
+			productData.PercentageOfTotal = (productData.TotalAmount / totalProductAmount) * 100
+		}
 	}
 
-// Calculate percentages for status data
+	// Calculate percentages for status data
 	for _, statusData := range statusMap {
 		if summary.TotalRevenue > 0 {
 			statusData.Percentage = (statusData.Amount / summary.TotalRevenue) * 100
@@ -1263,15 +1325,15 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 
 	// Convert maps to slices and sort
 	summary.SalesByCustomer = ers.sortCustomersByRevenue(customerMap)
-	
+
 	// Fetch items for each customer
 	for i := range summary.SalesByCustomer {
 		items, err := ers.getSaleItemsForCustomer(summary.SalesByCustomer[i].CustomerID, startDate, endDate)
 		if err != nil {
 			utils.ReportLog.WithFields(utils.Fields{
-				"customer_id": summary.SalesByCustomer[i].CustomerID,
+				"customer_id":   summary.SalesByCustomer[i].CustomerID,
 				"customer_name": summary.SalesByCustomer[i].CustomerName,
-				"error": err.Error(),
+				"error":         err.Error(),
 			}).Warn("Failed to fetch sale items for customer")
 			continue
 		}
@@ -1279,14 +1341,43 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		if len(items) > 0 {
 			utils.ReportLog.WithFields(utils.Fields{
 				"customer_name": summary.SalesByCustomer[i].CustomerName,
-				"items_count": len(items),
+				"items_count":   len(items),
 			}).Debug("Loaded sale items for customer")
 		}
 	}
-	
+
 	summary.SalesByProduct = ers.sortProductsBySales(productMap)
 	summary.SalesByPeriod = ers.sortPeriodsByDate(periodMap)
 	summary.SalesByStatus = ers.convertStatusMapToSlice(statusMap)
+
+	// Sync PeriodData fields: copy Amount to TotalSales, Transactions to TransactionCount
+	for i := range summary.SalesByPeriod {
+		summary.SalesByPeriod[i].TotalSales = summary.SalesByPeriod[i].Amount
+		summary.SalesByPeriod[i].TransactionCount = summary.SalesByPeriod[i].Transactions
+	}
+
+	// Calculate growth rates for periods
+	for i := 1; i < len(summary.SalesByPeriod); i++ {
+		prev := summary.SalesByPeriod[i-1].Amount
+		if prev > 0 {
+			summary.SalesByPeriod[i].GrowthRate = ((summary.SalesByPeriod[i].Amount - prev) / prev) * 100
+		}
+	}
+
+	// Build items list from sales
+	for _, sale := range sales {
+		custName := ""
+		if sale.Customer.Name != "" {
+			custName = sale.Customer.Name
+		}
+		summary.Items = append(summary.Items, SalesSummaryItem{
+			Date:         sale.Date.Format("2006-01-02"),
+			Code:         sale.InvoiceNumber,
+			CustomerName: custName,
+			TotalAmount:  sale.TotalAmount,
+			Status:       sale.Status,
+		})
+	}
 
 	// Build top performers data
 	summary.TopPerformers = ers.buildTopPerformers(summary.SalesByCustomer, summary.SalesByProduct)
@@ -1297,47 +1388,47 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 	// Enhanced processing with data quality analysis
 	processingTime := time.Since(startTime)
 	summary.ProcessingTime = processingTime.String()
-	
+
 	// Analyze data quality
 	dataQualityIssues := ers.analyzeDataQuality(sales)
 	validRecords := len(sales) - len(dataQualityIssues)
 	summary.DataQualityScore = (float64(validRecords) / float64(len(sales))) * 100
-	
+
 	if len(dataQualityIssues) > 0 {
 		utils.ReportLog.LogDataQuality("SalesSummary", dataQualityIssues, len(sales), validRecords)
 	}
-	
+
 	// Add debug information for successful generation
 	summary.DebugInfo = map[string]interface{}{
 		"message": fmt.Sprintf("Successfully generated sales summary for %d records", len(sales)),
 		"date_range_info": map[string]interface{}{
 			"start_date_jakarta": startDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 			"end_date_jakarta":   endDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
-			"timezone": "Asia/Jakarta (WIB)",
+			"timezone":           "Asia/Jakarta (WIB)",
 		},
 		"query_performance": map[string]interface{}{
-			"query_duration": queryDuration.String(),
+			"query_duration":        queryDuration.String(),
 			"total_processing_time": processingTime.String(),
-			"records_processed": len(sales),
+			"records_processed":     len(sales),
 		},
 		"data_summary": map[string]interface{}{
-			"total_revenue": summary.TotalRevenue,
-			"total_customers": summary.TotalCustomers,
-			"avg_order_value": summary.AverageOrderValue,
+			"total_revenue":    summary.TotalRevenue,
+			"total_customers":  summary.TotalCustomers,
+			"avg_order_value":  summary.AverageOrderValue,
 			"periods_analyzed": len(summary.SalesByPeriod),
 		},
 	}
-	
+
 	// Log successful generation
 	utils.ReportLog.LogReportGeneration("SalesSummary", utils.Fields{
-		"start_date": startDate.Format("2006-01-02"),
-		"end_date":   endDate.Format("2006-01-02"),
-		"group_by":   groupBy,
-		"records_found": len(sales),
-		"total_revenue": summary.TotalRevenue,
-		"total_customers": summary.TotalCustomers,
+		"start_date":         startDate.Format("2006-01-02"),
+		"end_date":           endDate.Format("2006-01-02"),
+		"group_by":           groupBy,
+		"records_found":      len(sales),
+		"total_revenue":      summary.TotalRevenue,
+		"total_customers":    summary.TotalCustomers,
 		"data_quality_score": summary.DataQualityScore,
-		"has_data": true,
+		"has_data":           true,
 	}, processingTime, true)
 
 	return summary, nil
@@ -1348,31 +1439,31 @@ func calculateDataQualityScore(sales []models.Sale) float64 {
 	if len(sales) == 0 {
 		return 100.0 // Perfect score for empty data
 	}
-	
+
 	var issues int
 	totalChecks := len(sales) * 5 // 5 checks per sale: code, customer, amount, date, status
-	
+
 	for _, sale := range sales {
 		// Check for missing sale code
 		if sale.Code == "" {
 			issues++
 		}
-		
+
 		// Check for missing customer
 		if sale.CustomerID == 0 {
 			issues++
 		}
-		
+
 		// Check for negative amounts
 		if sale.TotalAmount < 0 {
 			issues++
 		}
-		
+
 		// Check for future dates
 		if sale.Date.After(time.Now().In(utils.JakartaTZ)) {
 			issues++
 		}
-		
+
 		// Check for valid status
 		validStatuses := []string{"DRAFT", "PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "INVOICED", "OVERDUE", "PAID"}
 		validStatus := false
@@ -1386,11 +1477,11 @@ func calculateDataQualityScore(sales []models.Sale) float64 {
 			issues++
 		}
 	}
-	
+
 	if totalChecks == 0 {
 		return 100.0
 	}
-	
+
 	qualityScore := ((float64(totalChecks - issues)) / float64(totalChecks)) * 100
 	if qualityScore < 0 {
 		return 0.0
@@ -1465,13 +1556,13 @@ func (ers *EnhancedReportService) GenerateVendorAnalysis(startDate, endDate time
 	// Process payment data from purchase payments
 	for _, purchasePayment := range purchasePayments {
 		totalPayments += purchasePayment.Amount
-		
+
 		// Get the purchase to find the vendor
 		var purchase models.Purchase
 		if err := ers.db.First(&purchase, purchasePayment.PurchaseID).Error; err != nil {
 			continue // Skip if purchase not found
 		}
-		
+
 		if vendorData, exists := vendorMap[purchase.VendorID]; exists {
 			vendorData.TotalPayments += purchasePayment.Amount
 		}
@@ -1514,37 +1605,37 @@ func (ers *EnhancedReportService) GenerateVendorAnalysis(startDate, endDate time
 // analyzeDataQuality performs data quality analysis on sales records
 func (ers *EnhancedReportService) analyzeDataQuality(sales []models.Sale) []string {
 	var issues []string
-	
+
 	for _, sale := range sales {
 		// Check for missing required fields
 		if sale.Code == "" {
 			issues = append(issues, fmt.Sprintf("Sale ID %d: Missing sale code", sale.ID))
 		}
-		
+
 		if sale.CustomerID == 0 {
 			issues = append(issues, fmt.Sprintf("Sale %s: Missing customer ID", sale.Code))
 		}
-		
+
 		// Check for unrealistic amounts
 		if sale.TotalAmount < 0 {
 			issues = append(issues, fmt.Sprintf("Sale %s: Negative total amount (%.2f)", sale.Code, sale.TotalAmount))
 		}
-		
+
 		if sale.TotalAmount > 1000000000 { // More than 1 billion IDR might be suspicious
 			issues = append(issues, fmt.Sprintf("Sale %s: Unusually large amount (%.2f)", sale.Code, sale.TotalAmount))
 		}
-		
+
 		// Check for future dates
 		if sale.Date.After(time.Now().In(utils.JakartaTZ)) {
 			issues = append(issues, fmt.Sprintf("Sale %s: Future date (%s)", sale.Code, sale.Date.Format("2006-01-02")))
 		}
-		
+
 		// Check for very old dates (more than 10 years ago)
 		tenYearsAgo := time.Now().In(utils.JakartaTZ).AddDate(-10, 0, 0)
 		if sale.Date.Before(tenYearsAgo) {
 			issues = append(issues, fmt.Sprintf("Sale %s: Very old date (%s)", sale.Code, sale.Date.Format("2006-01-02")))
 		}
-		
+
 		// Check for inconsistent status
 		validStatuses := []string{"DRAFT", "PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "INVOICED", "OVERDUE", "PAID"}
 		validStatus := false
@@ -1557,18 +1648,18 @@ func (ers *EnhancedReportService) analyzeDataQuality(sales []models.Sale) []stri
 		if !validStatus {
 			issues = append(issues, fmt.Sprintf("Sale %s: Invalid status (%s)", sale.Code, sale.Status))
 		}
-		
+
 		// Check for inconsistent amounts
 		if sale.PaidAmount > sale.TotalAmount {
 			issues = append(issues, fmt.Sprintf("Sale %s: Paid amount (%.2f) exceeds total amount (%.2f)", sale.Code, sale.PaidAmount, sale.TotalAmount))
 		}
-		
+
 		expectedOutstanding := sale.TotalAmount - sale.PaidAmount
-		if math.Abs(sale.OutstandingAmount - expectedOutstanding) > 0.01 { // Allow for small rounding errors
+		if math.Abs(sale.OutstandingAmount-expectedOutstanding) > 0.01 { // Allow for small rounding errors
 			issues = append(issues, fmt.Sprintf("Sale %s: Outstanding amount mismatch (expected %.2f, got %.2f)", sale.Code, expectedOutstanding, sale.OutstandingAmount))
 		}
 	}
-	
+
 	return issues
 }
 
@@ -1595,6 +1686,10 @@ func (ers *EnhancedReportService) GenerateTrialBalance(asOfDate time.Time) (*Tri
 	// Process each account
 	for _, account := range accounts {
 		if !account.IsActive {
+			continue
+		}
+		// Skip header/parent accounts - reports should only show detail accounts
+		if account.IsHeader {
 			continue
 		}
 
@@ -1799,12 +1894,12 @@ func (ers *EnhancedReportService) GenerateGeneralLedgerAll(startDate, endDate ti
 
 	// Initialize general ledger for all accounts
 	generalLedgerAll := &GeneralLedgerAllData{
-		Company:     ers.getCompanyInfo(),
-		StartDate:   startDate,
-		EndDate:     endDate,
-		Currency:    ers.companyProfile.Currency,
+		Company:      ers.getCompanyInfo(),
+		StartDate:    startDate,
+		EndDate:      endDate,
+		Currency:     ers.companyProfile.Currency,
 		AccountCount: len(accounts),
-		GeneratedAt: time.Now(),
+		GeneratedAt:  time.Now(),
 	}
 
 	// Generate individual general ledgers for each account
@@ -1815,7 +1910,7 @@ func (ers *EnhancedReportService) GenerateGeneralLedgerAll(startDate, endDate ti
 			fmt.Printf("Warning: Failed to generate ledger for account %s: %v\n", account.Code, err)
 			continue
 		}
-		
+
 		// Only include accounts with transactions
 		if len(accountLedger.Transactions) > 0 {
 			generalLedgerAll.Accounts = append(generalLedgerAll.Accounts, *accountLedger)
@@ -1836,7 +1931,7 @@ func (ers *EnhancedReportService) GetValidationReport(startDate, endDate time.Ti
 	if ers.validationService == nil {
 		return nil, fmt.Errorf("validation service not available")
 	}
-	
+
 	return ers.validationService.ValidateReportData(startDate, endDate)
 }
 
@@ -1851,17 +1946,17 @@ func (ers *EnhancedReportService) GenerateJournalEntryAnalysisWithFilters(startD
 	query := ers.db.Preload("Creator").
 		Preload("JournalLines").
 		Where("entry_date BETWEEN ? AND ?", startDate, endDate)
-	
+
 	// Add status filter if specified
 	if status != "ALL" && status != "" {
 		query = query.Where("status = ?", status)
 	}
-	
+
 	// Add reference type filter if specified
 	if referenceType != "ALL" && referenceType != "" {
 		query = query.Where("reference_type = ?", referenceType)
 	}
-	
+
 	// Execute query
 	var journalEntries []models.JournalEntry
 	if err := query.Find(&journalEntries).Error; err != nil {
@@ -1898,15 +1993,15 @@ func (ers *EnhancedReportService) GenerateJournalEntryAnalysisWithFilters(startD
 		} else {
 			unbalancedCount++
 			unbalancedEntries = append(unbalancedEntries, JournalEntryDetail{
-				ID:          entry.ID,
-				Code:        entry.Code,
-				Date:        entry.EntryDate,
-				Description: entry.Description,
-				Reference:   entry.Reference,
-				DebitAmount: entry.TotalDebit,
+				ID:           entry.ID,
+				Code:         entry.Code,
+				Date:         entry.EntryDate,
+				Description:  entry.Description,
+				Reference:    entry.Reference,
+				DebitAmount:  entry.TotalDebit,
 				CreditAmount: entry.TotalCredit,
-				Status:      entry.Status,
-				User:        entry.Creator.FirstName + " " + entry.Creator.LastName,
+				Status:       entry.Status,
+				User:         entry.Creator.FirstName + " " + entry.Creator.LastName,
 			})
 		}
 
@@ -1958,30 +2053,30 @@ func (ers *EnhancedReportService) GenerateJournalEntryAnalysisWithFilters(startD
 		// Collect recent entries (last 10)
 		if len(recentEntries) < 10 {
 			recentEntries = append(recentEntries, JournalEntryDetail{
-				ID:          entry.ID,
-				Code:        entry.Code,
-				Date:        entry.EntryDate,
-				Description: entry.Description,
-				Reference:   entry.Reference,
-				DebitAmount: entry.TotalDebit,
+				ID:           entry.ID,
+				Code:         entry.Code,
+				Date:         entry.EntryDate,
+				Description:  entry.Description,
+				Reference:    entry.Reference,
+				DebitAmount:  entry.TotalDebit,
 				CreditAmount: entry.TotalCredit,
-				Status:      entry.Status,
-				User:        entry.Creator.FirstName + " " + entry.Creator.LastName,
+				Status:       entry.Status,
+				User:         entry.Creator.FirstName + " " + entry.Creator.LastName,
 			})
 		}
 
 		// Collect largest entries
 		if entry.TotalDebit >= 1000000 { // Entries over 1 million
 			largestEntries = append(largestEntries, JournalEntryDetail{
-				ID:          entry.ID,
-				Code:        entry.Code,
-				Date:        entry.EntryDate,
-				Description: entry.Description,
-				Reference:   entry.Reference,
-				DebitAmount: entry.TotalDebit,
+				ID:           entry.ID,
+				Code:         entry.Code,
+				Date:         entry.EntryDate,
+				Description:  entry.Description,
+				Reference:    entry.Reference,
+				DebitAmount:  entry.TotalDebit,
 				CreditAmount: entry.TotalCredit,
-				Status:      entry.Status,
-				User:        entry.Creator.FirstName + " " + entry.Creator.LastName,
+				Status:       entry.Status,
+				User:         entry.Creator.FirstName + " " + entry.Creator.LastName,
 			})
 		}
 	}

@@ -61,6 +61,13 @@ interface CashBankFormProps {
   mode: 'create' | 'edit';
 }
 
+interface AccountOption {
+  id: number;
+  code: string;
+  name: string;
+  balance: number;
+}
+
 interface CashBankFormData {
   name: string;
   type: 'CASH' | 'BANK';
@@ -72,7 +79,9 @@ interface CashBankFormData {
   opening_balance?: number;
   opening_date?: string;
   description?: string;
+  description?: string;
   account_id?: number;
+  source_account_id?: number;
 }
 
 const CashBankForm: React.FC<CashBankFormProps> = ({
@@ -86,6 +95,8 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [equityAccounts, setEquityAccounts] = useState<AccountOption[]>([]);
+
 
   const [openingBalanceDisplay, setOpeningBalanceDisplay] = useState<string>('');
   const toast = useToast();
@@ -129,9 +140,12 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       opening_balance: 0,
       opening_date: new Date().toISOString().split('T')[0],
       description: '',
-      account_id: undefined
+      account_id: undefined,
+      source_account_id: undefined
     }
   });
+
+  const watchedOpeningBalance = watch('opening_balance');
 
   const watchedType = watch('type');
 
@@ -175,6 +189,28 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
     loadAccounts();
   }, [token, isOpen, mode, watchedType, setValue]);
 
+  // Load Equity Accounts
+  useEffect(() => {
+    const loadEquityAccounts = async () => {
+      if (token && isOpen && mode === 'create') {
+        try {
+          const result = await accountService.getAccounts(token, 'EQUITY');
+          if (Array.isArray(result)) {
+            setEquityAccounts(result.map(acc => ({
+              id: acc.id,
+              code: acc.code,
+              name: acc.name,
+              balance: acc.balance
+            })));
+          }
+        } catch (error) {
+          console.error('Error loading equity accounts:', error);
+        }
+      }
+    };
+    loadEquityAccounts();
+  }, [token, isOpen, mode]);
+
   // Initialize form data when editing or opening modal
   useEffect(() => {
     if (isOpen) {
@@ -203,7 +239,8 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
           opening_balance: 0,
           opening_date: new Date().toISOString().split('T')[0],
           description: '',
-          account_id: undefined
+          account_id: undefined,
+          source_account_id: undefined
         });
         setOpeningBalanceDisplay(''); // Clear display for create mode
       }
@@ -227,6 +264,11 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       // COA Integration Validation (only for create mode)
       if (mode === 'create' && !data.account_id) {
         throw new Error(t('cashBank.form.errorGLAccount'));
+      }
+
+      // Equity Account Validation
+      if (mode === 'create' && (data.opening_balance || 0) > 0 && !data.source_account_id) {
+        throw new Error(t('cashBank.form.errorEquityAccount') || 'Harap pilih akun Modal untuk Saldo Awal');
       }
 
       // Prepare data for submission
@@ -628,6 +670,35 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                         <FormErrorMessage>{errors.opening_date?.message}</FormErrorMessage>
                       </FormControl>
                     </SimpleGrid>
+
+                    {/* Source of Funds (Equity) Selection - Double Entry */}
+                    {/* Always show in Create Mode for transparency, but only required > 0 */}
+                    {mode === 'create' && (
+                      <FormControl mt={4} isRequired={(watchedOpeningBalance || 0) > 0} isInvalid={!!errors.source_account_id}>
+                        <FormLabel>
+                          <HStack>
+                            <Text>🏦 {t('cashBank.form.sourceAccount') || 'Sumber Dana (Akun Modal)'}</Text>
+                          </HStack>
+                        </FormLabel>
+                        <Select
+                          placeholder={t('cashBank.form.selectEquityPlaceholder') || 'Pilih akun Modal (contoh: 3101 - Modal Disetor)'}
+                          {...register('source_account_id', {
+                            setValueAs: value => value ? parseInt(value) : undefined,
+                            required: (watchedOpeningBalance || 0) > 0 ? (t('cashBank.form.equityAccountRequired') || 'Akun Modal wajib dipilih untuk Saldo Awal') : false
+                          })}
+                        >
+                          {equityAccounts.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              [{acc.code}] {acc.name}
+                            </option>
+                          ))}
+                        </Select>
+                        <FormErrorMessage>{errors.source_account_id?.message}</FormErrorMessage>
+                        <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                          {t('cashBank.form.equityAccountHelp') || 'Pilih akun Ekuitas/Modal sebagai penyeimbang (Kredit) untuk Saldo Awal Kas/Bank (Debit).'}
+                        </Text>
+                      </FormControl>
+                    )}
                   </CardBody>
                 </Card>
               )}

@@ -1,12 +1,13 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
 	"log"
 	"math"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -16,14 +17,16 @@ import (
 type SalesJournalServiceSSOT struct {
 	db               *gorm.DB
 	coaService       *COAService
+	settingsService  *SettingsService
 	taxAccountHelper *TaxAccountHelper
 }
 
 // NewSalesJournalServiceSSOT creates a new instance
-func NewSalesJournalServiceSSOT(db *gorm.DB, coaService *COAService) *SalesJournalServiceSSOT {
+func NewSalesJournalServiceSSOT(db *gorm.DB, coaService *COAService, settingsService *SettingsService) *SalesJournalServiceSSOT {
 	return &SalesJournalServiceSSOT{
 		db:               db,
 		coaService:       coaService,
+		settingsService:  settingsService,
 		taxAccountHelper: NewTaxAccountHelper(db),
 	}
 }
@@ -52,30 +55,30 @@ func (s *SalesJournalServiceSSOT) syncCashBankBalance(tx *gorm.DB, accountID uin
 		}
 		return err
 	}
-	
+
 	// Get current COA account balance
 	var account models.Account
 	if err := tx.First(&account, accountID).Error; err != nil {
 		return err
 	}
-	
+
 	// Check if sync needed
 	if cashBank.Balance == account.Balance {
 		// Already in sync, no update needed
 		return nil
 	}
-	
+
 	// Sync balance
 	oldBalance := cashBank.Balance
 	cashBank.Balance = account.Balance
-	
+
 	if err := tx.Save(&cashBank).Error; err != nil {
 		return err
 	}
-	
-	log.Printf("🔄 [SYNC] CashBank #%d '%s' synced: %.2f → %.2f (from COA account #%d)", 
+
+	log.Printf("🔄 [SYNC] CashBank #%d '%s' synced: %.2f → %.2f (from COA account #%d)",
 		cashBank.ID, cashBank.Name, oldBalance, cashBank.Balance, accountID)
-	
+
 	return nil
 }
 
@@ -87,9 +90,9 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		return nil
 	}
 
-	log.Printf("📝 [SSOT] Creating unified journal entries for Sale #%d (Status: %s, Payment Method: '%s')", 
+	log.Printf("📝 [SSOT] Creating unified journal entries for Sale #%d (Status: %s, Payment Method: '%s')",
 		sale.ID, sale.Status, sale.PaymentMethodType)
-	
+
 	// ✅ FIX: Don't fail if payment method type is empty, use default CREDIT
 	// This prevents blocking journal creation for valid sales
 	if strings.TrimSpace(sale.PaymentMethodType) == "" {
@@ -108,7 +111,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	if err := dbToUse.Model(&models.SSOTJournalEntry{}).
 		Where("source_type = ? AND source_id = ?", "SALE", sale.ID).
 		Count(&existingCount).Error; err == nil && existingCount > 0 {
-		log.Printf("⚠️ [SSOT] Journal already exists for Sale #%d (found %d entries), skipping", 
+		log.Printf("⚠️ [SSOT] Journal already exists for Sale #%d (found %d entries), skipping",
 			sale.ID, existingCount)
 		return nil
 	}
@@ -128,10 +131,11 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	// 1. DEBIT side - based on payment method
 	var debitAccount *models.Account
 	var err error
-	
+
 	switch strings.ToUpper(strings.TrimSpace(sale.PaymentMethodType)) {
 	case "TUNAI", "CASH":
-		debitAccount, err = resolveByCode("1101")
+		debitAccount, err = resolveByCode("1101-002") // Kas Besar (Leaf)
+
 		if err != nil {
 			return fmt.Errorf("cash account not found: %v", err)
 		}
@@ -142,13 +146,15 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			var cashBank models.CashBank
 			if err := dbToUse.First(&cashBank, *sale.CashBankID).Error; err != nil {
 				log.Printf("⚠️ CashBank ID %d not found, using default BANK account: %v", *sale.CashBankID, err)
-				debitAccount, err = resolveByCode("1102")
+				debitAccount, err = resolveByCode("1101-004") // Default to Bank - Tabungan (Leaf)
+
 				if err != nil {
 					return fmt.Errorf("bank account not found: %v", err)
 				}
 			} else if cashBank.AccountID == 0 {
 				log.Printf("⚠️ CashBank #%d has no AccountID linked, using default BANK account", cashBank.ID)
-				debitAccount, err = resolveByCode("1102")
+				debitAccount, err = resolveByCode("1101-004") // Default to Bank - Tabungan (Leaf)
+
 				if err != nil {
 					return fmt.Errorf("bank account not found: %v", err)
 				}
@@ -156,23 +162,26 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 				// Use the linked account from CashBank
 				if err := dbToUse.First(&debitAccount, cashBank.AccountID).Error; err != nil {
 					log.Printf("⚠️ Account ID %d from CashBank #%d not found, using default: %v", cashBank.AccountID, cashBank.ID, err)
-					debitAccount, err = resolveByCode("1102")
+					debitAccount, err = resolveByCode("1101-004") // Default to Bank - Tabungan (Leaf)
+
 					if err != nil {
 						return fmt.Errorf("bank account not found: %v", err)
 					}
 				} else {
-					log.Printf("✅ Using CashBank '%s' (ID: %d) → Account '%s' (ID: %d)", 
+					log.Printf("✅ Using CashBank '%s' (ID: %d) → Account '%s' (ID: %d)",
 						cashBank.Name, cashBank.ID, debitAccount.Name, debitAccount.ID)
 				}
 			}
 		} else {
-			debitAccount, err = resolveByCode("1102")
+			debitAccount, err = resolveByCode("1101-004") // Default to Bank - Tabungan (Leaf)
+
 			if err != nil {
 				return fmt.Errorf("bank account not found: %v", err)
 			}
 		}
 	case "CREDIT", "PIUTANG":
-		debitAccount, err = resolveByCode("1201")
+		debitAccount, err = resolveByCode("1102-001") // 1102-001 = Piutang Usaha - Pihak Ketiga (Leaf)
+
 		if err != nil {
 			return fmt.Errorf("receivables account not found: %v", err)
 		}
@@ -180,9 +189,10 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		// ✅ FIX: Use CREDIT as safe default for unknown payment methods
 		// This allows journal creation even if payment method type doesn't match
 		// Better to record the transaction than to fail completely
-		log.Printf("⚠️ [SSOT] Warning: Unknown payment method type '%s' for Sale #%d, defaulting to CREDIT (Piutang)", 
+		log.Printf("⚠️ [SSOT] Warning: Unknown payment method type '%s' for Sale #%d, defaulting to CREDIT (Piutang)",
 			sale.PaymentMethodType, sale.ID)
-		debitAccount, err = resolveByCode("1201")
+		debitAccount, err = resolveByCode("1102-001") // 1102-001 = Piutang Usaha - Pihak Ketiga (Leaf)
+
 		if err != nil {
 			return fmt.Errorf("receivables account not found: %v", err)
 		}
@@ -191,27 +201,27 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	// Add DEBIT line
 	// ✅ CRITICAL FIX: Calculate correct debit amount
 	// The debit should equal all credits (Revenue + PPN + other tax additions - tax deductions)
-	// 
+	//
 	// IMPORTANT: Subtotal already has discount applied (it's sum of LineTotal which is after discount)
 	// Formula: Debit = Subtotal (after discount) + PPN + OtherTaxAdditions + ShippingCost
 	// Then TotalAmount = Debit - Tax Deductions (PPh, etc)
-	
+
 	// Calculate gross amount (after all additions, BEFORE tax deductions)
 	// This is the total amount BEFORE customer withholds taxes
 	// Subtotal already includes item discounts, so we start from there
 	grossAmount := decimal.NewFromFloat(sale.Subtotal).Add(decimal.NewFromFloat(sale.PPN))
-	
+
 	// Add any other tax additions if they exist
 	if sale.OtherTaxAdditions > 0 {
 		grossAmount = grossAmount.Add(decimal.NewFromFloat(sale.OtherTaxAdditions))
 	}
-	
+
 	// ✅ CRITICAL FIX: Add shipping cost to gross amount
 	// Shipping is part of the total amount that customer pays
 	if sale.ShippingCost > 0 {
 		grossAmount = grossAmount.Add(decimal.NewFromFloat(sale.ShippingCost))
 	}
-	
+
 	// ✅ CRITICAL FIX: Subtract tax deductions (PPh, PPh21, PPh23)
 	// Customer withholds these taxes, so we receive LESS than gross amount
 	// The withheld taxes become our prepaid tax asset
@@ -227,7 +237,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	if sale.OtherTaxDeductions > 0 {
 		grossAmount = grossAmount.Sub(decimal.NewFromFloat(sale.OtherTaxDeductions))
 	}
-	
+
 	// ✅ FIX: Subtract sale-level discount if exists and not already applied
 	// Note: Item-level discounts are already in Subtotal via LineTotal
 	// Sale-level discount (DiscountAmount) should be subtracted from gross
@@ -244,22 +254,22 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			grossAmount = grossAmount.Sub(decimal.NewFromFloat(sale.DiscountAmount))
 		}
 	}
-	
-	log.Printf("📊 [DEBIT CALC] Subtotal=%.2f + PPN=%.2f + OtherTaxAdd=%.2f + Shipping=%.2f - PPh=%.2f - PPh21=%.2f - PPh23=%.2f - OtherTaxDed=%.2f = GrossAmount=%.2f", 
-		sale.Subtotal, sale.PPN, sale.OtherTaxAdditions, sale.ShippingCost, 
+
+	log.Printf("📊 [DEBIT CALC] Subtotal=%.2f + PPN=%.2f + OtherTaxAdd=%.2f + Shipping=%.2f - PPh=%.2f - PPh21=%.2f - PPh23=%.2f - OtherTaxDed=%.2f = GrossAmount=%.2f",
+		sale.Subtotal, sale.PPN, sale.OtherTaxAdditions, sale.ShippingCost,
 		sale.PPh, sale.PPh21Amount, sale.PPh23Amount, sale.OtherTaxDeductions,
 		grossAmount.InexactFloat64())
 	log.Printf("📊 [DEBIT CALC] TotalAmount from DB=%.2f (GrossAmount should equal TotalAmount)", sale.TotalAmount)
-	
+
 	// Validate data consistency
 	// Note: grossAmount already has tax deductions subtracted, so it should equal TotalAmount
 	if math.Abs(grossAmount.InexactFloat64()-sale.TotalAmount) > 100.0 {
-		log.Printf("⚠️ [DATA WARNING] TotalAmount mismatch! Expected=%.2f, Actual=%.2f, Diff=%.2f", 
+		log.Printf("⚠️ [DATA WARNING] TotalAmount mismatch! Expected=%.2f, Actual=%.2f, Diff=%.2f",
 			grossAmount.InexactFloat64(), sale.TotalAmount, grossAmount.InexactFloat64()-sale.TotalAmount)
 		log.Printf("⚠️ This may indicate corrupted data or calculation error during sale creation")
 		log.Printf("⚠️ Using calculated GrossAmount instead of DB TotalAmount for journal entry")
 	}
-	
+
 	// Main debit entry - full gross amount (customer owes us this much)
 	lines = append(lines, SalesJournalLineRequest{
 		AccountID:    uint64(debitAccount.ID),
@@ -293,10 +303,27 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		}
 
 		accID := uint64(item.RevenueAccountID)
+
+		// ✅ FIX: Guard against header accounts — redirect to leaf child
+		if accID != 0 {
+			var revAcc models.Account
+			if err := dbToUse.First(&revAcc, accID).Error; err == nil && revAcc.IsHeader {
+				log.Printf("⚠️ [SSOT] SaleItem #%d has header revenue account %s (ID=%d), finding leaf", item.ID, revAcc.Code, revAcc.ID)
+				var leafAcc models.Account
+				if err := dbToUse.Where("parent_id = ? AND is_header = false AND deleted_at IS NULL", revAcc.ID).First(&leafAcc).Error; err == nil {
+					accID = uint64(leafAcc.ID)
+					log.Printf("✅ [SSOT] Redirected to leaf account %s (ID=%d)", leafAcc.Code, leafAcc.ID)
+				} else {
+					log.Printf("⚠️ [SSOT] No leaf child found for header %s, forcing fallback", revAcc.Code)
+					accID = 0 // Force fallback to 4101-001
+				}
+			}
+		}
+
 		if accID == 0 {
-			// Fallback: pakai akun pendapatan default (4101) jika item lama tidak punya RevenueAccountID
+			// Fallback: pakai akun pendapatan default (4101-001) jika item lama tidak punya RevenueAccountID
 			if defaultRevenueAccID == 0 {
-				defaultAcc, err := resolveByCode("4101")
+				defaultAcc, err := resolveByCode("4101-001") // Default Revenue Leaf (exists in all types)
 				if err != nil {
 					return fmt.Errorf("revenue account not found: %v", err)
 				}
@@ -310,7 +337,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 
 	// Jika tidak ada item (atau semua 0), fallback ke perilaku lama
 	if len(revenueTotals) == 0 {
-		defaultAcc, err := resolveByCode("4101")
+		defaultAcc, err := resolveByCode("4101-001") // Default Revenue Leaf
 		if err != nil {
 			return fmt.Errorf("revenue account not found: %v", err)
 		}
@@ -333,20 +360,39 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	}
 
 	// 3. PPN if exists
-	if sale.PPN > 0 {
-		ppnAccount, err := resolveByCode("2103")
+	// ✅ FIX: Safety net — recalculate PPN if sale.PPN=0 but PPNPercent > 0
+	ppnValue := sale.PPN
+	if ppnValue == 0 && sale.PPNPercent > 0 {
+		taxableAmt := sale.TaxableAmount
+		if taxableAmt == 0 {
+			taxableAmt = sale.Subtotal - sale.DiscountAmount
+		}
+		if taxableAmt > 0 {
+			ppnValue = taxableAmt * (sale.PPNPercent / 100)
+			log.Printf("⚠️ [SSOT] PPN was 0 but PPNPercent=%.2f, recalculated PPN=%.2f from TaxableAmount=%.2f", sale.PPNPercent, ppnValue, taxableAmt)
+		}
+	}
+
+	if ppnValue > 0 {
+		// Try standard template code first (2102-001 PPN Keluaran)
+		ppnAccount, err := resolveByCode("2102-001")
+		if err != nil {
+			// Fallback to legacy code (2103 PPN Keluaran)
+			ppnAccount, err = resolveByCode("2103")
+		}
+
 		if err != nil {
 			log.Printf("⚠️ PPN account not found, skipping PPN entry: %v", err)
 		} else {
 			lines = append(lines, SalesJournalLineRequest{
 				AccountID:    uint64(ppnAccount.ID),
 				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(sale.PPN),
+				CreditAmount: decimal.NewFromFloat(ppnValue),
 				Description:  fmt.Sprintf("PPN Keluaran - %s", sale.InvoiceNumber),
 			})
 		}
 	}
-	
+
 	// 3b. Other Tax Additions (if exists) - must be credited to match the debit
 	// These are additional taxes charged to customer, so they're credited as tax liabilities
 	// ✅ FIX: Only create entry if amount is significant (>= 1.00)
@@ -370,15 +416,15 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	} else if sale.OtherTaxAdditions > 0 {
 		log.Printf("⚠️ [OtherTaxAdditions] Skipped small amount: Rp %.2f (< 1.00)", sale.OtherTaxAdditions)
 	}
-	
+
 	// 3c. Shipping Cost (if exists and taxable/non-taxable)
 	// Shipping is revenue/income, so it's credited
 	// ✅ FIX: Only create entry if amount is significant (>= 1.00)
 	if sale.ShippingCost >= 1.0 {
 		shippingAccount, err := resolveByCode("4102") // Shipping revenue account
 		if err != nil {
-			log.Printf("⚠️ Shipping revenue account (4102) not found, using main revenue account (4101)")
-			shippingAccount, err = resolveByCode("4101")
+			log.Printf("⚠️ Shipping revenue account (4102) not found, using main revenue account (4101-001)")
+			shippingAccount, err = resolveByCode("4101-001")
 		}
 		if err == nil {
 			lines = append(lines, SalesJournalLineRequest{
@@ -399,13 +445,13 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	// ✅ FIX: Tax withheld by customer is our ASSET (claim against tax office)
 	// When customer withholds tax, we DEBIT prepaid tax account
 	// Later we can use this to offset our tax obligations
-	
+
 	// Legacy PPh field - use configured account
 	// ✅ CRITICAL FIX: PPh account MUST exist if PPh > 0, otherwise journal won't balance
 	if sale.PPh > 0 {
 		pphAccount, err := s.taxAccountHelper.GetWithholdingTax21Account(dbToUse)
 		if err != nil {
-			log.Printf("❌ [CRITICAL] PPh prepaid account not found but PPh=%.2f is applied to Sale #%d", 
+			log.Printf("❌ [CRITICAL] PPh prepaid account not found but PPh=%.2f is applied to Sale #%d",
 				sale.PPh, sale.ID)
 			return fmt.Errorf("PPh prepaid account not found (code 1114): %v. Please configure the account in Tax Account Settings", err)
 		}
@@ -417,13 +463,13 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		})
 		log.Printf("💰 [PPh] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh)
 	}
-	
+
 	// PPh 21 - use configured account
 	// ✅ CRITICAL FIX: PPh21 account MUST exist if PPh21Amount > 0, otherwise journal won't balance
 	if sale.PPh21Amount > 0 {
 		pph21Account, err := s.taxAccountHelper.GetWithholdingTax21Account(dbToUse)
 		if err != nil {
-			log.Printf("❌ [CRITICAL] PPh21 prepaid account not found but PPh21Amount=%.2f is applied to Sale #%d", 
+			log.Printf("❌ [CRITICAL] PPh21 prepaid account not found but PPh21Amount=%.2f is applied to Sale #%d",
 				sale.PPh21Amount, sale.ID)
 			return fmt.Errorf("PPh21 prepaid account not found (code 1114): %v. Please configure the account in Tax Account Settings", err)
 		}
@@ -435,7 +481,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		})
 		log.Printf("💰 [PPh21] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh21Amount)
 	}
-	
+
 	// PPh 23 - use configured account
 	// ✅ CRITICAL FIX: PPh23 account MUST exist if PPh23Amount > 0, otherwise journal won't balance
 	// Because grossAmount already has PPh23 subtracted, we MUST create the debit entry for prepaid tax
@@ -445,7 +491,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			// ✅ FIX: Return error instead of silently skipping
 			// If PPh23 is applied to sale, the account MUST exist
 			// Otherwise grossAmount is reduced but no corresponding debit entry exists = imbalance
-			log.Printf("❌ [CRITICAL] PPh23 prepaid account not found but PPh23Amount=%.2f is applied to Sale #%d", 
+			log.Printf("❌ [CRITICAL] PPh23 prepaid account not found but PPh23Amount=%.2f is applied to Sale #%d",
 				sale.PPh23Amount, sale.ID)
 			log.Printf("❌ This would cause journal imbalance. Please configure PPh23 account in Tax Settings or create account code 1115")
 			return fmt.Errorf("PPh23 prepaid account not found (code 1115): %v. Please configure the account in Tax Account Settings or create account with code 1115", err)
@@ -458,13 +504,13 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		})
 		log.Printf("💰 [PPh23] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh23Amount)
 	}
-	
+
 	// Other Tax Deductions (if exists)
 	if sale.OtherTaxDeductions > 0 {
-		otherTaxDedAccount, err := resolveByCode("1116") // Other Tax Deductions Prepaid
+		otherTaxDedAccount, err := resolveByCode("1105-003") // Other Tax Deductions Prepaid (PPH FINAL COA template)
 		if err != nil {
-			log.Printf("⚠️ Other tax deductions prepaid account (1116) not found, using 1114")
-			otherTaxDedAccount, err = resolveByCode("1114")
+			log.Printf("⚠️ Other tax deductions prepaid account (1105-003) not found, using 1105-001")
+			otherTaxDedAccount, err = resolveByCode("1105-001")
 		}
 		if err == nil {
 			lines = append(lines, SalesJournalLineRequest{
@@ -478,7 +524,6 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			log.Printf("⚠️ Other tax deductions prepaid account not found, skipping")
 		}
 	}
-	
 
 	// ========================================
 	// 🔥 FIX CRITICAL: ADD COGS JOURNAL ENTRY
@@ -489,79 +534,95 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	if err := dbToUse.Preload("SaleItems.Product").First(&saleWithItems, sale.ID).Error; err != nil {
 		log.Printf("⚠️ Failed to load sale items for COGS calculation: %v", err)
 	} else {
-		var totalCOGS decimal.Decimal
-		var cogsDetails []string
-		
-		// Calculate total COGS from all sale items
-		for _, item := range saleWithItems.SaleItems {
-			// Check if product is loaded
-			if item.Product.ID == 0 {
-				log.Printf("⚠️ Sale item #%d has no product loaded, skipping COGS", item.ID)
-				continue
-			}
-			
-			// ✅ NEW: Only treat NON-SERVICE products as inventory for COGS purposes
-			// This keeps behaviour consistent with purchase journals and stock service:
-			//  - Barang (IsService=false) → ada pergerakan persediaan & COGS
-			//  - Jasa  (IsService=true)  → TIDAK mengurangi akun persediaan 1301
-			if item.Product.IsService {
-				log.Printf("ℹ️ [COGS] Product '%s' (ID: %d) is marked as service, skipping COGS & inventory movement",
-					item.Product.Name, item.Product.ID)
-				continue
-			}
-			
-			// Calculate COGS: Quantity × Cost Price
-			itemCOGS := decimal.NewFromFloat(float64(item.Quantity)).
-				Mul(decimal.NewFromFloat(item.Product.CostPrice))
-			
-			if itemCOGS.IsZero() {
-				log.Printf("⚠️ Product '%s' (ID: %d) has zero cost price, COGS = 0", 
-					item.Product.Name, item.Product.ID)
-			} else {
-				totalCOGS = totalCOGS.Add(itemCOGS)
-				cogsDetails = append(cogsDetails, fmt.Sprintf("%s(Qty:%d×Rp%.0f)", 
-					item.Product.Name, item.Quantity, item.Product.CostPrice))
-			}
+		// ========================================
+		// COGS & INVENTORY (ONLY FOR TRADING/MANUFACTURING)
+		// ========================================
+
+		// Check company type
+		settings, err := s.settingsService.GetSettings()
+		isServiceCompany := false
+		if err == nil && settings.CompanyType == "SERVICE" {
+			isServiceCompany = true
 		}
-		
-		// Only create COGS entry if total COGS > 0
-		if !totalCOGS.IsZero() {
-			// DEBIT: COGS Account - use configured account
-			cogsAccount, err := s.taxAccountHelper.GetCOGSAccount(dbToUse)
-			if err != nil {
-				log.Printf("⚠️ COGS account not found, skipping COGS entry: %v", err)
-			} else {
-				lines = append(lines, SalesJournalLineRequest{
-					AccountID:    uint64(cogsAccount.ID),
-					DebitAmount:  totalCOGS,
-					CreditAmount: decimal.Zero,
-					Description:  fmt.Sprintf("HPP - %s", sale.InvoiceNumber),
-				})
-				
-				// CREDIT: Inventory Account - use configured account
-				inventoryAccount, err := s.taxAccountHelper.GetInventoryAccount(dbToUse)
-				if err != nil {
-					log.Printf("⚠️ Inventory account not found, skipping inventory credit: %v", err)
+
+		if isServiceCompany {
+			log.Printf("ℹ️ [COGS] Service company detected, skipping COGS & Inventory entries entirely for Sale #%d", sale.ID)
+		} else {
+			var totalCOGS decimal.Decimal
+			var cogsDetails []string
+
+			// Calculate total COGS from all sale items
+			for _, item := range saleWithItems.SaleItems {
+				// Check if product is loaded
+				if item.Product.ID == 0 {
+					log.Printf("⚠️ Sale item #%d has no product loaded, skipping COGS", item.ID)
+					continue
+				}
+
+				// ✅ NEW: Only treat NON-SERVICE products as inventory for COGS purposes
+				// This keeps behaviour consistent with purchase journals and stock service:
+				//  - Barang (IsService=false) → ada pergerakan persediaan & COGS
+				//  - Jasa  (IsService=true)  → TIDAK mengurangi akun persediaan 1301
+				if item.Product.IsService {
+					log.Printf("ℹ️ [COGS] Product '%s' (ID: %d) is marked as service, skipping COGS & inventory movement",
+						item.Product.Name, item.Product.ID)
+					continue
+				}
+
+				// Calculate COGS: Quantity × Cost Price
+				itemCOGS := decimal.NewFromFloat(float64(item.Quantity)).
+					Mul(decimal.NewFromFloat(item.Product.CostPrice))
+
+				if itemCOGS.IsZero() {
+					log.Printf("⚠️ Product '%s' (ID: %d) has zero cost price, COGS = 0",
+						item.Product.Name, item.Product.ID)
 				} else {
+					totalCOGS = totalCOGS.Add(itemCOGS)
+					cogsDetails = append(cogsDetails, fmt.Sprintf("%s(Qty:%d×Rp%.0f)",
+						item.Product.Name, item.Quantity, item.Product.CostPrice))
+				}
+			}
+			// Closing brace for else block will be handled by subsequent lines or logic
+
+			// Only create COGS entry if total COGS > 0
+			if !totalCOGS.IsZero() {
+				// Look up BOTH accounts first before adding any lines
+				// This prevents an imbalanced journal if one account is missing
+				cogsAccount, cogsErr := s.taxAccountHelper.GetCOGSAccount(dbToUse)
+				inventoryAccount, invErr := s.taxAccountHelper.GetInventoryAccount(dbToUse)
+
+				if cogsErr != nil {
+					log.Printf("⚠️ COGS account not found, skipping COGS/Inventory entries: %v", cogsErr)
+				} else if invErr != nil {
+					log.Printf("⚠️ Inventory account not found, skipping COGS/Inventory entries to maintain balance: %v", invErr)
+				} else {
+					// Both accounts found - add DEBIT (COGS) and CREDIT (Inventory) as a pair
+					lines = append(lines, SalesJournalLineRequest{
+						AccountID:    uint64(cogsAccount.ID),
+						DebitAmount:  totalCOGS,
+						CreditAmount: decimal.Zero,
+						Description:  fmt.Sprintf("HPP - %s", sale.InvoiceNumber),
+					})
+
 					lines = append(lines, SalesJournalLineRequest{
 						AccountID:    uint64(inventoryAccount.ID),
 						DebitAmount:  decimal.Zero,
 						CreditAmount: totalCOGS,
 						Description:  fmt.Sprintf("Pengurangan Persediaan - %s", sale.InvoiceNumber),
 					})
-					
-					log.Printf("💰 [COGS] Calculated COGS for Sale #%d: Rp %.2f (%d items: %s)", 
-						sale.ID, totalCOGS.InexactFloat64(), len(cogsDetails), 
+
+					log.Printf("💰 [COGS] Calculated COGS for Sale #%d: Rp %.2f (%d items: %s)",
+						sale.ID, totalCOGS.InexactFloat64(), len(cogsDetails),
 						strings.Join(cogsDetails, ", "))
 				}
+			} else {
+				log.Printf("⚠️ [COGS] No COGS calculated for Sale #%d (all items have zero cost price)", sale.ID)
 			}
-		} else {
-			log.Printf("⚠️ [COGS] No COGS calculated for Sale #%d (all items have zero cost price)", sale.ID)
 		}
+		// ========================================
+		// END COGS FIX
+		// ========================================
 	}
-	// ========================================
-	// END COGS FIX
-	// ========================================
 
 	// Calculate totals
 	var totalDebit, totalCredit decimal.Decimal
@@ -569,14 +630,14 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	for i, line := range lines {
 		totalDebit = totalDebit.Add(line.DebitAmount)
 		totalCredit = totalCredit.Add(line.CreditAmount)
-		log.Printf("  Line %d: AccountID=%d | Debit=%.2f | Credit=%.2f | Desc=%s", 
-			i+1, line.AccountID, line.DebitAmount.InexactFloat64(), 
+		log.Printf("  Line %d: AccountID=%d | Debit=%.2f | Credit=%.2f | Desc=%s",
+			i+1, line.AccountID, line.DebitAmount.InexactFloat64(),
 			line.CreditAmount.InexactFloat64(), line.Description)
 	}
 	log.Printf("📊 [BALANCE DEBUG] Sale Data: Subtotal=%.2f, PPN=%.2f, PPh=%.2f, TotalAmount=%.2f",
 		sale.Subtotal, sale.PPN, sale.PPh, sale.TotalAmount)
-	log.Printf("📊 [BALANCE DEBUG] Totals: Debit=%.2f | Credit=%.2f | Difference=%.2f", 
-		totalDebit.InexactFloat64(), totalCredit.InexactFloat64(), 
+	log.Printf("📊 [BALANCE DEBUG] Totals: Debit=%.2f | Credit=%.2f | Difference=%.2f",
+		totalDebit.InexactFloat64(), totalCredit.InexactFloat64(),
 		totalDebit.Sub(totalCredit).InexactFloat64())
 
 	// Verify balanced with rounding tolerance
@@ -584,13 +645,13 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	// ✅ FIX: Increase tolerance to 100 for data inconsistencies
 	// Many sales have small rounding errors from discount/tax calculations
 	toleranceThreshold := decimal.NewFromFloat(100.0) // Allow up to 100 Rupiah tolerance
-	
+
 	if difference.GreaterThan(toleranceThreshold) {
 		// Significant imbalance - try to auto-adjust if reasonable
 		if difference.LessThanOrEqual(decimal.NewFromFloat(500.0)) {
 			// For differences <= 500, adjust the first debit line (Cash/Bank/Receivable)
 			log.Printf("⚠️ [AUTO-ADJUST] Imbalance detected: %.2f (adjusting...)", difference.InexactFloat64())
-			
+
 			if len(lines) > 0 && lines[0].DebitAmount.GreaterThan(decimal.Zero) {
 				// Adjust first debit line
 				oldDebit := lines[0].DebitAmount
@@ -605,7 +666,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 					log.Printf("✅ [AUTO-ADJUST] Decreased first debit line: %.2f → %.2f (-%.2f)",
 						oldDebit.InexactFloat64(), lines[0].DebitAmount.InexactFloat64(), difference.InexactFloat64())
 				}
-				
+
 				// Recalculate totals
 				totalDebit = decimal.Zero
 				totalCredit = decimal.Zero
@@ -618,22 +679,22 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 					totalDebit.Sub(totalCredit).Abs().InexactFloat64())
 			}
 		}
-		
+
 		// Check again after adjustment
 		difference = totalDebit.Sub(totalCredit).Abs()
 		if difference.GreaterThan(toleranceThreshold) {
 			log.Printf("❌ [BALANCE ERROR] Journal entry still imbalanced after adjustment:")
-			log.Printf("   Debit: %.2f | Credit: %.2f | Difference: %.2f", 
+			log.Printf("   Debit: %.2f | Credit: %.2f | Difference: %.2f",
 				totalDebit.InexactFloat64(), totalCredit.InexactFloat64(), difference.InexactFloat64())
 			log.Printf("   This indicates data corruption in Sale #%d", sale.ID)
 			log.Printf("   Please verify: Subtotal, PPN, Taxes, Discounts, and Shipping calculations")
-			return fmt.Errorf("journal entry not balanced: debit=%.2f, credit=%.2f, difference=%.2f (tolerance: %.2f)", 
+			return fmt.Errorf("journal entry not balanced: debit=%.2f, credit=%.2f, difference=%.2f (tolerance: %.2f)",
 				totalDebit.InexactFloat64(), totalCredit.InexactFloat64(), difference.InexactFloat64(), toleranceThreshold.InexactFloat64())
 		}
 	}
-	
+
 	if difference.GreaterThan(decimal.Zero) && difference.LessThanOrEqual(toleranceThreshold) {
-		log.Printf("✅ [BALANCE] Accepted with rounding difference: %.2f (within tolerance of %.2f)", 
+		log.Printf("✅ [BALANCE] Accepted with rounding difference: %.2f (within tolerance of %.2f)",
 			difference.InexactFloat64(), toleranceThreshold.InexactFloat64())
 	}
 
@@ -642,7 +703,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	sourceID := uint64(sale.ID)
 	now := time.Now()
 	postedBy := uint64(sale.UserID)
-	
+
 	journalEntry := &models.SSOTJournalEntry{
 		EntryNumber:     fmt.Sprintf("SALE-%d-%d", sale.ID, now.Unix()),
 		SourceType:      "SALE",
@@ -688,7 +749,12 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			log.Printf("⚠️ Warning: Failed to update account balance for account %d: %v", lineReq.AccountID, err)
 			// Continue processing - don't fail transaction for balance update issues
 		}
-		
+
+		// Update parent account balances after each account balance change
+		if err := s.updateParentAccountBalances(dbToUse, lineReq.AccountID); err != nil {
+			log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", lineReq.AccountID, err)
+		}
+
 		// ✅ CRITICAL: Sync cash_banks.balance with accounts.balance after COA update
 		// This ensures Cash & Bank Management page shows same balance as COA
 		if err := s.syncCashBankBalance(dbToUse, lineReq.AccountID); err != nil {
@@ -707,7 +773,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	}
 	journalEntry.Status = "POSTED" // Update in-memory object
 
-	log.Printf("✅ [SSOT] Created and posted journal entry #%d with %d lines (Debit: %.2f, Credit: %.2f)", 
+	log.Printf("✅ [SSOT] Created and posted journal entry #%d with %d lines (Debit: %.2f, Credit: %.2f)",
 		journalEntry.ID, len(lines), totalDebit.InexactFloat64(), totalCredit.InexactFloat64())
 
 	return nil
@@ -716,7 +782,8 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 // updateAccountBalance updates account.balance field for COA tree view display
 // RE-ENABLED: COA Tree View needs this field updated
 // Note: P&L Report calculates balance from journal entries (real-time, always correct)
-//       COA Tree View reads from account.balance field (needs manual update)
+//
+//	COA Tree View reads from account.balance field (needs manual update)
 func (s *SalesJournalServiceSSOT) updateAccountBalance(db *gorm.DB, accountID uint64, debitAmount, creditAmount decimal.Decimal) error {
 	var account models.Account
 	if err := db.First(&account, accountID).Error; err != nil {
@@ -727,13 +794,13 @@ func (s *SalesJournalServiceSSOT) updateAccountBalance(db *gorm.DB, accountID ui
 	debit := debitAmount.InexactFloat64()
 	credit := creditAmount.InexactFloat64()
 	netChange := debit - credit
-	
+
 	oldBalance := account.Balance
 
 	// ✅ VALIDATION: Check account type correctness for critical accounts
 	accountType := strings.ToUpper(account.Type)
-	if account.Code == "1301" && accountType != "ASSET" {
-		log.Printf("❌ [BUG] Account 1301 (Persediaan) has WRONG type '%s', should be 'ASSET'!", accountType)
+	if strings.HasPrefix(account.Code, "1103") && accountType != "ASSET" {
+		log.Printf("❌ [BUG] Account %s (Persediaan) has WRONG type '%s', should be 'ASSET'!", account.Code, accountType)
 		log.Printf("❌ This will cause INCORRECT balance calculation!")
 	}
 	if account.Code == "5101" && accountType != "EXPENSE" {
@@ -745,12 +812,12 @@ func (s *SalesJournalServiceSSOT) updateAccountBalance(db *gorm.DB, accountID ui
 	case "ASSET", "EXPENSE":
 		// Assets and Expenses: debit increases balance
 		account.Balance += netChange
-		log.Printf("📊 [SSOT] Account %s (%s) TYPE=%s: Balance %.2f + netChange(%.2f) = %.2f", 
+		log.Printf("📊 [SSOT] Account %s (%s) TYPE=%s: Balance %.2f + netChange(%.2f) = %.2f",
 			account.Code, account.Name, accountType, oldBalance, netChange, account.Balance)
 	case "LIABILITY", "EQUITY", "REVENUE":
 		// Liabilities, Equity, Revenue: credit increases balance (so debit decreases)
 		account.Balance -= netChange
-		log.Printf("📊 [SSOT] Account %s (%s) TYPE=%s: Balance %.2f - netChange(%.2f) = %.2f", 
+		log.Printf("📊 [SSOT] Account %s (%s) TYPE=%s: Balance %.2f - netChange(%.2f) = %.2f",
 			account.Code, account.Name, accountType, oldBalance, netChange, account.Balance)
 	default:
 		log.Printf("⚠️ [SSOT] Unknown account type '%s' for account %s (%s)", accountType, account.Code, account.Name)
@@ -764,20 +831,55 @@ func (s *SalesJournalServiceSSOT) updateAccountBalance(db *gorm.DB, accountID ui
 
 	// ✅ DETAILED LOGGING for debugging
 	balanceChange := account.Balance - oldBalance
-	if account.Code == "1301" {
+	if strings.HasPrefix(account.Code, "1103") {
 		if credit > 0 && balanceChange > 0 {
-			log.Printf("❌ [BUG DETECTED] Account 1301 CREDIT %.2f but balance INCREASED by %.2f! (Should DECREASE)", 
-				credit, balanceChange)
-			log.Printf("❌ Old Balance: %.2f, New Balance: %.2f, Type: %s, netChange: %.2f", 
+			log.Printf("❌ [BUG DETECTED] Account %s CREDIT %.2f but balance INCREASED by %.2f! (Should DECREASE)",
+				account.Code, credit, balanceChange)
+			log.Printf("❌ Old Balance: %.2f, New Balance: %.2f, Type: %s, netChange: %.2f",
 				oldBalance, account.Balance, accountType, netChange)
 		} else if credit > 0 && balanceChange < 0 {
-			log.Printf("✅ [CORRECT] Account 1301 CREDIT %.2f and balance DECREASED by %.2f (correct!)", 
-				credit, -balanceChange)
+			log.Printf("✅ [CORRECT] Account %s CREDIT %.2f and balance DECREASED by %.2f (correct!)",
+				account.Code, credit, -balanceChange)
 		}
 	}
 
-	log.Printf("💰 [SSOT] Updated account %s (%s) TYPE=%s balance: Dr=%.2f, Cr=%.2f, netChange=%.2f, Old=%.2f, New=%.2f", 
+	log.Printf("💰 [SSOT] Updated account %s (%s) TYPE=%s balance: Dr=%.2f, Cr=%.2f, netChange=%.2f, Old=%.2f, New=%.2f",
 		account.Code, account.Name, accountType, debit, credit, netChange, oldBalance, account.Balance)
+
+	return nil
+}
+
+// updateParentAccountBalances updates parent account balances for a given account
+func (s *SalesJournalServiceSSOT) updateParentAccountBalances(db *gorm.DB, accountID uint64) error {
+	var parentID *uint
+
+	// Get parent ID
+	if err := db.Raw("SELECT parent_id FROM accounts WHERE id = ? AND deleted_at IS NULL", accountID).Scan(&parentID).Error; err != nil {
+		return fmt.Errorf("failed to get parent ID for account %d: %w", accountID, err)
+	}
+
+	// If has parent, update parent and continue up the chain
+	if parentID != nil {
+		// Calculate parent balance as sum of children
+		var parentBalance float64
+		if err := db.Raw(`
+			SELECT COALESCE(SUM(balance), 0)
+			FROM accounts 
+			WHERE parent_id = ? AND deleted_at IS NULL
+		`, *parentID).Scan(&parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to calculate parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Update parent balance
+		if err := db.Model(&models.Account{}).
+			Where("id = ? AND deleted_at IS NULL", *parentID).
+			Update("balance", parentBalance).Error; err != nil {
+			return fmt.Errorf("failed to update parent balance for account %d: %w", *parentID, err)
+		}
+
+		// Recursively update grandparent chain
+		return s.updateParentAccountBalances(db, uint64(*parentID))
+	}
 
 	return nil
 }
@@ -803,11 +905,11 @@ func (s *SalesJournalServiceSSOT) UpdateSalesJournal(sale *models.Sale, oldStatu
 	} else if oldShouldPost && newShouldPost {
 		// Update existing
 		log.Printf("🔄 [SSOT] Updating journal entries for Sale #%d", sale.ID)
-		
+
 		if err := s.DeleteSalesJournal(sale.ID, dbToUse); err != nil {
 			return err
 		}
-		
+
 		return s.CreateSalesJournal(sale, dbToUse)
 	}
 
@@ -853,4 +955,3 @@ type SalesJournalLineRequest struct {
 	CreditAmount decimal.Decimal
 	Description  string
 }
-

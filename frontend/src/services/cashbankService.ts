@@ -71,7 +71,9 @@ export interface CashBankCreateRequest {
   currency?: string;
   opening_balance?: number;
   opening_date?: string;
+  opening_date?: string;
   description?: string;
+  source_account_id?: number; // Equity account for opening balance
 }
 
 export interface CashBankUpdateRequest {
@@ -334,7 +336,7 @@ class CashBankService {
       if (filter.limit) params.limit = filter.limit;
       if (filter.start_date) params.start_date = filter.start_date;
       if (filter.end_date) params.end_date = filter.end_date;
-      
+
       const response = await api.get(API_ENDPOINTS.CASH_BANK.TRANSACTIONS(accountId), {
         params,
       });
@@ -395,7 +397,7 @@ class CashBankService {
 
   // Get deposit source accounts for deposit form
   // Business rule update: Deposit only needs equity accounts (no revenue)
-  async getDepositSourceAccounts(): Promise<{revenue: any[], equity: any[]}> {
+  async getDepositSourceAccounts(): Promise<{ revenue: any[], equity: any[] }> {
     try {
       // Fetch only EQUITY accounts using the accounts endpoint with type filter
       const response = await api.get(API_ENDPOINTS.ACCOUNTS.LIST, {

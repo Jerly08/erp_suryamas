@@ -3,971 +3,583 @@
  * 
  * Provides enhanced CSV and PDF export functionality for Cash Flow reports
  * Supports SSOT cash flow data formats with detailed account information
+ * Uses functional autoTable(doc, {...}) pattern for Turbopack/Next.js compatibility
  */
 
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { SSOTCashFlowData } from '../services/ssotCashFlowReportService';
 
-// Extend jsPDF type to include autoTable functionality
-declare module 'jspdf' {
-  interface jsPDF {
-    autoTable: any;
-    lastAutoTable: {
-      finalY: number;
-    };
+// ─── Theme colours ───────────────────────────────────────────────────────────
+const COLORS = {
+  primary: [25, 55, 109] as [number, number, number], // dark navy
+  accent: [0, 119, 182] as [number, number, number], // cerulean
+  operating: [0, 128, 94] as [number, number, number], // teal
+  investing: [106, 27, 154] as [number, number, number], // purple
+  financing: [230, 126, 34] as [number, number, number], // warm orange
+  dark: [33, 37, 41] as [number, number, number],
+  muted: [108, 117, 125] as [number, number, number],
+  lightBg: [245, 247, 250] as [number, number, number],
+  white: [255, 255, 255] as [number, number, number],
+  red: [220, 53, 69] as [number, number, number],
+  green: [40, 167, 69] as [number, number, number],
+  line: [200, 210, 220] as [number, number, number],
+};
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+export interface CompanyLetterhead {
+  companyName?: string;
+  companyAddress?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  companyWebsite?: string;
+  taxNumber?: string;
+  companyLogoBase64?: string; // pre-loaded logo as base64 data URL
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const fmt = (amount: number | null | undefined): string => {
+  if (amount === null || amount === undefined || isNaN(Number(amount))) return 'Rp 0';
+  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(amount));
+};
+
+const fmtCSV = (amount: number | null | undefined): string => {
+  if (amount === null || amount === undefined || isNaN(Number(amount))) return '0';
+  return Number(amount).toLocaleString('id-ID');
+};
+
+const escapeCSV = (value: string | number | null | undefined): string => {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${str.replace(/"/g, '""')}"` : str;
+};
+
+const formatDateID = (dateStr: string): string => {
+  try {
+    return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+  } catch { return dateStr; }
+};
+
+// ─── PDF Letterhead ──────────────────────────────────────────────────────────
+function drawLetterhead(doc: jsPDF, info: CompanyLetterhead, pageWidth: number): number {
+  const margin = 20;
+  const rightX = pageWidth - margin;
+  let y = 15;
+
+  // Logo — top-left (matching P&L Go backend layout)
+  let logoBottomY = y;
+  if (info.companyLogoBase64) {
+    try {
+      const logoW = 35; // mm, same as Go backend
+      doc.addImage(info.companyLogoBase64, 'AUTO', margin, y - 3, logoW, 0);
+      logoBottomY = y - 3 + logoW + 2; // approximate: logo height ≈ width for square logos
+    } catch (e) {
+      console.warn('Failed to add logo to PDF:', e);
+    }
+  }
+
+  // Company name — bold, right-aligned
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(...COLORS.primary);
+  const name = info.companyName || 'PT. Sistem Akuntansi';
+  doc.text(name, rightX, y, { align: 'right' });
+  y += 6;
+
+  // Address — right-aligned
+  if (info.companyAddress) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.dark);
+    doc.text(info.companyAddress, rightX, y, { align: 'right' });
+    y += 5;
+  }
+
+  // Phone — right-aligned
+  if (info.companyPhone) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.dark);
+    doc.text(`Phone: ${info.companyPhone}`, rightX, y, { align: 'right' });
+    y += 5;
+  }
+
+  // Email — right-aligned
+  if (info.companyEmail) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.dark);
+    doc.text(`Email: ${info.companyEmail}`, rightX, y, { align: 'right' });
+    y += 5;
+  }
+
+  // Ensure y is below logo area
+  if (y < logoBottomY) y = logoBottomY;
+
+  // Separator line
+  y += 3;
+  doc.setDrawColor(238, 238, 238);
+  doc.setLineWidth(0.3);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 8;
+
+  doc.setTextColor(0, 0, 0);
+  return y;
+}
+
+// ─── PDF Page Footer ─────────────────────────────────────────────────────────
+function drawFooter(doc: jsPDF, pageWidth: number, pageHeight: number) {
+  const totalPages = (doc as any).getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    const footerY = pageHeight - 10;
+    doc.setDrawColor(...COLORS.line);
+    doc.setLineWidth(0.3);
+    doc.line(20, footerY - 3, pageWidth - 20, footerY - 3);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.muted);
+    doc.text('Dicetak oleh Sistem Akuntansi', 20, footerY);
+    doc.text(`Halaman ${i} dari ${totalPages}`, pageWidth - 20, footerY, { align: 'right' });
+    doc.text(new Date().toLocaleString('id-ID'), pageWidth / 2, footerY, { align: 'center' });
   }
 }
 
-/**
- * Enhanced CSV Export for Cash Flow Statement (already implemented in reports page)
- * This function is provided here for consistency and potential reuse
- */
+// ─── Ensure new page if near bottom ──────────────────────────────────────────
+function ensureSpace(doc: jsPDF, y: number, needed: number, pageHeight: number): number {
+  if (y + needed > pageHeight - 20) { doc.addPage(); return 20; }
+  return y;
+}
+
+// ─── Section title ───────────────────────────────────────────────────────────
+function sectionTitle(doc: jsPDF, text: string, y: number, color: [number, number, number]): number {
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...color);
+  doc.text(text, 20, y);
+  doc.setTextColor(0, 0, 0);
+  return y + 6;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CSV EXPORT
+// ═══════════════════════════════════════════════════════════════════════════════
 export function exportCashFlowToCSV(
   data: SSOTCashFlowData,
-  options: {
-    includeAccountDetails?: boolean;
-    companyName?: string;
-  } = {}
+  options: { includeAccountDetails?: boolean; companyName?: string } = {}
 ): string {
   const { includeAccountDetails = true, companyName } = options;
-  
-  const csvLines: string[] = [];
-  
-  // Helper function to escape CSV values
-  const escapeCSV = (value: string | number | null | undefined): string => {
-    if (value === null || value === undefined) return '';
-    const str = String(value);
-    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-      return `"${str.replace(/"/g, '""')}"`;
-    }
-    return str;
-  };
-  
-  // Helper function to format currency
-  const formatCurrency = (amount: number | null | undefined): string => {
-    if (amount === null || amount === undefined || isNaN(Number(amount))) {
-      return '0';
-    }
-    return Number(amount).toLocaleString('id-ID');
-  };
-  
-  // Header
-  csvLines.push(escapeCSV(companyName || data.company?.name || 'PT. Sistem Akuntansi'));
-  csvLines.push('CASH FLOW STATEMENT');
-  csvLines.push(`Period: ${data.start_date} to ${data.end_date}`);
-  csvLines.push(`Generated on: ${new Date().toLocaleString('id-ID')}`);
-  csvLines.push(''); // Empty line
-  
-  // Summary
-  csvLines.push('CASH POSITION SUMMARY');
-  csvLines.push('Metric,Amount');
-  csvLines.push(`Net Cash Flow,${formatCurrency(data.net_cash_flow)}`);
-  csvLines.push(`Cash at Beginning of Period,${formatCurrency(data.cash_at_beginning)}`);
-  csvLines.push(`Cash at End of Period,${formatCurrency(data.cash_at_end)}`);
-  csvLines.push(''); // Empty line
-  
-  // Operating Activities
+  const L: string[] = [];
+
+  L.push(escapeCSV(companyName || data.company?.name || 'PT. Sistem Akuntansi'));
+  L.push('LAPORAN ARUS KAS');
+  L.push(`Periode: ${data.start_date} s/d ${data.end_date}`);
+  L.push(`Dicetak: ${new Date().toLocaleString('id-ID')}`);
+  L.push('');
+  L.push('POSISI KAS');
+  L.push('Metrik,Jumlah');
+  L.push(`Arus Kas Bersih,${fmtCSV(data.net_cash_flow)}`);
+  L.push(`Kas Awal Periode,${fmtCSV(data.cash_at_beginning)}`);
+  L.push(`Kas Akhir Periode,${fmtCSV(data.cash_at_end)}`);
+  L.push('');
+
+  // Operating
   if (data.operating_activities) {
-    csvLines.push('OPERATING ACTIVITIES BREAKDOWN');
-    csvLines.push('Category,Amount,Type');
-    csvLines.push(`Net Income,${formatCurrency(data.operating_activities.net_income)},Operating`);
-    
-    // Adjustments
-    if (data.operating_activities.adjustments) {
-      csvLines.push('ADJUSTMENTS FOR NON-CASH ITEMS,,');
-      if (data.operating_activities.adjustments.items && data.operating_activities.adjustments.items.length > 0) {
-        data.operating_activities.adjustments.items.forEach(item => {
-          csvLines.push([
-            escapeCSV(`${item.account_code} - ${item.account_name}`),
-            formatCurrency(item.amount),
-            escapeCSV(item.type || 'Adjustment')
-          ].join(','));
-        });
-      } else {
-        csvLines.push(`Depreciation,${formatCurrency(data.operating_activities.adjustments.depreciation)},Adjustment`);
-        csvLines.push(`Amortization,${formatCurrency(data.operating_activities.adjustments.amortization)},Adjustment`);
-        csvLines.push(`Bad Debt Expense,${formatCurrency(data.operating_activities.adjustments.bad_debt_expense)},Adjustment`);
-        csvLines.push(`Gain/Loss on Asset Disposal,${formatCurrency(data.operating_activities.adjustments.gain_loss_on_asset_disposal)},Adjustment`);
-        csvLines.push(`Other Non-Cash Items,${formatCurrency(data.operating_activities.adjustments.other_non_cash_items)},Adjustment`);
-      }
-      csvLines.push(`Total Adjustments,${formatCurrency(data.operating_activities.adjustments.total_adjustments)},Total`);
+    const op = data.operating_activities;
+    L.push('AKTIVITAS OPERASI');
+    L.push('Kode Akun,Nama Akun,Jumlah');
+    L.push(`-,Laba Bersih,${fmtCSV(op.net_income)}`);
+    if (op.adjustments?.items?.length) {
+      L.push('PENYESUAIAN NON-KAS,,');
+      op.adjustments.items.forEach(i => L.push(`${escapeCSV(i.account_code)},${escapeCSV(i.account_name)},${fmtCSV(i.amount)}`));
+      L.push(`,Total Penyesuaian,${fmtCSV(op.adjustments.total_adjustments)}`);
     }
-    
-    // Working Capital Changes
-    if (data.operating_activities.working_capital_changes) {
-      csvLines.push('WORKING CAPITAL CHANGES,,');
-      if (data.operating_activities.working_capital_changes.items && data.operating_activities.working_capital_changes.items.length > 0) {
-        data.operating_activities.working_capital_changes.items.forEach(item => {
-          csvLines.push([
-            escapeCSV(`${item.account_code} - ${item.account_name}`),
-            formatCurrency(item.amount),
-            escapeCSV(item.type || 'Working Capital')
-          ].join(','));
-        });
-      } else {
-        csvLines.push(`Accounts Receivable Change,${formatCurrency(data.operating_activities.working_capital_changes.accounts_receivable_change)},Working Capital`);
-        csvLines.push(`Inventory Change,${formatCurrency(data.operating_activities.working_capital_changes.inventory_change)},Working Capital`);
-        csvLines.push(`Prepaid Expenses Change,${formatCurrency(data.operating_activities.working_capital_changes.prepaid_expenses_change)},Working Capital`);
-        csvLines.push(`Accounts Payable Change,${formatCurrency(data.operating_activities.working_capital_changes.accounts_payable_change)},Working Capital`);
-        csvLines.push(`Accrued Liabilities Change,${formatCurrency(data.operating_activities.working_capital_changes.accrued_liabilities_change)},Working Capital`);
-        csvLines.push(`Other Working Capital Change,${formatCurrency(data.operating_activities.working_capital_changes.other_working_capital_change)},Working Capital`);
-      }
-      csvLines.push(`Total Working Capital Changes,${formatCurrency(data.operating_activities.working_capital_changes.total_working_capital_changes)},Total`);
+    if (op.working_capital_changes?.items?.length) {
+      L.push('PERUBAHAN MODAL KERJA,,');
+      op.working_capital_changes.items.forEach(i => L.push(`${escapeCSV(i.account_code)},${escapeCSV(i.account_name)},${fmtCSV(i.amount)}`));
+      L.push(`,Total Perubahan Modal Kerja,${fmtCSV(op.working_capital_changes.total_working_capital_changes)}`);
     }
-    
-    csvLines.push(`TOTAL OPERATING CASH FLOW,${formatCurrency(data.operating_activities.total_operating_cash_flow)},Total`);
-    csvLines.push(''); // Empty line
+    L.push(`TOTAL ARUS KAS OPERASI,,${fmtCSV(op.total_operating_cash_flow)}`);
+    L.push('');
   }
-  
-  // Investing Activities
+
+  // Investing
   if (data.investing_activities) {
-    csvLines.push('INVESTING ACTIVITIES BREAKDOWN');
-    csvLines.push('Item,Amount,Type');
-    if (data.investing_activities.items && data.investing_activities.items.length > 0) {
-      data.investing_activities.items.forEach(item => {
-        csvLines.push([
-          escapeCSV(`${item.account_code} - ${item.account_name}`),
-          formatCurrency(item.amount),
-          escapeCSV(item.type || 'Investing')
-        ].join(','));
-      });
-    } else {
-      csvLines.push(`Purchase of Fixed Assets,${formatCurrency(data.investing_activities.purchase_of_fixed_assets)},Investing`);
-      csvLines.push(`Sale of Fixed Assets,${formatCurrency(data.investing_activities.sale_of_fixed_assets)},Investing`);
-      csvLines.push(`Purchase of Investments,${formatCurrency(data.investing_activities.purchase_of_investments)},Investing`);
-      csvLines.push(`Sale of Investments,${formatCurrency(data.investing_activities.sale_of_investments)},Investing`);
-      csvLines.push(`Intangible Asset Purchases,${formatCurrency(data.investing_activities.intangible_asset_purchases)},Investing`);
-      csvLines.push(`Other Investing Activities,${formatCurrency(data.investing_activities.other_investing_activities)},Investing`);
-    }
-    csvLines.push(`TOTAL INVESTING CASH FLOW,${formatCurrency(data.investing_activities.total_investing_cash_flow)},Total`);
-    csvLines.push(''); // Empty line
+    const inv = data.investing_activities;
+    L.push('AKTIVITAS INVESTASI');
+    L.push('Kode Akun,Nama Akun,Jumlah');
+    if (inv.items?.length) inv.items.forEach(i => L.push(`${escapeCSV(i.account_code)},${escapeCSV(i.account_name)},${fmtCSV(i.amount)}`));
+    L.push(`TOTAL ARUS KAS INVESTASI,,${fmtCSV(inv.total_investing_cash_flow)}`);
+    L.push('');
   }
-  
-  // Financing Activities
+
+  // Financing
   if (data.financing_activities) {
-    csvLines.push('FINANCING ACTIVITIES BREAKDOWN');
-    csvLines.push('Item,Amount,Type');
-    if (data.financing_activities.items && data.financing_activities.items.length > 0) {
-      data.financing_activities.items.forEach(item => {
-        csvLines.push([
-          escapeCSV(`${item.account_code} - ${item.account_name}`),
-          formatCurrency(item.amount),
-          escapeCSV(item.type || 'Financing')
-        ].join(','));
-      });
-    } else {
-      csvLines.push(`Share Capital Increase,${formatCurrency(data.financing_activities.share_capital_increase)},Financing`);
-      csvLines.push(`Share Capital Decrease,${formatCurrency(data.financing_activities.share_capital_decrease)},Financing`);
-      csvLines.push(`Long Term Debt Increase,${formatCurrency(data.financing_activities.long_term_debt_increase)},Financing`);
-      csvLines.push(`Long Term Debt Decrease,${formatCurrency(data.financing_activities.long_term_debt_decrease)},Financing`);
-      csvLines.push(`Short Term Debt Increase,${formatCurrency(data.financing_activities.short_term_debt_increase)},Financing`);
-      csvLines.push(`Short Term Debt Decrease,${formatCurrency(data.financing_activities.short_term_debt_decrease)},Financing`);
-      csvLines.push(`Dividends Paid,${formatCurrency(data.financing_activities.dividends_paid)},Financing`);
-      csvLines.push(`Other Financing Activities,${formatCurrency(data.financing_activities.other_financing_activities)},Financing`);
-    }
-    csvLines.push(`TOTAL FINANCING CASH FLOW,${formatCurrency(data.financing_activities.total_financing_cash_flow)},Total`);
-    csvLines.push(''); // Empty line
+    const fin = data.financing_activities;
+    L.push('AKTIVITAS PENDANAAN');
+    L.push('Kode Akun,Nama Akun,Jumlah');
+    if (fin.items?.length) fin.items.forEach(i => L.push(`${escapeCSV(i.account_code)},${escapeCSV(i.account_name)},${fmtCSV(i.amount)}`));
+    L.push(`TOTAL ARUS KAS PENDANAAN,,${fmtCSV(fin.total_financing_cash_flow)}`);
+    L.push('');
   }
-  
-  // Detailed Account Breakdown
-  if (data.account_details && data.account_details.length > 0) {
-    csvLines.push('DETAILED ACCOUNT BREAKDOWN');
-    csvLines.push('Account Code,Account Name,Account Type,Debits,Credits,Net Change');
-    data.account_details.forEach(account => {
-      csvLines.push([
-        escapeCSV(account.account_code),
-        escapeCSV(account.account_name),
-        escapeCSV(account.account_type),
-        formatCurrency(account.debit_total),
-        formatCurrency(account.credit_total),
-        formatCurrency(account.net_balance)
-      ].join(','));
-    });
-    csvLines.push(''); // Empty line
-  }
-  
+
   // Ratios
   if (data.cash_flow_ratios) {
-    csvLines.push('CASH FLOW RATIOS');
-    csvLines.push('Ratio,Value');
-    csvLines.push(`Operating Cash Flow Ratio,${data.cash_flow_ratios.operating_cash_flow_ratio}`);
-    csvLines.push(`Cash Flow to Debt Ratio,${formatCurrency(data.cash_flow_ratios.cash_flow_to_debt_ratio)}`);
-    csvLines.push(`Free Cash Flow,${formatCurrency(data.cash_flow_ratios.free_cash_flow)}`);
-    if (data.cash_flow_ratios.cash_flow_per_share !== undefined) {
-      csvLines.push(`Cash Flow per Share,${data.cash_flow_ratios.cash_flow_per_share}`);
-    }
-    csvLines.push(''); // Empty line
+    L.push('RASIO ARUS KAS');
+    L.push('Rasio,Nilai');
+    if (data.cash_flow_ratios.operating_cash_flow_ratio !== undefined) L.push(`Operating CF Ratio,${data.cash_flow_ratios.operating_cash_flow_ratio}`);
+    if (data.cash_flow_ratios.free_cash_flow !== undefined) L.push(`Free Cash Flow,${fmtCSV(data.cash_flow_ratios.free_cash_flow)}`);
+    if (data.cash_flow_ratios.cash_flow_to_debt_ratio !== undefined) L.push(`CF to Debt Ratio,${data.cash_flow_ratios.cash_flow_to_debt_ratio}`);
+    L.push('');
   }
-  
-  // Footer
-  csvLines.push('Generated by Sistem Akuntansi');
-  csvLines.push(`Report Date: ${new Date().toLocaleString('id-ID')}`);
-  csvLines.push(`Data Source: ${data.enhanced ? 'SSOT Enhanced' : 'SSOT Standard'}`);
-  
-  return csvLines.join('\n');
+
+  L.push('Dicetak oleh Sistem Akuntansi');
+  return L.join('\n');
 }
 
-/**
- * Enhanced PDF Export for Cash Flow Statement
- * Generates professional PDF report with tables for all sections
- */
+// ═══════════════════════════════════════════════════════════════════════════════
+// PDF EXPORT
+// ═══════════════════════════════════════════════════════════════════════════════
 export function exportCashFlowToPDF(
   data: SSOTCashFlowData,
   options: {
     companyName?: string;
     logoUrl?: string;
     includeAccountDetails?: boolean;
+    letterhead?: CompanyLetterhead;
   } = {}
 ): jsPDF {
-  const { companyName, includeAccountDetails = true } = options;
-  
-  // Initialize PDF
+  const { companyName, includeAccountDetails = true, letterhead } = options;
   const doc = new jsPDF('portrait', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.width;
-  const pageHeight = doc.internal.pageSize.height;
-  
-  // Helper function to format currency for PDF
-  const formatCurrencyForPDF = (amount: number | null | undefined): string => {
-    if (amount === null || amount === undefined || isNaN(Number(amount))) {
-      return 'Rp 0';
-    }
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0
-    }).format(Number(amount));
-  };
-  
-  // Set fonts
-  doc.setFont('helvetica');
-  
-  // Header section
-  let yPosition = 20;
-  
-  // Company name
-  doc.setFontSize(16);
+  const pw = doc.internal.pageSize.width;
+  const ph = doc.internal.pageSize.height;
+
+  // ── Letterhead ──
+  const lh: CompanyLetterhead = letterhead || { companyName: companyName || data.company?.name };
+  let y = drawLetterhead(doc, lh, pw);
+
+  // ── Report title ──
   doc.setFont('helvetica', 'bold');
-  const company = companyName || data.company?.name || 'PT. Sistem Akuntansi';
-  doc.text(company, pageWidth / 2, yPosition, { align: 'center' });
-  
-  yPosition += 10;
-  
-  // Report title
   doc.setFontSize(14);
-  doc.text('CASH FLOW STATEMENT', pageWidth / 2, yPosition, { align: 'center' });
-  
-  yPosition += 8;
-  
-  // Date range
-  doc.setFontSize(12);
+  doc.setTextColor(...COLORS.primary);
+  doc.text('LAPORAN ARUS KAS', pw / 2, y, { align: 'center' });
+  y += 6;
   doc.setFont('helvetica', 'normal');
-  doc.text(`Period: ${new Date(data.start_date).toLocaleDateString('id-ID')} to ${new Date(data.end_date).toLocaleDateString('id-ID')}`, pageWidth / 2, yPosition, { align: 'center' });
-  
-  yPosition += 15;
-  
-  // Summary table
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.text('CASH POSITION SUMMARY', 20, yPosition);
-  yPosition += 5;
-  
-  const summaryData = [
-    ['Net Cash Flow', formatCurrencyForPDF(data.net_cash_flow)],
-    ['Cash at Beginning of Period', formatCurrencyForPDF(data.cash_at_beginning)],
-    ['Cash at End of Period', formatCurrencyForPDF(data.cash_at_end)]
-  ];
-  
-  // Ensure plugin is properly initialized for Next.js compatibility
-  if (typeof (doc as any).autoTable !== 'function') {
-    console.error('autoTable function is not available on jsPDF instance');
-    // Fallback: skip table and continue with text-only format
-    yPosition += 20; // Add some space for the skipped table
-  } else {
-    (doc as any).autoTable({
-      startY: yPosition,
-      head: [['Metric', 'Amount']],
-      body: summaryData,
-      theme: 'grid',
-      headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: 'bold' },
-      bodyStyles: { fontSize: 11 },
-      alternateRowStyles: { fillColor: [245, 245, 245] },
-      margin: { left: 20, right: 20 },
-      columnStyles: {
-        1: { halign: 'right' }
-      }
-    });
-    
-    yPosition = (doc as any).lastAutoTable.finalY + 10;
-  }
-  
-  // Operating Activities Section
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.muted);
+  doc.text(`Periode: ${formatDateID(data.start_date)} s/d ${formatDateID(data.end_date)}`, pw / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setTextColor(0, 0, 0);
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 1. RINGKASAN POSISI KAS
+  // ════════════════════════════════════════════════════════════════════════════
+  y = sectionTitle(doc, 'RINGKASAN POSISI KAS', y, COLORS.primary);
+  autoTable(doc, {
+    startY: y,
+    head: [['Keterangan', 'Jumlah']],
+    body: [
+      ['Kas Awal Periode', fmt(data.cash_at_beginning)],
+      ['Arus Kas Bersih', fmt(data.net_cash_flow)],
+      ['Kas Akhir Periode', fmt(data.cash_at_end)],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: COLORS.primary, textColor: 255, fontStyle: 'bold', fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    alternateRowStyles: { fillColor: COLORS.lightBg },
+    margin: { left: 20, right: 20 },
+    columnStyles: { 1: { halign: 'right' } },
+  } as any);
+  y = (doc as any).lastAutoTable.finalY + 10;
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 2. AKTIVITAS OPERASI
+  // ════════════════════════════════════════════════════════════════════════════
   if (data.operating_activities) {
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('OPERATING ACTIVITIES', 20, yPosition);
-    yPosition += 5;
-    
-    // Check if we need a new page
-    if (yPosition > pageHeight - 100) {
-      doc.addPage();
-      yPosition = 20;
-    }
-    
-    // Net Income
-    const operatingSummaryData = [
-      ['Net Income', formatCurrencyForPDF(data.operating_activities.net_income)]
-    ];
-    
-    if (typeof (doc as any).autoTable === 'function') {
-      (doc as any).autoTable({
-        startY: yPosition,
-        head: [['Description', 'Amount']],
-        body: operatingSummaryData,
-        theme: 'grid',
-        headStyles: { fillColor: [40, 167, 69], textColor: 255, fontStyle: 'bold' },
-        bodyStyles: { fontSize: 10 },
-        margin: { left: 20, right: 20 },
-        columnStyles: {
-          1: { halign: 'right' }
-        }
-      });
-      
-      yPosition = (doc as any).lastAutoTable.finalY + 5;
-    } else {
-      yPosition += 15; // Add space if table can't be rendered
-    }
-    
-    // Adjustments for Non-Cash Items
-    if (data.operating_activities.adjustments) {
-      // Prepare adjustment data
-      const adjustmentItems: any[] = [];
-      
-      if (data.operating_activities.adjustments.items && data.operating_activities.adjustments.items.length > 0) {
-        data.operating_activities.adjustments.items.forEach(item => {
-          adjustmentItems.push([
-            item.account_code || '',
-            item.account_name || '',
-            formatCurrencyForPDF(item.amount)
-          ]);
-        });
+    const op = data.operating_activities;
+    y = ensureSpace(doc, y, 40, ph);
+    y = sectionTitle(doc, 'A. AKTIVITAS OPERASI', y, COLORS.operating);
+
+    // Net Income row
+    autoTable(doc, {
+      startY: y,
+      head: [['Keterangan', 'Jumlah']],
+      body: [['Laba Bersih (dari Laporan Laba Rugi)', fmt(op.net_income)]],
+      theme: 'grid',
+      headStyles: { fillColor: COLORS.operating, textColor: 255, fontStyle: 'bold', fontSize: 9 },
+      bodyStyles: { fontSize: 9, fontStyle: 'bold' },
+      margin: { left: 20, right: 20 },
+      columnStyles: { 1: { halign: 'right' } },
+    } as any);
+    y = (doc as any).lastAutoTable.finalY + 4;
+
+    // Adjustments
+    if (op.adjustments) {
+      const adjItems: any[] = [];
+      if (op.adjustments.items?.length) {
+        op.adjustments.items.forEach(i => adjItems.push([i.account_code || '', i.account_name || '', fmt(i.amount)]));
       } else {
-        // Use standard adjustment items with more structured data if available
-        if (data.operating_activities.adjustments.depreciation) {
-          adjustmentItems.push(['', 'Depreciation', formatCurrencyForPDF(data.operating_activities.adjustments.depreciation)]);
-        }
-        if (data.operating_activities.adjustments.amortization) {
-          adjustmentItems.push(['', 'Amortization', formatCurrencyForPDF(data.operating_activities.adjustments.amortization)]);
-        }
-        if (data.operating_activities.adjustments.bad_debt_expense) {
-          adjustmentItems.push(['', 'Bad Debt Expense', formatCurrencyForPDF(data.operating_activities.adjustments.bad_debt_expense)]);
-        }
-        if (data.operating_activities.adjustments.gain_loss_on_asset_disposal) {
-          adjustmentItems.push(['', 'Gain/Loss on Asset Disposal', formatCurrencyForPDF(data.operating_activities.adjustments.gain_loss_on_asset_disposal)]);
-        }
-        if (data.operating_activities.adjustments.other_non_cash_items) {
-          adjustmentItems.push(['', 'Other Non-Cash Items', formatCurrencyForPDF(data.operating_activities.adjustments.other_non_cash_items)]);
-        }
+        if (op.adjustments.depreciation) adjItems.push(['', 'Penyusutan', fmt(op.adjustments.depreciation)]);
+        if (op.adjustments.amortization) adjItems.push(['', 'Amortisasi', fmt(op.adjustments.amortization)]);
+        if (op.adjustments.bad_debt_expense) adjItems.push(['', 'Beban Piutang Tak Tertagih', fmt(op.adjustments.bad_debt_expense)]);
+        if (op.adjustments.gain_loss_on_asset_disposal) adjItems.push(['', 'Laba/Rugi Pelepasan Aset', fmt(op.adjustments.gain_loss_on_asset_disposal)]);
+        if (op.adjustments.other_non_cash_items) adjItems.push(['', 'Item Non-Kas Lainnya', fmt(op.adjustments.other_non_cash_items)]);
       }
-      
-      if (adjustmentItems.length > 0) {
-        if (typeof (doc as any).autoTable === 'function') {
-          (doc as any).autoTable({
-            startY: yPosition,
-            head: [['Account Code', 'Adjustment Item', 'Amount']],
-            body: adjustmentItems,
-            theme: 'grid',
-            headStyles: { fillColor: [52, 58, 64], textColor: 255, fontStyle: 'bold' },
-            bodyStyles: { fontSize: 9 },
-            alternateRowStyles: { fillColor: [248, 249, 250] },
-            margin: { left: 25, right: 20 },
-            columnStyles: {
-              2: { halign: 'right' }
-            }
-          });
-          
-          yPosition = (doc as any).lastAutoTable.finalY + 2;
-        } else {
-          yPosition += 10; // Add space if table can't be rendered
-        }
-        
-        // Total adjustments
-        if (typeof (doc as any).autoTable === 'function') {
-          (doc as any).autoTable({
-            startY: yPosition,
-            head: [['', 'Total Adjustments', '']],
-            body: [['', formatCurrencyForPDF(data.operating_activities.adjustments.total_adjustments), '']],
-            theme: 'grid',
-            headStyles: { fillColor: [52, 58, 64], textColor: 255, fontStyle: 'bold' },
-            bodyStyles: { fontSize: 10, fontStyle: 'bold' },
-            margin: { left: 25, right: 20 },
-            columnStyles: {
-              1: { halign: 'right', fillColor: [248, 249, 250] }
-            }
-          });
-          
-          yPosition = (doc as any).lastAutoTable.finalY + 2;
-        } else {
-          yPosition += 8; // Add space if table can't be rendered
-        }
-      }
-    }
-    
-    // Working Capital Changes
-    if (data.operating_activities.working_capital_changes) {
-      // Prepare working capital change data
-      const workingCapitalItems: any[] = [];
-      
-      if (data.operating_activities.working_capital_changes.items && data.operating_activities.working_capital_changes.items.length > 0) {
-        data.operating_activities.working_capital_changes.items.forEach(item => {
-          workingCapitalItems.push([
-            item.account_code || '',
-            item.account_name || '',
-            formatCurrencyForPDF(item.amount)
-          ]);
-        });
-      } else {
-        // Use standard working capital items with more structured data if available
-        if (data.operating_activities.working_capital_changes.accounts_receivable_change) {
-          workingCapitalItems.push(['', 'Accounts Receivable Change', formatCurrencyForPDF(data.operating_activities.working_capital_changes.accounts_receivable_change)]);
-        }
-        if (data.operating_activities.working_capital_changes.inventory_change) {
-          workingCapitalItems.push(['', 'Inventory Change', formatCurrencyForPDF(data.operating_activities.working_capital_changes.inventory_change)]);
-        }
-        if (data.operating_activities.working_capital_changes.prepaid_expenses_change) {
-          workingCapitalItems.push(['', 'Prepaid Expenses Change', formatCurrencyForPDF(data.operating_activities.working_capital_changes.prepaid_expenses_change)]);
-        }
-        if (data.operating_activities.working_capital_changes.accounts_payable_change) {
-          workingCapitalItems.push(['', 'Accounts Payable Change', formatCurrencyForPDF(data.operating_activities.working_capital_changes.accounts_payable_change)]);
-        }
-        if (data.operating_activities.working_capital_changes.accrued_liabilities_change) {
-          workingCapitalItems.push(['', 'Accrued Liabilities Change', formatCurrencyForPDF(data.operating_activities.working_capital_changes.accrued_liabilities_change)]);
-        }
-        if (data.operating_activities.working_capital_changes.other_working_capital_change) {
-          workingCapitalItems.push(['', 'Other Working Capital Change', formatCurrencyForPDF(data.operating_activities.working_capital_changes.other_working_capital_change)]);
-        }
-      }
-      
-      if (workingCapitalItems.length > 0) {
-        if (typeof (doc as any).autoTable === 'function') {
-          (doc as any).autoTable({
-            startY: yPosition,
-            head: [['Account Code', 'Working Capital Change', 'Amount']],
-            body: workingCapitalItems,
-            theme: 'grid',
-            headStyles: { fillColor: [52, 58, 64], textColor: 255, fontStyle: 'bold' },
-            bodyStyles: { fontSize: 9 },
-            alternateRowStyles: { fillColor: [248, 249, 250] },
-            margin: { left: 25, right: 20 },
-            columnStyles: {
-              2: { halign: 'right' }
-            }
-          });
-          
-          yPosition = (doc as any).lastAutoTable.finalY + 2;
-        } else {
-          yPosition += 10; // Add space if table can't be rendered
-        }
-        
-        // Total working capital changes
-        if (typeof (doc as any).autoTable === 'function') {
-          (doc as any).autoTable({
-            startY: yPosition,
-            head: [['', 'Total Working Capital Changes', '']],
-            body: [['', formatCurrencyForPDF(data.operating_activities.working_capital_changes.total_working_capital_changes), '']],
-            theme: 'grid',
-            headStyles: { fillColor: [52, 58, 64], textColor: 255, fontStyle: 'bold' },
-            bodyStyles: { fontSize: 10, fontStyle: 'bold' },
-            margin: { left: 25, right: 20 },
-            columnStyles: {
-              1: { halign: 'right', fillColor: [248, 249, 250] }
-            }
-          });
-          
-          yPosition = (doc as any).lastAutoTable.finalY + 2;
-        } else {
-          yPosition += 8; // Add space if table can't be rendered
-        }
-      }
-    }
-    
-    // Total Operating Cash Flow
-    if (typeof (doc as any).autoTable === 'function') {
-      (doc as any).autoTable({
-        startY: yPosition,
-        head: [['TOTAL OPERATING CASH FLOW', '']],
-        body: [[formatCurrencyForPDF(data.operating_activities.total_operating_cash_flow), '']],
-        theme: 'grid',
-        headStyles: { fillColor: [40, 167, 69], textColor: 255, fontStyle: 'bold' },
-        bodyStyles: { fontSize: 11, fontStyle: 'bold' },
-        margin: { left: 20, right: 20 },
-        columnStyles: {
-          0: { halign: 'right', fillColor: [240, 255, 240] }
-        }
-      });
-      
-      yPosition = (doc as any).lastAutoTable.finalY + 10;
-    } else {
-      yPosition += 15; // Add space if table can't be rendered
-    }
-  }
-  
-  // Investing Activities Section
-  if (data.investing_activities) {
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('INVESTING ACTIVITIES', 20, yPosition);
-    yPosition += 5;
-    
-    // Check if we need a new page
-    if (yPosition > pageHeight - 100) {
-      doc.addPage();
-      yPosition = 20;
-    }
-    
-    // Prepare investing activities data
-    const investingItems: any[] = [];
-    
-    if (data.investing_activities.items && data.investing_activities.items.length > 0) {
-      data.investing_activities.items.forEach(item => {
-        investingItems.push([
-          `${item.account_code} - ${item.account_name}`,
-          formatCurrencyForPDF(item.amount)
-        ]);
-      });
-    } else {
-      // Use standard investing activity items
-      if (data.investing_activities.purchase_of_fixed_assets) {
-        investingItems.push(['Purchase of Fixed Assets', formatCurrencyForPDF(data.investing_activities.purchase_of_fixed_assets)]);
-      }
-      if (data.investing_activities.sale_of_fixed_assets) {
-        investingItems.push(['Sale of Fixed Assets', formatCurrencyForPDF(data.investing_activities.sale_of_fixed_assets)]);
-      }
-      if (data.investing_activities.purchase_of_investments) {
-        investingItems.push(['Purchase of Investments', formatCurrencyForPDF(data.investing_activities.purchase_of_investments)]);
-      }
-      if (data.investing_activities.sale_of_investments) {
-        investingItems.push(['Sale of Investments', formatCurrencyForPDF(data.investing_activities.sale_of_investments)]);
-      }
-      if (data.investing_activities.intangible_asset_purchases) {
-        investingItems.push(['Intangible Asset Purchases', formatCurrencyForPDF(data.investing_activities.intangible_asset_purchases)]);
-      }
-      if (data.investing_activities.other_investing_activities) {
-        investingItems.push(['Other Investing Activities', formatCurrencyForPDF(data.investing_activities.other_investing_activities)]);
-      }
-    }
-    
-    if (investingItems.length > 0) {
-      if (typeof (doc as any).autoTable === 'function') {
-        (doc as any).autoTable({
-          startY: yPosition,
-          head: [['Investment Activity', 'Amount']],
-          body: investingItems,
-          theme: 'grid',
-          headStyles: { fillColor: [138, 43, 226], textColor: 255, fontStyle: 'bold' },
-          bodyStyles: { fontSize: 10 },
-          alternateRowStyles: { fillColor: [248, 249, 250] },
-          margin: { left: 20, right: 20 },
-          columnStyles: {
-            1: { halign: 'right' }
-          }
-        });
-        
-        yPosition = (doc as any).lastAutoTable.finalY + 2;
-      } else {
-        yPosition += 10; // Add space if table can't be rendered
-      }
-    }
-    
-    // Total Investing Cash Flow
-    if (typeof (doc as any).autoTable === 'function') {
-      (doc as any).autoTable({
-        startY: yPosition,
-        head: [['TOTAL INVESTING CASH FLOW', '']],
-        body: [[formatCurrencyForPDF(data.investing_activities.total_investing_cash_flow), '']],
-        theme: 'grid',
-        headStyles: { fillColor: [138, 43, 226], textColor: 255, fontStyle: 'bold' },
-        bodyStyles: { fontSize: 11, fontStyle: 'bold' },
-        margin: { left: 20, right: 20 },
-        columnStyles: {
-          0: { halign: 'right', fillColor: [240, 240, 255] }
-        }
-      });
-      
-      yPosition = (doc as any).lastAutoTable.finalY + 10;
-    } else {
-      yPosition += 15; // Add space if table can't be rendered
-    }
-  }
-  
-  // Financing Activities Section
-  if (data.financing_activities) {
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('FINANCING ACTIVITIES', 20, yPosition);
-    yPosition += 5;
-    
-    // Check if we need a new page
-    if (yPosition > pageHeight - 100) {
-      doc.addPage();
-      yPosition = 20;
-    }
-    
-    // Prepare financing activities data
-    const financingItems: any[] = [];
-    
-    if (data.financing_activities.items && data.financing_activities.items.length > 0) {
-      data.financing_activities.items.forEach(item => {
-        financingItems.push([
-          `${item.account_code} - ${item.account_name}`,
-          formatCurrencyForPDF(item.amount)
-        ]);
-      });
-    } else {
-      // Use standard financing activity items
-      if (data.financing_activities.share_capital_increase) {
-        financingItems.push(['Share Capital Increase', formatCurrencyForPDF(data.financing_activities.share_capital_increase)]);
-      }
-      if (data.financing_activities.share_capital_decrease) {
-        financingItems.push(['Share Capital Decrease', formatCurrencyForPDF(data.financing_activities.share_capital_decrease)]);
-      }
-      if (data.financing_activities.long_term_debt_increase) {
-        financingItems.push(['Long Term Debt Increase', formatCurrencyForPDF(data.financing_activities.long_term_debt_increase)]);
-      }
-      if (data.financing_activities.long_term_debt_decrease) {
-        financingItems.push(['Long Term Debt Decrease', formatCurrencyForPDF(data.financing_activities.long_term_debt_decrease)]);
-      }
-      if (data.financing_activities.short_term_debt_increase) {
-        financingItems.push(['Short Term Debt Increase', formatCurrencyForPDF(data.financing_activities.short_term_debt_increase)]);
-      }
-      if (data.financing_activities.short_term_debt_decrease) {
-        financingItems.push(['Short Term Debt Decrease', formatCurrencyForPDF(data.financing_activities.short_term_debt_decrease)]);
-      }
-      if (data.financing_activities.dividends_paid) {
-        financingItems.push(['Dividends Paid', formatCurrencyForPDF(data.financing_activities.dividends_paid)]);
-      }
-      if (data.financing_activities.other_financing_activities) {
-        financingItems.push(['Other Financing Activities', formatCurrencyForPDF(data.financing_activities.other_financing_activities)]);
-      }
-    }
-    
-    if (financingItems.length > 0) {
-      if (typeof (doc as any).autoTable === 'function') {
-        (doc as any).autoTable({
-          startY: yPosition,
-          head: [['Financing Activity', 'Amount']],
-          body: financingItems,
-          theme: 'grid',
-          headStyles: { fillColor: [255, 193, 7], textColor: [33, 37, 41], fontStyle: 'bold' },
-          bodyStyles: { fontSize: 10 },
-          alternateRowStyles: { fillColor: [248, 249, 250] },
-          margin: { left: 20, right: 20 },
-          columnStyles: {
-            1: { halign: 'right' }
-          }
-        });
-        
-        yPosition = (doc as any).lastAutoTable.finalY + 2;
-      } else {
-        yPosition += 10; // Add space if table can't be rendered
-      }
-    }
-    
-    // Total Financing Cash Flow
-    if (typeof (doc as any).autoTable === 'function') {
-      (doc as any).autoTable({
-        startY: yPosition,
-        head: [['TOTAL FINANCING CASH FLOW', '']],
-        body: [[formatCurrencyForPDF(data.financing_activities.total_financing_cash_flow), '']],
-        theme: 'grid',
-        headStyles: { fillColor: [255, 193, 7], textColor: [33, 37, 41], fontStyle: 'bold' },
-        bodyStyles: { fontSize: 11, fontStyle: 'bold' },
-        margin: { left: 20, right: 20 },
-        columnStyles: {
-          0: { halign: 'right', fillColor: [255, 255, 200] }
-        }
-      });
-      
-      yPosition = (doc as any).lastAutoTable.finalY + 10;
-    } else {
-      yPosition += 15; // Add space if table can't be rendered
-    }
-  }
-  
-  // Detailed Account Breakdown by Activity Type (if included)
-  if (includeAccountDetails) {
-    // Operating Activities Detail
-    if (data.operating_activities && data.operating_activities.items && data.operating_activities.items.length > 0) {
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text('OPERATING ACTIVITIES - DETAIL', 20, yPosition);
-      yPosition += 5;
-      
-      // Check if we need a new page
-      if (yPosition > pageHeight - 100) {
-        doc.addPage();
-        yPosition = 20;
-      }
-      
-      // Prepare operating activities data
-      const operatingData: any[] = [];
-      data.operating_activities.items.forEach(item => {
-        operatingData.push([
-          item.account_code || '',
-          item.account_name || '',
-          formatCurrencyForPDF(item.amount)
-        ]);
-      });
-      
-      if (typeof (doc as any).autoTable === 'function') {
-        (doc as any).autoTable({
-          startY: yPosition,
-          head: [['Account Code', 'Account Name', 'Amount']],
-          body: operatingData,
-          theme: 'grid',
-          headStyles: { fillColor: [40, 167, 69], textColor: 255, fontStyle: 'bold' },
-          bodyStyles: { fontSize: 9 },
-          alternateRowStyles: { fillColor: [248, 249, 250] },
-          margin: { left: 20, right: 20 },
-          columnStyles: {
-            2: { halign: 'right' }
-          }
-        });
-        
-        yPosition = (doc as any).lastAutoTable.finalY + 10;
-      } else {
-        yPosition += 15; // Add space if table can't be rendered
-      }
-    }
-    
-    // Investing Activities Detail
-    if (data.investing_activities && data.investing_activities.items && data.investing_activities.items.length > 0) {
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text('INVESTING ACTIVITIES - DETAIL', 20, yPosition);
-      yPosition += 5;
-      
-      // Check if we need a new page
-      if (yPosition > pageHeight - 100) {
-        doc.addPage();
-        yPosition = 20;
-      }
-      
-      // Prepare investing activities data
-      const investingData: any[] = [];
-      data.investing_activities.items.forEach(item => {
-        investingData.push([
-          item.account_code || '',
-          item.account_name || '',
-          formatCurrencyForPDF(item.amount)
-        ]);
-      });
-      
-      if (typeof (doc as any).autoTable === 'function') {
-        (doc as any).autoTable({
-          startY: yPosition,
-          head: [['Account Code', 'Account Name', 'Amount']],
-          body: investingData,
-          theme: 'grid',
-          headStyles: { fillColor: [138, 43, 226], textColor: 255, fontStyle: 'bold' },
-          bodyStyles: { fontSize: 9 },
-          alternateRowStyles: { fillColor: [248, 249, 250] },
-          margin: { left: 20, right: 20 },
-          columnStyles: {
-            2: { halign: 'right' }
-          }
-        });
-        
-        yPosition = (doc as any).lastAutoTable.finalY + 10;
-      } else {
-        yPosition += 15; // Add space if table can't be rendered
-      }
-    }
-    
-    // Financing Activities Detail
-    if (data.financing_activities && data.financing_activities.items && data.financing_activities.items.length > 0) {
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text('FINANCING ACTIVITIES - DETAIL', 20, yPosition);
-      yPosition += 5;
-      
-      // Check if we need a new page
-      if (yPosition > pageHeight - 100) {
-        doc.addPage();
-        yPosition = 20;
-      }
-      
-      // Prepare financing activities data
-      const financingData: any[] = [];
-      data.financing_activities.items.forEach(item => {
-        financingData.push([
-          item.account_code || '',
-          item.account_name || '',
-          formatCurrencyForPDF(item.amount)
-        ]);
-      });
-      
-      if (typeof (doc as any).autoTable === 'function') {
-        (doc as any).autoTable({
-          startY: yPosition,
-          head: [['Account Code', 'Account Name', 'Amount']],
-          body: financingData,
-          theme: 'grid',
-          headStyles: { fillColor: [255, 193, 7], textColor: [33, 37, 41], fontStyle: 'bold' },
-          bodyStyles: { fontSize: 9 },
-          alternateRowStyles: { fillColor: [248, 249, 250] },
-          margin: { left: 20, right: 20 },
-          columnStyles: {
-            2: { halign: 'right' }
-          }
-        });
-        
-        yPosition = (doc as any).lastAutoTable.finalY + 10;
-      } else {
-        yPosition += 15; // Add space if table can't be rendered
-      }
-    }
-    
-    // Overall Account Details (if available)
-    if (data.account_details && data.account_details.length > 0) {
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text('ALL ACCOUNTS SUMMARY', 20, yPosition);
-      yPosition += 5;
-      
-      // Check if we need a new page
-      if (yPosition > pageHeight - 100) {
-        doc.addPage();
-        yPosition = 20;
-      }
-      
-      // Prepare account details data
-      const accountDetailsData: any[] = [];
-      data.account_details.forEach(account => {
-        accountDetailsData.push([
-          account.account_code || '',
-          account.account_name || '',
-          account.account_type || '',
-          formatCurrencyForPDF(account.debit_total),
-          formatCurrencyForPDF(account.credit_total),
-          formatCurrencyForPDF(account.net_balance)
-        ]);
-      });
-      
-      if (typeof (doc as any).autoTable === 'function') {
-        (doc as any).autoTable({
-          startY: yPosition,
-          head: [['Code', 'Account Name', 'Type', 'Debits', 'Credits', 'Net Change']],
-          body: accountDetailsData,
-          theme: 'grid',
-          headStyles: { fillColor: [108, 117, 125], textColor: 255, fontStyle: 'bold' },
+      if (adjItems.length) {
+        adjItems.push([{ content: 'Total Penyesuaian', colSpan: 2, styles: { fontStyle: 'bold' } }, { content: fmt(op.adjustments.total_adjustments), styles: { fontStyle: 'bold', halign: 'right' } }]);
+        autoTable(doc, {
+          startY: y,
+          head: [['Kode', 'Penyesuaian Non-Kas', 'Jumlah']],
+          body: adjItems,
+          theme: 'striped',
+          headStyles: { fillColor: COLORS.dark, textColor: 255, fontSize: 8 },
           bodyStyles: { fontSize: 8 },
-          alternateRowStyles: { fillColor: [248, 249, 250] },
-          margin: { left: 20, right: 20 },
-          columnStyles: {
-            3: { halign: 'right' },
-            4: { halign: 'right' },
-            5: { halign: 'right' }
-          }
-        });
-        
-        yPosition = (doc as any).lastAutoTable.finalY + 10;
-      } else {
-        yPosition += 15; // Add space if table can't be rendered
+          margin: { left: 25, right: 20 },
+          columnStyles: { 0: { cellWidth: 25 }, 2: { halign: 'right', cellWidth: 40 } },
+        } as any);
+        y = (doc as any).lastAutoTable.finalY + 3;
       }
     }
+
+    // Working Capital Changes
+    if (op.working_capital_changes) {
+      const wcItems: any[] = [];
+      if (op.working_capital_changes.items?.length) {
+        op.working_capital_changes.items.forEach(i => wcItems.push([i.account_code || '', i.account_name || '', fmt(i.amount)]));
+      } else {
+        if (op.working_capital_changes.accounts_receivable_change) wcItems.push(['', 'Perub. Piutang Usaha', fmt(op.working_capital_changes.accounts_receivable_change)]);
+        if (op.working_capital_changes.inventory_change) wcItems.push(['', 'Perub. Persediaan', fmt(op.working_capital_changes.inventory_change)]);
+        if (op.working_capital_changes.prepaid_expenses_change) wcItems.push(['', 'Perub. Beban Dibayar Dimuka', fmt(op.working_capital_changes.prepaid_expenses_change)]);
+        if (op.working_capital_changes.accounts_payable_change) wcItems.push(['', 'Perub. Utang Usaha', fmt(op.working_capital_changes.accounts_payable_change)]);
+        if (op.working_capital_changes.accrued_liabilities_change) wcItems.push(['', 'Perub. Utang Akrual', fmt(op.working_capital_changes.accrued_liabilities_change)]);
+        if (op.working_capital_changes.other_working_capital_change) wcItems.push(['', 'Perub. Modal Kerja Lainnya', fmt(op.working_capital_changes.other_working_capital_change)]);
+      }
+      if (wcItems.length) {
+        wcItems.push([{ content: 'Total Perubahan Modal Kerja', colSpan: 2, styles: { fontStyle: 'bold' } }, { content: fmt(op.working_capital_changes.total_working_capital_changes), styles: { fontStyle: 'bold', halign: 'right' } }]);
+        y = ensureSpace(doc, y, 30, ph);
+        autoTable(doc, {
+          startY: y,
+          head: [['Kode', 'Perubahan Modal Kerja', 'Jumlah']],
+          body: wcItems,
+          theme: 'striped',
+          headStyles: { fillColor: COLORS.dark, textColor: 255, fontSize: 8 },
+          bodyStyles: { fontSize: 8 },
+          margin: { left: 25, right: 20 },
+          columnStyles: { 0: { cellWidth: 25 }, 2: { halign: 'right', cellWidth: 40 } },
+        } as any);
+        y = (doc as any).lastAutoTable.finalY + 3;
+      }
+    }
+
+    // Total Operating
+    autoTable(doc, {
+      startY: y,
+      body: [['TOTAL ARUS KAS DARI AKTIVITAS OPERASI', fmt(op.total_operating_cash_flow)]],
+      theme: 'plain',
+      bodyStyles: { fontSize: 10, fontStyle: 'bold', textColor: COLORS.operating },
+      margin: { left: 20, right: 20 },
+      columnStyles: { 1: { halign: 'right', cellWidth: 50 } },
+    } as any);
+    y = (doc as any).lastAutoTable.finalY + 8;
   }
-  
-  // Cash Flow Ratios (if available)
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 3. AKTIVITAS INVESTASI
+  // ════════════════════════════════════════════════════════════════════════════
+  if (data.investing_activities) {
+    const inv = data.investing_activities;
+    y = ensureSpace(doc, y, 40, ph);
+    y = sectionTitle(doc, 'B. AKTIVITAS INVESTASI', y, COLORS.investing);
+
+    const invItems: any[] = [];
+    if (inv.items?.length) {
+      inv.items.forEach(i => invItems.push([i.account_code || '', i.account_name || '', fmt(i.amount)]));
+    } else {
+      if (inv.purchase_of_fixed_assets) invItems.push(['', 'Pembelian Aset Tetap', fmt(inv.purchase_of_fixed_assets)]);
+      if (inv.sale_of_fixed_assets) invItems.push(['', 'Penjualan Aset Tetap', fmt(inv.sale_of_fixed_assets)]);
+      if (inv.purchase_of_investments) invItems.push(['', 'Pembelian Investasi', fmt(inv.purchase_of_investments)]);
+      if (inv.sale_of_investments) invItems.push(['', 'Penjualan Investasi', fmt(inv.sale_of_investments)]);
+      if (inv.intangible_asset_purchases) invItems.push(['', 'Pembelian Aset Tak Berwujud', fmt(inv.intangible_asset_purchases)]);
+      if (inv.other_investing_activities) invItems.push(['', 'Aktivitas Investasi Lainnya', fmt(inv.other_investing_activities)]);
+    }
+
+    if (invItems.length) {
+      autoTable(doc, {
+        startY: y,
+        head: [['Kode', 'Aktivitas Investasi', 'Jumlah']],
+        body: invItems,
+        theme: 'striped',
+        headStyles: { fillColor: COLORS.investing, textColor: 255, fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        alternateRowStyles: { fillColor: COLORS.lightBg },
+        margin: { left: 20, right: 20 },
+        columnStyles: { 0: { cellWidth: 25 }, 2: { halign: 'right', cellWidth: 40 } },
+      } as any);
+      y = (doc as any).lastAutoTable.finalY + 3;
+    }
+
+    autoTable(doc, {
+      startY: y,
+      body: [['TOTAL ARUS KAS DARI AKTIVITAS INVESTASI', fmt(inv.total_investing_cash_flow)]],
+      theme: 'plain',
+      bodyStyles: { fontSize: 10, fontStyle: 'bold', textColor: COLORS.investing },
+      margin: { left: 20, right: 20 },
+      columnStyles: { 1: { halign: 'right', cellWidth: 50 } },
+    } as any);
+    y = (doc as any).lastAutoTable.finalY + 8;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 4. AKTIVITAS PENDANAAN
+  // ════════════════════════════════════════════════════════════════════════════
+  if (data.financing_activities) {
+    const fin = data.financing_activities;
+    y = ensureSpace(doc, y, 40, ph);
+    y = sectionTitle(doc, 'C. AKTIVITAS PENDANAAN', y, COLORS.financing);
+
+    const finItems: any[] = [];
+    if (fin.items?.length) {
+      fin.items.forEach(i => finItems.push([i.account_code || '', i.account_name || '', fmt(i.amount)]));
+    } else {
+      if (fin.share_capital_increase) finItems.push(['', 'Penambahan Modal Saham', fmt(fin.share_capital_increase)]);
+      if (fin.share_capital_decrease) finItems.push(['', 'Pengurangan Modal Saham', fmt(fin.share_capital_decrease)]);
+      if (fin.long_term_debt_increase) finItems.push(['', 'Penambahan Utang Jangka Panjang', fmt(fin.long_term_debt_increase)]);
+      if (fin.long_term_debt_decrease) finItems.push(['', 'Pelunasan Utang Jangka Panjang', fmt(fin.long_term_debt_decrease)]);
+      if (fin.short_term_debt_increase) finItems.push(['', 'Penambahan Utang Jangka Pendek', fmt(fin.short_term_debt_increase)]);
+      if (fin.short_term_debt_decrease) finItems.push(['', 'Pelunasan Utang Jangka Pendek', fmt(fin.short_term_debt_decrease)]);
+      if (fin.dividends_paid) finItems.push(['', 'Dividen Dibayarkan', fmt(fin.dividends_paid)]);
+      if (fin.other_financing_activities) finItems.push(['', 'Aktivitas Pendanaan Lainnya', fmt(fin.other_financing_activities)]);
+    }
+
+    if (finItems.length) {
+      autoTable(doc, {
+        startY: y,
+        head: [['Kode', 'Aktivitas Pendanaan', 'Jumlah']],
+        body: finItems,
+        theme: 'striped',
+        headStyles: { fillColor: COLORS.financing, textColor: 255, fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+        alternateRowStyles: { fillColor: COLORS.lightBg },
+        margin: { left: 20, right: 20 },
+        columnStyles: { 0: { cellWidth: 25 }, 2: { halign: 'right', cellWidth: 40 } },
+      } as any);
+      y = (doc as any).lastAutoTable.finalY + 3;
+    }
+
+    autoTable(doc, {
+      startY: y,
+      body: [['TOTAL ARUS KAS DARI AKTIVITAS PENDANAAN', fmt(fin.total_financing_cash_flow)]],
+      theme: 'plain',
+      bodyStyles: { fontSize: 10, fontStyle: 'bold', textColor: COLORS.financing },
+      margin: { left: 20, right: 20 },
+      columnStyles: { 1: { halign: 'right', cellWidth: 50 } },
+    } as any);
+    y = (doc as any).lastAutoTable.finalY + 10;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 5. RINGKASAN AKHIR
+  // ════════════════════════════════════════════════════════════════════════════
+  y = ensureSpace(doc, y, 50, ph);
+  y = sectionTitle(doc, 'RINGKASAN ARUS KAS', y, COLORS.primary);
+
+  const op = data.operating_activities;
+  const inv = data.investing_activities;
+  const fin = data.financing_activities;
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Keterangan', 'Jumlah']],
+    body: [
+      ['Kas Awal Periode', fmt(data.cash_at_beginning)],
+      ['Arus Kas dari Aktivitas Operasi (A)', fmt(op?.total_operating_cash_flow || 0)],
+      ['Arus Kas dari Aktivitas Investasi (B)', fmt(inv?.total_investing_cash_flow || 0)],
+      ['Arus Kas dari Aktivitas Pendanaan (C)', fmt(fin?.total_financing_cash_flow || 0)],
+      [{ content: 'Kenaikan (Penurunan) Bersih Kas', styles: { fontStyle: 'bold' } }, { content: fmt(data.net_cash_flow), styles: { fontStyle: 'bold', halign: 'right' } }],
+      [{ content: 'Kas Akhir Periode', styles: { fontStyle: 'bold', fillColor: [232, 245, 233] } }, { content: fmt(data.cash_at_end), styles: { fontStyle: 'bold', halign: 'right', fillColor: [232, 245, 233] } }],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: COLORS.primary, textColor: 255, fontStyle: 'bold', fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    alternateRowStyles: { fillColor: COLORS.lightBg },
+    margin: { left: 20, right: 20 },
+    columnStyles: { 1: { halign: 'right', cellWidth: 50 } },
+  } as any);
+  y = (doc as any).lastAutoTable.finalY + 10;
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 6. RASIO ARUS KAS (if available)
+  // ════════════════════════════════════════════════════════════════════════════
   if (data.cash_flow_ratios) {
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('CASH FLOW RATIOS', 20, yPosition);
-    yPosition += 5;
-    
-    // Check if we need a new page
-    if (yPosition > pageHeight - 100) {
-      doc.addPage();
-      yPosition = 20;
-    }
-    
-    const ratiosData: any[] = [];
-    if (data.cash_flow_ratios.operating_cash_flow_ratio !== undefined) {
-      ratiosData.push(['Operating Cash Flow Ratio', data.cash_flow_ratios.operating_cash_flow_ratio.toString()]);
-    }
-    if (data.cash_flow_ratios.cash_flow_to_debt_ratio !== undefined) {
-      ratiosData.push(['Cash Flow to Debt Ratio', formatCurrencyForPDF(data.cash_flow_ratios.cash_flow_to_debt_ratio)]);
-    }
-    if (data.cash_flow_ratios.free_cash_flow !== undefined) {
-      ratiosData.push(['Free Cash Flow', formatCurrencyForPDF(data.cash_flow_ratios.free_cash_flow)]);
-    }
-    if (data.cash_flow_ratios.cash_flow_per_share !== undefined) {
-      ratiosData.push(['Cash Flow per Share', data.cash_flow_ratios.cash_flow_per_share.toString()]);
-    }
-    
-    if (ratiosData.length > 0) {
-      if (typeof (doc as any).autoTable === 'function') {
-        (doc as any).autoTable({
-          startY: yPosition,
-          head: [['Ratio', 'Value']],
-          body: ratiosData,
-          theme: 'grid',
-          headStyles: { fillColor: [52, 58, 64], textColor: 255, fontStyle: 'bold' },
-          bodyStyles: { fontSize: 10 },
-          alternateRowStyles: { fillColor: [248, 249, 250] },
-          margin: { left: 20, right: 20 },
-          columnStyles: {
-            1: { halign: 'right' }
-          }
-        });
-        
-        yPosition = (doc as any).lastAutoTable.finalY + 10;
-      } else {
-        yPosition += 15; // Add space if table can't be rendered
-      }
+    y = ensureSpace(doc, y, 40, ph);
+    y = sectionTitle(doc, 'RASIO ARUS KAS', y, COLORS.accent);
+
+    const ratiosBody: any[] = [];
+    if (data.cash_flow_ratios.operating_cash_flow_ratio !== undefined)
+      ratiosBody.push(['Operating Cash Flow Ratio', `${data.cash_flow_ratios.operating_cash_flow_ratio.toFixed(2)}x`]);
+    if (data.cash_flow_ratios.free_cash_flow !== undefined)
+      ratiosBody.push(['Free Cash Flow', fmt(data.cash_flow_ratios.free_cash_flow)]);
+    if (data.cash_flow_ratios.cash_flow_to_debt_ratio !== undefined)
+      ratiosBody.push(['Cash Flow to Debt Ratio', `${data.cash_flow_ratios.cash_flow_to_debt_ratio.toFixed(2)}x`]);
+    if (data.cash_flow_ratios.cash_flow_per_share !== undefined)
+      ratiosBody.push(['Cash Flow per Share', `${data.cash_flow_ratios.cash_flow_per_share}`]);
+
+    if (ratiosBody.length) {
+      autoTable(doc, {
+        startY: y,
+        head: [['Rasio', 'Nilai']],
+        body: ratiosBody,
+        theme: 'grid',
+        headStyles: { fillColor: COLORS.accent, textColor: 255, fontSize: 9 },
+        bodyStyles: { fontSize: 9 },
+        alternateRowStyles: { fillColor: COLORS.lightBg },
+        margin: { left: 20, right: 20 },
+        columnStyles: { 1: { halign: 'right' } },
+      } as any);
+      y = (doc as any).lastAutoTable.finalY + 10;
     }
   }
-  
-  // Footer
-  const footerY = pageHeight - 20;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Generated by Sistem Akuntansi', 20, footerY);
-  doc.text(`Generated on: ${new Date().toLocaleString('id-ID')}`, pageWidth - 20, footerY, { align: 'right' });
-  doc.text(`Data Source: ${data.enhanced ? 'SSOT Enhanced' : 'SSOT Standard'}`, pageWidth / 2, footerY, { align: 'center' });
-  
-  // Add page numbers if multiple pages
-  const pageCount = doc.getNumberOfPages();
-  if (pageCount > 1) {
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.text(`Page ${i} of ${pageCount}`, pageWidth - 20, footerY - 5, { align: 'right' });
-    }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 7. RINCIAN AKUN (if includeAccountDetails)
+  // ════════════════════════════════════════════════════════════════════════════
+  if (includeAccountDetails && data.account_details?.length) {
+    y = ensureSpace(doc, y, 40, ph);
+    y = sectionTitle(doc, 'RINCIAN AKUN', y, COLORS.dark);
+
+    const detailBody: any[] = [];
+    data.account_details.forEach(a => {
+      detailBody.push([a.account_code || '', a.account_name || '', a.account_type || '', fmt(a.debit_total), fmt(a.credit_total), fmt(a.net_balance)]);
+    });
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Kode', 'Nama Akun', 'Tipe', 'Debit', 'Kredit', 'Saldo Bersih']],
+      body: detailBody,
+      theme: 'grid',
+      headStyles: { fillColor: COLORS.dark, textColor: 255, fontSize: 7 },
+      bodyStyles: { fontSize: 7 },
+      alternateRowStyles: { fillColor: COLORS.lightBg },
+      margin: { left: 20, right: 20 },
+      columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } },
+    } as any);
   }
-  
+
+  // ── Footer on all pages ──
+  drawFooter(doc, pw, ph);
+
   return doc;
 }
 
-/**
- * Download PDF file
- */
+// ─── Convenience wrappers ────────────────────────────────────────────────────
 export function downloadCashFlowPDF(doc: jsPDF, filename?: string): void {
-  const pdfName = filename || `cash_flow_${new Date().toISOString().split('T')[0]}.pdf`;
-  doc.save(pdfName);
+  doc.save(filename || `Arus_Kas_${new Date().toISOString().split('T')[0]}.pdf`);
 }
 
-/**
- * Export Cash Flow as PDF and trigger download
- */
 export function exportAndDownloadCashFlowPDF(
   data: SSOTCashFlowData,
-  options?: {
-    companyName?: string;
-    logoUrl?: string;
-    includeAccountDetails?: boolean;
-    filename?: string;
-  }
+  options?: { companyName?: string; logoUrl?: string; includeAccountDetails?: boolean; filename?: string; letterhead?: CompanyLetterhead }
 ): void {
   const doc = exportCashFlowToPDF(data, options);
   downloadCashFlowPDF(doc, options?.filename);

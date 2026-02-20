@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/utils"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -52,26 +54,28 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 		} else {
 			// Start from the day after last closed period
 			periodStartDate = lastClosedPeriod.EndDate.AddDate(0, 0, 1)
-			log.Printf("[UNIFIED CLOSING] Last closed period end: %s, starting from: %s", 
+			log.Printf("[UNIFIED CLOSING] Last closed period end: %s, starting from: %s",
 				lastClosedPeriod.EndDate.Format("2006-01-02"), periodStartDate.Format("2006-01-02"))
-			
+
 			// Validate that startDate matches periodStartDate
 			if !startDate.Equal(periodStartDate) {
-				log.Printf("[UNIFIED CLOSING] ⚠️ WARNING: Provided startDate (%s) doesn't match expected (%s)", 
+				log.Printf("[UNIFIED CLOSING] ⚠️ WARNING: Provided startDate (%s) doesn't match expected (%s)",
 					startDate.Format("2006-01-02"), periodStartDate.Format("2006-01-02"))
 			}
 		}
 
-		// 3. Get all revenue accounts (not just non-zero balances)
+		// 3. Get all revenue accounts (including headers if they have balance)
 		var revenueAccounts []models.Account
-		if err := tx.Where("type = ? AND is_header = false", "REVENUE").
+		// CRITICAL FIX: Removed is_header=false and added localized type support with ILIKE
+		if err := tx.Where("TRIM(type) ILIKE 'REVENUE' OR TRIM(type) ILIKE 'PENDAPATAN%'").
 			Find(&revenueAccounts).Error; err != nil {
 			return fmt.Errorf("failed to get revenue accounts: %v", err)
 		}
 
-		// 4. Get all expense accounts (not just non-zero balances)
+		// 4. Get all expense accounts (including headers if they have balance)
 		var expenseAccounts []models.Account
-		if err := tx.Where("type = ? AND is_header = false", "EXPENSE").
+		// CRITICAL FIX: Removed is_header=false and added localized type support with ILIKE
+		if err := tx.Where("TRIM(type) ILIKE 'EXPENSE' OR TRIM(type) ILIKE 'BEBAN%'").
 			Find(&expenseAccounts).Error; err != nil {
 			return fmt.Errorf("failed to get expense accounts: %v", err)
 		}
@@ -139,11 +143,14 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 			closingDeltaMap[bal.AccountID] = closingDelta
 
 			amountToClose := closingDelta.Abs() // nilai positif untuk laporan (Rp)
-			if bal.AccType == models.AccountTypeRevenue {
+			// Normalize type for checking
+			accTypeNormalized := strings.ToUpper(strings.TrimSpace(bal.AccType))
+
+			if accTypeNormalized == "REVENUE" || strings.HasPrefix(accTypeNormalized, "PENDAPATAN") {
 				// Revenue bersifat kredit normal → total revenue pakai nilai absolut
 				totalRevenue = totalRevenue.Add(amountToClose)
-			} else if bal.AccType == models.AccountTypeExpense {
-				// Expense bersifat debit normal → total expense pakai nilai absolut
+			} else {
+				// Expense & others
 				totalExpense = totalExpense.Add(amountToClose)
 			}
 		}
@@ -315,7 +322,7 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 				}
 				log.Printf("[UNIFIED CLOSING] Recalculated balance set: account_id=%d type=%s new_balance=%.2f", r.AccountID, r.AccType, r.Correct)
 			}
-			
+
 			// VALIDATION: Verify that all Revenue and Expense accounts are now ZERO
 			var nonZeroCount int64
 			if err := tx.Model(&models.Account{}).
@@ -323,19 +330,19 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 				Count(&nonZeroCount).Error; err != nil {
 				return fmt.Errorf("failed to validate zero balances: %v", err)
 			}
-			
+
 			if nonZeroCount > 0 {
 				// Log which accounts are not zero for debugging
 				var problemAccounts []models.Account
 				tx.Where("type IN (?) AND ABS(balance) > 0.01", []string{"REVENUE", "EXPENSE"}).
 					Find(&problemAccounts)
 				for _, acc := range problemAccounts {
-					log.Printf("[UNIFIED CLOSING] ⚠️ WARNING: Account %s (%s) still has balance: %.2f", 
+					log.Printf("[UNIFIED CLOSING] ⚠️ WARNING: Account %s (%s) still has balance: %.2f",
 						acc.Code, acc.Name, acc.Balance)
 				}
 				return fmt.Errorf("closing validation failed: %d revenue/expense accounts still have non-zero balance", nonZeroCount)
 			}
-			
+
 			log.Printf("[UNIFIED CLOSING] ✅ Validation passed: All Revenue and Expense accounts are ZERO")
 		}
 
@@ -422,12 +429,14 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 
 	// 4. Ambil semua akun revenue & expense (bukan hanya yang non-zero)
 	var revenueAccounts []models.Account
-	if err := tx.Where("type = ? AND is_header = false", models.AccountTypeRevenue).Find(&revenueAccounts).Error; err != nil {
+	// CRITICAL FIX: Removed is_header=false and added localized type support with ILIKE
+	if err := tx.Where("TRIM(type) ILIKE 'REVENUE' OR TRIM(type) ILIKE 'PENDAPATAN%'").Find(&revenueAccounts).Error; err != nil {
 		return nil, fmt.Errorf("failed to get revenue accounts: %v", err)
 	}
 
 	var expenseAccounts []models.Account
-	if err := tx.Where("type = ? AND is_header = false", models.AccountTypeExpense).Find(&expenseAccounts).Error; err != nil {
+	// CRITICAL FIX: Removed is_header=false and added localized type support with ILIKE
+	if err := tx.Where("TRIM(type) ILIKE 'EXPENSE' OR TRIM(type) ILIKE 'BEBAN%'").Find(&expenseAccounts).Error; err != nil {
 		return nil, fmt.Errorf("failed to get expense accounts: %v", err)
 	}
 
@@ -496,8 +505,10 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 		amountToClose := currentBalance.Neg().Abs()
 		amountFloat := amountToClose.InexactFloat64()
 
-		switch bal.AccType {
-		case models.AccountTypeRevenue:
+		// Gunakan logic deteksi tipe yang robust
+		accTypeUpper := strings.ToUpper(strings.TrimSpace(bal.AccType))
+
+		if accTypeUpper == "REVENUE" || strings.HasPrefix(accTypeUpper, "PENDAPATAN") {
 			acc, ok := revenueMap[bal.AccountID]
 			if !ok {
 				continue
@@ -510,7 +521,8 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 				Balance: amountFloat,
 				Type:    acc.Type,
 			})
-		case models.AccountTypeExpense:
+		} else {
+			// Assume Expense
 			acc, ok := expenseMap[bal.AccountID]
 			if !ok {
 				continue
@@ -558,20 +570,20 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 
 	// 7. Susun response map untuk kompatibilitas dengan frontend (SettingsPage)
 	return map[string]interface{}{
-		"start_date":        startDate.Format("2006-01-02"),
-		"end_date":          endDate.Format("2006-01-02"),
-		"total_revenue":     totalRevenue,
-		"total_expense":     totalExpense,
-		"net_income":        netIncome,
-		"retained_earnings": retainedName,
+		"start_date":           startDate.Format("2006-01-02"),
+		"end_date":             endDate.Format("2006-01-02"),
+		"total_revenue":        totalRevenue,
+		"total_expense":        totalExpense,
+		"net_income":           netIncome,
+		"retained_earnings":    retainedName,
 		"retained_earnings_id": retainedEarnings.ID,
-		"revenue_accounts":    revenuePreview,
-		"expense_accounts":    expensePreview,
-		"closing_entries":     closingEntries,
-		"can_close":           canClose,
-		"validation_messages": validationMessages,
-		"transaction_count":   transactionCount,
-		"period_days":         periodDays,
+		"revenue_accounts":     revenuePreview,
+		"expense_accounts":     expensePreview,
+		"closing_entries":      closingEntries,
+		"can_close":            canClose,
+		"validation_messages":  validationMessages,
+		"transaction_count":    transactionCount,
+		"period_days":          periodDays,
 	}, nil
 }
 
@@ -611,7 +623,7 @@ func (s *UnifiedPeriodClosingService) GetLastClosingInfo(ctx context.Context) (m
 				}
 				resp["period_start_date"] = earliestTxn.Format("2006-01-02")
 			}
-			
+
 			return resp, nil
 		}
 		return nil, fmt.Errorf("failed to query last closing period: %v", err)
@@ -646,25 +658,25 @@ func (s *UnifiedPeriodClosingService) GetPeriodInfoForDate(ctx context.Context, 
 	var period models.AccountingPeriod
 	err := s.db.Preload("ClosedByUser").Where("? BETWEEN start_date AND end_date AND is_closed = ?", date, true).
 		First(&period).Error
-	
+
 	if err != nil {
 		return nil
 	}
-	
+
 	info := map[string]interface{}{
 		"start_date":  period.StartDate,
 		"end_date":    period.EndDate,
 		"description": period.Description,
 		"is_locked":   period.IsLocked,
 	}
-	
+
 	if period.ClosedBy != nil {
 		info["closed_by"] = *period.ClosedBy
 	}
-	
+
 	if period.ClosedByUser.ID != 0 {
 		info["closed_by_name"] = period.ClosedByUser.GetDisplayName()
 	}
-	
+
 	return info
 }

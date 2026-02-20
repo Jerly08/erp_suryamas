@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/utils"
+
 	"github.com/jung-kurt/gofpdf"
 	"gorm.io/gorm"
 )
@@ -147,78 +145,24 @@ func (s *SalesReportExportService) ExportToPDF(data *SalesSummaryData, userID ui
 	pdf.SetAutoPageBreak(true, 15)
 	pdf.AddPage()
 
-	lm, tm, rm, _ := pdf.GetMargins()
+	lm, _, _, _ := pdf.GetMargins()
 	pageW, pageH := pdf.GetPageSize()
+	rm := float64(15)
 	contentW := pageW - lm - rm
 
 	// Company settings for consistent letterhead
 	settings := s.getCompanyInfo()
 
-	// Try to render real logo at top-left
-	logoW := 35.0
-	logoPath := strings.TrimSpace(settings.CompanyLogo)
-	logoDrawn := false
-	if logoPath != "" {
-		if strings.HasPrefix(logoPath, "/") {
-			logoPath = "." + logoPath
-		}
-		if _, err := os.Stat(logoPath); err != nil {
-			alt := filepath.Clean("./" + strings.TrimPrefix(settings.CompanyLogo, "/"))
-			if _, err2 := os.Stat(alt); err2 == nil {
-				logoPath = alt
-			} else {
-				logoPath = ""
-			}
-		}
-		if logoPath != "" {
-			if imgType := detectImageType(logoPath); imgType != "" {
-				pdf.ImageOptions(logoPath, lm, tm, logoW, 0, false, gofpdf.ImageOptions{ImageType: imgType, ReadDpi: true}, 0, "")
-				logoDrawn = true
-			}
-		}
-	}
-	if !logoDrawn {
-		pdf.SetDrawColor(220, 220, 220)
-		pdf.SetFillColor(248, 249, 250)
-		pdf.SetLineWidth(0.3)
-		pdf.Rect(lm, tm, logoW, logoW, "FD")
-		pdf.SetFont("Arial", "B", 16)
-		pdf.SetTextColor(120, 120, 120)
-		pdf.SetXY(lm+8, tm+19)
-		pdf.CellFormat(19, 8, "</>", "", 0, "C", false, 0, "")
-		pdf.SetTextColor(0, 0, 0)
-	}
-
-	// Company info (right-aligned)
-	companyName := strings.TrimSpace(settings.CompanyName)
-	if companyName == "" {
-		companyName = data.Company.Name
-	}
-	pdf.SetFont("Arial", "B", 12)
-	w := pdf.GetStringWidth(companyName)
-	pdf.SetXY(pageW-rm-w, tm)
-	pdf.Cell(w, 6, companyName)
-	pdf.SetFont("Arial", "", 9)
-	addr := strings.TrimSpace(settings.CompanyAddress)
-	if addr == "" {
-		addr = strings.TrimSpace(data.Company.Address)
-	}
-	if addr != "" {
-		pdf.SetXY(pageW-rm-pdf.GetStringWidth(addr), tm+8)
-		pdf.Cell(pdf.GetStringWidth(addr), 4, addr)
-	}
-
-	phoneText := fmt.Sprintf("Phone: %s", strings.TrimSpace(settings.CompanyPhone))
-	if strings.TrimSpace(settings.CompanyPhone) != "" {
-		pdf.SetXY(pageW-rm-pdf.GetStringWidth(phoneText), tm+14)
-		pdf.Cell(pdf.GetStringWidth(phoneText), 4, phoneText)
-	}
+	// Unified letterhead: logo left, company info right, separator
+	contentY := drawUnifiedLetterhead(pdf, settings, 35)
 
 	// Title
-	pdf.SetY(tm + logoW + 8)
+	pdf.SetY(contentY)
 	pdf.SetFont("Arial", "B", 14)
+	pdf.SetTextColor(25, 55, 109)
 	title := utils.T("sales_report", language)
 	pdf.Cell(contentW, 8, title)
+	pdf.SetTextColor(0, 0, 0)
 	pdf.Ln(8)
 
 	// Period
@@ -354,73 +298,70 @@ func (s *SalesReportExportService) ExportToPDF(data *SalesSummaryData, userID ui
 				pdf.AddPage()
 			}
 
-		// Customer name header - reduced width: 105 + 50 = 155mm
-		pdf.SetX(lm)
-		pdf.SetFont("Arial", "B", 9)
-		pdf.SetFillColor(230, 245, 255)
-		customerName := customer.CustomerName
-		if len(customerName) > 35 {
-			customerName = customerName[:32] + "..."
-		}
-		pdf.CellFormat(105, 7, customerName, "1", 0, "L", true, 0, "")
-		pdf.CellFormat(50, 7, fmt.Sprintf("%d items", len(customer.Items)), "1", 1, "R", true, 0, "")
-
-		// Items table header - Total: 55 + 18 + 30 + 30 + 22 = 155mm
-		pdf.SetX(lm)
-		pdf.SetFont("Arial", "B", 7.5)
-		pdf.SetFillColor(245, 245, 245)
-		pdf.CellFormat(55, 6, utils.T("product", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(18, 6, utils.T("qty", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(30, 6, utils.T("unit_price", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(30, 6, utils.T("total", language), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(22, 6, utils.T("date", language), "1", 1, "C", true, 0, "")
-
-		// Items rows
-		pdf.SetFont("Arial", "", 7.5)
-		for _, item := range customer.Items {
-			// Check if we need a new page
-			if pdf.GetY() > pageH-25 {
-				pdf.AddPage()
-				// Reprint header
-				pdf.SetX(lm)
-				pdf.SetFont("Arial", "B", 7.5)
-				pdf.SetFillColor(245, 245, 245)
-				pdf.CellFormat(55, 6, utils.T("product", language), "1", 0, "C", true, 0, "")
-				pdf.CellFormat(18, 6, utils.T("qty", language), "1", 0, "C", true, 0, "")
-				pdf.CellFormat(30, 6, utils.T("unit_price", language), "1", 0, "C", true, 0, "")
-				pdf.CellFormat(30, 6, utils.T("total", language), "1", 0, "C", true, 0, "")
-				pdf.CellFormat(22, 6, utils.T("date", language), "1", 1, "C", true, 0, "")
-				pdf.SetFont("Arial", "", 7.5)
-			}
-
-			productName := item.ProductName
-			if len(productName) > 32 {
-				productName = productName[:29] + "..."
-			}
-
-			qtyStr := fmt.Sprintf("%.0f %s", item.Quantity, item.Unit)
-			if len(qtyStr) > 12 {
-				qtyStr = qtyStr[:10] + ".."
-			}
-
+			// Customer name header - reduced width: 105 + 50 = 155mm
 			pdf.SetX(lm)
-			pdf.CellFormat(55, 6, productName, "1", 0, "L", false, 0, "")
-			pdf.CellFormat(18, 6, qtyStr, "1", 0, "R", false, 0, "")
-			pdf.CellFormat(30, 6, formatRupiahSimple(item.UnitPrice), "1", 0, "R", false, 0, "")
-			pdf.CellFormat(30, 6, formatRupiahSimple(item.TotalPrice), "1", 0, "R", false, 0, "")
-			pdf.CellFormat(22, 6, item.SaleDate.Format("02/01/06"), "1", 1, "C", false, 0, "")
-		}
+			pdf.SetFont("Arial", "B", 9)
+			pdf.SetFillColor(230, 245, 255)
+			customerName := customer.CustomerName
+			if len(customerName) > 35 {
+				customerName = customerName[:32] + "..."
+			}
+			pdf.CellFormat(105, 7, customerName, "1", 0, "L", true, 0, "")
+			pdf.CellFormat(50, 7, fmt.Sprintf("%d items", len(customer.Items)), "1", 1, "R", true, 0, "")
 
-		// Customer subtotal - Total: 103 + 52 = 155mm
-		pdf.SetX(lm)
-		pdf.SetFont("Arial", "B", 8)
-		pdf.SetFillColor(230, 245, 255)
-		custSubName := customer.CustomerName
-		if len(custSubName) > 25 {
-			custSubName = custSubName[:22] + "..."
-		}
-		pdf.CellFormat(103, 6, fmt.Sprintf("Subtotal (%s)", custSubName), "1", 0, "R", true, 0, "")
-		pdf.CellFormat(52, 6, formatRupiahSimple(customer.TotalAmount), "1", 1, "R", true, 0, "")
+			// Items table header - Total: 55 + 18 + 30 + 30 + 22 = 155mm
+			pdf.SetX(lm)
+			pdf.SetFont("Arial", "B", 7.5)
+			pdf.SetFillColor(245, 245, 245)
+			pdf.CellFormat(55, 6, utils.T("product", language), "1", 0, "C", true, 0, "")
+			pdf.CellFormat(18, 6, utils.T("qty", language), "1", 0, "C", true, 0, "")
+			pdf.CellFormat(30, 6, utils.T("unit_price", language), "1", 0, "C", true, 0, "")
+			pdf.CellFormat(30, 6, utils.T("total", language), "1", 0, "C", true, 0, "")
+			pdf.CellFormat(22, 6, utils.T("date", language), "1", 1, "C", true, 0, "")
+
+			// Items rows
+			pdf.SetFont("Arial", "", 7.5)
+			for _, item := range customer.Items {
+				// Check if we need a new page
+				if pdf.GetY() > pageH-25 {
+					pdf.AddPage()
+					// Reprint header
+					pdf.SetX(lm)
+					pdf.SetFont("Arial", "B", 7.5)
+					pdf.SetFillColor(245, 245, 245)
+					pdf.CellFormat(55, 6, utils.T("product", language), "1", 0, "C", true, 0, "")
+					pdf.CellFormat(18, 6, utils.T("qty", language), "1", 0, "C", true, 0, "")
+					pdf.CellFormat(30, 6, utils.T("unit_price", language), "1", 0, "C", true, 0, "")
+					pdf.CellFormat(30, 6, utils.T("total", language), "1", 0, "C", true, 0, "")
+					pdf.CellFormat(22, 6, utils.T("date", language), "1", 1, "C", true, 0, "")
+					pdf.SetFont("Arial", "", 7.5)
+				}
+
+				productName := item.ProductName
+				if len(productName) > 32 {
+					productName = productName[:29] + "..."
+				}
+
+				qtyStr := fmt.Sprintf("%.0f %s", item.Quantity, item.Unit)
+				if len(qtyStr) > 12 {
+					qtyStr = qtyStr[:10] + ".."
+				}
+
+				pdf.SetX(lm)
+				pdf.CellFormat(55, 6, productName, "1", 0, "L", false, 0, "")
+				pdf.CellFormat(18, 6, qtyStr, "1", 0, "R", false, 0, "")
+				pdf.CellFormat(30, 6, formatRupiahSimple(item.UnitPrice), "1", 0, "R", false, 0, "")
+				pdf.CellFormat(30, 6, formatRupiahSimple(item.TotalPrice), "1", 0, "R", false, 0, "")
+				pdf.CellFormat(22, 6, item.SaleDate.Format("02/01/06"), "1", 1, "C", false, 0, "")
+			}
+
+			// Customer subtotal - Total: 103 + 52 = 155mm
+			pdf.SetX(lm)
+			pdf.SetFont("Arial", "B", 8)
+			pdf.SetFillColor(230, 245, 255)
+			custSubName := customer.CustomerName
+			pdf.CellFormat(103, 6, fmt.Sprintf("Subtotal (%s)", custSubName), "1", 0, "R", true, 0, "")
+			pdf.CellFormat(52, 6, formatRupiahSimple(customer.TotalAmount), "1", 1, "R", true, 0, "")
 			pdf.Ln(4)
 		}
 	}
@@ -431,4 +372,3 @@ func (s *SalesReportExportService) ExportToPDF(data *SalesSummaryData, userID ui
 	}
 	return out.Bytes(), nil
 }
-

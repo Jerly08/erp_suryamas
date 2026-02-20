@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import SimpleLayout from '@/components/layout/SimpleLayout';
+import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
 import { DataTable } from '@/components/common/DataTable';
 import EnhancedPurchaseTable from '@/components/purchase/EnhancedPurchaseTable';
 import {
@@ -336,6 +337,7 @@ const columns = [
 
 const PurchasesPage: React.FC = () => {
   const { token, user } = useAuth();
+  const isServiceCompany = user?.company_type === 'SERVICE';
   const toast = useToast();
   const { t } = useTranslation();
   const { isOpen: isFilterOpen, onOpen: onFilterOpen, onClose: onFilterClose } = useDisclosure();
@@ -477,6 +479,7 @@ const PurchasesPage: React.FC = () => {
   const [canListExpenseAccounts, setCanListExpenseAccounts] = useState(true);
   const [loadingBankAccounts, setLoadingBankAccounts] = useState(false);
   const [loadingCreditAccounts, setLoadingCreditAccounts] = useState(false);  // New loading state
+  const [defaultTaxRate, setDefaultTaxRate] = useState<number>(0);
   const [formData, setFormData] = useState<PurchaseFormData>({
     vendor_id: '',
     date: new Date().toISOString().split('T')[0],
@@ -488,7 +491,7 @@ const PurchasesPage: React.FC = () => {
     tax: '0',
 
     // Tax additions (Penambahan)
-    ppn_rate: '11',
+    ppn_rate: '0',
     other_tax_additions: '0',
 
     // Tax deductions (Pemotongan)
@@ -568,6 +571,26 @@ const PurchasesPage: React.FC = () => {
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport, canApprove } = useModulePermissions('purchases');
+
+  // Fetch system settings for default tax rate
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const api = (await import('@/services/api')).default;
+        const response = await api.get('/api/v1/settings/public');
+        if (response.data?.data?.default_tax_rate !== undefined) {
+          const rate = response.data.data.default_tax_rate;
+          console.log('PurchasesPage: Using default tax rate from settings:', rate);
+          setDefaultTaxRate(rate);
+          // Set initial form ppn_rate to match settings
+          setFormData(prev => ({ ...prev, ppn_rate: rate.toString() }));
+        }
+      } catch (err) {
+        console.warn('PurchasesPage: Failed to load system settings, using default tax rate: 0');
+      }
+    };
+    if (token) fetchSettings();
+  }, [token]);
 
   // Helper function to notify directors
   const notifyDirectors = async (purchase: Purchase) => {
@@ -1691,58 +1714,65 @@ const PurchasesPage: React.FC = () => {
           description: '',
         }));
 
-        // Fetch asset accounts (inventory + fixed assets) using public endpoint
-        try {
-          const assetCatalogData = await accountService.getAccountCatalog(undefined, 'ASSET'); // Public endpoint
-          // Include both inventory and fixed asset accounts
-          const assetAccounts = assetCatalogData.filter(item => {
-            const code = item.code || '';
-            const name = (item.name || '').toLowerCase();
-
-            // Inventory accounts (current assets)
-            const isInventory = code === '1301' || name.includes('persediaan');
-
-            // Fixed asset accounts (codes 1500-1599 and specific account codes)
-            const isFixedAsset =
-              (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
-              ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
-              name.includes('fixed asset') ||
-              name.includes('asset tetap') ||
-              name.includes('peralatan') ||
-              name.includes('mesin') ||
-              name.includes('printer') ||
-              name.includes('komputer') ||
-              name.includes('equipment') ||
-              name.includes('furniture') ||
-              name.includes('kendaraan') ||
-              name.includes('bangunan') ||
-              name.includes('gedung');
-
-            return isInventory || isFixedAsset;
-          }).map(item => ({
-            id: item.id,
-            code: item.code,
-            name: item.name,
-            type: 'ASSET' as const,
-            is_active: item.active,
-            level: 1,
-            is_header: false,
-            balance: 0,
-            created_at: '',
-            updated_at: '',
-            description: '',
-          }));
-          allAccounts = [...assetAccounts, ...formattedExpenseAccounts];
-        } catch (assetError) {
-          console.log('Could not fetch asset accounts, using expense only:', assetError);
+        // For service companies: only show expense accounts (no inventory/fixed assets)
+        if (isServiceCompany) {
           allAccounts = formattedExpenseAccounts;
+        } else {
+          // Fetch asset accounts (inventory + fixed assets) using public endpoint
+          try {
+            const assetCatalogData = await accountService.getAccountCatalog(undefined, 'ASSET'); // Public endpoint
+            // Include both inventory and fixed asset accounts
+            const assetAccounts = assetCatalogData.filter(item => {
+              const code = item.code || '';
+              const name = (item.name || '').toLowerCase();
+
+              // Inventory accounts (current assets)
+              const isInventory = code.startsWith('1103') || name.includes('persediaan');
+
+              // Fixed asset accounts (codes 1500-1599 and specific account codes)
+              const isFixedAsset =
+                (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
+                ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
+                name.includes('fixed asset') ||
+                name.includes('asset tetap') ||
+                name.includes('peralatan') ||
+                name.includes('mesin') ||
+                name.includes('printer') ||
+                name.includes('komputer') ||
+                name.includes('equipment') ||
+                name.includes('furniture') ||
+                name.includes('kendaraan') ||
+                name.includes('bangunan') ||
+                name.includes('gedung');
+
+              return isInventory || isFixedAsset;
+            }).map(item => ({
+              id: item.id,
+              code: item.code,
+              name: item.name,
+              type: 'ASSET' as const,
+              is_active: item.active,
+              level: 1,
+              is_header: false,
+              balance: 0,
+              created_at: '',
+              updated_at: '',
+              description: '',
+            }));
+            allAccounts = [...assetAccounts, ...formattedExpenseAccounts];
+          } catch (assetError) {
+            console.log('Could not fetch asset accounts, using expense only:', assetError);
+            allAccounts = formattedExpenseAccounts;
+          }
         }
 
-        console.log('Formatted accounts from public catalog (inventory + fixed assets + expense):', allAccounts);
-        setExpenseAccounts(allAccounts);
+        // Filter out header/parent accounts — only detail accounts can be selected for transactions
+        const detailAccounts = allAccounts.filter(acc => !acc.is_header);
+        console.log('Formatted accounts from public catalog (inventory + fixed assets + expense), filtered headers:', detailAccounts.length, '/', allAccounts.length);
+        setExpenseAccounts(detailAccounts);
         setCanListExpenseAccounts(true);
-        if (allAccounts.length > 0) {
-          setDefaultExpenseAccountId(allAccounts[0].id as number);
+        if (detailAccounts.length > 0) {
+          setDefaultExpenseAccountId(detailAccounts[0].id as number);
         }
         return; // Success, exit early
       } catch (catalogError: any) {
@@ -1758,44 +1788,48 @@ const PurchasesPage: React.FC = () => {
 
         // Try to fetch asset accounts (inventory + fixed assets)
         let allAccountsList: GLAccount[] = expenseList;
-        try {
-          const assetData = await accountService.getAccounts(token, 'ASSET');
-          const assetList: GLAccount[] = Array.isArray(assetData) ? assetData : [];
-          const assetAccounts = assetList.filter(acc => {
-            const code = acc.code || '';
-            const name = (acc.name || '').toLowerCase();
+        if (!isServiceCompany) {
+          try {
+            const assetData = await accountService.getAccounts(token, 'ASSET');
+            const assetList: GLAccount[] = Array.isArray(assetData) ? assetData : [];
+            const assetAccounts = assetList.filter(acc => {
+              const code = acc.code || '';
+              const name = (acc.name || '').toLowerCase();
 
-            // Inventory accounts (current assets)
-            const isInventory = code === '1301' || name.includes('persediaan');
+              // Inventory accounts (current assets)
+              const isInventory = code.startsWith('1103') || name.includes('persediaan');
 
-            // Fixed asset accounts (codes 1500-1599 and specific account codes)
-            const isFixedAsset =
-              (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
-              ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
-              name.includes('fixed asset') ||
-              name.includes('asset tetap') ||
-              name.includes('peralatan') ||
-              name.includes('mesin') ||
-              name.includes('printer') ||
-              name.includes('komputer') ||
-              name.includes('equipment') ||
-              name.includes('furniture') ||
-              name.includes('kendaraan') ||
-              name.includes('bangunan') ||
-              name.includes('gedung');
+              // Fixed asset accounts (codes 1500-1599 and specific account codes)
+              const isFixedAsset =
+                (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
+                ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
+                name.includes('fixed asset') ||
+                name.includes('asset tetap') ||
+                name.includes('peralatan') ||
+                name.includes('mesin') ||
+                name.includes('printer') ||
+                name.includes('komputer') ||
+                name.includes('equipment') ||
+                name.includes('furniture') ||
+                name.includes('kendaraan') ||
+                name.includes('bangunan') ||
+                name.includes('gedung');
 
-            return isInventory || isFixedAsset;
-          });
-          allAccountsList = [...assetAccounts, ...expenseList];
-        } catch (assetError) {
-          console.log('Could not fetch asset accounts from regular endpoint, using expense only:', assetError);
+              return isInventory || isFixedAsset;
+            });
+            allAccountsList = [...assetAccounts, ...expenseList];
+          } catch (assetError) {
+            console.log('Could not fetch asset accounts from regular endpoint, using expense only:', assetError);
+          }
         }
 
-        console.log('Formatted accounts from regular endpoint (inventory + fixed assets + expense):', allAccountsList);
-        setExpenseAccounts(allAccountsList);
+        // Filter out header/parent accounts — only detail accounts can be selected for transactions
+        const detailAccountsList = allAccountsList.filter(acc => !acc.is_header);
+        console.log('Formatted accounts from regular endpoint (inventory + fixed assets + expense), filtered headers:', detailAccountsList.length, '/', allAccountsList.length);
+        setExpenseAccounts(detailAccountsList);
         setCanListExpenseAccounts(true);
-        if (allAccountsList.length > 0) {
-          setDefaultExpenseAccountId(allAccountsList[0].id as number);
+        if (detailAccountsList.length > 0) {
+          setDefaultExpenseAccountId(detailAccountsList[0].id as number);
         }
       } catch (regularError: any) {
         console.error('Regular accounts endpoint also failed:', regularError);
@@ -2186,7 +2220,7 @@ const PurchasesPage: React.FC = () => {
         discount: detailResponse.discount?.toString() || '0',
         tax: detailResponse.tax?.toString() || '0',
         // Tax additions (Penambahan)
-        ppn_rate: detailResponse.ppn_rate?.toString() || '11',
+        ppn_rate: detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
         other_tax_additions: detailResponse.other_tax_additions?.toString() || '0',
         // Tax deductions (Pemotongan)
         pph21_rate: detailResponse.pph21_rate?.toString() || '0',
@@ -2245,7 +2279,7 @@ const PurchasesPage: React.FC = () => {
       tax: '0',
 
       // Tax additions (Penambahan)
-      ppn_rate: '11',
+      ppn_rate: defaultTaxRate.toString(),
       other_tax_additions: '0',
 
       // Tax deductions (Pemotongan)
@@ -2321,7 +2355,7 @@ const PurchasesPage: React.FC = () => {
         notes: formData.notes,
         discount: parseFloat(formData.discount) || 0,
         // Send proper tax rates (not legacy tax field)
-        ppn_rate: !isNaN(parseFloat(formData.ppn_rate)) ? parseFloat(formData.ppn_rate) : 11,
+        ppn_rate: !isNaN(parseFloat(formData.ppn_rate)) ? parseFloat(formData.ppn_rate) : defaultTaxRate,
         other_tax_additions: parseFloat(formData.other_tax_additions) || 0,
         pph21_rate: parseFloat(formData.pph21_rate) || 0,
         pph23_rate: parseFloat(formData.pph23_rate) || 0,
@@ -2405,7 +2439,7 @@ const PurchasesPage: React.FC = () => {
         discount: detailResponse.discount?.toString() || '0',
         tax: detailResponse.tax?.toString() || '0',
         // Tax additions
-        ppn_rate: detailResponse.ppn_rate?.toString() || '11',
+        ppn_rate: detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
         other_tax_additions: detailResponse.other_tax_additions?.toString() || '0',
         // Tax deductions
         pph21_rate: detailResponse.pph21_rate?.toString() || '0',
@@ -2698,1043 +2732,1980 @@ const PurchasesPage: React.FC = () => {
   if (loading) {
     return (
       <ProtectedModule module="purchases">
-        <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
-          <Box>
-            <Text>{t('purchases.loadingPurchases')}</Text>
-          </Box>
-        </SimpleLayout>
+        <CompanyTypeGuard moduleName="Purchases">
+          <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
+            <Box>
+              <Text>{t('purchases.loadingPurchases')}</Text>
+            </Box>
+          </SimpleLayout>
+        </CompanyTypeGuard>
       </ProtectedModule>
     );
   }
 
   return (
     <ProtectedModule module="purchases">
-      <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
-        <Box
-          bg={bgColor}
-          minH="100vh"
-          p={6}
-        >
-          <VStack spacing={6} align="stretch">
-            {/* Enhanced Header */}
-            <Card
-              bg={cardBg}
-              borderWidth="1px"
-              borderColor={borderColor}
-              boxShadow="sm"
-              borderRadius="lg"
-              mb={2}
-            >
-              <CardBody p={6}>
-                <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
-                  <VStack align="start" spacing={1}>
-                    <Heading
-                      size="xl"
-                      color={headingColor}
-                      fontWeight="600"
-                    >
-                      {t('purchases.title') || 'Purchase Management'}
-                    </Heading>
-                    <Text
-                      fontSize="md"
-                      color={textSecondary}
-                    >
-                      {t('purchases.manageTransactions')}
-                    </Text>
-                  </VStack>
-
-                  <HStack spacing={3}>
-                    <Tooltip label={t('purchases.refreshData')}>
-                      <IconButton
-                        aria-label={t('purchases.refresh')}
-                        icon={<FiRefreshCw />}
-                        variant="ghost"
-                        onClick={handleRefresh}
-                        isLoading={loading}
-                        _hover={{
-                          bg: hoverBg,
-                          transform: 'translateY(-1px)',
-                          boxShadow: 'md'
-                        }}
-                        transition="all 0.2s ease"
-                      />
-                    </Tooltip>
-
-                    <Menu zIndex={9999} strategy="fixed">
-                      <MenuButton
-                        as={Button}
-                        leftIcon={<FiDownload />}
-                        colorScheme="green"
-                        variant="outline"
-                        size="md"
-                        _hover={{
-                          bg: hoverBg,
-                          borderColor: hoverBorder,
-                          transform: 'translateY(-1px)'
-                        }}
-                        transition="all 0.2s ease"
-                      >
-                        {t('purchases.exportReport')}
-                      </MenuButton>
-                      <MenuList
-                        zIndex={10001}
-                        boxShadow="lg"
-                        border="1px solid"
-                        borderColor={borderColor}
-                        bg={cardBg}
-                        minW="160px"
-                        maxW="240px"
-                      >
-                        <MenuItem onClick={handleExportPDF} icon={<FiFileText />}>{t('purchases.exportPDF')}</MenuItem>
-                        <MenuItem onClick={handleExportCSV} icon={<FiDownload />}>{t('purchases.exportCSV')}</MenuItem>
-                      </MenuList>
-                    </Menu>
-
-                    {canCreate && (
-                      <Button
-                        leftIcon={<FiPlus />}
-                        colorScheme="blue"
-                        size="md"
-                        px={6}
-                        fontWeight="medium"
-                        onClick={handleCreate}
-                        _hover={{
-                          transform: 'translateY(-1px)',
-                          boxShadow: 'lg'
-                        }}
-                      >
-                        {t('purchases.createPurchase')}
-                      </Button>
-                    )}
-                  </HStack>
-                </Flex>
-              </CardBody>
-            </Card>
-
-            {/* Enhanced Statistics Cards */}
-            <Grid templateColumns="repeat(auto-fit, minmax(280px, 1fr))" gap={6}>
+      <CompanyTypeGuard moduleName="Purchases">
+        <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
+          <Box
+            bg={bgColor}
+            minH="100vh"
+            p={6}
+          >
+            <VStack spacing={6} align="stretch">
+              {/* Enhanced Header */}
               <Card
                 bg={cardBg}
                 borderWidth="1px"
                 borderColor={borderColor}
                 boxShadow="sm"
                 borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
+                mb={2}
               >
                 <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
-                      >
-                        {t('purchases.totalPurchases')}
-                      </StatLabel>
-                      <StatNumber
+                  <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
+                    <VStack align="start" spacing={1}>
+                      <Heading
+                        size="xl"
                         color={headingColor}
-                        fontSize="2xl"
-                        fontWeight="bold"
+                        fontWeight="600"
                       >
-                        {stats.total}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.blue}
-                      color={statColors.blue}
-                    >
-                      <FiRefreshCw size={20} />
-                    </Box>
+                        {t('purchases.title') || 'Purchase Management'}
+                      </Heading>
+                      <Text
+                        fontSize="md"
+                        color={textSecondary}
+                      >
+                        {t('purchases.manageTransactions')}
+                      </Text>
+                    </VStack>
+
+                    <HStack spacing={3}>
+                      <Tooltip label={t('purchases.refreshData')}>
+                        <IconButton
+                          aria-label={t('purchases.refresh')}
+                          icon={<FiRefreshCw />}
+                          variant="ghost"
+                          onClick={handleRefresh}
+                          isLoading={loading}
+                          _hover={{
+                            bg: hoverBg,
+                            transform: 'translateY(-1px)',
+                            boxShadow: 'md'
+                          }}
+                          transition="all 0.2s ease"
+                        />
+                      </Tooltip>
+
+                      <Menu zIndex={9999} strategy="fixed">
+                        <MenuButton
+                          as={Button}
+                          leftIcon={<FiDownload />}
+                          colorScheme="green"
+                          variant="outline"
+                          size="md"
+                          _hover={{
+                            bg: hoverBg,
+                            borderColor: hoverBorder,
+                            transform: 'translateY(-1px)'
+                          }}
+                          transition="all 0.2s ease"
+                        >
+                          {t('purchases.exportReport')}
+                        </MenuButton>
+                        <MenuList
+                          zIndex={10001}
+                          boxShadow="lg"
+                          border="1px solid"
+                          borderColor={borderColor}
+                          bg={cardBg}
+                          minW="160px"
+                          maxW="240px"
+                        >
+                          <MenuItem onClick={handleExportPDF} icon={<FiFileText />}>{t('purchases.exportPDF')}</MenuItem>
+                          <MenuItem onClick={handleExportCSV} icon={<FiDownload />}>{t('purchases.exportCSV')}</MenuItem>
+                        </MenuList>
+                      </Menu>
+
+                      {canCreate && (
+                        <Button
+                          leftIcon={<FiPlus />}
+                          colorScheme="blue"
+                          size="md"
+                          px={6}
+                          fontWeight="medium"
+                          onClick={handleCreate}
+                          _hover={{
+                            transform: 'translateY(-1px)',
+                            boxShadow: 'lg'
+                          }}
+                        >
+                          {t('purchases.createPurchase')}
+                        </Button>
+                      )}
+                    </HStack>
                   </Flex>
                 </CardBody>
               </Card>
 
-              <Card
-                bg={cardBg}
-                borderWidth="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-                borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
-              >
-                <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
+              {/* Enhanced Statistics Cards */}
+              <Grid templateColumns="repeat(auto-fit, minmax(280px, 1fr))" gap={6}>
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.totalPurchases')}
+                        </StatLabel>
+                        <StatNumber
+                          color={headingColor}
+                          fontSize="2xl"
+                          fontWeight="bold"
+                        >
+                          {stats.total}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.blue}
+                        color={statColors.blue}
                       >
-                        {t('purchases.pendingApproval')}
-                      </StatLabel>
-                      <StatNumber
+                        <FiRefreshCw size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
+
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.pendingApproval')}
+                        </StatLabel>
+                        <StatNumber
+                          color={statColors.orange}
+                          fontSize="2xl"
+                          fontWeight="bold"
+                        >
+                          {stats.needingApproval}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.orange}
                         color={statColors.orange}
-                        fontSize="2xl"
-                        fontWeight="bold"
                       >
-                        {stats.needingApproval}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.orange}
-                      color={statColors.orange}
-                    >
-                      <FiClock size={20} />
-                    </Box>
-                  </Flex>
-                </CardBody>
-              </Card>
+                        <FiClock size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
 
-              <Card
-                bg={cardBg}
-                borderWidth="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-                borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
-              >
-                <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
-                      >
-                        {t('purchases.approved')}
-                      </StatLabel>
-                      <StatNumber
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.approved')}
+                        </StatLabel>
+                        <StatNumber
+                          color={statColors.green}
+                          fontSize="2xl"
+                          fontWeight="bold"
+                        >
+                          {stats.approved}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.green}
                         color={statColors.green}
-                        fontSize="2xl"
-                        fontWeight="bold"
                       >
-                        {stats.approved}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.green}
-                      color={statColors.green}
-                    >
-                      <FiCheckCircle size={20} />
-                    </Box>
-                  </Flex>
-                </CardBody>
-              </Card>
+                        <FiCheckCircle size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
 
-              <Card
-                bg={cardBg}
-                borderWidth="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-                borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
-              >
-                <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
-                      >
-                        {t('purchases.rejected')}
-                      </StatLabel>
-                      <StatNumber
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.rejected')}
+                        </StatLabel>
+                        <StatNumber
+                          color={statColors.red}
+                          fontSize="2xl"
+                          fontWeight="bold"
+                        >
+                          {stats.rejected}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.red}
                         color={statColors.red}
-                        fontSize="2xl"
-                        fontWeight="bold"
                       >
-                        {stats.rejected}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.red}
-                      color={statColors.red}
-                    >
-                      <FiXCircle size={20} />
-                    </Box>
-                  </Flex>
-                </CardBody>
-              </Card>
+                        <FiXCircle size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
 
-              <Card
-                bg={cardBg}
-                borderWidth="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-                borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
-              >
-                <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.totalValue')}
+                        </StatLabel>
+                        <StatNumber
+                          color={headingColor}
+                          fontSize="lg"
+                          fontWeight="bold"
+                        >
+                          {formatCurrency(stats.totalValue || 0)}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.purple}
+                        color={statColors.purple}
                       >
-                        {t('purchases.totalValue')}
-                      </StatLabel>
-                      <StatNumber
-                        color={headingColor}
-                        fontSize="lg"
-                        fontWeight="bold"
-                      >
-                        {formatCurrency(stats.totalValue || 0)}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.purple}
-                      color={statColors.purple}
-                    >
-                      <FiAlertCircle size={20} />
-                    </Box>
-                  </Flex>
-                </CardBody>
-              </Card>
+                        <FiAlertCircle size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
 
-              <Card
-                bg={cardBg}
-                borderWidth="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-                borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
-              >
-                <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.totalApprovedAmount')}
+                        </StatLabel>
+                        <StatNumber
+                          color={headingColor}
+                          fontSize="lg"
+                          fontWeight="bold"
+                        >
+                          {formatCurrency(stats.totalApprovedAmount || 0)}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.purple}
+                        color={statColors.purple}
                       >
-                        {t('purchases.totalApprovedAmount')}
-                      </StatLabel>
-                      <StatNumber
-                        color={headingColor}
-                        fontSize="lg"
-                        fontWeight="bold"
-                      >
-                        {formatCurrency(stats.totalApprovedAmount || 0)}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.purple}
-                      color={statColors.purple}
-                    >
-                      <FiAlertCircle size={20} />
-                    </Box>
-                  </Flex>
-                </CardBody>
-              </Card>
+                        <FiAlertCircle size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
 
-              <Card
-                bg={cardBg}
-                borderWidth="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-                borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
-              >
-                <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
-                      >
-                        {t('purchases.totalPaid')}
-                      </StatLabel>
-                      <StatNumber
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.totalPaid')}
+                        </StatLabel>
+                        <StatNumber
+                          color={statColors.green}
+                          fontSize="lg"
+                          fontWeight="bold"
+                        >
+                          {formatCurrency(stats.totalPaid || 0)}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.green}
                         color={statColors.green}
-                        fontSize="lg"
-                        fontWeight="bold"
                       >
-                        {formatCurrency(stats.totalPaid || 0)}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.green}
-                      color={statColors.green}
-                    >
-                      <FiCheckCircle size={20} />
-                    </Box>
-                  </Flex>
-                </CardBody>
-              </Card>
+                        <FiCheckCircle size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
 
-              <Card
-                bg={cardBg}
-                borderWidth="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-                borderRadius="lg"
-                _hover={{
-                  boxShadow: 'md',
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease'
-                }}
-                transition="all 0.2s ease"
-              >
-                <CardBody p={6}>
-                  <Flex align="center" justify="space-between">
-                    <Stat>
-                      <StatLabel
-                        color={textSecondary}
-                        fontSize="sm"
-                        fontWeight="medium"
-                        mb={2}
-                      >
-                        {t('purchases.outstandingAmount')}
-                      </StatLabel>
-                      <StatNumber
+                <Card
+                  bg={cardBg}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  boxShadow="sm"
+                  borderRadius="lg"
+                  _hover={{
+                    boxShadow: 'md',
+                    transform: 'translateY(-2px)',
+                    transition: 'all 0.2s ease'
+                  }}
+                  transition="all 0.2s ease"
+                >
+                  <CardBody p={6}>
+                    <Flex align="center" justify="space-between">
+                      <Stat>
+                        <StatLabel
+                          color={textSecondary}
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                        >
+                          {t('purchases.outstandingAmount')}
+                        </StatLabel>
+                        <StatNumber
+                          color={statColors.orange}
+                          fontSize="lg"
+                          fontWeight="bold"
+                        >
+                          {formatCurrency(stats.totalOutstanding || 0)}
+                        </StatNumber>
+                      </Stat>
+                      <Box
+                        p={3}
+                        borderRadius="lg"
+                        bg={statBgColors.orange}
                         color={statColors.orange}
-                        fontSize="lg"
-                        fontWeight="bold"
                       >
-                        {formatCurrency(stats.totalOutstanding || 0)}
-                      </StatNumber>
-                    </Stat>
-                    <Box
-                      p={3}
-                      borderRadius="lg"
-                      bg={statBgColors.orange}
-                      color={statColors.orange}
-                    >
-                      <FiClock size={20} />
+                        <FiClock size={20} />
+                      </Box>
+                    </Flex>
+                  </CardBody>
+                </Card>
+              </Grid>
+
+              {error && (
+                <Alert status="error">
+                  <AlertIcon />
+                  <AlertTitle>Error!</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {/* Search and Filters */}
+              <Card mb={6}>
+                <CardBody>
+                  <Flex gap={4} align="end" wrap="wrap">
+                    <Box flex="1" minW="300px">
+                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                        {t('purchases.searchTransactions')}
+                      </Text>
+                      <InputGroup>
+                        <InputLeftElement pointerEvents="none">
+                          <FiSearch color={textSecondary} />
+                        </InputLeftElement>
+                        <Input
+                          placeholder={t('purchases.searchPlaceholder')}
+                          value={searchInput}
+                          onChange={(e) => handleSearchChange(e.target.value)}
+                          bg={cardBg}
+                        />
+                      </InputGroup>
                     </Box>
-                  </Flex>
-                </CardBody>
-              </Card>
-            </Grid>
 
-            {error && (
-              <Alert status="error">
-                <AlertIcon />
-                <AlertTitle>Error!</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
+                    <Box minW="180px">
+                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                        {t('purchases.filterByVendor')}
+                      </Text>
+                      <Select
+                        placeholder={t('purchases.allVendors')}
+                        value={filters.vendor_id || ''}
+                        onChange={(e) => handleFilterChange({ vendor_id: e.target.value })}
+                        bg={cardBg}
+                      >
+                        {vendors.map((vendor) => (
+                          <option key={vendor.id} value={vendor.id.toString()}>
+                            {vendor.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Box>
 
-            {/* Search and Filters */}
-            <Card mb={6}>
-              <CardBody>
-                <Flex gap={4} align="end" wrap="wrap">
-                  <Box flex="1" minW="300px">
-                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                      {t('purchases.searchTransactions')}
-                    </Text>
-                    <InputGroup>
-                      <InputLeftElement pointerEvents="none">
-                        <FiSearch color={textSecondary} />
-                      </InputLeftElement>
+                    <Box minW="160px">
+                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                        {t('purchases.filterByStatus')}
+                      </Text>
+                      <Select
+                        placeholder={t('purchases.allStatuses')}
+                        value={filters.status || ''}
+                        onChange={(e) => handleFilterChange({ status: e.target.value })}
+                        bg={cardBg}
+                      >
+                        <option value="">{t('purchases.allStatuses')}</option>
+                        <option value="draft">{t('purchases.draft')}</option>
+                        <option value="pending_approval">{t('purchases.pendingApprovalStatus')}</option>
+                        <option value="approved">{t('purchases.approved')}</option>
+                        <option value="cancelled">{t('purchases.cancelled')}</option>
+                      </Select>
+                    </Box>
+
+                    <Box minW="160px">
+                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                        {t('purchases.approvalStatus')}
+                      </Text>
+                      <Select
+                        placeholder={t('purchases.allApprovalStatuses')}
+                        value={filters.approval_status || ''}
+                        onChange={(e) => handleFilterChange({ approval_status: e.target.value })}
+                        bg={cardBg}
+                      >
+                        <option value="">{t('purchases.allApprovalStatuses')}</option>
+                        <option value="not_required">{t('purchases.notRequired')}</option>
+                        <option value="pending">{t('purchases.pending')}</option>
+                        <option value="approved">{t('purchases.approved')}</option>
+                        <option value="rejected">{t('purchases.rejected')}</option>
+                      </Select>
+                    </Box>
+
+                    <Box minW="160px">
+                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                        {t('purchases.startDate')}
+                      </Text>
                       <Input
-                        placeholder={t('purchases.searchPlaceholder')}
-                        value={searchInput}
-                        onChange={(e) => handleSearchChange(e.target.value)}
+                        type="date"
+                        value={filters.start_date || ''}
+                        onChange={(e) => handleFilterChange({ start_date: e.target.value })}
                         bg={cardBg}
                       />
-                    </InputGroup>
-                  </Box>
+                    </Box>
 
-                  <Box minW="180px">
-                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                      {t('purchases.filterByVendor')}
-                    </Text>
-                    <Select
-                      placeholder={t('purchases.allVendors')}
-                      value={filters.vendor_id || ''}
-                      onChange={(e) => handleFilterChange({ vendor_id: e.target.value })}
-                      bg={cardBg}
+                    <Box minW="160px">
+                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                        {t('purchases.endDate')}
+                      </Text>
+                      <Input
+                        type="date"
+                        value={filters.end_date || ''}
+                        onChange={(e) => handleFilterChange({ end_date: e.target.value })}
+                        bg={cardBg}
+                      />
+                    </Box>
+
+                    <Button
+                      leftIcon={<FiFilter />}
+                      variant="outline"
+                      onClick={() => {
+                        // Clear search input state
+                        setSearchInput('');
+                        // Reset purchases to show all
+                        setPurchases(allPurchases);
+                        // Reset filters
+                        setFilters({
+                          page: 1,
+                          limit: 10,
+                          status: '',
+                          vendor_id: '',
+                          approval_status: '',
+                          search: '',
+                          start_date: '',
+                          end_date: ''
+                        });
+                        fetchPurchases({ page: 1, limit: 10 });
+                      }}
                     >
-                      {vendors.map((vendor) => (
-                        <option key={vendor.id} value={vendor.id.toString()}>
-                          {vendor.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </Box>
+                      {t('purchases.clearFilters')}
+                    </Button>
+                  </Flex>
+                </CardBody>
+              </Card>
 
-                  <Box minW="160px">
-                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                      {t('purchases.filterByStatus')}
-                    </Text>
-                    <Select
-                      placeholder={t('purchases.allStatuses')}
-                      value={filters.status || ''}
-                      onChange={(e) => handleFilterChange({ status: e.target.value })}
-                      bg={cardBg}
-                    >
-                      <option value="">{t('purchases.allStatuses')}</option>
-                      <option value="draft">{t('purchases.draft')}</option>
-                      <option value="pending_approval">{t('purchases.pendingApprovalStatus')}</option>
-                      <option value="approved">{t('purchases.approved')}</option>
-                      <option value="cancelled">{t('purchases.cancelled')}</option>
-                    </Select>
-                  </Box>
+              {/* Main Data Table */}
+              <EnhancedPurchaseTable
+                purchases={purchases}
+                loading={loading}
+                onViewDetails={handleView}
+                onEdit={canEdit ? handleEdit : undefined}
+                onSubmitForApproval={handleSubmitForApproval}
+                onDelete={canDelete ? handleDelete : undefined}
+                onDuplicate={canEdit ? handleDuplicate : undefined}
+                renderActions={renderActions}
+                title={t('purchases.purchaseTransactions')}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                userRole={normalizeRole(user?.role as any)}
+              />
 
-                  <Box minW="160px">
-                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                      {t('purchases.approvalStatus')}
-                    </Text>
-                    <Select
-                      placeholder={t('purchases.allApprovalStatuses')}
-                      value={filters.approval_status || ''}
-                      onChange={(e) => handleFilterChange({ approval_status: e.target.value })}
-                      bg={cardBg}
-                    >
-                      <option value="">{t('purchases.allApprovalStatuses')}</option>
-                      <option value="not_required">{t('purchases.notRequired')}</option>
-                      <option value="pending">{t('purchases.pending')}</option>
-                      <option value="approved">{t('purchases.approved')}</option>
-                      <option value="rejected">{t('purchases.rejected')}</option>
-                    </Select>
-                  </Box>
+              {/* View Purchase Modal */}
+              <Modal isOpen={isViewOpen} onClose={onViewClose} size="xl">
+                <ModalOverlay />
+                <ModalContent bg={modalContentBg}>
+                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                    {t('purchases.viewPurchase')} - {selectedPurchase?.code}
+                  </ModalHeader>
+                  <ModalCloseButton />
+                  <ModalBody>
+                    {selectedPurchase && (
+                      <VStack spacing={6} align="stretch">
+                        {/* Show rejection alert for cancelled/rejected purchases */}
+                        {(selectedPurchase.status === 'CANCELLED' || selectedPurchase.approval_status === 'REJECTED') && (
+                          <Alert status="error" variant="left-accent">
+                            <AlertIcon />
+                            <VStack align="start" spacing={1}>
+                              <AlertTitle>
+                                {selectedPurchase.status === 'CANCELLED' ? t('purchases.purchaseCancelled') : t('purchases.purchaseRejected')}
+                              </AlertTitle>
+                              <AlertDescription>
+                                {selectedPurchase.status === 'CANCELLED'
+                                  ? t('purchases.purchaseCancelledDesc')
+                                  : t('purchases.purchaseRejectedDesc')}
+                              </AlertDescription>
+                            </VStack>
+                          </Alert>
+                        )}
 
-                  <Box minW="160px">
-                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                      {t('purchases.startDate')}
-                    </Text>
-                    <Input
-                      type="date"
-                      value={filters.start_date || ''}
-                      onChange={(e) => handleFilterChange({ start_date: e.target.value })}
-                      bg={cardBg}
-                    />
-                  </Box>
+                        {/* Basic Info */}
+                        <SimpleGrid columns={2} spacing={4}>
+                          <FormControl>
+                            <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
+                            <Text fontWeight="medium">{selectedPurchase.code}</Text>
+                          </FormControl>
 
-                  <Box minW="160px">
-                    <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                      {t('purchases.endDate')}
-                    </Text>
-                    <Input
-                      type="date"
-                      value={filters.end_date || ''}
-                      onChange={(e) => handleFilterChange({ end_date: e.target.value })}
-                      bg={cardBg}
-                    />
-                  </Box>
+                          <FormControl>
+                            <FormLabel>{t('purchases.vendor')}</FormLabel>
+                            <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
+                          </FormControl>
 
-                  <Button
-                    leftIcon={<FiFilter />}
-                    variant="outline"
-                    onClick={() => {
-                      // Clear search input state
-                      setSearchInput('');
-                      // Reset purchases to show all
-                      setPurchases(allPurchases);
-                      // Reset filters
-                      setFilters({
-                        page: 1,
-                        limit: 10,
-                        status: '',
-                        vendor_id: '',
-                        approval_status: '',
-                        search: '',
-                        start_date: '',
-                        end_date: ''
-                      });
-                      fetchPurchases({ page: 1, limit: 10 });
-                    }}
-                  >
-                    {t('purchases.clearFilters')}
-                  </Button>
-                </Flex>
-              </CardBody>
-            </Card>
+                          <FormControl>
+                            <FormLabel>{t('purchases.date')}</FormLabel>
+                            <Text fontWeight="medium">{new Date(selectedPurchase.date).toLocaleDateString('id-ID')}</Text>
+                          </FormControl>
 
-            {/* Main Data Table */}
-            <EnhancedPurchaseTable
-              purchases={purchases}
-              loading={loading}
-              onViewDetails={handleView}
-              onEdit={canEdit ? handleEdit : undefined}
-              onSubmitForApproval={handleSubmitForApproval}
-              onDelete={canDelete ? handleDelete : undefined}
-              onDuplicate={canEdit ? handleDuplicate : undefined}
-              renderActions={renderActions}
-              title={t('purchases.purchaseTransactions')}
-              formatCurrency={formatCurrency}
-              formatDate={formatDate}
-              canEdit={canEdit}
-              canDelete={canDelete}
-              userRole={normalizeRole(user?.role as any)}
-            />
+                          <FormControl>
+                            <FormLabel>{t('purchases.totalAmount')}</FormLabel>
+                            <Text fontWeight="medium" color="green.500">{formatCurrency(selectedPurchase.total_amount)}</Text>
+                          </FormControl>
 
-            {/* View Purchase Modal */}
-            <Modal isOpen={isViewOpen} onClose={onViewClose} size="xl">
-              <ModalOverlay />
-              <ModalContent bg={modalContentBg}>
-                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-                  {t('purchases.viewPurchase')} - {selectedPurchase?.code}
-                </ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  {selectedPurchase && (
-                    <VStack spacing={6} align="stretch">
-                      {/* Show rejection alert for cancelled/rejected purchases */}
-                      {(selectedPurchase.status === 'CANCELLED' || selectedPurchase.approval_status === 'REJECTED') && (
-                        <Alert status="error" variant="left-accent">
-                          <AlertIcon />
-                          <VStack align="start" spacing={1}>
-                            <AlertTitle>
-                              {selectedPurchase.status === 'CANCELLED' ? t('purchases.purchaseCancelled') : t('purchases.purchaseRejected')}
-                            </AlertTitle>
-                            <AlertDescription>
-                              {selectedPurchase.status === 'CANCELLED'
-                                ? t('purchases.purchaseCancelledDesc')
-                                : t('purchases.purchaseRejectedDesc')}
-                            </AlertDescription>
-                          </VStack>
-                        </Alert>
-                      )}
+                          <FormControl>
+                            <FormLabel>{t('purchases.status')}</FormLabel>
+                            <Badge colorScheme={getStatusColor(selectedPurchase.status)} variant="subtle" w="fit-content">
+                              {selectedPurchase.status.replace('_', ' ').toUpperCase()}
+                            </Badge>
+                          </FormControl>
 
-                      {/* Basic Info */}
-                      <SimpleGrid columns={2} spacing={4}>
-                        <FormControl>
-                          <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
-                          <Text fontWeight="medium">{selectedPurchase.code}</Text>
-                        </FormControl>
+                          <FormControl>
+                            <FormLabel>{t('purchases.approvalStatus')}</FormLabel>
+                            <Badge colorScheme={getApprovalStatusColor(selectedPurchase.approval_status)} variant="subtle" w="fit-content">
+                              {selectedPurchase.approval_status.replace('_', ' ').toUpperCase()}
+                            </Badge>
+                          </FormControl>
+                        </SimpleGrid>
 
-                        <FormControl>
-                          <FormLabel>{t('purchases.vendor')}</FormLabel>
-                          <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel>{t('purchases.date')}</FormLabel>
-                          <Text fontWeight="medium">{new Date(selectedPurchase.date).toLocaleDateString('id-ID')}</Text>
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel>{t('purchases.totalAmount')}</FormLabel>
-                          <Text fontWeight="medium" color="green.500">{formatCurrency(selectedPurchase.total_amount)}</Text>
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel>{t('purchases.status')}</FormLabel>
-                          <Badge colorScheme={getStatusColor(selectedPurchase.status)} variant="subtle" w="fit-content">
-                            {selectedPurchase.status.replace('_', ' ').toUpperCase()}
-                          </Badge>
-                        </FormControl>
-
-                        <FormControl>
-                          <FormLabel>{t('purchases.approvalStatus')}</FormLabel>
-                          <Badge colorScheme={getApprovalStatusColor(selectedPurchase.approval_status)} variant="subtle" w="fit-content">
-                            {selectedPurchase.approval_status.replace('_', ' ').toUpperCase()}
-                          </Badge>
-                        </FormControl>
-                      </SimpleGrid>
-
-                      {/* Payment Information */}
-                      {selectedPurchase.payment_method && (
-                        <Box>
-                          <FormLabel mb={3}>{t('purchases.paymentInformation')}</FormLabel>
-                          <SimpleGrid columns={3} spacing={4}>
-                            <FormControl>
-                              <FormLabel fontSize="sm">{t('purchases.paymentMethod')}</FormLabel>
-                              <Badge
-                                colorScheme={
-                                  selectedPurchase.payment_method === 'CREDIT' ? 'orange' :
-                                    selectedPurchase.payment_method === 'CASH' ? 'green' :
-                                      selectedPurchase.payment_method === 'BANK_TRANSFER' ? 'blue' :
-                                        selectedPurchase.payment_method === 'CHECK' ? 'purple' : 'gray'
-                                }
-                                variant="subtle"
-                                w="fit-content"
-                              >
-                                {selectedPurchase.payment_method.replace('_', ' ')}
-                              </Badge>
-                            </FormControl>
-
-                            {selectedPurchase.bank_account_id && (
+                        {/* Payment Information */}
+                        {selectedPurchase.payment_method && (
+                          <Box>
+                            <FormLabel mb={3}>{t('purchases.paymentInformation')}</FormLabel>
+                            <SimpleGrid columns={3} spacing={4}>
                               <FormControl>
-                                <FormLabel fontSize="sm">{t('purchases.bankAccount')}</FormLabel>
-                                <Text fontWeight="medium">
-                                  {(() => {
-                                    // Prefer relation from backend if available
-                                    const relatedAccount: any = (selectedPurchase as any).bank_account;
-                                    const accountFromList = bankAccounts.find(
-                                      (account) => account.id === selectedPurchase.bank_account_id
-                                    );
-                                    const name = relatedAccount?.name || accountFromList?.name;
-                                    const code = relatedAccount?.code || accountFromList?.code;
-                                    if (!name && !code) return 'Unknown Account';
-                                    if (name && code) return `${name} (${code})`;
-                                    return name || code || 'Unknown Account';
-                                  })()}
-                                </Text>
+                                <FormLabel fontSize="sm">{t('purchases.paymentMethod')}</FormLabel>
+                                <Badge
+                                  colorScheme={
+                                    selectedPurchase.payment_method === 'CREDIT' ? 'orange' :
+                                      selectedPurchase.payment_method === 'CASH' ? 'green' :
+                                        selectedPurchase.payment_method === 'BANK_TRANSFER' ? 'blue' :
+                                          selectedPurchase.payment_method === 'CHECK' ? 'purple' : 'gray'
+                                  }
+                                  variant="subtle"
+                                  w="fit-content"
+                                >
+                                  {selectedPurchase.payment_method.replace('_', ' ')}
+                                </Badge>
                               </FormControl>
-                            )}
 
-                            {selectedPurchase.payment_reference && (
-                              <FormControl>
-                                <FormLabel fontSize="sm">{t('purchases.paymentReference')}</FormLabel>
-                                <Text fontWeight="medium">{selectedPurchase.payment_reference}</Text>
-                              </FormControl>
-                            )}
-                          </SimpleGrid>
-                        </Box>
-                      )}
+                              {selectedPurchase.bank_account_id && (
+                                <FormControl>
+                                  <FormLabel fontSize="sm">{t('purchases.bankAccount')}</FormLabel>
+                                  <Text fontWeight="medium">
+                                    {(() => {
+                                      // Prefer relation from backend if available
+                                      const relatedAccount: any = (selectedPurchase as any).bank_account;
+                                      const accountFromList = bankAccounts.find(
+                                        (account) => account.id === selectedPurchase.bank_account_id
+                                      );
+                                      const name = relatedAccount?.name || accountFromList?.name;
+                                      const code = relatedAccount?.code || accountFromList?.code;
+                                      if (!name && !code) return 'Unknown Account';
+                                      if (name && code) return `${name} (${code})`;
+                                      return name || code || 'Unknown Account';
+                                    })()}
+                                  </Text>
+                                </FormControl>
+                              )}
 
-                      {/* Notes */}
-                      {selectedPurchase.notes && (
-                        <FormControl>
-                          <FormLabel>{t('purchases.notes')}</FormLabel>
-                          <Text p={3} bg={notesBoxBg} borderRadius="md">{selectedPurchase.notes}</Text>
-                        </FormControl>
-                      )}
+                              {selectedPurchase.payment_reference && (
+                                <FormControl>
+                                  <FormLabel fontSize="sm">{t('purchases.paymentReference')}</FormLabel>
+                                  <Text fontWeight="medium">{selectedPurchase.payment_reference}</Text>
+                                </FormControl>
+                              )}
+                            </SimpleGrid>
+                          </Box>
+                        )}
 
-                      {/* Approval Panel */}
-                      <ApprovalPanel
-                        purchaseId={selectedPurchase.id}
-                        approvalStatus={selectedPurchase.approval_status}
-                        purchaseAmount={selectedPurchase.total_amount}
-                        canApprove={(() => {
-                          const roleNorm = normalizeRole(user?.role as any);
-                          const isDraft = (selectedPurchase.status || '').toUpperCase() === 'DRAFT';
-                          const isPending = (selectedPurchase.approval_status || '').toUpperCase() === 'PENDING';
-                          const isNotStarted = (selectedPurchase.approval_status || '').toUpperCase() === 'NOT_STARTED';
+                        {/* Notes */}
+                        {selectedPurchase.notes && (
+                          <FormControl>
+                            <FormLabel>{t('purchases.notes')}</FormLabel>
+                            <Text p={3} bg={notesBoxBg} borderRadius="md">{selectedPurchase.notes}</Text>
+                          </FormControl>
+                        )}
 
-                          // Admin can always approve
-                          if (roleNorm === 'admin') return true;
+                        {/* Approval Panel */}
+                        <ApprovalPanel
+                          purchaseId={selectedPurchase.id}
+                          approvalStatus={selectedPurchase.approval_status}
+                          purchaseAmount={selectedPurchase.total_amount}
+                          canApprove={(() => {
+                            const roleNorm = normalizeRole(user?.role as any);
+                            const isDraft = (selectedPurchase.status || '').toUpperCase() === 'DRAFT';
+                            const isPending = (selectedPurchase.approval_status || '').toUpperCase() === 'PENDING';
+                            const isNotStarted = (selectedPurchase.approval_status || '').toUpperCase() === 'NOT_STARTED';
 
-                          // Finance can approve DRAFT purchases, pending purchases (escalated), or purchases that haven't started approval
-                          if (roleNorm === 'finance' && (isDraft || isPending || isNotStarted)) return true;
+                            // Admin can always approve
+                            if (roleNorm === 'admin') return true;
 
-                          // Director can approve pending purchases (escalated)
-                          if (roleNorm === 'director' && isPending) return true;
+                            // Finance can approve DRAFT purchases, pending purchases (escalated), or purchases that haven't started approval
+                            if (roleNorm === 'finance' && (isDraft || isPending || isNotStarted)) return true;
 
-                          // Check approval steps for other roles
-                          const steps: any[] = (selectedPurchase as any)?.approval_steps || [];
-                          if (!Array.isArray(steps) || steps.length === 0) return false;
-                          const active = steps.find((s: any) => s.is_active && s.status === 'PENDING');
-                          const approverRole = active?.step?.approver_role ? normalizeRole(active.step.approver_role) : null;
-                          return !!approverRole && approverRole === roleNorm;
-                        })()}
-                        onApprove={async (comments?: string, requiresDirector?: boolean) => {
-                          if (!selectedPurchase) return;
-                          try {
-                            // Call API to approve with escalation parameter
-                            const result = await approvalService.approvePurchase(selectedPurchase.id, {
-                              comments: comments || '',
-                              escalate_to_director: requiresDirector || false
-                            });
+                            // Director can approve pending purchases (escalated)
+                            if (roleNorm === 'director' && isPending) return true;
 
-                            // Handle different approval outcomes
-                            if (result.escalated) {
+                            // Check approval steps for other roles
+                            const steps: any[] = (selectedPurchase as any)?.approval_steps || [];
+                            if (!Array.isArray(steps) || steps.length === 0) return false;
+                            const active = steps.find((s: any) => s.is_active && s.status === 'PENDING');
+                            const approverRole = active?.step?.approver_role ? normalizeRole(active.step.approver_role) : null;
+                            return !!approverRole && approverRole === roleNorm;
+                          })()}
+                          onApprove={async (comments?: string, requiresDirector?: boolean) => {
+                            if (!selectedPurchase) return;
+                            try {
+                              // Call API to approve with escalation parameter
+                              const result = await approvalService.approvePurchase(selectedPurchase.id, {
+                                comments: comments || '',
+                                escalate_to_director: requiresDirector || false
+                              });
+
+                              // Handle different approval outcomes
+                              if (result.escalated) {
+                                toast({
+                                  title: 'Approved & Escalated',
+                                  description: result.message || 'Purchase approved by Finance and escalated to Director for final approval',
+                                  status: 'info',
+                                  duration: 5000,
+                                  isClosable: true
+                                });
+
+                                // Send notification to directors
+                                await notifyDirectors(selectedPurchase);
+                              } else {
+                                toast({
+                                  title: 'Approved',
+                                  description: result.message || 'Purchase approved successfully',
+                                  status: 'success',
+                                  duration: 3000,
+                                  isClosable: true
+                                });
+                              }
+
+                              // Refresh purchase data
+                              const detailResponse = await purchaseService.getById(selectedPurchase.id);
+                              setSelectedPurchase(detailResponse);
+                              await fetchPurchases();
+                              // Don't close modal - let user see the updated history with comments
+                            } catch (err: any) {
                               toast({
-                                title: 'Approved & Escalated',
-                                description: result.message || 'Purchase approved by Finance and escalated to Director for final approval',
-                                status: 'info',
+                                title: 'Error',
+                                description: err.response?.data?.message || err.response?.data?.error || 'Failed to approve',
+                                status: 'error',
                                 duration: 5000,
                                 isClosable: true
                               });
-
-                              // Send notification to directors
-                              await notifyDirectors(selectedPurchase);
-                            } else {
-                              toast({
-                                title: 'Approved',
-                                description: result.message || 'Purchase approved successfully',
-                                status: 'success',
-                                duration: 3000,
-                                isClosable: true
-                              });
                             }
+                          }}
+                          onReject={async (comments: string) => {
+                            if (!selectedPurchase) return;
+                            if (!comments || comments.trim() === '') {
+                              toast({ title: 'Komentar diperlukan', description: 'Mohon isi alasan penolakan.', status: 'warning', duration: 3000, isClosable: true });
+                              return;
+                            }
+                            try {
+                              await approvalService.rejectPurchase(selectedPurchase.id, { comments });
+                              toast({ title: 'Rejected', description: 'Purchase rejected successfully', status: 'warning', duration: 3000, isClosable: true });
+                              const detailResponse = await purchaseService.getById(selectedPurchase.id);
+                              setSelectedPurchase(detailResponse);
+                              await fetchPurchases();
+                              // Don't close modal - let user see the updated history with rejection comments
+                            } catch (err: any) {
+                              toast({ title: 'Error', description: err.response?.data?.message || 'Failed to reject', status: 'error', duration: 5000, isClosable: true });
+                            }
+                          }}
+                        />
 
-                            // Refresh purchase data
-                            const detailResponse = await purchaseService.getById(selectedPurchase.id);
-                            setSelectedPurchase(detailResponse);
-                            await fetchPurchases();
-                            // Don't close modal - let user see the updated history with comments
-                          } catch (err: any) {
-                            toast({
-                              title: 'Error',
-                              description: err.response?.data?.message || err.response?.data?.error || 'Failed to approve',
-                              status: 'error',
-                              duration: 5000,
-                              isClosable: true
-                            });
-                          }
-                        }}
-                        onReject={async (comments: string) => {
-                          if (!selectedPurchase) return;
-                          if (!comments || comments.trim() === '') {
-                            toast({ title: 'Komentar diperlukan', description: 'Mohon isi alasan penolakan.', status: 'warning', duration: 3000, isClosable: true });
-                            return;
-                          }
-                          try {
-                            await approvalService.rejectPurchase(selectedPurchase.id, { comments });
-                            toast({ title: 'Rejected', description: 'Purchase rejected successfully', status: 'warning', duration: 3000, isClosable: true });
-                            const detailResponse = await purchaseService.getById(selectedPurchase.id);
-                            setSelectedPurchase(detailResponse);
-                            await fetchPurchases();
-                            // Don't close modal - let user see the updated history with rejection comments
-                          } catch (err: any) {
-                            toast({ title: 'Error', description: err.response?.data?.message || 'Failed to reject', status: 'error', duration: 5000, isClosable: true });
-                          }
-                        }}
-                      />
+                        {/* Items */}
+                        {selectedPurchase.purchase_items && selectedPurchase.purchase_items.length > 0 && (
+                          <FormControl>
+                            <FormLabel>{t('purchases.purchaseItems')}</FormLabel>
+                            <TableContainer>
+                              <Table size="sm" bg={tableBg}>
+                                <Thead bg={tableHeaderBg}>
+                                  <Tr>
+                                    <Th>{t('purchases.product')}</Th>
+                                    <Th isNumeric>{t('purchases.quantity')}</Th>
+                                    <Th isNumeric>{t('purchases.unitPrice')}</Th>
+                                    <Th isNumeric>{t('purchases.total')}</Th>
+                                  </Tr>
+                                </Thead>
+                                <Tbody>
+                                  {selectedPurchase.purchase_items.map((item: any, index: number) => (
+                                    <Tr key={index}>
+                                      <Td>{item.product?.name || 'N/A'}</Td>
+                                      <Td isNumeric>{item.quantity}</Td>
+                                      <Td isNumeric>{formatCurrency(item.unit_price)}</Td>
+                                      <Td isNumeric>{formatCurrency(item.quantity * item.unit_price)}</Td>
+                                    </Tr>
+                                  ))}
+                                </Tbody>
+                              </Table>
+                            </TableContainer>
+                          </FormControl>
+                        )}
+                      </VStack>
+                    )}
+                  </ModalBody>
+                  <ModalFooter>
+                    <Button onClick={onViewClose}>{t('purchases.close')}</Button>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
 
-                      {/* Items */}
-                      {selectedPurchase.purchase_items && selectedPurchase.purchase_items.length > 0 && (
+              {/* Edit Purchase Modal */}
+              <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl">
+                <ModalOverlay />
+                <ModalContent bg={modalContentBg}>
+                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                    Edit Purchase - {selectedPurchase?.code}
+                  </ModalHeader>
+                  <ModalCloseButton />
+                  <ModalBody>
+                    <VStack spacing={4} align="stretch">
+                      <Text fontSize="md" fontWeight="semibold" color={headingColor}>Basic Info</Text>
+                      <SimpleGrid columns={2} spacing={4}>
                         <FormControl>
-                          <FormLabel>{t('purchases.purchaseItems')}</FormLabel>
-                          <TableContainer>
-                            <Table size="sm" bg={tableBg}>
+                          <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
+                          <Input value={selectedPurchase?.code || ''} isReadOnly bg="gray.50" />
+                        </FormControl>
+
+                        <FormControl isRequired>
+                          <FormLabel>Vendor</FormLabel>
+                          <HStack spacing={2}>
+                            {loadingVendors ? (
+                              <Spinner size="sm" />
+                            ) : (
+                              <Select
+                                placeholder="Select vendor"
+                                value={formData.vendor_id}
+                                onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
+                                flex={1}
+                              >
+                                {vendors.map(vendor => (
+                                  <option key={vendor.id} value={vendor.id}>
+                                    {vendor.name} ({vendor.code})
+                                  </option>
+                                ))}
+                              </Select>
+                            )}
+                            <IconButton
+                              aria-label="Add new vendor"
+                              icon={<FiPlus />}
+                              size="sm"
+                              colorScheme="green"
+                              variant="outline"
+                              onClick={onAddVendorOpen}
+                              title="Add New Vendor"
+                              _hover={{ bg: 'green.50' }}
+                            />
+                          </HStack>
+                        </FormControl>
+
+                        <FormControl isRequired>
+                          <FormLabel>Purchase Date</FormLabel>
+                          <Input
+                            type="date"
+                            value={formData.date}
+                            onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+
+                      <SimpleGrid columns={2} spacing={4}>
+                        <FormControl>
+                          <FormLabel>Due Date</FormLabel>
+                          <Input
+                            type="date"
+                            value={formData.due_date}
+                            onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                          />
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel>Discount (%)</FormLabel>
+                          <NumberInput
+                            value={formData.discount}
+                            onChange={(value) => setFormData({ ...formData, discount: value })}
+                          >
+                            <NumberInputField placeholder="0" />
+                          </NumberInput>
+                          <FormHelperText>Masukkan persentase diskon atas subtotal (0-100).</FormHelperText>
+                        </FormControl>
+                      </SimpleGrid>
+
+                      {!canListExpenseAccounts && (
+                        <FormControl>
+                          <FormLabel>Default Expense Account ID</FormLabel>
+                          <NumberInput min={1} value={defaultExpenseAccountId ?? ''} onChange={(v) => setDefaultExpenseAccountId(isNaN(Number(v)) ? null : Number(v))} maxW="260px">
+                            <NumberInputField placeholder="Masukkan Account ID (EXPENSE)" />
+                          </NumberInput>
+                          <FormHelperText>Karena role Anda tidak bisa melihat daftar akun, isi ID akun beban (EXPENSE) default di sini.</FormHelperText>
+                        </FormControl>
+                      )}
+
+                      <FormControl>
+                        <FormLabel>Notes</FormLabel>
+                        <Textarea
+                          value={formData.notes}
+                          onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                          placeholder="Enter any notes or descriptions..."
+                          rows={4}
+                        />
+                      </FormControl>
+
+                      {/* Purchase Items Section */}
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Flex justify="space-between" align="center">
+                            <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                              🛒 Purchase Items
+                            </Text>
+                            <Button
+                              size="sm"
+                              leftIcon={<FiPlus />}
+                              colorScheme="blue"
+                              variant="outline"
+                              onClick={() => {
+                                setFormData({
+                                  ...formData,
+                                  items: [
+                                    ...formData.items,
+                                    { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: isServiceCompany && expenseAccounts.length > 0 ? expenseAccounts[0].id!.toString() : '' }
+                                  ]
+                                });
+                              }}
+                            >
+                              Add Item
+                            </Button>
+                          </Flex>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <Box overflow="visible">
+                            <Table size="sm" variant="simple">
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
-                                  <Th>{t('purchases.product')}</Th>
-                                  <Th isNumeric>{t('purchases.quantity')}</Th>
-                                  <Th isNumeric>{t('purchases.unitPrice')}</Th>
-                                  <Th isNumeric>{t('purchases.total')}</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>{isServiceCompany ? 'Akun Beban *' : 'Expense Account'}</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Total (IDR)</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
                                 </Tr>
                               </Thead>
                               <Tbody>
-                                {selectedPurchase.purchase_items.map((item: any, index: number) => (
-                                  <Tr key={index}>
-                                    <Td>{item.product?.name || 'N/A'}</Td>
-                                    <Td isNumeric>{item.quantity}</Td>
-                                    <Td isNumeric>{formatCurrency(item.unit_price)}</Td>
-                                    <Td isNumeric>{formatCurrency(item.quantity * item.unit_price)}</Td>
+                                {formData.items.length === 0 ? (
+                                  <Tr>
+                                    <Td colSpan={6} textAlign="center" py={8}>
+                                      <VStack spacing={2}>
+                                        <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
+                                        <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
+                                      </VStack>
+                                    </Td>
                                   </Tr>
-                                ))}
+                                ) : (
+                                  formData.items.map((item, index) => (
+                                    <Tr key={index} _hover={{ bg: hoverBg }}>
+                                      <Td minW="200px">
+                                        {loadingProducts ? (
+                                          <Flex align="center" justify="center" h="32px">
+                                            <Spinner size="sm" />
+                                          </Flex>
+                                        ) : (
+                                          <HStack spacing={2}>
+                                            <VStack spacing={2} align="stretch">
+                                              <Select
+                                                placeholder={isServiceCompany ? '🔍 Pilih Produk/Jasa' : '🔍 Choose Product - V2.0 (Stock Available)'}
+                                                value={item.product_id}
+                                                onChange={(e) => {
+                                                  const items = [...formData.items];
+                                                  items[index] = { ...items[index], product_id: e.target.value };
+                                                  // Auto-fill unit price from product purchase_price if available
+                                                  const selectedProduct = products.find(p => p.id?.toString() === e.target.value);
+                                                  if (selectedProduct && selectedProduct.purchase_price) {
+                                                    items[index] = { ...items[index], unit_price: selectedProduct.purchase_price.toString() };
+                                                  }
+                                                  // Reset quantity when switching products to prevent stock issues
+                                                  if (!isServiceCompany && selectedProduct) {
+                                                    items[index] = { ...items[index], quantity: '1' };
+                                                  }
+                                                  setFormData({ ...formData, items });
+                                                }}
+                                                size="sm"
+                                                maxW="320px"
+                                                bg={cardBg}
+                                                borderColor={borderColor}
+                                                _hover={{ borderColor: inputHoverBorder }}
+                                                _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                                              >
+                                                {products.map((p) => {
+                                                  if (isServiceCompany) {
+                                                    // Service companies: simple product list without stock info
+                                                    return (
+                                                      <option key={p.id} value={p.id?.toString()}>
+                                                        {p?.code} - {p?.name}
+                                                      </option>
+                                                    );
+                                                  }
+
+                                                  // Trading/Manufacturing: show stock info
+                                                  const stockLevel = p?.stock || 0;
+                                                  const minStock = p?.min_stock || 0;
+
+                                                  let productUnit = 'units';
+                                                  if (p?.unit) {
+                                                    if (typeof p.unit === 'string' && isNaN(Number(p.unit))) {
+                                                      productUnit = p.unit;
+                                                    } else {
+                                                      productUnit = 'units';
+                                                    }
+                                                  }
+                                                  const isOutOfStock = stockLevel === 0;
+                                                  const isLowStock = stockLevel > 0 && stockLevel <= minStock;
+
+                                                  let stockStatus = '';
+                                                  let stockColor = '#2d3748';
+
+                                                  if (isOutOfStock) {
+                                                    stockStatus = ' ❌ OUT OF STOCK';
+                                                    stockColor = '#999';
+                                                  } else if (isLowStock) {
+                                                    stockStatus = ' ⚠️ LOW STOCK';
+                                                    stockColor = '#d69e2e';
+                                                  } else if (stockLevel <= 10) {
+                                                    stockStatus = ' ⏰ RUNNING LOW';
+                                                    stockColor = '#e6a700';
+                                                  } else {
+                                                    stockStatus = ' ✅ AVAILABLE';
+                                                    stockColor = '#2d3748';
+                                                  }
+
+                                                  return (
+                                                    <option
+                                                      key={p.id}
+                                                      value={p.id?.toString()}
+                                                      disabled={isOutOfStock}
+                                                      style={{
+                                                        color: stockColor,
+                                                        fontWeight: (isLowStock || isOutOfStock) ? '600' : 'normal',
+                                                        backgroundColor: isOutOfStock ? '#f7fafc' : 'white'
+                                                      }}
+                                                    >
+                                                      🏆 NEW: {p?.code} - {p?.name} | Stock: {stockLevel} {productUnit}{stockStatus}
+                                                    </option>
+                                                  );
+                                                })}
+                                              </Select>
+
+                                              {/* Stock status indicator for selected product — hidden for service companies */}
+                                              {!isServiceCompany && item.product_id && (() => {
+                                                const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                                                if (selectedProduct) {
+                                                  const stockLevel = selectedProduct.stock || 0;
+                                                  const minStock = selectedProduct.min_stock || 0;
+
+                                                  // Handle unit display consistently
+                                                  let productUnit = 'units';
+                                                  if (selectedProduct?.unit) {
+                                                    if (typeof selectedProduct.unit === 'string' && isNaN(Number(selectedProduct.unit))) {
+                                                      productUnit = selectedProduct.unit;
+                                                    } else {
+                                                      productUnit = 'units';
+                                                    }
+                                                  }
+                                                  const isOutOfStock = stockLevel === 0;
+                                                  const isLowStock = stockLevel > 0 && stockLevel <= minStock;
+                                                  const isRunningLow = stockLevel > minStock && stockLevel <= 10;
+
+                                                  if (isOutOfStock) {
+                                                    return (
+                                                      <Badge colorScheme="red" size="sm" variant="solid">
+                                                        ❌ Out of Stock - Cannot Purchase
+                                                      </Badge>
+                                                    );
+                                                  } else if (isLowStock) {
+                                                    return (
+                                                      <Badge colorScheme="orange" size="sm" variant="solid">
+                                                        ⚠️ Low Stock: {stockLevel} {productUnit} remaining
+                                                      </Badge>
+                                                    );
+                                                  } else if (isRunningLow) {
+                                                    return (
+                                                      <Badge colorScheme="yellow" size="sm" variant="outline">
+                                                        ⏰ Running Low: {stockLevel} {productUnit} available
+                                                      </Badge>
+                                                    );
+                                                  } else {
+                                                    return (
+                                                      <Badge colorScheme="green" size="sm" variant="subtle">
+                                                        ✅ Available: {stockLevel} {productUnit} in stock
+                                                      </Badge>
+                                                    );
+                                                  }
+                                                }
+                                                return null;
+                                              })()}
+                                            </VStack>
+                                            <IconButton
+                                              aria-label="Add new product"
+                                              icon={<FiPlus />}
+                                              size="sm"
+                                              colorScheme="blue"
+                                              variant="outline"
+                                              onClick={onAddProductOpen}
+                                              title="Add New Product"
+                                              _hover={{ bg: 'blue.50' }}
+                                            />
+                                          </HStack>
+                                        )}
+                                      </Td>
+                                      <Td isNumeric>
+                                        {isServiceCompany ? (
+                                          /* Service companies: simple qty input without stock validation */
+                                          <NumberInput
+                                            size="sm"
+                                            min={1}
+                                            value={item.quantity}
+                                            onChange={(valueString) => {
+                                              const items = [...formData.items];
+                                              items[index] = { ...items[index], quantity: valueString };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            maxW="90px"
+                                          >
+                                            <NumberInputField textAlign="right" fontSize="sm" bg={cardBg} borderColor={borderColor} />
+                                            <NumberInputStepper>
+                                              <NumberIncrementStepper />
+                                              <NumberDecrementStepper />
+                                            </NumberInputStepper>
+                                          </NumberInput>
+                                        ) : (
+                                          /* Trading/Manufacturing: qty with stock validation */
+                                          <VStack spacing={1} align="end">
+                                            {(() => {
+                                              const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                                              const availableStock = selectedProduct?.stock || 0;
+                                              const currentQty = parseFloat(item.quantity) || 0;
+                                              const isExceedingStock = currentQty > availableStock;
+
+                                              return (
+                                                <>
+                                                  <NumberInput
+                                                    size="sm"
+                                                    min={1}
+                                                    max={selectedProduct ? Math.max(1, availableStock) : undefined}
+                                                    value={item.quantity}
+                                                    onChange={(valueString) => {
+                                                      const items = [...formData.items];
+                                                      const numValue = parseFloat(valueString) || 0;
+
+                                                      // Allow input but warn if exceeding stock
+                                                      items[index] = { ...items[index], quantity: valueString };
+                                                      setFormData({ ...formData, items });
+
+                                                      // Show toast warning for exceeding stock
+                                                      if (selectedProduct && numValue > availableStock && availableStock > 0) {
+                                                        toast({
+                                                          title: 'Stock Warning',
+                                                          description: `Quantity (${numValue}) exceeds available stock (${availableStock}). This purchase may face stock shortages.`,
+                                                          status: 'warning',
+                                                          duration: 4000,
+                                                          isClosable: true,
+                                                        });
+                                                      }
+                                                    }}
+                                                    maxW="90px"
+                                                    isInvalid={isExceedingStock && availableStock > 0}
+                                                  >
+                                                    <NumberInputField
+                                                      textAlign="right"
+                                                      fontSize="sm"
+                                                      bg={isExceedingStock && availableStock > 0 ? 'red.50' : cardBg}
+                                                      borderColor={isExceedingStock && availableStock > 0 ? 'red.300' : borderColor}
+                                                      _hover={{
+                                                        borderColor: isExceedingStock && availableStock > 0 ? 'red.400' : inputHoverBorder
+                                                      }}
+                                                      _focus={{
+                                                        borderColor: isExceedingStock && availableStock > 0 ? 'red.500' : inputFocusBorder,
+                                                        boxShadow: isExceedingStock && availableStock > 0 ? '0 0 0 1px #e53e3e' : inputFocusShadow
+                                                      }}
+                                                    />
+                                                    <NumberInputStepper>
+                                                      <NumberIncrementStepper
+                                                        isDisabled={selectedProduct && currentQty >= availableStock && availableStock > 0}
+                                                      />
+                                                      <NumberDecrementStepper />
+                                                    </NumberInputStepper>
+                                                  </NumberInput>
+
+                                                  {/* Stock validation indicator */}
+                                                  {selectedProduct && availableStock > 0 && isExceedingStock && (
+                                                    <Text fontSize="xs" color="red.500" fontWeight="bold" textAlign="center" w="90px">
+                                                      ⚠️ Exceeds stock!
+                                                    </Text>
+                                                  )}
+                                                  {selectedProduct && availableStock > 0 && currentQty > 0 && !isExceedingStock && (
+                                                    <Text fontSize="xs" color="green.500" fontWeight="medium" textAlign="center" w="90px">
+                                                      ✓ Stock OK
+                                                    </Text>
+                                                  )}
+                                                  {selectedProduct && availableStock === 0 && currentQty > 0 && (
+                                                    <Text fontSize="xs" color="red.600" fontWeight="bold" textAlign="center" w="90px">
+                                                      ❌ No stock
+                                                    </Text>
+                                                  )}
+                                                </>
+                                              );
+                                            })()}
+                                          </VStack>
+                                        )}
+                                      </Td>
+                                      <Td isNumeric>
+                                        <Box maxW="160px">
+                                          <CurrencyInput
+                                            value={parseFloat(item.unit_price) || 0}
+                                            onChange={(value) => {
+                                              const items = [...formData.items];
+                                              items[index] = { ...items[index], unit_price: value.toString() };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            placeholder="Rp 10.000"
+                                            size="sm"
+                                            min={0}
+                                            showLabel={false}
+                                          />
+                                        </Box>
+                                      </Td>
+                                      <Td minW="240px" position="relative">
+                                        {canListExpenseAccounts ? (
+                                          <Box minW="240px" w="100%">
+                                            <SearchableSelect
+                                              options={expenseAccounts.map(acc => ({
+                                                id: acc.id!,
+                                                code: acc.code,
+                                                name: acc.name,
+                                                active: acc.is_active
+                                              }))}
+                                              value={item.expense_account_id}
+                                              onChange={(value) => {
+                                                const items = [...formData.items];
+                                                items[index] = { ...items[index], expense_account_id: value.toString() };
+                                                setFormData({ ...formData, items });
+                                              }}
+                                              placeholder="Pilih akun beban..."
+                                              isLoading={loadingExpenseAccounts}
+                                              displayFormat={(option) => `${option.code} - ${option.name}`}
+                                              size="sm"
+                                            />
+                                          </Box>
+                                        ) : (
+                                          <NumberInput
+                                            min={1}
+                                            value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')}
+                                            onChange={(v) => {
+                                              const items = [...formData.items];
+                                              items[index] = { ...items[index], expense_account_id: v.toString() };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            maxW="240px"
+                                            size="sm"
+                                          >
+                                            <NumberInputField placeholder="Expense Account ID" fontSize="sm" />
+                                          </NumberInput>
+                                        )}
+                                      </Td>
+                                      <Td isNumeric>
+                                        <Text fontSize="sm" fontWeight="medium" color="green.600">
+                                          {(() => {
+                                            const qty = parseFloat(item.quantity || '0');
+                                            const price = parseFloat(item.unit_price || '0');
+                                            return formatCurrency((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
+                                          })()}
+                                        </Text>
+                                      </Td>
+                                      <Td>
+                                        <IconButton
+                                          aria-label="Remove item"
+                                          size="sm"
+                                          colorScheme="red"
+                                          variant="ghost"
+                                          icon={<FiTrash2 />}
+                                          onClick={() => {
+                                            const items = [...formData.items];
+                                            items.splice(index, 1);
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          _hover={{ bg: 'red.50' }}
+                                        />
+                                      </Td>
+                                    </Tr>
+                                  ))
+                                )}
                               </Tbody>
                             </Table>
-                          </TableContainer>
-                        </FormControl>
-                      )}
-                    </VStack>
-                  )}
-                </ModalBody>
-                <ModalFooter>
-                  <Button onClick={onViewClose}>{t('purchases.close')}</Button>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
+                          </Box>
 
-            {/* Edit Purchase Modal */}
-            <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl">
-              <ModalOverlay />
-              <ModalContent bg={modalContentBg}>
-                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-                  Edit Purchase - {selectedPurchase?.code}
-                </ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  <VStack spacing={4} align="stretch">
-                    <Text fontSize="md" fontWeight="semibold" color={headingColor}>Basic Info</Text>
-                    <SimpleGrid columns={2} spacing={4}>
-                      <FormControl>
-                        <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
-                        <Input value={selectedPurchase?.code || ''} isReadOnly bg="gray.50" />
-                      </FormControl>
+                          {/* Stock Alert Summary — hidden for service companies */}
+                          {!isServiceCompany && formData.items.length > 0 && (() => {
+                            const itemsWithStockIssues = formData.items.filter(item => {
+                              const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                              const availableStock = selectedProduct?.stock || 0;
+                              const currentQty = parseFloat(item.quantity) || 0;
+                              return selectedProduct && (availableStock === 0 || currentQty > availableStock);
+                            });
 
-                      <FormControl isRequired>
-                        <FormLabel>Vendor</FormLabel>
-                        <HStack spacing={2}>
-                          {loadingVendors ? (
-                            <Spinner size="sm" />
-                          ) : (
-                            <Select
-                              placeholder="Select vendor"
-                              value={formData.vendor_id}
-                              onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
-                              flex={1}
-                            >
-                              {vendors.map(vendor => (
-                                <option key={vendor.id} value={vendor.id}>
-                                  {vendor.name} ({vendor.code})
-                                </option>
-                              ))}
-                            </Select>
-                          )}
-                          <IconButton
-                            aria-label="Add new vendor"
-                            icon={<FiPlus />}
-                            size="sm"
-                            colorScheme="green"
-                            variant="outline"
-                            onClick={onAddVendorOpen}
-                            title="Add New Vendor"
-                            _hover={{ bg: 'green.50' }}
-                          />
-                        </HStack>
-                      </FormControl>
+                            const outOfStockItems = formData.items.filter(item => {
+                              const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                              return selectedProduct && selectedProduct.stock === 0;
+                            });
 
-                      <FormControl isRequired>
-                        <FormLabel>Purchase Date</FormLabel>
-                        <Input
-                          type="date"
-                          value={formData.date}
-                          onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                        />
-                      </FormControl>
-                    </SimpleGrid>
+                            const exceedsStockItems = formData.items.filter(item => {
+                              const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                              const availableStock = selectedProduct?.stock || 0;
+                              const currentQty = parseFloat(item.quantity) || 0;
+                              return selectedProduct && availableStock > 0 && currentQty > availableStock;
+                            });
 
-                    <SimpleGrid columns={2} spacing={4}>
-                      <FormControl>
-                        <FormLabel>Due Date</FormLabel>
-                        <Input
-                          type="date"
-                          value={formData.due_date}
-                          onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                        />
-                      </FormControl>
+                            const lowStockItems = formData.items.filter(item => {
+                              const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
+                              const availableStock = selectedProduct?.stock || 0;
+                              const minStock = selectedProduct?.min_stock || 0;
+                              return selectedProduct && availableStock > 0 && availableStock <= minStock;
+                            });
 
-                      <FormControl>
-                        <FormLabel>Discount (%)</FormLabel>
-                        <NumberInput
-                          value={formData.discount}
-                          onChange={(value) => setFormData({ ...formData, discount: value })}
-                        >
-                          <NumberInputField placeholder="0" />
-                        </NumberInput>
-                        <FormHelperText>Masukkan persentase diskon atas subtotal (0-100).</FormHelperText>
-                      </FormControl>
-                    </SimpleGrid>
-
-                    {!canListExpenseAccounts && (
-                      <FormControl>
-                        <FormLabel>Default Expense Account ID</FormLabel>
-                        <NumberInput min={1} value={defaultExpenseAccountId ?? ''} onChange={(v) => setDefaultExpenseAccountId(isNaN(Number(v)) ? null : Number(v))} maxW="260px">
-                          <NumberInputField placeholder="Masukkan Account ID (EXPENSE)" />
-                        </NumberInput>
-                        <FormHelperText>Karena role Anda tidak bisa melihat daftar akun, isi ID akun beban (EXPENSE) default di sini.</FormHelperText>
-                      </FormControl>
-                    )}
-
-                    <FormControl>
-                      <FormLabel>Notes</FormLabel>
-                      <Textarea
-                        value={formData.notes}
-                        onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                        placeholder="Enter any notes or descriptions..."
-                        rows={4}
-                      />
-                    </FormControl>
-
-                    {/* Purchase Items Section */}
-                    <Card>
-                      <CardHeader pb={3}>
-                        <Flex justify="space-between" align="center">
-                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                            🛒 Purchase Items
-                          </Text>
-                          <Button
-                            size="sm"
-                            leftIcon={<FiPlus />}
-                            colorScheme="blue"
-                            variant="outline"
-                            onClick={() => {
-                              setFormData({
-                                ...formData,
-                                items: [
-                                  ...formData.items,
-                                  { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: '' }
-                                ]
-                              });
-                            }}
-                          >
-                            Add Item
-                          </Button>
-                        </Flex>
-                      </CardHeader>
-                      <CardBody pt={0}>
-                        <Box overflow="visible">
-                          <Table size="sm" variant="simple">
-                            <Thead bg={tableHeaderBg}>
-                              <Tr>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Expense Account</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Total (IDR)</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
-                              </Tr>
-                            </Thead>
-                            <Tbody>
-                              {formData.items.length === 0 ? (
-                                <Tr>
-                                  <Td colSpan={6} textAlign="center" py={8}>
-                                    <VStack spacing={2}>
-                                      <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
-                                      <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
+                            return (
+                              <VStack spacing={3} mt={4}>
+                                {/* Critical Stock Issues Alert */}
+                                {(outOfStockItems.length > 0 || exceedsStockItems.length > 0) && (
+                                  <Alert status="error" variant="left-accent" borderRadius="md">
+                                    <AlertIcon />
+                                    <VStack align="start" spacing={1}>
+                                      <AlertTitle fontSize="sm">Stock Issues Detected!</AlertTitle>
+                                      <AlertDescription fontSize="xs">
+                                        {outOfStockItems.length > 0 && (
+                                          <Text>❌ {outOfStockItems.length} item(s) are out of stock</Text>
+                                        )}
+                                        {exceedsStockItems.length > 0 && (
+                                          <Text>⚠️ {exceedsStockItems.length} item(s) exceed available stock</Text>
+                                        )}
+                                        <Text fontWeight="medium">Purchase may face stock shortages or delivery delays.</Text>
+                                      </AlertDescription>
                                     </VStack>
-                                  </Td>
+                                  </Alert>
+                                )}
+
+                                {/* Low Stock Warning */}
+                                {lowStockItems.length > 0 && outOfStockItems.length === 0 && exceedsStockItems.length === 0 && (
+                                  <Alert status="warning" variant="left-accent" borderRadius="md">
+                                    <AlertIcon />
+                                    <VStack align="start" spacing={1}>
+                                      <AlertTitle fontSize="sm">Low Stock Alert</AlertTitle>
+                                      <AlertDescription fontSize="xs">
+                                        ⏰ {lowStockItems.length} item(s) have low stock levels. Consider increasing order quantities.
+                                      </AlertDescription>
+                                    </VStack>
+                                  </Alert>
+                                )}
+
+                                {/* All Good Status */}
+                                {itemsWithStockIssues.length === 0 && lowStockItems.length === 0 && (
+                                  <Alert status="success" variant="left-accent" borderRadius="md">
+                                    <AlertIcon />
+                                    <VStack align="start" spacing={1}>
+                                      <AlertTitle fontSize="sm">Stock Status: All Good</AlertTitle>
+                                      <AlertDescription fontSize="xs">
+                                        ✅ All selected products have sufficient stock for this purchase.
+                                      </AlertDescription>
+                                    </VStack>
+                                  </Alert>
+                                )}
+                              </VStack>
+                            );
+                          })()}
+
+                          {/* Summary Row */}
+                          {formData.items.length > 0 && (
+                            <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
+                              <Flex justify="space-between" align="center">
+                                <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
+                                  Total Items: {formData.items.length}
+                                </Text>
+                                <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                                  Subtotal: {formatCurrency(
+                                    formData.items.reduce((total, item) => {
+                                      const qty = parseFloat(item.quantity || '0');
+                                      const price = parseFloat(item.unit_price || '0');
+                                      return total + ((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
+                                    }, 0)
+                                  )}
+                                </Text>
+                              </Flex>
+                            </Box>
+                          )}
+
+                          <FormHelperText mt={3} fontSize="xs">
+                            📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
+                          </FormHelperText>
+                        </CardBody>
+                      </Card>
+
+                      {/* Tax Configuration Section */}
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            💰 Tax Configuration
+                          </Text>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <VStack spacing={4} align="stretch">
+                            {/* Tax Additions (Penambahan) */}
+                            <Box>
+                              <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
+                                ➕ Tax Additions (Penambahan)
+                              </Text>
+                              <SimpleGrid columns={2} spacing={4}>
+                                <FormControl>
+                                  <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.ppn_rate}
+                                    onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="11" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.other_tax_additions}
+                                    onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="0" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
+                                </FormControl>
+                              </SimpleGrid>
+                            </Box>
+
+                            <Divider />
+
+                            {/* Tax Deductions (Pemotongan) */}
+                            <Box>
+                              <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
+                                ➖ Tax Deductions (Pemotongan)
+                              </Text>
+                              <SimpleGrid columns={3} spacing={4}>
+                                <FormControl>
+                                  <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.pph21_rate}
+                                    onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="0" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 21</FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.pph23_rate}
+                                    onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="0" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 23</FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.other_tax_deductions}
+                                    onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="0" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
+                                </FormControl>
+                              </SimpleGrid>
+                            </Box>
+
+                            {/* Tax Summary Calculation */}
+                            {formData.items.length > 0 && (
+                              <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
+                                <VStack spacing={2} align="stretch">
+                                  <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
+                                  {(() => {
+                                    const subtotal = formData.items.reduce((total, item) => {
+                                      const qty = parseFloat(item.quantity || '0');
+                                      const price = parseFloat(item.unit_price || '0');
+                                      const discount = parseFloat(item.discount || '0');
+                                      const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                      const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
+                                      return total + lineTotal;
+                                    }, 0);
+
+                                    const discount = (parseFloat(formData.discount) || 0) / 100;
+                                    const discountedSubtotal = subtotal * (1 - discount);
+
+                                    const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
+                                    const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
+                                    const totalAdditions = ppnAmount + otherAdditions;
+
+                                    const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
+                                    const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
+                                    const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
+                                    const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
+
+                                    const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
+
+                                    return (
+                                      <SimpleGrid columns={2} spacing={4} fontSize="xs">
+                                        <VStack align="start" spacing={1}>
+                                          <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
+                                          <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
+                                          <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
+                                        </VStack>
+
+                                        <VStack align="start" spacing={1}>
+                                          <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
+                                          {parseFloat(formData.other_tax_additions) > 0 && (
+                                            <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
+                                          )}
+                                          {parseFloat(formData.pph21_rate) > 0 && (
+                                            <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
+                                          )}
+                                          {parseFloat(formData.pph23_rate) > 0 && (
+                                            <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
+                                          )}
+                                          {parseFloat(formData.other_tax_deductions) > 0 && (
+                                            <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
+                                          )}
+                                          <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
+                                            Final Total: {formatCurrency(finalTotal)}
+                                          </Text>
+                                        </VStack>
+                                      </SimpleGrid>
+                                    );
+                                  })()}
+                                </VStack>
+                              </Box>
+                            )}
+                          </VStack>
+                        </CardBody>
+                      </Card>
+
+                      {/* Payment Method Section */}
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            💳 Payment Method
+                          </Text>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <SimpleGrid columns={2} spacing={4}>
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
+                              <Select
+                                value={formData.payment_method}
+                                onChange={(e) => {
+                                  // Reset bank_account_id saat ganti payment method untuk menghindari konflik
+                                  setFormData({
+                                    ...formData,
+                                    payment_method: e.target.value,
+                                    bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
+                                  })
+                                }}
+                                size="sm"
+                              >
+                                <option value="CREDIT">Credit</option>
+                                <option value="CASH">Cash</option>
+                                <option value="BANK_TRANSFER">Bank Transfer</option>
+                                <option value="CHECK">Check</option>
+                              </Select>
+                              <FormHelperText fontSize="xs">
+                                {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
+                                {formData.payment_method === 'CASH' && 'Direct cash payment'}
+                                {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
+                                {formData.payment_method === 'CHECK' && 'Payment by check'}
+                              </FormHelperText>
+                            </FormControl>
+
+                            {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
+                            {formData.payment_method !== 'CREDIT' && (
+                              <FormControl isRequired>
+                                <FormLabel fontSize="sm" fontWeight="medium">
+                                  {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
+                                </FormLabel>
+                                <Select
+                                  value={formData.bank_account_id}
+                                  onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
+                                  size="sm"
+                                  disabled={loadingBankAccounts}
+                                  placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
+                                >
+                                  {bankAccounts
+                                    .filter(account => {
+                                      // Filter berdasarkan payment method
+                                      if (formData.payment_method === 'CASH') {
+                                        return account.type === 'CASH';
+                                      } else {
+                                        return account.type === 'BANK';
+                                      }
+                                    })
+                                    .map((account) => (
+                                      <option key={account.id} value={account.id.toString()}>
+                                        {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
+                                      </option>
+                                    ))
+                                  }
+                                </Select>
+                                <FormHelperText fontSize="xs">
+                                  Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
+                                </FormHelperText>
+                              </FormControl>
+                            )}
+
+                            {/* Credit Account dropdown for Credit payment */}
+                            {formData.payment_method === 'CREDIT' && (
+                              <FormControl isRequired>
+                                <FormLabel fontSize="sm" fontWeight="medium">
+                                  Liability Account
+                                </FormLabel>
+                                <Select
+                                  value={formData.credit_account_id}
+                                  onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
+                                  size="sm"
+                                  disabled={loadingCreditAccounts}
+                                  placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
+                                >
+                                  {creditAccounts.map((account) => (
+                                    <option key={account.id} value={account.id?.toString()}>
+                                      {account.code} - {account.name}
+                                    </option>
+                                  ))}
+                                </Select>
+                                <FormHelperText fontSize="xs">
+                                  Required: Select liability account for tracking credit purchases
+                                </FormHelperText>
+                              </FormControl>
+                            )}
+                          </SimpleGrid>
+
+                          {/* Payment Reference (for non-credit and non-cash payments) */}
+                          {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
+                            <FormControl mt={4}>
+                              <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
+                              <Input
+                                value={formData.payment_reference}
+                                onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
+                                placeholder={
+                                  formData.payment_method === 'CHECK' ? 'Check number' :
+                                    formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
+                                      'Payment reference number'
+                                }
+                                size="sm"
+                              />
+                              <FormHelperText fontSize="xs">
+                                Optional reference for tracking this payment
+                              </FormHelperText>
+                            </FormControl>
+                          )}
+                        </CardBody>
+                      </Card>
+
+                    </VStack>
+                  </ModalBody>
+                  <ModalFooter>
+                    <HStack spacing={3}>
+                      <Button variant="ghost" onClick={onEditClose}>
+                        Cancel
+                      </Button>
+                      <Button colorScheme="blue" onClick={handleSave}>
+                        Update Purchase
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
+              {/* Create Purchase Modal */}
+              <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="6xl">
+                <ModalOverlay />
+                <ModalContent maxW="95vw" maxH="95vh" bg={modalContentBg}>
+                  <ModalHeader bg={modalHeaderBg} borderRadius="md" mx={4} mt={4} mb={2} borderBottomWidth={1} borderColor={borderColor}>
+                    <HStack>
+                      <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
+                      <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                        Create New Purchase
+                      </Text>
+                    </HStack>
+                  </ModalHeader>
+                  <ModalCloseButton top={6} right={6} />
+                  <ModalBody overflowY="auto" px={6} pb={2}>
+                    <VStack spacing={6} align="stretch">
+                      {/* Basic Information Section */}
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            📋 Basic Information
+                          </Text>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <SimpleGrid columns={3} spacing={4}>
+                            <FormControl>
+                              <FormLabel fontSize="sm" fontWeight="medium">{t('purchases.purchaseCode')}</FormLabel>
+                              <Input value={t('purchases.autoGenerated')} isReadOnly bg="gray.100" size="sm" color="gray.500" />
+                              <FormHelperText fontSize="xs">{t('purchases.autoGeneratedDesc')}</FormHelperText>
+                            </FormControl>
+
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">Vendor</FormLabel>
+                              <HStack spacing={2}>
+                                {loadingVendors ? (
+                                  <Spinner size="sm" />
+                                ) : (
+                                  <Select
+                                    placeholder="Select vendor"
+                                    value={formData.vendor_id}
+                                    onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
+                                    size="sm"
+                                    flex={1}
+                                  >
+                                    {vendors.map(vendor => (
+                                      <option key={vendor.id} value={vendor.id}>
+                                        {vendor.name} ({vendor.code})
+                                      </option>
+                                    ))}
+                                  </Select>
+                                )}
+                                <IconButton
+                                  aria-label="Add new vendor"
+                                  icon={<FiPlus />}
+                                  size="sm"
+                                  colorScheme="green"
+                                  variant="outline"
+                                  onClick={onAddVendorOpen}
+                                  title="Add New Vendor"
+                                  _hover={{ bg: 'green.50' }}
+                                />
+                              </HStack>
+                            </FormControl>
+
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">Purchase Date</FormLabel>
+                              <Input
+                                type="date"
+                                size="sm"
+                                value={formData.date}
+                                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel fontSize="sm" fontWeight="medium">Due Date</FormLabel>
+                              <Input
+                                type="date"
+                                size="sm"
+                                value={formData.due_date}
+                                onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                              />
+                            </FormControl>
+                          </SimpleGrid>
+
+                          <SimpleGrid columns={2} spacing={4} mt={4}>
+                            <FormControl>
+                              <FormLabel fontSize="sm" fontWeight="medium">Discount (%)</FormLabel>
+                              <NumberInput
+                                value={formData.discount}
+                                onChange={(value) => setFormData({ ...formData, discount: value })}
+                                size="sm"
+                                min={0}
+                                max={100}
+                              >
+                                <NumberInputField placeholder="0" />
+                                <NumberInputStepper>
+                                  <NumberIncrementStepper />
+                                  <NumberDecrementStepper />
+                                </NumberInputStepper>
+                              </NumberInput>
+                              <FormHelperText fontSize="xs">Masukkan persentase diskon atas subtotal (0-100)</FormHelperText>
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel fontSize="sm" fontWeight="medium">Notes</FormLabel>
+                              <Textarea
+                                value={formData.notes}
+                                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                                placeholder="Enter any notes or descriptions..."
+                                rows={3}
+                                size="sm"
+                                resize="vertical"
+                              />
+                            </FormControl>
+                          </SimpleGrid>
+                        </CardBody>
+                      </Card>
+
+                      {/* Purchase Items Section */}
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Flex justify="space-between" align="center">
+                            <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                              🛒 Purchase Items
+                            </Text>
+                            <Button
+                              size="sm"
+                              leftIcon={<FiPlus />}
+                              colorScheme="blue"
+                              variant="outline"
+                              onClick={() => {
+                                setFormData({
+                                  ...formData,
+                                  items: [
+                                    ...formData.items,
+                                    { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: isServiceCompany && expenseAccounts.length > 0 ? expenseAccounts[0].id!.toString() : '' }
+                                  ]
+                                });
+                              }}
+                            >
+                              Add Item
+                            </Button>
+                          </Flex>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <Box overflow="visible">
+                            <Table size="sm" variant="simple">
+                              <Thead bg={tableHeaderBg}>
+                                <Tr>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Discount (IDR)</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>{isServiceCompany ? 'Akun Beban *' : 'Account'}</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Line Total (IDR)</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
                                 </Tr>
-                              ) : (
-                                formData.items.map((item, index) => (
-                                  <Tr key={index} _hover={{ bg: hoverBg }}>
-                                    <Td minW="200px">
-                                      {loadingProducts ? (
-                                        <Flex align="center" justify="center" h="32px">
-                                          <Spinner size="sm" />
-                                        </Flex>
-                                      ) : (
-                                        <HStack spacing={2}>
-                                          <VStack spacing={2} align="stretch">
+                              </Thead>
+                              <Tbody>
+                                {formData.items.length === 0 ? (
+                                  <Tr>
+                                    <Td colSpan={7} textAlign="center" py={8}>
+                                      <VStack spacing={2}>
+                                        <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
+                                        <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
+                                      </VStack>
+                                    </Td>
+                                  </Tr>
+                                ) : (
+                                  formData.items.map((item, index) => (
+                                    <Tr key={index} _hover={{ bg: hoverBg }}>
+                                      <Td minW="200px">
+                                        {loadingProducts ? (
+                                          <Flex align="center" justify="center" h="32px">
+                                            <Spinner size="sm" />
+                                          </Flex>
+                                        ) : (
+                                          <HStack spacing={2}>
                                             <Select
-                                              placeholder="🔍 Choose Product - V2.0 (Stock Available)"
+                                              placeholder={isServiceCompany ? '🔍 Pilih Produk/Jasa' : 'Select product'}
                                               value={item.product_id}
                                               onChange={(e) => {
                                                 const items = [...formData.items];
@@ -3744,2140 +4715,1237 @@ const PurchasesPage: React.FC = () => {
                                                 if (selectedProduct && selectedProduct.purchase_price) {
                                                   items[index] = { ...items[index], unit_price: selectedProduct.purchase_price.toString() };
                                                 }
-                                                // Reset quantity when switching products to prevent stock issues
-                                                if (selectedProduct) {
-                                                  items[index] = { ...items[index], quantity: '1' };
-                                                }
                                                 setFormData({ ...formData, items });
                                               }}
                                               size="sm"
-                                              maxW="320px"
-                                              bg={cardBg}
-                                              borderColor={borderColor}
-                                              _hover={{ borderColor: inputHoverBorder }}
-                                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                                              maxW="280px"
                                             >
-                                              {products.map((p) => {
-                                                // Handle unit display properly - some units might be numeric IDs
-                                                // We'll use a proper unit name or fallback to 'units'
-
-                                                // Determine stock status and styling
-                                                const stockLevel = p?.stock || 0;
-                                                const minStock = p?.min_stock || 0;
-
-                                                // Handle unit display - if unit is numeric (ID), use generic 'units'
-                                                // If unit is text, use it as-is
-                                                let productUnit = 'units';
-                                                if (p?.unit) {
-                                                  if (typeof p.unit === 'string' && isNaN(Number(p.unit))) {
-                                                    productUnit = p.unit;
-                                                  } else {
-                                                    // Unit seems to be an ID, use generic
-                                                    productUnit = 'units';
-                                                  }
-                                                }
-                                                const isOutOfStock = stockLevel === 0;
-                                                const isLowStock = stockLevel > 0 && stockLevel <= minStock;
-
-                                                let stockStatus = '';
-                                                let stockColor = '#2d3748';
-
-                                                if (isOutOfStock) {
-                                                  stockStatus = ' ❌ OUT OF STOCK';
-                                                  stockColor = '#999';
-                                                } else if (isLowStock) {
-                                                  stockStatus = ' ⚠️ LOW STOCK';
-                                                  stockColor = '#d69e2e';
-                                                } else if (stockLevel <= 10) {
-                                                  stockStatus = ' ⏰ RUNNING LOW';
-                                                  stockColor = '#e6a700';
-                                                } else {
-                                                  stockStatus = ' ✅ AVAILABLE';
-                                                  stockColor = '#2d3748';
-                                                }
-
-                                                return (
-                                                  <option
-                                                    key={p.id}
-                                                    value={p.id?.toString()}
-                                                    disabled={isOutOfStock}
-                                                    style={{
-                                                      color: stockColor,
-                                                      fontWeight: (isLowStock || isOutOfStock) ? '600' : 'normal',
-                                                      backgroundColor: isOutOfStock ? '#f7fafc' : 'white'
-                                                    }}
-                                                  >
-                                                    🏆 NEW: {p?.code} - {p?.name} | Stock: {stockLevel} {productUnit}{stockStatus}
-                                                  </option>
-                                                );
-                                              })}
+                                              {products.map((p) => (
+                                                <option key={p.id} value={p.id?.toString()}>
+                                                  {isServiceCompany ? `${p?.code} - ${p?.name}` : `${p?.id} - ${p?.name || p?.code}`}
+                                                </option>
+                                              ))}
                                             </Select>
-
-                                            {/* Stock status indicator for selected product */}
-                                            {item.product_id && (() => {
-                                              const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                                              if (selectedProduct) {
-                                                const stockLevel = selectedProduct.stock || 0;
-                                                const minStock = selectedProduct.min_stock || 0;
-
-                                                // Handle unit display consistently
-                                                let productUnit = 'units';
-                                                if (selectedProduct?.unit) {
-                                                  if (typeof selectedProduct.unit === 'string' && isNaN(Number(selectedProduct.unit))) {
-                                                    productUnit = selectedProduct.unit;
-                                                  } else {
-                                                    productUnit = 'units';
-                                                  }
-                                                }
-                                                const isOutOfStock = stockLevel === 0;
-                                                const isLowStock = stockLevel > 0 && stockLevel <= minStock;
-                                                const isRunningLow = stockLevel > minStock && stockLevel <= 10;
-
-                                                if (isOutOfStock) {
-                                                  return (
-                                                    <Badge colorScheme="red" size="sm" variant="solid">
-                                                      ❌ Out of Stock - Cannot Purchase
-                                                    </Badge>
-                                                  );
-                                                } else if (isLowStock) {
-                                                  return (
-                                                    <Badge colorScheme="orange" size="sm" variant="solid">
-                                                      ⚠️ Low Stock: {stockLevel} {productUnit} remaining
-                                                    </Badge>
-                                                  );
-                                                } else if (isRunningLow) {
-                                                  return (
-                                                    <Badge colorScheme="yellow" size="sm" variant="outline">
-                                                      ⏰ Running Low: {stockLevel} {productUnit} available
-                                                    </Badge>
-                                                  );
-                                                } else {
-                                                  return (
-                                                    <Badge colorScheme="green" size="sm" variant="subtle">
-                                                      ✅ Available: {stockLevel} {productUnit} in stock
-                                                    </Badge>
-                                                  );
-                                                }
-                                              }
-                                              return null;
-                                            })()}
-                                          </VStack>
-                                          <IconButton
-                                            aria-label="Add new product"
-                                            icon={<FiPlus />}
-                                            size="sm"
-                                            colorScheme="blue"
-                                            variant="outline"
-                                            onClick={onAddProductOpen}
-                                            title="Add New Product"
-                                            _hover={{ bg: 'blue.50' }}
-                                          />
-                                        </HStack>
-                                      )}
-                                    </Td>
-                                    <Td isNumeric>
-                                      <VStack spacing={1} align="end">
-                                        {(() => {
-                                          const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                                          const availableStock = selectedProduct?.stock || 0;
-                                          const currentQty = parseFloat(item.quantity) || 0;
-                                          const isExceedingStock = currentQty > availableStock;
-
-                                          return (
-                                            <>
-                                              <NumberInput
-                                                size="sm"
-                                                min={1}
-                                                max={selectedProduct ? Math.max(1, availableStock) : undefined}
-                                                value={item.quantity}
-                                                onChange={(valueString) => {
-                                                  const items = [...formData.items];
-                                                  const numValue = parseFloat(valueString) || 0;
-
-                                                  // Allow input but warn if exceeding stock
-                                                  items[index] = { ...items[index], quantity: valueString };
-                                                  setFormData({ ...formData, items });
-
-                                                  // Show toast warning for exceeding stock
-                                                  if (selectedProduct && numValue > availableStock && availableStock > 0) {
-                                                    toast({
-                                                      title: 'Stock Warning',
-                                                      description: `Quantity (${numValue}) exceeds available stock (${availableStock}). This purchase may face stock shortages.`,
-                                                      status: 'warning',
-                                                      duration: 4000,
-                                                      isClosable: true,
-                                                    });
-                                                  }
-                                                }}
-                                                maxW="90px"
-                                                isInvalid={isExceedingStock && availableStock > 0}
-                                              >
-                                                <NumberInputField
-                                                  textAlign="right"
-                                                  fontSize="sm"
-                                                  bg={isExceedingStock && availableStock > 0 ? 'red.50' : cardBg}
-                                                  borderColor={isExceedingStock && availableStock > 0 ? 'red.300' : borderColor}
-                                                  _hover={{
-                                                    borderColor: isExceedingStock && availableStock > 0 ? 'red.400' : inputHoverBorder
-                                                  }}
-                                                  _focus={{
-                                                    borderColor: isExceedingStock && availableStock > 0 ? 'red.500' : inputFocusBorder,
-                                                    boxShadow: isExceedingStock && availableStock > 0 ? '0 0 0 1px #e53e3e' : inputFocusShadow
-                                                  }}
-                                                />
-                                                <NumberInputStepper>
-                                                  <NumberIncrementStepper
-                                                    isDisabled={selectedProduct && currentQty >= availableStock && availableStock > 0}
-                                                  />
-                                                  <NumberDecrementStepper />
-                                                </NumberInputStepper>
-                                              </NumberInput>
-
-                                              {/* Stock validation indicator */}
-                                              {selectedProduct && availableStock > 0 && isExceedingStock && (
-                                                <Text fontSize="xs" color="red.500" fontWeight="bold" textAlign="center" w="90px">
-                                                  ⚠️ Exceeds stock!
-                                                </Text>
-                                              )}
-                                              {selectedProduct && availableStock > 0 && currentQty > 0 && !isExceedingStock && (
-                                                <Text fontSize="xs" color="green.500" fontWeight="medium" textAlign="center" w="90px">
-                                                  ✓ Stock OK
-                                                </Text>
-                                              )}
-                                              {selectedProduct && availableStock === 0 && currentQty > 0 && (
-                                                <Text fontSize="xs" color="red.600" fontWeight="bold" textAlign="center" w="90px">
-                                                  ❌ No stock
-                                                </Text>
-                                              )}
-                                            </>
-                                          );
-                                        })()}
-                                      </VStack>
-                                    </Td>
-                                    <Td isNumeric>
-                                      <Box maxW="160px">
-                                        <CurrencyInput
-                                          value={parseFloat(item.unit_price) || 0}
-                                          onChange={(value) => {
+                                            <IconButton
+                                              aria-label="Add new product"
+                                              icon={<FiPlus />}
+                                              size="sm"
+                                              colorScheme="blue"
+                                              variant="outline"
+                                              onClick={onAddProductOpen}
+                                              title="Add New Product"
+                                              _hover={{ bg: 'blue.50' }}
+                                            />
+                                          </HStack>
+                                        )}
+                                      </Td>
+                                      <Td isNumeric>
+                                        <NumberInput
+                                          size="sm"
+                                          min={1}
+                                          value={item.quantity}
+                                          onChange={(valueString) => {
                                             const items = [...formData.items];
-                                            items[index] = { ...items[index], unit_price: value.toString() };
+                                            items[index] = { ...items[index], quantity: valueString };
                                             setFormData({ ...formData, items });
                                           }}
-                                          placeholder="Rp 10.000"
-                                          size="sm"
-                                          min={0}
-                                          showLabel={false}
-                                        />
-                                      </Box>
-                                    </Td>
-                                    <Td minW="240px" position="relative">
-                                      {canListExpenseAccounts ? (
-                                        <Box minW="240px" w="100%">
-                                          <SearchableSelect
-                                            options={expenseAccounts.map(acc => ({
-                                              id: acc.id!,
-                                              code: acc.code,
-                                              name: acc.name,
-                                              active: acc.is_active
-                                            }))}
-                                            value={item.expense_account_id}
+                                          maxW="80px"
+                                        >
+                                          <NumberInputField textAlign="right" fontSize="sm" />
+                                          <NumberInputStepper>
+                                            <NumberIncrementStepper />
+                                            <NumberDecrementStepper />
+                                          </NumberInputStepper>
+                                        </NumberInput>
+                                      </Td>
+                                      <Td isNumeric>
+                                        <Box maxW="160px">
+                                          <CurrencyInput
+                                            value={parseFloat(item.unit_price) || 0}
                                             onChange={(value) => {
                                               const items = [...formData.items];
-                                              items[index] = { ...items[index], expense_account_id: value.toString() };
+                                              items[index] = { ...items[index], unit_price: value.toString() };
                                               setFormData({ ...formData, items });
                                             }}
-                                            placeholder="Pilih akun beban..."
-                                            isLoading={loadingExpenseAccounts}
-                                            displayFormat={(option) => `${option.code} - ${option.name}`}
+                                            placeholder="Rp 10.000"
                                             size="sm"
+                                            min={0}
+                                            showLabel={false}
                                           />
                                         </Box>
-                                      ) : (
-                                        <NumberInput
-                                          min={1}
-                                          value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')}
-                                          onChange={(v) => {
-                                            const items = [...formData.items];
-                                            items[index] = { ...items[index], expense_account_id: v.toString() };
-                                            setFormData({ ...formData, items });
-                                          }}
-                                          maxW="240px"
-                                          size="sm"
-                                        >
-                                          <NumberInputField placeholder="Expense Account ID" fontSize="sm" />
-                                        </NumberInput>
-                                      )}
-                                    </Td>
-                                    <Td isNumeric>
-                                      <Text fontSize="sm" fontWeight="medium" color="green.600">
-                                        {(() => {
-                                          const qty = parseFloat(item.quantity || '0');
-                                          const price = parseFloat(item.unit_price || '0');
-                                          return formatCurrency((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
-                                        })()}
-                                      </Text>
-                                    </Td>
-                                    <Td>
-                                      <IconButton
-                                        aria-label="Remove item"
-                                        size="sm"
-                                        colorScheme="red"
-                                        variant="ghost"
-                                        icon={<FiTrash2 />}
-                                        onClick={() => {
-                                          const items = [...formData.items];
-                                          items.splice(index, 1);
-                                          setFormData({ ...formData, items });
-                                        }}
-                                        _hover={{ bg: 'red.50' }}
-                                      />
-                                    </Td>
-                                  </Tr>
-                                ))
-                              )}
-                            </Tbody>
-                          </Table>
-                        </Box>
-
-                        {/* Stock Alert Summary */}
-                        {formData.items.length > 0 && (() => {
-                          const itemsWithStockIssues = formData.items.filter(item => {
-                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                            const availableStock = selectedProduct?.stock || 0;
-                            const currentQty = parseFloat(item.quantity) || 0;
-                            return selectedProduct && (availableStock === 0 || currentQty > availableStock);
-                          });
-
-                          const outOfStockItems = formData.items.filter(item => {
-                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                            return selectedProduct && selectedProduct.stock === 0;
-                          });
-
-                          const exceedsStockItems = formData.items.filter(item => {
-                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                            const availableStock = selectedProduct?.stock || 0;
-                            const currentQty = parseFloat(item.quantity) || 0;
-                            return selectedProduct && availableStock > 0 && currentQty > availableStock;
-                          });
-
-                          const lowStockItems = formData.items.filter(item => {
-                            const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                            const availableStock = selectedProduct?.stock || 0;
-                            const minStock = selectedProduct?.min_stock || 0;
-                            return selectedProduct && availableStock > 0 && availableStock <= minStock;
-                          });
-
-                          return (
-                            <VStack spacing={3} mt={4}>
-                              {/* Critical Stock Issues Alert */}
-                              {(outOfStockItems.length > 0 || exceedsStockItems.length > 0) && (
-                                <Alert status="error" variant="left-accent" borderRadius="md">
-                                  <AlertIcon />
-                                  <VStack align="start" spacing={1}>
-                                    <AlertTitle fontSize="sm">Stock Issues Detected!</AlertTitle>
-                                    <AlertDescription fontSize="xs">
-                                      {outOfStockItems.length > 0 && (
-                                        <Text>❌ {outOfStockItems.length} item(s) are out of stock</Text>
-                                      )}
-                                      {exceedsStockItems.length > 0 && (
-                                        <Text>⚠️ {exceedsStockItems.length} item(s) exceed available stock</Text>
-                                      )}
-                                      <Text fontWeight="medium">Purchase may face stock shortages or delivery delays.</Text>
-                                    </AlertDescription>
-                                  </VStack>
-                                </Alert>
-                              )}
-
-                              {/* Low Stock Warning */}
-                              {lowStockItems.length > 0 && outOfStockItems.length === 0 && exceedsStockItems.length === 0 && (
-                                <Alert status="warning" variant="left-accent" borderRadius="md">
-                                  <AlertIcon />
-                                  <VStack align="start" spacing={1}>
-                                    <AlertTitle fontSize="sm">Low Stock Alert</AlertTitle>
-                                    <AlertDescription fontSize="xs">
-                                      ⏰ {lowStockItems.length} item(s) have low stock levels. Consider increasing order quantities.
-                                    </AlertDescription>
-                                  </VStack>
-                                </Alert>
-                              )}
-
-                              {/* All Good Status */}
-                              {itemsWithStockIssues.length === 0 && lowStockItems.length === 0 && (
-                                <Alert status="success" variant="left-accent" borderRadius="md">
-                                  <AlertIcon />
-                                  <VStack align="start" spacing={1}>
-                                    <AlertTitle fontSize="sm">Stock Status: All Good</AlertTitle>
-                                    <AlertDescription fontSize="xs">
-                                      ✅ All selected products have sufficient stock for this purchase.
-                                    </AlertDescription>
-                                  </VStack>
-                                </Alert>
-                              )}
-                            </VStack>
-                          );
-                        })()}
-
-                        {/* Summary Row */}
-                        {formData.items.length > 0 && (
-                          <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
-                            <Flex justify="space-between" align="center">
-                              <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
-                                Total Items: {formData.items.length}
-                              </Text>
-                              <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                                Subtotal: {formatCurrency(
-                                  formData.items.reduce((total, item) => {
-                                    const qty = parseFloat(item.quantity || '0');
-                                    const price = parseFloat(item.unit_price || '0');
-                                    return total + ((isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price));
-                                  }, 0)
-                                )}
-                              </Text>
-                            </Flex>
-                          </Box>
-                        )}
-
-                        <FormHelperText mt={3} fontSize="xs">
-                          📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
-                        </FormHelperText>
-                      </CardBody>
-                    </Card>
-
-                    {/* Tax Configuration Section */}
-                    <Card>
-                      <CardHeader pb={3}>
-                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                          💰 Tax Configuration
-                        </Text>
-                      </CardHeader>
-                      <CardBody pt={0}>
-                        <VStack spacing={4} align="stretch">
-                          {/* Tax Additions (Penambahan) */}
-                          <Box>
-                            <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
-                              ➕ Tax Additions (Penambahan)
-                            </Text>
-                            <SimpleGrid columns={2} spacing={4}>
-                              <FormControl>
-                                <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.ppn_rate}
-                                  onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="11" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
-                              </FormControl>
-
-                              <FormControl>
-                                <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.other_tax_additions}
-                                  onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="0" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
-                              </FormControl>
-                            </SimpleGrid>
-                          </Box>
-
-                          <Divider />
-
-                          {/* Tax Deductions (Pemotongan) */}
-                          <Box>
-                            <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
-                              ➖ Tax Deductions (Pemotongan)
-                            </Text>
-                            <SimpleGrid columns={3} spacing={4}>
-                              <FormControl>
-                                <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.pph21_rate}
-                                  onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="0" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 21</FormHelperText>
-                              </FormControl>
-
-                              <FormControl>
-                                <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.pph23_rate}
-                                  onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="0" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 23</FormHelperText>
-                              </FormControl>
-
-                              <FormControl>
-                                <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.other_tax_deductions}
-                                  onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="0" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
-                              </FormControl>
-                            </SimpleGrid>
-                          </Box>
-
-                          {/* Tax Summary Calculation */}
-                          {formData.items.length > 0 && (
-                            <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
-                              <VStack spacing={2} align="stretch">
-                                <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
-                                {(() => {
-                                  const subtotal = formData.items.reduce((total, item) => {
-                                    const qty = parseFloat(item.quantity || '0');
-                                    const price = parseFloat(item.unit_price || '0');
-                                    const discount = parseFloat(item.discount || '0');
-                                    const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                    const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
-                                    return total + lineTotal;
-                                  }, 0);
-
-                                  const discount = (parseFloat(formData.discount) || 0) / 100;
-                                  const discountedSubtotal = subtotal * (1 - discount);
-
-                                  const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
-                                  const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
-                                  const totalAdditions = ppnAmount + otherAdditions;
-
-                                  const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
-                                  const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
-                                  const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
-                                  const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
-
-                                  const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
-
-                                  return (
-                                    <SimpleGrid columns={2} spacing={4} fontSize="xs">
-                                      <VStack align="start" spacing={1}>
-                                        <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
-                                        <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
-                                        <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
-                                      </VStack>
-
-                                      <VStack align="start" spacing={1}>
-                                        <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
-                                        {parseFloat(formData.other_tax_additions) > 0 && (
-                                          <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
-                                        )}
-                                        {parseFloat(formData.pph21_rate) > 0 && (
-                                          <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
-                                        )}
-                                        {parseFloat(formData.pph23_rate) > 0 && (
-                                          <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
-                                        )}
-                                        {parseFloat(formData.other_tax_deductions) > 0 && (
-                                          <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
-                                        )}
-                                        <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
-                                          Final Total: {formatCurrency(finalTotal)}
-                                        </Text>
-                                      </VStack>
-                                    </SimpleGrid>
-                                  );
-                                })()}
-                              </VStack>
-                            </Box>
-                          )}
-                        </VStack>
-                      </CardBody>
-                    </Card>
-
-                    {/* Payment Method Section */}
-                    <Card>
-                      <CardHeader pb={3}>
-                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                          💳 Payment Method
-                        </Text>
-                      </CardHeader>
-                      <CardBody pt={0}>
-                        <SimpleGrid columns={2} spacing={4}>
-                          <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
-                            <Select
-                              value={formData.payment_method}
-                              onChange={(e) => {
-                                // Reset bank_account_id saat ganti payment method untuk menghindari konflik
-                                setFormData({
-                                  ...formData,
-                                  payment_method: e.target.value,
-                                  bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
-                                })
-                              }}
-                              size="sm"
-                            >
-                              <option value="CREDIT">Credit</option>
-                              <option value="CASH">Cash</option>
-                              <option value="BANK_TRANSFER">Bank Transfer</option>
-                              <option value="CHECK">Check</option>
-                            </Select>
-                            <FormHelperText fontSize="xs">
-                              {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
-                              {formData.payment_method === 'CASH' && 'Direct cash payment'}
-                              {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
-                              {formData.payment_method === 'CHECK' && 'Payment by check'}
-                            </FormHelperText>
-                          </FormControl>
-
-                          {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
-                          {formData.payment_method !== 'CREDIT' && (
-                            <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">
-                                {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
-                              </FormLabel>
-                              <Select
-                                value={formData.bank_account_id}
-                                onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
-                                size="sm"
-                                disabled={loadingBankAccounts}
-                                placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
-                              >
-                                {bankAccounts
-                                  .filter(account => {
-                                    // Filter berdasarkan payment method
-                                    if (formData.payment_method === 'CASH') {
-                                      return account.type === 'CASH';
-                                    } else {
-                                      return account.type === 'BANK';
-                                    }
-                                  })
-                                  .map((account) => (
-                                    <option key={account.id} value={account.id.toString()}>
-                                      {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
-                                    </option>
-                                  ))
-                                }
-                              </Select>
-                              <FormHelperText fontSize="xs">
-                                Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
-                              </FormHelperText>
-                            </FormControl>
-                          )}
-
-                          {/* Credit Account dropdown for Credit payment */}
-                          {formData.payment_method === 'CREDIT' && (
-                            <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">
-                                Liability Account
-                              </FormLabel>
-                              <Select
-                                value={formData.credit_account_id}
-                                onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
-                                size="sm"
-                                disabled={loadingCreditAccounts}
-                                placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
-                              >
-                                {creditAccounts.map((account) => (
-                                  <option key={account.id} value={account.id?.toString()}>
-                                    {account.code} - {account.name}
-                                  </option>
-                                ))}
-                              </Select>
-                              <FormHelperText fontSize="xs">
-                                Required: Select liability account for tracking credit purchases
-                              </FormHelperText>
-                            </FormControl>
-                          )}
-                        </SimpleGrid>
-
-                        {/* Payment Reference (for non-credit and non-cash payments) */}
-                        {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
-                          <FormControl mt={4}>
-                            <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
-                            <Input
-                              value={formData.payment_reference}
-                              onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
-                              placeholder={
-                                formData.payment_method === 'CHECK' ? 'Check number' :
-                                  formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
-                                    'Payment reference number'
-                              }
-                              size="sm"
-                            />
-                            <FormHelperText fontSize="xs">
-                              Optional reference for tracking this payment
-                            </FormHelperText>
-                          </FormControl>
-                        )}
-                      </CardBody>
-                    </Card>
-
-                  </VStack>
-                </ModalBody>
-                <ModalFooter>
-                  <HStack spacing={3}>
-                    <Button variant="ghost" onClick={onEditClose}>
-                      Cancel
-                    </Button>
-                    <Button colorScheme="blue" onClick={handleSave}>
-                      Update Purchase
-                    </Button>
-                  </HStack>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
-
-            {/* Create Purchase Modal */}
-            <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="6xl">
-              <ModalOverlay />
-              <ModalContent maxW="95vw" maxH="95vh" bg={modalContentBg}>
-                <ModalHeader bg={modalHeaderBg} borderRadius="md" mx={4} mt={4} mb={2} borderBottomWidth={1} borderColor={borderColor}>
-                  <HStack>
-                    <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
-                    <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                      Create New Purchase
-                    </Text>
-                  </HStack>
-                </ModalHeader>
-                <ModalCloseButton top={6} right={6} />
-                <ModalBody overflowY="auto" px={6} pb={2}>
-                  <VStack spacing={6} align="stretch">
-                    {/* Basic Information Section */}
-                    <Card>
-                      <CardHeader pb={3}>
-                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                          📋 Basic Information
-                        </Text>
-                      </CardHeader>
-                      <CardBody pt={0}>
-                        <SimpleGrid columns={3} spacing={4}>
-                          <FormControl>
-                            <FormLabel fontSize="sm" fontWeight="medium">{t('purchases.purchaseCode')}</FormLabel>
-                            <Input value={t('purchases.autoGenerated')} isReadOnly bg="gray.100" size="sm" color="gray.500" />
-                            <FormHelperText fontSize="xs">{t('purchases.autoGeneratedDesc')}</FormHelperText>
-                          </FormControl>
-
-                          <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">Vendor</FormLabel>
-                            <HStack spacing={2}>
-                              {loadingVendors ? (
-                                <Spinner size="sm" />
-                              ) : (
-                                <Select
-                                  placeholder="Select vendor"
-                                  value={formData.vendor_id}
-                                  onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
-                                  size="sm"
-                                  flex={1}
-                                >
-                                  {vendors.map(vendor => (
-                                    <option key={vendor.id} value={vendor.id}>
-                                      {vendor.name} ({vendor.code})
-                                    </option>
-                                  ))}
-                                </Select>
-                              )}
-                              <IconButton
-                                aria-label="Add new vendor"
-                                icon={<FiPlus />}
-                                size="sm"
-                                colorScheme="green"
-                                variant="outline"
-                                onClick={onAddVendorOpen}
-                                title="Add New Vendor"
-                                _hover={{ bg: 'green.50' }}
-                              />
-                            </HStack>
-                          </FormControl>
-
-                          <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">Purchase Date</FormLabel>
-                            <Input
-                              type="date"
-                              size="sm"
-                              value={formData.date}
-                              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                            />
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm" fontWeight="medium">Due Date</FormLabel>
-                            <Input
-                              type="date"
-                              size="sm"
-                              value={formData.due_date}
-                              onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                            />
-                          </FormControl>
-                        </SimpleGrid>
-
-                        <SimpleGrid columns={2} spacing={4} mt={4}>
-                          <FormControl>
-                            <FormLabel fontSize="sm" fontWeight="medium">Discount (%)</FormLabel>
-                            <NumberInput
-                              value={formData.discount}
-                              onChange={(value) => setFormData({ ...formData, discount: value })}
-                              size="sm"
-                              min={0}
-                              max={100}
-                            >
-                              <NumberInputField placeholder="0" />
-                              <NumberInputStepper>
-                                <NumberIncrementStepper />
-                                <NumberDecrementStepper />
-                              </NumberInputStepper>
-                            </NumberInput>
-                            <FormHelperText fontSize="xs">Masukkan persentase diskon atas subtotal (0-100)</FormHelperText>
-                          </FormControl>
-
-                          <FormControl>
-                            <FormLabel fontSize="sm" fontWeight="medium">Notes</FormLabel>
-                            <Textarea
-                              value={formData.notes}
-                              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                              placeholder="Enter any notes or descriptions..."
-                              rows={3}
-                              size="sm"
-                              resize="vertical"
-                            />
-                          </FormControl>
-                        </SimpleGrid>
-                      </CardBody>
-                    </Card>
-
-                    {/* Purchase Items Section */}
-                    <Card>
-                      <CardHeader pb={3}>
-                        <Flex justify="space-between" align="center">
-                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                            🛒 Purchase Items
-                          </Text>
-                          <Button
-                            size="sm"
-                            leftIcon={<FiPlus />}
-                            colorScheme="blue"
-                            variant="outline"
-                            onClick={() => {
-                              setFormData({
-                                ...formData,
-                                items: [
-                                  ...formData.items,
-                                  { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: '' }
-                                ]
-                              });
-                            }}
-                          >
-                            Add Item
-                          </Button>
-                        </Flex>
-                      </CardHeader>
-                      <CardBody pt={0}>
-                        <Box overflow="visible">
-                          <Table size="sm" variant="simple">
-                            <Thead bg={tableHeaderBg}>
-                              <Tr>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Discount (IDR)</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Account</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Line Total (IDR)</Th>
-                                <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
-                              </Tr>
-                            </Thead>
-                            <Tbody>
-                              {formData.items.length === 0 ? (
-                                <Tr>
-                                  <Td colSpan={7} textAlign="center" py={8}>
-                                    <VStack spacing={2}>
-                                      <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
-                                      <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
-                                    </VStack>
-                                  </Td>
-                                </Tr>
-                              ) : (
-                                formData.items.map((item, index) => (
-                                  <Tr key={index} _hover={{ bg: hoverBg }}>
-                                    <Td minW="200px">
-                                      {loadingProducts ? (
-                                        <Flex align="center" justify="center" h="32px">
-                                          <Spinner size="sm" />
-                                        </Flex>
-                                      ) : (
-                                        <HStack spacing={2}>
-                                          <Select
-                                            placeholder="Select product"
-                                            value={item.product_id}
-                                            onChange={(e) => {
+                                      </Td>
+                                      <Td isNumeric>
+                                        <Box maxW="140px">
+                                          <CurrencyInput
+                                            value={parseFloat(item.discount) || 0}
+                                            onChange={(value) => {
                                               const items = [...formData.items];
-                                              items[index] = { ...items[index], product_id: e.target.value };
+                                              items[index] = { ...items[index], discount: value.toString() };
                                               setFormData({ ...formData, items });
                                             }}
+                                            placeholder="Rp 0"
                                             size="sm"
-                                            maxW="280px"
+                                            min={0}
+                                            showLabel={false}
+                                          />
+                                        </Box>
+                                      </Td>
+                                      <Td minW="240px">
+                                        {canListExpenseAccounts ? (
+                                          <Box maxW="240px">
+                                            <SearchableSelect
+                                              options={expenseAccounts.map(acc => ({
+                                                id: acc.id!,
+                                                code: acc.code,
+                                                name: acc.name,
+                                                active: acc.is_active
+                                              }))}
+                                              value={item.expense_account_id}
+                                              onChange={(value) => {
+                                                const items = [...formData.items];
+                                                items[index] = { ...items[index], expense_account_id: value.toString() };
+                                                setFormData({ ...formData, items });
+                                              }}
+                                              placeholder="Pilih akun..."
+                                              isLoading={loadingExpenseAccounts}
+                                              displayFormat={(option) => `${option.code} - ${option.name}`}
+                                            />
+                                          </Box>
+                                        ) : (
+                                          <NumberInput
+                                            min={1}
+                                            value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')}
+                                            onChange={(v) => {
+                                              const items = [...formData.items];
+                                              items[index] = { ...items[index], expense_account_id: v.toString() };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            maxW="240px"
+                                            size="sm"
                                           >
-                                            {products.map((p) => (
-                                              <option key={p.id} value={p.id?.toString()}>
-                                                {p?.id} - {p?.name || p?.code}
-                                              </option>
-                                            ))}
-                                          </Select>
-                                          <IconButton
-                                            aria-label="Add new product"
-                                            icon={<FiPlus />}
-                                            size="sm"
-                                            colorScheme="blue"
-                                            variant="outline"
-                                            onClick={onAddProductOpen}
-                                            title="Add New Product"
-                                            _hover={{ bg: 'blue.50' }}
-                                          />
-                                        </HStack>
-                                      )}
-                                    </Td>
-                                    <Td isNumeric>
-                                      <NumberInput
-                                        size="sm"
-                                        min={1}
-                                        value={item.quantity}
-                                        onChange={(valueString) => {
-                                          const items = [...formData.items];
-                                          items[index] = { ...items[index], quantity: valueString };
-                                          setFormData({ ...formData, items });
-                                        }}
-                                        maxW="80px"
-                                      >
-                                        <NumberInputField textAlign="right" fontSize="sm" />
-                                        <NumberInputStepper>
-                                          <NumberIncrementStepper />
-                                          <NumberDecrementStepper />
-                                        </NumberInputStepper>
-                                      </NumberInput>
-                                    </Td>
-                                    <Td isNumeric>
-                                      <Box maxW="160px">
-                                        <CurrencyInput
-                                          value={parseFloat(item.unit_price) || 0}
-                                          onChange={(value) => {
-                                            const items = [...formData.items];
-                                            items[index] = { ...items[index], unit_price: value.toString() };
-                                            setFormData({ ...formData, items });
-                                          }}
-                                          placeholder="Rp 10.000"
-                                          size="sm"
-                                          min={0}
-                                          showLabel={false}
-                                        />
-                                      </Box>
-                                    </Td>
-                                    <Td isNumeric>
-                                      <Box maxW="140px">
-                                        <CurrencyInput
-                                          value={parseFloat(item.discount) || 0}
-                                          onChange={(value) => {
-                                            const items = [...formData.items];
-                                            items[index] = { ...items[index], discount: value.toString() };
-                                            setFormData({ ...formData, items });
-                                          }}
-                                          placeholder="Rp 0"
-                                          size="sm"
-                                          min={0}
-                                          showLabel={false}
-                                        />
-                                      </Box>
-                                    </Td>
-                                    <Td minW="240px">
-                                      {canListExpenseAccounts ? (
-                                        <Box maxW="240px">
-                                          <SearchableSelect
-                                            options={expenseAccounts.map(acc => ({
-                                              id: acc.id!,
-                                              code: acc.code,
-                                              name: acc.name,
-                                              active: acc.is_active
-                                            }))}
-                                            value={item.expense_account_id}
-                                            onChange={(value) => {
-                                              const items = [...formData.items];
-                                              items[index] = { ...items[index], expense_account_id: value.toString() };
-                                              setFormData({ ...formData, items });
-                                            }}
-                                            placeholder="Pilih akun..."
-                                            isLoading={loadingExpenseAccounts}
-                                            displayFormat={(option) => `${option.code} - ${option.name}`}
-                                          />
-                                        </Box>
-                                      ) : (
-                                        <NumberInput
-                                          min={1}
-                                          value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')}
-                                          onChange={(v) => {
-                                            const items = [...formData.items];
-                                            items[index] = { ...items[index], expense_account_id: v.toString() };
-                                            setFormData({ ...formData, items });
-                                          }}
-                                          maxW="240px"
-                                          size="sm"
-                                        >
-                                          <NumberInputField placeholder="Account ID" fontSize="sm" />
-                                        </NumberInput>
-                                      )}
-                                    </Td>
-                                    <Td isNumeric>
-                                      <Text fontSize="sm" fontWeight="medium" color={statColors.green}>
-                                        {(() => {
-                                          const qty = parseFloat(item.quantity || '0');
-                                          const price = parseFloat(item.unit_price || '0');
-                                          const discount = parseFloat(item.discount || '0');
-                                          const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                          const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
-                                          return formatCurrency(lineTotal);
-                                        })()}
-                                      </Text>
-                                    </Td>
-                                    <Td>
-                                      <IconButton
-                                        aria-label="Remove item"
-                                        size="sm"
-                                        colorScheme="red"
-                                        variant="ghost"
-                                        icon={<FiTrash2 />}
-                                        onClick={() => {
-                                          const items = [...formData.items];
-                                          items.splice(index, 1);
-                                          setFormData({ ...formData, items });
-                                        }}
-                                        _hover={{ bg: 'red.50' }}
-                                      />
-                                    </Td>
-                                  </Tr>
-                                ))
-                              )}
-                            </Tbody>
-                          </Table>
-                        </Box>
-
-                        {/* Summary Row */}
-                        {formData.items.length > 0 && (
-                          <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
-                            <Flex justify="space-between" align="center">
-                              <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
-                                Total Items: {formData.items.length}
-                              </Text>
-                              <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                                Subtotal: {formatCurrency(
-                                  formData.items.reduce((total, item) => {
-                                    const qty = parseFloat(item.quantity || '0');
-                                    const price = parseFloat(item.unit_price || '0');
-                                    const discount = parseFloat(item.discount || '0');
-                                    const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                    const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
-                                    return total + lineTotal;
-                                  }, 0)
-                                )}
-                              </Text>
-                            </Flex>
-                          </Box>
-                        )}
-
-                        <FormControl>
-                          <FormHelperText mt={3} fontSize="xs">
-                            📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
-                          </FormHelperText>
-                        </FormControl>
-                      </CardBody>
-                    </Card>
-
-                    {/* Tax Configuration Section */}
-                    <Card>
-                      <CardHeader pb={3}>
-                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                          💰 Tax Configuration
-                        </Text>
-                      </CardHeader>
-                      <CardBody pt={0}>
-                        <VStack spacing={4} align="stretch">
-                          {/* Tax Additions (Penambahan) */}
-                          <Box>
-                            <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
-                              ➕ Tax Additions (Penambahan)
-                            </Text>
-                            <SimpleGrid columns={2} spacing={4}>
-                              <FormControl>
-                                <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.ppn_rate}
-                                  onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="11" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
-                              </FormControl>
-
-                              <FormControl>
-                                <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.other_tax_additions}
-                                  onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="0" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
-                              </FormControl>
-                            </SimpleGrid>
-                          </Box>
-
-                          <Divider />
-
-                          {/* Tax Deductions (Pemotongan) */}
-                          <Box>
-                            <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
-                              ➖ Tax Deductions (Pemotongan)
-                            </Text>
-                            <SimpleGrid columns={3} spacing={4}>
-                              <FormControl>
-                                <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.pph21_rate}
-                                  onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="2" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">PPh 21: 2% jasa konstruksi, 15% dividen/bunga</FormHelperText>
-                              </FormControl>
-
-                              <FormControl>
-                                <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.pph23_rate}
-                                  onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="2" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">PPh 23: 2% jasa umum, 15% dividen/bunga/royalti</FormHelperText>
-                              </FormControl>
-
-                              <FormControl>
-                                <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
-                                <NumberInput
-                                  value={formData.other_tax_deductions}
-                                  onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
-                                  size="sm"
-                                  min={0}
-                                  max={100}
-                                  step={0.1}
-                                >
-                                  <NumberInputField placeholder="0" />
-                                  <NumberInputStepper>
-                                    <NumberIncrementStepper />
-                                    <NumberDecrementStepper />
-                                  </NumberInputStepper>
-                                </NumberInput>
-                                <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
-                              </FormControl>
-                            </SimpleGrid>
-                          </Box>
-
-                          {/* Tax Summary Calculation */}
-                          {formData.items.length > 0 && (
-                            <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
-                              <VStack spacing={2} align="stretch">
-                                <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
-                                {(() => {
-                                  const subtotal = formData.items.reduce((total, item) => {
-                                    const qty = parseFloat(item.quantity || '0');
-                                    const price = parseFloat(item.unit_price || '0');
-                                    const discount = parseFloat(item.discount || '0');
-                                    const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                    const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
-                                    return total + lineTotal;
-                                  }, 0);
-
-                                  const discount = (parseFloat(formData.discount) || 0) / 100;
-                                  const discountedSubtotal = subtotal * (1 - discount);
-
-                                  const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
-                                  const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
-                                  const totalAdditions = ppnAmount + otherAdditions;
-
-                                  const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
-                                  const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
-                                  const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
-                                  const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
-
-                                  const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
-
-                                  return (
-                                    <SimpleGrid columns={2} spacing={4} fontSize="xs">
-                                      <VStack align="start" spacing={1}>
-                                        <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
-                                        <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
-                                        <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
-                                      </VStack>
-
-                                      <VStack align="start" spacing={1}>
-                                        <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
-                                        {parseFloat(formData.other_tax_additions) > 0 && (
-                                          <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
+                                            <NumberInputField placeholder="Account ID" fontSize="sm" />
+                                          </NumberInput>
                                         )}
-                                        {parseFloat(formData.pph21_rate) > 0 && (
-                                          <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
-                                        )}
-                                        {parseFloat(formData.pph23_rate) > 0 && (
-                                          <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
-                                        )}
-                                        {parseFloat(formData.other_tax_deductions) > 0 && (
-                                          <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
-                                        )}
-                                        <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
-                                          Final Total: {formatCurrency(finalTotal)}
+                                      </Td>
+                                      <Td isNumeric>
+                                        <Text fontSize="sm" fontWeight="medium" color={statColors.green}>
+                                          {(() => {
+                                            const qty = parseFloat(item.quantity || '0');
+                                            const price = parseFloat(item.unit_price || '0');
+                                            const discount = parseFloat(item.discount || '0');
+                                            const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                            const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
+                                            return formatCurrency(lineTotal);
+                                          })()}
                                         </Text>
-                                      </VStack>
-                                    </SimpleGrid>
-                                  );
-                                })()}
-                              </VStack>
+                                      </Td>
+                                      <Td>
+                                        <IconButton
+                                          aria-label="Remove item"
+                                          size="sm"
+                                          colorScheme="red"
+                                          variant="ghost"
+                                          icon={<FiTrash2 />}
+                                          onClick={() => {
+                                            const items = [...formData.items];
+                                            items.splice(index, 1);
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          _hover={{ bg: 'red.50' }}
+                                        />
+                                      </Td>
+                                    </Tr>
+                                  ))
+                                )}
+                              </Tbody>
+                            </Table>
+                          </Box>
+
+                          {/* Summary Row */}
+                          {formData.items.length > 0 && (
+                            <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
+                              <Flex justify="space-between" align="center">
+                                <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
+                                  Total Items: {formData.items.length}
+                                </Text>
+                                <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                                  Subtotal: {formatCurrency(
+                                    formData.items.reduce((total, item) => {
+                                      const qty = parseFloat(item.quantity || '0');
+                                      const price = parseFloat(item.unit_price || '0');
+                                      const discount = parseFloat(item.discount || '0');
+                                      const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                      const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
+                                      return total + lineTotal;
+                                    }, 0)
+                                  )}
+                                </Text>
+                              </Flex>
                             </Box>
                           )}
-                        </VStack>
-                      </CardBody>
-                    </Card>
 
-                    {/* Payment Method Section */}
-                    <Card>
-                      <CardHeader pb={3}>
-                        <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                          💳 Payment Method
-                        </Text>
-                      </CardHeader>
-                      <CardBody pt={0}>
-                        <SimpleGrid columns={2} spacing={4}>
-                          <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
-                            <Select
-                              value={formData.payment_method}
-                              onChange={(e) => {
-                                // Reset bank_account_id saat ganti payment method untuk menghindari konflik
-                                setFormData({
-                                  ...formData,
-                                  payment_method: e.target.value,
-                                  bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
-                                })
-                              }}
-                              size="sm"
-                            >
-                              <option value="CREDIT">Credit</option>
-                              <option value="CASH">Cash</option>
-                              <option value="BANK_TRANSFER">Bank Transfer</option>
-                              <option value="CHECK">Check</option>
-                            </Select>
-                            <FormHelperText fontSize="xs">
-                              {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
-                              {formData.payment_method === 'CASH' && 'Direct cash payment'}
-                              {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
-                              {formData.payment_method === 'CHECK' && 'Payment by check'}
+                          <FormControl>
+                            <FormHelperText mt={3} fontSize="xs">
+                              📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
                             </FormHelperText>
                           </FormControl>
-
-                          {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
-                          {formData.payment_method !== 'CREDIT' && (
-                            <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">
-                                {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
-                              </FormLabel>
-                              <Select
-                                value={formData.bank_account_id}
-                                onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
-                                size="sm"
-                                disabled={loadingBankAccounts}
-                                placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
-                              >
-                                {bankAccounts
-                                  .filter(account => {
-                                    // Filter berdasarkan payment method
-                                    if (formData.payment_method === 'CASH') {
-                                      return account.type === 'CASH';
-                                    } else {
-                                      return account.type === 'BANK';
-                                    }
-                                  })
-                                  .map((account) => (
-                                    <option key={account.id} value={account.id.toString()}>
-                                      {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
-                                    </option>
-                                  ))
-                                }
-                              </Select>
-                              <FormHelperText fontSize="xs">
-                                Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
-                              </FormHelperText>
-                            </FormControl>
-                          )}
-
-                          {/* Credit Account dropdown for Credit payment */}
-                          {formData.payment_method === 'CREDIT' && (
-                            <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">
-                                Liability Account
-                              </FormLabel>
-                              <Select
-                                value={formData.credit_account_id}
-                                onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
-                                size="sm"
-                                disabled={loadingCreditAccounts}
-                                placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
-                              >
-                                {creditAccounts.map((account) => (
-                                  <option key={account.id} value={account.id?.toString()}>
-                                    {account.code} - {account.name}
-                                  </option>
-                                ))}
-                              </Select>
-                              <FormHelperText fontSize="xs">
-                                Required: Select liability account for tracking credit purchases
-                              </FormHelperText>
-                            </FormControl>
-                          )}
-                        </SimpleGrid>
-
-                        {/* Payment Reference (for non-credit and non-cash payments) */}
-                        {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
-                          <FormControl mt={4}>
-                            <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
-                            <Input
-                              value={formData.payment_reference}
-                              onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
-                              placeholder={
-                                formData.payment_method === 'CHECK' ? 'Check number' :
-                                  formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
-                                    'Payment reference number'
-                              }
-                              size="sm"
-                            />
-                            <FormHelperText fontSize="xs">
-                              Optional reference for tracking this payment
-                            </FormHelperText>
-                          </FormControl>
-                        )}
-                      </CardBody>
-                    </Card>
-                  </VStack>
-                </ModalBody>
-                <ModalFooter>
-                  <HStack spacing={3}>
-                    <Button variant="ghost" onClick={onCreateClose}>
-                      Cancel
-                    </Button>
-                    <Button colorScheme="blue" onClick={handleSave}>
-                      Create Purchase
-                    </Button>
-                  </HStack>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
-
-            {/* Add Vendor Modal */}
-            <Modal isOpen={isAddVendorOpen} onClose={onAddVendorClose} size="lg">
-              <ModalOverlay />
-              <ModalContent bg={modalContentBg}>
-                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-                  <HStack>
-                    <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
-                    <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
-                      Add New Vendor
-                    </Text>
-                  </HStack>
-                </ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  <VStack spacing={4} align="stretch">
-                    <SimpleGrid columns={2} spacing={4}>
-                      <FormControl isRequired>
-                        <FormLabel fontSize="sm">Vendor Name</FormLabel>
-                        <Input
-                          size="sm"
-                          placeholder="Enter vendor name"
-                          value={newVendorData.name}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, name: e.target.value })}
-                        />
-                      </FormControl>
-
-                      <FormControl>
-                        <FormLabel fontSize="sm">Vendor Code</FormLabel>
-                        <Input
-                          size="sm"
-                          placeholder="Auto-generated if empty"
-                          value={newVendorData.code}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, code: e.target.value })}
-                        />
-                      </FormControl>
-                    </SimpleGrid>
-
-                    <SimpleGrid columns={2} spacing={4}>
-                      <FormControl isRequired>
-                        <FormLabel fontSize="sm">Email</FormLabel>
-                        <Input
-                          size="sm"
-                          type="email"
-                          placeholder="vendor@company.com"
-                          value={newVendorData.email}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, email: e.target.value })}
-                        />
-                      </FormControl>
-
-                      <FormControl>
-                        <FormLabel fontSize="sm">Phone</FormLabel>
-                        <Input
-                          size="sm"
-                          placeholder="Enter phone number"
-                          value={newVendorData.phone}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, phone: e.target.value })}
-                        />
-                      </FormControl>
-                    </SimpleGrid>
-
-                    <SimpleGrid columns={2} spacing={4}>
-                      <FormControl>
-                        <FormLabel fontSize="sm">Mobile</FormLabel>
-                        <Input
-                          size="sm"
-                          placeholder="Enter mobile number"
-                          value={newVendorData.mobile}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, mobile: e.target.value })}
-                        />
-                      </FormControl>
-
-                      <FormControl>
-                        <FormLabel fontSize="sm">PIC Name</FormLabel>
-                        <Input
-                          size="sm"
-                          placeholder="Person in charge"
-                          value={newVendorData.pic_name}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, pic_name: e.target.value })}
-                        />
-                      </FormControl>
-                    </SimpleGrid>
-
-                    <FormControl>
-                      <FormLabel fontSize="sm">Vendor ID</FormLabel>
-                      <Input
-                        size="sm"
-                        placeholder="External vendor ID (optional)"
-                        value={newVendorData.external_id}
-                        onChange={(e) => setNewVendorData({ ...newVendorData, external_id: e.target.value })}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel fontSize="sm">Address</FormLabel>
-                      <Textarea
-                        size="sm"
-                        placeholder="Enter vendor address"
-                        rows={3}
-                        value={newVendorData.address}
-                        onChange={(e) => setNewVendorData({ ...newVendorData, address: e.target.value })}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel fontSize="sm">Notes</FormLabel>
-                      <Textarea
-                        size="sm"
-                        placeholder="Additional notes (optional)"
-                        rows={2}
-                        value={newVendorData.notes}
-                        onChange={(e) => setNewVendorData({ ...newVendorData, notes: e.target.value })}
-                      />
-                    </FormControl>
-                  </VStack>
-                </ModalBody>
-                <ModalFooter>
-                  <HStack spacing={3}>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setNewVendorData({
-                          name: '',
-                          code: '',
-                          email: '',
-                          phone: '',
-                          mobile: '',
-                          address: '',
-                          pic_name: '',
-                          external_id: '',
-                          notes: ''
-                        });
-                        onAddVendorClose();
-                      }}
-                      disabled={savingVendor}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      colorScheme="green"
-                      onClick={handleAddVendor}
-                      isLoading={savingVendor}
-                      loadingText="Creating..."
-                    >
-                      Create Vendor
-                    </Button>
-                  </HStack>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
-
-            {/* Add Product Modal */}
-            <Modal isOpen={isAddProductOpen} onClose={onAddProductClose} size="lg">
-              <ModalOverlay />
-              <ModalContent bg={modalContentBg}>
-                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-                  <HStack>
-                    <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
-                    <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                      Add New Product
-                    </Text>
-                  </HStack>
-                </ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  <VStack spacing={4} align="stretch">
-                    <FormControl isRequired>
-                      <FormLabel fontSize="sm">Product Name</FormLabel>
-                      <Input
-                        size="sm"
-                        placeholder="Enter product name"
-                        value={newProductData.name}
-                        onChange={(e) => setNewProductData({ ...newProductData, name: e.target.value })}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel fontSize="sm">Product Code</FormLabel>
-                      <Input
-                        size="sm"
-                        placeholder="Enter product code (optional)"
-                        value={newProductData.code}
-                        onChange={(e) => setNewProductData({ ...newProductData, code: e.target.value })}
-                      />
-                    </FormControl>
-
-                    <FormControl>
-                      <FormLabel fontSize="sm">Description</FormLabel>
-                      <Textarea
-                        size="sm"
-                        placeholder="Enter product description"
-                        value={newProductData.description}
-                        onChange={(e) => setNewProductData({ ...newProductData, description: e.target.value })}
-                      />
-                    </FormControl>
-
-                    <SimpleGrid columns={3} spacing={4}>
-                      <FormControl isRequired>
-                        <FormLabel fontSize="sm">Unit</FormLabel>
-                        <Input
-                          size="sm"
-                          placeholder="e.g., pcs, kg, box"
-                          value={newProductData.unit}
-                          onChange={(e) => setNewProductData({ ...newProductData, unit: e.target.value })}
-                        />
-                      </FormControl>
-
-                      <FormControl>
-                        <FormLabel fontSize="sm">Purchase Price (IDR)</FormLabel>
-                        <CurrencyInput
-                          value={parseFloat(newProductData.purchase_price) || 0}
-                          onChange={(value) => setNewProductData({ ...newProductData, purchase_price: value.toString() })}
-                          placeholder="Rp 10.000"
-                          size="sm"
-                          min={0}
-                          showLabel={false}
-                        />
-                      </FormControl>
-
-                      <FormControl>
-                        <FormLabel fontSize="sm">Sale Price (IDR)</FormLabel>
-                        <CurrencyInput
-                          value={parseFloat(newProductData.sale_price) || 0}
-                          onChange={(value) => setNewProductData({ ...newProductData, sale_price: value.toString() })}
-                          placeholder="Rp 15.000"
-                          size="sm"
-                          min={0}
-                          showLabel={false}
-                        />
-                      </FormControl>
-                    </SimpleGrid>
-                  </VStack>
-                </ModalBody>
-                <ModalFooter>
-                  <HStack spacing={3} w="100%">
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setNewProductData({
-                          name: '',
-                          code: '',
-                          description: '',
-                          unit: '',
-                          purchase_price: '0',
-                          sale_price: '0',
-                        });
-                        onAddProductClose();
-                      }}
-                      flex={1}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      colorScheme="blue"
-                      onClick={handleAddProduct}
-                      isLoading={savingProduct}
-                      loadingText="Creating..."
-                      flex={1}
-                    >
-                      Create Product
-                    </Button>
-                  </HStack>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
-
-            {/* Create Receipt Modal */}
-            <Modal isOpen={isReceiptOpen} onClose={onReceiptClose} size="xl">
-              <ModalOverlay />
-              <ModalContent bg={modalContentBg}>
-                <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-                  <HStack>
-                    <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
-                    <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
-                      Create Goods Receipt - {selectedPurchase?.code}
-                    </Text>
-                  </HStack>
-                </ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  {selectedPurchase && (
-                    <VStack spacing={6} align="stretch">
-                      {/* Purchase Info */}
-                      <Card variant="outline">
-                        <CardBody p={4}>
-                          <SimpleGrid columns={3} spacing={4}>
-                            <FormControl>
-                              <FormLabel fontSize="sm">Purchase Code</FormLabel>
-                              <Text fontWeight="medium">{selectedPurchase.code}</Text>
-                            </FormControl>
-                            <FormControl>
-                              <FormLabel fontSize="sm">Vendor</FormLabel>
-                              <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
-                            </FormControl>
-                            <FormControl>
-                              <FormLabel fontSize="sm">Total Amount</FormLabel>
-                              <Text fontWeight="medium" color="green.500">
-                                {formatCurrency(selectedPurchase.total_amount)}
-                              </Text>
-                            </FormControl>
-                          </SimpleGrid>
                         </CardBody>
                       </Card>
 
-                      {/* Receipt Details */}
+                      {/* Tax Configuration Section */}
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            💰 Tax Configuration
+                          </Text>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <VStack spacing={4} align="stretch">
+                            {/* Tax Additions (Penambahan) */}
+                            <Box>
+                              <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
+                                ➕ Tax Additions (Penambahan)
+                              </Text>
+                              <SimpleGrid columns={2} spacing={4}>
+                                <FormControl>
+                                  <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.ppn_rate}
+                                    onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="11" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.other_tax_additions}
+                                    onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="0" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
+                                </FormControl>
+                              </SimpleGrid>
+                            </Box>
+
+                            <Divider />
+
+                            {/* Tax Deductions (Pemotongan) */}
+                            <Box>
+                              <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
+                                ➖ Tax Deductions (Pemotongan)
+                              </Text>
+                              <SimpleGrid columns={3} spacing={4}>
+                                <FormControl>
+                                  <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.pph21_rate}
+                                    onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="2" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">PPh 21: 2% jasa konstruksi, 15% dividen/bunga</FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.pph23_rate}
+                                    onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="2" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">PPh 23: 2% jasa umum, 15% dividen/bunga/royalti</FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
+                                  <NumberInput
+                                    value={formData.other_tax_deductions}
+                                    onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField placeholder="0" />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                  <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
+                                </FormControl>
+                              </SimpleGrid>
+                            </Box>
+
+                            {/* Tax Summary Calculation */}
+                            {formData.items.length > 0 && (
+                              <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
+                                <VStack spacing={2} align="stretch">
+                                  <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
+                                  {(() => {
+                                    const subtotal = formData.items.reduce((total, item) => {
+                                      const qty = parseFloat(item.quantity || '0');
+                                      const price = parseFloat(item.unit_price || '0');
+                                      const discount = parseFloat(item.discount || '0');
+                                      const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
+                                      const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
+                                      return total + lineTotal;
+                                    }, 0);
+
+                                    const discount = (parseFloat(formData.discount) || 0) / 100;
+                                    const discountedSubtotal = subtotal * (1 - discount);
+
+                                    const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
+                                    const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
+                                    const totalAdditions = ppnAmount + otherAdditions;
+
+                                    const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
+                                    const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
+                                    const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
+                                    const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
+
+                                    const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
+
+                                    return (
+                                      <SimpleGrid columns={2} spacing={4} fontSize="xs">
+                                        <VStack align="start" spacing={1}>
+                                          <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
+                                          <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
+                                          <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
+                                        </VStack>
+
+                                        <VStack align="start" spacing={1}>
+                                          <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
+                                          {parseFloat(formData.other_tax_additions) > 0 && (
+                                            <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
+                                          )}
+                                          {parseFloat(formData.pph21_rate) > 0 && (
+                                            <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
+                                          )}
+                                          {parseFloat(formData.pph23_rate) > 0 && (
+                                            <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
+                                          )}
+                                          {parseFloat(formData.other_tax_deductions) > 0 && (
+                                            <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
+                                          )}
+                                          <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
+                                            Final Total: {formatCurrency(finalTotal)}
+                                          </Text>
+                                        </VStack>
+                                      </SimpleGrid>
+                                    );
+                                  })()}
+                                </VStack>
+                              </Box>
+                            )}
+                          </VStack>
+                        </CardBody>
+                      </Card>
+
+                      {/* Payment Method Section */}
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            💳 Payment Method
+                          </Text>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <SimpleGrid columns={2} spacing={4}>
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
+                              <Select
+                                value={formData.payment_method}
+                                onChange={(e) => {
+                                  // Reset bank_account_id saat ganti payment method untuk menghindari konflik
+                                  setFormData({
+                                    ...formData,
+                                    payment_method: e.target.value,
+                                    bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
+                                  })
+                                }}
+                                size="sm"
+                              >
+                                <option value="CREDIT">Credit</option>
+                                <option value="CASH">Cash</option>
+                                <option value="BANK_TRANSFER">Bank Transfer</option>
+                                <option value="CHECK">Check</option>
+                              </Select>
+                              <FormHelperText fontSize="xs">
+                                {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
+                                {formData.payment_method === 'CASH' && 'Direct cash payment'}
+                                {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
+                                {formData.payment_method === 'CHECK' && 'Payment by check'}
+                              </FormHelperText>
+                            </FormControl>
+
+                            {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
+                            {formData.payment_method !== 'CREDIT' && (
+                              <FormControl isRequired>
+                                <FormLabel fontSize="sm" fontWeight="medium">
+                                  {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
+                                </FormLabel>
+                                <Select
+                                  value={formData.bank_account_id}
+                                  onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
+                                  size="sm"
+                                  disabled={loadingBankAccounts}
+                                  placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
+                                >
+                                  {bankAccounts
+                                    .filter(account => {
+                                      // Filter berdasarkan payment method
+                                      if (formData.payment_method === 'CASH') {
+                                        return account.type === 'CASH';
+                                      } else {
+                                        return account.type === 'BANK';
+                                      }
+                                    })
+                                    .map((account) => (
+                                      <option key={account.id} value={account.id.toString()}>
+                                        {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
+                                      </option>
+                                    ))
+                                  }
+                                </Select>
+                                <FormHelperText fontSize="xs">
+                                  Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
+                                </FormHelperText>
+                              </FormControl>
+                            )}
+
+                            {/* Credit Account dropdown for Credit payment */}
+                            {formData.payment_method === 'CREDIT' && (
+                              <FormControl isRequired>
+                                <FormLabel fontSize="sm" fontWeight="medium">
+                                  Liability Account
+                                </FormLabel>
+                                <Select
+                                  value={formData.credit_account_id}
+                                  onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
+                                  size="sm"
+                                  disabled={loadingCreditAccounts}
+                                  placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
+                                >
+                                  {creditAccounts.map((account) => (
+                                    <option key={account.id} value={account.id?.toString()}>
+                                      {account.code} - {account.name}
+                                    </option>
+                                  ))}
+                                </Select>
+                                <FormHelperText fontSize="xs">
+                                  Required: Select liability account for tracking credit purchases
+                                </FormHelperText>
+                              </FormControl>
+                            )}
+                          </SimpleGrid>
+
+                          {/* Payment Reference (for non-credit and non-cash payments) */}
+                          {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
+                            <FormControl mt={4}>
+                              <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
+                              <Input
+                                value={formData.payment_reference}
+                                onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
+                                placeholder={
+                                  formData.payment_method === 'CHECK' ? 'Check number' :
+                                    formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
+                                      'Payment reference number'
+                                }
+                                size="sm"
+                              />
+                              <FormHelperText fontSize="xs">
+                                Optional reference for tracking this payment
+                              </FormHelperText>
+                            </FormControl>
+                          )}
+                        </CardBody>
+                      </Card>
+                    </VStack>
+                  </ModalBody>
+                  <ModalFooter>
+                    <HStack spacing={3}>
+                      <Button variant="ghost" onClick={onCreateClose}>
+                        Cancel
+                      </Button>
+                      <Button colorScheme="blue" onClick={handleSave}>
+                        Create Purchase
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
+              {/* Add Vendor Modal */}
+              <Modal isOpen={isAddVendorOpen} onClose={onAddVendorClose} size="lg">
+                <ModalOverlay />
+                <ModalContent bg={modalContentBg}>
+                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                    <HStack>
+                      <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
+                      <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
+                        Add New Vendor
+                      </Text>
+                    </HStack>
+                  </ModalHeader>
+                  <ModalCloseButton />
+                  <ModalBody>
+                    <VStack spacing={4} align="stretch">
                       <SimpleGrid columns={2} spacing={4}>
                         <FormControl isRequired>
-                          <FormLabel fontSize="sm">Received Date</FormLabel>
+                          <FormLabel fontSize="sm">Vendor Name</FormLabel>
                           <Input
-                            type="date"
                             size="sm"
-                            value={receiptFormData.received_date}
-                            onChange={(e) => setReceiptFormData({
-                              ...receiptFormData,
-                              received_date: e.target.value
-                            })}
+                            placeholder="Enter vendor name"
+                            value={newVendorData.name}
+                            onChange={(e) => setNewVendorData({ ...newVendorData, name: e.target.value })}
                           />
                         </FormControl>
+
                         <FormControl>
-                          <FormLabel fontSize="sm">Receipt Notes</FormLabel>
+                          <FormLabel fontSize="sm">Vendor Code</FormLabel>
                           <Input
                             size="sm"
-                            placeholder="General notes for this receipt"
-                            value={receiptFormData.notes}
-                            onChange={(e) => setReceiptFormData({
-                              ...receiptFormData,
-                              notes: e.target.value
-                            })}
+                            placeholder="Auto-generated if empty"
+                            value={newVendorData.code}
+                            onChange={(e) => setNewVendorData({ ...newVendorData, code: e.target.value })}
                           />
                         </FormControl>
                       </SimpleGrid>
 
-                      {/* Receipt Items */}
+                      <SimpleGrid columns={2} spacing={4}>
+                        <FormControl isRequired>
+                          <FormLabel fontSize="sm">Email</FormLabel>
+                          <Input
+                            size="sm"
+                            type="email"
+                            placeholder="vendor@company.com"
+                            value={newVendorData.email}
+                            onChange={(e) => setNewVendorData({ ...newVendorData, email: e.target.value })}
+                          />
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontSize="sm">Phone</FormLabel>
+                          <Input
+                            size="sm"
+                            placeholder="Enter phone number"
+                            value={newVendorData.phone}
+                            onChange={(e) => setNewVendorData({ ...newVendorData, phone: e.target.value })}
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+
+                      <SimpleGrid columns={2} spacing={4}>
+                        <FormControl>
+                          <FormLabel fontSize="sm">Mobile</FormLabel>
+                          <Input
+                            size="sm"
+                            placeholder="Enter mobile number"
+                            value={newVendorData.mobile}
+                            onChange={(e) => setNewVendorData({ ...newVendorData, mobile: e.target.value })}
+                          />
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontSize="sm">PIC Name</FormLabel>
+                          <Input
+                            size="sm"
+                            placeholder="Person in charge"
+                            value={newVendorData.pic_name}
+                            onChange={(e) => setNewVendorData({ ...newVendorData, pic_name: e.target.value })}
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+
                       <FormControl>
-                        <FormLabel fontSize="sm">Receipt Items & Asset Creation</FormLabel>
-                        <TableContainer>
-                          <Table size="sm" bg={tableBg}>
-                            <Thead bg={tableHeaderBg}>
-                              <Tr>
-                                <Th fontSize="xs">Product</Th>
-                                <Th fontSize="xs" isNumeric>Ordered Qty</Th>
-                                <Th fontSize="xs" isNumeric>Received Qty</Th>
-                                <Th fontSize="xs">Condition</Th>
-                                <Th fontSize="xs">Serial Number</Th>
-                                <Th fontSize="xs" textAlign="center">🏭 Create Asset</Th>
-                                <Th fontSize="xs">Notes</Th>
-                              </Tr>
-                            </Thead>
-                            <Tbody>
-                              {receiptFormData.receipt_items.map((receiptItem, index) => {
-                                const purchaseItem = selectedPurchase.purchase_items?.find(
-                                  item => item.id === receiptItem.purchase_item_id
-                                );
-                                return (
-                                  <Tr key={receiptItem.purchase_item_id}>
-                                    <Td fontSize="sm">
-                                      {purchaseItem?.product?.name || 'Unknown Product'}
-                                    </Td>
-                                    <Td fontSize="sm" isNumeric>
-                                      {purchaseItem?.quantity || 0}
-                                    </Td>
-                                    <Td>
-                                      <NumberInput
-                                        size="sm"
-                                        min={0}
-                                        max={remainingQtyMap[purchaseItem?.id as number] ?? (purchaseItem?.quantity || 0)}
-                                        value={receiptItem.quantity_received}
-                                        onChange={(_, value) => {
-                                          const newItems = [...receiptFormData.receipt_items];
-                                          newItems[index].quantity_received = value || 0;
-                                          setReceiptFormData({
-                                            ...receiptFormData,
-                                            receipt_items: newItems
-                                          });
-                                        }}
-                                      >
-                                        <NumberInputField />
-                                        <NumberInputStepper>
-                                          <NumberIncrementStepper />
-                                          <NumberDecrementStepper />
-                                        </NumberInputStepper>
-                                      </NumberInput>
-                                    </Td>
-                                    <Td>
-                                      <Select
-                                        size="sm"
-                                        value={receiptItem.condition}
-                                        onChange={(e) => {
-                                          const newItems = [...receiptFormData.receipt_items];
-                                          newItems[index].condition = e.target.value;
-                                          setReceiptFormData({
-                                            ...receiptFormData,
-                                            receipt_items: newItems
-                                          });
-                                        }}
-                                      >
-                                        <option value="GOOD">Good</option>
-                                        <option value="DAMAGED">Damaged</option>
-                                        <option value="DEFECTIVE">Defective</option>
-                                      </Select>
-                                    </Td>
-                                    {/* Serial Number */}
-                                    <Td>
-                                      <Input
-                                        size="sm"
-                                        placeholder="Serial/Chassis number"
-                                        value={receiptItem.serial_number || ''}
-                                        onChange={(e) => {
-                                          const newItems = [...receiptFormData.receipt_items];
-                                          newItems[index].serial_number = e.target.value;
-                                          setReceiptFormData({
-                                            ...receiptFormData,
-                                            receipt_items: newItems
-                                          });
-                                        }}
-                                      />
-                                    </Td>
+                        <FormLabel fontSize="sm">Vendor ID</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="External vendor ID (optional)"
+                          value={newVendorData.external_id}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, external_id: e.target.value })}
+                        />
+                      </FormControl>
 
-                                    {/* Create Asset Checkbox & Options */}
-                                    <Td>
-                                      <VStack spacing={2} align="center">
-                                        {/* Asset Creation Checkbox */}
-                                        <HStack>
-                                          {(() => {
-                                            // Determine account type from selected expense account
-                                            const accId = purchaseItem?.expense_account_id as number | undefined;
-                                            const acc = expenseAccounts.find(a => a.id === accId);
-                                            const code = (acc?.code || '').toString();
-                                            const name = (acc?.name || '').toLowerCase();
-                                            const isFixedAsset = code.startsWith('15') || name.includes('asset tetap') || name.includes('fixed asset') || name.includes('bangunan') || name.includes('gedung');
-                                            // Convenience mode: checkbox always enabled
-                                            const disabled = false;
-                                            // Default-check for Fixed Asset items if user hasn't set it yet
-                                            const checked = receiptItem.create_asset ?? isFixedAsset;
-                                            return (
-                                              <>
-                                                <input
-                                                  type="checkbox"
-                                                  checked={checked}
-                                                  disabled={disabled}
-                                                  onChange={(e) => {
-                                                    const newItems = [...receiptFormData.receipt_items];
-                                                    newItems[index].create_asset = e.target.checked;
-                                                    // Set defaults when checked
-                                                    if (e.target.checked) {
-                                                      newItems[index].asset_category = newItems[index].asset_category || 'Equipment';
-                                                      newItems[index].asset_useful_life = newItems[index].asset_useful_life || 5;
-                                                      newItems[index].asset_salvage_percentage = newItems[index].asset_salvage_percentage || 10;
-                                                    }
-                                                    setReceiptFormData({
-                                                      ...receiptFormData,
-                                                      receipt_items: newItems
-                                                    });
-                                                  }}
-                                                  style={{ transform: 'scale(1.2)' }}
-                                                />
-                                                <VStack spacing={0} align="start">
-                                                  <Text fontSize="xs" fontWeight="medium">
-                                                    Asset
-                                                  </Text>
-                                                  <Text fontSize="10px" color="gray.400">
-                                                    (Shortcut: creates asset record only; journals follow purchase account)
-                                                  </Text>
-                                                </VStack>
-                                              </>
-                                            );
-                                          })()}
-                                        </HStack>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Address</FormLabel>
+                        <Textarea
+                          size="sm"
+                          placeholder="Enter vendor address"
+                          rows={3}
+                          value={newVendorData.address}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, address: e.target.value })}
+                        />
+                      </FormControl>
 
-                                        {/* Asset Options - Show when checked */}
-                                        {receiptItem.create_asset && (
-                                          <VStack spacing={1} w="full">
-                                            <Select
-                                              size="xs"
-                                              value={receiptItem.asset_category || 'Equipment'}
-                                              onChange={(e) => {
-                                                const newItems = [...receiptFormData.receipt_items];
-                                                newItems[index].asset_category = e.target.value;
-                                                setReceiptFormData({
-                                                  ...receiptFormData,
-                                                  receipt_items: newItems
-                                                });
-                                              }}
-                                            >
-                                              <option value="Equipment">Equipment</option>
-                                              <option value="Vehicle">Vehicle</option>
-                                              <option value="Furniture">Furniture</option>
-                                              <option value="Computer">Computer</option>
-                                              <option value="Machinery">Machinery</option>
-                                              <option value="Building">Building</option>
-                                            </Select>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Notes</FormLabel>
+                        <Textarea
+                          size="sm"
+                          placeholder="Additional notes (optional)"
+                          rows={2}
+                          value={newVendorData.notes}
+                          onChange={(e) => setNewVendorData({ ...newVendorData, notes: e.target.value })}
+                        />
+                      </FormControl>
+                    </VStack>
+                  </ModalBody>
+                  <ModalFooter>
+                    <HStack spacing={3}>
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setNewVendorData({
+                            name: '',
+                            code: '',
+                            email: '',
+                            phone: '',
+                            mobile: '',
+                            address: '',
+                            pic_name: '',
+                            external_id: '',
+                            notes: ''
+                          });
+                          onAddVendorClose();
+                        }}
+                        disabled={savingVendor}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        colorScheme="green"
+                        onClick={handleAddVendor}
+                        isLoading={savingVendor}
+                        loadingText="Creating..."
+                      >
+                        Create Vendor
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
 
-                                            <HStack spacing={1}>
-                                              <NumberInput
+              {/* Add Product Modal */}
+              <Modal isOpen={isAddProductOpen} onClose={onAddProductClose} size="lg">
+                <ModalOverlay />
+                <ModalContent bg={modalContentBg}>
+                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                    <HStack>
+                      <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
+                      <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                        Add New Product
+                      </Text>
+                    </HStack>
+                  </ModalHeader>
+                  <ModalCloseButton />
+                  <ModalBody>
+                    <VStack spacing={4} align="stretch">
+                      <FormControl isRequired>
+                        <FormLabel fontSize="sm">Product Name</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="Enter product name"
+                          value={newProductData.name}
+                          onChange={(e) => setNewProductData({ ...newProductData, name: e.target.value })}
+                        />
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel fontSize="sm">Product Code</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="Enter product code (optional)"
+                          value={newProductData.code}
+                          onChange={(e) => setNewProductData({ ...newProductData, code: e.target.value })}
+                        />
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel fontSize="sm">Description</FormLabel>
+                        <Textarea
+                          size="sm"
+                          placeholder="Enter product description"
+                          value={newProductData.description}
+                          onChange={(e) => setNewProductData({ ...newProductData, description: e.target.value })}
+                        />
+                      </FormControl>
+
+                      <SimpleGrid columns={3} spacing={4}>
+                        <FormControl isRequired>
+                          <FormLabel fontSize="sm">Unit</FormLabel>
+                          <Input
+                            size="sm"
+                            placeholder="e.g., pcs, kg, box"
+                            value={newProductData.unit}
+                            onChange={(e) => setNewProductData({ ...newProductData, unit: e.target.value })}
+                          />
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontSize="sm">Purchase Price (IDR)</FormLabel>
+                          <CurrencyInput
+                            value={parseFloat(newProductData.purchase_price) || 0}
+                            onChange={(value) => setNewProductData({ ...newProductData, purchase_price: value.toString() })}
+                            placeholder="Rp 10.000"
+                            size="sm"
+                            min={0}
+                            showLabel={false}
+                          />
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontSize="sm">Sale Price (IDR)</FormLabel>
+                          <CurrencyInput
+                            value={parseFloat(newProductData.sale_price) || 0}
+                            onChange={(value) => setNewProductData({ ...newProductData, sale_price: value.toString() })}
+                            placeholder="Rp 15.000"
+                            size="sm"
+                            min={0}
+                            showLabel={false}
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+                    </VStack>
+                  </ModalBody>
+                  <ModalFooter>
+                    <HStack spacing={3} w="100%">
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setNewProductData({
+                            name: '',
+                            code: '',
+                            description: '',
+                            unit: '',
+                            purchase_price: '0',
+                            sale_price: '0',
+                          });
+                          onAddProductClose();
+                        }}
+                        flex={1}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        colorScheme="blue"
+                        onClick={handleAddProduct}
+                        isLoading={savingProduct}
+                        loadingText="Creating..."
+                        flex={1}
+                      >
+                        Create Product
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
+              {/* Create Receipt Modal */}
+              <Modal isOpen={isReceiptOpen} onClose={onReceiptClose} size="xl">
+                <ModalOverlay />
+                <ModalContent bg={modalContentBg}>
+                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                    <HStack>
+                      <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
+                      <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
+                        Create Goods Receipt - {selectedPurchase?.code}
+                      </Text>
+                    </HStack>
+                  </ModalHeader>
+                  <ModalCloseButton />
+                  <ModalBody>
+                    {selectedPurchase && (
+                      <VStack spacing={6} align="stretch">
+                        {/* Purchase Info */}
+                        <Card variant="outline">
+                          <CardBody p={4}>
+                            <SimpleGrid columns={3} spacing={4}>
+                              <FormControl>
+                                <FormLabel fontSize="sm">Purchase Code</FormLabel>
+                                <Text fontWeight="medium">{selectedPurchase.code}</Text>
+                              </FormControl>
+                              <FormControl>
+                                <FormLabel fontSize="sm">Vendor</FormLabel>
+                                <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
+                              </FormControl>
+                              <FormControl>
+                                <FormLabel fontSize="sm">Total Amount</FormLabel>
+                                <Text fontWeight="medium" color="green.500">
+                                  {formatCurrency(selectedPurchase.total_amount)}
+                                </Text>
+                              </FormControl>
+                            </SimpleGrid>
+                          </CardBody>
+                        </Card>
+
+                        {/* Receipt Details */}
+                        <SimpleGrid columns={2} spacing={4}>
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm">Received Date</FormLabel>
+                            <Input
+                              type="date"
+                              size="sm"
+                              value={receiptFormData.received_date}
+                              onChange={(e) => setReceiptFormData({
+                                ...receiptFormData,
+                                received_date: e.target.value
+                              })}
+                            />
+                          </FormControl>
+                          <FormControl>
+                            <FormLabel fontSize="sm">Receipt Notes</FormLabel>
+                            <Input
+                              size="sm"
+                              placeholder="General notes for this receipt"
+                              value={receiptFormData.notes}
+                              onChange={(e) => setReceiptFormData({
+                                ...receiptFormData,
+                                notes: e.target.value
+                              })}
+                            />
+                          </FormControl>
+                        </SimpleGrid>
+
+                        {/* Receipt Items */}
+                        <FormControl>
+                          <FormLabel fontSize="sm">Receipt Items & Asset Creation</FormLabel>
+                          <TableContainer>
+                            <Table size="sm" bg={tableBg}>
+                              <Thead bg={tableHeaderBg}>
+                                <Tr>
+                                  <Th fontSize="xs">Product</Th>
+                                  <Th fontSize="xs" isNumeric>Ordered Qty</Th>
+                                  <Th fontSize="xs" isNumeric>Received Qty</Th>
+                                  <Th fontSize="xs">Condition</Th>
+                                  <Th fontSize="xs">Serial Number</Th>
+                                  <Th fontSize="xs" textAlign="center">🏭 Create Asset</Th>
+                                  <Th fontSize="xs">Notes</Th>
+                                </Tr>
+                              </Thead>
+                              <Tbody>
+                                {receiptFormData.receipt_items.map((receiptItem, index) => {
+                                  const purchaseItem = selectedPurchase.purchase_items?.find(
+                                    item => item.id === receiptItem.purchase_item_id
+                                  );
+                                  return (
+                                    <Tr key={receiptItem.purchase_item_id}>
+                                      <Td fontSize="sm">
+                                        {purchaseItem?.product?.name || 'Unknown Product'}
+                                      </Td>
+                                      <Td fontSize="sm" isNumeric>
+                                        {purchaseItem?.quantity || 0}
+                                      </Td>
+                                      <Td>
+                                        <NumberInput
+                                          size="sm"
+                                          min={0}
+                                          max={remainingQtyMap[purchaseItem?.id as number] ?? (purchaseItem?.quantity || 0)}
+                                          value={receiptItem.quantity_received}
+                                          onChange={(_, value) => {
+                                            const newItems = [...receiptFormData.receipt_items];
+                                            newItems[index].quantity_received = value || 0;
+                                            setReceiptFormData({
+                                              ...receiptFormData,
+                                              receipt_items: newItems
+                                            });
+                                          }}
+                                        >
+                                          <NumberInputField />
+                                          <NumberInputStepper>
+                                            <NumberIncrementStepper />
+                                            <NumberDecrementStepper />
+                                          </NumberInputStepper>
+                                        </NumberInput>
+                                      </Td>
+                                      <Td>
+                                        <Select
+                                          size="sm"
+                                          value={receiptItem.condition}
+                                          onChange={(e) => {
+                                            const newItems = [...receiptFormData.receipt_items];
+                                            newItems[index].condition = e.target.value;
+                                            setReceiptFormData({
+                                              ...receiptFormData,
+                                              receipt_items: newItems
+                                            });
+                                          }}
+                                        >
+                                          <option value="GOOD">Good</option>
+                                          <option value="DAMAGED">Damaged</option>
+                                          <option value="DEFECTIVE">Defective</option>
+                                        </Select>
+                                      </Td>
+                                      {/* Serial Number */}
+                                      <Td>
+                                        <Input
+                                          size="sm"
+                                          placeholder="Serial/Chassis number"
+                                          value={receiptItem.serial_number || ''}
+                                          onChange={(e) => {
+                                            const newItems = [...receiptFormData.receipt_items];
+                                            newItems[index].serial_number = e.target.value;
+                                            setReceiptFormData({
+                                              ...receiptFormData,
+                                              receipt_items: newItems
+                                            });
+                                          }}
+                                        />
+                                      </Td>
+
+                                      {/* Create Asset Checkbox & Options */}
+                                      <Td>
+                                        <VStack spacing={2} align="center">
+                                          {/* Asset Creation Checkbox */}
+                                          <HStack>
+                                            {(() => {
+                                              // Determine account type from selected expense account
+                                              const accId = purchaseItem?.expense_account_id as number | undefined;
+                                              const acc = expenseAccounts.find(a => a.id === accId);
+                                              const code = (acc?.code || '').toString();
+                                              const name = (acc?.name || '').toLowerCase();
+                                              const isFixedAsset = code.startsWith('15') || name.includes('asset tetap') || name.includes('fixed asset') || name.includes('bangunan') || name.includes('gedung');
+                                              // Convenience mode: checkbox always enabled
+                                              const disabled = false;
+                                              // Default-check for Fixed Asset items if user hasn't set it yet
+                                              const checked = receiptItem.create_asset ?? isFixedAsset;
+                                              return (
+                                                <>
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    disabled={disabled}
+                                                    onChange={(e) => {
+                                                      const newItems = [...receiptFormData.receipt_items];
+                                                      newItems[index].create_asset = e.target.checked;
+                                                      // Set defaults when checked
+                                                      if (e.target.checked) {
+                                                        newItems[index].asset_category = newItems[index].asset_category || 'Equipment';
+                                                        newItems[index].asset_useful_life = newItems[index].asset_useful_life || 5;
+                                                        newItems[index].asset_salvage_percentage = newItems[index].asset_salvage_percentage || 10;
+                                                      }
+                                                      setReceiptFormData({
+                                                        ...receiptFormData,
+                                                        receipt_items: newItems
+                                                      });
+                                                    }}
+                                                    style={{ transform: 'scale(1.2)' }}
+                                                  />
+                                                  <VStack spacing={0} align="start">
+                                                    <Text fontSize="xs" fontWeight="medium">
+                                                      Asset
+                                                    </Text>
+                                                    <Text fontSize="10px" color="gray.400">
+                                                      (Shortcut: creates asset record only; journals follow purchase account)
+                                                    </Text>
+                                                  </VStack>
+                                                </>
+                                              );
+                                            })()}
+                                          </HStack>
+
+                                          {/* Asset Options - Show when checked */}
+                                          {receiptItem.create_asset && (
+                                            <VStack spacing={1} w="full">
+                                              <Select
                                                 size="xs"
-                                                min={1}
-                                                max={50}
-                                                value={receiptItem.asset_useful_life || 5}
-                                                onChange={(_, value) => {
+                                                value={receiptItem.asset_category || 'Equipment'}
+                                                onChange={(e) => {
                                                   const newItems = [...receiptFormData.receipt_items];
-                                                  newItems[index].asset_useful_life = value || 5;
+                                                  newItems[index].asset_category = e.target.value;
                                                   setReceiptFormData({
                                                     ...receiptFormData,
                                                     receipt_items: newItems
                                                   });
                                                 }}
-                                                maxW="50px"
                                               >
-                                                <NumberInputField />
-                                              </NumberInput>
-                                              <Text fontSize="xs">yrs</Text>
-                                            </HStack>
-                                          </VStack>
-                                        )}
-                                      </VStack>
-                                    </Td>
+                                                <option value="Equipment">Equipment</option>
+                                                <option value="Vehicle">Vehicle</option>
+                                                <option value="Furniture">Furniture</option>
+                                                <option value="Computer">Computer</option>
+                                                <option value="Machinery">Machinery</option>
+                                                <option value="Building">Building</option>
+                                              </Select>
 
-                                    {/* Notes */}
+                                              <HStack spacing={1}>
+                                                <NumberInput
+                                                  size="xs"
+                                                  min={1}
+                                                  max={50}
+                                                  value={receiptItem.asset_useful_life || 5}
+                                                  onChange={(_, value) => {
+                                                    const newItems = [...receiptFormData.receipt_items];
+                                                    newItems[index].asset_useful_life = value || 5;
+                                                    setReceiptFormData({
+                                                      ...receiptFormData,
+                                                      receipt_items: newItems
+                                                    });
+                                                  }}
+                                                  maxW="50px"
+                                                >
+                                                  <NumberInputField />
+                                                </NumberInput>
+                                                <Text fontSize="xs">yrs</Text>
+                                              </HStack>
+                                            </VStack>
+                                          )}
+                                        </VStack>
+                                      </Td>
+
+                                      {/* Notes */}
+                                      <Td>
+                                        <Input
+                                          size="sm"
+                                          placeholder="Item notes"
+                                          value={receiptItem.notes}
+                                          onChange={(e) => {
+                                            const newItems = [...receiptFormData.receipt_items];
+                                            newItems[index].notes = e.target.value;
+                                            setReceiptFormData({
+                                              ...receiptFormData,
+                                              receipt_items: newItems
+                                            });
+                                          }}
+                                        />
+                                      </Td>
+                                    </Tr>
+                                  );
+                                })}
+                              </Tbody>
+                            </Table>
+                          </TableContainer>
+                        </FormControl>
+
+                        {/* Asset Creation Summary */}
+                        {receiptFormData.receipt_items.some(item => item.create_asset) && (
+                          <Alert status="success" variant="left-accent">
+                            <AlertIcon />
+                            <VStack align="start" spacing={1}>
+                              <AlertTitle fontSize="sm">🎉 Auto Asset Creation Enabled!</AlertTitle>
+                              <AlertDescription fontSize="xs">
+                                {receiptFormData.receipt_items.filter(item => item.create_asset).length} item(s) will be automatically created as assets after receipt completion.
+                                Assets will include purchase reference, vendor info, and depreciation settings.
+                              </AlertDescription>
+                              <HStack mt={2}>
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  colorScheme="blue"
+                                  onClick={() => {
+                                    const assetsToCreate = receiptFormData.receipt_items.filter(item => item.create_asset);
+                                    console.log('🔍 DEBUG - Current receipt form data:', receiptFormData);
+                                    console.log('🔍 DEBUG - Assets to create:', assetsToCreate);
+                                    console.log('🔍 DEBUG - Selected purchase:', selectedPurchase);
+                                    alert(`Debug info logged to console. Assets to create: ${assetsToCreate.length}`);
+                                  }}
+                                >
+                                  🔍 Debug Info
+                                </Button>
+                              </HStack>
+                            </VStack>
+                          </Alert>
+                        )}
+
+                        <Alert status="info" variant="left-accent">
+                          <AlertIcon />
+                          <VStack align="start" spacing={1}>
+                            <AlertTitle fontSize="sm">Receipt Information</AlertTitle>
+                            <AlertDescription fontSize="xs">
+                              • Creating this receipt will mark the purchase as COMPLETED if all items are fully received.<br />
+                              • Stock quantities were already updated when the purchase was approved.<br />
+                              • Check "Create Asset" for fixed assets (vehicles, equipment, machinery) to auto-create asset records.
+                            </AlertDescription>
+                          </VStack>
+                        </Alert>
+                      </VStack>
+                    )}
+                  </ModalBody>
+                  <ModalFooter>
+                    <HStack spacing={3} w="100%">
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setReceiptFormData({
+                            received_date: new Date().toISOString().split('T')[0],
+                            notes: '',
+                            receipt_items: []
+                          });
+                          onReceiptClose();
+                        }}
+                        disabled={savingReceipt}
+                        flex={1}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        colorScheme="green"
+                        onClick={handleSaveReceipt}
+                        isLoading={savingReceipt}
+                        loadingText="Creating Receipt..."
+                        flex={1}
+                        leftIcon={<FiPackage />}
+                      >
+                        Create Receipt
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
+              {/* Receipts Modal */}
+              <Modal isOpen={isReceiptsOpen} onClose={onReceiptsClose} size="4xl">
+                <ModalOverlay />
+                <ModalContent>
+                  <ModalHeader>
+                    <HStack>
+                      <Icon as={FiPackage} />
+                      <VStack align="start" spacing={0}>
+                        <Text fontWeight="bold">Receipts for {selectedPurchaseForReceipts?.code}</Text>
+                        <Text fontSize="sm" color="gray.600">
+                          Vendor: {selectedPurchaseForReceipts?.vendor?.name}
+                        </Text>
+                      </VStack>
+                    </HStack>
+                  </ModalHeader>
+                  <ModalCloseButton />
+                  <ModalBody>
+                    {loadingReceipts ? (
+                      <VStack spacing={4}>
+                        <Spinner size="lg" />
+                        <Text>Loading receipts...</Text>
+                      </VStack>
+                    ) : (
+                      <Box>
+                        {receipts.length === 0 ? (
+                          <Alert status="info">
+                            <AlertIcon />
+                            <Text>No completed receipts found for this purchase.</Text>
+                          </Alert>
+                        ) : (
+                          <TableContainer>
+                            <Table size="sm">
+                              <Thead>
+                                <Tr>
+                                  <Th>Receipt #</Th>
+                                  <Th>Date</Th>
+                                  <Th>Received By</Th>
+                                  <Th>Status</Th>
+                                  <Th>Items</Th>
+                                  <Th>Actions</Th>
+                                </Tr>
+                              </Thead>
+                              <Tbody>
+                                {receipts.map(receipt => (
+                                  <Tr key={receipt.id}>
+                                    <Td fontWeight="medium">{receipt.receipt_number}</Td>
+                                    <Td>{formatDate(receipt.received_date)}</Td>
+                                    <Td>{getReceiverName(receipt.receiver)}</Td>
                                     <Td>
-                                      <Input
+                                      <Badge colorScheme={getStatusColor(receipt.status)}>
+                                        {receipt.status}
+                                      </Badge>
+                                    </Td>
+                                    <Td>{(receipt.receipt_items || []).reduce((sum: number, it: any) => sum + (it.quantity_received || 0), 0)}</Td>
+                                    <Td>
+                                      <IconButton
+                                        aria-label="Download Receipt PDF"
+                                        icon={<FiDownload />}
                                         size="sm"
-                                        placeholder="Item notes"
-                                        value={receiptItem.notes}
-                                        onChange={(e) => {
-                                          const newItems = [...receiptFormData.receipt_items];
-                                          newItems[index].notes = e.target.value;
-                                          setReceiptFormData({
-                                            ...receiptFormData,
-                                            receipt_items: newItems
-                                          });
-                                        }}
+                                        colorScheme="blue"
+                                        variant="ghost"
+                                        onClick={() => handleDownloadReceiptPDF(receipt.id, receipt.receipt_number)}
+                                        title="Download this receipt as PDF"
                                       />
                                     </Td>
                                   </Tr>
-                                );
-                              })}
-                            </Tbody>
-                          </Table>
-                        </TableContainer>
-                      </FormControl>
-
-                      {/* Asset Creation Summary */}
-                      {receiptFormData.receipt_items.some(item => item.create_asset) && (
-                        <Alert status="success" variant="left-accent">
-                          <AlertIcon />
-                          <VStack align="start" spacing={1}>
-                            <AlertTitle fontSize="sm">🎉 Auto Asset Creation Enabled!</AlertTitle>
-                            <AlertDescription fontSize="xs">
-                              {receiptFormData.receipt_items.filter(item => item.create_asset).length} item(s) will be automatically created as assets after receipt completion.
-                              Assets will include purchase reference, vendor info, and depreciation settings.
-                            </AlertDescription>
-                            <HStack mt={2}>
-                              <Button
-                                size="xs"
-                                variant="outline"
-                                colorScheme="blue"
-                                onClick={() => {
-                                  const assetsToCreate = receiptFormData.receipt_items.filter(item => item.create_asset);
-                                  console.log('🔍 DEBUG - Current receipt form data:', receiptFormData);
-                                  console.log('🔍 DEBUG - Assets to create:', assetsToCreate);
-                                  console.log('🔍 DEBUG - Selected purchase:', selectedPurchase);
-                                  alert(`Debug info logged to console. Assets to create: ${assetsToCreate.length}`);
-                                }}
-                              >
-                                🔍 Debug Info
-                              </Button>
-                            </HStack>
-                          </VStack>
-                        </Alert>
-                      )}
-
-                      <Alert status="info" variant="left-accent">
-                        <AlertIcon />
-                        <VStack align="start" spacing={1}>
-                          <AlertTitle fontSize="sm">Receipt Information</AlertTitle>
-                          <AlertDescription fontSize="xs">
-                            • Creating this receipt will mark the purchase as COMPLETED if all items are fully received.<br />
-                            • Stock quantities were already updated when the purchase was approved.<br />
-                            • Check "Create Asset" for fixed assets (vehicles, equipment, machinery) to auto-create asset records.
-                          </AlertDescription>
-                        </VStack>
-                      </Alert>
-                    </VStack>
-                  )}
-                </ModalBody>
-                <ModalFooter>
-                  <HStack spacing={3} w="100%">
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setReceiptFormData({
-                          received_date: new Date().toISOString().split('T')[0],
-                          notes: '',
-                          receipt_items: []
-                        });
-                        onReceiptClose();
-                      }}
-                      disabled={savingReceipt}
-                      flex={1}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      colorScheme="green"
-                      onClick={handleSaveReceipt}
-                      isLoading={savingReceipt}
-                      loadingText="Creating Receipt..."
-                      flex={1}
-                      leftIcon={<FiPackage />}
-                    >
-                      Create Receipt
-                    </Button>
-                  </HStack>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
-
-            {/* Receipts Modal */}
-            <Modal isOpen={isReceiptsOpen} onClose={onReceiptsClose} size="4xl">
-              <ModalOverlay />
-              <ModalContent>
-                <ModalHeader>
-                  <HStack>
-                    <Icon as={FiPackage} />
-                    <VStack align="start" spacing={0}>
-                      <Text fontWeight="bold">Receipts for {selectedPurchaseForReceipts?.code}</Text>
-                      <Text fontSize="sm" color="gray.600">
-                        Vendor: {selectedPurchaseForReceipts?.vendor?.name}
-                      </Text>
-                    </VStack>
-                  </HStack>
-                </ModalHeader>
-                <ModalCloseButton />
-                <ModalBody>
-                  {loadingReceipts ? (
-                    <VStack spacing={4}>
-                      <Spinner size="lg" />
-                      <Text>Loading receipts...</Text>
-                    </VStack>
-                  ) : (
-                    <Box>
-                      {receipts.length === 0 ? (
-                        <Alert status="info">
-                          <AlertIcon />
-                          <Text>No completed receipts found for this purchase.</Text>
-                        </Alert>
-                      ) : (
-                        <TableContainer>
-                          <Table size="sm">
-                            <Thead>
-                              <Tr>
-                                <Th>Receipt #</Th>
-                                <Th>Date</Th>
-                                <Th>Received By</Th>
-                                <Th>Status</Th>
-                                <Th>Items</Th>
-                                <Th>Actions</Th>
-                              </Tr>
-                            </Thead>
-                            <Tbody>
-                              {receipts.map(receipt => (
-                                <Tr key={receipt.id}>
-                                  <Td fontWeight="medium">{receipt.receipt_number}</Td>
-                                  <Td>{formatDate(receipt.received_date)}</Td>
-                                  <Td>{getReceiverName(receipt.receiver)}</Td>
-                                  <Td>
-                                    <Badge colorScheme={getStatusColor(receipt.status)}>
-                                      {receipt.status}
-                                    </Badge>
-                                  </Td>
-                                  <Td>{(receipt.receipt_items || []).reduce((sum: number, it: any) => sum + (it.quantity_received || 0), 0)}</Td>
-                                  <Td>
-                                    <IconButton
-                                      aria-label="Download Receipt PDF"
-                                      icon={<FiDownload />}
-                                      size="sm"
-                                      colorScheme="blue"
-                                      variant="ghost"
-                                      onClick={() => handleDownloadReceiptPDF(receipt.id, receipt.receipt_number)}
-                                      title="Download this receipt as PDF"
-                                    />
-                                  </Td>
-                                </Tr>
-                              ))}
-                            </Tbody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                    </Box>
-                  )}
-                </ModalBody>
-                <ModalFooter>
-                  <HStack spacing={3} w="100%">
-                    {receipts.length > 0 && (
-                      <Button
-                        leftIcon={<FiDownload />}
-                        colorScheme="green"
-                        onClick={() => selectedPurchaseForReceipts && handleDownloadAllReceiptsPDF(selectedPurchaseForReceipts)}
-                        flex={1}
-                      >
-                        Download Receipts
-                      </Button>
+                                ))}
+                              </Tbody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </Box>
                     )}
-                    <Button
-                      variant="ghost"
-                      onClick={onReceiptsClose}
-                      flex={receipts.length > 0 ? 0 : 1}
-                    >
-                      Close
-                    </Button>
-                  </HStack>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
+                  </ModalBody>
+                  <ModalFooter>
+                    <HStack spacing={3} w="100%">
+                      {receipts.length > 0 && (
+                        <Button
+                          leftIcon={<FiDownload />}
+                          colorScheme="green"
+                          onClick={() => selectedPurchaseForReceipts && handleDownloadAllReceiptsPDF(selectedPurchaseForReceipts)}
+                          flex={1}
+                        >
+                          Download Receipts
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        onClick={onReceiptsClose}
+                        flex={receipts.length > 0 ? 0 : 1}
+                      >
+                        Close
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
 
-            {/* Journal Entries Modal */}
-            <PurchaseJournalEntriesModal
-              isOpen={isJournalOpen}
-              onClose={onJournalClose}
-              purchase={selectedPurchaseForJournal}
-            />
+              {/* Journal Entries Modal */}
+              <PurchaseJournalEntriesModal
+                isOpen={isJournalOpen}
+                onClose={onJournalClose}
+                purchase={selectedPurchaseForJournal}
+              />
 
-            {/* Payment Modal */}
-            <PurchasePaymentForm
-              isOpen={isPaymentOpen}
-              onClose={onPaymentClose}
-              purchase={selectedPurchaseForPayment}
-              onSuccess={handlePaymentSuccess}
-              cashBanks={cashBanks}
-            />
+              {/* Payment Modal */}
+              <PurchasePaymentForm
+                isOpen={isPaymentOpen}
+                onClose={onPaymentClose}
+                purchase={selectedPurchaseForPayment}
+                onSuccess={handlePaymentSuccess}
+                cashBanks={cashBanks}
+              />
 
-          </VStack>
-        </Box>
-      </SimpleLayout>
+            </VStack>
+          </Box>
+        </SimpleLayout>
+      </CompanyTypeGuard>
     </ProtectedModule>
   );
 };

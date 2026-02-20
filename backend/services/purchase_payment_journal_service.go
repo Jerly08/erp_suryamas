@@ -2,10 +2,12 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+
 	"gorm.io/gorm"
 )
 
@@ -48,7 +50,7 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntry(
 			fmt.Printf("💡 Falling back to legacy journal creation\n")
 		} else {
 			fmt.Printf("✅ SSOT payment journal created successfully\n")
-			
+
 			// If SSOT succeeds, also create legacy journal for immediate balance update if enabled
 			if os.Getenv("ENABLE_LEGACY_PAYMENT_JOURNALS") == "true" {
 				if err := s.createLegacyPaymentJournal(payment, cashBankID, userID); err != nil {
@@ -192,31 +194,16 @@ func (s *PurchasePaymentJournalService) createLegacyPaymentJournal(
 		return fmt.Errorf("failed to create payment journal entry: %v", err)
 	}
 
-	// 🔥 CRITICAL: Update COA account balances immediately
-	// Debit Utang Usaha (LIABILITY account - normal credit balance)
-	// Debit reduces liability balance: balance = balance - amount
-	if err := tx.Exec("UPDATE accounts SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-		payment.Amount, apAccount.ID).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to update Utang Usaha balance: %v", err)
-	}
-
-	// Credit Cash/Bank (ASSET account - normal debit balance)
-	// Credit reduces asset balance: balance = balance - amount
-	if err := tx.Exec("UPDATE accounts SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-		payment.Amount, cashBankAccountID).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to update cash/bank GL balance: %v", err)
-	}
+	// NOTE: Do NOT update accounts.balance here!
+	// The SSOT system (AutoPost=true) handles balance updates.
+	// Manual updates here would cause double-posting.
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit payment journal transaction: %v", err)
 	}
 
-	fmt.Printf("✅ Legacy payment journal created and COA balances updated:\n")
-	fmt.Printf("   - Utang Usaha (ID: %d) reduced by %.2f\n", apAccount.ID, payment.Amount)
-	fmt.Printf("   - Cash/Bank GL (ID: %d) reduced by %.2f\n", cashBankAccountID, payment.Amount)
+	fmt.Printf("✅ Legacy payment journal created (balance updates handled by SSOT AutoPost)\n")
 
 	return nil
 }
@@ -244,7 +231,7 @@ func (s *PurchasePaymentJournalService) ValidatePaymentJournal(paymentID uint) e
 
 	for _, entry := range journalEntries {
 		if entry.TotalDebit != entry.TotalCredit {
-			return fmt.Errorf("journal entry %s is not balanced: debit=%.2f, credit=%.2f", 
+			return fmt.Errorf("journal entry %s is not balanced: debit=%.2f, credit=%.2f",
 				entry.Code, entry.TotalDebit, entry.TotalCredit)
 		}
 
@@ -267,7 +254,7 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntryWithTx(
 	// For now, we'll use the legacy approach with the provided transaction
 	// TODO: In future, integrate with SSOT system properly
 	fmt.Printf("📝 Creating purchase payment journal via legacy COA update...\n")
-	
+
 	return s.createLegacyPaymentJournalWithTx(tx, payment, cashBankID, userID)
 }
 
@@ -346,24 +333,14 @@ func (s *PurchasePaymentJournalService) createLegacyPaymentJournalWithTx(
 		return fmt.Errorf("failed to create payment journal entry: %v", err)
 	}
 
-	// 🔥 CRITICAL: Update COA account balances immediately
-	// Debit Utang Usaha (LIABILITY account - normal credit balance)
-	// Debit reduces liability balance: balance = balance - amount
-	if err := tx.Exec("UPDATE accounts SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-		payment.Amount, apAccount.ID).Error; err != nil {
-		return fmt.Errorf("failed to update Utang Usaha balance: %v", err)
-	}
+	// ⚠️ DO NOT manually UPDATE accounts.balance here!
+	// PostgreSQL trigger `trg_update_account_balance` on `journal_lines` table
+	// automatically recalculates accounts.balance when journal lines are inserted
+	// (which happens in tx.Create(journalEntry) above).
+	// Manual UPDATE here would cause DOUBLE POSTING.
+	log.Printf("✅ Journal entry created - accounts.balance will be updated automatically by DB trigger")
 
-	// Credit Cash/Bank (ASSET account - normal debit balance)
-	// Credit reduces asset balance: balance = balance - amount
-	if err := tx.Exec("UPDATE accounts SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-		payment.Amount, cashBankAccountID).Error; err != nil {
-		return fmt.Errorf("failed to update cash/bank GL balance: %v", err)
-	}
-
-	fmt.Printf("✅ Purchase payment journal created and COA balances updated:\n")
-	fmt.Printf("   - Utang Usaha (ID: %d) reduced by %.2f\n", apAccount.ID, payment.Amount)
-	fmt.Printf("   - Cash/Bank GL (ID: %d) reduced by %.2f\n", cashBankAccountID, payment.Amount)
+	fmt.Printf("✅ Legacy purchase payment journal created (balance auto-synced by DB trigger)\n")
 
 	return nil
 }

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import { useAuth } from '@/contexts/AuthContext';
+import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import { useTranslation } from '@/hooks/useTranslation';
 import EnhancedSalesTable from '@/components/sales/EnhancedSalesTable';
@@ -70,7 +71,19 @@ interface SalesPageState {
   summary: any;
 }
 
-const SalesPage: React.FC = () => {
+export default function SalesPage() {
+  return (
+    <ProtectedModule module="sales">
+      <CompanyTypeGuard>
+        <SimpleLayout>
+          <SalesPageContent />
+        </SimpleLayout>
+      </CompanyTypeGuard>
+    </ProtectedModule>
+  );
+}
+
+const SalesPageContent: React.FC = () => {
   const { user } = useAuth();
   const toast = useToast();
   const { t } = useTranslation();
@@ -379,252 +392,247 @@ const SalesPage: React.FC = () => {
   };
 
   return (
-    <ProtectedModule module="sales">
-      <SimpleLayout>
-        <Box>
-          {/* Header */}
-          <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
-            <VStack align="start" spacing={1}>
-              <Heading size="xl" color={headingColor} fontWeight="600">
-                {t('sales.management')}
-              </Heading>
-              <Text color={subheadingColor} fontSize="md">
-                {t('sales.manageTransactions')}
-              </Text>
-            </VStack>
+    <>
+      <Box>
+        {/* Header */}
+        <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
+          <VStack align="start" spacing={1}>
+            <Heading size="xl" color={headingColor} fontWeight="600">
+              {t('sales.management')}
+            </Heading>
+            <Text color={subheadingColor} fontSize="md">
+              {t('sales.manageTransactions')}
+            </Text>
+          </VStack>
 
-            <HStack spacing={3}>
-              <Tooltip label={t('sales.refreshData')}>
-                <IconButton
-                  aria-label="Refresh"
-                  icon={<FiRefreshCw />}
-                  variant="ghost"
-                  onClick={() => { loadSales(); loadSalesSummary(); }}
-                  isLoading={state.loading}
+          <HStack spacing={3}>
+            <Tooltip label={t('sales.refreshData')}>
+              <IconButton
+                aria-label="Refresh"
+                icon={<FiRefreshCw />}
+                variant="ghost"
+                onClick={() => { loadSales(); loadSalesSummary(); }}
+                isLoading={state.loading}
+              />
+            </Tooltip>
+
+            <Button
+              leftIcon={<FiSettings />}
+              colorScheme="purple"
+              variant="outline"
+              size="md"
+              onClick={onInvoiceTypesOpen}
+              title="Manage Invoice Types"
+            >
+              {t('sales.invoiceTypes')}
+            </Button>
+
+            {canExport && (
+              <Menu>
+                <MenuButton
+                  as={Button}
+                  leftIcon={<FiDownload />}
+                  colorScheme="green"
+                  variant="outline"
+                  size="md"
+                >
+                  {t('sales.exportReport')}
+                </MenuButton>
+                <MenuList>
+                  <MenuItem onClick={handleExportPDF}>{t('sales.exportPDF')}</MenuItem>
+                  <MenuItem onClick={handleExportCSV}>{t('sales.exportCSV')}</MenuItem>
+                </MenuList>
+              </Menu>
+            )}
+
+            {(canCreate || !user) && (
+              <Button
+                leftIcon={<FiPlus />}
+                colorScheme="blue"
+                size="md"
+                px={6}
+                fontWeight="medium"
+                onClick={() => handleSaleAction()}
+                _hover={{
+                  transform: 'translateY(-1px)',
+                  boxShadow: 'lg'
+                }}
+              >
+                {t('sales.createSale')}
+              </Button>
+            )}
+          </HStack>
+        </Flex>
+
+        {/* Summary Cards */}
+        {state.summary && (
+          <Box mb={6}>
+            <EnhancedStatsCards
+              stats={state.summary}
+              formatCurrency={salesService.formatCurrency}
+            />
+          </Box>
+        )}
+
+        {/* Search and Filters */}
+        <Card mb={6}>
+          <CardBody>
+            <Flex gap={4} align="end" wrap="wrap">
+              <Box flex="1" minW="300px">
+                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
+                  {t('sales.searchTransactions')}
+                </Text>
+                <InputGroup>
+                  <InputLeftElement pointerEvents="none">
+                    <FiSearch color={textColor} />
+                  </InputLeftElement>
+                  <Input
+                    placeholder={t('sales.searchPlaceholder')}
+                    value={state.filter.search}
+                    onChange={(e) => handleSearch(e.target.value)}
+                    bg={tableBg}
+                  />
+                </InputGroup>
+              </Box>
+
+              <Box minW="180px">
+                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
+                  {t('sales.filterByStatus')}
+                </Text>
+                <Select
+                  placeholder={t('sales.allStatus')}
+                  value={state.filter.status}
+                  onChange={(e) => handleFilterChange('status', e.target.value)}
+                  bg={tableBg}
+                >
+                  <option value="DRAFT">{t('sales.draft')}</option>
+                  <option value="INVOICED">{t('sales.invoiced')}</option>
+                  <option value="PAID">{t('sales.paid')}</option>
+                  <option value="OVERDUE">{t('sales.overdue')}</option>
+                  <option value="CANCELLED">{t('sales.cancelled')}</option>
+                </Select>
+              </Box>
+
+              <Box minW="160px">
+                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
+                  {t('sales.startDate')}
+                </Text>
+                <Input
+                  type="date"
+                  value={state.filter.start_date}
+                  onChange={(e) => handleFilterChange('start_date', e.target.value)}
+                  bg={tableBg}
                 />
-              </Tooltip>
+              </Box>
+
+              <Box minW="160px">
+                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
+                  {t('sales.endDate')}
+                </Text>
+                <Input
+                  type="date"
+                  value={state.filter.end_date}
+                  onChange={(e) => handleFilterChange('end_date', e.target.value)}
+                  bg={tableBg}
+                />
+              </Box>
 
               <Button
-                leftIcon={<FiSettings />}
-                colorScheme="purple"
+                leftIcon={<FiFilter />}
                 variant="outline"
-                size="md"
-                onClick={onInvoiceTypesOpen}
-                title="Manage Invoice Types"
-              >
-                {t('sales.invoiceTypes')}
-              </Button>
-
-              {canExport && (
-                <Menu>
-                  <MenuButton
-                    as={Button}
-                    leftIcon={<FiDownload />}
-                    colorScheme="green"
-                    variant="outline"
-                    size="md"
-                  >
-                    {t('sales.exportReport')}
-                  </MenuButton>
-                  <MenuList>
-                    <MenuItem onClick={handleExportPDF}>{t('sales.exportPDF')}</MenuItem>
-                    <MenuItem onClick={handleExportCSV}>{t('sales.exportCSV')}</MenuItem>
-                  </MenuList>
-                </Menu>
-              )}
-
-              {(canCreate || !user) && (
-                <Button
-                  leftIcon={<FiPlus />}
-                  colorScheme="blue"
-                  size="md"
-                  px={6}
-                  fontWeight="medium"
-                  onClick={() => handleSaleAction()}
-                  _hover={{
-                    transform: 'translateY(-1px)',
-                    boxShadow: 'lg'
-                  }}
-                >
-                  {t('sales.createSale')}
-                </Button>
-              )}
-            </HStack>
-          </Flex>
-
-          {/* Summary Cards */}
-          {state.summary && (
-            <Box mb={6}>
-              <EnhancedStatsCards
-                stats={state.summary}
-                formatCurrency={salesService.formatCurrency}
-              />
-            </Box>
-          )}
-
-          {/* Search and Filters */}
-          <Card mb={6}>
-            <CardBody>
-              <Flex gap={4} align="end" wrap="wrap">
-                <Box flex="1" minW="300px">
-                  <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                    {t('sales.searchTransactions')}
-                  </Text>
-                  <InputGroup>
-                    <InputLeftElement pointerEvents="none">
-                      <FiSearch color={textColor} />
-                    </InputLeftElement>
-                    <Input
-                      placeholder={t('sales.searchPlaceholder')}
-                      value={state.filter.search}
-                      onChange={(e) => handleSearch(e.target.value)}
-                      bg={tableBg}
-                    />
-                  </InputGroup>
-                </Box>
-
-                <Box minW="180px">
-                  <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                    {t('sales.filterByStatus')}
-                  </Text>
-                  <Select
-                    placeholder={t('sales.allStatus')}
-                    value={state.filter.status}
-                    onChange={(e) => handleFilterChange('status', e.target.value)}
-                    bg={tableBg}
-                  >
-                    <option value="DRAFT">{t('sales.draft')}</option>
-                    <option value="INVOICED">{t('sales.invoiced')}</option>
-                    <option value="PAID">{t('sales.paid')}</option>
-                    <option value="OVERDUE">{t('sales.overdue')}</option>
-                    <option value="CANCELLED">{t('sales.cancelled')}</option>
-                  </Select>
-                </Box>
-
-                <Box minW="160px">
-                  <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                    {t('sales.startDate')}
-                  </Text>
-                  <Input
-                    type="date"
-                    value={state.filter.start_date}
-                    onChange={(e) => handleFilterChange('start_date', e.target.value)}
-                    bg={tableBg}
-                  />
-                </Box>
-
-                <Box minW="160px">
-                  <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                    {t('sales.endDate')}
-                  </Text>
-                  <Input
-                    type="date"
-                    value={state.filter.end_date}
-                    onChange={(e) => handleFilterChange('end_date', e.target.value)}
-                    bg={tableBg}
-                  />
-                </Box>
-
-                <Button
-                  leftIcon={<FiFilter />}
-                  variant="outline"
-                  onClick={() => {
-                    setState(prev => ({
-                      ...prev,
-                      filter: {
-                        ...prev.filter,
-                        search: '',
-                        status: '',
-                        start_date: '',
-                        end_date: ''
-                      }
-                    }));
-                    loadSales({
+                onClick={() => {
+                  setState(prev => ({
+                    ...prev,
+                    filter: {
+                      ...prev.filter,
                       search: '',
                       status: '',
                       start_date: '',
-                      end_date: '',
-                      page: 1
-                    });
-                  }}
-                >
-                  {t('sales.clearFilters')}
-                </Button>
-              </Flex>
-            </CardBody>
-          </Card>
+                      end_date: ''
+                    }
+                  }));
+                  loadSales({
+                    search: '',
+                    status: '',
+                    start_date: '',
+                    end_date: '',
+                    page: 1
+                  });
+                }}
+              >
+                {t('sales.clearFilters')}
+              </Button>
+            </Flex>
+          </CardBody>
+        </Card>
 
-          {/* Error Alert */}
-          {state.error && (
-            <Alert status="error" mb={6}>
-              <AlertIcon />
-              {state.error}
-            </Alert>
-          )}
+        {/* Error Alert */}
+        {state.error && (
+          <Alert status="error" mb={6}>
+            <AlertIcon />
+            {state.error}
+          </Alert>
+        )}
 
-          {/* Enhanced Sales Table */}
-          <EnhancedSalesTable
-            sales={state.sales || []}
-            loading={state.loading}
-            onViewDetails={handleViewDetails}
-            onEdit={canEdit ? (sale) => handleSaleAction(sale) : undefined}
-            onConfirm={canEdit ? (sale) => handleSaleStatusAction(sale, 'confirm') : undefined}
-            onCancel={canEdit ? (sale) => handleSaleStatusAction(sale, 'cancel') : undefined}
-            onPayment={canEdit ? handlePayment : undefined}
-            onDelete={canDelete ? handleDelete : undefined}
-            onDuplicate={canCreate ? handleDuplicate : undefined}
-            onDownloadInvoice={handleDownloadInvoice}
-            onCreateReceipt={handleCreateReceipt}
-            formatCurrency={salesService.formatCurrency}
-            formatDate={salesService.formatDate}
-            canEdit={canEdit}
-            canDelete={canDelete}
-          />
-
-        </Box>
-
-        {/* Sales Form Modal */}
-        <SalesForm
-          isOpen={isFormOpen}
-          onClose={handleFormClose}
-          onSave={handleFormSave}
-          sale={state.selectedSale && state.selectedSale.id > 0 ? state.selectedSale : undefined}
-          initialData={state.selectedSale && state.selectedSale.id === 0 ? state.selectedSale : undefined}
+        {/* Enhanced Sales Table */}
+        <EnhancedSalesTable
+          sales={state.sales || []}
+          loading={state.loading}
+          onViewDetails={handleViewDetails}
+          onEdit={canEdit ? (sale) => handleSaleAction(sale) : undefined}
+          onConfirm={canEdit ? (sale) => handleSaleStatusAction(sale, 'confirm') : undefined}
+          onCancel={canEdit ? (sale) => handleSaleStatusAction(sale, 'cancel') : undefined}
+          onPayment={canEdit ? handlePayment : undefined}
+          onDelete={canDelete ? handleDelete : undefined}
+          onDuplicate={canCreate ? handleDuplicate : undefined}
+          onDownloadInvoice={handleDownloadInvoice}
+          onCreateReceipt={handleCreateReceipt}
+          formatCurrency={salesService.formatCurrency}
+          formatDate={salesService.formatDate}
+          canEdit={canEdit}
+          canDelete={canDelete}
         />
 
-        {/* Payment Form Modal */}
-        <PaymentForm
-          isOpen={isPaymentOpen}
-          onClose={onPaymentClose}
-          onSave={handlePaymentSave}
-          sale={state.selectedSale}
-        />
+      </Box>
 
-        {/* Invoice Types Management Modal */}
-        <Modal
-          isOpen={isInvoiceTypesOpen}
-          onClose={onInvoiceTypesClose}
-          size="6xl"
-          scrollBehavior="inside"
-        >
-          <ModalOverlay />
-          <ModalContent maxH="90vh">
-            <ModalHeader>
-              <HStack>
-                <FiSettings />
-                <Text>{t('sales.invoiceTypes')} {t('common.management')}</Text>
-              </HStack>
-            </ModalHeader>
-            <ModalCloseButton />
-            <ModalBody p={0}>
-              <InvoiceTypeManagement />
-            </ModalBody>
-          </ModalContent>
-        </Modal>
-      </SimpleLayout>
-    </ProtectedModule>
+      {/* Sales Form Modal */}
+      <SalesForm
+        isOpen={isFormOpen}
+        onClose={handleFormClose}
+        onSave={handleFormSave}
+        sale={state.selectedSale && state.selectedSale.id > 0 ? state.selectedSale : undefined}
+        initialData={state.selectedSale && state.selectedSale.id === 0 ? state.selectedSale : undefined}
+      />
+
+      {/* Payment Form Modal */}
+      <PaymentForm
+        isOpen={isPaymentOpen}
+        onClose={onPaymentClose}
+        onSave={handlePaymentSave}
+        sale={state.selectedSale}
+      />
+
+      {/* Invoice Types Management Modal */}
+      <Modal
+        isOpen={isInvoiceTypesOpen}
+        onClose={onInvoiceTypesClose}
+        size="6xl"
+        scrollBehavior="inside"
+      >
+        <ModalOverlay />
+        <ModalContent maxH="90vh">
+          <ModalHeader>
+            <HStack>
+              <FiSettings />
+              <Text>{t('sales.invoiceTypes')} {t('common.management')}</Text>
+            </HStack>
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody p={0}>
+            <InvoiceTypeManagement />
+          </ModalBody>
+        </ModalContent>
+      </Modal>
+    </>
   );
 };
-
-export default SalesPage;
-

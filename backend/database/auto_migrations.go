@@ -21,28 +21,28 @@ var idempotentSkipCount int64
 // RunAutoMigrations runs all pending SQL migrations automatically
 func RunAutoMigrations(db *gorm.DB) error {
 	log.Println("🔄 Starting auto-migrations...")
-	
+
 	// Create migration_logs table first if it doesn't exist
 	if err := createMigrationLogsTable(db); err != nil {
 		return fmt.Errorf("failed to create migration_logs table: %v", err)
 	}
-	
+
 	// Run pre-migration fixes to ensure compatibility
 	if err := runPreMigrationFixes(db); err != nil {
 		log.Printf("⚠️  Pre-migration fixes failed: %v", err)
 		// Don't fail completely, just warn
 	}
-	
+
 	// Silently verify invoice types system
 	if err := ensureInvoiceTypesSystem(db); err != nil {
 		log.Printf("⚠️  Invoice types system verification failed: %v", err)
 	}
-	
+
 	// Silently verify tax account settings table
 	if err := ensureTaxAccountSettingsTable(db); err != nil {
 		log.Printf("⚠️  Tax account settings table verification failed: %v", err)
 	}
-	
+
 	// Silently verify settings history table
 	if err := ensureSettingsHistoryTable(db); err != nil {
 		log.Printf("⚠️  Settings history table verification failed: %v", err)
@@ -53,10 +53,10 @@ func RunAutoMigrations(db *gorm.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to get migration files: %v", err)
 	}
-	
+
 	// Reset idempotent skip counter
 	atomic.StoreInt64(&idempotentSkipCount, 0)
-	
+
 	// Run each migration
 	successCount := 0
 	failedCount := 0
@@ -68,7 +68,7 @@ func RunAutoMigrations(db *gorm.DB) error {
 		}
 		successCount++
 	}
-	
+
 	// Print concise migration summary
 	if failedCount > 0 {
 		log.Println("")
@@ -81,7 +81,7 @@ func RunAutoMigrations(db *gorm.DB) error {
 			log.Printf("✅ Database migrations: %d completed successfully", successCount)
 		}
 	}
-	
+
 	// Check and create Standard Purchase Approval workflow (smart skip)
 	if err := ensureStandardPurchaseApprovalWorkflow(db); err != nil {
 		log.Printf("⚠️  WORKFLOW AUTO-MIGRATION FAILED: %v", err)
@@ -141,25 +141,25 @@ func createMigrationLogsTable(db *gorm.DB) error {
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)`
-	
+
 	if err := db.Exec(createTableSQL).Error; err != nil {
 		return err
 	}
-	
+
 	// Execute INDEX statements separately
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_migration_logs_name ON migration_logs(migration_name)",
-		"CREATE INDEX IF NOT EXISTS idx_migration_logs_status ON migration_logs(status)", 
+		"CREATE INDEX IF NOT EXISTS idx_migration_logs_status ON migration_logs(status)",
 		"CREATE INDEX IF NOT EXISTS idx_migration_logs_executed_at ON migration_logs(executed_at)",
 	}
-	
+
 	for _, indexSQL := range indexes {
 		if err := db.Exec(indexSQL).Error; err != nil {
 			// Index creation failure is not critical
 			log.Printf("Warning: Failed to create index: %v", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -298,7 +298,7 @@ func runMigration(db *gorm.DB, filename string) error {
 	startTime := time.Now()
 	log.Printf("🔄 Running: %s", filename)
 
-// Read migration file
+	// Read migration file
 	migrationDir, dirErr := findMigrationDir()
 	if dirErr != nil {
 		logMigrationResult(db, filename, "FAILED", fmt.Sprintf("Failed to locate migrations dir: %v", dirErr), 0)
@@ -345,13 +345,13 @@ GOT_CONTENT:
 			break
 		}
 	}
-	
+
 	if strings.Contains(filename, "unified_journal_ssot") ||
-	   strings.Contains(lowerContent, "language plpgsql") ||
-	   strings.Contains(lowerContent, "create function") ||
-	   strings.Contains(lowerContent, "create or replace function") ||
-	   strings.Contains(lowerContent, "$$") ||
-	   hasExplicitTransaction {
+		strings.Contains(lowerContent, "language plpgsql") ||
+		strings.Contains(lowerContent, "create function") ||
+		strings.Contains(lowerContent, "create or replace function") ||
+		strings.Contains(lowerContent, "$$") ||
+		hasExplicitTransaction {
 		return runComplexMigration(db, filename, content, startTime)
 	}
 
@@ -504,11 +504,11 @@ func parseComplexSQL(content string) []string {
 	var statements []string
 	var b strings.Builder
 
-	inSingle := false   // inside '...'
-	inDouble := false   // inside "..."
-	inLineComment := false // inside -- ... \n
+	inSingle := false       // inside '...'
+	inDouble := false       // inside "..."
+	inLineComment := false  // inside -- ... \n
 	inBlockComment := false // inside /* ... */
-	dollarTag := ""       // current $tag$ or $$ if inside a dollar-quoted string
+	dollarTag := ""         // current $tag$ or $$ if inside a dollar-quoted string
 
 	i := 0
 	for i < len(content) {
@@ -699,7 +699,7 @@ $$;`
 		log.Println("✅ Installed SSOT sync functions")
 	}
 
-return nil
+	return nil
 }
 
 // functionExists checks if a PostgreSQL function with the given name exists (any signature)
@@ -773,7 +773,7 @@ func getObjectNameFromError(err error) string {
 		return "unknown object"
 	}
 	errMsg := err.Error()
-	
+
 	// Try to extract table/index/constraint name from error message
 	// Format: ERROR: relation "table_name" already exists
 	if idx := strings.Index(errMsg, "relation \""); idx != -1 {
@@ -782,7 +782,7 @@ func getObjectNameFromError(err error) string {
 			return errMsg[start : start+end]
 		}
 	}
-	
+
 	// Format: ERROR: constraint "constraint_name" already exists
 	if idx := strings.Index(errMsg, "constraint \""); idx != -1 {
 		start := idx + len("constraint \"")
@@ -790,7 +790,7 @@ func getObjectNameFromError(err error) string {
 			return errMsg[start : start+end]
 		}
 	}
-	
+
 	// Format: ERROR: index "index_name" already exists
 	if idx := strings.Index(errMsg, "index \""); idx != -1 {
 		start := idx + len("index \"")
@@ -798,7 +798,7 @@ func getObjectNameFromError(err error) string {
 			return errMsg[start : start+end]
 		}
 	}
-	
+
 	// Format: ERROR: function "function_name" already exists
 	if idx := strings.Index(errMsg, "function "); idx != -1 {
 		start := idx + len("function ")
@@ -806,7 +806,7 @@ func getObjectNameFromError(err error) string {
 			return errMsg[start : start+end]
 		}
 	}
-	
+
 	// Return shortened error if we can't extract the name
 	if len(errMsg) > 100 {
 		return errMsg[:100] + "..."
@@ -824,7 +824,7 @@ func logMigrationResult(db *gorm.DB, migrationName, status, message string, exec
 		execution_time_ms = EXCLUDED.execution_time_ms,
 		executed_at = CURRENT_TIMESTAMP
 	`
-	
+
 	if err := db.Exec(sql, migrationName, status, message, executionTimeMs).Error; err != nil {
 		log.Printf("⚠️  Failed to log migration result: %v", err)
 	}
@@ -877,12 +877,12 @@ func ensureStandardPurchaseApprovalWorkflow(db *gorm.DB) error {
 	// Check if Standard Purchase Approval workflow exists
 	var existingWorkflow ApprovalWorkflow
 	result := db.Where("name = ? AND module = ?", "Standard Purchase Approval", "PURCHASE").First(&existingWorkflow)
-	
+
 	if result.Error == nil {
 		// Check if workflow has steps
 		var stepCount int64
 		db.Model(&ApprovalStep{}).Where("workflow_id = ?", existingWorkflow.ID).Count(&stepCount)
-		
+
 		if stepCount == 0 {
 			log.Println("🔧 Creating workflow steps...")
 			// Create steps for existing workflow
@@ -892,11 +892,11 @@ func ensureStandardPurchaseApprovalWorkflow(db *gorm.DB) error {
 			return nil
 		}
 	}
-	
+
 	// If not found, create it
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		log.Println("🔧 Creating Standard Purchase Approval workflow...")
-		
+
 		// Create workflow
 		workflow := ApprovalWorkflow{
 			Name:            "Standard Purchase Approval",
@@ -907,15 +907,15 @@ func ensureStandardPurchaseApprovalWorkflow(db *gorm.DB) error {
 			RequireDirector: true,
 			RequireFinance:  true,
 		}
-		
+
 		if err := db.Create(&workflow).Error; err != nil {
 			return fmt.Errorf("failed to create Standard Purchase Approval workflow: %v", err)
 		}
-		
+
 		// Create workflow steps
 		return createWorkflowSteps(db, workflow.ID)
 	}
-	
+
 	// Other database errors
 	return fmt.Errorf("failed to check existing workflow: %v", result.Error)
 }
@@ -948,15 +948,15 @@ func createWorkflowSteps(db *gorm.DB, workflowID uint) error {
 			TimeLimit:    72,
 		},
 	}
-	
+
 	for _, step := range steps {
 		if err := db.Create(&step).Error; err != nil {
 			return fmt.Errorf("failed to create workflow step '%s': %v", step.StepName, err)
 		}
 	}
-	
+
 	log.Println("✅ Standard Purchase Approval workflow created")
-	
+
 	return nil
 }
 
@@ -964,21 +964,21 @@ func createWorkflowSteps(db *gorm.DB, workflowID uint) error {
 // This prevents migration failures when clients pull new code
 func runPreMigrationFixes(db *gorm.DB) error {
 	log.Println("🔧 Running pre-migration compatibility fixes...")
-	
+
 	// Fix 1: Ensure 'description' column exists in migration_logs table
 	if err := ensureMigrationLogsDescriptionColumn(db); err != nil {
 		return fmt.Errorf("failed to ensure migration_logs description column: %v", err)
 	}
-	
+
 	// Fix 2: Mark problematic migrations as SUCCESS to prevent re-execution
 	if err := markProblematicMigrationsAsSuccess(db); err != nil {
 		log.Printf("⚠️  Warning: Failed to mark problematic migrations: %v", err)
 		// Don't fail completely, just warn
 	}
-	
+
 	// NOTE: Materialized view account_balances has been removed - using SSOT direct query instead
 	// All reports now use /api/v1/ssot-reports/* endpoints with real-time query to unified_journal_lines
-	
+
 	log.Println("✅ Pre-migration compatibility fixes completed")
 	return nil
 }
@@ -994,25 +994,25 @@ func ensureMigrationLogsDescriptionColumn(db *gorm.DB) error {
 			AND column_name = 'description'
 		);
 	`).Scan(&columnExists).Error
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to check description column: %v", err)
 	}
-	
+
 	if !columnExists {
 		log.Println("📝 Adding missing 'description' column to migration_logs table...")
-		
+
 		// Add the missing column
 		err = db.Exec(`ALTER TABLE migration_logs ADD COLUMN description TEXT;`).Error
 		if err != nil {
 			return fmt.Errorf("failed to add description column: %v", err)
 		}
-		
+
 		log.Println("✅ Added 'description' column to migration_logs table")
 	} else {
 		log.Println("ℹ️  Description column already exists")
 	}
-	
+
 	return nil
 }
 
@@ -1034,29 +1034,29 @@ func markProblematicMigrationsAsSuccess(db *gorm.DB) error {
 		"prevent_duplicate_accounts.sql",
 		"database_enhancements_v2024_1.sql",
 	}
-	
+
 	now := time.Now()
 	updatedCount := 0
-	
+
 	for _, migrationName := range problematicMigrations {
 		var existingStatus string
 		var existingID int
-		
+
 		err := db.Raw(`
 			SELECT id, status FROM migration_logs 
 			WHERE migration_name = $1
 		`, migrationName).Row().Scan(&existingID, &existingStatus)
-		
+
 		if err != nil {
 			// Migration doesn't exist in logs, insert it as SUCCESS
 			err = db.Exec(`
 				INSERT INTO migration_logs 
 				(migration_name, status, message, description, executed_at, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)
-			`, migrationName, "SUCCESS", "Auto-fixed by pre-migration compatibility check", 
-				"Migration marked as SUCCESS to prevent re-execution issues during auto-migrations", 
+			`, migrationName, "SUCCESS", "Auto-fixed by pre-migration compatibility check",
+				"Migration marked as SUCCESS to prevent re-execution issues during auto-migrations",
 				now, now, now).Error
-			
+
 			if err != nil {
 				log.Printf("⚠️  Failed to insert %s: %v", migrationName, err)
 			} else {
@@ -1073,10 +1073,10 @@ func markProblematicMigrationsAsSuccess(db *gorm.DB) error {
 				    executed_at = $4, 
 				    updated_at = $5
 				WHERE id = $6
-			`, "SUCCESS", "Auto-fixed by pre-migration compatibility check", 
-				"Migration marked as SUCCESS to prevent re-execution issues during auto-migrations", 
+			`, "SUCCESS", "Auto-fixed by pre-migration compatibility check",
+				"Migration marked as SUCCESS to prevent re-execution issues during auto-migrations",
 				now, now, existingID).Error
-			
+
 			if err != nil {
 				log.Printf("⚠️  Failed to update %s: %v", migrationName, err)
 			} else {
@@ -1085,7 +1085,7 @@ func markProblematicMigrationsAsSuccess(db *gorm.DB) error {
 			}
 		}
 	}
-	
+
 	log.Printf("📊 Updated %d problematic migrations to SUCCESS status", updatedCount)
 	return nil
 }
@@ -1103,28 +1103,28 @@ func ensureBalanceSyncSystem(db *gorm.DB) error {
 func checkBalanceSyncTriggers(db *gorm.DB) (bool, error) {
 	requiredTriggers := []string{
 		"trigger_recalc_cashbank_balance_insert",
-		"trigger_recalc_cashbank_balance_update", 
+		"trigger_recalc_cashbank_balance_update",
 		"trigger_recalc_cashbank_balance_delete",
 		"trigger_validate_account_balance",
 	}
-	
+
 	for _, triggerName := range requiredTriggers {
 		var count int64
 		err := db.Raw(`
 			SELECT COUNT(*) FROM information_schema.triggers 
 			WHERE trigger_name = $1
 		`, triggerName).Scan(&count).Error
-		
+
 		if err != nil {
 			return false, err
 		}
-		
+
 		if count == 0 {
 			// Don't log missing triggers during silent check
 			return false, nil
 		}
 	}
-	
+
 	return true, nil
 }
 
@@ -1138,47 +1138,47 @@ func checkBalanceSyncFunctions(db *gorm.DB) (bool, error) {
 		"manual_sync_all_cashbank_coa",
 		"ensure_cashbank_not_header",
 	}
-	
+
 	for _, functionName := range requiredFunctions {
 		var count int64
 		err := db.Raw(`
 			SELECT COUNT(*) FROM pg_proc 
 			WHERE proname = $1
 		`, functionName).Scan(&count).Error
-		
+
 		if err != nil {
 			return false, err
 		}
-		
+
 		if count == 0 {
 			// Don't log missing functions during silent check
 			return false, nil
 		}
 	}
-	
+
 	return true, nil
 }
 
 // installBalanceSyncSystem installs or updates the balance sync system
 func installBalanceSyncSystem(db *gorm.DB) error {
-	
+
 	// Read the comprehensive balance sync migration content
 	migrationPath := "20250930_comprehensive_auto_balance_sync.sql"
 	migrationDir, err := findMigrationDir()
 	if err != nil {
 		return fmt.Errorf("failed to find migration directory: %w", err)
 	}
-	
+
 	fullPath := filepath.Join(migrationDir, migrationPath)
 	content, err := ioutil.ReadFile(fullPath)
 	if err != nil {
 		return fmt.Errorf("failed to read balance sync migration file: %w", err)
 	}
-	
+
 	// Parse and execute the migration using the complex parser
 	log.Printf("🔧 Executing balance sync migration: %s", migrationPath)
 	statements := parseComplexSQL(string(content))
-	
+
 	// Pre-check known functions and triggers to proactively skip problematic statements
 	knownFns := []string{
 		"recalculate_cashbank_balance",
@@ -1192,14 +1192,14 @@ func installBalanceSyncSystem(db *gorm.DB) error {
 	for _, fn := range knownFns {
 		fnExists[fn] = functionExists(db, fn)
 	}
-	
+
 	for i, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" || strings.HasPrefix(stmt, "--") {
 			continue
 		}
 		upper := strings.ToUpper(stmt)
-		
+
 		// Proactively skip CREATE TRIGGER statements that reference missing functions
 		if strings.HasPrefix(upper, "CREATE TRIGGER ") {
 			// If the trigger references a known function that's missing, skip without executing
@@ -1215,7 +1215,7 @@ func installBalanceSyncSystem(db *gorm.DB) error {
 				goto NEXT_STMT
 			}
 		}
-		
+
 		// Proactively skip COMMENT ON FUNCTION for missing functions
 		if strings.HasPrefix(upper, "COMMENT ON FUNCTION ") {
 			if fn := extractFunctionNameFromComment(stmt); fn != "" && !functionExists(db, fn) {
@@ -1223,28 +1223,28 @@ func installBalanceSyncSystem(db *gorm.DB) error {
 				goto NEXT_STMT
 			}
 		}
-		
+
 		if err := db.Exec(stmt).Error; err != nil {
 			errMsg := strings.ToLower(err.Error())
-			
+
 			// Skip if object already exists (idempotent)
 			if isAlreadyExistsError(err) {
 				log.Printf("   ⏭️  Skipping statement %d - object already exists", i+1)
 				goto NEXT_STMT
 			}
-			
+
 			// Skip if function doesn't exist (might be created later in the migration)
 			if strings.Contains(errMsg, "does not exist") && strings.Contains(errMsg, "function") {
 				log.Printf("   ⏭️  Skipping statement %d - function will be created later", i+1)
 				goto NEXT_STMT
 			}
-			
+
 			return fmt.Errorf("failed to execute statement %d: %w\nSQL: %s", i+1, err, stmt)
 		}
 	NEXT_STMT:
 		continue
 	}
-	
+
 	log.Println("✅ Balance sync system installed successfully")
 	return nil
 }
@@ -1256,11 +1256,11 @@ func ensureCashBankAccountConfiguration(db *gorm.DB) error {
 	if err := db.Raw("SELECT COUNT(*) FROM cash_banks WHERE deleted_at IS NULL").Scan(&cashBankCount).Error; err != nil {
 		return fmt.Errorf("failed to count cash banks: %w", err)
 	}
-	
+
 	if cashBankCount == 0 {
 		return nil // silent skip
 	}
-	
+
 	// Ensure cash bank accounts are not header accounts, but only if helper function exists
 	if functionExists(db, "ensure_cashbank_not_header") {
 		if err := db.Exec("SELECT ensure_cashbank_not_header()").Error; err != nil {
@@ -1275,17 +1275,17 @@ func ensureCashBankAccountConfiguration(db *gorm.DB) error {
 func performInitialBalanceSync(db *gorm.DB) error {
 	// Check if sync functions are available
 	if !functionExists(db, "manual_sync_all_cashbank_coa") ||
-	   !functionExists(db, "update_parent_account_balances") {
+		!functionExists(db, "update_parent_account_balances") {
 		return nil // silent skip if dependencies not available
 	}
-	
+
 	// Perform the sync
 	var syncResult string
 	err := db.Raw("SELECT manual_sync_all_cashbank_coa()").Scan(&syncResult).Error
 	if err != nil {
 		return fmt.Errorf("failed to perform initial sync: %w", err)
 	}
-	
+
 	log.Printf("✅ Initial balance sync: %s", syncResult)
 	return nil
 }
@@ -1293,21 +1293,21 @@ func performInitialBalanceSync(db *gorm.DB) error {
 // ensureInvoiceTypesSystem ensures invoice types system is properly installed
 // This handles cases where PC differences cause missing tables or inconsistent migration logs
 func ensureInvoiceTypesSystem(db *gorm.DB) error {
-	
+
 	// Step 1: Check if invoice_types table exists
 	var invoiceTypesExists bool
 	err := db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'invoice_types')").Scan(&invoiceTypesExists).Error
 	if err != nil {
 		return fmt.Errorf("failed to check invoice_types table: %w", err)
 	}
-	
+
 	// Step 2: Check if invoice_counters table exists
 	var invoiceCountersExists bool
 	err = db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'invoice_counters')").Scan(&invoiceCountersExists).Error
 	if err != nil {
 		return fmt.Errorf("failed to check invoice_counters table: %w", err)
 	}
-	
+
 	// Step 3: Check if sales table has invoice_type_id column
 	var salesInvoiceTypeExists bool
 	err = db.Raw(`
@@ -1319,9 +1319,9 @@ func ensureInvoiceTypesSystem(db *gorm.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to check sales.invoice_type_id column: %w", err)
 	}
-	
+
 	// Silently check system status
-	
+
 	// Step 4: If invoice_types exists but invoice_counters doesn't, create it
 	if invoiceTypesExists && !invoiceCountersExists {
 		log.Println("🔧 Creating invoice_counters table...")
@@ -1330,10 +1330,10 @@ func ensureInvoiceTypesSystem(db *gorm.DB) error {
 		}
 		log.Println("✅ Invoice_counters table created")
 	}
-	
+
 	// Step 5: If invoice_types doesn't exist but we have migration logs, run the migration
 	if !invoiceTypesExists {
-		
+
 		// Check if we have 037 migration file
 		migrationDir, err := findMigrationDir()
 		if err == nil {
@@ -1348,14 +1348,14 @@ func ensureInvoiceTypesSystem(db *gorm.DB) error {
 			}
 		}
 	}
-	
+
 	// Step 6: Verify helper functions exist (silently)
 	if invoiceTypesExists && invoiceCountersExists {
 		if err := ensureInvoiceNumberFunctions(db); err != nil {
 			log.Printf("⚠️  Failed to create helper functions: %v", err)
 		}
 	}
-	
+
 	// Step 7: Clean up failed migration logs that might cause issues (silently)
 	result := db.Exec(`
 		DELETE FROM migration_logs 
@@ -1364,7 +1364,7 @@ func ensureInvoiceTypesSystem(db *gorm.DB) error {
 	if result.Error != nil {
 		log.Printf("⚠️  Could not clean up failed migrations: %v", result.Error)
 	}
-	
+
 	// Step 8: Ensure success migration log exists if system is working (silently)
 	if invoiceTypesExists && invoiceCountersExists && salesInvoiceTypeExists {
 		var successExists bool
@@ -1374,7 +1374,7 @@ func ensureInvoiceTypesSystem(db *gorm.DB) error {
 				WHERE migration_name = '037_add_invoice_types_system.sql' AND status = 'SUCCESS'
 			)
 		`).Scan(&successExists).Error
-		
+
 		if err != nil {
 			log.Printf("⚠️  Could not check success status: %v", err)
 		} else if !successExists {
@@ -1387,13 +1387,13 @@ func ensureInvoiceTypesSystem(db *gorm.DB) error {
 					message = 'Invoice types system verified and working',
 					executed_at = NOW()
 			`).Error
-			
+
 			if err != nil {
 				log.Printf("⚠️  Could not insert success record: %v", err)
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -1405,14 +1405,14 @@ func ensureTaxAccountSettingsTable(db *gorm.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to check tax_account_settings table: %w", err)
 	}
-	
+
 	if tableExists {
 		// Silently skip if exists
 		return nil
 	}
-	
+
 	log.Println("🔧 Creating tax_account_settings table...")
-	
+
 	// Create table with PostgreSQL syntax
 	createTableSQL := `
 		CREATE TABLE IF NOT EXISTS tax_account_settings (
@@ -1454,25 +1454,25 @@ func ensureTaxAccountSettingsTable(db *gorm.DB) error {
 			notes TEXT NULL
 		)
 	`
-	
+
 	err = db.Exec(createTableSQL).Error
 	if err != nil {
 		return fmt.Errorf("failed to create tax_account_settings table: %w", err)
 	}
-	
+
 	// Create indexes
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_tax_account_settings_deleted_at ON tax_account_settings(deleted_at)",
 		"CREATE INDEX IF NOT EXISTS idx_tax_account_settings_is_active ON tax_account_settings(is_active)",
 		"CREATE INDEX IF NOT EXISTS idx_tax_account_settings_updated_by ON tax_account_settings(updated_by)",
 	}
-	
+
 	for _, indexSQL := range indexes {
 		if err := db.Exec(indexSQL).Error; err != nil {
 			log.Printf("⚠️  Failed to create index: %v", err)
 		}
 	}
-	
+
 	// Insert default configuration
 	defaultConfigSQL := `
 		INSERT INTO tax_account_settings (
@@ -1496,7 +1496,7 @@ func ensureTaxAccountSettingsTable(db *gorm.DB) error {
 			COALESCE((SELECT id FROM accounts WHERE code = '1201' AND deleted_at IS NULL LIMIT 1), 1) as sales_receivable_account_id,
 			COALESCE((SELECT id FROM accounts WHERE code = '1101' AND deleted_at IS NULL LIMIT 1), 1) as sales_cash_account_id,
 			COALESCE((SELECT id FROM accounts WHERE code = '1102' AND deleted_at IS NULL LIMIT 1), 1) as sales_bank_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '4101' AND deleted_at IS NULL LIMIT 1), 1) as sales_revenue_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code = '4101-001' AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '4101' AND deleted_at IS NULL LIMIT 1), 1) as sales_revenue_account_id,
 			COALESCE((SELECT id FROM accounts WHERE code = '2103' AND deleted_at IS NULL LIMIT 1), 1) as sales_output_vat_account_id,
 			
 			-- Purchase accounts
@@ -1513,12 +1513,12 @@ func ensureTaxAccountSettingsTable(db *gorm.DB) error {
 			'Default configuration created by auto-migration system' as notes
 		WHERE NOT EXISTS (SELECT 1 FROM tax_account_settings WHERE is_active = TRUE)
 	`
-	
+
 	result := db.Exec(defaultConfigSQL)
 	if result.Error != nil {
 		log.Printf("⚠️  Failed to insert default config: %v", result.Error)
 	}
-	
+
 	log.Println("✅ Tax account settings table created")
 	return nil
 }
@@ -1541,24 +1541,24 @@ func createInvoiceCountersTable(db *gorm.DB) error {
 				ON DELETE CASCADE ON UPDATE CASCADE
 		)
 	`
-	
+
 	err := db.Exec(createTableSQL).Error
 	if err != nil {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
-	
+
 	// Create indexes
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_invoice_counters_invoice_type_id ON invoice_counters(invoice_type_id)",
 		"CREATE INDEX IF NOT EXISTS idx_invoice_counters_year ON invoice_counters(year)",
 	}
-	
+
 	for _, indexSQL := range indexes {
 		if err := db.Exec(indexSQL).Error; err != nil {
 			log.Printf("⚠️  Failed to create index: %v", err)
 		}
 	}
-	
+
 	// Add comments
 	comments := []string{
 		"COMMENT ON TABLE invoice_counters IS 'Counter tracking for invoice numbering per type per year'",
@@ -1566,11 +1566,11 @@ func createInvoiceCountersTable(db *gorm.DB) error {
 		"COMMENT ON COLUMN invoice_counters.year IS 'Year for counter (e.g., 2025)'",
 		"COMMENT ON COLUMN invoice_counters.counter IS 'Current counter value for this type/year'",
 	}
-	
+
 	for _, commentSQL := range comments {
 		db.Exec(commentSQL) // Don't fail on comment errors
 	}
-	
+
 	// Initialize counters for existing invoice types
 	initSQL := `
 		INSERT INTO invoice_counters (invoice_type_id, year, counter, created_at, updated_at)
@@ -1579,14 +1579,14 @@ func createInvoiceCountersTable(db *gorm.DB) error {
 		WHERE is_active = TRUE
 		ON CONFLICT (invoice_type_id, year) DO NOTHING
 	`
-	
+
 	result := db.Exec(initSQL)
 	if result.Error != nil {
 		log.Printf("⚠️  Failed to initialize counters: %v", result.Error)
 	} else {
 		log.Printf("✅ Initialized %d counters", result.RowsAffected)
 	}
-	
+
 	return nil
 }
 
@@ -1638,12 +1638,12 @@ func ensureInvoiceNumberFunctions(db *gorm.DB) error {
 		END;
 		$$ LANGUAGE plpgsql;
 	`
-	
+
 	err := db.Exec(getNextFunc).Error
 	if err != nil {
 		return fmt.Errorf("failed to create get_next_invoice_number function: %w", err)
 	}
-	
+
 	// Create preview_next_invoice_number function
 	previewFunc := `
 		CREATE OR REPLACE FUNCTION preview_next_invoice_number(invoice_type_id_param BIGINT)
@@ -1689,12 +1689,12 @@ func ensureInvoiceNumberFunctions(db *gorm.DB) error {
 		END;
 		$$ LANGUAGE plpgsql;
 	`
-	
+
 	err = db.Exec(previewFunc).Error
 	if err != nil {
 		return fmt.Errorf("failed to create preview_next_invoice_number function: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -1722,7 +1722,7 @@ func fixRevenueDuplication(db *gorm.DB) error {
 	// Step 1: Mark parent accounts as headers
 	log.Println("[AUTO-FIX] Step 1/5: Marking parent accounts as headers...")
 	parentAccounts := []string{"1000", "1100", "1500", "2000", "2100", "3000", "4000", "5000"}
-	
+
 	result := db.Exec(`
 		UPDATE accounts 
 		SET is_header = true, 
@@ -1730,7 +1730,7 @@ func fixRevenueDuplication(db *gorm.DB) error {
 		WHERE code IN (?)
 		  AND COALESCE(is_header, false) = false
 	`, parentAccounts)
-	
+
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark parent accounts as headers: %v", result.Error)
 	}
@@ -1738,10 +1738,10 @@ func fixRevenueDuplication(db *gorm.DB) error {
 		log.Printf("[AUTO-FIX] ✓ Marked %d parent accounts as headers", result.RowsAffected)
 	}
 
-// Step 2: Standardize account names in journal_entries for revenue (4xxx)
-log.Println("[AUTO-FIX] Step 2/5: Standardizing revenue account names in journal_entries...")
-if columnExists(db, "journal_entries", "account_code") && columnExists(db, "journal_entries", "account_name") {
-	result = db.Exec(`
+	// Step 2: Standardize account names in journal_entries for revenue (4xxx)
+	log.Println("[AUTO-FIX] Step 2/5: Standardizing revenue account names in journal_entries...")
+	if columnExists(db, "journal_entries", "account_code") && columnExists(db, "journal_entries", "account_name") {
+		result = db.Exec(`
 		UPDATE journal_entries je
 		SET account_name = a.name,
 		    updated_at = NOW()
@@ -1750,25 +1750,25 @@ if columnExists(db, "journal_entries", "account_code") && columnExists(db, "jour
 		  AND je.account_name != a.name
 		  AND je.account_code LIKE '4%'
 	`)
-	if result.Error != nil {
-		log.Printf("[AUTO-FIX] ⚠ Warning: Could not standardize journal_entries (4xxx): %v", result.Error)
-	} else if result.RowsAffected > 0 {
-		log.Printf("[AUTO-FIX] ✓ Standardized %d revenue journal entries", result.RowsAffected)
+		if result.Error != nil {
+			log.Printf("[AUTO-FIX] ⚠ Warning: Could not standardize journal_entries (4xxx): %v", result.Error)
+		} else if result.RowsAffected > 0 {
+			log.Printf("[AUTO-FIX] ✓ Standardized %d revenue journal entries", result.RowsAffected)
+		}
+	} else {
+		log.Println("[AUTO-FIX] ℹ️  Skipping journal_entries (4xxx) standardization: columns not present")
 	}
-} else {
-	log.Println("[AUTO-FIX] ℹ️  Skipping journal_entries (4xxx) standardization: columns not present")
-}
-	
+
 	if result.Error != nil {
 		log.Printf("[AUTO-FIX] ⚠ Warning: Could not standardize journal_entries (4xxx): %v", result.Error)
 	} else if result.RowsAffected > 0 {
 		log.Printf("[AUTO-FIX] ✓ Standardized %d revenue journal entries", result.RowsAffected)
 	}
 
-// Step 3: Standardize account names in journal_entries for expenses (5xxx)
-log.Println("[AUTO-FIX] Step 3/5: Standardizing expense account names in journal_entries...")
-if columnExists(db, "journal_entries", "account_code") && columnExists(db, "journal_entries", "account_name") {
-	result = db.Exec(`
+	// Step 3: Standardize account names in journal_entries for expenses (5xxx)
+	log.Println("[AUTO-FIX] Step 3/5: Standardizing expense account names in journal_entries...")
+	if columnExists(db, "journal_entries", "account_code") && columnExists(db, "journal_entries", "account_name") {
+		result = db.Exec(`
 		UPDATE journal_entries je
 		SET account_name = a.name,
 		    updated_at = NOW()
@@ -1777,19 +1777,19 @@ if columnExists(db, "journal_entries", "account_code") && columnExists(db, "jour
 		  AND je.account_name != a.name
 		  AND je.account_code LIKE '5%'
 	`)
-	if result.Error != nil {
-		log.Printf("[AUTO-FIX] ⚠ Warning: Could not standardize journal_entries (5xxx): %v", result.Error)
-	} else if result.RowsAffected > 0 {
-		log.Printf("[AUTO-FIX] ✓ Standardized %d expense journal entries", result.RowsAffected)
+		if result.Error != nil {
+			log.Printf("[AUTO-FIX] ⚠ Warning: Could not standardize journal_entries (5xxx): %v", result.Error)
+		} else if result.RowsAffected > 0 {
+			log.Printf("[AUTO-FIX] ✓ Standardized %d expense journal entries", result.RowsAffected)
+		}
+	} else {
+		log.Println("[AUTO-FIX] ℹ️  Skipping journal_entries (5xxx) standardization: columns not present")
 	}
-} else {
-	log.Println("[AUTO-FIX] ℹ️  Skipping journal_entries (5xxx) standardization: columns not present")
-}
 
-// Step 4: Standardize unified_journal_lines for revenue (4xxx)
-log.Println("[AUTO-FIX] Step 4/5: Standardizing unified journal lines (4xxx)...")
-if columnExists(db, "unified_journal_lines", "account_name") && columnExists(db, "unified_journal_lines", "account_code") {
-	result = db.Exec(`
+	// Step 4: Standardize unified_journal_lines for revenue (4xxx)
+	log.Println("[AUTO-FIX] Step 4/5: Standardizing unified journal lines (4xxx)...")
+	if columnExists(db, "unified_journal_lines", "account_name") && columnExists(db, "unified_journal_lines", "account_code") {
+		result = db.Exec(`
 		UPDATE unified_journal_lines ujl
 		SET account_name = a.name,
 		    updated_at = NOW()
@@ -1798,19 +1798,19 @@ if columnExists(db, "unified_journal_lines", "account_name") && columnExists(db,
 		  AND ujl.account_name != a.name
 		  AND ujl.account_code LIKE '4%'
 	`)
-	if result.Error != nil {
-		log.Printf("[AUTO-FIX] ⚠ Warning: unified_journal_lines not updated (4xxx): %v", result.Error)
-	} else if result.RowsAffected > 0 {
-		log.Printf("[AUTO-FIX] ✓ Standardized %d unified revenue lines", result.RowsAffected)
+		if result.Error != nil {
+			log.Printf("[AUTO-FIX] ⚠ Warning: unified_journal_lines not updated (4xxx): %v", result.Error)
+		} else if result.RowsAffected > 0 {
+			log.Printf("[AUTO-FIX] ✓ Standardized %d unified revenue lines", result.RowsAffected)
+		}
+	} else {
+		log.Println("[AUTO-FIX] ℹ️  Skipping unified_journal_lines (4xxx): columns not present")
 	}
-} else {
-	log.Println("[AUTO-FIX] ℹ️  Skipping unified_journal_lines (4xxx): columns not present")
-}
 
-// Step 5: Standardize unified_journal_lines for expenses (5xxx)
-log.Println("[AUTO-FIX] Step 5/5: Standardizing unified journal lines (5xxx)...")
-if columnExists(db, "unified_journal_lines", "account_name") && columnExists(db, "unified_journal_lines", "account_code") {
-	result = db.Exec(`
+	// Step 5: Standardize unified_journal_lines for expenses (5xxx)
+	log.Println("[AUTO-FIX] Step 5/5: Standardizing unified journal lines (5xxx)...")
+	if columnExists(db, "unified_journal_lines", "account_name") && columnExists(db, "unified_journal_lines", "account_code") {
+		result = db.Exec(`
 		UPDATE unified_journal_lines ujl
 		SET account_name = a.name,
 		    updated_at = NOW()
@@ -1819,27 +1819,27 @@ if columnExists(db, "unified_journal_lines", "account_name") && columnExists(db,
 		  AND ujl.account_name != a.name
 		  AND ujl.account_code LIKE '5%'
 	`)
-	if result.Error != nil {
-		log.Printf("[AUTO-FIX] ⚠ Warning: unified_journal_lines not updated (5xxx): %v", result.Error)
-	} else if result.RowsAffected > 0 {
-		log.Printf("[AUTO-FIX] ✓ Standardized %d unified expense lines", result.RowsAffected)
+		if result.Error != nil {
+			log.Printf("[AUTO-FIX] ⚠ Warning: unified_journal_lines not updated (5xxx): %v", result.Error)
+		} else if result.RowsAffected > 0 {
+			log.Printf("[AUTO-FIX] ✓ Standardized %d unified expense lines", result.RowsAffected)
+		}
+	} else {
+		log.Println("[AUTO-FIX] ℹ️  Skipping unified_journal_lines (5xxx): columns not present")
 	}
-} else {
-	log.Println("[AUTO-FIX] ℹ️  Skipping unified_journal_lines (5xxx): columns not present")
-}
 
 	// Verification
 	log.Println("[AUTO-FIX] Verifying fix...")
-	
+
 	type VerifyResult struct {
-		AccountCode  string `gorm:"column:account_code"`
-		NameCount    int    `gorm:"column:name_count"`
-		AllNames     string `gorm:"column:all_names"`
+		AccountCode string `gorm:"column:account_code"`
+		NameCount   int    `gorm:"column:name_count"`
+		AllNames    string `gorm:"column:all_names"`
 	}
-	
+
 	var dupes []VerifyResult
-if columnExists(db, "journal_entries", "account_code") && columnExists(db, "journal_entries", "account_name") {
-	db.Raw(`
+	if columnExists(db, "journal_entries", "account_code") && columnExists(db, "journal_entries", "account_name") {
+		db.Raw(`
 		SELECT 
 			je.account_code,
 			COUNT(DISTINCT je.account_name) as name_count,
@@ -1849,8 +1849,8 @@ if columnExists(db, "journal_entries", "account_code") && columnExists(db, "jour
 		GROUP BY je.account_code
 		HAVING COUNT(DISTINCT je.account_name) > 1
 	`).Scan(&dupes)
-}
-	
+	}
+
 	if len(dupes) > 0 {
 		log.Printf("[AUTO-FIX] ⚠ WARNING: Still found %d accounts with name variations:", len(dupes))
 		for _, d := range dupes {
@@ -1872,14 +1872,14 @@ func ensureSettingsHistoryTable(db *gorm.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to check settings_history table: %w", err)
 	}
-	
+
 	if tableExists {
 		// Silently skip if exists
 		return nil
 	}
-	
+
 	log.Println("🔧 Creating settings_history table...")
-	
+
 	// Create table with PostgreSQL syntax
 	createTableSQL := `
 		CREATE TABLE IF NOT EXISTS settings_history (
@@ -1910,12 +1910,12 @@ func ensureSettingsHistoryTable(db *gorm.DB) error {
 				FOREIGN KEY (settings_id) REFERENCES settings(id) ON DELETE CASCADE
 		)
 	`
-	
+
 	err = db.Exec(createTableSQL).Error
 	if err != nil {
 		return fmt.Errorf("failed to create settings_history table: %w", err)
 	}
-	
+
 	// Create indexes
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_settings_history_settings_id ON settings_history(settings_id)",
@@ -1924,13 +1924,13 @@ func ensureSettingsHistoryTable(db *gorm.DB) error {
 		"CREATE INDEX IF NOT EXISTS idx_settings_history_created_at ON settings_history(created_at)",
 		"CREATE INDEX IF NOT EXISTS idx_settings_history_deleted_at ON settings_history(deleted_at)",
 	}
-	
+
 	for _, indexSQL := range indexes {
 		if err := db.Exec(indexSQL).Error; err != nil {
 			log.Printf("⚠️  Failed to create index: %v", err)
 		}
 	}
-	
+
 	log.Println("✅ Settings history table created")
 	return nil
 }

@@ -1,12 +1,13 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
 	"fmt"
 	"log"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/repositories"
+
 	"gorm.io/gorm"
 )
 
@@ -24,9 +25,9 @@ func NewSalesJournalServiceV2(
 	coaService *COAService,
 ) *SalesJournalServiceV2 {
 	return &SalesJournalServiceV2{
-		db:              db,
-		journalRepo:     journalRepo,
-		coaService:      coaService,
+		db:          db,
+		journalRepo: journalRepo,
+		coaService:  coaService,
 	}
 }
 
@@ -51,7 +52,7 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 		return nil // Return nil karena ini bukan error, tapi by design
 	}
 
-	log.Printf("📝 Creating journal entries for Sale #%d (Status: %s, Payment Method: %s)", 
+	log.Printf("📝 Creating journal entries for Sale #%d (Status: %s, Payment Method: %s)",
 		sale.ID, sale.Status, sale.PaymentMethodType)
 
 	// Tentukan database yang akan digunakan
@@ -66,7 +67,7 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 	if err := dbToUse.Model(&models.SimpleSSOTJournal{}).
 		Where("transaction_type = ? AND transaction_id = ?", "SALES", sale.ID).
 		Count(&existingCount).Error; err == nil && existingCount > 0 {
-		log.Printf("⚠️ Journal already exists for Sale #%d (found %d entries), skipping creation to prevent duplicate", 
+		log.Printf("⚠️ Journal already exists for Sale #%d (found %d entries), skipping creation to prevent duplicate",
 			sale.ID, existingCount)
 		return nil // Don't create duplicate journal
 	}
@@ -122,7 +123,7 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 			log.Printf("⚠️ Missing cash account 1101: %v", err)
 		}
 	case "BANK":
-		// BANK → Debit ke Bank (specific cash_bank account if available, otherwise 1102)
+		// BANK → Debit ke Bank (specific cash_bank account if available, otherwise 1101-003 BANK GIRO)
 		var acc *models.Account
 		if sale.CashBankID != nil && *sale.CashBankID > 0 {
 			var cashBank models.CashBank
@@ -135,10 +136,11 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 			}
 		}
 		if acc == nil {
-			if resolved, err := resolveByCode("1102"); err == nil {
+			// Fallback: 1101-003 = BANK GIRO (under KAS DAN SETARA KAS)
+			if resolved, err := resolveByCode("1101-003"); err == nil {
 				acc = resolved
 			} else {
-				log.Printf("⚠️ Default bank account 1102 not found: %v", err)
+				log.Printf("⚠️ Default bank account 1101-003 not found: %v", err)
 			}
 		}
 		if acc != nil {
@@ -202,12 +204,17 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 
 		accID := item.RevenueAccountID
 		if accID == 0 {
-			// Fallback: gunakan akun 4101 untuk data lama yang tidak punya RevenueAccountID
+			// ✅ FIX: Fallback ke LEAF account 4101-001 (bukan header 4101)
+			// Posting ke header menyebabkan balance di-overwrite oleh RecalculateAllParentBalances()
 			if defaultRevenueAcc == nil {
-				acc, err := resolveByCode("4101")
+				acc, err := resolveByCode("4101-001")
 				if err != nil {
-					log.Printf("⚠️ Missing default revenue account 4101: %v", err)
-					continue
+					// Fallback ke header jika leaf tidak ada
+					acc, err = resolveByCode("4101")
+					if err != nil {
+						log.Printf("⚠️ Missing default revenue account 4101-001/4101: %v", err)
+						continue
+					}
 				}
 				defaultRevenueAcc = acc
 			}
@@ -218,20 +225,26 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 	}
 
 	if len(revenueTotals) == 0 {
-		// Tidak ada grouping (mis. data sangat lama), fallback ke perilaku lama
-		if acc, err := resolveByCode("4101"); err == nil {
+		// ✅ FIX: Fallback ke LEAF account 4101-001 (bukan header 4101)
+		var fallbackAcc *models.Account
+		if acc, err := resolveByCode("4101-001"); err == nil {
+			fallbackAcc = acc
+		} else if acc, err := resolveByCode("4101"); err == nil {
+			fallbackAcc = acc
+		}
+		if fallbackAcc != nil {
 			journalItems = append(journalItems, models.SimpleSSOTJournalItem{
 				JournalID:   ssotEntry.ID,
-				AccountID:   acc.ID,
-				AccountCode: acc.Code,
-				AccountName: acc.Name,
+				AccountID:   fallbackAcc.ID,
+				AccountCode: fallbackAcc.Code,
+				AccountName: fallbackAcc.Name,
 				Debit:       0,
 				Credit:      sale.Subtotal,
 				Description: fmt.Sprintf("Sales revenue for Invoice #%s", sale.InvoiceNumber),
 			})
-			log.Printf("💰 Revenue: Credit to %s (%s) = %.2f", acc.Name, acc.Code, sale.Subtotal)
+			log.Printf("💰 Revenue: Credit to %s (%s) = %.2f", fallbackAcc.Name, fallbackAcc.Code, sale.Subtotal)
 		} else {
-			log.Printf("⚠️ Missing revenue account 4101: %v", err)
+			log.Printf("⚠️ Missing revenue account 4101-001/4101: no revenue account found")
 		}
 	} else {
 		// Buat satu baris kredit per akun pendapatan
@@ -255,9 +268,9 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 		}
 	}
 
-	// PPN Keluaran (2103) - Credit jika ada
+	// PPN Keluaran (2102-001) - Credit jika ada
 	if sale.PPN > 0 {
-		if acc, err := resolveByCode("2103"); err == nil {
+		if acc, err := resolveByCode("2102-001"); err == nil {
 			journalItems = append(journalItems, models.SimpleSSOTJournalItem{
 				JournalID:   ssotEntry.ID,
 				AccountID:   acc.ID,
@@ -269,7 +282,7 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 			})
 			log.Printf("📊 PPN: Credit to %s (%s) = %.2f", acc.Name, acc.Code, sale.PPN)
 		} else {
-			log.Printf("⚠️ Missing PPN Keluaran account 2103: %v", err)
+			log.Printf("⚠️ Missing PPN Keluaran account 2102-001: %v", err)
 		}
 	}
 
@@ -320,12 +333,12 @@ func (s *SalesJournalServiceV2) UpdateSalesJournal(sale *models.Sale, oldStatus 
 	} else if oldShouldPost && newShouldPost {
 		// Both statuses require journal - Update existing
 		log.Printf("🔄 Updating existing journal entries for Sale #%d", sale.ID)
-		
+
 		// Delete old entries
 		if err := s.DeleteSalesJournal(sale.ID, dbToUse); err != nil {
 			return err
 		}
-		
+
 		// Create new entries
 		return s.CreateSalesJournal(sale, dbToUse)
 	}
@@ -399,7 +412,7 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 	if err := dbToUse.Model(&models.SimpleSSOTJournal{}).
 		Where("transaction_type = ? AND transaction_id = ?", "SALES_PAYMENT", payment.ID).
 		Count(&existingCount).Error; err == nil && existingCount > 0 {
-		log.Printf("⚠️ Payment journal already exists for Payment #%d (found %d entries), skipping creation to prevent duplicate", 
+		log.Printf("⚠️ Payment journal already exists for Payment #%d (found %d entries), skipping creation to prevent duplicate",
 			payment.ID, existingCount)
 		return nil // Don't create duplicate journal
 	}
@@ -451,10 +464,14 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 	if debitAcc == nil {
 		if method == "BANK" || strings.HasPrefix(method, "BANK") {
 			// Default bank account if method indicates bank but cash_bank_id missing
-			if acc, err := resolveByCode("1102"); err == nil { debitAcc = acc }
+			if acc, err := resolveByCode("1101-003"); err == nil {
+				debitAcc = acc
+			}
 		} else {
 			// Default cash account
-			if acc, err := resolveByCode("1101"); err == nil { debitAcc = acc }
+			if acc, err := resolveByCode("1101"); err == nil {
+				debitAcc = acc
+			}
 		}
 	}
 	if debitAcc != nil {
@@ -514,7 +531,7 @@ func (s *SalesJournalServiceV2) updateCOABalance(db *gorm.DB, accountID uint, de
 
 	// Update balance based on account type
 	netChange := debit - credit
-	
+
 	switch account.Type {
 	case "ASSET", "EXPENSE":
 		// Assets and Expenses increase with debit
@@ -530,12 +547,12 @@ func (s *SalesJournalServiceV2) updateCOABalance(db *gorm.DB, accountID uint, de
 // updateParentAccountBalances updates parent account balances for a given account
 func (s *SalesJournalServiceV2) updateParentAccountBalances(db *gorm.DB, accountID uint) error {
 	var parentID *uint
-	
+
 	// Get parent ID
 	if err := db.Raw("SELECT parent_id FROM accounts WHERE id = ? AND deleted_at IS NULL", accountID).Scan(&parentID).Error; err != nil {
 		return fmt.Errorf("failed to get parent ID for account %d: %w", accountID, err)
 	}
-	
+
 	// If has parent, update parent and continue up the chain
 	if parentID != nil {
 		// Calculate parent balance as sum of children
@@ -558,7 +575,7 @@ func (s *SalesJournalServiceV2) updateParentAccountBalances(db *gorm.DB, account
 		// Recursively update grandparent chain
 		return s.updateParentAccountBalances(db, *parentID)
 	}
-	
+
 	return nil
 }
 
@@ -569,7 +586,7 @@ func (s *SalesJournalServiceV2) GetDisplayBalance(accountID uint) (float64, erro
 		return 0, err
 	}
 
-	// For REVENUE and LIABILITY accounts (like PPN Keluaran), 
+	// For REVENUE and LIABILITY accounts (like PPN Keluaran),
 	// return positive value for display
 	if coa.Type == "REVENUE" || coa.Type == "LIABILITY" {
 		return -coa.Balance, nil // Convert negative to positive for display

@@ -274,7 +274,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                                 {t('purchases.edit')}
                               </MenuItem>
                             )}
-                            {purchase.status === 'DRAFT' && userRole === 'employee' && onSubmitForApproval && (
+                            {purchase.status === 'DRAFT' && onSubmitForApproval && (purchase.approval_status === 'NOT_STARTED' || !purchase.approval_status) && (
                               <MenuItem
                                 icon={<FiAlertCircle />}
                                 onClick={() => onSubmitForApproval(purchase.id)}

@@ -1,11 +1,12 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"context"
 	"fmt"
 	"log"
 	"time"
-	"app-sistem-akuntansi/models"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -13,15 +14,17 @@ import (
 // InventoryCOGSService handles Cost of Goods Sold journal entries
 // This service creates COGS journal entries when items are sold
 type InventoryCOGSService struct {
-	db         *gorm.DB
-	coaService *COAService
+	db               *gorm.DB
+	coaService       *COAService
+	taxAccountHelper *TaxAccountHelper
 }
 
 // NewInventoryCOGSService creates a new COGS service instance
 func NewInventoryCOGSService(db *gorm.DB, coaService *COAService) *InventoryCOGSService {
 	return &InventoryCOGSService{
-		db:         db,
-		coaService: coaService,
+		db:               db,
+		coaService:       coaService,
+		taxAccountHelper: NewTaxAccountHelper(db),
 	}
 }
 
@@ -40,7 +43,7 @@ func (s *InventoryCOGSService) RecordCOGSForSale(sale *models.Sale, tx *gorm.DB)
 	var existingCount int64
 	saleIDCheck := uint64(sale.ID)
 	if err := dbToUse.Model(&models.SSOTJournalEntry{}).
-		Where("source_type = ? AND source_id = ? AND notes = ?", 
+		Where("source_type = ? AND source_id = ? AND notes = ?",
 			"SALE", &saleIDCheck, "COGS").
 		Count(&existingCount).Error; err == nil && existingCount > 0 {
 		log.Printf("⚠️ [COGS] COGS journal already exists for Sale #%d, skipping", sale.ID)
@@ -52,15 +55,23 @@ func (s *InventoryCOGSService) RecordCOGSForSale(sale *models.Sale, tx *gorm.DB)
 		return fmt.Errorf("failed to load sale items: %v", err)
 	}
 
-	// Get COGS and Inventory accounts
-	cogsAccount, err := s.getAccountByCode(dbToUse, "5101") // Harga Pokok Penjualan
+	// Get COGS and Inventory accounts from Tax Account Settings (configurable)
+	cogsAccount, err := s.taxAccountHelper.GetCOGSAccount(dbToUse)
 	if err != nil {
-		return fmt.Errorf("COGS account not found: %v", err)
+		// Fallback to direct code lookup
+		cogsAccount, err = s.getAccountByCode(dbToUse, "5101")
+		if err != nil {
+			return fmt.Errorf("COGS account not found: %v", err)
+		}
 	}
 
-	inventoryAccount, err := s.getAccountByCode(dbToUse, "1301") // Persediaan Barang
+	inventoryAccount, err := s.taxAccountHelper.GetInventoryAccount(dbToUse)
 	if err != nil {
-		return fmt.Errorf("Inventory account not found: %v", err)
+		// Fallback to direct code lookup
+		inventoryAccount, err = s.getAccountByCode(dbToUse, "1103-001")
+		if err != nil {
+			return fmt.Errorf("Inventory account not found: %v", err)
+		}
 	}
 
 	// Calculate total COGS from sale items
@@ -131,7 +142,7 @@ func (s *InventoryCOGSService) RecordCOGSForSale(sale *models.Sale, tx *gorm.DB)
 		Description:  fmt.Sprintf("COGS - %s", sale.InvoiceNumber),
 	})
 
-	// CREDIT: 1301 Persediaan Barang (Inventory - Asset)
+	// CREDIT: 1103-001 Persediaan Barang (Inventory - Asset)
 	journalLines = append(journalLines, models.SSOTJournalLine{
 		JournalID:    journalEntry.ID,
 		AccountID:    uint64(inventoryAccount.ID),
@@ -177,7 +188,7 @@ func (s *InventoryCOGSService) RecordCOGSForSale(sale *models.Sale, tx *gorm.DB)
 // RecordCOGSForMultipleSales records COGS for multiple sales (batch processing)
 func (s *InventoryCOGSService) RecordCOGSForMultipleSales(saleIDs []uint) (int, error) {
 	successCount := 0
-	
+
 	for _, saleID := range saleIDs {
 		var sale models.Sale
 		if err := s.db.First(&sale, saleID).Error; err != nil {
@@ -239,11 +250,20 @@ func (s *InventoryCOGSService) BackfillCOGSForExistingSales(ctx context.Context,
 // GetCOGSSummary returns COGS summary for a period
 func (s *InventoryCOGSService) GetCOGSSummary(startDate, endDate time.Time) (map[string]interface{}, error) {
 	var result struct {
-		TotalCOGS       decimal.Decimal
-		TotalSales      int64
-		TotalRevenue    decimal.Decimal
-		AvgCOGS         decimal.Decimal
-		COGSPercentage  decimal.Decimal
+		TotalCOGS      decimal.Decimal
+		TotalSales     int64
+		TotalRevenue   decimal.Decimal
+		AvgCOGS        decimal.Decimal
+		COGSPercentage decimal.Decimal
+	}
+
+	// Resolve COGS account code dynamically from Tax Account Settings
+	cogsAccountCode := "5101" // default fallback
+	cogsAccount, err := s.taxAccountHelper.GetCOGSAccount(s.db)
+	if err == nil {
+		cogsAccountCode = cogsAccount.Code
+	} else {
+		log.Printf("⚠️ [COGS Summary] Could not resolve COGS account from settings, using default code '5101'")
 	}
 
 	// Get total COGS from journal entries
@@ -256,8 +276,8 @@ func (s *InventoryCOGSService) GetCOGSSummary(startDate, endDate time.Time) (map
 		WHERE uje.entry_date >= ? AND uje.entry_date <= ?
 		  AND uje.status = 'POSTED'
 		  AND uje.notes = 'COGS'
-		  AND a.code = '5101'
-	`, startDate, endDate).Scan(&totalCOGS).Error; err != nil {
+		  AND a.code = ?
+	`, startDate, endDate, cogsAccountCode).Scan(&totalCOGS).Error; err != nil {
 		return nil, fmt.Errorf("failed to calculate total COGS: %v", err)
 	}
 
@@ -293,11 +313,11 @@ func (s *InventoryCOGSService) GetCOGSSummary(startDate, endDate time.Time) (map
 	}
 
 	return map[string]interface{}{
-		"total_cogs":       result.TotalCOGS.InexactFloat64(),
-		"total_sales":      result.TotalSales,
-		"total_revenue":    result.TotalRevenue.InexactFloat64(),
-		"avg_cogs":         result.AvgCOGS.InexactFloat64(),
-		"cogs_percentage":  result.COGSPercentage.InexactFloat64(),
+		"total_cogs":      result.TotalCOGS.InexactFloat64(),
+		"total_sales":     result.TotalSales,
+		"total_revenue":   result.TotalRevenue.InexactFloat64(),
+		"avg_cogs":        result.AvgCOGS.InexactFloat64(),
+		"cogs_percentage": result.COGSPercentage.InexactFloat64(),
 	}, nil
 }
 
@@ -309,4 +329,3 @@ func (s *InventoryCOGSService) getAccountByCode(db *gorm.DB, code string) (*mode
 	}
 	return &account, nil
 }
-

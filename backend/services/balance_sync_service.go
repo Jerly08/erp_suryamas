@@ -87,6 +87,23 @@ func (s *BalanceSyncService) syncParentAccountBalances() error {
 	return nil
 }
 
+// RecalculateAllParentBalances is a public wrapper to recalculate all header account balances
+func (s *BalanceSyncService) RecalculateAllParentBalances() (int64, error) {
+	log.Println("🔄 Recalculating all parent/header account balances...")
+	
+	// Count header accounts before update
+	var headerCount int64
+	s.db.Model(&models.Account{}).Where("is_header = true AND deleted_at IS NULL").Count(&headerCount)
+	
+	err := s.syncParentAccountBalances()
+	if err != nil {
+		return 0, err
+	}
+	
+	log.Printf("✅ Recalculated balances for %d header accounts", headerCount)
+	return headerCount, nil
+}
+
 // AutoSyncAfterJournalPost automatically syncs balances after journal posting
 func (s *BalanceSyncService) AutoSyncAfterJournalPost(journalID uint) error {
 	log.Printf("🔄 Auto-syncing balances after journal %d posting...", journalID)

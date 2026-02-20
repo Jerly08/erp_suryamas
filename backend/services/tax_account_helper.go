@@ -3,8 +3,9 @@ package services
 import (
 	"fmt"
 	"log"
-	
+
 	"app-sistem-akuntansi/models"
+
 	"gorm.io/gorm"
 )
 
@@ -39,8 +40,8 @@ func (h *TaxAccountHelper) GetWithholdingTax21Account(tx *gorm.DB) (*models.Acco
 	// Ensure settings are loaded
 	if h.cachedSettings == nil {
 		if err := h.LoadSettings(); err != nil {
-			// Fallback to hardcoded account
-			return h.getAccountByCode(tx, "1114") // Default PPh 21 Dibayar Dimuka
+			// Fallback to COA template account
+			return h.getAccountByCode(tx, "1105-001") // PPH 21 DIBAYAR DIMUKA (COA template)
 		}
 	}
 
@@ -54,8 +55,8 @@ func (h *TaxAccountHelper) GetWithholdingTax21Account(tx *gorm.DB) (*models.Acco
 	}
 
 	// Fallback to default
-	log.Printf("⚠️ [TaxAccountHelper] PPh21 account not configured, using default (1114)")
-	return h.getAccountByCode(tx, "1114")
+	log.Printf("⚠️ [TaxAccountHelper] PPh21 account not configured, using default (1105-001)")
+	return h.getAccountByCode(tx, "1105-001")
 }
 
 // GetWithholdingTax23Account returns the configured PPh 23 account or fallback
@@ -63,8 +64,8 @@ func (h *TaxAccountHelper) GetWithholdingTax23Account(tx *gorm.DB) (*models.Acco
 	// Ensure settings are loaded
 	if h.cachedSettings == nil {
 		if err := h.LoadSettings(); err != nil {
-			// Fallback to hardcoded account
-			return h.getAccountByCode(tx, "1115") // Default PPh 23 Dibayar Dimuka
+			// Fallback to COA template account
+			return h.getAccountByCode(tx, "1105-002") // PPH 23 DIBAYAR DIMUKA (COA template)
 		}
 	}
 
@@ -78,8 +79,8 @@ func (h *TaxAccountHelper) GetWithholdingTax23Account(tx *gorm.DB) (*models.Acco
 	}
 
 	// Fallback to default
-	log.Printf("⚠️ [TaxAccountHelper] PPh23 account not configured, using default (1115)")
-	return h.getAccountByCode(tx, "1115")
+	log.Printf("⚠️ [TaxAccountHelper] PPh23 account not configured, using default (1105-002)")
+	return h.getAccountByCode(tx, "1105-002")
 }
 
 // GetWithholdingTax25Account returns the configured PPh 25 account or fallback
@@ -87,8 +88,8 @@ func (h *TaxAccountHelper) GetWithholdingTax25Account(tx *gorm.DB) (*models.Acco
 	// Ensure settings are loaded
 	if h.cachedSettings == nil {
 		if err := h.LoadSettings(); err != nil {
-			// Fallback to hardcoded account
-			return h.getAccountByCode(tx, "1116") // Default PPh 25 Dibayar Dimuka
+			// Fallback to COA template account
+			return h.getAccountByCode(tx, "1105-003") // PPH FINAL DIBAYAR DIMUKA (COA template)
 		}
 	}
 
@@ -102,8 +103,8 @@ func (h *TaxAccountHelper) GetWithholdingTax25Account(tx *gorm.DB) (*models.Acco
 	}
 
 	// Fallback to default
-	log.Printf("⚠️ [TaxAccountHelper] PPh25 account not configured, using default (1116)")
-	return h.getAccountByCode(tx, "1116")
+	log.Printf("⚠️ [TaxAccountHelper] PPh25 account not configured, using default (1105-003)")
+	return h.getAccountByCode(tx, "1105-003")
 }
 
 // GetTaxPayableAccount returns the configured Tax Payable account or fallback
@@ -111,8 +112,8 @@ func (h *TaxAccountHelper) GetTaxPayableAccount(tx *gorm.DB) (*models.Account, e
 	// Ensure settings are loaded
 	if h.cachedSettings == nil {
 		if err := h.LoadSettings(); err != nil {
-			// Fallback to hardcoded account
-			return h.getAccountByCode(tx, "2104") // Default Hutang Pajak
+			// Fallback to COA template account
+			return h.getAccountByCode(tx, "2102-003") // PPH PASAL 21 utang (COA template)
 		}
 	}
 
@@ -126,8 +127,8 @@ func (h *TaxAccountHelper) GetTaxPayableAccount(tx *gorm.DB) (*models.Account, e
 	}
 
 	// Fallback to default
-	log.Printf("⚠️ [TaxAccountHelper] Tax Payable account not configured, using default (2104)")
-	return h.getAccountByCode(tx, "2104")
+	log.Printf("⚠️ [TaxAccountHelper] Tax Payable account not configured, using default (2102-003)")
+	return h.getAccountByCode(tx, "2102-003")
 }
 
 // GetInventoryAccount returns the configured Inventory account or fallback
@@ -136,7 +137,7 @@ func (h *TaxAccountHelper) GetInventoryAccount(tx *gorm.DB) (*models.Account, er
 	if h.cachedSettings == nil {
 		if err := h.LoadSettings(); err != nil {
 			// Fallback to hardcoded account
-			return h.getAccountByCode(tx, "1301") // Default Persediaan Barang
+			return h.getAccountByCode(tx, "1103-001") // Default Persediaan Barang Dagang (Trading)
 		}
 	}
 
@@ -150,8 +151,8 @@ func (h *TaxAccountHelper) GetInventoryAccount(tx *gorm.DB) (*models.Account, er
 	}
 
 	// Fallback to default
-	log.Printf("⚠️ [TaxAccountHelper] Inventory account not configured, using default (1301)")
-	return h.getAccountByCode(tx, "1301")
+	log.Printf("⚠️ [TaxAccountHelper] Inventory account not configured, using default (1103-001)")
+	return h.getAccountByCode(tx, "1103-001")
 }
 
 // GetCOGSAccount returns the configured COGS account or fallback
@@ -160,7 +161,7 @@ func (h *TaxAccountHelper) GetCOGSAccount(tx *gorm.DB) (*models.Account, error) 
 	if h.cachedSettings == nil {
 		if err := h.LoadSettings(); err != nil {
 			// Fallback to hardcoded account
-			return h.getAccountByCode(tx, "5101") // Default Harga Pokok Penjualan
+			return h.getAccountByCode(tx, "5101") // Default Pembelian Barang Dagang (Trading) - COGS Header is 5000, 5101 is detail
 		}
 	}
 

@@ -143,11 +143,15 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
 
   const formatTransactionType = (type: string) => {
     switch (type) {
-      case 'DEPOSIT': return { label: 'Deposit', color: 'green' };
-      case 'WITHDRAWAL': return { label: 'Withdrawal', color: 'red' };
-      case 'TRANSFER': return { label: 'Transfer', color: 'blue' };
-      case 'OPENING_BALANCE': return { label: 'Opening Balance', color: 'purple' };
-      case 'ADJUSTMENT': return { label: 'Adjustment', color: 'orange' };
+      case 'DEPOSIT': return { label: t('common.transactionTypes.deposit'), color: 'green' };
+      case 'WITHDRAWAL': return { label: t('common.transactionTypes.withdrawal'), color: 'red' };
+      case 'TRANSFER': return { label: t('common.transactionTypes.transfer'), color: 'blue' };
+      case 'OPENING_BALANCE': return { label: t('common.transactionTypes.openingBalance'), color: 'purple' };
+      case 'ADJUSTMENT': return { label: t('common.transactionTypes.adjustment'), color: 'orange' };
+      case 'SALE': return { label: t('common.transactionTypes.sale'), color: 'teal' };
+      case 'PURCHASE': return { label: t('common.transactionTypes.purchase'), color: 'orange' };
+      case 'SALES_PAYMENT': return { label: t('common.transactionTypes.salesPayment'), color: 'green' };
+      case 'PURCHASE_PAYMENT': return { label: t('common.transactionTypes.purchasePayment'), color: 'red' };
       default: return { label: type, color: 'gray' };
     }
   };
@@ -163,7 +167,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
             <Text fontSize="lg">{account.type === 'CASH' ? '💵' : '🏦'}</Text>
             <Box>
               <Text fontSize="lg" fontWeight="bold">
-                {t('common.transactionHistory') || 'Transaction History'}
+                {t('common.transactionHistory')}
               </Text>
               <Text fontSize="sm" color="gray.500" fontFamily="mono">
                 {account.name} ({account.code})
@@ -180,7 +184,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
               <CardBody>
                 <SimpleGrid columns={4} spacing={4}>
                   <Stat size="sm">
-                    <StatLabel>{t('accounts.accountType') || 'Account Type'}</StatLabel>
+                    <StatLabel>{t('accounts.accountType')}</StatLabel>
                     <StatNumber fontSize="md">
                       <Badge colorScheme={account.type === 'CASH' ? 'green' : 'blue'}>
                         {account.type}
@@ -188,11 +192,11 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     </StatNumber>
                   </Stat>
                   <Stat size="sm">
-                    <StatLabel>{t('settings.currency') || 'Currency'}</StatLabel>
+                    <StatLabel>{t('settings.currency')}</StatLabel>
                     <StatNumber fontSize="md">{account.currency}</StatNumber>
                   </Stat>
                   <Stat size="sm">
-                    <StatLabel>{t('products.currentStock').replace('Stock', 'Balance') || 'Current Balance'}</StatLabel>
+                    <StatLabel>{t('common.currentBalance')}</StatLabel>
                     <StatNumber
                       fontSize="md"
                       color={account.balance < 0 ? 'red.500' : 'green.600'}
@@ -203,7 +207,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     </StatNumber>
                   </Stat>
                   <Stat size="sm">
-                    <StatLabel>{t('dashboard.stats.totalTransactions') || 'Total Transactions'}</StatLabel>
+                    <StatLabel>{t('dashboard.stats.totalTransactions')}</StatLabel>
                     <StatNumber fontSize="md">{total?.toLocaleString() || '0'}</StatNumber>
                   </Stat>
                 </SimpleGrid>
@@ -214,11 +218,11 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
             <Card>
               <CardBody>
                 <Text fontSize="md" fontWeight="semibold" mb={4} color="gray.700">
-                  {t('common.filter') || 'Filter Transactions'}
+                  {t('common.filter')}
                 </Text>
                 <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4}>
                   <FormControl>
-                    <FormLabel fontSize="sm">{t('common.filters.startDate') || 'Start Date'}</FormLabel>
+                    <FormLabel fontSize="sm">{t('common.filters.startDate')}</FormLabel>
                     <Input
                       type="date"
                       value={filters.start_date}
@@ -227,7 +231,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     />
                   </FormControl>
                   <FormControl>
-                    <FormLabel fontSize="sm">{t('common.filters.endDate') || 'End Date'}</FormLabel>
+                    <FormLabel fontSize="sm">{t('common.filters.endDate')}</FormLabel>
                     <Input
                       type="date"
                       value={filters.end_date}
@@ -236,7 +240,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     />
                   </FormControl>
                   <FormControl>
-                    <FormLabel fontSize="sm">Items per page</FormLabel>
+                    <FormLabel fontSize="sm">{t('common.itemsPerPage')}</FormLabel>
                     <Select
                       value={filters.limit}
                       onChange={(e) => handleFilterChange('limit', parseInt(e.target.value))}
@@ -249,9 +253,9 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     </Select>
                   </FormControl>
                   <FormControl>
-                    <FormLabel fontSize="sm">Actions</FormLabel>
+                    <FormLabel fontSize="sm">{t('common.actions')}</FormLabel>
                     <HStack>
-                      <Tooltip label="Refresh transactions" fontSize="xs">
+                      <Tooltip label={t('common.refreshTransactions')} fontSize="xs">
                         <IconButton
                           aria-label="Refresh"
                           icon={<FiRefreshCw />}
@@ -266,7 +270,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                         variant="outline"
                         onClick={clearFilters}
                       >
-                        Clear
+                        {t('common.clear')}
                       </Button>
                     </HStack>
                   </FormControl>
@@ -285,19 +289,19 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
             {/* Transaction Table */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" mb={4} color="gray.700">
-                {t('common.transactionHistory') || 'Transaction History'} ({total || 0} {t('common.pagination.entries') || 'records'})
+                {t('common.transactionHistory')} ({total || 0} {t('common.pagination.entries')})
               </Text>
 
               {loading ? (
                 <Box textAlign="center" py={8}>
                   <Spinner size="lg" />
-                  <Text mt={2} color="gray.500">Loading transactions...</Text>
+                  <Text mt={2} color="gray.500">{t('common.loadingTransactions')}</Text>
                 </Box>
               ) : !Array.isArray(transactions) || transactions.length === 0 ? (
                 <Box textAlign="center" py={8}>
-                  <Text color="gray.500">No transactions found for this account</Text>
+                  <Text color="gray.500">{t('common.noTransactionsFound')}</Text>
                   <Text fontSize="sm" color="gray.400" mt={1}>
-                    Try adjusting your filter criteria or refresh the data
+                    {t('common.noTransactionsHint')}
                   </Text>
                 </Box>
               ) : (
@@ -305,12 +309,12 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                   <Table size="sm" variant="striped">
                     <Thead>
                       <Tr>
-                        <Th>{t('common.labels.date') || 'Date'}</Th>
-                        <Th>{t('common.labels.type') || 'Type'}</Th>
-                        <Th>{t('common.placeholders.referenceNumber') || 'Reference'}</Th>
-                        <Th isNumeric>{t('common.labels.amount') || 'Amount'}</Th>
-                        <Th isNumeric>{t('common.labels.balance') || 'Balance After'}</Th>
-                        <Th>{t('common.labels.description') || 'Notes'}</Th>
+                        <Th>{t('common.labels.date')}</Th>
+                        <Th>{t('common.labels.type')}</Th>
+                        <Th>{t('common.placeholders.referenceNumber')}</Th>
+                        <Th isNumeric>{t('common.labels.amount')}</Th>
+                        <Th isNumeric>{t('common.labels.balance')}</Th>
+                        <Th>{t('common.labels.description')}</Th>
                       </Tr>
                     </Thead>
                     <Tbody>
@@ -388,7 +392,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     onClick={() => handlePageChange(currentPage - 1)}
                     isDisabled={currentPage === 1 || loading}
                   >
-                    Previous
+                    {t('common.previous')}
                   </Button>
 
                   <HStack spacing={1}>
@@ -416,11 +420,11 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                     onClick={() => handlePageChange(currentPage + 1)}
                     isDisabled={currentPage === totalPages || loading}
                   >
-                    Next
+                    {t('common.next')}
                   </Button>
 
                   <Text fontSize="sm" color="gray.500">
-                    Page {currentPage} of {totalPages}
+                    {t('common.pageOf', { current: currentPage, total: totalPages })}
                   </Text>
                 </Flex>
               )}

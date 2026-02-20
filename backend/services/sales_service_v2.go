@@ -1,26 +1,27 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
 	"fmt"
 	"log"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/repositories"
+
 	"gorm.io/gorm"
 )
 
 // SalesServiceV2 handles all sales operations with clean business logic
 type SalesServiceV2 struct {
-	db                     *gorm.DB
-	salesRepo              *repositories.SalesRepository
-	salesJournalService    *SalesJournalServiceV2      // Legacy simple_ssot_journals (deprecated)
-	salesJournalServiceSSOT *SalesJournalServiceSSOT   // NEW: unified_journal_ledger (for Balance Sheet)
-	cogsService            *InventoryCOGSService       // NEW: COGS recording service
-	stockService           *StockService
-	notificationService    *NotificationService
-	settingsService        *SettingsService
-	invoiceNumberService   *InvoiceNumberService
+	db                      *gorm.DB
+	salesRepo               *repositories.SalesRepository
+	salesJournalService     *SalesJournalServiceV2   // Legacy simple_ssot_journals (deprecated)
+	salesJournalServiceSSOT *SalesJournalServiceSSOT // NEW: unified_journal_ledger (for Balance Sheet)
+	cogsService             *InventoryCOGSService    // NEW: COGS recording service
+	stockService            *StockService
+	notificationService     *NotificationService
+	settingsService         *SettingsService
+	invoiceNumberService    *InvoiceNumberService
 }
 
 // NewSalesServiceV2 creates a new instance of SalesServiceV2
@@ -37,17 +38,17 @@ func NewSalesServiceV2(
 	// Initialize COGS service for automatic COGS recording
 	coaService := NewCOAService(db)
 	cogsService := NewInventoryCOGSService(db, coaService)
-	
+
 	return &SalesServiceV2{
-		db:                     db,
-		salesRepo:              salesRepo,
-		salesJournalService:    salesJournalService,
+		db:                      db,
+		salesRepo:               salesRepo,
+		salesJournalService:     salesJournalService,
 		salesJournalServiceSSOT: salesJournalServiceSSOT,
-		cogsService:            cogsService,
-		stockService:           stockService,
-		notificationService:    notificationService,
-		settingsService:        settingsService,
-		invoiceNumberService:   invoiceNumberService,
+		cogsService:             cogsService,
+		stockService:            stockService,
+		notificationService:     notificationService,
+		settingsService:         settingsService,
+		invoiceNumberService:    invoiceNumberService,
 	}
 }
 
@@ -72,42 +73,42 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			Quantity:  item.Quantity,
 		})
 	}
-	
+
 	// Validate stock availability
 	stockValidation, err := s.ValidateStockForCreate(stockValidationReq)
 	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to validate stock: %v", err)
 	}
-	
+
 	// Check if there are any stock issues
 	if stockValidation.HasInsufficient {
 		// Build detailed error message
 		var insufficientItems []string
 		for _, item := range stockValidation.Items {
 			if !item.IsSufficient && !item.IsService {
-				insufficientItems = append(insufficientItems, 
-					fmt.Sprintf("❌ %s: Tersedia %d, Diminta %d", 
+				insufficientItems = append(insufficientItems,
+					fmt.Sprintf("❌ %s: Tersedia %d, Diminta %d",
 						item.ProductName, item.AvailableQty, item.RequestedQty))
 			}
 		}
 		tx.Rollback()
 		return nil, fmt.Errorf("stock tidak mencukupi:\n%s", strings.Join(insufficientItems, "\n"))
 	}
-	
+
 	if stockValidation.HasZeroStock {
 		// Find zero stock items
 		var zeroStockItems []string
 		for _, item := range stockValidation.Items {
 			if item.AvailableQty == 0 && !item.IsService {
-				zeroStockItems = append(zeroStockItems, 
+				zeroStockItems = append(zeroStockItems,
 					fmt.Sprintf("❌ %s: Stock habis (0)", item.ProductName))
 			}
 		}
 		tx.Rollback()
 		return nil, fmt.Errorf("beberapa produk stock-nya habis:\n%s", strings.Join(zeroStockItems, "\n"))
 	}
-	
+
 	// Log warnings for low stock (but allow creation)
 	if stockValidation.HasMinStockAlerts || stockValidation.HasReorderAlerts {
 		for _, item := range stockValidation.Items {
@@ -116,16 +117,16 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			}
 		}
 	}
-	
+
 	log.Printf("✅ Stock validation passed for all items")
-	
+
 	// Generate sale code using settings service
 	saleCode, err := s.settingsService.GetNextSalesNumber()
 	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to generate sales code: %v", err)
 	}
-	
+
 	// Handle enhanced tax configuration
 	ppnPercent := request.PPNPercent
 	if ppnPercent == nil {
@@ -138,44 +139,44 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			ppnPercent = &defaultPPN
 		}
 	}
-	
+
 	// Create sale with DRAFT status by default
 	log.Printf("📝 Creating sale with invoice_type_id: %v", request.InvoiceTypeID)
 	sale := &models.Sale{
-		Code:              saleCode,
-		CustomerID:        request.CustomerID,
-		UserID:            userID,
-		SalesPersonID:     request.SalesPersonID,
-		InvoiceTypeID:     request.InvoiceTypeID,
-		Type:              request.Type,
-		Status:            "DRAFT", // Always start with DRAFT
-		Date:              request.Date,
-		DueDate:           request.DueDate,
-		ValidUntil:        request.ValidUntil,
-		Currency:          getOrDefaultStr(request.Currency, "IDR"),
-		ExchangeRate:      getOrDefault(request.ExchangeRate, 1.0),
-		DiscountPercent:   request.DiscountPercent,
-		PPNPercent:        *ppnPercent,
-		PPhPercent:        request.PPhPercent,
-		PPhType:           request.PPhType,
-            // Enhanced tax fields
-            PPNRate:           *ppnPercent,
-		OtherTaxAdditions: request.OtherTaxAdditions,
-		PPh21Rate:         request.PPh21Rate,
-		PPh23Rate:         request.PPh23Rate,
+		Code:            saleCode,
+		CustomerID:      request.CustomerID,
+		UserID:          userID,
+		SalesPersonID:   request.SalesPersonID,
+		InvoiceTypeID:   request.InvoiceTypeID,
+		Type:            request.Type,
+		Status:          "DRAFT", // Always start with DRAFT
+		Date:            request.Date,
+		DueDate:         request.DueDate,
+		ValidUntil:      request.ValidUntil,
+		Currency:        getOrDefaultStr(request.Currency, "IDR"),
+		ExchangeRate:    getOrDefault(request.ExchangeRate, 1.0),
+		DiscountPercent: request.DiscountPercent,
+		PPNPercent:      *ppnPercent,
+		PPhPercent:      request.PPhPercent,
+		PPhType:         request.PPhType,
+		// Enhanced tax fields
+		PPNRate:            *ppnPercent,
+		OtherTaxAdditions:  request.OtherTaxAdditions,
+		PPh21Rate:          request.PPh21Rate,
+		PPh23Rate:          request.PPh23Rate,
 		OtherTaxDeductions: request.OtherTaxDeductions,
-		PaymentTerms:      request.PaymentTerms,
-		PaymentMethod:     request.PaymentMethod,
-		PaymentMethodType: request.PaymentMethodType, // CASH, BANK, or CREDIT
-		CashBankID:        request.CashBankID,
-		ShippingMethod:    request.ShippingMethod,
-		ShippingCost:      request.ShippingCost,
-		ShippingTaxable:   request.ShippingTaxable,
-		BillingAddress:    request.BillingAddress,
-		ShippingAddress:   request.ShippingAddress,
-		Notes:             request.Notes,
-		InternalNotes:     request.InternalNotes,
-		Reference:         request.Reference,
+		PaymentTerms:       request.PaymentTerms,
+		PaymentMethod:      request.PaymentMethod,
+		PaymentMethodType:  request.PaymentMethodType, // CASH, BANK, or CREDIT
+		CashBankID:         request.CashBankID,
+		ShippingMethod:     request.ShippingMethod,
+		ShippingCost:       request.ShippingCost,
+		ShippingTaxable:    request.ShippingTaxable,
+		BillingAddress:     request.BillingAddress,
+		ShippingAddress:    request.ShippingAddress,
+		Notes:              request.Notes,
+		InternalNotes:      request.InternalNotes,
+		Reference:          request.Reference,
 	}
 
 	// Calculate totals
@@ -194,29 +195,53 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			defaultDiscount := 0.0
 			discountPercent = &defaultDiscount
 		}
-		
+
 		// Set default revenue account if not provided or 0
 		revenueAccountID := itemRequest.RevenueAccountID
 		if revenueAccountID == 0 {
-			// Get default sales revenue account (4101)
+			// ✅ FIX: Use LEAF account 4101-001 (Penjualan Lokal) instead of HEADER 4101
+			// Posting to header account causes balance to be overwritten to 0 by
+			// RecalculateAllParentBalances() which recalculates headers as SUM(children)
 			var defaultAccount models.Account
-			if err := tx.Where("code = ? AND deleted_at IS NULL", "4101").First(&defaultAccount).Error; err != nil {
-				// Fallback to any revenue account if 4101 doesn't exist
-				if err := tx.Where("type = ? AND deleted_at IS NULL", "REVENUE").First(&defaultAccount).Error; err != nil {
-					tx.Rollback()
-					return nil, fmt.Errorf("failed to find default revenue account: %v", err)
+			if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&defaultAccount).Error; err != nil {
+				// Fallback: try header 4101 if leaf doesn't exist, then any revenue account
+				if err := tx.Where("code = ? AND deleted_at IS NULL", "4101").First(&defaultAccount).Error; err != nil {
+					if err := tx.Where("type = ? AND deleted_at IS NULL", "REVENUE").First(&defaultAccount).Error; err != nil {
+						tx.Rollback()
+						return nil, fmt.Errorf("failed to find default revenue account: %v", err)
+					}
 				}
 			}
 			revenueAccountID = defaultAccount.ID
 		}
 
+		// ✅ FIX: Guard against header accounts — ALWAYS redirect to leaf child
+		// This catches cases where the frontend sends a header account ID (e.g., from tax_account_settings)
+		if revenueAccountID != 0 {
+			var revAcc models.Account
+			if err := tx.First(&revAcc, revenueAccountID).Error; err == nil && revAcc.IsHeader {
+				log.Printf("⚠️ Revenue account %s (ID=%d) is a HEADER, redirecting to leaf child", revAcc.Code, revAcc.ID)
+				var leafAcc models.Account
+				if err := tx.Where("parent_id = ? AND is_header = false AND deleted_at IS NULL", revAcc.ID).First(&leafAcc).Error; err == nil {
+					revenueAccountID = leafAcc.ID
+					log.Printf("✅ Redirected to leaf revenue account %s (ID=%d)", leafAcc.Code, leafAcc.ID)
+				} else {
+					// Use 4101-001 as absolute fallback
+					if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&leafAcc).Error; err == nil {
+						revenueAccountID = leafAcc.ID
+						log.Printf("✅ Fallback to 4101-001 (ID=%d)", leafAcc.ID)
+					}
+				}
+			}
+		}
+
 		item := models.SaleItem{
-			ProductID:       itemRequest.ProductID,
-			Description:     itemRequest.Description,
-			Quantity:        int(itemRequest.Quantity),
-			UnitPrice:       itemRequest.UnitPrice,
-			DiscountPercent: *discountPercent,
-			Taxable:         getOrDefault(itemRequest.Taxable, true),
+			ProductID:        itemRequest.ProductID,
+			Description:      itemRequest.Description,
+			Quantity:         int(itemRequest.Quantity),
+			UnitPrice:        itemRequest.UnitPrice,
+			DiscountPercent:  *discountPercent,
+			Taxable:          getOrDefault(itemRequest.Taxable, true),
 			RevenueAccountID: revenueAccountID,
 		}
 
@@ -225,7 +250,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		discountAmount := lineTotal * (item.DiscountPercent / 100)
 		item.DiscountAmount = discountAmount
 		item.LineTotal = lineTotal - discountAmount
-		
+
 		// Calculate taxes if taxable
 		if item.Taxable {
 			item.PPNAmount = item.LineTotal * (sale.PPNPercent / 100)
@@ -233,10 +258,10 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			totalPPN += item.PPNAmount
 			totalPPH += item.PPhAmount
 		}
-		
+
 		item.TotalTax = item.PPNAmount + item.PPhAmount
 		item.FinalAmount = item.LineTotal + item.PPNAmount - item.PPhAmount
-		
+
 		subtotal += item.LineTotal
 		sale.SaleItems = append(sale.SaleItems, item)
 	}
@@ -244,12 +269,12 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 	// Calculate sale totals
 	sale.Subtotal = subtotal
 	sale.SubTotal = subtotal // Compatibility field
-	
+
 	// ✅ FIX: Apply sale-level discount
 	sale.DiscountAmount = subtotal * (sale.DiscountPercent / 100)
 	sale.TaxableAmount = subtotal - sale.DiscountAmount
 	sale.NetBeforeTax = sale.TaxableAmount // Net amount before any taxes
-	
+
 	// ✅ FIX: Recalculate PPN from TaxableAmount (after sale-level discount)
 	// Item-level PPN was calculated before sale discount, so recalculate
 	if sale.PPNPercent > 0 || sale.PPNRate > 0 {
@@ -263,7 +288,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		sale.PPN = totalPPN // Use item-level PPN if no rate specified
 		sale.PPNAmount = totalPPN
 	}
-	
+
 	// ✅ FIX: Calculate enhanced tax fields
 	// PPh21 and PPh23 are calculated from TaxableAmount if rates are provided
 	if sale.PPh21Rate > 0 {
@@ -272,27 +297,27 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 	if sale.PPh23Rate > 0 {
 		sale.PPh23Amount = sale.TaxableAmount * (sale.PPh23Rate / 100)
 	}
-	
+
 	// Legacy PPh field
 	sale.PPh = totalPPH
-	
+
 	// Total tax additions (added to invoice total)
 	sale.TotalTaxAdditions = sale.OtherTaxAdditions
-	
+
 	// Total tax deductions (subtracted from invoice total)
 	sale.TotalTaxDeductions = sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
-	
+
 	// Total tax for display
 	sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
 	sale.Tax = sale.TotalTax // Compatibility field
-	
+
 	// ✅ FIX: Calculate final TotalAmount correctly
 	// Formula: TaxableAmount + PPN + OtherTaxAdditions + ShippingCost - TotalTaxDeductions
 	sale.TotalAmount = sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
 	sale.OutstandingAmount = sale.TotalAmount // Initially all outstanding
-	
+
 	log.Printf("📊 [CALC] Subtotal=%.2f, Discount=%.2f, TaxableAmt=%.2f", sale.Subtotal, sale.DiscountAmount, sale.TaxableAmount)
-	log.Printf("📊 [CALC] PPN=%.2f, Additions=%.2f, Deductions=%.2f, Shipping=%.2f", 
+	log.Printf("📊 [CALC] PPN=%.2f, Additions=%.2f, Deductions=%.2f, Shipping=%.2f",
 		sale.PPN, sale.OtherTaxAdditions, sale.TotalTaxDeductions, sale.ShippingCost)
 	log.Printf("📊 [CALC] TotalAmount=%.2f", sale.TotalAmount)
 
@@ -358,7 +383,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	if request.CashBankID != nil {
 		sale.CashBankID = request.CashBankID
 	}
-	
+
 	// Update legacy tax fields
 	if request.PPNPercent != nil {
 		sale.PPNPercent = *request.PPNPercent
@@ -369,7 +394,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	if request.PPhType != nil {
 		sale.PPhType = *request.PPhType
 	}
-	
+
 	// Update enhanced tax fields
 	if request.PPNRate != nil {
 		sale.PPNRate = *request.PPNRate
@@ -388,7 +413,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	if request.OtherTaxDeductions != nil {
 		sale.OtherTaxDeductions = *request.OtherTaxDeductions
 	}
-	
+
 	// Update other fields
 	if request.DiscountPercent != nil {
 		sale.DiscountPercent = *request.DiscountPercent
@@ -445,30 +470,49 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				defaultDiscount := 0.0
 				discountPercent = &defaultDiscount
 			}
-			
+
 			// Set default revenue account if not provided or 0
 			revenueAccountID := itemRequest.RevenueAccountID
 			if revenueAccountID == 0 {
-				// Get default sales revenue account (4101)
+				// ✅ FIX: Use LEAF account 4101-001 instead of HEADER 4101
 				var defaultAccount models.Account
-				if err := tx.Where("code = ? AND deleted_at IS NULL", "4101").First(&defaultAccount).Error; err != nil {
-					// Fallback to any revenue account if 4101 doesn't exist
-					if err := tx.Where("type = ? AND deleted_at IS NULL", "REVENUE").First(&defaultAccount).Error; err != nil {
-						tx.Rollback()
-						return nil, fmt.Errorf("failed to find default revenue account: %v", err)
+				if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&defaultAccount).Error; err != nil {
+					// Fallback: try header 4101 if leaf doesn't exist, then any revenue account
+					if err := tx.Where("code = ? AND deleted_at IS NULL", "4101").First(&defaultAccount).Error; err != nil {
+						if err := tx.Where("type = ? AND deleted_at IS NULL", "REVENUE").First(&defaultAccount).Error; err != nil {
+							tx.Rollback()
+							return nil, fmt.Errorf("failed to find default revenue account: %v", err)
+						}
 					}
 				}
 				revenueAccountID = defaultAccount.ID
 			}
 
+			// ✅ FIX: Guard against header accounts — ALWAYS redirect to leaf child
+			if revenueAccountID != 0 {
+				var revAcc models.Account
+				if err := tx.First(&revAcc, revenueAccountID).Error; err == nil && revAcc.IsHeader {
+					log.Printf("⚠️ [UpdateSale] Revenue account %s (ID=%d) is a HEADER, redirecting to leaf", revAcc.Code, revAcc.ID)
+					var leafAcc models.Account
+					if err := tx.Where("parent_id = ? AND is_header = false AND deleted_at IS NULL", revAcc.ID).First(&leafAcc).Error; err == nil {
+						revenueAccountID = leafAcc.ID
+						log.Printf("✅ Redirected to leaf revenue account %s (ID=%d)", leafAcc.Code, leafAcc.ID)
+					} else {
+						if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&leafAcc).Error; err == nil {
+							revenueAccountID = leafAcc.ID
+						}
+					}
+				}
+			}
+
 			item := models.SaleItem{
-				SaleID:          sale.ID,
-				ProductID:       itemRequest.ProductID,
-				Description:     itemRequest.Description,
-				Quantity:        int(itemRequest.Quantity),
-				UnitPrice:       itemRequest.UnitPrice,
-				DiscountPercent: *discountPercent,
-				Taxable:         getOrDefault(itemRequest.Taxable, true),
+				SaleID:           sale.ID,
+				ProductID:        itemRequest.ProductID,
+				Description:      itemRequest.Description,
+				Quantity:         int(itemRequest.Quantity),
+				UnitPrice:        itemRequest.UnitPrice,
+				DiscountPercent:  *discountPercent,
+				Taxable:          getOrDefault(itemRequest.Taxable, true),
 				RevenueAccountID: revenueAccountID,
 			}
 
@@ -477,7 +521,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 			discountAmount := lineTotal * (item.DiscountPercent / 100)
 			item.DiscountAmount = discountAmount
 			item.LineTotal = lineTotal - discountAmount
-			
+
 			if item.Taxable {
 				// Use PPNRate if available, otherwise fall back to PPNPercent
 				ppnRate := sale.PPNRate
@@ -489,10 +533,10 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				totalPPN += item.PPNAmount
 				totalPPH += item.PPhAmount
 			}
-			
+
 			item.TotalTax = item.PPNAmount + item.PPhAmount
 			item.FinalAmount = item.LineTotal + item.PPNAmount - item.PPhAmount
-			
+
 			subtotal += item.LineTotal
 			sale.SaleItems = append(sale.SaleItems, item)
 		}
@@ -500,12 +544,12 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		// Apply same calculation logic as CreateSale
 		sale.Subtotal = subtotal
 		sale.SubTotal = subtotal
-		
+
 		// Apply sale-level discount
 		sale.DiscountAmount = subtotal * (sale.DiscountPercent / 100)
 		sale.TaxableAmount = subtotal - sale.DiscountAmount
 		sale.NetBeforeTax = sale.TaxableAmount
-		
+
 		// Recalculate PPN from TaxableAmount
 		if sale.PPNPercent > 0 || sale.PPNRate > 0 {
 			ppnRate := sale.PPNPercent
@@ -518,7 +562,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 			sale.PPN = totalPPN
 			sale.PPNAmount = totalPPN
 		}
-		
+
 		// Calculate enhanced tax fields
 		if sale.PPh21Rate > 0 {
 			sale.PPh21Amount = sale.TaxableAmount * (sale.PPh21Rate / 100)
@@ -530,27 +574,27 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		} else {
 			sale.PPh23Amount = 0
 		}
-		
+
 		sale.PPh = totalPPH
 		sale.TotalTaxAdditions = sale.OtherTaxAdditions
 		sale.TotalTaxDeductions = sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
 		sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
 		sale.Tax = sale.TotalTax
-		
+
 		// Calculate final TotalAmount
 		sale.TotalAmount = sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
 		sale.OutstandingAmount = sale.TotalAmount - sale.PaidAmount
-		
+
 		log.Printf("📊 [UPDATE] TotalAmount=%.2f, Outstanding=%.2f", sale.TotalAmount, sale.OutstandingAmount)
 	} else {
 		// ✅ FIX: Recalculate totals even if items didn't change (tax fields may have changed)
 		// This ensures PPh23, PPh21, and other tax fields are properly applied
-		
+
 		// Recalculate from existing subtotal
 		sale.DiscountAmount = sale.Subtotal * (sale.DiscountPercent / 100)
 		sale.TaxableAmount = sale.Subtotal - sale.DiscountAmount
 		sale.NetBeforeTax = sale.TaxableAmount
-		
+
 		// Recalculate PPN
 		if sale.PPNPercent > 0 || sale.PPNRate > 0 {
 			ppnRate := sale.PPNPercent
@@ -560,7 +604,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 			sale.PPN = sale.TaxableAmount * (ppnRate / 100)
 			sale.PPNAmount = sale.PPN
 		}
-		
+
 		// Recalculate enhanced tax fields
 		if sale.PPh21Rate > 0 {
 			sale.PPh21Amount = sale.TaxableAmount * (sale.PPh21Rate / 100)
@@ -572,18 +616,18 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		} else {
 			sale.PPh23Amount = 0
 		}
-		
+
 		// Recalculate totals
 		sale.TotalTaxAdditions = sale.OtherTaxAdditions
 		sale.TotalTaxDeductions = sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
 		sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
 		sale.Tax = sale.TotalTax
-		
+
 		// Calculate final TotalAmount
 		sale.TotalAmount = sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
 		sale.OutstandingAmount = sale.TotalAmount - sale.PaidAmount
-		
-		log.Printf("📊 [UPDATE-TAX-ONLY] TaxableAmt=%.2f, PPh23=%.2f, Deductions=%.2f, TotalAmount=%.2f", 
+
+		log.Printf("📊 [UPDATE-TAX-ONLY] TaxableAmt=%.2f, PPh23=%.2f, Deductions=%.2f, TotalAmount=%.2f",
 			sale.TaxableAmount, sale.PPh23Amount, sale.TotalTaxDeductions, sale.TotalAmount)
 	}
 
@@ -650,7 +694,7 @@ func (s *SalesServiceV2) ConfirmSale(saleID uint, userID uint) (*models.Sale, er
 	if err := s.db.Preload("Customer").Preload("SaleItems.Product").First(&sale, sale.ID).Error; err != nil {
 		return nil, fmt.Errorf("failed to reload sale after commit: %v", err)
 	}
-	
+
 	return &sale, nil
 }
 
@@ -673,7 +717,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 	// Check if invoice already created (has invoice number or status is INVOICED/PAID)
 	if sale.InvoiceNumber != "" || sale.Status == "INVOICED" || sale.Status == "PAID" {
 		tx.Rollback()
-		return nil, fmt.Errorf("invoice already created for this sale (Invoice #%s, Status: %s)", 
+		return nil, fmt.Errorf("invoice already created for this sale (Invoice #%s, Status: %s)",
 			sale.InvoiceNumber, sale.Status)
 	}
 
@@ -691,34 +735,34 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to load product %d: %v", item.ProductID, err)
 		}
-		
+
 		// Skip stock check for service products
 		if product.IsService {
 			log.Printf("ℹ️ Product %d (%s) is a service, skipping stock validation", product.ID, product.Name)
 			continue
 		}
-		
+
 		// Check stock availability BEFORE starting any journal/COGS process
 		if product.Stock == 0 {
 			tx.Rollback()
-			return nil, fmt.Errorf("stock tidak cukup untuk product '%s'. Tersedia: %d, Diminta: %d (Stock habis, tidak bisa membuat invoice)", 
+			return nil, fmt.Errorf("stock tidak cukup untuk product '%s'. Tersedia: %d, Diminta: %d (Stock habis, tidak bisa membuat invoice)",
 				product.Name, product.Stock, item.Quantity)
 		}
-		
+
 		if product.Stock < item.Quantity {
 			tx.Rollback()
-			return nil, fmt.Errorf("stock tidak cukup untuk product '%s'. Tersedia: %d, Diminta: %d", 
+			return nil, fmt.Errorf("stock tidak cukup untuk product '%s'. Tersedia: %d, Diminta: %d",
 				product.Name, product.Stock, item.Quantity)
 		}
-		
-		log.Printf("✅ Stock check passed: %s (Available: %d, Required: %d)", 
+
+		log.Printf("✅ Stock check passed: %s (Available: %d, Required: %d)",
 			product.Name, product.Stock, item.Quantity)
 	}
 	log.Printf("✅ All stock validations passed for Sale #%d", sale.ID)
 
 	oldStatus := sale.Status
 	sale.Status = "INVOICED"
-	
+
 	// Generate invoice number using new service
 	if sale.InvoiceTypeID != nil {
 		log.Printf("🔧 Generating invoice number for sale #%d with invoice type ID: %d", sale.ID, *sale.InvoiceTypeID)
@@ -729,7 +773,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 			return nil, fmt.Errorf("failed to generate invoice number: %v", err)
 		}
 		sale.InvoiceNumber = invoiceResp.InvoiceNumber
-		log.Printf("✅ Generated invoice number: %s (Counter: %d, Type: %s)", 
+		log.Printf("✅ Generated invoice number: %s (Counter: %d, Type: %s)",
 			invoiceResp.InvoiceNumber, invoiceResp.Counter, invoiceResp.TypeCode)
 	} else {
 		// Fallback to old method if no invoice type specified
@@ -737,12 +781,52 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 		sale.InvoiceNumber = s.generateInvoiceNumber()
 		log.Printf("📄 Generated fallback invoice number: %s", sale.InvoiceNumber)
 	}
-	
+
 	sale.UpdatedAt = time.Now()
 
 	if err := tx.Save(&sale).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to create invoice: %v", err)
+	}
+
+	// ✅ FIX: Recalculate PPN if it was lost (e.g., sale created before PPN fix)
+	// This ensures PPN Keluaran is always posted for taxable credit sales
+	if sale.PPN == 0 && sale.PPNPercent > 0 {
+		ppnRate := sale.PPNPercent
+		if ppnRate == 0 {
+			ppnRate = sale.PPNRate
+		}
+
+		// Calculate TaxableAmount if not set
+		taxableAmount := sale.TaxableAmount
+		if taxableAmount == 0 {
+			taxableAmount = sale.Subtotal - sale.DiscountAmount
+		}
+
+		if taxableAmount > 0 && ppnRate > 0 {
+			sale.PPN = taxableAmount * (ppnRate / 100)
+			sale.PPNAmount = sale.PPN
+			sale.PPNRate = ppnRate
+			sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
+			sale.TotalAmount = taxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
+			sale.OutstandingAmount = sale.TotalAmount - sale.PaidAmount
+
+			log.Printf("⚠️ [CreateInvoice] PPN recalculated: PPN=%.2f (PPNPercent=%.2f, TaxableAmount=%.2f)", sale.PPN, ppnRate, taxableAmount)
+
+			// Save updated PPN to DB
+			if err := tx.Model(&sale).Updates(map[string]interface{}{
+				"ppn":                sale.PPN,
+				"ppn_amount":         sale.PPNAmount,
+				"ppn_rate":           sale.PPNRate,
+				"total_tax":          sale.TotalTax,
+				"total_amount":       sale.TotalAmount,
+				"outstanding_amount": sale.OutstandingAmount,
+			}).Error; err != nil {
+				log.Printf("⚠️ Warning: Failed to save recalculated PPN: %v", err)
+			} else {
+				log.Printf("✅ [CreateInvoice] PPN saved: PPN=%.2f, TotalAmount=%.2f", sale.PPN, sale.TotalAmount)
+			}
+		}
 	}
 
 	// CREATE JOURNAL ENTRIES for INVOICED status using SSOT service
@@ -761,7 +845,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to create journal entries: %v", err)
 		}
-		
+
 		// 💰 ONLY CREATE COGS IF USING LEGACY SERVICE
 		// Legacy service doesn't include COGS, so we need to create it separately
 		// SSOT service already includes COGS, so we skip this to prevent DOUBLE POSTING
@@ -793,15 +877,25 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 		// ✅ REMOVED MANUAL CASH/BANK UPDATE - Now handled by auto-sync in journal service
 		// The SalesJournalServiceSSOT.syncCashBankBalance() automatically syncs cash_banks.balance
 		// with accounts.balance after each journal line is posted, ensuring consistency.
-		
+
 		// Create cash/bank transaction record for audit trail
 		if sale.CashBankID != nil && *sale.CashBankID > 0 {
+			// Read actual cash/bank balance for accurate balance_after
+			var cashBankForBalance models.CashBank
+			var balanceAfter float64
+			if err := tx.First(&cashBankForBalance, *sale.CashBankID).Error; err != nil {
+				log.Printf("⚠️ Warning: Failed to load cash/bank for balance_after: %v", err)
+				balanceAfter = 0
+			} else {
+				balanceAfter = cashBankForBalance.Balance
+			}
+
 			cashBankTransaction := &models.CashBankTransaction{
 				CashBankID:      *sale.CashBankID,
 				ReferenceType:   "SALE",
 				ReferenceID:     sale.ID,
 				Amount:          sale.TotalAmount,
-				BalanceAfter:    0, // Will be updated by sync
+				BalanceAfter:    balanceAfter,
 				TransactionDate: sale.Date,
 				Notes:           fmt.Sprintf("Immediate payment - Invoice #%s", sale.InvoiceNumber),
 			}
@@ -827,33 +921,33 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 				tx.Rollback()
 				return nil, fmt.Errorf("failed to load product %d: %v", item.ProductID, err)
 			}
-			
+
 			// Skip stock check for service products
 			if product.IsService {
 				log.Printf("ℹ️ Product %d (%s) is a service, skipping stock reduction", product.ID, product.Name)
 				continue
 			}
-			
+
 			// Check stock availability BEFORE reducing
 			if product.Stock < item.Quantity {
 				tx.Rollback()
-				return nil, fmt.Errorf("stock tidak cukup untuk product '%s'. Tersedia: %d, Diminta: %d", 
+				return nil, fmt.Errorf("stock tidak cukup untuk product '%s'. Tersedia: %d, Diminta: %d",
 					product.Name, product.Stock, item.Quantity)
 			}
-			
+
 			// Check if stock is zero
 			if product.Stock == 0 {
 				tx.Rollback()
 				return nil, fmt.Errorf("product '%s' habis (stock = 0), tidak bisa dijual", product.Name)
 			}
-			
+
 			// Reduce stock
 			if err := s.stockService.ReduceStock(item.ProductID, item.Quantity, tx); err != nil {
 				tx.Rollback()
 				return nil, fmt.Errorf("gagal mengurangi stock untuk product '%s': %v", product.Name, err)
 			}
-			
-			log.Printf("✅ Stock reduced for product %d (%s): %d → %d", 
+
+			log.Printf("✅ Stock reduced for product %d (%s): %d → %d",
 				product.ID, product.Name, product.Stock, product.Stock-item.Quantity)
 		}
 	}
@@ -961,7 +1055,7 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 			return nil, fmt.Errorf("failed to create cash/bank transaction: %v", err)
 		}
 
-		log.Printf("💰 Updated Cash/Bank #%d balance: +%.2f (new balance: %.2f)", 
+		log.Printf("💰 Updated Cash/Bank #%d balance: +%.2f (new balance: %.2f)",
 			*payment.CashBankID, payment.Amount, cashBank.Balance)
 	} else {
 		log.Printf("⚠️ Warning: No CashBankID provided for payment #%d, cash_banks balance not updated", payment.ID)
@@ -1216,68 +1310,68 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 			continue
 		}
 
-available := p.Stock
-reqQty := int(it.Quantity)
-isSufficient := available >= reqQty
-lowStock := available <= p.MinStock && p.MinStock > 0
-atOrBelowMin := available <= p.MinStock && p.MinStock > 0
-atOrBelowReorder := available <= p.ReorderLevel && p.ReorderLevel > 0
-isZeroStock := available == 0
+		available := p.Stock
+		reqQty := int(it.Quantity)
+		isSufficient := available >= reqQty
+		lowStock := available <= p.MinStock && p.MinStock > 0
+		atOrBelowMin := available <= p.MinStock && p.MinStock > 0
+		atOrBelowReorder := available <= p.ReorderLevel && p.ReorderLevel > 0
+		isZeroStock := available == 0
 
-warning := ""
-if isZeroStock {
-	// Explicit hard alert when stock is 0
-	result.HasZeroStock = true
-	if warning == "" {
-		warning = "Stok 0: produk tidak bisa dijual"
-	} else {
-		warning = "Stok 0: produk tidak bisa dijual; " + warning
-	}
-}
-if !isSufficient {
-	if warning == "" {
-		warning = fmt.Sprintf("Stock tidak cukup. Tersedia %d, diminta %d", available, reqQty)
-	} else {
-		warning += fmt.Sprintf("; stok tidak cukup (tersedia %d, diminta %d)", available, reqQty)
-	}
-	result.HasInsufficient = true
-}
-if atOrBelowMin {
-	result.HasMinStockAlerts = true
-	if warning == "" {
-		warning = fmt.Sprintf("Di bawah stok minimum (%d)", p.MinStock)
-	} else {
-		warning += fmt.Sprintf("; di bawah stok minimum (%d)", p.MinStock)
-	}
-}
-if atOrBelowReorder {
-	result.HasReorderAlerts = true
-	if warning == "" {
-		warning = fmt.Sprintf("Di bawah level reorder (%d)", p.ReorderLevel)
-	} else {
-		warning += fmt.Sprintf("; di bawah level reorder (%d)", p.ReorderLevel)
-	}
-}
-if available <= p.MinStock && p.MinStock > 0 {
-	result.HasLowStock = true
-}
+		warning := ""
+		if isZeroStock {
+			// Explicit hard alert when stock is 0
+			result.HasZeroStock = true
+			if warning == "" {
+				warning = "Stok 0: produk tidak bisa dijual"
+			} else {
+				warning = "Stok 0: produk tidak bisa dijual; " + warning
+			}
+		}
+		if !isSufficient {
+			if warning == "" {
+				warning = fmt.Sprintf("Stock tidak cukup. Tersedia %d, diminta %d", available, reqQty)
+			} else {
+				warning += fmt.Sprintf("; stok tidak cukup (tersedia %d, diminta %d)", available, reqQty)
+			}
+			result.HasInsufficient = true
+		}
+		if atOrBelowMin {
+			result.HasMinStockAlerts = true
+			if warning == "" {
+				warning = fmt.Sprintf("Di bawah stok minimum (%d)", p.MinStock)
+			} else {
+				warning += fmt.Sprintf("; di bawah stok minimum (%d)", p.MinStock)
+			}
+		}
+		if atOrBelowReorder {
+			result.HasReorderAlerts = true
+			if warning == "" {
+				warning = fmt.Sprintf("Di bawah level reorder (%d)", p.ReorderLevel)
+			} else {
+				warning += fmt.Sprintf("; di bawah level reorder (%d)", p.ReorderLevel)
+			}
+		}
+		if available <= p.MinStock && p.MinStock > 0 {
+			result.HasLowStock = true
+		}
 
-result.Items = append(result.Items, models.StockValidationItem{
-	ProductID:       p.ID,
-	ProductCode:     p.Code,
-	ProductName:     p.Name,
-	RequestedQty:    reqQty,
-	AvailableQty:    available,
-	MinStock:        p.MinStock,
-	ReorderLevel:    p.ReorderLevel,
-	IsService:       false,
-	IsSufficient:    isSufficient,
-	LowStock:        lowStock,
-	AtOrBelowMin:    atOrBelowMin,
-	AtOrBelowReorder: atOrBelowReorder,
-	IsZeroStock:     isZeroStock,
-	Warning:         warning,
-})
+		result.Items = append(result.Items, models.StockValidationItem{
+			ProductID:        p.ID,
+			ProductCode:      p.Code,
+			ProductName:      p.Name,
+			RequestedQty:     reqQty,
+			AvailableQty:     available,
+			MinStock:         p.MinStock,
+			ReorderLevel:     p.ReorderLevel,
+			IsService:        false,
+			IsSufficient:     isSufficient,
+			LowStock:         lowStock,
+			AtOrBelowMin:     atOrBelowMin,
+			AtOrBelowReorder: atOrBelowReorder,
+			IsZeroStock:      isZeroStock,
+			Warning:          warning,
+		})
 	}
 
 	return result, nil
@@ -1321,9 +1415,9 @@ func getOrDefaultStr(value string, defaultValue string) string {
 // GetSalesSummary gets sales summary with date filtering
 func (s *SalesServiceV2) GetSalesSummary(startDate, endDate *time.Time) (*models.SalesSummaryResponse, error) {
 	log.Printf("📊 Getting sales summary (start: %v, end: %v)", startDate, endDate)
-	
+
 	query := s.db.Model(&models.Sale{})
-	
+
 	// Apply date filters if provided
 	if startDate != nil {
 		query = query.Where("date >= ?", *startDate)
@@ -1331,48 +1425,48 @@ func (s *SalesServiceV2) GetSalesSummary(startDate, endDate *time.Time) (*models
 	if endDate != nil {
 		query = query.Where("date <= ?", *endDate)
 	}
-	
+
 	// Get basic counts and totals
 	var totalSales int64
 	var totalAmount, totalPaid, totalOutstanding float64
-	
+
 	query.Count(&totalSales)
-	
+
 	// Get sum of amounts
 	type SumResult struct {
 		TotalAmount      float64 `json:"total_amount"`
 		TotalPaid        float64 `json:"total_paid"`
 		TotalOutstanding float64 `json:"total_outstanding"`
 	}
-	
+
 	var sumResult SumResult
 	err := query.Select(
 		"COALESCE(SUM(total_amount), 0) as total_amount, " +
-		"COALESCE(SUM(paid_amount), 0) as total_paid, " +
-		"COALESCE(SUM(outstanding_amount), 0) as total_outstanding",
+			"COALESCE(SUM(paid_amount), 0) as total_paid, " +
+			"COALESCE(SUM(outstanding_amount), 0) as total_outstanding",
 	).Scan(&sumResult).Error
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sales summary: %v", err)
 	}
-	
+
 	totalAmount = sumResult.TotalAmount
 	totalPaid = sumResult.TotalPaid
 	totalOutstanding = sumResult.TotalOutstanding
-	
+
 	// Calculate average order value
 	avgOrderValue := 0.0
 	if totalSales > 0 {
 		avgOrderValue = totalAmount / float64(totalSales)
 	}
-	
+
 	// Get top customers
 	topCustomers, err := s.getTopCustomers(startDate, endDate)
 	if err != nil {
 		log.Printf("⚠️ Warning: Failed to get top customers: %v", err)
 		topCustomers = []models.CustomerSales{} // Empty slice instead of nil
 	}
-	
+
 	summary := &models.SalesSummaryResponse{
 		TotalSales:       totalSales,
 		TotalAmount:      totalAmount,
@@ -1381,7 +1475,7 @@ func (s *SalesServiceV2) GetSalesSummary(startDate, endDate *time.Time) (*models
 		AvgOrderValue:    avgOrderValue,
 		TopCustomers:     topCustomers,
 	}
-	
+
 	log.Printf("✅ Sales summary generated: %d sales, total: %.2f", totalSales, totalAmount)
 	return summary, nil
 }
@@ -1395,7 +1489,7 @@ func (s *SalesServiceV2) getTopCustomers(startDate, endDate *time.Time) ([]model
 		Group("sales.customer_id, contacts.name").
 		Order("total_amount DESC").
 		Limit(5)
-	
+
 	// Apply date filters if provided
 	if startDate != nil {
 		query = query.Where("sales.date >= ?", *startDate)
@@ -1403,11 +1497,11 @@ func (s *SalesServiceV2) getTopCustomers(startDate, endDate *time.Time) ([]model
 	if endDate != nil {
 		query = query.Where("sales.date <= ?", *endDate)
 	}
-	
+
 	var topCustomers []models.CustomerSales
 	if err := query.Find(&topCustomers).Error; err != nil {
 		return nil, fmt.Errorf("failed to get top customers: %v", err)
 	}
-	
+
 	return topCustomers, nil
 }

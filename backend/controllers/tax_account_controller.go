@@ -6,6 +6,7 @@ import (
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -280,12 +281,12 @@ func (c *TaxAccountController) GetAvailableAccounts(ctx *gin.Context) {
 	var responses []models.AccountResponse
 	for _, account := range accounts {
 		responses = append(responses, models.AccountResponse{
-			ID:          account.ID,
-			Code:        account.Code,
-			Name:        account.Name,
-			Type:        account.Type,
-			Category:    account.Category,
-			IsActive:    account.IsActive,
+			ID:       account.ID,
+			Code:     account.Code,
+			Name:     account.Name,
+			Type:     account.Type,
+			Category: account.Category,
+			IsActive: account.IsActive,
 		})
 	}
 
@@ -317,22 +318,22 @@ func (c *TaxAccountController) ValidateAccountConfiguration(ctx *gin.Context) {
 
 	// Create temporary settings object for validation
 	settings := &models.TaxAccountSettings{
-		SalesReceivableAccountID:   req.SalesReceivableAccountID,
-		SalesCashAccountID:         req.SalesCashAccountID,
-		SalesBankAccountID:         req.SalesBankAccountID,
-		SalesRevenueAccountID:      req.SalesRevenueAccountID,
-		SalesOutputVATAccountID:    req.SalesOutputVATAccountID,
-		PurchasePayableAccountID:   req.PurchasePayableAccountID,
-		PurchaseCashAccountID:      req.PurchaseCashAccountID,
-		PurchaseBankAccountID:      req.PurchaseBankAccountID,
-		PurchaseInputVATAccountID:  req.PurchaseInputVATAccountID,
-		PurchaseExpenseAccountID:   req.PurchaseExpenseAccountID,
-		WithholdingTax21AccountID:  req.WithholdingTax21AccountID,
-		WithholdingTax23AccountID:  req.WithholdingTax23AccountID,
-		WithholdingTax25AccountID:  req.WithholdingTax25AccountID,
-		TaxPayableAccountID:        req.TaxPayableAccountID,
-		InventoryAccountID:         req.InventoryAccountID,
-		COGSAccountID:              req.COGSAccountID,
+		SalesReceivableAccountID:  req.SalesReceivableAccountID,
+		SalesCashAccountID:        req.SalesCashAccountID,
+		SalesBankAccountID:        req.SalesBankAccountID,
+		SalesRevenueAccountID:     req.SalesRevenueAccountID,
+		SalesOutputVATAccountID:   req.SalesOutputVATAccountID,
+		PurchasePayableAccountID:  req.PurchasePayableAccountID,
+		PurchaseCashAccountID:     req.PurchaseCashAccountID,
+		PurchaseBankAccountID:     req.PurchaseBankAccountID,
+		PurchaseInputVATAccountID: req.PurchaseInputVATAccountID,
+		PurchaseExpenseAccountID:  req.PurchaseExpenseAccountID,
+		WithholdingTax21AccountID: req.WithholdingTax21AccountID,
+		WithholdingTax23AccountID: req.WithholdingTax23AccountID,
+		WithholdingTax25AccountID: req.WithholdingTax25AccountID,
+		TaxPayableAccountID:       req.TaxPayableAccountID,
+		InventoryAccountID:        req.InventoryAccountID,
+		COGSAccountID:             req.COGSAccountID,
 	}
 
 	// Validate settings
@@ -390,100 +391,106 @@ func (c *TaxAccountController) GetAccountSuggestions(ctx *gin.Context) {
 	suggestions := map[string]interface{}{
 		"sales": map[string]interface{}{
 			"receivable_account": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1201", "1200"},
-				"description": "Piutang Usaha - untuk mencatat piutang dari penjualan",
+				"suggested_codes":        []string{"1201", "1200"},
+				"description":            "Piutang Usaha - untuk mencatat piutang dari penjualan kredit",
 			},
 			"cash_account": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1101", "1100"},
-				"description": "Kas - untuk penjualan tunai",
+				"suggested_codes":        []string{"1101-002", "1101"},
+				"description":            "Kas Besar - untuk penjualan tunai",
 			},
 			"bank_account": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1102", "1110", "1120"},
-				"description": "Bank - untuk penjualan via transfer bank",
+				"suggested_codes":        []string{"1101-003", "1101-004"},
+				"description":            "Bank (di bawah KAS DAN SETARA KAS 1101) - untuk penjualan via transfer bank",
 			},
 			"revenue_account": map[string]interface{}{
-				"recommended_types": []string{"REVENUE"},
+				"recommended_types":      []string{"REVENUE"},
 				"recommended_categories": []string{"SALES_REVENUE", "OPERATING_REVENUE"},
-				"suggested_codes": []string{"4101", "4100"},
-				"description": "Pendapatan Penjualan - untuk mencatat pendapatan dari penjualan",
+				"suggested_codes":        []string{"4101", "4100"},
+				"description":            "Pendapatan Penjualan - untuk mencatat pendapatan dari penjualan",
 			},
 			"output_vat_account": map[string]interface{}{
-				"recommended_types": []string{"LIABILITY"},
+				"recommended_types":      []string{"LIABILITY"},
 				"recommended_categories": []string{"CURRENT_LIABILITY"},
-				"suggested_codes": []string{"2103", "2100", "2110"},
-				"description": "PPN Keluaran - untuk mencatat kewajiban PPN penjualan",
+				"suggested_codes":        []string{"2102-001", "2103"},
+				"description":            "PPN Keluaran - untuk mencatat kewajiban PPN penjualan",
 			},
 		},
 		"purchase": map[string]interface{}{
 			"payable_account": map[string]interface{}{
-				"recommended_types": []string{"LIABILITY"},
+				"recommended_types":      []string{"LIABILITY"},
 				"recommended_categories": []string{"CURRENT_LIABILITY"},
-				"suggested_codes": []string{"2001", "2000"},
-				"description": "Hutang Usaha - untuk mencatat hutang dari pembelian",
+				"suggested_codes":        []string{"2101-001", "2101"},
+				"description":            "Hutang Usaha - untuk mencatat hutang dari pembelian kredit",
 			},
 			"cash_account": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1101", "1100"},
-				"description": "Kas - untuk pembelian tunai",
+				"suggested_codes":        []string{"1101-002", "1101"},
+				"description":            "Kas Besar - untuk pembelian tunai",
 			},
 			"bank_account": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1102", "1110", "1120"},
-				"description": "Bank - untuk pembelian via transfer bank",
+				"suggested_codes":        []string{"1101-003", "1101-004"},
+				"description":            "Bank (di bawah KAS DAN SETARA KAS 1101) - untuk pembelian via transfer bank",
 			},
-		"input_vat_account": map[string]interface{}{
-			"recommended_types": []string{"ASSET"},
-			"recommended_categories": []string{"CURRENT_ASSET"},
-			"suggested_codes": []string{"1240", "1106"},
-			"description": "PPN Masukan - untuk mencatat PPN yang dapat dikreditkan",
-		},
+			"input_vat_account": map[string]interface{}{
+				"recommended_types":      []string{"LIABILITY"},
+				"recommended_categories": []string{"CURRENT_LIABILITY"},
+				"suggested_codes":        []string{"2102-002"},
+				"description":            "PPN Masukan - untuk mencatat PPN yang dapat dikreditkan dari pembelian",
+			},
 			"expense_account": map[string]interface{}{
-				"recommended_types": []string{"EXPENSE"},
+				"recommended_types":      []string{"EXPENSE"},
 				"recommended_categories": []string{"OPERATING_EXPENSE", "ADMINISTRATIVE_EXPENSE"},
-				"suggested_codes": []string{"6001", "6000", "5101"},
-				"description": "Beban Operasional - untuk mencatat biaya operasional dari pembelian",
+				"suggested_codes":        []string{"6001", "6000", "5101"},
+				"description":            "Beban Operasional - untuk mencatat biaya operasional dari pembelian",
 			},
 		},
 		"tax": map[string]interface{}{
 			"withholding_tax21": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1106", "1107"},
-				"description": "PPh 21 yang dipotong - untuk karyawan",
+				"suggested_codes":        []string{"1105-001"},
+				"description":            "PPh 21 Dibayar Dimuka - pajak yang dipotong dari karyawan/dipotong oleh customer",
 			},
 			"withholding_tax23": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1108", "1109"},
-				"description": "PPh 23 yang dipotong - untuk vendor",
+				"suggested_codes":        []string{"1105-002"},
+				"description":            "PPh 23 Dibayar Dimuka - pajak yang dipotong dari vendor/dipotong oleh customer",
+			},
+			"withholding_tax25": map[string]interface{}{
+				"recommended_types":      []string{"ASSET"},
+				"recommended_categories": []string{"CURRENT_ASSET"},
+				"suggested_codes":        []string{"1105-003"},
+				"description":            "PPh Final/25 Dibayar Dimuka - pajak final atau angsuran bulanan",
 			},
 			"tax_payable": map[string]interface{}{
-				"recommended_types": []string{"LIABILITY"},
+				"recommended_types":      []string{"LIABILITY"},
 				"recommended_categories": []string{"CURRENT_LIABILITY"},
-				"suggested_codes": []string{"2104", "2105"},
-				"description": "Hutang Pajak - untuk kewajiban pajak lainnya",
+				"suggested_codes":        []string{"2102-003", "2102-004"},
+				"description":            "Hutang Pajak Penghasilan - untuk kewajiban pajak yang harus disetor (PPh 21/23/25)",
 			},
 		},
 		"inventory": map[string]interface{}{
 			"inventory_account": map[string]interface{}{
-				"recommended_types": []string{"ASSET"},
+				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes": []string{"1301", "1300"},
-				"description": "Persediaan - untuk barang dagangan",
+				"suggested_codes":        []string{"1103-001", "1103"},
+				"description":            "Persediaan Barang Dagangan - untuk melacak nilai stok barang",
 			},
 			"cogs_account": map[string]interface{}{
-				"recommended_types": []string{"EXPENSE"},
+				"recommended_types":      []string{"EXPENSE"},
 				"recommended_categories": []string{"COST_OF_GOODS_SOLD"},
-				"suggested_codes": []string{"5101", "5100"},
-				"description": "Harga Pokok Penjualan - untuk mencatat HPP",
+				"suggested_codes":        []string{"5101", "5100"},
+				"description":            "Harga Pokok Penjualan (HPP) - untuk mencatat biaya barang yang terjual",
 			},
 		},
 	}

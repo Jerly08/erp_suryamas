@@ -5,10 +5,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type ContactHistoryController struct {
@@ -25,65 +26,66 @@ func NewContactHistoryController(db *gorm.DB, pdfService services.PDFServiceInte
 
 // CustomerHistoryData represents customer transaction history
 type CustomerHistoryData struct {
-	Company       *models.CompanyInfo `json:"company"`
-	Customer      *CustomerInfo       `json:"customer"`
-	StartDate     string              `json:"start_date"`
-	EndDate       string              `json:"end_date"`
-	Transactions  []TransactionHistory `json:"transactions"`
-	Summary       HistorySummary      `json:"summary"`
-	Currency      string              `json:"currency"`
-	GeneratedAt   time.Time           `json:"generated_at"`
+	Company      *models.CompanyInfo  `json:"company"`
+	Customer     *CustomerInfo        `json:"customer"`
+	StartDate    string               `json:"start_date"`
+	EndDate      string               `json:"end_date"`
+	Transactions []TransactionHistory `json:"transactions"`
+	Summary      HistorySummary       `json:"summary"`
+	Currency     string               `json:"currency"`
+	GeneratedAt  time.Time            `json:"generated_at"`
 }
 
 // VendorHistoryData represents vendor transaction history
 type VendorHistoryData struct {
-	Company       *models.CompanyInfo `json:"company"`
-	Vendor        *VendorInfo         `json:"vendor"`
-	StartDate     string              `json:"start_date"`
-	EndDate       string              `json:"end_date"`
-	Transactions  []TransactionHistory `json:"transactions"`
-	Summary       HistorySummary      `json:"summary"`
-	Currency      string              `json:"currency"`
-	GeneratedAt   time.Time           `json:"generated_at"`
+	Company      *models.CompanyInfo  `json:"company"`
+	Vendor       *VendorInfo          `json:"vendor"`
+	StartDate    string               `json:"start_date"`
+	EndDate      string               `json:"end_date"`
+	Transactions []TransactionHistory `json:"transactions"`
+	Summary      HistorySummary       `json:"summary"`
+	Currency     string               `json:"currency"`
+	GeneratedAt  time.Time            `json:"generated_at"`
 }
 
 type CustomerInfo struct {
-	ID           uint    `json:"id"`
-	Code         string  `json:"code"`
-	Name         string  `json:"name"`
-	Email        string  `json:"email"`
-	Phone        string  `json:"phone"`
-	CreditLimit  float64 `json:"credit_limit"`
-	Address      string  `json:"address"`
-}
-
-type VendorInfo struct {
 	ID          uint    `json:"id"`
 	Code        string  `json:"code"`
 	Name        string  `json:"name"`
 	Email       string  `json:"email"`
 	Phone       string  `json:"phone"`
+	CreditLimit float64 `json:"credit_limit"`
 	Address     string  `json:"address"`
 }
 
+type VendorInfo struct {
+	ID      uint   `json:"id"`
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Email   string `json:"email"`
+	Phone   string `json:"phone"`
+	Address string `json:"address"`
+}
+
 type TransactionHistory struct {
-	Date            time.Time `json:"date"`
-	TransactionType string    `json:"transaction_type"` // SALE, INVOICE, PAYMENT, PURCHASE, BILL
-	TransactionCode string    `json:"transaction_code"`
-	Description     string    `json:"description"`
-	Reference       string    `json:"reference"`
-	Amount          float64   `json:"amount"`
-	PaidAmount      float64   `json:"paid_amount"`
-	Outstanding     float64   `json:"outstanding"`
-	Status          string    `json:"status"`
+	TransactionID   uint       `json:"transaction_id"`
+	Date            time.Time  `json:"date"`
+	TransactionType string     `json:"transaction_type"` // SALE, INVOICE, PAYMENT, PURCHASE, BILL
+	TransactionCode string     `json:"transaction_code"`
+	Description     string     `json:"description"`
+	Reference       string     `json:"reference"`
+	Amount          float64    `json:"amount"`
+	PaidAmount      float64    `json:"paid_amount"`
+	Outstanding     float64    `json:"outstanding"`
+	Status          string     `json:"status"`
 	DueDate         *time.Time `json:"due_date,omitempty"`
 }
 
 type HistorySummary struct {
-	TotalTransactions int     `json:"total_transactions"`
-	TotalAmount       float64 `json:"total_amount"`
-	TotalPaid         float64 `json:"total_paid"`
-	TotalOutstanding  float64 `json:"total_outstanding"`
+	TotalTransactions int        `json:"total_transactions"`
+	TotalAmount       float64    `json:"total_amount"`
+	TotalPaid         float64    `json:"total_paid"`
+	TotalOutstanding  float64    `json:"total_outstanding"`
 	FirstTransaction  *time.Time `json:"first_transaction,omitempty"`
 	LastTransaction   *time.Time `json:"last_transaction,omitempty"`
 }
@@ -375,7 +377,7 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 	// Get company info
 	var settings models.Settings
 	c.db.First(&settings)
-	
+
 	company := &models.CompanyInfo{
 		Name:    settings.CompanyName,
 		Address: settings.CompanyAddress,
@@ -397,8 +399,9 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 		if sale.InvoiceType != nil && sale.InvoiceType.Name != "" {
 			description = "Sales Transaction for " + sale.InvoiceType.Name
 		}
-		
+
 		transaction := TransactionHistory{
+			TransactionID:   sale.ID,
 			Date:            sale.Date,
 			TransactionType: "SALE",
 			TransactionCode: sale.Code,
@@ -411,7 +414,7 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 			DueDate:         &sale.DueDate,
 		}
 		transactions = append(transactions, transaction)
-		
+
 		summary.TotalAmount += sale.TotalAmount
 		summary.TotalPaid += sale.PaidAmount
 		summary.TotalOutstanding += (sale.TotalAmount - sale.PaidAmount)
@@ -419,7 +422,7 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 
 	// Get invoices (optional - skip if table doesn't exist)
 	var invoices []models.Invoice
-	if err := c.db.Where("customer_id = ? AND date BETWEEN ? AND ?", 
+	if err := c.db.Where("customer_id = ? AND date BETWEEN ? AND ?",
 		customerID, startDate, endDate).
 		Order("date DESC").Find(&invoices).Error; err != nil {
 		// If invoices table doesn't exist, skip it (not critical)
@@ -434,6 +437,7 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 		// Process invoices only if table exists and query succeeds
 		for _, invoice := range invoices {
 			transaction := TransactionHistory{
+				TransactionID:   invoice.ID,
 				Date:            invoice.Date,
 				TransactionType: "INVOICE",
 				TransactionCode: invoice.Code,
@@ -458,6 +462,7 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 
 	for _, payment := range payments {
 		transaction := TransactionHistory{
+			TransactionID:   payment.ID,
 			Date:            payment.Date,
 			TransactionType: "PAYMENT",
 			TransactionCode: payment.Code,
@@ -469,16 +474,16 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 			Status:          payment.Status,
 		}
 		transactions = append(transactions, transaction)
-		
+
 		// Check if payment is unallocated (advance payment)
 		var allocatedAmount float64
 		c.db.Model(&models.PaymentAllocation{}).
 			Where("payment_id = ?", payment.ID).
 			Select("COALESCE(SUM(allocated_amount), 0)").
 			Scan(&allocatedAmount)
-		
+
 		unallocatedAmount := payment.Amount - allocatedAmount
-		
+
 		// Only add unallocated payments to TotalPaid
 		// Allocated payments are already counted in sale.PaidAmount
 		if unallocatedAmount > 0 {
@@ -488,7 +493,7 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 	}
 
 	summary.TotalTransactions = len(transactions)
-	
+
 	// Find first and last transaction dates
 	if len(transactions) > 0 {
 		// Transactions are already sorted by date DESC, so last is first, first is last
@@ -515,7 +520,7 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 	// Get company info
 	var settings models.Settings
 	c.db.First(&settings)
-	
+
 	company := &models.CompanyInfo{
 		Name:    settings.CompanyName,
 		Address: settings.CompanyAddress,
@@ -533,6 +538,7 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 
 	for _, purchase := range purchases {
 		transaction := TransactionHistory{
+			TransactionID:   purchase.ID,
 			Date:            purchase.Date,
 			TransactionType: "PURCHASE",
 			TransactionCode: purchase.Code,
@@ -545,7 +551,7 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 			DueDate:         &purchase.DueDate,
 		}
 		transactions = append(transactions, transaction)
-		
+
 		summary.TotalAmount += purchase.TotalAmount
 		summary.TotalPaid += purchase.PaidAmount
 		summary.TotalOutstanding += (purchase.TotalAmount - purchase.PaidAmount)
@@ -563,6 +569,7 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 
 	for _, payment := range payments {
 		transaction := TransactionHistory{
+			TransactionID:   payment.ID,
 			Date:            payment.Date,
 			TransactionType: "PAYMENT",
 			TransactionCode: payment.Code,
@@ -574,16 +581,16 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 			Status:          payment.Status,
 		}
 		transactions = append(transactions, transaction)
-		
+
 		// Check if payment is unallocated (advance payment)
 		var allocatedAmount float64
 		c.db.Model(&models.PaymentAllocation{}).
 			Where("payment_id = ?", payment.ID).
 			Select("COALESCE(SUM(allocated_amount), 0)").
 			Scan(&allocatedAmount)
-		
+
 		unallocatedAmount := payment.Amount - allocatedAmount
-		
+
 		// Only add unallocated payments to TotalPaid
 		// Allocated payments are already counted in purchase.PaidAmount
 		if unallocatedAmount > 0 {
@@ -593,7 +600,7 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 	}
 
 	summary.TotalTransactions = len(transactions)
-	
+
 	// Find first and last transaction dates
 	if len(transactions) > 0 {
 		summary.LastTransaction = &transactions[0].Date
@@ -609,4 +616,169 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 		Currency:     "IDR",
 		GeneratedAt:  time.Now(),
 	}, nil
+}
+
+// GetTransactionJournalDetail returns journal entry details for a specific transaction
+// @Summary Get journal detail for a transaction
+// @Description Look up SSOT journal entries linked to a specific source transaction (SALE, PURCHASE, PAYMENT)
+// @Tags Contact History
+// @Produce json
+// @Param source_type query string true "Source type (SALE, PURCHASE, PAYMENT, INVOICE)"
+// @Param source_id query string true "Source transaction ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /api/v1/reports/transaction-journal-detail [get]
+func (c *ContactHistoryController) GetTransactionJournalDetail(ctx *gin.Context) {
+	sourceType := ctx.Query("source_type")
+	sourceIDStr := ctx.Query("source_id")
+
+	if sourceType == "" || sourceIDStr == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "source_type and source_id are required",
+		})
+		return
+	}
+
+	sourceID, err := strconv.ParseUint(sourceIDStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Invalid source_id format",
+		})
+		return
+	}
+
+	// Response types
+	type JournalLineDetail struct {
+		AccountCode string  `json:"account_code"`
+		AccountName string  `json:"account_name"`
+		Description string  `json:"description"`
+		Debit       float64 `json:"debit"`
+		Credit      float64 `json:"credit"`
+	}
+	type JournalDetail struct {
+		ID          uint64              `json:"id"`
+		EntryNumber string              `json:"entry_number"`
+		Date        string              `json:"date"`
+		Description string              `json:"description"`
+		Reference   string              `json:"reference"`
+		Status      string              `json:"status"`
+		TotalDebit  float64             `json:"total_debit"`
+		TotalCredit float64             `json:"total_credit"`
+		IsBalanced  bool                `json:"is_balanced"`
+		Lines       []JournalLineDetail `json:"lines"`
+	}
+
+	// Look up journal entries from unified_journal_ledger
+	var journals []models.SSOTJournalEntry
+	if err := c.db.Where("source_type = ? AND source_id = ? AND deleted_at IS NULL", sourceType, sourceID).
+		Preload("Lines", func(db *gorm.DB) *gorm.DB {
+			return db.Order("line_number ASC")
+		}).
+		Preload("Lines.Account").
+		Order("entry_date DESC").
+		Find(&journals).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Failed to retrieve journal details",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if len(journals) > 0 {
+		var result []JournalDetail
+		for _, j := range journals {
+			jd := JournalDetail{
+				ID:          j.ID,
+				EntryNumber: j.EntryNumber,
+				Date:        j.EntryDate.Format("2006-01-02"),
+				Description: j.Description,
+				Reference:   j.Reference,
+				Status:      j.Status,
+				TotalDebit:  j.TotalDebit.InexactFloat64(),
+				TotalCredit: j.TotalCredit.InexactFloat64(),
+				IsBalanced:  j.IsBalanced,
+			}
+			for _, line := range j.Lines {
+				accCode := ""
+				accName := ""
+				if line.Account != nil {
+					accCode = line.Account.Code
+					accName = line.Account.Name
+				}
+				jd.Lines = append(jd.Lines, JournalLineDetail{
+					AccountCode: accCode,
+					AccountName: accName,
+					Description: line.Description,
+					Debit:       line.DebitAmount.InexactFloat64(),
+					Credit:      line.CreditAmount.InexactFloat64(),
+				})
+			}
+			result = append(result, jd)
+		}
+		ctx.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"source_type": sourceType,
+				"source_id":   sourceID,
+				"journals":    result,
+			},
+		})
+		return
+	}
+
+	// Fallback: try simple_ssot_journals
+	var simpleJournals []models.SimpleSSOTJournal
+	if err := c.db.Where("transaction_type = ? AND transaction_id = ?", sourceType, sourceID).
+		Preload("Items").
+		Preload("Items.Account").
+		Order("date DESC").
+		Find(&simpleJournals).Error; err == nil && len(simpleJournals) > 0 {
+		var result []JournalDetail
+		for _, sj := range simpleJournals {
+			jd := JournalDetail{
+				ID:          uint64(sj.ID),
+				EntryNumber: sj.EntryNumber,
+				Date:        sj.Date.Format("2006-01-02"),
+				Description: sj.Description,
+				Status:      sj.Status,
+				TotalDebit:  sj.TotalDebit,
+				TotalCredit: sj.TotalCredit,
+				IsBalanced:  sj.TotalDebit == sj.TotalCredit,
+			}
+			for _, item := range sj.Items {
+				jd.Lines = append(jd.Lines, JournalLineDetail{
+					AccountCode: item.AccountCode,
+					AccountName: item.AccountName,
+					Description: item.Description,
+					Debit:       item.Debit,
+					Credit:      item.Credit,
+				})
+			}
+			result = append(result, jd)
+		}
+		ctx.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data": gin.H{
+				"source_type": sourceType,
+				"source_id":   sourceID,
+				"journals":    result,
+			},
+		})
+		return
+	}
+
+	// No journal entries found
+	ctx.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data": gin.H{
+			"source_type": sourceType,
+			"source_id":   sourceID,
+			"journals":    []interface{}{},
+			"message":     "No journal entries found for this transaction",
+		},
+	})
 }

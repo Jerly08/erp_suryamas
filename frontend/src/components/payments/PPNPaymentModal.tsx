@@ -18,8 +18,6 @@ import {
   Input,
   Select,
   Textarea,
-  NumberInput,
-  NumberInputField,
   Box,
   Text,
   useToast,
@@ -73,7 +71,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
 }) => {
   const { token } = useAuth();
   const toast = useToast();
-  
+
   // Helper to format currency without decimals
   const formatRupiah = (amount: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -83,7 +81,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
       maximumFractionDigits: 0,
     }).format(amount);
   };
-  
+
   const [loading, setLoading] = useState(false);
   const [cashBanks, setCashBanks] = useState<CashBank[]>([]);
   const [ppnBalanceInfo, setPPNBalanceInfo] = useState<PPNBalanceInfo | null>(null);
@@ -115,7 +113,6 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
     },
   });
 
-  const amount = watch('amount');
   const selectedCashBankId = watch('cash_bank_id');
 
   // Load cash/bank accounts
@@ -143,40 +140,40 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
 
   const loadPPNBalance = async () => {
     if (!token) return;
-    
+
     setLoadingBalance(true);
     try {
       console.log('🔍 Loading PPN balance...');
       console.log('🔑 Token:', token ? 'Present' : 'Missing');
-      
+
       const inputUrl = `/api/v1/tax-payments/ppn/balance?type=INPUT`;
       const outputUrl = `/api/v1/tax-payments/ppn/balance?type=OUTPUT`;
-      
+
       console.log('🎯 Fetching URLs:', { inputUrl, outputUrl });
-      
+
       // Load both PPN Masukan and Keluaran balances
       const [masukanRes, keluaranRes] = await Promise.all([
         fetch(inputUrl, {
-          headers: { 
+          headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
         }),
         fetch(outputUrl, {
-          headers: { 
+          headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
         }),
       ]);
-      
-      console.log('📊 Response status:', { 
-        masukan: masukanRes.status, 
+
+      console.log('📊 Response status:', {
+        masukan: masukanRes.status,
         masukanOk: masukanRes.ok,
         keluaran: keluaranRes.status,
         keluaranOk: keluaranRes.ok,
       });
-      
+
       // Try to get error messages if not ok
       if (!masukanRes.ok) {
         const errorText = await masukanRes.text();
@@ -186,38 +183,44 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
         const errorText = await keluaranRes.text();
         console.error('❌ Keluaran API Error:', keluaranRes.status, errorText);
       }
-      
+
       if (masukanRes.ok && keluaranRes.ok) {
         const masukanData = await masukanRes.json();
         const keluaranData = await keluaranRes.json();
-        
+
         console.log('💰 PPN Balance Data:', { masukanData, keluaranData });
-        
-        const ppnMasukan = masukanData.balance || 0;
-        const ppnKeluaran = keluaranData.balance || 0;
+
+        // ⚠️ IMPORTANT: Use Math.abs() for both values as a defensive measure.
+        // PPN Masukan (2102-002) is a LIABILITY account, so its raw balance
+        // may be negative. Backend now returns absolute values, but we guard
+        // against any future regression. This ensures:
+        //   CORRECT: 6,600,000 - 1,100,000 = 5,500,000
+        //   NOT:     6,600,000 - (-1,100,000) = 7,700,000
+        const ppnMasukan = Math.abs(masukanData.balance || 0);
+        const ppnKeluaran = Math.abs(keluaranData.balance || 0);
         // Round to avoid floating point precision issues
         const ppnTerutang = Math.round(ppnKeluaran - ppnMasukan);
-        
+
         console.log('✅ Calculated:', { ppnMasukan, ppnKeluaran, ppnTerutang });
-        
+
         setPPNBalanceInfo({
           ppn_masukan: ppnMasukan,
           ppn_keluaran: ppnKeluaran,
           ppn_terutang: ppnTerutang,
         });
       } else {
-        console.error('❌ API Error:', { 
-          masukanStatus: masukanRes.status, 
-          keluaranStatus: keluaranRes.status 
+        console.error('❌ API Error:', {
+          masukanStatus: masukanRes.status,
+          keluaranStatus: keluaranRes.status
         });
-        
+
         // Set default values if API fails
         setPPNBalanceInfo({
           ppn_masukan: 0,
           ppn_keluaran: 0,
           ppn_terutang: 0,
         });
-        
+
         toast({
           title: 'Warning',
           description: 'Gagal memuat balance PPN. Menggunakan nilai 0.',
@@ -227,14 +230,14 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
       }
     } catch (error: any) {
       console.error('❌ Failed to load PPN balance:', error);
-      
+
       // Set default values on error
       setPPNBalanceInfo({
         ppn_masukan: 0,
         ppn_keluaran: 0,
         ppn_terutang: 0,
       });
-      
+
       toast({
         title: 'Error',
         description: 'Gagal memuat balance PPN: ' + error.message,
@@ -261,20 +264,22 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
       return;
     }
 
-    if (data.amount <= 0) {
+    if (!data.cash_bank_id) {
       toast({
         title: 'Error',
-        description: 'Jumlah pembayaran harus lebih dari 0',
+        description: 'Pilih akun kas/bank',
         status: 'error',
         duration: 3000,
       });
       return;
     }
 
-    if (!data.cash_bank_id) {
+    // Always use full PPN Terutang (no partial/cicilan)
+    const fullAmount = ppnBalanceInfo?.ppn_terutang || 0;
+    if (fullAmount <= 0) {
       toast({
         title: 'Error',
-        description: 'Pilih akun kas/bank',
+        description: 'Tidak ada PPN Terutang yang harus dibayar',
         status: 'error',
         duration: 3000,
       });
@@ -291,7 +296,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
         },
         body: JSON.stringify({
           ppn_type: data.ppn_type,
-          amount: data.amount,
+          amount: fullAmount,
           date: new Date(data.date).toISOString(),
           cash_bank_id: data.cash_bank_id,
           reference: data.reference,
@@ -301,15 +306,15 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
 
       if (!response.ok) {
         const errorData = await response.json();
-        
+
         // Check if it's a validation error (PPN already paid, insufficient balance, etc)
         const errorMsg = errorData.error || 'Gagal membuat pembayaran PPN';
-        const isValidationError = errorData.type === 'validation_error' || 
-                                   response.status === 400;
-        
+        const isValidationError = errorData.type === 'validation_error' ||
+          response.status === 400;
+
         // Special handling for "PPN sudah lunas"
-        if (errorMsg.includes('tidak ada PPN yang harus dibayar') || 
-            errorMsg.includes('PPN Terutang: 0')) {
+        if (errorMsg.includes('tidak ada PPN yang harus dibayar') ||
+          errorMsg.includes('PPN Terutang: 0')) {
           toast({
             title: '✅ PPN Sudah Lunas',
             description: 'Tidak ada PPN yang harus dibayar saat ini. Semua kewajiban PPN sudah diselesaikan.',
@@ -320,7 +325,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
           onClose();
           return;
         }
-        
+
         // For other validation errors, show as warning
         if (isValidationError) {
           toast({
@@ -331,7 +336,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
           });
           return;
         }
-        
+
         // For server errors, throw
         throw new Error(errorMsg);
       }
@@ -394,8 +399,8 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                 <Box fontSize="sm">
                   <Text fontWeight="bold">Jurnal Otomatis (Sesuai PSAK):</Text>
                   <Text>
-                    Debit: PPN Keluaran (liability berkurang)<br/>
-                    Credit: PPN Masukan (asset/kompensasi)<br/>
+                    Debit: PPN Keluaran (liability berkurang)<br />
+                    Credit: PPN Masukan (asset/kompensasi)<br />
                     Credit: Kas/Bank (pembayaran neto)
                   </Text>
                 </Box>
@@ -408,7 +413,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                   <Text fontSize="sm">Memuat balance PPN...</Text>
                 </Alert>
               )}
-              
+
               {/* PPN Already Paid / No Outstanding */}
               {!loadingBalance && ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang === 0 && (
                 <Alert status="success" borderRadius="md">
@@ -421,7 +426,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                   </Box>
                 </Alert>
               )}
-              
+
               {/* PPN Calculation Card */}
               {!loadingBalance && ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang > 0 && (
                 <Card bg={ppnCardBg} borderColor={borderColor} borderWidth="2px">
@@ -431,7 +436,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                       <Text fontSize="md" fontWeight="bold" textAlign="center">
                         Perhitungan PPN
                       </Text>
-                      
+
                       {/* PPN Keluaran */}
                       <Box>
                         <HStack justify="space-between" mb={1}>
@@ -442,14 +447,14 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                           PPN yang dipungut dari customer
                         </Text>
                       </Box>
-                      
+
                       {/* Minus Sign */}
                       <HStack justify="center">
                         <Box width="full" borderBottom="1px" borderColor={borderColor} />
                         <Text fontSize="lg" fontWeight="bold" px={3}>−</Text>
                         <Box width="full" borderBottom="1px" borderColor={borderColor} />
                       </HStack>
-                      
+
                       {/* PPN Masukan */}
                       <Box>
                         <HStack justify="space-between" mb={1}>
@@ -460,11 +465,11 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                           PPN yang dibayar ke vendor (kredit pajak)
                         </Text>
                       </Box>
-                      
+
                       {/* Result */}
-                      <Box 
-                        borderTop="2px" 
-                        borderColor={ppnBalanceInfo.ppn_terutang > 0 ? 'red.400' : 'green.400'} 
+                      <Box
+                        borderTop="2px"
+                        borderColor={ppnBalanceInfo.ppn_terutang > 0 ? 'red.400' : 'green.400'}
                         pt={3}
                         bg={ppnBalanceInfo.ppn_terutang > 0 ? resultBgKurangBayar : resultBgLebihBayar}
                         p={3}
@@ -478,18 +483,18 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                             {formatRupiah(Math.abs(ppnBalanceInfo.ppn_terutang))}
                           </Text>
                         </HStack>
-                        <Badge 
-                          colorScheme={ppnBalanceInfo.ppn_terutang > 0 ? 'red' : 'green'} 
+                        <Badge
+                          colorScheme={ppnBalanceInfo.ppn_terutang > 0 ? 'red' : 'green'}
                           fontSize="xs"
                           px={2}
                           py={1}
                         >
-                          {ppnBalanceInfo.ppn_terutang > 0 
-                            ? '⚠️ KURANG BAYAR - Harus dibayar ke negara' 
+                          {ppnBalanceInfo.ppn_terutang > 0
+                            ? '⚠️ KURANG BAYAR - Harus dibayar ke negara'
                             : '✅ LEBIH BAYAR - Bisa dikompensasi periode berikutnya'
                           }
                         </Badge>
-                        
+
                         {ppnBalanceInfo.ppn_terutang > 0 && (
                           <Text fontSize="xs" color={mutedColor} mt={2} fontStyle="italic">
                             * Jumlah ini yang harus disetor ke negara melalui e-Billing DJP
@@ -522,62 +527,32 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                 <FormErrorMessage>{errors.date?.message}</FormErrorMessage>
               </FormControl>
 
-              {/* Amount */}
-              <FormControl isInvalid={!!errors.amount}>
+              {/* Amount (Read-only - always full PPN Terutang) */}
+              <FormControl>
                 <FormLabel>
                   Jumlah Pembayaran
-                  <Tooltip label="Jumlah PPN yang dibayarkan ke negara (kosongkan untuk otomatis menggunakan PPN Terutang)">
+                  <Tooltip label="Pembayaran PPN selalu menggunakan jumlah penuh PPN Terutang">
                     <span>
                       <Icon as={FiInfo} ml={2} color={mutedColor} />
                     </span>
                   </Tooltip>
                 </FormLabel>
-                <Controller
-                  name="amount"
-                  control={control}
-                  rules={{ 
-                    required: 'Jumlah pembayaran wajib diisi',
-                    min: { value: 1, message: 'Jumlah minimal 1' },
-                    validate: {
-                      notExceed: (value) => {
-                        if (ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0) {
-                          // Round both values and add tolerance of 1 Rupiah to avoid floating point issues
-                          const roundedValue = Math.round(value);
-                          const roundedTerutang = Math.round(ppnBalanceInfo.ppn_terutang);
-                          if (roundedValue > roundedTerutang + 1) {
-                            return `Jumlah tidak boleh melebihi PPN Terutang: ${formatRupiah(ppnBalanceInfo.ppn_terutang)}`;
-                          }
-                        }
-                        return true;
-                      }
-                    }
-                  }}
-                  render={({ field }) => (
-                    <NumberInput
-                      value={field.value}
-                      onChange={(_, valueNumber) => field.onChange(valueNumber || 0)}
-                      min={0}
-                      max={ppnBalanceInfo ? Math.round(ppnBalanceInfo.ppn_terutang) + 1 : undefined}
-                    >
-                      <NumberInputField 
-                        placeholder={ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0
-                          ? `${formatRupiah(ppnBalanceInfo.ppn_terutang)} (otomatis jika kosong)` 
-                          : "Masukkan jumlah pembayaran PPN"
-                        }
-                      />
-                    </NumberInput>
-                  )}
-                />
-                <FormErrorMessage>{errors.amount?.message}</FormErrorMessage>
-                {amount > 0 ? (
-                  <Text fontSize="sm" color={mutedColor} mt={1}>
-                    {formatRupiah(amount)}
+                <Box
+                  p={3}
+                  bg={useColorModeValue('blue.50', 'blue.900')}
+                  borderRadius="md"
+                  border="1px solid"
+                  borderColor={useColorModeValue('blue.200', 'blue.700')}
+                >
+                  <Text fontSize="lg" fontWeight="bold" color={useColorModeValue('blue.700', 'blue.200')}>
+                    {ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0
+                      ? formatRupiah(ppnBalanceInfo.ppn_terutang)
+                      : 'Rp 0'}
                   </Text>
-                ) : ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0 && (
-                  <Text fontSize="sm" color="blue.500" mt={1} fontWeight="medium">
-                    💡 Akan menggunakan PPN Terutang: {formatRupiah(ppnBalanceInfo.ppn_terutang)}
+                  <Text fontSize="xs" color={mutedColor} mt={1}>
+                    Pembayaran penuh PPN Terutang (tidak bisa cicilan)
                   </Text>
-                )}
+                </Box>
               </FormControl>
 
               {/* Cash/Bank Account */}
@@ -611,10 +586,10 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                 <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
               </FormControl>
 
-              {/* Amount Validation */}
-              {amount > 0 && selectedCashBankId > 0 && (() => {
+              {/* Balance Validation */}
+              {ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0 && selectedCashBankId > 0 && (() => {
                 const selectedCB = getSelectedCashBank();
-                if (selectedCB && amount > selectedCB.balance) {
+                if (selectedCB && ppnBalanceInfo.ppn_terutang > selectedCB.balance) {
                   return (
                     <Alert status="warning" borderRadius="md">
                       <AlertIcon />
@@ -673,7 +648,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
               </FormControl>
 
               {/* Summary */}
-              {amount > 0 && (
+              {ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0 && (
                 <Card bg={summaryBg} borderColor={borderColor}>
                   <CardBody>
                     <VStack align="stretch" spacing={2}>
@@ -681,7 +656,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                       <HStack justify="space-between">
                         <Text fontSize="sm">Jumlah Pembayaran:</Text>
                         <Text fontSize="sm" fontWeight="bold">
-                          {formatRupiah(amount)}
+                          {formatRupiah(ppnBalanceInfo.ppn_terutang)}
                         </Text>
                       </HStack>
                       <HStack justify="space-between">
@@ -714,8 +689,8 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
               loadingText="Memproses..."
               isDisabled={ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang === 0}
             >
-              {ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang === 0 
-                ? '✅ Sudah Lunas' 
+              {ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang === 0
+                ? '✅ Sudah Lunas'
                 : 'Bayar PPN'
               }
             </Button>

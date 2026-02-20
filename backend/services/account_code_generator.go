@@ -2,11 +2,12 @@ package services
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
-	"sort"
 
 	"app-sistem-akuntansi/models"
+
 	"gorm.io/gorm"
 )
 
@@ -22,11 +23,11 @@ func NewAccountCodeGenerator(db *gorm.DB) *AccountCodeGenerator {
 
 // AccountCodeRule defines the structure for account code generation rules
 type AccountCodeRule struct {
-	AccountType  string
-	StartRange   int
-	EndRange     int
+	AccountType   string
+	StartRange    int
+	EndRange      int
 	DefaultDigits int
-	Description  string
+	Description   string
 }
 
 // Standard accounting code structure
@@ -60,7 +61,7 @@ func (g *AccountCodeGenerator) generateMainAccountCode(rule AccountCodeRule) (st
 	// Get all existing codes in this range
 	var existingCodes []string
 	err := g.db.Model(&models.Account{}).
-		Where("code LIKE ? AND LENGTH(code) = ?", 
+		Where("code LIKE ? AND LENGTH(code) = ?",
 			fmt.Sprintf("%d%%", rule.StartRange/1000), rule.DefaultDigits).
 		Pluck("code", &existingCodes).Error
 
@@ -94,7 +95,7 @@ func (g *AccountCodeGenerator) generateChildCode(parentCode string) (string, err
 
 	// Determine the next child code format
 	parentLen := len(parentCode)
-	
+
 	// For 4-digit parent (e.g., 1100), child should be 1101, 1102, etc.
 	if parentLen == 4 {
 		return g.generateSequentialChild(parentCode, existingCodes, 1)
@@ -113,11 +114,11 @@ func (g *AccountCodeGenerator) generateChildCode(parentCode string) (string, err
 func (g *AccountCodeGenerator) generateSequentialChild(parentCode string, existingCodes []string, increment int) (string, error) {
 	// Parse existing child numbers
 	var childNumbers []int
-	
+
 	for _, code := range existingCodes {
 		if strings.HasPrefix(code, parentCode) {
 			suffix := strings.TrimPrefix(code, parentCode)
-			
+
 			// Handle different formats
 			if strings.HasPrefix(suffix, "-") {
 				// Handle dash format (e.g., 1100-001)
@@ -144,7 +145,7 @@ func (g *AccountCodeGenerator) generateSequentialChild(parentCode string, existi
 
 	// Find next available number
 	sort.Ints(childNumbers)
-	
+
 	nextNum := increment
 	for _, num := range childNumbers {
 		if num == nextNum {
@@ -156,7 +157,7 @@ func (g *AccountCodeGenerator) generateSequentialChild(parentCode string, existi
 
 	// Determine format based on parent code structure and existing patterns
 	hasChildWithDash := g.hasChildWithDashFormat(existingCodes, parentCode)
-	
+
 	if hasChildWithDash {
 		// Use dash format with zero padding
 		return fmt.Sprintf("%s-%03d", parentCode, nextNum), nil
@@ -199,17 +200,17 @@ func (g *AccountCodeGenerator) ValidateAccountCode(code string, accountType stri
 	if len(code) >= 1 {
 		firstDigits, _ = strconv.Atoi(string(code[0]))
 	}
-	
+
 	expectedFirstDigit := rule.StartRange / 1000
 	if firstDigits != expectedFirstDigit {
-		return fmt.Errorf("account code %s does not match account type %s (should start with %d)", 
+		return fmt.Errorf("account code %s does not match account type %s (should start with %d)",
 			code, accountType, expectedFirstDigit)
 	}
 
 	// Check if parent-child relationship is valid
 	if parentCode != "" {
 		if !strings.HasPrefix(code, parentCode) && !strings.HasPrefix(code, parentCode+"-") {
-			return fmt.Errorf("child account code %s does not properly inherit from parent %s", 
+			return fmt.Errorf("child account code %s does not properly inherit from parent %s",
 				code, parentCode)
 		}
 	}
@@ -269,7 +270,7 @@ func (g *AccountCodeGenerator) GetRecommendedCode(accountType string, parentCode
 // optimizeCodeBasedOnName provides code suggestions based on account name
 func (g *AccountCodeGenerator) optimizeCodeBasedOnName(code string, name string, accountType string) string {
 	name = strings.ToLower(name)
-	
+
 	// Special cases for common account names
 	switch accountType {
 	case "ASSET":
@@ -277,31 +278,31 @@ func (g *AccountCodeGenerator) optimizeCodeBasedOnName(code string, name string,
 			return g.suggestSpecificCode("1101", code)
 		}
 		if strings.Contains(name, "kas") && strings.Contains(name, "kecil") {
-			return g.suggestSpecificCode("1102", code)
+			return g.suggestSpecificCode("1101-001", code)
 		}
 		if strings.Contains(name, "bank") {
-			return g.suggestSpecificCode("1103", code)
+			return g.suggestSpecificCode("1101-003", code)
 		}
 		if strings.Contains(name, "piutang") {
 			return g.suggestSpecificCode("1201", code)
 		}
 		if strings.Contains(name, "persediaan") || strings.Contains(name, "inventory") {
-			return g.suggestSpecificCode("1301", code)
+			return g.suggestSpecificCode("1103-001", code)
 		}
-		
+
 	case "LIABILITY":
 		if strings.Contains(name, "utang") {
 			return g.suggestSpecificCode("2101", code)
 		}
 		if strings.Contains(name, "ppn") && strings.Contains(name, "keluaran") {
-			return g.suggestSpecificCode("2103", code)
+			return g.suggestSpecificCode("2102-001", code)
 		}
-		
+
 	case "REVENUE":
 		if strings.Contains(name, "penjualan") || strings.Contains(name, "sales") {
 			return g.suggestSpecificCode("4101", code)
 		}
-		
+
 	case "EXPENSE":
 		if strings.Contains(name, "gaji") || strings.Contains(name, "salary") {
 			return g.suggestSpecificCode("5101", code)
@@ -310,7 +311,7 @@ func (g *AccountCodeGenerator) optimizeCodeBasedOnName(code string, name string,
 			return g.suggestSpecificCode("5201", code)
 		}
 	}
-	
+
 	return code
 }
 
@@ -326,7 +327,7 @@ func (g *AccountCodeGenerator) suggestSpecificCode(preferred string, fallback st
 // FixNonStandardCodes identifies and suggests fixes for non-standard codes
 func (g *AccountCodeGenerator) FixNonStandardCodes() ([]AccountCodeFix, error) {
 	var fixes []AccountCodeFix
-	
+
 	// Find accounts with non-standard codes
 	var accounts []models.Account
 	err := g.db.Find(&accounts).Error
@@ -392,7 +393,7 @@ func (g *AccountCodeGenerator) getNonStandardReason(code string, accountType str
 	if strings.Contains(code, "-") {
 		return "Contains dash in main account code (should use sequential numbers)"
 	}
-	
+
 	rule, err := g.getRuleForAccountType(accountType)
 	if err != nil {
 		return "Unknown account type"

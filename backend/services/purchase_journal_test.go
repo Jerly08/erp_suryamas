@@ -1,10 +1,10 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"context"
 	"testing"
 	"time"
-	"app-sistem-akuntansi/models"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -30,21 +30,21 @@ func (m *MockAccountRepository) FindByID(ctx context.Context, id uint) (*models.
 func TestCreatePurchaseJournalLines_WithPPh(t *testing.T) {
 	// Setup mock account repository
 	mockAccountRepo := new(MockAccountRepository)
-	
+
 	// Mock account data
-	inventoryAccount := &models.Account{ID: 101, Code: "1301", Name: "Persediaan Barang Dagangan"}
-	ppnInputAccount := &models.Account{ID: 102, Code: "1240", Name: "PPN Masukan"}
+	inventoryAccount := &models.Account{ID: 101, Code: "1103-001", Name: "Persediaan Barang Dagangan"}
+	ppnInputAccount := &models.Account{ID: 102, Code: "2102-002", Name: "PPN Masukan"}
 	accountsPayableAccount := &models.Account{ID: 201, Code: "2101", Name: "Utang Usaha"}
-	pph21PayableAccount := &models.Account{ID: 202, Code: "2111", Name: "Utang PPh 21"}
-	pph23PayableAccount := &models.Account{ID: 203, Code: "2112", Name: "Utang PPh 23"}
+	pph21PayableAccount := &models.Account{ID: 202, Code: "2102-003", Name: "Utang PPh 21"}
+	pph23PayableAccount := &models.Account{ID: 203, Code: "2102-004", Name: "Utang PPh 23"}
 	expenseAccount := &models.Account{ID: 501, Code: "5001", Name: "Biaya Operasional"}
 
 	// Setup mock responses
-	mockAccountRepo.On("FindByCode", mock.Anything, "1301").Return(inventoryAccount, nil)
-	mockAccountRepo.On("FindByCode", mock.Anything, "1240").Return(ppnInputAccount, nil)
+	mockAccountRepo.On("FindByCode", mock.Anything, "1103-001").Return(inventoryAccount, nil)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-002").Return(ppnInputAccount, nil)
 	mockAccountRepo.On("FindByCode", mock.Anything, "2101").Return(accountsPayableAccount, nil)
-	mockAccountRepo.On("FindByCode", mock.Anything, "2111").Return(pph21PayableAccount, nil)
-	mockAccountRepo.On("FindByCode", mock.Anything, "2112").Return(pph23PayableAccount, nil)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-003").Return(pph21PayableAccount, nil)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-004").Return(pph23PayableAccount, nil)
 	mockAccountRepo.On("FindByID", mock.Anything, uint(501)).Return(expenseAccount, nil)
 
 	// Create test purchase service
@@ -137,8 +137,8 @@ func TestCreatePurchaseJournalLines_WithPPh(t *testing.T) {
 	assert.Equal(t, 20000.0, lines[5].CreditAmount)
 
 	// Verify balance
-	totalDebit := 800000.0 + 200000.0 + 110000.0  // = 1,110,000
-	totalCredit := 1110000.0 + 25000.0 + 20000.0  // = 1,155,000
+	totalDebit := 800000.0 + 200000.0 + 110000.0 // = 1,110,000
+	totalCredit := 1110000.0 + 25000.0 + 20000.0 // = 1,155,000
 
 	// Wait, this should be balanced. Let me fix the calculation:
 	// Gross Payable should be NetBeforeTax + TotalTaxAdditions = 1,000,000 + 110,000 = 1,110,000
@@ -146,7 +146,7 @@ func TestCreatePurchaseJournalLines_WithPPh(t *testing.T) {
 	// Total Credit = Gross Payable + PPh amounts = 1,110,000 + 25,000 + 20,000 = 1,155,000
 	// Total Debit = Items + PPN = 1,000,000 + 110,000 = 1,110,000
 	// This is not balanced! The issue is that PPh reduces the net payment to vendor
-	
+
 	// Let me verify the balance calculation
 	var calculatedDebit, calculatedCredit float64
 	for _, line := range lines {
@@ -163,18 +163,18 @@ func TestCreatePurchaseJournalLines_WithPPh(t *testing.T) {
 func TestCreatePurchaseJournalLines_WithoutPPh(t *testing.T) {
 	// Setup mock account repository
 	mockAccountRepo := new(MockAccountRepository)
-	
+
 	// Mock account data
-	inventoryAccount := &models.Account{ID: 101, Code: "1301", Name: "Persediaan Barang Dagangan"}
-	ppnInputAccount := &models.Account{ID: 102, Code: "1240", Name: "PPN Masukan"}
+	inventoryAccount := &models.Account{ID: 101, Code: "1103-001", Name: "Persediaan Barang Dagangan"}
+	ppnInputAccount := &models.Account{ID: 102, Code: "2102-002", Name: "PPN Masukan"}
 	accountsPayableAccount := &models.Account{ID: 201, Code: "2101", Name: "Utang Usaha"}
 
 	// Setup mock responses
-	mockAccountRepo.On("FindByCode", mock.Anything, "1301").Return(inventoryAccount, nil)
-	mockAccountRepo.On("FindByCode", mock.Anything, "1240").Return(ppnInputAccount, nil)
+	mockAccountRepo.On("FindByCode", mock.Anything, "1103-001").Return(inventoryAccount, nil)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-002").Return(ppnInputAccount, nil)
 	mockAccountRepo.On("FindByCode", mock.Anything, "2101").Return(accountsPayableAccount, nil)
-	mockAccountRepo.On("FindByCode", mock.Anything, "2111").Return(nil, gorm.ErrRecordNotFound)
-	mockAccountRepo.On("FindByCode", mock.Anything, "2112").Return(nil, gorm.ErrRecordNotFound)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-003").Return(nil, gorm.ErrRecordNotFound)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-004").Return(nil, gorm.ErrRecordNotFound)
 
 	// Create test purchase service
 	service := &PurchaseService{
@@ -254,17 +254,17 @@ func TestCreatePurchaseJournalLines_WithoutPPh(t *testing.T) {
 func TestCreatePurchaseJournalLines_ZeroPPN(t *testing.T) {
 	// Setup mock account repository
 	mockAccountRepo := new(MockAccountRepository)
-	
+
 	// Mock account data
-	inventoryAccount := &models.Account{ID: 101, Code: "1301", Name: "Persediaan Barang Dagangan"}
+	inventoryAccount := &models.Account{ID: 101, Code: "1103-001", Name: "Persediaan Barang Dagangan"}
 	accountsPayableAccount := &models.Account{ID: 201, Code: "2101", Name: "Utang Usaha"}
 
 	// Setup mock responses
-	mockAccountRepo.On("FindByCode", mock.Anything, "1301").Return(inventoryAccount, nil)
-	mockAccountRepo.On("FindByCode", mock.Anything, "1240").Return(nil, gorm.ErrRecordNotFound) // PPN not found, but that's OK for 0 PPN
+	mockAccountRepo.On("FindByCode", mock.Anything, "1103-001").Return(inventoryAccount, nil)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-002").Return(nil, gorm.ErrRecordNotFound) // PPN not found, but that's OK for 0 PPN
 	mockAccountRepo.On("FindByCode", mock.Anything, "2101").Return(accountsPayableAccount, nil)
-	mockAccountRepo.On("FindByCode", mock.Anything, "2111").Return(nil, gorm.ErrRecordNotFound)
-	mockAccountRepo.On("FindByCode", mock.Anything, "2112").Return(nil, gorm.ErrRecordNotFound)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-003").Return(nil, gorm.ErrRecordNotFound)
+	mockAccountRepo.On("FindByCode", mock.Anything, "2102-004").Return(nil, gorm.ErrRecordNotFound)
 
 	// Create test purchase service
 	service := &PurchaseService{

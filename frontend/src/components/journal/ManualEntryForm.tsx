@@ -24,6 +24,8 @@ import {
     Card,
     CardBody,
     Divider,
+    InputGroup,
+    InputLeftAddon,
 } from '@chakra-ui/react';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { FiPlus, FiTrash2, FiSave } from 'react-icons/fi';
@@ -32,6 +34,82 @@ import { accountService } from '@/services/accountService';
 import { ssotJournalService } from '@/services/ssotJournalService';
 import { Account } from '@/types/account';
 import { useAuth } from '@/contexts/AuthContext';
+
+// Helper function to format number with thousand separators
+const formatNumberWithSeparator = (value: number | string): string => {
+    if (value === '' || value === null || value === undefined) return '';
+    const num = typeof value === 'string' ? parseFloat(value.replace(/\./g, '')) : value;
+    if (isNaN(num) || num === 0) return '';
+    return num.toLocaleString('id-ID');
+};
+
+// Helper function to parse formatted number back to number
+const parseFormattedNumber = (value: string): number => {
+    if (!value || value === '') return 0;
+    // Remove all dots (thousand separators) and parse
+    const cleaned = value.replace(/\./g, '').replace(/,/g, '.');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+};
+
+// Currency Input Component
+interface CurrencyInputProps {
+    value: number;
+    onChange: (value: number) => void;
+    placeholder?: string;
+    size?: string;
+}
+
+const CurrencyInput: React.FC<CurrencyInputProps> = ({ value, onChange, placeholder = '0', size = 'sm' }) => {
+    const [displayValue, setDisplayValue] = useState<string>('');
+
+    // Update display value when external value changes
+    useEffect(() => {
+        if (value && value !== 0) {
+            setDisplayValue(formatNumberWithSeparator(value));
+        } else {
+            setDisplayValue('');
+        }
+    }, [value]);
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const inputValue = e.target.value;
+
+        // Allow only numbers and dots
+        const cleanedInput = inputValue.replace(/[^\d]/g, '');
+
+        if (cleanedInput === '') {
+            setDisplayValue('');
+            onChange(0);
+            return;
+        }
+
+        // Parse and format with thousand separators
+        const numValue = parseInt(cleanedInput, 10);
+        if (!isNaN(numValue)) {
+            setDisplayValue(numValue.toLocaleString('id-ID'));
+            onChange(numValue);
+        }
+    };
+
+    const handleBlur = () => {
+        // Re-format on blur to ensure proper display
+        if (value && value !== 0) {
+            setDisplayValue(formatNumberWithSeparator(value));
+        }
+    };
+
+    return (
+        <Input
+            value={displayValue}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            placeholder={placeholder}
+            size={size}
+            textAlign="right"
+        />
+    );
+};
 
 interface JournalLineForm {
     account_id: string; // use string for select value
@@ -304,17 +382,31 @@ export default function ManualEntryForm({ onSuccess, onCancel, initialData }: Ma
                                             />
                                         </Td>
                                         <Td>
-                                            <Input
-                                                type="number"
-                                                size="sm"
-                                                {...register(`lines.${index}.debit`, { valueAsNumber: true })}
+                                            <Controller
+                                                control={control}
+                                                name={`lines.${index}.debit`}
+                                                render={({ field }) => (
+                                                    <CurrencyInput
+                                                        value={field.value || 0}
+                                                        onChange={(val) => field.onChange(val)}
+                                                        placeholder="0"
+                                                        size="sm"
+                                                    />
+                                                )}
                                             />
                                         </Td>
                                         <Td>
-                                            <Input
-                                                type="number"
-                                                size="sm"
-                                                {...register(`lines.${index}.credit`, { valueAsNumber: true })}
+                                            <Controller
+                                                control={control}
+                                                name={`lines.${index}.credit`}
+                                                render={({ field }) => (
+                                                    <CurrencyInput
+                                                        value={field.value || 0}
+                                                        onChange={(val) => field.onChange(val)}
+                                                        placeholder="0"
+                                                        size="sm"
+                                                    />
+                                                )}
                                             />
                                         </Td>
                                         <Td>

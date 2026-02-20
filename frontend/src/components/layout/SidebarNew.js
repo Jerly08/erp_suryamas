@@ -42,46 +42,58 @@ import { useTheme } from '@/contexts/SimpleThemeContext';
 import { usePermissions } from '@/hooks/usePermissions';
 
 // Menu structure - will be translated dynamically
-const getMenuGroups = (t) => [
-  {
-    title: t('navigation.dashboard'),
-    items: [
-      { name: t('navigation.dashboard'), icon: FiHome, href: '/dashboard', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'DIRECTOR', 'EMPLOYEE'] },
-    ]
-  },
-  {
-    title: t('navigation.sidebar.masterData'),
-    items: [
-      { name: t('navigation.accounts'), icon: FiFileText, href: '/accounts', module: 'accounts', permission: 'view', roles: ['ADMIN', 'FINANCE'] },
-      { name: t('navigation.products'), icon: FiLayers, href: '/products', module: 'products', permission: 'view', roles: ['ADMIN', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-      { name: t('navigation.contacts'), icon: FiUsers, href: '/contacts', module: 'contacts', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-      { name: t('navigation.assets'), icon: FiStar, href: '/assets', module: 'assets', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-    ]
-  },
-  {
-    title: t('navigation.sidebar.financial'),
-    items: [
-      { name: t('navigation.sales'), icon: FiDollarSign, href: '/sales', module: 'sales', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR', 'EMPLOYEE'] },
-      { name: t('navigation.purchases'), icon: FiShoppingCart, href: '/purchases', module: 'purchases', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-      { name: t('navigation.payments'), icon: FiTrendingUp, href: '/payments', module: 'payments', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-      { name: t('navigation.cashBank'), icon: FiCompass, href: '/cash-bank', module: 'cash_bank', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-      { name: t('navigation.journal'), icon: FiFileText, href: '/journal', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-    ]
-  },
-  {
-    title: t('navigation.reports'),
-    items: [
-      { name: t('navigation.reports'), icon: FiBarChart, href: '/reports', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-    ]
-  },
-  {
-    title: t('navigation.sidebar.system'),
-    items: [
-      { name: t('navigation.users'), icon: FiUser, href: '/users', module: null, permission: null, roles: ['ADMIN'] },
-      { name: t('navigation.settings'), icon: FiSettings, href: '/settings', module: null, permission: null, roles: ['ADMIN'] },
-    ]
-  },
-];
+// companyType: 'SERVICE' | 'TRADING' | 'MANUFACTURING'
+const getMenuGroups = (t, companyType) => {
+  // Helper: get company-type label or fallback to generic translation
+  const ctLabel = (key, fallbackKey) => {
+    if (companyType) {
+      const translated = t(`companyType.${companyType}.${key}`);
+      if (!translated.startsWith('companyType.')) return translated;
+    }
+    return t(fallbackKey);
+  };
+
+  return [
+    {
+      title: t('navigation.dashboard'),
+      items: [
+        { name: t('navigation.dashboard'), icon: FiHome, href: '/dashboard', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'DIRECTOR', 'EMPLOYEE'] },
+      ]
+    },
+    {
+      title: t('navigation.sidebar.masterData'),
+      items: [
+        { name: t('navigation.accounts'), icon: FiFileText, href: '/accounts', module: 'accounts', permission: 'view', roles: ['ADMIN', 'FINANCE'] },
+        { name: ctLabel('products', 'navigation.products'), icon: FiLayers, href: '/products', module: 'products', permission: 'view', roles: ['ADMIN', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
+        { name: t('navigation.contacts'), icon: FiUsers, href: '/contacts', module: 'contacts', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
+        { name: t('navigation.assets'), icon: FiStar, href: '/assets', module: 'assets', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+      ]
+    },
+    {
+      title: t('navigation.sidebar.financial'),
+      items: [
+        { name: ctLabel('sales', 'navigation.sales'), icon: FiDollarSign, href: '/sales', module: 'sales', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR', 'EMPLOYEE'] },
+        { name: ctLabel('purchases', 'navigation.purchases'), icon: FiShoppingCart, href: '/purchases', module: 'purchases', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
+        { name: t('navigation.payments'), icon: FiTrendingUp, href: '/payments', module: 'payments', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+        { name: t('navigation.cashBank'), icon: FiCompass, href: '/cash-bank', module: 'cash_bank', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+        { name: t('navigation.journal'), icon: FiFileText, href: '/journal', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+      ]
+    },
+    {
+      title: t('navigation.reports'),
+      items: [
+        { name: t('navigation.reports'), icon: FiBarChart, href: '/reports', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+      ]
+    },
+    {
+      title: t('navigation.sidebar.system'),
+      items: [
+        { name: t('navigation.users'), icon: FiUser, href: '/users', module: null, permission: null, roles: ['ADMIN'] },
+        { name: t('navigation.settings'), icon: FiSettings, href: '/settings', module: null, permission: null, roles: ['ADMIN'] },
+      ]
+    },
+  ];
+};
 
 export default function Sidebar({ isOpen, onClose, display, width, collapsed, onToggleCollapse, variant, ...rest }) {
   const { user } = useAuth();
@@ -91,8 +103,11 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
   const { theme } = useTheme();
   const { canView, canMenu, loading: permissionLoading } = usePermissions();
 
-  // Get translated menu groups
-  const MenuGroups = getMenuGroups(t);
+  // Get company type from user context
+  const companyType = user?.company_type || '';
+
+  // Get translated menu groups with company-type-specific labels
+  const MenuGroups = getMenuGroups(t, companyType);
 
   // Filter menu groups based on user permissions and role
   const userRoleNormalized = user ? normalizeRole(user.role) : '';

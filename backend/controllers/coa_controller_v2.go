@@ -1,9 +1,10 @@
 package controllers
 
 import (
-	"strconv"
 	"app-sistem-akuntansi/services"
 	"app-sistem-akuntansi/utils"
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -62,11 +63,10 @@ func (c *COAControllerV2) GetCOABalancesByType(ctx *gin.Context) {
 func (c *COAControllerV2) GetSpecificAccounts(ctx *gin.Context) {
 	// Default accounts for sales display
 	accountCodes := []string{
-		"1101", // Kas
-		"1102", // Bank
-		"1201", // Piutang Usaha
-		"2103", // PPN Keluaran
-		"4101", // Pendapatan Penjualan
+		"1101",     // Kas
+		"1102",     // Piutang Usaha
+		"2102-001", // PPN Keluaran
+		"4101",     // Pendapatan Penjualan
 	}
 
 	accounts, err := c.coaDisplayService.GetSpecificAccountsForDisplay(accountCodes)
@@ -82,12 +82,11 @@ func (c *COAControllerV2) GetSpecificAccounts(ctx *gin.Context) {
 func (c *COAControllerV2) GetSalesRelatedAccounts(ctx *gin.Context) {
 	// Accounts specifically for sales transactions
 	accountCodes := []string{
-		"1101", // Kas
-		"1102", // Bank
-		"1201", // Piutang Usaha
-		"2103", // PPN Keluaran
-		"4101", // Pendapatan Penjualan
-		"4102", // Pendapatan Jasa
+		"1101",     // Kas
+		"1102",     // Piutang Usaha
+		"2102-001", // PPN Keluaran
+		"4101",     // Pendapatan Penjualan
+		"4102",     // Pendapatan Jasa
 	}
 
 	accounts, err := c.coaDisplayService.GetSpecificAccountsForDisplay(accountCodes)
@@ -101,9 +100,9 @@ func (c *COAControllerV2) GetSalesRelatedAccounts(ctx *gin.Context) {
 		"accounts": accounts,
 		"metadata": gin.H{
 			"display_rules": gin.H{
-				"revenue": "Always show as positive",
+				"revenue":   "Always show as positive",
 				"liability": "Always show as positive (PPN Keluaran)",
-				"asset": "Show as stored",
+				"asset":     "Show as stored",
 			},
 		},
 	}
