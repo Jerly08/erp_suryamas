@@ -29,7 +29,8 @@ BEGIN
     FROM unified_journal_lines ujl 
     LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
     WHERE ujl.account_id = account_id_param 
-    AND uje.status = 'POSTED';
+    AND uje.status = 'POSTED'
+    AND uje.deleted_at IS NULL;
     
     -- Update account balance
     UPDATE accounts 
@@ -179,6 +180,7 @@ BEGIN
             SELECT 1 FROM unified_journal_lines ujl
             LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
             WHERE ujl.account_id = a.id AND uje.status = 'POSTED'
+              AND uje.deleted_at IS NULL
         )
     LOOP
         PERFORM sync_account_balance_from_ssot(account_record.id);

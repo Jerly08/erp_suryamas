@@ -604,6 +604,16 @@ func (s *PaymentService) updateCashBankBalance(tx *gorm.DB, cashBankID uint, amo
 		return err
 	}
 
+	// ✅ CRITICAL: Sync linked COA account balance to maintain COA <> CashBank consistency
+	if cashBank.AccountID > 0 {
+		if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
+			newBalance, cashBank.AccountID).Error; err != nil {
+			log.Printf("⚠️ Warning: Failed to sync COA balance for GL account %d: %v", cashBank.AccountID, err)
+		} else {
+			log.Printf("🔄 Synced COA balance for GL account %d to %.2f", cashBank.AccountID, newBalance)
+		}
+	}
+
 	// Create transaction record
 	transaction := &models.CashBankTransaction{
 		CashBankID:      cashBankID,
@@ -683,13 +693,20 @@ func (s *PaymentService) createReceivablePaymentJournal(tx *gorm.DB, payment *mo
 		cashBankAccountID = kasAccount.ID
 	}
 
-	// Get Accounts Receivable account (Piutang Usaha - 1201)
+	// Get Accounts Receivable account (Piutang Usaha - Try 1102-001 first, then 1102, then 1201)
 	var arAccount models.Account
-	if err := tx.Where("code = ?", "1201").First(&arAccount).Error; err != nil {
-		log.Printf("Warning: Piutang Usaha account (1201) not found, using fallback")
-		// Fallback: try to find by name pattern
-		if err := tx.Where("LOWER(name) LIKE ?", "%piutang%usaha%").First(&arAccount).Error; err != nil {
-			return fmt.Errorf("accounts receivable account not found: %v", err)
+	// Try primary active AR account first
+	if err := tx.Where("code = ?", "1102-001").First(&arAccount).Error; err != nil {
+		// Try general AR account second
+		if err := tx.Where("code = ?", "1102").First(&arAccount).Error; err != nil {
+			// Try legacy AR account last
+			if err := tx.Where("code = ?", "1201").First(&arAccount).Error; err != nil {
+				log.Printf("Warning: Piutang Usaha exact accounts not found, using name fallback")
+				// Fallback: try to find by name pattern
+				if err := tx.Where("LOWER(name) LIKE ?", "%piutang%usaha%").First(&arAccount).Error; err != nil {
+					return fmt.Errorf("accounts receivable account not found: %v", err)
+				}
+			}
 		}
 	}
 	arAccountID := arAccount.ID
@@ -940,6 +957,27 @@ func (s *PaymentService) cancelPaymentTransaction(tx *gorm.DB, payment *models.P
 	// Create reversal journal entries
 	if err := s.createReversalJournal(tx, payment, reason, userID); err != nil {
 		return err
+	}
+
+	// CRITICAL FIX: Also soft-delete any SSOT unified_journal_ledger entries linked to this payment
+	// This prevents the Balance Sheet and Neraca Saldo from counting soft-deleted payments!
+	if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).
+		Model(&models.SSOTJournalEntry{}).
+		Where("source_type IN (?, ?) AND source_id = ?", "PAYMENT", "PURCHASE_PAYMENT", payment.ID).
+		Update("deleted_at", time.Now()).Error; err != nil {
+		log.Printf("Warning: failed to soft-delete SSOT journal entries for payment %d: %v", payment.ID, err)
+	}
+
+	// Also soft-delete any unified_journal_lines
+	if err := tx.Exec(`
+		UPDATE unified_journal_lines 
+		SET deleted_at = CURRENT_TIMESTAMP
+		WHERE deleted_at IS NULL AND journal_id IN (
+			SELECT id FROM unified_journal_ledger 
+			WHERE source_type IN ('PAYMENT', 'PURCHASE_PAYMENT') AND source_id = ?
+		)
+	`, payment.ID).Error; err != nil {
+		log.Printf("Warning: failed to soft-delete SSOT journal lines for payment %d: %v", payment.ID, err)
 	}
 
 	// Update payment status
@@ -1777,12 +1815,20 @@ func (s *PaymentService) createReceivablePaymentJournalWithSSOT(tx *gorm.DB, pay
 		log.Printf("📋 Using default Cash Account ID: %d", cashBankAccountID)
 	}
 
-	// Get AR account
+	// Get AR account (Piutang Usaha - Try 1102-001 first, then 1102, then 1201)
 	var arAccount models.Account
-	if err := tx.Where("code = ?", "1201").First(&arAccount).Error; err != nil {
-		log.Printf("⚠️ AR account (1201) not found, trying fallback")
-		if err := tx.Where("LOWER(name) LIKE ?", "%piutang%usaha%").First(&arAccount).Error; err != nil {
-			return fmt.Errorf("accounts receivable account not found: %v", err)
+	// Try primary active AR account first
+	if err := tx.Where("code = ?", "1102-001").First(&arAccount).Error; err != nil {
+		// Try general AR account second
+		if err := tx.Where("code = ?", "1102").First(&arAccount).Error; err != nil {
+			// Try legacy AR account last
+			if err := tx.Where("code = ?", "1201").First(&arAccount).Error; err != nil {
+				log.Printf("⚠️ AR account exact codes not found, trying fallback")
+				// Fallback: try to find by name pattern
+				if err := tx.Where("LOWER(name) LIKE ?", "%piutang%usaha%").First(&arAccount).Error; err != nil {
+					return fmt.Errorf("accounts receivable account not found: %v", err)
+				}
+			}
 		}
 	}
 	log.Printf("📋 Using AR Account ID: %d (Code: %s)", arAccount.ID, arAccount.Code)
@@ -1871,12 +1917,20 @@ func (s *PaymentService) createReceivablePaymentJournalWithSSOTFixed(tx *gorm.DB
 		log.Printf("📋 Using default Cash Account ID: %d", cashBankAccountID)
 	}
 
-	// Get AR account
+	// Get AR account (Piutang Usaha - Try 1102-001 first, then 1102, then 1201)
 	var arAccount models.Account
-	if err := tx.Where("code = ?", "1201").First(&arAccount).Error; err != nil {
-		log.Printf("⚠️ AR account (1201) not found, trying fallback")
-		if err := tx.Where("LOWER(name) LIKE ?", "%piutang%usaha%").First(&arAccount).Error; err != nil {
-			return fmt.Errorf("accounts receivable account not found: %v", err)
+	// Try primary active AR account first
+	if err := tx.Where("code = ?", "1102-001").First(&arAccount).Error; err != nil {
+		// Try general AR account second
+		if err := tx.Where("code = ?", "1102").First(&arAccount).Error; err != nil {
+			// Try legacy AR account last
+			if err := tx.Where("code = ?", "1201").First(&arAccount).Error; err != nil {
+				log.Printf("⚠️ AR account exact codes not found, trying fallback")
+				// Fallback: try to find by name pattern
+				if err := tx.Where("LOWER(name) LIKE ?", "%piutang%usaha%").First(&arAccount).Error; err != nil {
+					return fmt.Errorf("accounts receivable account not found: %v", err)
+				}
+			}
 		}
 	}
 	log.Printf("📋 Using AR Account ID: %d (Code: %s)", arAccount.ID, arAccount.Code)

@@ -3,128 +3,212 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"strings"
+	"time"
 
-	"github.com/joho/godotenv"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	"app-sistem-akuntansi/config"
+	"app-sistem-akuntansi/database"
+	"app-sistem-akuntansi/models"
+
+	"github.com/shopspring/decimal"
 )
 
-// Account struct to map database columns
-type Account struct {
-	ID       uint `gorm:"primaryKey"`
-	Code     string
-	Name     string
-	Type     string
-	Level    int
-	IsHeader bool
-	Balance  float64
-	ParentID *uint
-}
-
 func main() {
-	// Load .env file (try multiple paths)
-	if err := godotenv.Load(".env"); err != nil {
-		if err := godotenv.Load("../../.env"); err != nil {
-			log.Println("Warning: Error loading .env file, checking environment variables...")
+	_ = config.LoadConfig()
+	db := database.ConnectDB()
+
+	fmt.Println("=== BALANCE SHEET FIX: Correcting Payment SSOT Entries ===")
+	fmt.Println()
+
+	// 1. Find the correct AP account (2101-001, not 2101 header)
+	var apAccount models.Account
+	if err := db.Where("code = ? AND COALESCE(is_header, false) = false", "2101-001").First(&apAccount).Error; err != nil {
+		log.Fatalf("Cannot find AP account 2101-001: %v", err)
+	}
+	fmt.Printf("✅ Found AP account: %s %s (ID=%d)\n", apAccount.Code, apAccount.Name, apAccount.ID)
+
+	// 2. Find header account 2101 (this is incorrectly used in payment entries)
+	var headerAccount models.Account
+	if err := db.Where("code = ? AND COALESCE(is_header, false) = true", "2101").First(&headerAccount).Error; err != nil {
+		// Try without is_header check
+		if err := db.Where("code = ?", "2101").First(&headerAccount).Error; err != nil {
+			log.Fatalf("Cannot find header account 2101: %v", err)
 		}
 	}
+	fmt.Printf("✅ Found header account: %s %s (ID=%d, is_header=%v)\n", headerAccount.Code, headerAccount.Name, headerAccount.ID, headerAccount.IsHeader)
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		// Fallback to hardcoded DSN with CORRECT database name
-		dsn = "host=localhost user=postgres password=postgres dbname=sistem_akuntansi port=5432 sslmode=disable TimeZone=Asia/Jakarta"
-		fmt.Println("Using fallback DSN:", dsn)
+	// 3. Fix existing PAYMENT entries that reference 2101 (header) instead of 2101-001 (child)
+	if headerAccount.ID != apAccount.ID {
+		result := db.Model(&models.SSOTJournalLine{}).
+			Where("account_id = ? AND journal_id IN (SELECT id FROM unified_journal_ledger WHERE source_type = 'PAYMENT' AND status = 'POSTED')", headerAccount.ID).
+			Update("account_id", apAccount.ID)
+		if result.Error != nil {
+			log.Printf("❌ Failed to fix PAYMENT journal lines: %v", result.Error)
+		} else {
+			fmt.Printf("✅ Fixed %d journal lines: changed account from %s(ID=%d) to %s(ID=%d)\n",
+				result.RowsAffected, headerAccount.Code, headerAccount.ID, apAccount.Code, apAccount.ID)
+		}
 	} else {
-		fmt.Println("Using .env DSN:", dsn)
+		fmt.Println("ℹ️ Account 2101 and 2101-001 have the same ID, no fix needed")
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+	// 4. Find bank account (1101-005 BANK OCBC)
+	var bankAccount models.Account
+	if err := db.Where("code = ?", "1101-005").First(&bankAccount).Error; err != nil {
+		log.Fatalf("Cannot find bank account 1101-005: %v", err)
+	}
+	fmt.Printf("✅ Found bank account: %s %s (ID=%d)\n", bankAccount.Code, bankAccount.Name, bankAccount.ID)
+
+	// 5. Find payments that have NO SSOT entries (neither PAYMENT nor PURCHASE_PAYMENT)
+	type PaymentInfo struct {
+		ID     uint      `gorm:"column:id"`
+		Code   string    `gorm:"column:code"`
+		Amount float64   `gorm:"column:amount"`
+		Date   time.Time `gorm:"column:date"`
+		UserID uint      `gorm:"column:user_id"`
+	}
+	var missingPayments []PaymentInfo
+	db.Raw(`
+		SELECT p.id, p.code, p.amount, p.date, p.user_id
+		FROM payments p
+		WHERE p.status = 'COMPLETED' AND p.deleted_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM unified_journal_ledger uje 
+			WHERE uje.source_id = p.id 
+			  AND uje.source_type IN ('PAYMENT', 'PURCHASE_PAYMENT')
+			  AND uje.deleted_at IS NULL
+		  )
+		ORDER BY p.id
+	`).Scan(&missingPayments)
+
+	fmt.Printf("\n--- Payments without SSOT entries: %d ---\n", len(missingPayments))
+	for _, mp := range missingPayments {
+		fmt.Printf("  Payment #%d (%s): Amount=%.2f Date=%s\n", mp.ID, mp.Code, mp.Amount, mp.Date.Format("2006-01-02"))
 	}
 
-	// Create output file
-	outFile, err := os.Create("debug_results.txt")
-	if err != nil {
-		log.Fatalf("Failed to create output file: %v", err)
-	}
-	defer outFile.Close()
+	// 6. Create SSOT entries for missing payments
+	for _, mp := range missingPayments {
+		amount := decimal.NewFromFloat(mp.Amount)
+		now := time.Now()
+		paymentID := uint64(mp.ID)
+		postedBy := uint64(mp.UserID)
 
-	fmt.Fprintln(outFile, "=== DEBUG BALANCE SHEET SCRIPT ===")
+		journalEntry := &models.SSOTJournalEntry{
+			EntryNumber:     fmt.Sprintf("PAYMENT-FIX-%d-%d", mp.ID, now.Unix()),
+			SourceType:      "PAYMENT",
+			SourceID:        &paymentID,
+			SourceCode:      mp.Code,
+			EntryDate:       mp.Date,
+			Description:     fmt.Sprintf("Purchase Payment %s", mp.Code),
+			Reference:       mp.Code,
+			TotalDebit:      amount,
+			TotalCredit:     amount,
+			Status:          "POSTED",
+			IsBalanced:      true,
+			IsAutoGenerated: true,
+			CreatedBy:       uint64(mp.UserID),
+			PostedAt:        &now,
+			PostedBy:        &postedBy,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
 
-	var accounts []Account
-	if err := db.Where("deleted_at IS NULL").Order("code asc").Find(&accounts).Error; err != nil {
-		log.Fatalf("Failed to fetch accounts: %v", err)
-	}
-
-	var totalAsset, totalLiability, totalEquity float64
-	var totalRevenue, totalExpense float64
-
-	fmt.Fprintf(outFile, "%-10s %-35s %-20s %-10s %-20s\n", "CODE", "NAME", "TYPE", "HEADER?", "BALANCE")
-	fmt.Fprintln(outFile, strings.Repeat("-", 100))
-
-	for _, acc := range accounts {
-		// Clean type
-		accType := strings.TrimSpace(strings.ToUpper(acc.Type))
-
-		fmt.Fprintf(outFile, "%-10s %-35s %-20s %-10v %15.2f\n", acc.Code, acc.Name, acc.Type, acc.IsHeader, acc.Balance)
-
-		// Skip counting headers for summation usually?
-		// If headers have balance, that's a problem in itself, but we should count them if they hold value.
-		// However, standard logic usually sums only non-headers.
-		// Let's mimic the APP LOGIC (exclude headers).
-
-		if acc.IsHeader {
-			// Check if header has balance
-			if acc.Balance != 0 {
-				fmt.Fprintf(outFile, "  >>> WARNING: Header account has non-zero balance! Included/Excluded? App excludes entries.\n")
-			}
+		tx := db.Begin()
+		if err := tx.Create(journalEntry).Error; err != nil {
+			tx.Rollback()
+			log.Printf("❌ Failed to create journal for payment #%d: %v", mp.ID, err)
 			continue
 		}
 
-		switch {
-		case accType == "ASSET" || accType == "ASET" || strings.HasPrefix(accType, "ASSET"):
-			totalAsset += acc.Balance
-		case accType == "LIABILITY" || accType == "KEWAJIBAN" || strings.HasPrefix(accType, "LIABILITY"):
-			totalLiability += acc.Balance
-		case accType == "EQUITY" || accType == "MODAL" || accType == "EKUITAS" || strings.HasPrefix(accType, "EQUITY"):
-			totalEquity += acc.Balance
-		case accType == "REVENUE" || accType == "PENDAPATAN" || strings.HasPrefix(accType, "PENDAPATAN") || strings.Contains(accType, "INCOME"):
-			totalRevenue += acc.Balance
-		case accType == "EXPENSE" || accType == "BEBAN" || strings.HasPrefix(accType, "BEBAN") || strings.Contains(accType, "EXPENSE"):
-			totalExpense += acc.Balance
+		// DR Hutang Usaha (2101-001)
+		drLine := &models.SSOTJournalLine{
+			JournalID:    journalEntry.ID,
+			AccountID:    uint64(apAccount.ID),
+			LineNumber:   1,
+			Description:  fmt.Sprintf("Pelunasan Hutang Usaha - %s", mp.Code),
+			DebitAmount:  amount,
+			CreditAmount: decimal.Zero,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if err := tx.Create(drLine).Error; err != nil {
+			tx.Rollback()
+			log.Printf("❌ Failed to create DR line for payment #%d: %v", mp.ID, err)
+			continue
+		}
+
+		// CR Bank OCBC (1101-005)
+		crLine := &models.SSOTJournalLine{
+			JournalID:    journalEntry.ID,
+			AccountID:    uint64(bankAccount.ID),
+			LineNumber:   2,
+			Description:  fmt.Sprintf("Pembayaran via %s - %s", bankAccount.Name, mp.Code),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: amount,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if err := tx.Create(crLine).Error; err != nil {
+			tx.Rollback()
+			log.Printf("❌ Failed to create CR line for payment #%d: %v", mp.ID, err)
+			continue
+		}
+
+		tx.Commit()
+		fmt.Printf("  ✅ Created SSOT entry for Payment #%d (%s): Dr AP %.2f / Cr Bank %.2f\n",
+			mp.ID, mp.Code, mp.Amount, mp.Amount)
+	}
+
+	// 7. Verify balance sheet after fix
+	type AccBal struct {
+		Code string  `gorm:"column:code"`
+		Name string  `gorm:"column:name"`
+		Type string  `gorm:"column:type"`
+		Net  float64 `gorm:"column:net"`
+	}
+	var accBals []AccBal
+	db.Raw(`
+		SELECT a.code, MAX(a.name) as name, UPPER(a.type) as type,
+			CASE 
+				WHEN UPPER(a.type) IN ('ASSET', 'EXPENSE') THEN COALESCE(SUM(ujl.debit_amount), 0) - COALESCE(SUM(ujl.credit_amount), 0)
+				ELSE COALESCE(SUM(ujl.credit_amount), 0) - COALESCE(SUM(ujl.debit_amount), 0)
+			END as net
+		FROM accounts a
+		JOIN unified_journal_lines ujl ON ujl.account_id = a.id
+		JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
+		WHERE COALESCE(a.is_header, false) = false AND a.deleted_at IS NULL
+			AND uje.status = 'POSTED' AND uje.deleted_at IS NULL
+		GROUP BY a.code, UPPER(a.type)
+		ORDER BY a.code
+	`).Scan(&accBals)
+
+	fmt.Println("\n=== VERIFICATION: Post-Fix Balance Sheet ===")
+	totalA, totalL, totalE, totalR, totalX := 0.0, 0.0, 0.0, 0.0, 0.0
+	for _, ab := range accBals {
+		fmt.Printf("  %s %-40s (%s) Net=%.2f\n", ab.Code, ab.Name, ab.Type, ab.Net)
+		switch ab.Type {
+		case "ASSET":
+			totalA += ab.Net
+		case "LIABILITY":
+			totalL += ab.Net
+		case "EQUITY":
+			totalE += ab.Net
+		case "REVENUE":
+			totalR += ab.Net
+		case "EXPENSE":
+			totalX += ab.Net
 		}
 	}
+	ni := totalR - totalX
+	fmt.Printf("\n  TOTAL ASSETS:      %.2f\n", totalA)
+	fmt.Printf("  TOTAL LIABILITIES: %.2f\n", totalL)
+	fmt.Printf("  TOTAL EQUITY:      %.2f\n", totalE)
+	fmt.Printf("  NET INCOME:        %.2f\n", ni)
+	fmt.Printf("  L+E+NI:            %.2f\n", totalL+totalE+ni)
+	fmt.Printf("  DIFFERENCE:        %.2f\n", totalA-(totalL+totalE+ni))
 
-	fmt.Fprintln(outFile, strings.Repeat("-", 100))
-
-	netIncome := totalRevenue - totalExpense
-
-	fmt.Fprintf(outFile, "\n=== SUMMARY ===\n")
-	fmt.Fprintf(outFile, "Total Assets:      %15.2f\n", totalAsset)
-	fmt.Fprintf(outFile, "Total Liabilities: %15.2f\n", totalLiability)
-	fmt.Fprintf(outFile, "Total Equity (Obs):%15.2f\n", totalEquity)
-	fmt.Fprintf(outFile, "Total Revenue:     %15.2f\n", totalRevenue)
-	fmt.Fprintf(outFile, "Total Expense:     %15.2f\n", totalExpense)
-	fmt.Fprintf(outFile, "Net Income (Calc): %15.2f (Rev - Exp)\n", netIncome)
-
-	impliedEquity := totalEquity + netIncome
-	fmt.Fprintf(outFile, "Total Equity + NI: %15.2f\n", impliedEquity)
-
-	fmt.Fprintf(outFile, "\n=== BALANCE CHECK ===\n")
-	fmt.Fprintf(outFile, "Left (Assets):     %15.2f\n", totalAsset)
-	fmt.Fprintf(outFile, "Right (Liab+Eq):   %15.2f (Liab + Equity + NetIncome)\n", totalLiability+impliedEquity)
-	fmt.Fprintf(outFile, "Difference:        %15.2f\n", totalAsset-(totalLiability+impliedEquity))
-
-	if totalAsset-(totalLiability+impliedEquity) == 0 {
-		fmt.Fprintln(outFile, "STATUS: BALANCED ✅")
+	if totalA == totalL+totalE+ni {
+		fmt.Println("\n🎉🎉🎉 BALANCE SHEET IS BALANCED! 🎉🎉🎉")
 	} else {
-		fmt.Fprintln(outFile, "STATUS: UNBALANCED ❌")
+		fmt.Printf("\n⚠️ Still unbalanced by %.2f\n", totalA-(totalL+totalE+ni))
 	}
-	fmt.Println("Debug script completed. Check debug_results.txt")
 }

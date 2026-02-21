@@ -368,7 +368,7 @@ const UsersPage: React.FC = () => {
   if (loading) {
     return (
       <ProtectedModule module="users">
-        <SimpleLayout allowedRoles={['admin']}>
+        <SimpleLayout>
           <Box>
             <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
             <Text ml={4}>{t('common.loading')}</Text>
@@ -436,7 +436,7 @@ const UsersPage: React.FC = () => {
 
   return (
     <ProtectedModule module="users">
-      <SimpleLayout allowedRoles={['admin']}>
+      <SimpleLayout>
         <Box>
           <HStack justify="space-between" align="center" mb={6}>
             <Heading as="h1" size="xl">{t('users.management')}</Heading>

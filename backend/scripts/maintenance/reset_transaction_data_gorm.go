@@ -340,15 +340,7 @@ func executeTransactionResetWithGORM(db *gorm.DB) error {
 		fmt.Printf("   ⚠️  Warning: Delete SSOTJournalEntry error: %v\n", err)
 	}
 
-	// Also remove legacy/simple SSOT journal tables used by some endpoints
-	fmt.Println("   🔄 SSOT JOURNAL SYSTEM: Menghapus simple_ssot_journal_items...")
-	if err := tx.Unscoped().Where("1 = 1").Delete(&models.SimpleSSOTJournalItem{}).Error; err != nil {
-		fmt.Printf("   ⚠️  Warning: Delete SimpleSSOTJournalItem error: %v\n", err)
-	}
-	fmt.Println("   🔄 SSOT JOURNAL SYSTEM: Menghapus simple_ssot_journals...")
-	if err := tx.Unscoped().Where("1 = 1").Delete(&models.SimpleSSOTJournal{}).Error; err != nil {
-		fmt.Printf("   ⚠️  Warning: Delete SimpleSSOTJournal error: %v\n", err)
-	}
+	// Removed legacy/simple SSOT journal tables used by some endpoints here as they no longer exist
 
 	// ===== CLASSIC JOURNAL SYSTEM RESET =====
 	fmt.Println("   📊 CLASSIC JOURNAL: Menghapus journal lines...")
@@ -607,8 +599,14 @@ func logResetActivity(db *gorm.DB) {
 
 	// Also refresh materialized view if it exists
 	fmt.Println("   🔄 Refreshing account_balances materialized view...")
-	if err := db.Exec("REFRESH MATERIALIZED VIEW account_balances").Error; err != nil {
-		fmt.Printf("   ⚠️  Warning: Gagal refresh materialized view: %v\n", err)
+	var exists bool
+	db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'account_balances' AND relkind = 'm')").Scan(&exists)
+	if exists {
+		if err := db.Exec("REFRESH MATERIALIZED VIEW account_balances").Error; err != nil {
+			fmt.Printf("   ⚠️  Warning: Gagal refresh materialized view: %v\n", err)
+		}
+	} else {
+		fmt.Println("   ℹ️  Materialized view 'account_balances' tidak ditemukan, skip refresh.")
 	}
 }
 
@@ -637,22 +635,22 @@ func cleanUnusedAccounts(db *gorm.DB) error {
 	// ⚠️ IMPORTANT: Do NOT include accounts that are part of any active template!
 	// Valid template accounts: 2000, 2100, 2200, 4102, 5000, 5101, 5102, 5103, etc.
 	legacyAccounts := []string{
-		"1301", // Legacy Inventory (replaced by 1103)
-		"292",  // PENAMBAHAN PAJAK LAINNYA (SALES) - Invalid format
-		"293",  // PENDAPATAN ONGKIR (SHIPPING) - Invalid format
-		"1240", // PPN MASUKAN - Legacy, replaced by 2102-002
-		"1114", // PPH 21 DIBAYAR DIMUKA - Duplicate/Legacy
-		"1115", // PPH 23 DIBAYAR DIMUKA - Duplicate/Legacy
-		"1116", // POTONGAN PAJAK LAINNYA - Duplicate/Legacy
-		"1500", // FIXED ASSETS - Legacy header
-		"1501", // PERALATAN KANTOR - Legacy
-		"1502", // KENDARAAN - Legacy
-		"1503", // BANGUNAN - Legacy
-		"1509", // TRUK - Legacy
-		"3201", // LABA DITAHAN - Duplicate of 3102
+		"1301",                                 // Legacy Inventory (replaced by 1103)
+		"292",                                  // PENAMBAHAN PAJAK LAINNYA (SALES) - Invalid format
+		"293",                                  // PENDAPATAN ONGKIR (SHIPPING) - Invalid format
+		"1240",                                 // PPN MASUKAN - Legacy, replaced by 2102-002
+		"1114",                                 // PPH 21 DIBAYAR DIMUKA - Duplicate/Legacy
+		"1115",                                 // PPH 23 DIBAYAR DIMUKA - Duplicate/Legacy
+		"1116",                                 // POTONGAN PAJAK LAINNYA - Duplicate/Legacy
+		"1500",                                 // FIXED ASSETS - Legacy header
+		"1501",                                 // PERALATAN KANTOR - Legacy
+		"1502",                                 // KENDARAAN - Legacy
+		"1503",                                 // BANGUNAN - Legacy
+		"1509",                                 // TRUK - Legacy
+		"3201",                                 // LABA DITAHAN - Duplicate of 3102
 		"2104", "2107", "2108", "2111", "2112", // Legacy Tax Payables
-		"4900", // OTHER INCOME - Legacy English
-		"5900", // GENERAL EXPENSE - Legacy English
+		"4900",                                 // OTHER INCOME - Legacy English
+		"5900",                                 // GENERAL EXPENSE - Legacy English
 		"5200", "5201", "5202", "5203", "5204", // Legacy Expenses (using 5xxx instead of 6xxx)
 		"4201", // PENDAPATAN LAIN-LAIN - Duplicate of 7101
 	}

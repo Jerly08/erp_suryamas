@@ -562,6 +562,16 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 					return fmt.Errorf("failed to reverse cash/bank balance: %w", err)
 				}
 
+				// ✅ CRITICAL: Sync linked COA account balance after reversal
+				if cashBank.AccountID > 0 {
+					if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
+						newBalance, cashBank.AccountID).Error; err != nil {
+						log.Printf("⚠️ Warning: Failed to sync COA balance for GL account %d on reversal: %v", cashBank.AccountID, err)
+					} else {
+						log.Printf("🔄 Synced COA balance for GL account %d to %.2f (reversal)", cashBank.AccountID, newBalance)
+					}
+				}
+
 				// Insert reversal transaction row for Cash & Bank UI/history
 				txRow := &models.CashBankTransaction{
 					CashBankID:      cashBank.ID,
@@ -625,6 +635,16 @@ func (eps *EnhancedPaymentServiceWithJournal) applyCashBankMovement(
 	cashBank.Balance = newBalance
 	if err := tx.Save(cashBank).Error; err != nil {
 		return fmt.Errorf("save cash bank: %w", err)
+	}
+
+	// ✅ CRITICAL: Sync linked COA account balance to maintain COA <> CashBank consistency
+	if cashBank.AccountID > 0 {
+		if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
+			newBalance, cashBank.AccountID).Error; err != nil {
+			log.Printf("⚠️ Warning: Failed to sync COA balance for GL account %d: %v", cashBank.AccountID, err)
+		} else {
+			log.Printf("🔄 Synced COA balance for GL account %d to %.2f", cashBank.AccountID, newBalance)
+		}
 	}
 
 	// Insert transaction row for Cash&Bank UI/history

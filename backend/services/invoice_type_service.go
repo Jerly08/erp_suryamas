@@ -1,10 +1,11 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
 	"strings"
+
 	"gorm.io/gorm"
-	"app-sistem-akuntansi/models"
 )
 
 type InvoiceTypeService struct {
@@ -19,11 +20,11 @@ func NewInvoiceTypeService(db *gorm.DB) *InvoiceTypeService {
 func (s *InvoiceTypeService) GetInvoiceTypes(activeOnly bool) ([]models.InvoiceTypeResponse, error) {
 	var invoiceTypes []models.InvoiceType
 	query := s.db.Preload("Creator")
-	
+
 	if activeOnly {
 		query = query.Where("is_active = ?", true)
 	}
-	
+
 	if err := query.Order("name ASC").Find(&invoiceTypes).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch invoice types: %v", err)
 	}
@@ -196,15 +197,9 @@ func (s *InvoiceTypeService) DeleteInvoiceType(id uint) error {
 		return fmt.Errorf("cannot delete invoice type: it is being used by %d sales record(s). Consider deactivating instead", salesCount)
 	}
 
-	// Check if there are counters for this type
-	var counterCount int64
-	if err := s.db.Model(&models.InvoiceCounter{}).Where("invoice_type_id = ?", id).Count(&counterCount).Error; err != nil {
-		return fmt.Errorf("failed to check counter usage: %v", err)
-	}
-
-	if counterCount > 0 {
-		return fmt.Errorf("cannot delete invoice type: it has counter history. Consider deactivating instead")
-	}
+	// Note: We deliberately skip checking for existing counter history.
+	// Invoice types with counters can still be soft-deleted. The counters will remain in the DB,
+	// but the invoice type will no longer be available for new transactions.
 
 	// Soft delete
 	if err := s.db.Delete(&invoiceType).Error; err != nil {

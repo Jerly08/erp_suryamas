@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"app-sistem-akuntansi/models"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -39,10 +40,10 @@ func (rm *RBACManager) RequireRole(roles ...string) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Insufficient role permissions",
-			"code":  "INSUFFICIENT_ROLE",
+			"error":          "Insufficient role permissions",
+			"code":           "INSUFFICIENT_ROLE",
 			"required_roles": roles,
-			"user_role": roleStr,
+			"user_role":      roleStr,
 		})
 		c.Abort()
 	}
@@ -98,10 +99,10 @@ func (rm *RBACManager) RequirePermission(resource, action string) gin.HandlerFun
 				}
 				if !ok {
 					c.JSON(http.StatusForbidden, gin.H{
-						"error": "Insufficient permissions",
-						"code":  "INSUFFICIENT_PERMISSION",
+						"error":               "Insufficient permissions",
+						"code":                "INSUFFICIENT_PERMISSION",
 						"required_permission": permissionName,
-						"user_role": roleStr,
+						"user_role":           roleStr,
 					})
 					c.Abort()
 					return
@@ -139,16 +140,38 @@ func (rm *RBACManager) RequirePermission(resource, action string) gin.HandlerFun
 
 		if !hasPermission {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "Insufficient permissions",
-				"code":  "INSUFFICIENT_PERMISSION",
+				"error":               "Insufficient permissions",
+				"code":                "INSUFFICIENT_PERMISSION",
 				"required_permission": permissionName,
-				"user_role": roleStr,
+				"user_role":           roleStr,
 			})
 			c.Abort()
 			return
 		}
 
 		c.Next()
+	}
+}
+
+// AutoPermission automatically determines the required action based on the HTTP method
+func (rm *RBACManager) AutoPermission(resource string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var action string
+		switch c.Request.Method {
+		case http.MethodGet:
+			action = "view"
+		case http.MethodPost:
+			action = "create"
+		case http.MethodPut, http.MethodPatch:
+			action = "edit"
+		case http.MethodDelete:
+			action = "delete"
+		default:
+			action = "view" // fallback
+		}
+
+		// Delegate to RequirePermission
+		rm.RequirePermission(resource, action)(c)
 	}
 }
 
@@ -179,7 +202,7 @@ func (rm *RBACManager) RequirePermissions(permissions ...string) gin.HandlerFunc
 		}
 
 		roleStr := userRole.(string)
-		
+
 		for _, permission := range permissions {
 			// 1) If user has module permission record, use it
 			if userID != 0 {
@@ -198,11 +221,11 @@ func (rm *RBACManager) RequirePermissions(permissions ...string) gin.HandlerFunc
 						}
 						if !ok {
 							c.JSON(http.StatusForbidden, gin.H{
-								"error": "Insufficient permissions",
-								"code":  "INSUFFICIENT_PERMISSION",
+								"error":                "Insufficient permissions",
+								"code":                 "INSUFFICIENT_PERMISSION",
 								"required_permissions": permissions,
-								"missing_permission": permission,
-								"user_role": roleStr,
+								"missing_permission":   permission,
+								"user_role":            roleStr,
 							})
 							c.Abort()
 							return
@@ -243,11 +266,11 @@ func (rm *RBACManager) RequirePermissions(permissions ...string) gin.HandlerFunc
 
 			if !hasPermission {
 				c.JSON(http.StatusForbidden, gin.H{
-					"error": "Insufficient permissions",
-					"code":  "INSUFFICIENT_PERMISSION",
+					"error":                "Insufficient permissions",
+					"code":                 "INSUFFICIENT_PERMISSION",
 					"required_permissions": permissions,
-					"missing_permission": permission,
-					"user_role": roleStr,
+					"missing_permission":   permission,
+					"user_role":            roleStr,
 				})
 				c.Abort()
 				return
@@ -285,7 +308,7 @@ func (rm *RBACManager) RequireAnyPermission(permissions ...string) gin.HandlerFu
 		}
 
 		roleStr := userRole.(string)
-		
+
 		for _, permission := range permissions {
 			// 1) Role table quick check
 			hasPermission, err := rm.hasPermission(roleStr, permission)
@@ -340,10 +363,10 @@ func (rm *RBACManager) RequireAnyPermission(permissions ...string) gin.HandlerFu
 		}
 
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Insufficient permissions",
-			"code":  "INSUFFICIENT_PERMISSION",
+			"error":           "Insufficient permissions",
+			"code":            "INSUFFICIENT_PERMISSION",
 			"required_any_of": permissions,
-			"user_role": roleStr,
+			"user_role":       roleStr,
 		})
 		c.Abort()
 	}
@@ -438,7 +461,6 @@ func (rm *RBACManager) InventoryManagerOrAdmin() gin.HandlerFunc {
 	return rm.RequireRole(models.RoleAdmin, models.RoleInventoryManager)
 }
 
-
 // Custom permission checkers for specific resources
 
 // CanReadFinancialData checks if user can read financial data
@@ -485,7 +507,7 @@ func (rm *RBACManager) CanManageInventory() gin.HandlerFunc {
 
 func (rm *RBACManager) hasPermission(role, permissionName string) (bool, error) {
 	var count int64
-	
+
 	// Split permission name to get resource and action
 	parts := strings.Split(permissionName, ":")
 	if len(parts) != 2 {

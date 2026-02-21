@@ -2176,7 +2176,7 @@ const ReportsPage: React.FC = () => {
   };
 
   return (
-    <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'inventory_manager']}>
+    <SimpleLayout>
       <Box p={8}>
         <VStack spacing={8} align="stretch">
           <VStack align="start" spacing={4}>

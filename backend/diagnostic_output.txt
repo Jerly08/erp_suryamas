@@ -1,0 +1,42 @@
+﻿=== BALANCE SHEET FIX: Correcting Payment SSOT Entries ===
+
+Γ£à Found AP account: 2101-001 UTANG USAHA ΓÇô LOKAL (ID=360)
+Γ£à Found header account: 2101 UTANG USAHA (ID=150, is_header=true)
+Γ£à Fixed 5 journal lines: changed account from 2101(ID=150) to 2101-001(ID=360)
+Γ£à Found bank account: 1101-005 BANK - OCBC (ID=448)
+
+--- Payments without SSOT entries: 7 ---
+  Payment #1 (PAY/2026/02/0002): Amount=12487500.00 Date=2026-02-19
+  Payment #2 (PAY/2026/02/0003): Amount=9365625.00 Date=2026-02-19
+  Payment #3 (PAY/2026/02/0004): Amount=7024218.00 Date=2026-02-19
+  Payment #5 (PAY/2026/02/0006): Amount=3951123.00 Date=2026-02-19
+  Payment #6 (PAY/2026/02/0007): Amount=2963342.00 Date=2026-02-19
+  Payment #7 (PAY/2026/02/0008): Amount=2222507.00 Date=2026-02-19
+  Payment #8 (PAY/2026/02/0009): Amount=1666880.00 Date=2026-02-19
+  Γ£à Created SSOT entry for Payment #1 (PAY/2026/02/0002): Dr AP 12487500.00 / Cr Bank 12487500.00
+  Γ£à Created SSOT entry for Payment #2 (PAY/2026/02/0003): Dr AP 9365625.00 / Cr Bank 9365625.00
+  Γ£à Created SSOT entry for Payment #3 (PAY/2026/02/0004): Dr AP 7024218.00 / Cr Bank 7024218.00
+  Γ£à Created SSOT entry for Payment #5 (PAY/2026/02/0006): Dr AP 3951123.00 / Cr Bank 3951123.00
+  Γ£à Created SSOT entry for Payment #6 (PAY/2026/02/0007): Dr AP 2963342.00 / Cr Bank 2963342.00
+  Γ£à Created SSOT entry for Payment #7 (PAY/2026/02/0008): Dr AP 2222507.00 / Cr Bank 2222507.00
+  Γ£à Created SSOT entry for Payment #8 (PAY/2026/02/0009): Dr AP 1666880.00 / Cr Bank 1666880.00
+
+=== VERIFICATION: Post-Fix Balance Sheet ===
+  1101-005 BANK - OCBC                              (ASSET) Net=101132175.00
+  1102-001 PIUTANG USAHA ΓÇô PIHAK KETIGA             (ASSET) Net=28860000.00
+  1103-001 PERSEDIAAN BARANG DAGANG                 (ASSET) Net=50000000.00
+  2101-001 UTANG USAHA ΓÇô LOKAL                      (LIABILITY) Net=-27827825.00
+  2102-001 PPN KELUARAN                             (LIABILITY) Net=5720000.00
+  2102-002 PPN MASUKAN                              (LIABILITY) Net=-9900000.00
+  3101 MODAL DISETOR                            (EQUITY) Net=200000000.00
+  4101-001 PENJUALAN LOKAL                          (REVENUE) Net=52000000.00
+  5101 PEMBELIAN BARANG DAGANG                  (EXPENSE) Net=40000000.00
+
+  TOTAL ASSETS:      179992175.00
+  TOTAL LIABILITIES: -32007825.00
+  TOTAL EQUITY:      200000000.00
+  NET INCOME:        12000000.00
+  L+E+NI:            179992175.00
+  DIFFERENCE:        0.00
+
+≡ƒÄë≡ƒÄë≡ƒÄë BALANCE SHEET IS BALANCED! ≡ƒÄë≡ƒÄë≡ƒÄë

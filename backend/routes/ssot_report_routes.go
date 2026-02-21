@@ -4,6 +4,7 @@ import (
 	"app-sistem-akuntansi/controllers"
 	"app-sistem-akuntansi/middleware"
 	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -15,6 +16,7 @@ func SetupSSOTReportRoutes(
 	unifiedJournalService *services.UnifiedJournalService,
 	enhancedReportService *services.EnhancedReportService,
 	jwtManager *middleware.JWTManager,
+	rbacMgr *middleware.RBACManager,
 ) {
 	// Initialize SSOT Report Integration Service
 	ssotReportIntegrationService := services.NewSSOTReportIntegrationService(
@@ -23,16 +25,16 @@ func SetupSSOTReportRoutes(
 		enhancedReportService,
 	)
 
-// Initialize SSOT Report Integration Controller
-ssotReportController := controllers.NewSSOTReportIntegrationController(ssotReportIntegrationService, db)
+	// Initialize SSOT Report Integration Controller
+	ssotReportController := controllers.NewSSOTReportIntegrationController(ssotReportIntegrationService, db)
 
 	// Create SSOT reports group with authentication and authorization
 	ssotReportsGroup := router.Group("/ssot-reports")
 	ssotReportsGroup.Use(jwtManager.AuthRequired())
-	ssotReportsGroup.Use(middleware.RoleRequired("finance", "admin", "director", "auditor"))
+	ssotReportsGroup.Use(rbacMgr.AutoPermission("reports"))
 
 	// ✨ MAIN INTEGRATION ENDPOINTS
-	
+
 	// 🎯 Get all integrated financial reports (main endpoint)
 	ssotReportsGroup.GET("/integrated", ssotReportController.GetIntegratedFinancialReports)
 
@@ -41,7 +43,6 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 
 	// 📊 System status and health check
 	ssotReportsGroup.GET("/status", ssotReportController.GetSSOTReportStatus)
-
 
 	// ✨ INDIVIDUAL SSOT REPORT ENDPOINTS
 
@@ -53,7 +54,7 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 	ssotReportsGroup.GET("/purchase-report", purchaseReportController.GetPurchaseReport)
 	ssotReportsGroup.GET("/purchase-summary", purchaseReportController.GetPurchaseSummary)
 	ssotReportsGroup.GET("/purchase-report/validate", purchaseReportController.ValidatePurchaseReport)
-	
+
 	// 📈 Vendor Analysis Report (DEPRECATED - replaced by Purchase Report)
 	ssotReportsGroup.GET("/vendor-analysis", func(c *gin.Context) {
 		c.JSON(400, gin.H{
@@ -61,9 +62,9 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 			"error":   "This endpoint has been replaced by /api/v1/ssot-reports/purchase-report",
 			"message": "Vendor Analysis has been replaced with more credible Purchase Report",
 			"new_endpoints": gin.H{
-				"purchase_report":   "/api/v1/ssot-reports/purchase-report",
-				"purchase_summary":  "/api/v1/ssot-reports/purchase-summary",
-				"validate_report":   "/api/v1/ssot-reports/purchase-report/validate",
+				"purchase_report":  "/api/v1/ssot-reports/purchase-report",
+				"purchase_summary": "/api/v1/ssot-reports/purchase-summary",
+				"validate_report":  "/api/v1/ssot-reports/purchase-report/validate",
 			},
 			"migration_guide": "Use the new Purchase Report for accurate vendor and purchase analysis",
 		})
@@ -96,7 +97,7 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 	ssotReportsGroup.GET("/account-balances", ssotAccountBalanceController.GetSSOTAccountBalances)
 
 	// ✨ ENHANCED REPORT ENDPOINTS (with SSOT integration)
-	
+
 	// Create enhanced reports group for better organization
 	enhancedGroup := ssotReportsGroup.Group("/enhanced")
 	{
@@ -110,8 +111,8 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 			c.Set("use_ssot", true)
 			// Forward to existing enhanced report controller but with SSOT context
 			c.JSON(200, gin.H{
-				"status":  "redirect",
-				"message": "Use /api/v1/reports/profit-loss for P&L with SSOT integration",
+				"status":        "redirect",
+				"message":       "Use /api/v1/reports/profit-loss for P&L with SSOT integration",
 				"ssot_endpoint": "/api/v1/ssot-reports/integrated",
 			})
 		})
@@ -119,8 +120,8 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 		enhancedGroup.GET("/balance-sheet", func(c *gin.Context) {
 			c.Set("use_ssot", true)
 			c.JSON(200, gin.H{
-				"status":  "redirect",
-				"message": "Use /api/v1/reports/balance-sheet for Balance Sheet with SSOT integration",
+				"status":        "redirect",
+				"message":       "Use /api/v1/reports/balance-sheet for Balance Sheet with SSOT integration",
 				"ssot_endpoint": "/api/v1/ssot-reports/integrated",
 			})
 		})
@@ -128,8 +129,8 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 		enhancedGroup.GET("/cash-flow", func(c *gin.Context) {
 			c.Set("use_ssot", true)
 			c.JSON(200, gin.H{
-				"status":  "redirect",
-				"message": "Use /api/v1/reports/cash-flow for Cash Flow with SSOT integration",
+				"status":        "redirect",
+				"message":       "Use /api/v1/reports/cash-flow for Cash Flow with SSOT integration",
 				"ssot_endpoint": "/api/v1/ssot-reports/integrated",
 			})
 		})
@@ -137,32 +138,32 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 		enhancedGroup.GET("/sales-summary", func(c *gin.Context) {
 			c.Set("use_ssot", true)
 			c.JSON(200, gin.H{
-				"status":  "redirect",
-				"message": "Use /api/v1/reports/sales-summary for Sales Summary with SSOT integration",
+				"status":        "redirect",
+				"message":       "Use /api/v1/reports/sales-summary for Sales Summary with SSOT integration",
 				"ssot_endpoint": "/api/v1/ssot-reports/integrated",
 			})
 		})
 	}
 
 	// ✨ COMPATIBILITY ROUTES (for existing frontend compatibility)
-	
+
 	// Create compatibility group for legacy support
 	compatGroup := ssotReportsGroup.Group("/compat")
 	{
 		// Map existing report endpoints to SSOT versions
 		compatGroup.GET("/vendor-analysis", func(c *gin.Context) {
 			c.JSON(400, gin.H{
-				"success": false,
-				"error":   "This endpoint has been replaced by /api/v1/ssot-reports/purchase-report",
-				"message": "Vendor Analysis has been replaced with more credible Purchase Report",
-				"redirect_to": "/api/v1/ssot-reports/purchase-report",
+				"success":            false,
+				"error":              "This endpoint has been replaced by /api/v1/ssot-reports/purchase-report",
+				"message":            "Vendor Analysis has been replaced with more credible Purchase Report",
+				"redirect_to":        "/api/v1/ssot-reports/purchase-report",
 				"compatibility_note": "Use Purchase Report for more accurate vendor and purchase analysis",
 			})
 		})
 		compatGroup.GET("/trial-balance", ssotReportController.GetSSOTTrialBalance)
 		compatGroup.GET("/general-ledger", ssotReportController.GetSSOTGeneralLedger)
 		compatGroup.GET("/journal-entry-analysis", ssotReportController.GetSSOTJournalAnalysis)
-		
+
 		// Provide information about SSOT integration for existing endpoints
 		compatGroup.GET("/info", func(c *gin.Context) {
 			c.JSON(200, gin.H{
@@ -171,18 +172,18 @@ ssotReportController := controllers.NewSSOTReportIntegrationController(ssotRepor
 				"ssot_integration": gin.H{
 					"version":     "1.0",
 					"description": "All reports now integrated with Single Source of Truth (SSOT) journal system",
-						"benefits": []string{
-							"Real-time data consistency",
-							"Automated journal entry integration",
-							"Enhanced data integrity",
-							"Comprehensive audit trail",
-						},
-				},
-					"migration_guide": gin.H{
-						"existing_endpoints": "Still functional with SSOT integration",
-						"new_endpoints":      "Use /api/v1/ssot-reports/* for full SSOT features",
-						"breaking_changes":   "None - fully backward compatible",
+					"benefits": []string{
+						"Real-time data consistency",
+						"Automated journal entry integration",
+						"Enhanced data integrity",
+						"Comprehensive audit trail",
 					},
+				},
+				"migration_guide": gin.H{
+					"existing_endpoints": "Still functional with SSOT integration",
+					"new_endpoints":      "Use /api/v1/ssot-reports/* for full SSOT features",
+					"breaking_changes":   "None - fully backward compatible",
+				},
 			})
 		})
 	}
@@ -196,6 +197,7 @@ func RegisterSSOTReportRoutesInMain(
 	unifiedJournalService *services.UnifiedJournalService,
 	enhancedReportService *services.EnhancedReportService,
 	jwtManager *middleware.JWTManager,
+	rbacMgr *middleware.RBACManager,
 ) {
-	SetupSSOTReportRoutes(v1, db, unifiedJournalService, enhancedReportService, jwtManager)
+	SetupSSOTReportRoutes(v1, db, unifiedJournalService, enhancedReportService, jwtManager, rbacMgr)
 }

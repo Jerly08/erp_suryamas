@@ -6,9 +6,11 @@ import (
 
 	"app-sistem-akuntansi/config"
 	"app-sistem-akuntansi/database"
+	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/routes"
 	"app-sistem-akuntansi/services"
 	"app-sistem-akuntansi/startup"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -45,15 +47,15 @@ func main() {
 
 	// Connect to database
 	db := database.ConnectDB()
-	
+
 	// Auto migrate models
 	database.AutoMigrate(db)
-	
+
 	// Run auto SQL migrations (including Bank Mandiri fix)
 	if err := database.RunAutoMigrations(db); err != nil {
 		log.Printf("Warning: Auto-migration failed: %v", err)
 	}
-	
+
 	// Check and verify SSOT Journal Migration
 	log.Println("⚡ Starting SSOT Journal System verification...")
 	if err := startup.CheckAndRunSSOTMigration(db); err != nil {
@@ -63,7 +65,7 @@ func main() {
 	} else {
 		log.Println("✅ SSOT Journal System is ready and verified!")
 	}
-	
+
 	// Migrate to Unified Journals (if old journal_entries exist)
 	log.Println("⚡ Checking migration to Unified Journals...")
 	if err := startup.MigrateToUnifiedJournals(db); err != nil {
@@ -73,18 +75,42 @@ func main() {
 	} else {
 		log.Println("✅ Unified Journals migration check completed!")
 	}
-	
+
+	// 🔄 Auto-migrate purchase payment journals to SSOT (idempotent - safe to run every startup)
+	log.Println("⚡ Checking purchase payment SSOT journal migration...")
+	{
+		accountRepo := repositories.NewAccountRepository(db)
+		unifiedJournalService := services.NewUnifiedJournalService(db)
+		paymentJournalSvc := services.NewPurchasePaymentJournalService(db, accountRepo, unifiedJournalService, nil)
+		migrated, skipped, err := paymentJournalSvc.MigrateExistingPaymentsToSSOT()
+		if err != nil {
+			log.Printf("❌ Payment journal SSOT migration failed: %v", err)
+		} else if migrated > 0 {
+			log.Printf("✅ Payment journal migration: %d migrated, %d skipped", migrated, skipped)
+		} else {
+			log.Printf("✅ Payment journal SSOT migration: all up-to-date (%d already migrated)", skipped)
+		}
+	}
+
+	// 🔄 Sync accounts.balance from SSOT journals (fixes stale balances after cleanup/migration)
+	{
+		balanceSyncSvc := services.NewBalanceSyncService(db)
+		if err := balanceSyncSvc.SyncAccountBalancesFromSSOT(); err != nil {
+			log.Printf("❌ Balance sync failed: %v", err)
+		}
+	}
+
 	// Migrate permissions table
 	if err := database.MigratePermissions(db); err != nil {
 		log.Printf("Error migrating permissions: %v", err)
 	}
-	
+
 	// Seed database with initial data
 	database.SeedData(db)
 
 	// Ensure default Asset Categories exist and migrate legacy asset categories
 	database.AssetCategoryMigration(db)
-	
+
 	// Run startup tasks including fix account header status
 	startupService := services.NewStartupService(db)
 	startupService.RunStartupTasks()
@@ -110,8 +136,8 @@ func main() {
 	// CORS middleware with dynamic origins
 	allowedOrigins := config.GetAllowedOrigins(cfg)
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     allowedOrigins,
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowOrigins: allowedOrigins,
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		// Include Cache-Control to satisfy browser preflight checks (Axios often sends it)
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "Cache-Control"},
 		ExposeHeaders:    []string{"Content-Length"},
@@ -122,7 +148,7 @@ func main() {
 	if cfg.Environment == "development" || os.Getenv("ENABLE_SWAGGER") == "true" {
 		config.UpdateSwaggerDocs()
 		config.PrintSwaggerInfo()
-		
+
 		// Setup enhanced dynamic Swagger routes with authentication support
 		config.SetupEnhancedSwaggerRoutes(r)
 	}
@@ -135,7 +161,7 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	
+
 	log.Printf("Server starting on port %s", port)
 	log.Fatal(r.Run(":" + port))
 }

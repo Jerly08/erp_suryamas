@@ -1,0 +1,2 @@
+-- Empty down script by design. 
+-- The simple_ssot_journals table cannot be safely restored via sql down script since data was transitioned to unified ledger.

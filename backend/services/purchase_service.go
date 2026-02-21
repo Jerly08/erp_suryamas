@@ -31,10 +31,8 @@ type PurchaseService struct {
 	unifiedJournalService *UnifiedJournalService
 	// Asset capitalization
 	assetCapitalizationSvc *AssetCapitalizationService
-	// Journal Service V2 for COA balance updates
-	journalServiceV2   *PurchaseJournalServiceV2   // Legacy (simple_ssot_journals)
-	journalServiceSSOT *PurchaseJournalServiceSSOT // NEW: unified_journal_ledger (for Balance Sheet)
-	coaService         *COAService
+	journalServiceSSOT     *PurchaseJournalServiceSSOT // NEW: unified_journal_ledger (for Balance Sheet)
+	coaService             *COAService
 }
 
 type PurchaseResult struct {
@@ -64,9 +62,6 @@ func NewPurchaseService(
 	taxAccountService := NewTaxAccountService(db)
 	ssotAdapter := NewPurchaseSSOTJournalAdapter(db, unifiedJournalService, accountRepo, taxAccountService)
 
-	// Initialize PurchaseJournalServiceV2 for COA balance updates (legacy)
-	journalServiceV2 := NewPurchaseJournalServiceV2(db, journalRepo, coaService)
-
 	ps := &PurchaseService{
 		db:                    db,
 		purchaseRepo:          purchaseRepo,
@@ -79,7 +74,6 @@ func NewPurchaseService(
 		pdfService:            pdfService,
 		unifiedJournalService: unifiedJournalService,
 		ssotJournalAdapter:    ssotAdapter,
-		journalServiceV2:      journalServiceV2,
 		journalServiceSSOT:    purchaseJournalServiceSSOT,
 		coaService:            coaService,
 	}
@@ -343,6 +337,27 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 		fmt.Printf("❌ Failed to delete purchase %d: %v\n", id, err)
 		return fmt.Errorf("failed to delete purchase: %v", err)
 	}
+
+	// CRITICAL FIX: Also soft-delete any SSOT unified_journal_ledger entries linked to this purchase
+	if err := s.db.Session(&gorm.Session{AllowGlobalUpdate: true}).
+		Model(&models.SSOTJournalEntry{}).
+		Where("source_type = 'PURCHASE' AND source_id = ?", id).
+		Update("deleted_at", time.Now()).Error; err != nil {
+		fmt.Printf("⚠ Warning: failed to soft-delete SSOT journal entries for purchase %d: %v\n", id, err)
+	}
+
+	// Also soft-delete any unified_journal_lines
+	if err := s.db.Exec(`
+		UPDATE unified_journal_lines 
+		SET deleted_at = CURRENT_TIMESTAMP
+		WHERE deleted_at IS NULL AND journal_id IN (
+			SELECT id FROM unified_journal_ledger 
+			WHERE source_type = 'PURCHASE' AND source_id = ?
+		)
+	`, id).Error; err != nil {
+		fmt.Printf("⚠ Warning: failed to soft-delete SSOT journal lines for purchase %d: %v\n", id, err)
+	}
+
 	fmt.Printf("✅ Purchase %d deleted successfully\n", id)
 	return nil
 }
@@ -1052,33 +1067,19 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	}
 
 	// 2. Create journal entries - PRIORITIZE SSOT (no double posting)
-	fmt.Printf("🏗️ Creating journal entries for approved purchase %s\n", purchase.Code)
+	fmt.Printf("🏗️ Creating journal entries for approved purchase %s (ONLY using SSOT)\n", purchase.Code)
 
-	// ✅ CRITICAL FIX: Use SSOT service ONLY (prevent double posting)
+	// Use SSOT service exclusively
 	if s.journalServiceSSOT != nil {
 		if err := s.journalServiceSSOT.CreatePurchaseJournal(purchase, nil); err != nil {
 			fmt.Printf("⚠️ Warning: SSOT journal creation failed: %v\n", err)
-
-			// 🔄 Fallback to V2 journal service only if SSOT fails
-			fmt.Printf("🔄 Attempting fallback to V2 journal service\n")
-			if err := s.handlePurchaseJournalUpdate(purchase, "PENDING", nil); err != nil {
-				fmt.Printf("❌ Both SSOT and V2 journal creation failed: %v\n", err)
-				// Continue processing - journal can be recreated later
-			} else {
-				fmt.Printf("✅ [V2] Created purchase journal entries (fallback)\n")
-			}
+			// Continue processing - journal can be recreated later
 		} else {
 			fmt.Printf("✅ [SSOT] Created purchase journal entries for Balance Sheet integration\n")
-			// ✅ SUCCESS: SSOT journal created, skip V2 to prevent double posting
 		}
 	} else {
-		// No SSOT service available, use V2 as primary
-		fmt.Printf("⚠️ SSOT journal service not available, using V2 journal service\n")
-		if err := s.handlePurchaseJournalUpdate(purchase, "PENDING", nil); err != nil {
-			fmt.Printf("⚠️ Warning: Failed to create V2 journal entries: %v\n", err)
-		} else {
-			fmt.Printf("📗 [V2] Created purchase journal entries\n")
-		}
+		// No SSOT service available
+		fmt.Printf("⚠️ SSOT journal service not available, skipping journal creation\n")
 	}
 
 	// 3. Update cash/bank balance for immediate payment methods
@@ -1851,30 +1852,6 @@ func (s *PurchaseService) updateCashBankBalanceForPurchase(purchase *models.Purc
 	fmt.Printf("💰 Balance updated: %s %.2f → %.2f (decreased by %.2f)\n",
 		cashBank.Name, oldBalance, cashBank.Balance, purchase.TotalAmount)
 
-	// 🔥 NEW: Sync COA balance after cash/bank balance update
-	fmt.Printf("🔧 Syncing COA balance after immediate payment purchase...\n")
-	if s.accountRepo != nil {
-		// Initialize COA sync service for immediate payment purchases
-		coaSyncService := NewPurchasePaymentCOASyncService(s.db, s.accountRepo)
-
-		// Sync COA balance to match cash/bank balance
-		if err := coaSyncService.SyncCOABalanceAfterPayment(
-			purchase.ID,
-			purchase.TotalAmount,
-			*purchase.BankAccountID,
-			purchase.UserID,
-			fmt.Sprintf("CASH-%s", purchase.Code),
-			fmt.Sprintf("Immediate payment for Purchase %s", purchase.Code),
-		); err != nil {
-			fmt.Printf("⚠️ Warning: Failed to sync COA balance for immediate payment: %v\n", err)
-			// Don't fail the entire purchase process, just log the warning
-		} else {
-			fmt.Printf("✅ COA balance synchronized successfully for immediate payment\n")
-		}
-	} else {
-		fmt.Printf("⚠️ Warning: Account repository not available for COA sync\n")
-	}
-
 	// Create cash/bank transaction record for audit trail
 	cashBankTransaction := &models.CashBankTransaction{
 		CashBankID:      *purchase.BankAccountID,
@@ -1968,13 +1945,8 @@ func (s *PurchaseService) createSSOTPurchaseJournalEntries(purchase *models.Purc
 	ctx := context.Background()
 	journalEntry, err := s.ssotJournalAdapter.CreatePurchaseJournalEntry(ctx, purchase, uint64(userID))
 	if err != nil {
-		// Robust fallback: write to simple_ssot_journals/items as POSTED so COA posted balances update
-		fmt.Printf("⚠️ SSOT create failed (%v). Falling back to simple_ssot_journals...\n", err)
-		if fbErr := s.createSimpleSSOTPurchaseJournalFallback(purchase); fbErr != nil {
-			return fmt.Errorf("failed SSOT and fallback: %v | fallbackErr: %v", err, fbErr)
-		}
-		fmt.Printf("✅ Fallback simple_ssot_journals posted for %s\n", purchase.Code)
-		return nil
+		fmt.Printf("⚠️ SSOT create failed (%v).\n", err)
+		return fmt.Errorf("failed SSOT: %v", err)
 	}
 
 	fmt.Printf("✅ SSOT Journal Entry created: %s (ID: %d) for purchase %s\n",
@@ -2063,164 +2035,4 @@ func (s *PurchaseService) GetDB() *gorm.DB {
 // CreateAndPostLegacyForCLI exposes legacy posting for CLI scripts (backfill)
 func (s *PurchaseService) CreateAndPostLegacyForCLI(purchase *models.Purchase) error {
 	return s.createAndPostPurchaseJournalEntries(purchase, purchase.UserID)
-}
-
-// createSimpleSSOTPurchaseJournalFallback inserts a posted purchase journal into simple_ssot_journals/items
-// This is a safety net so /coa/posted-balances reflects purchase impact even if unified SSOT posting fails
-func (s *PurchaseService) createSimpleSSOTPurchaseJournalFallback(purchase *models.Purchase) error {
-	// 1) Resolve required accounts
-	getAccID := func(code string) (uint, error) {
-		acc, err := s.accountRepo.GetAccountByCode(code)
-		if err != nil {
-			return 0, fmt.Errorf("account %s not found: %v", code, err)
-		}
-		return acc.ID, nil
-	}
-	invID, err := getAccID("1103-001")
-	if err != nil {
-		return err
-	}
-	ppnInputID, err := getAccID("2102-002")
-	if err != nil {
-		return err
-	}
-	apID, err := getAccID("2101")
-	if err != nil {
-		return err
-	}
-
-	// Optional withholdings
-	p21ID := uint(0)
-	if acc, err := s.accountRepo.GetAccountByCode("2102-003"); err == nil {
-		p21ID = acc.ID
-	}
-	p23ID := uint(0)
-	if acc, err := s.accountRepo.GetAccountByCode("2102-004"); err == nil {
-		p23ID = acc.ID
-	}
-
-	// Resolve cash/bank GL when immediate payment
-	resolveBankGL := func(bankAccountID *uint) (uint, error) {
-		if bankAccountID != nil && *bankAccountID != 0 {
-			var cb models.CashBank
-			if err := s.db.Select("account_id").First(&cb, *bankAccountID).Error; err == nil && cb.AccountID != 0 {
-				return cb.AccountID, nil
-			}
-		}
-		// Fallback to 1101 (Kas)
-		return getAccID("1101")
-	}
-
-	// 2) Create posted journal in simple_ssot_journals
-	type row struct{ ID uint }
-	var jr row
-	if err := s.db.Raw(
-		"INSERT INTO simple_ssot_journals (status, entry_date, reference, description) VALUES ('POSTED', ?, ?, ?) RETURNING id",
-		purchase.Date, purchase.Code, fmt.Sprintf("Purchase %s - %s", purchase.Code, purchase.Vendor.Name),
-	).Scan(&jr).Error; err != nil {
-		return fmt.Errorf("failed to insert simple_ssot_journals: %v", err)
-	}
-
-	// 3) Insert lines: debit inventory/expense items
-	lineNo := 1
-	for _, it := range purchase.PurchaseItems {
-		// Treat physical goods (non-service products) as inventory purchases so
-		// fallback journals also keep 1301 in sync with COGS postings
-		accID := invID
-		if it.Product.ID != 0 && !it.Product.IsService {
-			// Force inventory account for stock items, regardless of ExpenseAccountID
-			if it.ExpenseAccountID != 0 {
-				fmt.Printf("⚠️ [SSOT-FALLBACK] Inventory product %s (item %d) has ExpenseAccountID=%d configured; ignoring it and using inventory account ID %d\n",
-					it.Product.Name, it.ID, it.ExpenseAccountID, invID)
-			}
-		} else if it.ExpenseAccountID != 0 {
-			// Non-stock / service purchases: respect explicit expense account when provided
-			accID = uint(it.ExpenseAccountID)
-		}
-
-		if err := s.db.Exec(
-			"INSERT INTO simple_ssot_journal_items (journal_id, account_id, debit, credit, description, line_number) VALUES (?,?,?,?,?,?)",
-			jr.ID, accID, it.TotalPrice, 0, fmt.Sprintf("Purchase - %s", it.Product.Name), lineNo,
-		).Error; err != nil {
-			return fmt.Errorf("failed to insert item line: %v", err)
-		}
-		lineNo++
-	}
-
-	// Debit PPN Masukan if any
-	if purchase.PPNAmount > 0 {
-		if err := s.db.Exec(
-			"INSERT INTO simple_ssot_journal_items (journal_id, account_id, debit, credit, description, line_number) VALUES (?,?,?,?,?,?)",
-			jr.ID, ppnInputID, purchase.PPNAmount, 0, "PPN Masukan (Input VAT)", lineNo,
-		).Error; err != nil {
-			return fmt.Errorf("failed to insert PPN line: %v", err)
-		}
-		lineNo++
-	}
-
-	// Optional withholdings
-	if p21ID != 0 && purchase.PPh21Amount > 0 {
-		if err := s.db.Exec(
-			"INSERT INTO simple_ssot_journal_items (journal_id, account_id, debit, credit, description, line_number) VALUES (?,?,?,?,?,?)",
-			jr.ID, p21ID, 0, purchase.PPh21Amount, "PPh 21 Withholding", lineNo,
-		).Error; err != nil {
-			return fmt.Errorf("failed to insert PPh21 line: %v", err)
-		}
-		lineNo++
-	}
-	if p23ID != 0 && purchase.PPh23Amount > 0 {
-		if err := s.db.Exec(
-			"INSERT INTO simple_ssot_journal_items (journal_id, account_id, debit, credit, description, line_number) VALUES (?,?,?,?,?,?)",
-			jr.ID, p23ID, 0, purchase.PPh23Amount, "PPh 23 Withholding", lineNo,
-		).Error; err != nil {
-			return fmt.Errorf("failed to insert PPh23 line: %v", err)
-		}
-		lineNo++
-	}
-
-	// Credit side: immediate payment -> bank, else AP
-	if isImmediatePayment(purchase.PaymentMethod) {
-		bankGL, err := resolveBankGL(purchase.BankAccountID)
-		if err != nil {
-			return err
-		}
-		if err := s.db.Exec(
-			"INSERT INTO simple_ssot_journal_items (journal_id, account_id, debit, credit, description, line_number) VALUES (?,?,?,?,?,?)",
-			jr.ID, bankGL, 0, purchase.TotalAmount, fmt.Sprintf("%s Payment - %s", purchase.PaymentMethod, purchase.Vendor.Name), lineNo,
-		).Error; err != nil {
-			return fmt.Errorf("failed to insert bank credit line: %v", err)
-		}
-	} else {
-		if err := s.db.Exec(
-			"INSERT INTO simple_ssot_journal_items (journal_id, account_id, debit, credit, description, line_number) VALUES (?,?,?,?,?,?)",
-			jr.ID, apID, 0, purchase.TotalAmount, fmt.Sprintf("Accounts Payable - %s", purchase.Vendor.Name), lineNo,
-		).Error; err != nil {
-			return fmt.Errorf("failed to insert AP credit line: %v", err)
-		}
-	}
-
-	return nil
-}
-
-// handlePurchaseJournalUpdate handles journal entries creation/update/deletion when purchase status changes
-// This is similar to sales management journal update logic
-func (s *PurchaseService) handlePurchaseJournalUpdate(purchase *models.Purchase, oldStatus string, tx *gorm.DB) error {
-	if s.journalServiceV2 == nil {
-		fmt.Printf("⚠️ PurchaseJournalServiceV2 not initialized, skipping journal update\n")
-		return nil
-	}
-
-	// Use the V2 service to handle journal updates based on status change
-	return s.journalServiceV2.UpdatePurchaseJournal(purchase, oldStatus, tx)
-}
-
-// createPurchaseJournalOnApproval creates journal entries when purchase status becomes APPROVED
-func (s *PurchaseService) createPurchaseJournalOnApproval(purchase *models.Purchase, tx *gorm.DB) error {
-	if s.journalServiceV2 == nil {
-		fmt.Printf("⚠️ PurchaseJournalServiceV2 not initialized, skipping journal creation\n")
-		return nil
-	}
-
-	// Create journal entries for the approved purchase
-	return s.journalServiceV2.CreatePurchaseJournal(purchase, tx)
 }

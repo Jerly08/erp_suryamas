@@ -24,7 +24,8 @@ func MigratePPhPrepaidAccounts(db *gorm.DB) error {
 	legacyCodes := []string{"1114", "1115", "1116"}
 	for _, code := range legacyCodes {
 		var legacyAccount models.Account
-		if err := db.Where("code = ? AND deleted_at IS NULL", code).First(&legacyAccount).Error; err == nil {
+		result := db.Where("code = ? AND deleted_at IS NULL", code).Find(&legacyAccount)
+		if result.Error == nil && result.RowsAffected > 0 {
 			// Only soft-delete if the account has zero balance (no active transactions)
 			if legacyAccount.Balance == 0 {
 				now := time.Now()
@@ -70,10 +71,10 @@ func MigratePPhPrepaidAccounts(db *gorm.DB) error {
 	for _, pph := range pphAccounts {
 		var existingAccount models.Account
 
-		// Check if account already exists
-		result := db.Where("code = ? AND deleted_at IS NULL", pph.Code).First(&existingAccount)
+		// Check if account already exists using Find to suppress 'record not found' logs
+		result := db.Where("code = ? AND deleted_at IS NULL", pph.Code).Find(&existingAccount)
 
-		if result.Error == gorm.ErrRecordNotFound {
+		if result.Error == nil && result.RowsAffected == 0 {
 			// Account doesn't exist, create it
 			newAccount := models.Account{
 				Code:        pph.Code,
@@ -96,22 +97,17 @@ func MigratePPhPrepaidAccounts(db *gorm.DB) error {
 
 			// Set parent relationship to 1105 (PAJAK DIBAYAR DIMUKA)
 			var parentAccount models.Account
-			if err := db.Where("code = ? AND deleted_at IS NULL", pph.ParentCode).First(&parentAccount).Error; err == nil {
+			if parentResult := db.Where("code = ? AND deleted_at IS NULL", pph.ParentCode).Find(&parentAccount); parentResult.Error == nil && parentResult.RowsAffected > 0 {
 				db.Model(&newAccount).Update("parent_id", parentAccount.ID)
-				log.Printf("   → Set parent to %s (%s)", parentAccount.Code, parentAccount.Name)
 			} else {
 				// Fallback to 1100 (ASET LANCAR)
-				if err := db.Where("code = '1100' AND deleted_at IS NULL").First(&parentAccount).Error; err == nil {
+				if fallbackResult := db.Where("code = '1100' AND deleted_at IS NULL").Find(&parentAccount); fallbackResult.Error == nil && fallbackResult.RowsAffected > 0 {
 					db.Model(&newAccount).Update("parent_id", parentAccount.ID)
-					log.Printf("   → Set parent to %s (%s) (fallback)", parentAccount.Code, parentAccount.Name)
 				}
 			}
 		} else if result.Error != nil {
 			// Unexpected error
 			log.Printf("⚠️ Error checking account %s: %v", pph.Code, result.Error)
-		} else {
-			// Account exists
-			log.Printf("✓ PPh account %s already exists", pph.Code)
 		}
 	}
 

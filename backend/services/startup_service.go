@@ -149,20 +149,17 @@ func (s *StartupService) fixRevenueHeaderPostings() {
 
 	// Step 1: Find the header account (4101) and leaf account (4101-001)
 	var headerAccount models.Account
-	if err := s.DB.Where("code = ? AND deleted_at IS NULL", "4101").First(&headerAccount).Error; err != nil {
-		log.Printf("ℹ️ Account 4101 not found, skipping revenue header fix")
+	if result := s.DB.Where("code = ? AND deleted_at IS NULL", "4101").Find(&headerAccount); result.Error != nil || result.RowsAffected == 0 {
 		return
 	}
 
 	var leafAccount models.Account
-	if err := s.DB.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&leafAccount).Error; err != nil {
-		log.Printf("⚠️ Leaf account 4101-001 not found, cannot fix revenue header postings")
+	if result := s.DB.Where("code = ? AND deleted_at IS NULL", "4101-001").Find(&leafAccount); result.Error != nil || result.RowsAffected == 0 {
 		return
 	}
 
 	// Verify 4101 is actually a header
 	if !headerAccount.IsHeader {
-		log.Printf("ℹ️ Account 4101 is not a header, no fix needed")
 		return
 	}
 
@@ -216,7 +213,6 @@ func (s *StartupService) fixRevenueHeaderPostings() {
 	}
 
 	if !fixApplied {
-		log.Printf("ℹ️ No revenue data pointing to header 4101 found, no fix needed")
 		return
 	}
 
@@ -289,8 +285,7 @@ func (s *StartupService) fixEquityBalancesFromJournals() {
 
 	// Find account 3101 MODAL DISETOR
 	var equityAccount models.Account
-	if err := s.DB.Where("code = ? AND deleted_at IS NULL", "3101").First(&equityAccount).Error; err != nil {
-		log.Printf("ℹ️ Account 3101 not found, skipping equity balance fix")
+	if result := s.DB.Where("code = ? AND deleted_at IS NULL", "3101").Find(&equityAccount); result.Error != nil || result.RowsAffected == 0 {
 		return
 	}
 
@@ -312,7 +307,6 @@ func (s *StartupService) fixEquityBalancesFromJournals() {
 
 	// Only fix if the balance is different
 	if rawBalance == equityAccount.Balance {
-		log.Printf("ℹ️ Account 3101 balance is already correct: %.2f", equityAccount.Balance)
 		return
 	}
 

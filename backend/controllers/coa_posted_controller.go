@@ -31,7 +31,7 @@ func NewCOAPostedController(db *gorm.DB) *COAPostedController {
 // GET /api/v1/coa/posted-balances
 func (ctl *COAPostedController) GetPostedBalances(c *gin.Context) {
 	// Aggregate SSOT sums per account with posted-only rules.
-	// Prefer unified_journal_*; also include fallback sums from simple_ssot_journals.
+	// Prefer unified_journal_*. Removed fallback sums from simple_ssot_journals.
 	query := `
 		WITH uj AS (
 			SELECT 
@@ -42,27 +42,16 @@ func (ctl *COAPostedController) GetPostedBalances(c *gin.Context) {
 			JOIN unified_journal_ledger ujd ON ujd.id = ujl.journal_id
 			LEFT JOIN sales s ON ujd.source_type = 'SALE' AND ujd.source_id = s.id
 			GROUP BY ujl.account_id
-		),
-		sj AS (
-			SELECT 
-				ssi.account_id,
-				COALESCE(SUM(ssi.debit), 0) AS debit_sum,
-				COALESCE(SUM(ssi.credit), 0) AS credit_sum
-			FROM simple_ssot_journal_items ssi
-			JOIN simple_ssot_journals ssj ON ssj.id = ssi.journal_id
-			WHERE ssj.status = 'POSTED' AND ssj.deleted_at IS NULL
-			GROUP BY ssi.account_id
 		)
 		SELECT
 		  a.id   AS account_id,
 		  a.code AS account_code,
 		  a.name AS account_name,
 		  a.type AS account_type,
-		  COALESCE(uj.debit_sum, 0) + COALESCE(sj.debit_sum, 0)  AS debit_total,
-		  COALESCE(uj.credit_sum, 0) + COALESCE(sj.credit_sum, 0) AS credit_total
+		  COALESCE(uj.debit_sum, 0) AS debit_total,
+		  COALESCE(uj.credit_sum, 0) AS credit_total
 		FROM accounts a
 		LEFT JOIN uj ON uj.account_id = a.id
-		LEFT JOIN sj ON sj.account_id = a.id
 		WHERE COALESCE(a.is_header, false) = false
 		  AND a.deleted_at IS NULL
 		ORDER BY a.code
@@ -114,8 +103,8 @@ func (ctl *COAPostedController) GetPostedBalances(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"data":    balances,
-		"source":  "SSOT_POSTED_ONLY",
+		"status": "success",
+		"data":   balances,
+		"source": "SSOT_POSTED_ONLY",
 	})
 }

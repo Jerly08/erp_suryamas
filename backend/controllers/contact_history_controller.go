@@ -730,47 +730,6 @@ func (c *ContactHistoryController) GetTransactionJournalDetail(ctx *gin.Context)
 		return
 	}
 
-	// Fallback: try simple_ssot_journals
-	var simpleJournals []models.SimpleSSOTJournal
-	if err := c.db.Where("transaction_type = ? AND transaction_id = ?", sourceType, sourceID).
-		Preload("Items").
-		Preload("Items.Account").
-		Order("date DESC").
-		Find(&simpleJournals).Error; err == nil && len(simpleJournals) > 0 {
-		var result []JournalDetail
-		for _, sj := range simpleJournals {
-			jd := JournalDetail{
-				ID:          uint64(sj.ID),
-				EntryNumber: sj.EntryNumber,
-				Date:        sj.Date.Format("2006-01-02"),
-				Description: sj.Description,
-				Status:      sj.Status,
-				TotalDebit:  sj.TotalDebit,
-				TotalCredit: sj.TotalCredit,
-				IsBalanced:  sj.TotalDebit == sj.TotalCredit,
-			}
-			for _, item := range sj.Items {
-				jd.Lines = append(jd.Lines, JournalLineDetail{
-					AccountCode: item.AccountCode,
-					AccountName: item.AccountName,
-					Description: item.Description,
-					Debit:       item.Debit,
-					Credit:      item.Credit,
-				})
-			}
-			result = append(result, jd)
-		}
-		ctx.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data": gin.H{
-				"source_type": sourceType,
-				"source_id":   sourceID,
-				"journals":    result,
-			},
-		})
-		return
-	}
-
 	// No journal entries found
 	ctx.JSON(http.StatusOK, gin.H{
 		"status": "success",

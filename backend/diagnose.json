@@ -1,0 +1,39 @@
+{
+  "payments": null,
+  "purchases": [
+    {
+      "approval_status": "APPROVED",
+      "code": "PO/2026/02/0011",
+      "deleted": false,
+      "id": 3,
+      "journals": [
+        {
+          "deleted": false,
+          "entry_number": "PURCHASE-3-1771486866",
+          "id": 3,
+          "status": "POSTED"
+        }
+      ],
+      "paid": 49950000,
+      "status": "COMPLETED",
+      "total": 49950000
+    },
+    {
+      "approval_status": "APPROVED",
+      "code": "PO/2026/02/0012",
+      "deleted": false,
+      "id": 4,
+      "journals": [
+        {
+          "deleted": false,
+          "entry_number": "PURCHASE-4-1771494123",
+          "id": 5,
+          "status": "POSTED"
+        }
+      ],
+      "paid": 49950000,
+      "status": "APPROVED",
+      "total": 49950000
+    }
+  ]
+}

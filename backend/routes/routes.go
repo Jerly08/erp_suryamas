@@ -280,6 +280,10 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 	// Initialize Permission Middleware
 	permMiddleware := middleware.NewPermissionMiddleware(db)
+
+	// Initialize RBACManager for dynamic module permissions (AutoPermission)
+	rbacMgr := middleware.NewRBACManager(db)
+
 	// 🔒 Initialize Enhanced Security Middleware
 	enhancedSecurity := middleware.NewEnhancedSecurityMiddleware(db)
 
@@ -337,16 +341,16 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 		journalDrilldownAPI.Use(jwtManager.AuthRequired())
 		{
 			// Main drill-down endpoint for POST requests with detailed filtering
-			journalDrilldownAPI.POST("", permMiddleware.CanView("reports"), journalDrilldownController.GetJournalDrilldown)
+			journalDrilldownAPI.POST("", permMiddleware.CanView("journal"), journalDrilldownController.GetJournalDrilldown)
 
 			// Alternative GET endpoint for simpler URL-based filtering
-			journalDrilldownAPI.GET("/entries", permMiddleware.CanView("reports"), journalDrilldownController.GetJournalDrilldownByParams)
+			journalDrilldownAPI.GET("/entries", permMiddleware.CanView("journal"), journalDrilldownController.GetJournalDrilldownByParams)
 
 			// Get detailed information for a specific journal entry
-			journalDrilldownAPI.GET("/entries/:id", permMiddleware.CanView("reports"), journalDrilldownController.GetJournalEntryDetail)
+			journalDrilldownAPI.GET("/entries/:id", permMiddleware.CanView("journal"), journalDrilldownController.GetJournalEntryDetail)
 
 			// Get accounts that have activity in a period (useful for filters)
-			journalDrilldownAPI.GET("/accounts", permMiddleware.CanView("reports"), journalDrilldownController.GetAccountsForPeriod)
+			journalDrilldownAPI.GET("/accounts", permMiddleware.CanView("journal"), journalDrilldownController.GetAccountsForPeriod)
 		}
 
 		// 📋 Journal Entry Management routes (accessible by finance, admin, director)
@@ -363,21 +367,21 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 		unifiedJournals.Use(jwtManager.AuthRequired())
 		{
 			// Main CRUD operations
-			unifiedJournals.POST("", permMiddleware.CanCreate("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.CreateJournalEntry)
-			unifiedJournals.GET("", permMiddleware.CanView("reports"), unifiedJournalController.GetJournalEntries)
-			unifiedJournals.GET("/:id", permMiddleware.CanView("reports"), unifiedJournalController.GetJournalEntry)
-			unifiedJournals.PUT("/:id", permMiddleware.CanEdit("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.UpdateJournalEntry)
-			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("reports"), unifiedJournalController.DeleteJournalEntry)
+			unifiedJournals.POST("", permMiddleware.CanCreate("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.CreateJournalEntry)
+			unifiedJournals.GET("", permMiddleware.CanView("journal"), unifiedJournalController.GetJournalEntries)
+			unifiedJournals.GET("/:id", permMiddleware.CanView("journal"), unifiedJournalController.GetJournalEntry)
+			unifiedJournals.PUT("/:id", permMiddleware.CanEdit("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.UpdateJournalEntry)
+			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("journal"), unifiedJournalController.DeleteJournalEntry)
 
 			// Status operations
-			unifiedJournals.PUT("/:id/post", permMiddleware.CanEdit("reports"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.PostJournalEntry)
+			unifiedJournals.PUT("/:id/post", permMiddleware.CanEdit("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.PostJournalEntry)
 
 			// Balance management
-			unifiedJournals.GET("/account-balances", permMiddleware.CanView("reports"), unifiedJournalController.GetAccountBalances)
-			unifiedJournals.POST("/account-balances/refresh", permMiddleware.CanEdit("reports"), unifiedJournalController.RefreshAccountBalances)
+			unifiedJournals.GET("/account-balances", permMiddleware.CanView("journal"), unifiedJournalController.GetAccountBalances)
+			unifiedJournals.POST("/account-balances/refresh", permMiddleware.CanEdit("journal"), unifiedJournalController.RefreshAccountBalances)
 
 			// Summary and reporting
-			unifiedJournals.GET("/summary", permMiddleware.CanView("reports"), unifiedJournalController.GetJournalSummary)
+			unifiedJournals.GET("/summary", permMiddleware.CanView("journal"), unifiedJournalController.GetJournalSummary)
 		}
 
 		// 🔒 SECURITY: Secure debug routes (development only dengan multiple security layers)
@@ -416,24 +420,25 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			// Profile routes
 			protected.GET("/profile", authController.Profile)
 
-			// User management routes (admin only)
+			// User management routes
 			users := protected.Group("/users")
+			users.Use(rbacMgr.AutoPermission("users"))
 			{
-				users.GET("", middleware.RoleRequired("admin"), userController.GetUsers)
-				users.GET("/:id", middleware.RoleRequired("admin"), userController.GetUser)
-				users.POST("", middleware.RoleRequired("admin"), userController.CreateUser)
-				users.PUT("/:id", middleware.RoleRequired("admin"), userController.UpdateUser)
-				users.DELETE("/:id", middleware.RoleRequired("admin"), userController.DeleteUser)
+				users.GET("", userController.GetUsers)
+				users.GET("/:id", userController.GetUser)
+				users.POST("", userController.CreateUser)
+				users.PUT("/:id", userController.UpdateUser)
+				users.DELETE("/:id", userController.DeleteUser)
 			}
 
 			// Permission management routes
 			permissions := protected.Group("/permissions")
 			{
 				// Admin only routes
-				permissions.GET("/users", middleware.RoleRequired("admin"), permissionController.GetAllUsersPermissions)
-				permissions.GET("/users/:userId", middleware.RoleRequired("admin"), permissionController.GetUserPermissions)
-				permissions.PUT("/users/:userId", middleware.RoleRequired("admin"), permissionController.UpdateUserPermissions)
-				permissions.POST("/users/:userId/reset", middleware.RoleRequired("admin"), permissionController.ResetToDefaultPermissions)
+				permissions.GET("/users", rbacMgr.AutoPermission("users"), permissionController.GetAllUsersPermissions)
+				permissions.GET("/users/:userId", rbacMgr.AutoPermission("users"), permissionController.GetUserPermissions)
+				permissions.PUT("/users/:userId", rbacMgr.AutoPermission("users"), permissionController.UpdateUserPermissions)
+				permissions.POST("/users/:userId/reset", rbacMgr.AutoPermission("users"), permissionController.ResetToDefaultPermissions)
 
 				// Self permission routes (any authenticated user)
 				permissions.GET("/me", permissionController.GetMyPermissions)       // User can get their own permissions
@@ -801,7 +806,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			ultraFastRoutes.SetupUltraFastPaymentRoutes(r)
 
 			// ⚙️ Setup Settings routes
-			SetupSettingsRoutes(protected, db)
+			SetupSettingsRoutes(protected, db, rbacMgr)
 
 			// 🔄 Setup CashBank SSOT Integration routes (NEW - Phase 1 Implementation)
 			// This provides unified view of CashBank data integrated with SSOT Journal system
@@ -967,7 +972,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			RegisterEnhancedReportRoutes(v1, enhancedReportController, jwtManager)
 
 			// 🚀 SSOT REPORT INTEGRATION ROUTES: Single Source of Truth integration with all financial reports
-			RegisterSSOTReportRoutesInMain(v1, db, unifiedJournalService, enhancedReportService, jwtManager)
+			RegisterSSOTReportRoutesInMain(v1, db, unifiedJournalService, enhancedReportService, jwtManager, rbacMgr)
 
 			// 📋 CONTACT HISTORY REPORTS: Customer and Vendor transaction history reports
 			RegisterContactHistoryRoutes(r, db, pdfService)
@@ -977,7 +982,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			// These routes redirect to the proper /api/v1/ssot-reports/* endpoints
 			ssotAliasGroup := r.Group("/ssot-reports")
 			ssotAliasGroup.Use(jwtManager.AuthRequired())
-			ssotAliasGroup.Use(middleware.RoleRequired("finance", "admin", "director", "auditor"))
+			ssotAliasGroup.Use(rbacMgr.AutoPermission("reports"))
 			{
 				// Initialize SSOT controllers for direct access using existing services
 				ssotAliasReportIntegrationService := services.NewSSOTReportIntegrationService(
@@ -1025,7 +1030,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			// SSOT Report routes for frontend integration
 			ssotReports := v1.Group("/reports")
 			ssotReports.Use(jwtManager.AuthRequired())
-			ssotReports.Use(middleware.RoleRequired("finance", "admin", "director"))
+			ssotReports.Use(rbacMgr.AutoPermission("reports"))
 			{
 				// Main P&L endpoint for frontend - matches the format expected by EnhancedProfitLossModal
 				ssotReports.GET("/ssot-profit-loss", ssotPLController.GetSSOTProfitLoss)
@@ -1041,6 +1046,26 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				cogsRoutes.GET("/missing", cogsController.GetSalesWithoutCOGS)        // Get sales without COGS entries
 				cogsRoutes.POST("/backfill", cogsController.BackfillCOGS)             // Backfill COGS for existing sales
 				cogsRoutes.POST("/record/:sale_id", cogsController.RecordCOGSForSale) // Record COGS for specific sale
+
+				// 🔄 Migration: Backfill SSOT journals for existing purchase payments
+				cogsRoutes.POST("/migrate-payment-journals", func(c *gin.Context) {
+					log.Printf("🔄 Starting purchase payment SSOT journal migration...")
+					migrationSvc := services.NewPurchasePaymentJournalService(db, accountRepo, unifiedJournalService, nil)
+					migrated, skipped, err := migrationSvc.MigrateExistingPaymentsToSSOT()
+					if err != nil {
+						c.JSON(500, gin.H{
+							"error":    "Migration failed: " + err.Error(),
+							"migrated": migrated,
+							"skipped":  skipped,
+						})
+						return
+					}
+					c.JSON(200, gin.H{
+						"message":  "Purchase payment SSOT journal migration completed",
+						"migrated": migrated,
+						"skipped":  skipped,
+					})
+				})
 			}
 
 			// 📊 SSOT Balance Sheet Controller - Direct Balance Sheet endpoint for frontend
@@ -1052,7 +1077,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			// Balance Sheet Report routes for frontend integration
 			ssotBSReports := v1.Group("/reports/ssot")
 			ssotBSReports.Use(jwtManager.AuthRequired())
-			ssotBSReports.Use(middleware.RoleRequired("finance", "admin", "director"))
+			ssotBSReports.Use(rbacMgr.AutoPermission("reports"))
 			{
 				// Main Balance Sheet endpoint for frontend - matches the format expected by SSOT Balance Sheet Modal
 				ssotBSReports.GET("/balance-sheet", ssotBSController.GenerateSSOTBalanceSheet)

@@ -1,0 +1,16 @@
+{
+  "payments": [
+    {
+      "amount": 0,
+      "journal_id": 31,
+      "payment_id": 0,
+      "purchase_id": 0
+    },
+    {
+      "amount": 0,
+      "journal_id": 32,
+      "payment_id": 0,
+      "purchase_id": 0
+    }
+  ]
+}

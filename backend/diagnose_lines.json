@@ -1,0 +1,46 @@
+{
+  "lines": [
+    {
+      "account_code": "1103-001",
+      "account_name": "PERSEDIAAN BARANG DAGANG",
+      "credit": "0",
+      "debit": "45000000",
+      "journal_id": 3
+    },
+    {
+      "account_code": "2102-002",
+      "account_name": "PPN MASUKAN",
+      "credit": "0",
+      "debit": "4950000",
+      "journal_id": 3
+    },
+    {
+      "account_code": "1101-005",
+      "account_name": "BANK - OCBC",
+      "credit": "49950000",
+      "debit": "0",
+      "journal_id": 3
+    },
+    {
+      "account_code": "1103-001",
+      "account_name": "PERSEDIAAN BARANG DAGANG",
+      "credit": "0",
+      "debit": "45000000",
+      "journal_id": 5
+    },
+    {
+      "account_code": "2102-002",
+      "account_name": "PPN MASUKAN",
+      "credit": "0",
+      "debit": "4950000",
+      "journal_id": 5
+    },
+    {
+      "account_code": "2101-001",
+      "account_name": "UTANG USAHA – LOKAL",
+      "credit": "49950000",
+      "debit": "0",
+      "journal_id": 5
+    }
+  ]
+}

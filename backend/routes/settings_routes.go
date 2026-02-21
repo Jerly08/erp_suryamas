@@ -10,7 +10,7 @@ import (
 )
 
 // SetupSettingsRoutes registers all settings-related routes
-func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB) {
+func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB, rbacMgr *middleware.RBACManager) {
 	// Initialize settings service and controller
 	settingsService := services.NewSettingsService(db)
 	settingsController := controllers.NewSettingsController(settingsService)
@@ -28,7 +28,7 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB) {
 
 	// Settings routes (admin only)
 	settings := protected.Group("/settings")
-	settings.Use(middleware.RoleRequired("admin"))
+	settings.Use(rbacMgr.AutoPermission("settings"))
 	{
 		// Main settings endpoints
 		settings.GET("", settingsController.GetSettings)
@@ -50,13 +50,13 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB) {
 
 	// Tax Account Settings routes (admin and finance)
 	taxSettings := protected.Group("/tax-accounts")
-	taxSettings.Use(middleware.RoleRequired("admin", "finance", "director"))
+	taxSettings.Use(rbacMgr.AutoPermission("settings"))
 	{
 		// Get current active tax account settings
 		taxSettings.GET("/current", taxAccountController.GetCurrentSettings)
 
-		// Get all tax account settings (admin only)
-		taxSettings.GET("", middleware.RoleRequired("admin"), taxAccountController.GetAllSettings)
+		// Get all tax account settings (admin only via AutoPermission fallbacks assuming default roles if not given)
+		taxSettings.GET("", rbacMgr.RequireRole("admin"), taxAccountController.GetAllSettings)
 
 		// Create new tax account settings
 		taxSettings.POST("", taxAccountController.CreateSettings)
@@ -74,7 +74,7 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB) {
 		taxSettings.POST("/validate", taxAccountController.ValidateAccountConfiguration)
 
 		// Refresh cache
-		taxSettings.POST("/refresh-cache", middleware.RoleRequired("admin"), taxAccountController.RefreshCache)
+		taxSettings.POST("/refresh-cache", rbacMgr.RequireRole("admin"), taxAccountController.RefreshCache)
 
 		// Get account suggestions for setup wizard
 		taxSettings.GET("/suggestions", taxAccountController.GetAccountSuggestions)

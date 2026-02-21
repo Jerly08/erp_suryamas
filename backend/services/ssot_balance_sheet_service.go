@@ -516,16 +516,8 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 				fmt.Printf("[DEBUG] Processing UTANG USAHA (2101): Amount=%.2f, Type=%s\n", amount, balance.AccountType)
 			}
 
-			// Convert negative liability balances to positive for proper display
-			// This handles cases where the database might store negative values incorrectly
-			// EXCEPTION: Don't convert PPN accounts - they need original values for netting
-			isPPNAccount := strings.Contains(strings.ToLower(balance.AccountName), "ppn keluaran") ||
-				strings.Contains(strings.ToLower(balance.AccountName), "ppn masukan")
-			if amount < 0 && !isPPNAccount {
-				amount = -amount // Make it positive
-				fmt.Printf("[DEBUG] Converted negative liability %s (%s) from %.2f to %.2f\n",
-					code, balance.AccountName, balance.NetBalance, amount)
-			}
+			// Removed negative liability inversion: negative liabilities represent valid overpaid debts (Debit > Credit)
+			// and MUST remain negative so they properly reduce Total Liabilities, preserving the accounting equation.
 		}
 
 		item := BSAccountItem{
@@ -719,14 +711,10 @@ func (s *SSOTBalanceSheetService) categorizeAssetAccount(bsData *SSOTBalanceShee
 func (s *SSOTBalanceSheetService) categorizeLiabilityAccount(bsData *SSOTBalanceSheetData, item BSAccountItem, code string) {
 	// IMPORTANT: Don't convert PPN accounts here - they need original values for netting
 	// Use code-based matching instead of name-based
-	isPPNAccount := strings.HasPrefix(code, "2102-001") || strings.HasPrefix(code, "2102-002")
 
-	// Ensure liability amounts are positive for proper categorization (except PPN)
+	// Removed negative liability inversion: negative liabilities (Debit > Credit)
+	// MUST remain negative to properly reduce Total Liabilities and match Total Assets.
 	amount := item.Amount
-	if amount < 0 && !isPPNAccount {
-		amount = -amount // Make it positive
-		fmt.Printf("[DEBUG] Converted negative liability %s from %.2f to %.2f\n", item.AccountCode, item.Amount, amount)
-	}
 
 	// Skip zero-balance items for cleaner display
 	if amount == 0 {
@@ -734,8 +722,8 @@ func (s *SSOTBalanceSheetService) categorizeLiabilityAccount(bsData *SSOTBalance
 	}
 
 	// Log liability categorization for debugging
-	fmt.Printf("[DEBUG] Categorizing Liability: %s - %s (Amount: %.2f, isPPN: %v)\n",
-		item.AccountCode, item.AccountName, amount, isPPNAccount)
+	fmt.Printf("[DEBUG] Categorizing Liability: %s - %s (Amount: %.2f)\n",
+		item.AccountCode, item.AccountName, amount)
 
 	// Update the item amount (preserve original for PPN)
 	item.Amount = amount

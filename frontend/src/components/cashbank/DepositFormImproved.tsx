@@ -126,7 +126,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
   // Enhanced error handling for deposit operations
   const handleDepositError = (error: any) => {
     const status = error?.response?.status || error?.status;
-    
+
     // Handle permission error specially with simple, clear message
     if (status === 403) {
       const permissionMessage = (
@@ -142,14 +142,14 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
               What you can do:
             </Text>
             <Text fontSize="sm" color="gray.700">
-              • Contact your administrator<br/>
-              • Request Cash & Bank permissions<br/>
+              • Contact your administrator<br />
+              • Request Cash & Bank permissions<br />
               • Ask your manager for help
             </Text>
           </Box>
         </Box>
       );
-      
+
       setError('Access denied - insufficient permissions');
       toast({
         title: 'Access Denied',
@@ -160,7 +160,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
       });
       return;
     }
-    
+
     // Handle 400 error with more specific information
     if (status === 400) {
       const validationMessage = error?.response?.data?.error || error?.response?.data?.message || 'Invalid data';
@@ -177,7 +177,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
           </Text>
         </Box>
       );
-      
+
       setError(`Validation error: ${validationMessage}`);
       toast({
         title: 'Invalid Request',
@@ -188,14 +188,14 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
       });
       return;
     }
-    
+
     // Use existing error handler for other errors
     const errorMessage = ErrorHandler.handleAPIError(error, toast, {
       operation: 'process deposit',
       fallbackMessage: 'Failed to process deposit. Please try again.',
       duration: 6000
     });
-    
+
     setError(errorMessage);
   };
 
@@ -221,20 +221,20 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
         reference: formData.reference || '',
         notes: formData.notes || '',
       };
-      
+
       // Validate required fields
       if (!requestData.account_id || requestData.account_id <= 0) {
         throw new Error('Invalid account selected');
       }
-      
+
       if (!requestData.date) {
         throw new Error('Transaction date is required');
       }
-      
+
       if (!requestData.amount || requestData.amount <= 0) {
         throw new Error('Amount must be greater than zero');
       }
-      
+
       // Validate date format (YYYY-MM-DD)
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(requestData.date)) {
@@ -250,15 +250,15 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
       console.log('🔍 Deposit request data:', requestData);
       console.log('🔍 Account info:', account);
       console.log('🔍 Form data:', formData);
-      
+
       // Use cashbankService instead of direct fetch
       await cashbankService.processDeposit(requestData);
-      
+
       // If we get here, it was successful
       const allAccounts = [...sourceAccounts.equity]; // Only equity accounts
       const selectedAccount = allAccounts.find(acc => acc.id === parseInt(formData.source_account_id || '0'));
-      const sourceAccountName = selectedAccount ? selectedAccount.name : 'Modal Pemilik (Default)';
-      
+      const sourceAccountName = selectedAccount ? selectedAccount.name : 'Modal Disetor (Default)';
+
       toast({
         title: 'Deposit Successful! 💰',
         description: (
@@ -307,7 +307,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
   const newBalance = account.balance + formData.amount;
   const allAccounts = [...sourceAccounts.equity]; // Only equity accounts
   const selectedAccount = allAccounts.find(acc => acc.id === parseInt(formData.source_account_id || '0'));
-  const sourceAccountName = selectedAccount ? selectedAccount.name : 'Modal Pemilik (Default)';
+  const sourceAccountName = selectedAccount ? selectedAccount.name : 'Modal Disetor (Default)';
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} size="2xl" scrollBehavior="inside">
@@ -329,11 +329,11 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
             </Badge>
           </Flex>
         </ModalHeader>
-        
+
         <ModalBody>
           {error && (
-            <Alert 
-              status={error.includes('Access denied') || error.includes('permission') ? 'error' : 'error'} 
+            <Alert
+              status={error.includes('Access denied') || error.includes('permission') ? 'error' : 'error'}
               mb={4}
               variant="subtle"
               borderRadius="md"
@@ -368,10 +368,10 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                     {account.type}
                   </Badge>
                 </Flex>
-                
+
                 <Stat>
                   <StatLabel>Current Balance</StatLabel>
-                  <StatNumber 
+                  <StatNumber
                     color={account.balance < 0 ? 'red.500' : 'green.600'}
                     fontFamily="mono"
                   >
@@ -379,8 +379,8 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                     {account.balance < 0 && ' (Dr)'}
                   </StatNumber>
                   <StatHelpText>
-                    {account.balance < 0 ? '⚠️ Overdraft' : 
-                     account.balance > 0 ? '✅ Available' : '➖ Zero Balance'}
+                    {account.balance < 0 ? '⚠️ Overdraft' :
+                      account.balance > 0 ? '✅ Available' : '➖ Zero Balance'}
                   </StatHelpText>
                 </Stat>
               </Box>
@@ -391,7 +391,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
               <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
                 📝 Transaction Details
               </Text>
-              
+
               <VStack spacing={4} align="stretch">
                 <FormControl isRequired>
                   <FormLabel>Transaction Date</FormLabel>
@@ -417,8 +417,8 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                       }}
                       w="100%"
                     >
-                      <NumberInputField 
-                        placeholder="Rp 0" 
+                      <NumberInputField
+                        placeholder="Rp 0"
                         fontFamily="mono"
                         fontSize="md"
                         textAlign="left"
@@ -462,15 +462,15 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                 💰 Capital/Equity Account Selection
               </Text>
               <Text fontSize="sm" color="gray.600" mb={3}>
-                Select the equity account to be credited. Leave blank to use default "Modal Pemilik" (Owner's Equity) account for proper balance sheet treatment.
+                Select the equity account to be credited. Leave blank to use default "Modal Disetor" (Owner's Equity) account for proper balance sheet treatment.
               </Text>
-              
+
               <FormControl>
                 <FormLabel>💳 Credit Account (Equity Source)</FormLabel>
                 <Select
                   value={formData.source_account_id}
                   onChange={(e) => handleInputChange('source_account_id', e.target.value)}
-                  placeholder="Use default 'Modal Pemilik' (Owner's Equity) account"
+                  placeholder="Use default 'Modal Disetor' (Owner's Equity) account"
                   isDisabled={loadingAccounts}
                 >
                   {/* EQUITY SECTION ONLY */}
@@ -488,7 +488,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                     Loading equity accounts...
                   </Text>
                 )}
-                
+
                 {/* Updated Help Text */}
                 <Text fontSize="xs" color="gray.500" mt={2}>
                   💡 <strong>Proper Accounting:</strong> Deposits are recorded as capital contributions to maintain balanced balance sheets.
@@ -513,9 +513,9 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                         BALANCED
                       </Badge>
                     </HStack>
-                    
+
                     <Divider />
-                    
+
                     {/* Debit Entry */}
                     <HStack justify="space-between" align="center">
                       <HStack spacing={2}>
@@ -529,7 +529,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                         +Rp {formData.amount.toLocaleString('id-ID')}
                       </Text>
                     </HStack>
-                    
+
                     {/* Credit Entry */}
                     <HStack justify="space-between" align="center">
                       <HStack spacing={2}>
@@ -537,7 +537,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                         <Box>
                           <Text fontSize="sm" fontWeight="medium">{sourceAccountName}</Text>
                           <Text fontSize="xs" color="gray.600" fontFamily="mono">
-                            {selectedAccount?.code || '4900'}
+                            {selectedAccount?.code || '3101'}
                           </Text>
                         </Box>
                       </HStack>
@@ -545,9 +545,9 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                         +Rp {formData.amount.toLocaleString('id-ID')}
                       </Text>
                     </HStack>
-                    
+
                     <Divider />
-                    
+
                     <HStack justify="space-between">
                       <Text fontSize="sm" fontWeight="bold">Total Balance:</Text>
                       <Text fontSize="sm" fontWeight="bold" color="green.600">

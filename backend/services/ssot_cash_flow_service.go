@@ -202,7 +202,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 			END as net_balance
 		FROM accounts a
 		LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
-		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
+		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.deleted_at IS NULL
 		WHERE uje.status = 'POSTED' 
 			AND uje.entry_date >= ? 
 			AND uje.entry_date < ?
@@ -213,6 +213,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 			AND a.code NOT LIKE '6%'
 			AND a.code NOT LIKE '7%'
 			AND a.code NOT LIKE '8%'
+			AND a.deleted_at IS NULL
 		GROUP BY a.id, a.code, a.name, a.type, a.category
 		HAVING COALESCE(SUM(ujl.debit_amount), 0) > 0 OR COALESCE(SUM(ujl.credit_amount), 0) > 0
 		ORDER BY a.code
@@ -254,11 +255,12 @@ func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endDate string) (f
 		) as net_income
 		FROM accounts a
 		LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
-		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
+		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.deleted_at IS NULL
 		WHERE uje.status = 'POSTED' 
 			AND uje.entry_date >= ? 
 			AND uje.entry_date < ?
 			AND UPPER(COALESCE(uje.source_type, '')) != 'CLOSING'
+			AND a.deleted_at IS NULL
 			AND (a.code LIKE '4%' OR a.code LIKE '5%' OR a.code LIKE '6%' OR a.code LIKE '7%' OR a.code LIKE '8%' OR a.code LIKE '9%')
 	`
 
@@ -286,6 +288,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 		WHERE uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
+			AND a.deleted_at IS NULL
 			AND uje.entry_date < ?
 			AND a.code LIKE '1101%'
 	`
@@ -302,6 +305,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 		WHERE uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
+			AND a.deleted_at IS NULL
 			AND uje.entry_date < ?
 			AND a.code LIKE '1101%'
 	`

@@ -499,7 +499,7 @@ func (s *SSOTReportIntegrationService) generateAccountBreakdown(ctx context.Cont
 		JOIN accounts a ON a.id = ujl.account_id
 		WHERE uje.entry_date >= ? AND uje.entry_date <= ? 
 			AND uje.status = ?
-			AND ujl.deleted_at IS NULL
+			AND uje.deleted_at IS NULL
 			AND a.deleted_at IS NULL
 		GROUP BY a.id, a.code, a.name
 		ORDER BY total_debit + total_credit DESC
@@ -541,7 +541,7 @@ func (s *SSOTReportIntegrationService) generatePeriodBreakdown(ctx context.Conte
 			COUNT(*) as count,
 			COALESCE(SUM(total_debit), 0) as total_amount
 		FROM unified_journal_ledger
-		WHERE entry_date >= ? AND entry_date <= ? AND status = ?
+		WHERE entry_date >= ? AND entry_date <= ? AND status = ? AND deleted_at IS NULL
 		GROUP BY %s
 		ORDER BY %s
 	`, groupBy, groupBy, groupBy, groupBy, groupBy)
@@ -764,6 +764,7 @@ func (s *SSOTReportIntegrationService) generateVendorAnalysis(ctx context.Contex
 		LEFT JOIN accounts a ON a.id = sjl.account_id
 		WHERE sje.entry_date BETWEEN ? AND ?
 			AND sje.status = ?
+			AND sje.deleted_at IS NULL
 			AND a.code LIKE '2%'
 			AND sje.source_type IN ('PURCHASE', 'PAYMENT')
 		ORDER BY sje.entry_date, sjl.journal_id

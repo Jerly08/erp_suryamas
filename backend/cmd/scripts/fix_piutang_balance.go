@@ -3,120 +3,89 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"strconv"
 
-	"github.com/joho/godotenv"
-	"gorm.io/driver/postgres"
+	"app-sistem-akuntansi/config"
+	"app-sistem-akuntansi/database"
+	"app-sistem-akuntansi/models"
+
 	"gorm.io/gorm"
 )
 
 func main() {
-	// Load .env file
-	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: .env file not found, using environment variables: %v", err)
-	}
+	config.LoadConfig()
+	db := database.ConnectDB()
 
-	// Connect to database using DATABASE_URL from .env
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL environment variable is not set")
-	}
-
-	fmt.Printf("🔗 Connecting to database...\n")
-	gormDB, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
-	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
-	}
-
-	// Get underlying sql.DB
-	sqlDB, err := gormDB.DB()
-	if err != nil {
-		log.Fatal("Failed to get underlying sql.DB:", err)
-	}
-	defer sqlDB.Close()
-
-	// Account ID 9 is Piutang Usaha
-	accountID := 9
-	
-	fmt.Printf("🔍 Recalculating balance for Account ID %d (Piutang Usaha)...\n", accountID)
-	
-	// Get current balance
-	var currentBalance float64
-	err = sqlDB.QueryRow("SELECT balance FROM accounts WHERE id = $1", accountID).Scan(&currentBalance)
-	if err != nil {
-		log.Fatalf("Error getting current balance: %v", err)
-	}
-	fmt.Printf("Current stored balance: Rp %.0f\n", currentBalance)
-	
-	// Calculate correct balance from unified_journal_lines
-	query := `
-		SELECT 
-			COALESCE(SUM(CAST(ujl.debit_amount AS DECIMAL)), 0) as total_debit,
-			COALESCE(SUM(CAST(ujl.credit_amount AS DECIMAL)), 0) as total_credit
-		FROM unified_journal_lines ujl
-		WHERE ujl.account_id = $1;
-	`
-
-	var totalDebitStr, totalCreditStr string
-	err = sqlDB.QueryRow(query, accountID).Scan(&totalDebitStr, &totalCreditStr)
-	if err != nil {
-		log.Fatalf("Failed to calculate balance: %v", err)
-	}
-
-	totalDebit, _ := strconv.ParseFloat(totalDebitStr, 64)
-	totalCredit, _ := strconv.ParseFloat(totalCreditStr, 64)
-	correctBalance := totalDebit - totalCredit
-	
-	fmt.Printf("Calculated from unified_journal_lines:\n")
-	fmt.Printf("  Total Debit:  Rp %.0f\n", totalDebit)
-	fmt.Printf("  Total Credit: Rp %.0f\n", totalCredit)
-	fmt.Printf("  Net Balance:  Rp %.0f\n", correctBalance)
-	
-	if correctBalance == currentBalance {
-		fmt.Printf("✅ Balance is already correct!\n")
-		return
-	}
-	
-	fmt.Printf("\n❌ Balance mismatch detected!\n")
-	fmt.Printf("   Current: Rp %.0f\n", currentBalance)
-	fmt.Printf("   Correct: Rp %.0f\n", correctBalance)
-	fmt.Printf("   Difference: Rp %.0f\n", correctBalance - currentBalance)
-	
-	// Update the balance in accounts table
-	fmt.Printf("\n🔧 Updating account balance...\n")
-	
-	updateQuery := `UPDATE accounts SET balance = $1, updated_at = NOW() WHERE id = $2`
-	result, err := sqlDB.Exec(updateQuery, correctBalance, accountID)
-	if err != nil {
-		log.Fatalf("Failed to update balance: %v", err)
-	}
-	
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Printf("Warning: Could not get rows affected: %v", err)
-	} else if rowsAffected == 0 {
-		log.Fatalf("No rows were updated - account ID %d not found", accountID)
-	}
-	
-	// Verify the update
-	var newBalance float64
-	err = sqlDB.QueryRow("SELECT balance FROM accounts WHERE id = $1", accountID).Scan(&newBalance)
-	if err != nil {
-		log.Printf("Warning: Could not verify new balance: %v", err)
-	} else {
-		fmt.Printf("✅ Balance updated successfully!\n")
-		fmt.Printf("   Old balance: Rp %.0f\n", currentBalance)
-		fmt.Printf("   New balance: Rp %.0f\n", newBalance)
-		
-		if newBalance == correctBalance {
-			fmt.Printf("✅ Verification passed - balance is now correct!\n")
-		} else {
-			fmt.Printf("❌ Verification failed - balance mismatch: %.0f vs %.0f\n", newBalance, correctBalance)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var piutang models.Account
+		if err := tx.Where("code = ?", "1102-001").First(&piutang).Error; err != nil {
+			return err
 		}
+
+		fmt.Printf("Current Piutang Balance (1102-001): %.2f\n", piutang.Balance)
+
+		// Check the journal line for the payment. Journal 27 is the payment journal.
+		var lines []models.SSOTJournalLine
+		tx.Where("journal_id = ?", 27).Find(&lines)
+
+		var paymentCreditAmount float64
+		for _, l := range lines {
+			if l.CreditAmount.InexactFloat64() > 0 {
+				paymentCreditAmount = l.CreditAmount.InexactFloat64()
+				fmt.Printf("Found payment credit: %.2f on Acc ID: %d\n", paymentCreditAmount, l.AccountID)
+			}
+		}
+
+		// The payment is 7,215,000. It SHOULD reduce the Piutang Asset.
+		// If balance is currently 28,860,000 (which is exactly the full invoice amount),
+		// then it means the payment reduction was never applied to 1102-001.
+		if piutang.Balance == 28860000 && paymentCreditAmount == 7215000 {
+			piutang.Balance -= paymentCreditAmount
+
+			if err := tx.Save(&piutang).Error; err != nil {
+				return err
+			}
+			fmt.Printf("Fixed Piutang Balance (1102-001) to: %.2f\n", piutang.Balance)
+
+			// Recalculate and update parent balances
+			updateParentAccountBalances(tx, piutang.ID)
+		} else {
+			fmt.Printf("No fix applied. Conditions not met: Piutang Balance=%.2f, PaymentCredit=%.2f\n", piutang.Balance, paymentCreditAmount)
+		}
+
+		// Let's also check if there's any other account that incorrectly received this 7,215,000.
+		// In fix_sales_payment_journal.go, we did:
+		// goodAcc.Balance -= creditAmount on Account 137. Wait, is 137 the ID of 1102-001?
+		var acc137 models.Account
+		if err := tx.First(&acc137, 137).Error; err == nil {
+			fmt.Printf("Account 137 Code: %s, Name: %s, Balance: %.2f\n", acc137.Code, acc137.Name, acc137.Balance)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Fatalf("Transaction failed: %v", err)
 	}
-	
-	fmt.Printf("\n🎉 Piutang Usaha balance fix completed!\n")
-	fmt.Printf("   Account ID %d now shows: Rp %.0f\n", accountID, correctBalance)
-	fmt.Printf("   This represents the remaining accounts receivable after payment.\n")
+}
+
+func updateParentAccountBalances(db *gorm.DB, accountID uint) error {
+	var account models.Account
+	if err := db.First(&account, accountID).Error; err != nil {
+		return err
+	}
+	if account.ParentID != nil && *account.ParentID > 0 {
+		var children []models.Account
+		if err := db.Where("parent_id = ?", *account.ParentID).Find(&children).Error; err != nil {
+			return err
+		}
+		var total float64
+		for _, child := range children {
+			total += child.Balance
+		}
+		if err := db.Model(&models.Account{}).Where("id = ?", *account.ParentID).UpdateColumn("balance", total).Error; err != nil {
+			return err
+		}
+		return updateParentAccountBalances(db, *account.ParentID)
+	}
+	return nil
 }

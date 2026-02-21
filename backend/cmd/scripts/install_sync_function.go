@@ -1,9 +1,9 @@
 package main
 
 import (
+	"app-sistem-akuntansi/database"
 	"fmt"
 	"log"
-	"app-sistem-akuntansi/database"
 )
 
 const sqlBigint = `
@@ -28,7 +28,8 @@ BEGIN
     FROM unified_journal_lines ujl
     LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
     WHERE ujl.account_id = account_id_param
-      AND uje.status = 'POSTED';
+      AND uje.status = 'POSTED'
+      AND uje.deleted_at IS NULL;
 
     UPDATE accounts 
     SET balance = COALESCE(new_balance, 0),

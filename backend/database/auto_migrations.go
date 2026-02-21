@@ -122,6 +122,11 @@ func RunAutoMigrations(db *gorm.DB) error {
 		log.Printf("⚠️  ACTIVITY_LOGS USER_ID FIX FAILED: %v", err)
 	}
 
+	// Sync sequences for tables with seeded data to prevent duplicate PK errors
+	if err := SyncAllSeededSequences(db); err != nil {
+		log.Printf("⚠️  SEQUENCE SYNC FAILED: %v", err)
+	}
+
 	log.Println("✅ Auto-migrations completed")
 	return nil
 }
@@ -664,6 +669,7 @@ BEGIN
             LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
             WHERE ujl.account_id = account_id_param 
               AND uje.status = 'POSTED'
+              AND uje.deleted_at IS NULL
         ), 0),
         updated_at = NOW()
     WHERE a.id = account_id_param;
@@ -1090,12 +1096,115 @@ func markProblematicMigrationsAsSuccess(db *gorm.DB) error {
 	return nil
 }
 
-// ensureBalanceSyncSystem ensures the comprehensive balance sync system is installed and configured
+// ensureBalanceSyncSystem ensures the SSOT-based balance sync triggers are installed
 // This is idempotent and safe to run on every startup across environments
-// DISABLED: This system is not needed for period closing and causes cache issues
+// NOTE: Only installs triggers for unified_journal_lines/unified_journal_ledger.
+// Does NOT install the old cashbank→COA triggers (trigger_sync_cashbank_coa etc.)
+// which caused double-posting. See migration 20251017_disable_auto_balance_sync_triggers.sql.
 func ensureBalanceSyncSystem(db *gorm.DB) error {
-	// DISABLED: Skip balance sync system to prevent cached code execution
-	log.Println("⏭️  Balance sync system installation DISABLED (not needed for core functionality)")
+	// Check if the SSOT trigger already exists
+	var triggerExists int64
+	checkTrigger := `SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_name = 'trg_sync_account_balance_on_line_change'`
+	if err := db.Raw(checkTrigger).Scan(&triggerExists).Error; err != nil {
+		log.Printf("⚠️  Could not check trigger existence: %v", err)
+	}
+
+	if triggerExists > 0 {
+		// Triggers already installed, skip silently
+		return nil
+	}
+
+	log.Println("🔧 Installing SSOT balance sync triggers...")
+
+	// 1. Create trigger function for journal line changes
+	triggerFnLines := `
+CREATE OR REPLACE FUNCTION trigger_sync_account_balance()
+RETURNS TRIGGER AS $$
+DECLARE
+    affected_account_id INTEGER;
+BEGIN
+    IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+        affected_account_id := NEW.account_id;
+        IF EXISTS (
+            SELECT 1 FROM unified_journal_ledger
+            WHERE id = NEW.journal_id AND status = 'POSTED'
+        ) THEN
+            PERFORM sync_account_balance_from_ssot(affected_account_id);
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        affected_account_id := OLD.account_id;
+        PERFORM sync_account_balance_from_ssot(affected_account_id);
+        RETURN OLD;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;`
+
+	if err := db.Exec(triggerFnLines).Error; err != nil {
+		return fmt.Errorf("failed to create trigger_sync_account_balance function: %v", err)
+	}
+
+	// 2. Create trigger function for journal status changes
+	triggerFnStatus := `
+CREATE OR REPLACE FUNCTION trigger_sync_on_journal_status_change()
+RETURNS TRIGGER AS $$
+DECLARE
+    line_record RECORD;
+BEGIN
+    IF NEW.status = 'POSTED' AND (OLD.status IS NULL OR OLD.status != 'POSTED') THEN
+        FOR line_record IN
+            SELECT DISTINCT account_id
+            FROM unified_journal_lines
+            WHERE journal_id = NEW.id
+        LOOP
+            PERFORM sync_account_balance_from_ssot(line_record.account_id);
+        END LOOP;
+    END IF;
+
+    IF NEW.status IN ('REVERSED', 'CANCELLED') AND OLD.status = 'POSTED' THEN
+        FOR line_record IN
+            SELECT DISTINCT account_id
+            FROM unified_journal_lines
+            WHERE journal_id = NEW.id
+        LOOP
+            PERFORM sync_account_balance_from_ssot(line_record.account_id);
+        END LOOP;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;`
+
+	if err := db.Exec(triggerFnStatus).Error; err != nil {
+		return fmt.Errorf("failed to create trigger_sync_on_journal_status_change function: %v", err)
+	}
+
+	// 3. Drop and re-create triggers (idempotent)
+	triggers := []string{
+		`DROP TRIGGER IF EXISTS trg_sync_account_balance_on_line_change ON unified_journal_lines`,
+		`CREATE TRIGGER trg_sync_account_balance_on_line_change
+		    AFTER INSERT OR UPDATE OR DELETE ON unified_journal_lines
+		    FOR EACH ROW
+		    EXECUTE FUNCTION trigger_sync_account_balance()`,
+		`DROP TRIGGER IF EXISTS trg_sync_account_balance_on_status_change ON unified_journal_ledger`,
+		`CREATE TRIGGER trg_sync_account_balance_on_status_change
+		    AFTER UPDATE ON unified_journal_ledger
+		    FOR EACH ROW
+		    WHEN (OLD.status IS DISTINCT FROM NEW.status)
+		    EXECUTE FUNCTION trigger_sync_on_journal_status_change()`,
+	}
+
+	for _, sql := range triggers {
+		if err := db.Exec(sql).Error; err != nil {
+			return fmt.Errorf("failed to execute trigger SQL: %v", err)
+		}
+	}
+
+	log.Println("✅ SSOT balance sync triggers installed successfully")
 	return nil
 }
 
@@ -1932,5 +2041,46 @@ func ensureSettingsHistoryTable(db *gorm.DB) error {
 	}
 
 	log.Println("✅ Settings history table created")
+	return nil
+}
+
+// SyncAllSeededSequences ensures the PostgreSQL sequences are in sync for tables that have pre-seeded data
+// This prevents 'duplicate key value violates unique constraint' errors after seeding data with explicit IDs
+func SyncAllSeededSequences(db *gorm.DB) error {
+	tablesToSync := []string{
+		"users",
+		"permissions",
+		"product_categories",
+		"product_units",
+		"expense_categories",
+		"report_templates",
+		"asset_categories",
+		"invoice_types",
+	}
+
+	for _, tableName := range tablesToSync {
+		// First check if table exists
+		var tableExists bool
+		err := db.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = ?)", tableName).Scan(&tableExists).Error
+		if err != nil || !tableExists {
+			continue // Table doesn't exist yet, nothing to sync for this one
+		}
+
+		// PostgreSQL specific query to sync sequence with MAX(id)
+		// Properly escape table name in format string to prevent injection
+		query := fmt.Sprintf(`
+			SELECT setval(
+				pg_get_serial_sequence('%s', 'id'), 
+				COALESCE((SELECT MAX(id) FROM %s), 1), 
+				true
+			)
+		`, tableName, tableName)
+
+		if err := db.Exec(query).Error; err != nil {
+			// Log but don't fail entirely, as it might just be the sequence doesn't exist or is not supported in the dialect
+			log.Printf("ℹ️ Could not sync %s sequence (this is normal if not using PostgreSQL): %v", tableName, err)
+		}
+	}
+
 	return nil
 }

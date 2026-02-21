@@ -1,6 +1,10 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/utils"
 	"bytes"
 	"encoding/csv"
 	"fmt"
@@ -9,10 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/services"
-	"app-sistem-akuntansi/repositories"
-	"app-sistem-akuntansi/utils"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -60,11 +60,11 @@ func NewSalesController(salesServiceV2 *services.SalesServiceV2, paymentService 
 // @Router /api/v1/sales [get]
 func (sc *SalesController) GetSales(c *gin.Context) {
 	log.Printf("📋 Getting sales list with filters")
-	
+
 	// Parse and validate pagination parameters
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	
+
 	// Validate pagination bounds
 	if page < 1 {
 		utils.SendValidationError(c, "Invalid pagination parameters", map[string]string{
@@ -78,7 +78,7 @@ func (sc *SalesController) GetSales(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Get filter parameters
 	status := c.Query("status")
 	customerID := c.Query("customer_id")
@@ -96,9 +96,9 @@ func (sc *SalesController) GetSales(c *gin.Context) {
 		Limit:      limit,
 	}
 
-	log.Printf("🔍 Fetching sales with filters: page=%d, limit=%d, status=%s, customer_id=%s", 
+	log.Printf("🔍 Fetching sales with filters: page=%d, limit=%d, status=%s, customer_id=%s",
 		page, limit, status, customerID)
-	
+
 	result, err := sc.salesServiceV2.GetSales(filter)
 	if err != nil {
 		log.Printf("❌ Failed to get sales: %v", err)
@@ -107,13 +107,13 @@ func (sc *SalesController) GetSales(c *gin.Context) {
 	}
 
 	log.Printf("✅ Retrieved %d sales (total: %d)", len(result.Data), result.Total)
-	
+
 	// Send paginated success response
-utils.SendPaginatedSuccess(c, 
-		"Sales retrieved successfully", 
-		result.Data, 
-		result.Page, 
-		result.Limit, 
+	utils.SendPaginatedSuccess(c,
+		"Sales retrieved successfully",
+		result.Data,
+		result.Page,
+		result.Limit,
 		int64(result.Total))
 }
 
@@ -140,7 +140,7 @@ func (sc *SalesController) GetSale(c *gin.Context) {
 	}
 
 	log.Printf("🔍 Getting sale details for ID: %d", id)
-	
+
 	sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	if err != nil {
 		log.Printf("❌ Sale %d not found: %v", id, err)
@@ -206,7 +206,7 @@ func (sc *SalesController) ValidateSaleStock(c *gin.Context) {
 // @Router /api/v1/sales [post]
 func (sc *SalesController) CreateSale(c *gin.Context) {
 	log.Printf("🎆 Creating new sale")
-	
+
 	var request models.SaleCreateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("❌ Invalid sale creation request: %v", err)
@@ -231,19 +231,19 @@ func (sc *SalesController) CreateSale(c *gin.Context) {
 	}
 
 	log.Printf("📄 Creating sale for customer %d by user %d", request.CustomerID, userID)
-	
+
 	sale, err := sc.salesServiceV2.CreateSale(request, userID)
 	if err != nil {
 		log.Printf("❌ Failed to create sale: %v", err)
-		
+
 		// Handle specific error types
 		errorMsg := err.Error()
 		switch {
 		case strings.Contains(errorMsg, "customer not found"):
 			utils.SendNotFound(c, "Customer not found")
-		case strings.Contains(errorMsg, "stock tidak mencukupi") || 
-		     strings.Contains(errorMsg, "stock habis") ||
-		     strings.Contains(errorMsg, "stock tidak cukup"):
+		case strings.Contains(errorMsg, "stock tidak mencukupi") ||
+			strings.Contains(errorMsg, "stock habis") ||
+			strings.Contains(errorMsg, "stock tidak cukup"):
 			// Stock validation failed - return 400 with clear message
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
@@ -325,7 +325,7 @@ func (sc *SalesController) DeleteSale(c *gin.Context) {
 		return
 	}
 
-// For V2, we'll delete the sale directly (role checks can be re-enabled if needed)
+	// For V2, we'll delete the sale directly (role checks can be re-enabled if needed)
 	if err := sc.salesServiceV2.DeleteSale(uint(id)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -362,7 +362,7 @@ func (sc *SalesController) ConfirmSale(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "Sale confirmed successfully", "data": sale})
 	return
 
@@ -393,7 +393,7 @@ func (sc *SalesController) InvoiceSale(c *gin.Context) {
 	invoice, err := sc.salesServiceV2.CreateInvoice(uint(id), userID)
 	if err != nil {
 		log.Printf("❌ Failed to create invoice for sale %d: %v", id, err)
-		
+
 		// Handle specific error types with appropriate status codes and messages
 		errorMsg := err.Error()
 		switch {
@@ -406,9 +406,9 @@ func (sc *SalesController) InvoiceSale(c *gin.Context) {
 				"code":    "DUPLICATE_INVOICE",
 				"details": "Invoice untuk penjualan ini sudah dibuat sebelumnya. Silakan refresh halaman.",
 			})
-		case strings.Contains(errorMsg, "stock tidak cukup") || 
-		     strings.Contains(errorMsg, "stock habis") ||
-		     strings.Contains(errorMsg, "gagal mengurangi stock"):
+		case strings.Contains(errorMsg, "stock tidak cukup") ||
+			strings.Contains(errorMsg, "stock habis") ||
+			strings.Contains(errorMsg, "gagal mengurangi stock"):
 			// Stock validation failed - return 400 with clear message
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
@@ -513,7 +513,7 @@ func (sc *SalesController) GetSalePayments(c *gin.Context) {
 // CreateSalePayment creates a payment for a sale with proper race condition protection
 func (sc *SalesController) CreateSalePayment(c *gin.Context) {
 	log.Printf("🚀 Starting payment creation process")
-	
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		log.Printf("❌ Invalid sale ID: %v", err)
@@ -541,7 +541,7 @@ func (sc *SalesController) CreateSalePayment(c *gin.Context) {
 
 	// Set the sale ID from the URL parameter
 	request.SaleID = uint(id)
-	log.Printf("💰 Processing payment request for sale %d: amount=%.2f, method=%s", 
+	log.Printf("💰 Processing payment request for sale %d: amount=%.2f, method=%s",
 		id, request.Amount, request.PaymentMethod)
 
 	// Get user ID from context with proper error handling
@@ -572,15 +572,15 @@ func (sc *SalesController) CreateSalePayment(c *gin.Context) {
 	// The UnifiedSalesPaymentService is disabled in stub_services.go to prevent auto-posting
 	// We should use the working SalesServiceV2.ProcessPayment() which creates proper journals
 	log.Printf("💡 Using SalesServiceV2.ProcessPayment for partial payment support")
-	
+
 	payment, err := sc.salesServiceV2.ProcessPayment(uint(id), request, userID)
 	if err != nil {
 		log.Printf("❌ Payment creation failed for sale %d: %v", id, err)
-		
+
 		// Determine appropriate HTTP status based on error type
 		status := http.StatusInternalServerError
 		code := "PAYMENT_CREATION_ERROR"
-		
+
 		errorMsg := err.Error()
 		switch {
 		case strings.Contains(errorMsg, "not found"):
@@ -599,45 +599,20 @@ func (sc *SalesController) CreateSalePayment(c *gin.Context) {
 			status = http.StatusBadRequest
 			code = "VALIDATION_ERROR"
 		}
-		
+
 		c.JSON(status, gin.H{
-			"status":   "error",
-			"error":    "Failed to create payment",
-			"details":  errorMsg,
-			"code":     code,
-			"sale_id":  id,
-			"user_id":  userID,
+			"status":  "error",
+			"error":   "Failed to create payment",
+			"details": errorMsg,
+			"code":    code,
+			"sale_id": id,
+			"user_id": userID,
 		})
 		return
 	}
 
-	log.Printf("✅ Payment created successfully for sale %d: payment_id=%d, amount=%.2f", 
+	log.Printf("✅ Payment created successfully for sale %d: payment_id=%d, amount=%.2f",
 		id, payment.ID, payment.Amount)
-
-	// 🔥 NEW: Ensure COA balance is synchronized after unified sales payment
-	log.Printf("🔧 Ensuring COA balance sync after unified sales payment...")
-	if sc.accountRepo != nil && request.CashBankID != nil && *request.CashBankID != 0 {
-		// Initialize COA sync service for unified sales payments
-		coaSyncService := services.NewPurchasePaymentCOASyncService(sc.db, sc.accountRepo)
-		
-		// Sync COA balance to match cash/bank balance
-		err = coaSyncService.SyncCOABalanceAfterPayment(
-			uint(id),
-			request.Amount,
-			*request.CashBankID,
-			userID,
-			fmt.Sprintf("UNI-SAL-%d", id),
-			fmt.Sprintf("Unified sales payment for Sale %d", id),
-		)
-		if err != nil {
-			log.Printf("⚠️ Warning: Failed to sync COA balance for unified sales payment: %v", err)
-			// Don't fail the payment, just log the warning
-		} else {
-			log.Printf("✅ COA balance synchronized successfully for unified sales payment")
-		}
-	} else {
-		log.Printf("⚠️ Warning: Account repository not available or CashBankID missing for COA sync")
-	}
 
 	// Return success response with comprehensive data
 	c.JSON(http.StatusCreated, gin.H{
@@ -664,26 +639,26 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Amount        float64   `json:"amount" binding:"required,min=0"`
-		Date          time.Time `json:"date" binding:"required"`
-		Method        string    `json:"method" binding:"required"`
-		CashBankID    uint      `json:"cash_bank_id" binding:"required"`
-		Reference     string    `json:"reference"`
-		Notes         string    `json:"notes"`
+		Amount     float64   `json:"amount" binding:"required,min=0"`
+		Date       time.Time `json:"date" binding:"required"`
+		Method     string    `json:"method" binding:"required"`
+		CashBankID uint      `json:"cash_bank_id" binding:"required"`
+		Reference  string    `json:"reference"`
+		Notes      string    `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("Payment creation validation error for sale %d: %v", id, err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 			"expected_fields": map[string]string{
-				"amount": "number (required, min=0)",
-				"date": "datetime string (required, ISO format)",
-				"method": "string (required)",
+				"amount":       "number (required, min=0)",
+				"date":         "datetime string (required, ISO format)",
+				"method":       "string (required)",
 				"cash_bank_id": "number (required)",
-				"reference": "string (optional)",
-				"notes": "string (optional)",
+				"reference":    "string (optional)",
+				"notes":        "string (optional)",
 			},
 		})
 		return
@@ -691,12 +666,12 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 
 	// Log successful request parsing
 	log.Printf("Received integrated payment request for sale %d: amount=%.2f, method=%s, cash_bank_id=%d", id, request.Amount, request.Method, request.CashBankID)
-	
+
 	// Get sale details to validate and get customer ID
-sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
+	sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Sale not found",
+			"error":   "Sale not found",
 			"details": err.Error(),
 		})
 		return
@@ -705,7 +680,7 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	// Validate sale status
 	if sale.Status != models.SaleStatusInvoiced && sale.Status != models.SaleStatusOverdue {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Sale must be invoiced to receive payments",
+			"error":       "Sale must be invoiced to receive payments",
 			"sale_status": sale.Status,
 		})
 		return
@@ -714,9 +689,9 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	// Validate payment amount
 	if request.Amount > sale.OutstandingAmount {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Payment amount exceeds outstanding amount",
+			"error":              "Payment amount exceeds outstanding amount",
 			"outstanding_amount": sale.OutstandingAmount,
-			"requested_amount": request.Amount,
+			"requested_amount":   request.Amount,
 		})
 		return
 	}
@@ -726,7 +701,7 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	if !exists {
 		log.Printf("Error: user_id not found in context for sale %d payment", id)
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "User not authenticated",
+			"error":   "User not authenticated",
 			"details": "user_id not found in context",
 		})
 		return
@@ -735,7 +710,7 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	if !ok {
 		log.Printf("Error: user_id has invalid type for sale %d payment: %T", id, userIDInterface)
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid user authentication",
+			"error":   "Invalid user authentication",
 			"details": "user_id has invalid type",
 		})
 		return
@@ -743,13 +718,13 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 
 	// Create payment request for Payment Management service
 	paymentRequest := services.PaymentCreateRequest{
-		ContactID:   sale.CustomerID,
-		CashBankID:  request.CashBankID,
-		Date:        request.Date,
-		Amount:      request.Amount,
-		Method:      request.Method,
-		Reference:   request.Reference,
-		Notes:       fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
+		ContactID:  sale.CustomerID,
+		CashBankID: request.CashBankID,
+		Date:       request.Date,
+		Amount:     request.Amount,
+		Method:     request.Method,
+		Reference:  request.Reference,
+		Notes:      fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
 		Allocations: []services.InvoiceAllocation{
 			{
 				InvoiceID: uint(id),
@@ -765,9 +740,9 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 		log.Printf("Error in CreateReceivablePayment for sale %d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error": "Failed to create payment",
+			"error":   "Failed to create payment",
 			"details": err.Error(),
-			"status": "error",
+			"status":  "error",
 		})
 		return
 	}
@@ -780,7 +755,7 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	// FIX: Trust PaymentService to handle everything correctly
 
 	// Return response with both payment info and updated sale status
-updatedSale, err := sc.salesServiceV2.GetSaleByID(uint(id))
+	updatedSale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	if err != nil {
 		// If we can't get updated sale info, still return success but with basic info
 		log.Printf("Warning: Could not fetch updated sale info after payment creation: %v", err)
@@ -788,23 +763,23 @@ updatedSale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 			"success": true,
 			"payment": payment,
 			"message": "Payment created successfully via Payment Management",
-			"note": "Payment created but updated sale info unavailable",
-			"status": "success",
+			"note":    "Payment created but updated sale info unavailable",
+			"status":  "success",
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"payment": payment,
 		"updated_sale": gin.H{
-			"id": updatedSale.ID,
-			"status": updatedSale.Status,
-			"paid_amount": updatedSale.PaidAmount,
+			"id":                 updatedSale.ID,
+			"status":             updatedSale.Status,
+			"paid_amount":        updatedSale.PaidAmount,
 			"outstanding_amount": updatedSale.OutstandingAmount,
 		},
 		"message": "Payment created successfully via Payment Management",
-		"status": "success",
+		"status":  "success",
 	})
 }
 
@@ -816,7 +791,7 @@ func (sc *SalesController) GetSaleForPayment(c *gin.Context) {
 		return
 	}
 
-sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
+	sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Sale not found"})
 		return
@@ -824,20 +799,20 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 
 	// Format response for payment creation
 	response := gin.H{
-		"sale_id": sale.ID,
+		"sale_id":        sale.ID,
 		"invoice_number": sale.InvoiceNumber,
 		"customer": gin.H{
-			"id": sale.Customer.ID,
+			"id":   sale.Customer.ID,
 			"name": sale.Customer.Name,
 			"type": sale.Customer.Type,
 		},
-		"total_amount": sale.TotalAmount,
-		"paid_amount": sale.PaidAmount,
-		"outstanding_amount": sale.OutstandingAmount,
-		"status": sale.Status,
-		"date": sale.Date.Format("2006-01-02"),
-		"due_date": sale.DueDate.Format("2006-01-02"),
-		"can_receive_payment": sale.Status == models.SaleStatusInvoiced || sale.Status == models.SaleStatusOverdue,
+		"total_amount":           sale.TotalAmount,
+		"paid_amount":            sale.PaidAmount,
+		"outstanding_amount":     sale.OutstandingAmount,
+		"status":                 sale.Status,
+		"date":                   sale.Date.Format("2006-01-02"),
+		"due_date":               sale.DueDate.Format("2006-01-02"),
+		"can_receive_payment":    sale.Status == models.SaleStatusInvoiced || sale.Status == models.SaleStatusOverdue,
 		"payment_url_suggestion": fmt.Sprintf("/api/sales/%d/integrated-payment", sale.ID),
 	}
 
@@ -848,30 +823,30 @@ sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 
 // CreateSaleReturn creates a return for a sale
 func (sc *SalesController) CreateSaleReturn(c *gin.Context) {
-_, err := strconv.ParseUint(c.Param("id"), 10, 32)
-if err != nil {
-	c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sale ID"})
-	return
-}
+	_, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sale ID"})
+		return
+	}
 
-var request models.SaleReturnRequest
-if err := c.ShouldBindJSON(&request); err != nil {
-	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	return
-}
+	var request models.SaleReturnRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-_ = c.MustGet("user_id").(uint)
+	_ = c.MustGet("user_id").(uint)
 
-// Not implemented in V2 service yet
-c.JSON(http.StatusNotImplemented, gin.H{"error": "Sale returns are not implemented in this build"})
+	// Not implemented in V2 service yet
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "Sale returns are not implemented in this build"})
 }
 
 // GetSaleReturns gets all returns
 func (sc *SalesController) GetSaleReturns(c *gin.Context) {
-_, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
-_, _ = strconv.Atoi(c.DefaultQuery("limit", "10"))
- 
-c.JSON(http.StatusNotImplemented, gin.H{"error": "GetSaleReturns is not implemented in this build"})
+	_, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	_, _ = strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "GetSaleReturns is not implemented in this build"})
 }
 
 // Reporting and Analytics
@@ -879,10 +854,10 @@ c.JSON(http.StatusNotImplemented, gin.H{"error": "GetSaleReturns is not implemen
 // GetSalesSummary gets sales summary statistics
 func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 	log.Printf("📊 Getting sales summary with filters")
-	
+
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
-	
+
 	// Parse dates if provided
 	var startDate, endDate *time.Time
 	if startDateStr != "" {
@@ -907,9 +882,9 @@ func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	log.Printf("📅 Date filters: start=%v, end=%v", startDate, endDate)
-	
+
 	// Get summary from service
 	summary, err := sc.salesServiceV2.GetSalesSummary(startDate, endDate)
 	if err != nil {
@@ -917,22 +892,22 @@ func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 		utils.SendInternalError(c, "Failed to retrieve sales summary", err.Error())
 		return
 	}
-	
+
 	log.Printf("✅ Sales summary retrieved: %d sales, %.2f total", summary.TotalSales, summary.TotalAmount)
 	utils.SendSuccess(c, "Sales summary retrieved successfully", summary)
 }
 
 // GetSalesAnalytics gets sales analytics data
 func (sc *SalesController) GetSalesAnalytics(c *gin.Context) {
-_, _ = c.GetQuery("period")
-_, _ = c.GetQuery("year")
+	_, _ = c.GetQuery("period")
+	_, _ = c.GetQuery("year")
 
-c.JSON(http.StatusNotImplemented, gin.H{"error": "GetSalesAnalytics is not implemented in this build"})
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "GetSalesAnalytics is not implemented in this build"})
 }
 
 // GetReceivablesReport gets accounts receivable report
 func (sc *SalesController) GetReceivablesReport(c *gin.Context) {
-c.JSON(http.StatusNotImplemented, gin.H{"error": "GetReceivablesReport is not implemented in this build"})
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "GetReceivablesReport is not implemented in this build"})
 }
 
 // PDF Export
@@ -952,12 +927,12 @@ func (sc *SalesController) ExportSaleInvoicePDF(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Sale not found"})
 		return
 	}
-	
+
 	// Get language from query parameter (defaults to user's language from settings)
 	lang := c.Query("lang")
 	var pdfBytes []byte
 	var genErr error
-	
+
 	if lang != "" {
 		// Use specified language
 		pdfBytes, genErr = sc.pdfService.GenerateInvoicePDFWithLanguage(sale, lang)
@@ -965,7 +940,7 @@ func (sc *SalesController) ExportSaleInvoicePDF(c *gin.Context) {
 		// Use default language from settings
 		pdfBytes, genErr = sc.pdfService.GenerateInvoicePDF(sale)
 	}
-	
+
 	if genErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": genErr.Error()})
 		return
@@ -1052,7 +1027,7 @@ func (sc *SalesController) ExportSalesReportPDF(c *gin.Context) {
 		endDate = end.Format("2006-01-02")
 	}
 
-// Collect sales data via service and generate PDF
+	// Collect sales data via service and generate PDF
 	filter := models.SalesFilter{StartDate: startDate, EndDate: endDate, Status: status, CustomerID: customerID, Search: search, Page: 1, Limit: 10000}
 	res, err := sc.salesServiceV2.GetSales(filter)
 	if err != nil {
@@ -1098,10 +1073,14 @@ func (sc *SalesController) ExportSalesReportCSV(c *gin.Context) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	language := "id"
-	if sc.pdfService != nil { language = sc.pdfService.Language() }
+	if sc.pdfService != nil {
+		language = sc.pdfService.Language()
+	}
 	loc := func(key, fallback string) string {
 		t := utils.T(key, language)
-		if t == key { return fallback }
+		if t == key {
+			return fallback
+		}
 		return t
 	}
 	// Header lines
@@ -1163,30 +1142,29 @@ func (sc *SalesController) ExportSalesReportCSV(c *gin.Context) {
 	c.Data(http.StatusOK, "text/csv", buf.Bytes())
 }
 
-
 // Customer Portal
 
 // GetCustomerSales gets sales for a specific customer (for customer portal)
 func (sc *SalesController) GetCustomerSales(c *gin.Context) {
-_, err := strconv.ParseUint(c.Param("customer_id"), 10, 32)
+	_, err := strconv.ParseUint(c.Param("customer_id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid customer ID"})
 		return
 	}
 
-_, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
-_, _ = strconv.Atoi(c.DefaultQuery("limit", "10"))
+	_, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	_, _ = strconv.Atoi(c.DefaultQuery("limit", "10"))
 
-c.JSON(http.StatusNotImplemented, gin.H{"error": "GetCustomerSales is not implemented in this build"})
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "GetCustomerSales is not implemented in this build"})
 }
 
 // GetCustomerInvoices gets invoices for a specific customer
 func (sc *SalesController) GetCustomerInvoices(c *gin.Context) {
-_, err := strconv.ParseUint(c.Param("customer_id"), 10, 32)
+	_, err := strconv.ParseUint(c.Param("customer_id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid customer ID"})
 		return
 	}
 
-c.JSON(http.StatusNotImplemented, gin.H{"error": "GetCustomerInvoices is not implemented in this build"})
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "GetCustomerInvoices is not implemented in this build"})
 }

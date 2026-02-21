@@ -5,8 +5,9 @@ import (
 	"log"
 	"time"
 
-	"gorm.io/gorm"
 	"app-sistem-akuntansi/models"
+
+	"gorm.io/gorm"
 )
 
 type BalanceSyncService struct {
@@ -20,10 +21,10 @@ func NewBalanceSyncService(db *gorm.DB) *BalanceSyncService {
 // SyncAccountBalancesFromSSOT automatically synchronizes account balances from SSOT journal entries
 func (s *BalanceSyncService) SyncAccountBalancesFromSSOT() error {
 	log.Println("🔄 Starting automatic SSOT balance synchronization...")
-	
+
 	// 1. Calculate balances from SSOT journal lines
 	var accountUpdates []struct {
-		AccountID       uint    `json:"account_id"`
+		AccountID         uint    `json:"account_id"`
 		CalculatedBalance float64 `json:"calculated_balance"`
 	}
 
@@ -33,7 +34,7 @@ func (s *BalanceSyncService) SyncAccountBalancesFromSSOT() error {
 			SUM(debit_amount) - SUM(credit_amount) as calculated_balance
 		FROM unified_journal_lines ujl
 		JOIN unified_journal_ledger uj ON ujl.journal_id = uj.id
-		WHERE uj.status = 'POSTED'
+		WHERE uj.status = 'POSTED' AND uj.deleted_at IS NULL
 		GROUP BY account_id
 	`).Scan(&accountUpdates).Error
 
@@ -47,7 +48,7 @@ func (s *BalanceSyncService) SyncAccountBalancesFromSSOT() error {
 		err = s.db.Model(&models.Account{}).
 			Where("id = ?", update.AccountID).
 			Update("balance", update.CalculatedBalance).Error
-		
+
 		if err != nil {
 			log.Printf("Warning: Failed to update account %d balance: %v", update.AccountID, err)
 		} else {
@@ -83,23 +84,23 @@ func (s *BalanceSyncService) syncParentAccountBalances() error {
 			return fmt.Errorf("error updating parent balances (pass %d): %v", pass+1, err)
 		}
 	}
-	
+
 	return nil
 }
 
 // RecalculateAllParentBalances is a public wrapper to recalculate all header account balances
 func (s *BalanceSyncService) RecalculateAllParentBalances() (int64, error) {
 	log.Println("🔄 Recalculating all parent/header account balances...")
-	
+
 	// Count header accounts before update
 	var headerCount int64
 	s.db.Model(&models.Account{}).Where("is_header = true AND deleted_at IS NULL").Count(&headerCount)
-	
+
 	err := s.syncParentAccountBalances()
 	if err != nil {
 		return 0, err
 	}
-	
+
 	log.Printf("✅ Recalculated balances for %d header accounts", headerCount)
 	return headerCount, nil
 }
@@ -107,7 +108,7 @@ func (s *BalanceSyncService) RecalculateAllParentBalances() (int64, error) {
 // AutoSyncAfterJournalPost automatically syncs balances after journal posting
 func (s *BalanceSyncService) AutoSyncAfterJournalPost(journalID uint) error {
 	log.Printf("🔄 Auto-syncing balances after journal %d posting...", journalID)
-	
+
 	// Get affected accounts from this journal
 	var affectedAccounts []uint
 	err := s.db.Raw(`
@@ -128,7 +129,7 @@ func (s *BalanceSyncService) AutoSyncAfterJournalPost(journalID uint) error {
 			SELECT COALESCE(SUM(debit_amount) - SUM(credit_amount), 0)
 			FROM unified_journal_lines ujl
 			JOIN unified_journal_ledger uj ON ujl.journal_id = uj.id
-			WHERE ujl.account_id = ? AND uj.status = 'POSTED'
+			WHERE ujl.account_id = ? AND uj.status = 'POSTED' AND uj.deleted_at IS NULL
 		`, accountID).Scan(&newBalance).Error
 
 		if err != nil {
@@ -156,10 +157,10 @@ func (s *BalanceSyncService) AutoSyncAfterJournalPost(journalID uint) error {
 // updateParentChain updates the parent account chain for a given account
 func (s *BalanceSyncService) updateParentChain(accountID uint) {
 	var parentID *uint
-	
+
 	// Get parent ID
 	s.db.Raw("SELECT parent_id FROM accounts WHERE id = ?", accountID).Scan(&parentID)
-	
+
 	// If has parent, update parent and continue up the chain
 	if parentID != nil {
 		// Calculate parent balance as sum of children
@@ -174,7 +175,7 @@ func (s *BalanceSyncService) updateParentChain(accountID uint) {
 		err := s.db.Model(&models.Account{}).
 			Where("id = ?", *parentID).
 			Update("balance", parentBalance).Error
-		
+
 		if err != nil {
 			log.Printf("Warning: Failed to update parent account %d balance: %v", *parentID, err)
 		} else {
@@ -207,14 +208,14 @@ func (s *BalanceSyncService) VerifyBalanceIntegrity() (bool, error) {
 				(SELECT SUM(ujl.debit_amount) - SUM(ujl.credit_amount)
 				 FROM unified_journal_lines ujl 
 				 JOIN unified_journal_ledger uj ON ujl.journal_id = uj.id
-				 WHERE ujl.account_id = a.id AND uj.status = 'POSTED'),
+				 WHERE ujl.account_id = a.id AND uj.status = 'POSTED' AND uj.deleted_at IS NULL),
 				0
 			) as ssot_balance,
 			a.balance - COALESCE(
 				(SELECT SUM(ujl.debit_amount) - SUM(ujl.credit_amount)
 				 FROM unified_journal_lines ujl 
 				 JOIN unified_journal_ledger uj ON ujl.journal_id = uj.id
-				 WHERE ujl.account_id = a.id AND uj.status = 'POSTED'),
+				 WHERE ujl.account_id = a.id AND uj.status = 'POSTED' AND uj.deleted_at IS NULL),
 				0
 			) as difference
 		FROM accounts a
@@ -238,7 +239,7 @@ func (s *BalanceSyncService) VerifyBalanceIntegrity() (bool, error) {
 	if len(mismatches) > 0 {
 		log.Printf("❌ Found %d balance mismatches:", len(mismatches))
 		for _, mismatch := range mismatches {
-			log.Printf("  Account %s: COA=%.2f, SSOT=%.2f, Diff=%.2f", 
+			log.Printf("  Account %s: COA=%.2f, SSOT=%.2f, Diff=%.2f",
 				mismatch.AccountCode, mismatch.CoaBalance, mismatch.SsotBalance, mismatch.Difference)
 		}
 		return false, nil
@@ -257,7 +258,7 @@ func (s *BalanceSyncService) SchedulePeriodicSync(intervalMinutes int) {
 		select {
 		case <-ticker.C:
 			log.Printf("🔄 Running periodic balance sync (every %d minutes)...", intervalMinutes)
-			
+
 			// Verify integrity first
 			isConsistent, err := s.VerifyBalanceIntegrity()
 			if err != nil {

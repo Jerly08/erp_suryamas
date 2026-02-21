@@ -4,10 +4,10 @@ import { useRouter } from 'next/navigation';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
 import { useTranslation } from '@/hooks/useTranslation';
-import { 
-  Box, 
-  Heading, 
-  Text, 
+import {
+  Box,
+  Heading,
+  Text,
   Card,
   CardHeader,
   CardBody,
@@ -43,46 +43,60 @@ interface DashboardSummary {
   min_stock_alerts_count?: number;
 }
 
+interface PendingApproval {
+  id: number;
+  request_code: string;
+  request_title: string;
+  request_type: string;
+  total_amount: number;
+  priority: string;
+  requester_name: string;
+  created_at: string;
+  step_name: string;
+  time_limit: number;
+  days_pending?: number;
+  urgency_level?: string;
+}
+
+interface SubmittedRequest {
+  id: number;
+  request_code: string;
+  request_title: string;
+  request_type: string;
+  total_amount: number;
+  status: string;
+  priority: string;
+  created_at: string;
+  completed_at?: string;
+  current_step_name: string;
+}
+
+interface RecentNotification {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  priority: string;
+  is_read: boolean;
+  created_at: string;
+  data?: string;
+}
+
+interface QuickStats {
+  pending_approvals_count: number;
+  submitted_requests_count: number;
+  pending_requests_count: number;
+  unread_notifications_count: number;
+  purchase_requests_count?: number;
+  approved_purchase_requests_count?: number;
+  rejected_purchase_requests_count?: number;
+}
+
 interface EmployeeDashboardData {
-  pending_approvals?: Array<{
-    id: number;
-    title: string;
-    description: string;
-    status: string;
-    created_at: string;
-    urgency_level?: string;
-    days_pending?: number;
-  }>;
-  approval_notifications?: Array<{
-    id: number;
-    title: string;
-    message: string;
-    type: string;
-    status: string;
-    created_at: string;
-    urgency_level?: string;
-  }>;
-  purchase_requests?: Array<{
-    id: number;
-    title: string;
-    status: string;
-    total_amount: number;
-    approval_step: string;
-    days_pending?: number;
-    urgency_level?: string;
-  }>;
-  workflows?: Array<{
-    id: number;
-    name: string;
-    status: string;
-    total_steps: number;
-    current_step: number;
-  }>;
-  summary?: {
-    total_pending_approvals: number;
-    total_notifications: number;
-    urgent_items: number;
-  };
+  pending_approvals?: PendingApproval[];
+  submitted_requests?: SubmittedRequest[];
+  recent_notifications?: RecentNotification[];
+  quick_stats?: QuickStats;
 }
 
 export const EmployeeDashboard = () => {
@@ -95,7 +109,6 @@ export const EmployeeDashboard = () => {
   useEffect(() => {
     const fetchEmployeeDashboard = async () => {
       try {
-        // Use employee dashboard endpoint
         const res = await api.get(API_ENDPOINTS.DASHBOARD_EMPLOYEE);
         setEmployeeData(res.data?.data || res.data || {});
         setError(null);
@@ -108,7 +121,10 @@ export const EmployeeDashboard = () => {
     };
     fetchEmployeeDashboard();
   }, []);
-  
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value || 0);
+
   return (
     <Box>
       <Heading as="h2" size="xl" mb={6} color="gray.800">
@@ -127,8 +143,40 @@ export const EmployeeDashboard = () => {
             </Box>
           )}
 
-          {/* Approval Notifications */}
-          {employeeData?.approval_notifications && employeeData.approval_notifications.length > 0 && (
+          {/* Quick Stats Summary */}
+          {employeeData?.quick_stats && (
+            <Flex gap={4} flexWrap="wrap" mt={2}>
+              <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="180px">
+                <Heading as="h3" size="sm" mb={2} color="orange.600">{t('dashboard.pendingApprovals')}</Heading>
+                <Text fontSize="2xl" fontWeight="bold" color="orange.600">
+                  {employeeData.quick_stats.pending_approvals_count}
+                </Text>
+              </Box>
+              <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="180px">
+                <Heading as="h3" size="sm" mb={2} color="blue.600">{t('purchases.purchaseOrder')}</Heading>
+                <Text fontSize="2xl" fontWeight="bold" color="blue.600">
+                  {employeeData.quick_stats.submitted_requests_count}
+                </Text>
+                {employeeData.quick_stats.pending_requests_count > 0 && (
+                  <Text fontSize="sm" color="gray.500">
+                    {employeeData.quick_stats.pending_requests_count} pending
+                  </Text>
+                )}
+              </Box>
+              <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="180px">
+                <Heading as="h3" size="sm" mb={2} color="red.600">
+                  <Icon as={FiBell} mr={1} />{t('common.labels.notification') || 'Notifikasi'}
+                </Heading>
+                <Text fontSize="2xl" fontWeight="bold" color="red.600">
+                  {employeeData.quick_stats.unread_notifications_count}
+                </Text>
+                <Text fontSize="sm" color="gray.500">belum dibaca</Text>
+              </Box>
+            </Flex>
+          )}
+
+          {/* Pending Approvals */}
+          {employeeData?.pending_approvals && employeeData.pending_approvals.length > 0 && (
             <Card mt={6}>
               <CardHeader>
                 <Heading size="md" display="flex" alignItems="center">
@@ -138,23 +186,23 @@ export const EmployeeDashboard = () => {
               </CardHeader>
               <CardBody>
                 <List spacing={3}>
-                  {employeeData.approval_notifications.slice(0, 5).map((notif) => (
-                    <ListItem key={notif.id} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
-                      <ListIcon as={FiBell} color={notif.urgency_level === 'urgent' ? 'red.500' : 'orange.500'} />
+                  {employeeData.pending_approvals.slice(0, 5).map((approval) => (
+                    <ListItem key={approval.id} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
+                      <ListIcon as={FiBell} color={approval.priority === 'HIGH' ? 'red.500' : 'orange.500'} />
                       <Box flex="1">
-                        <Text fontWeight="medium">{notif.title}</Text>
+                        <Text fontWeight="medium">{approval.request_title || approval.request_code}</Text>
                         <Text fontSize="sm" color="gray.600">
-                          {notif.message}
+                          {approval.request_type} • {approval.step_name} • {formatCurrency(approval.total_amount)}
                         </Text>
                         <Text fontSize="xs" color="gray.500">
-                          {new Date(notif.created_at).toLocaleString('id-ID')}
+                          {t('common.labels.requestedBy') || 'Dari'}: {approval.requester_name} • {new Date(approval.created_at).toLocaleString('id-ID')}
                         </Text>
                       </Box>
-                      <Badge 
-                        colorScheme={notif.urgency_level === 'urgent' ? 'red' : 'orange'}
+                      <Badge
+                        colorScheme={approval.priority === 'HIGH' ? 'red' : 'orange'}
                         size="sm"
                       >
-                        {notif.urgency_level || notif.status}
+                        {approval.priority || 'PENDING'}
                       </Badge>
                     </ListItem>
                   ))}
@@ -163,8 +211,8 @@ export const EmployeeDashboard = () => {
             </Card>
           )}
 
-          {/* Purchase Requests */}
-          {employeeData?.purchase_requests && employeeData.purchase_requests.length > 0 && (
+          {/* Submitted Requests */}
+          {employeeData?.submitted_requests && employeeData.submitted_requests.length > 0 && (
             <Card mt={6}>
               <CardHeader>
                 <Heading size="md" display="flex" alignItems="center">
@@ -174,20 +222,20 @@ export const EmployeeDashboard = () => {
               </CardHeader>
               <CardBody>
                 <List spacing={3}>
-                  {employeeData.purchase_requests.slice(0, 5).map((req) => (
+                  {employeeData.submitted_requests.slice(0, 5).map((req) => (
                     <ListItem key={req.id} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
                       <ListIcon as={FiFileText} color="blue.500" />
                       <Box flex="1">
-                        <Text fontWeight="medium">{req.title}</Text>
+                        <Text fontWeight="medium">{req.request_title || req.request_code}</Text>
                         <Text fontSize="sm" color="gray.600">
-                          {req.approval_step} • Rp {req.total_amount?.toLocaleString('id-ID') || '0'}
+                          {req.current_step_name} • {formatCurrency(req.total_amount)}
                         </Text>
                         <Text fontSize="xs" color="gray.500">
-                          {req.days_pending && `${req.days_pending} ${t('common.labels.date')}`}
+                          {new Date(req.created_at).toLocaleString('id-ID')}
                         </Text>
                       </Box>
-                      <Badge 
-                        colorScheme={req.status === 'approved' ? 'green' : req.status === 'rejected' ? 'red' : 'yellow'}
+                      <Badge
+                        colorScheme={req.status === 'APPROVED' ? 'green' : req.status === 'REJECTED' ? 'red' : 'yellow'}
                         size="sm"
                       >
                         {req.status}
@@ -199,31 +247,34 @@ export const EmployeeDashboard = () => {
             </Card>
           )}
 
-          {/* Approval Workflows */}
-          {employeeData?.workflows && employeeData.workflows.length > 0 && (
+          {/* Recent Notifications */}
+          {employeeData?.recent_notifications && employeeData.recent_notifications.length > 0 && (
             <Card mt={6}>
               <CardHeader>
                 <Heading size="md" display="flex" alignItems="center">
                   <Icon as={FiActivity} mr={2} color="purple.500" />
-                  {t('dashboard.pendingApprovals')}
+                  {t('common.labels.notification') || 'Notifikasi Terbaru'}
                 </Heading>
               </CardHeader>
               <CardBody>
                 <List spacing={3}>
-                  {employeeData.workflows.slice(0, 5).map((workflow) => (
-                    <ListItem key={workflow.id} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
-                      <ListIcon as={FiActivity} color="purple.500" />
+                  {employeeData.recent_notifications.slice(0, 5).map((notif) => (
+                    <ListItem key={notif.id} display="flex" alignItems="center" p={3} bg={notif.is_read ? 'gray.50' : 'blue.50'} borderRadius="md">
+                      <ListIcon as={FiBell} color={notif.is_read ? 'gray.400' : 'blue.500'} />
                       <Box flex="1">
-                        <Text fontWeight="medium">{workflow.name}</Text>
+                        <Text fontWeight={notif.is_read ? 'normal' : 'bold'}>{notif.title}</Text>
                         <Text fontSize="sm" color="gray.600">
-                          Step {workflow.current_step} / {workflow.total_steps}
+                          {notif.message}
+                        </Text>
+                        <Text fontSize="xs" color="gray.500">
+                          {new Date(notif.created_at).toLocaleString('id-ID')}
                         </Text>
                       </Box>
-                      <Badge 
-                        colorScheme={workflow.status === 'completed' ? 'green' : 'blue'}
+                      <Badge
+                        colorScheme={notif.priority === 'HIGH' ? 'red' : notif.priority === 'MEDIUM' ? 'orange' : 'gray'}
                         size="sm"
                       >
-                        {workflow.status}
+                        {notif.type}
                       </Badge>
                     </ListItem>
                   ))}

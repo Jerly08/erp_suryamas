@@ -819,7 +819,7 @@ func (s *UnifiedJournalService) GetJournalEntries(filters interface{}) (*Journal
 		return nil, fmt.Errorf("invalid filters type")
 	}
 
-	query := s.db.Model(&models.SSOTJournalEntry{})
+	query := s.db.Model(&models.SSOTJournalEntry{}).Where("status = ?", models.SSOTStatusPosted).Where("deleted_at IS NULL")
 	if f.SourceType != "" {
 		query = query.Where("source_type = ?", f.SourceType)
 	}

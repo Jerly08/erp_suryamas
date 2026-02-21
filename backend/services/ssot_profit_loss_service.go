@@ -209,7 +209,7 @@ func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endDate st
 			AND uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
 			AND UPPER(uje.source_type) != 'CLOSING'
-		WHERE uje.entry_date >= ? AND uje.entry_date <= ?
+		WHERE uje.entry_date >= ? AND uje.entry_date <= ? AND a.deleted_at IS NULL
 		GROUP BY a.code
 		HAVING (COALESCE(SUM(ujl.debit_amount), 0) <> 0 OR COALESCE(SUM(ujl.credit_amount), 0) <> 0)
 		ORDER BY a.code

@@ -523,7 +523,7 @@ const SettingsPage: React.FC = () => {
   if (loading) {
     return (
       <ProtectedModule module="settings">
-        <SimpleLayout allowedRoles={['admin']}>
+        <SimpleLayout>
           <Box>
             <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
             <Text ml={4}>{t('common.loading')}</Text>
@@ -537,7 +537,7 @@ const SettingsPage: React.FC = () => {
   if (!settings) {
     return (
       <ProtectedModule module="settings">
-        <SimpleLayout allowedRoles={['admin']}>
+        <SimpleLayout>
           <Box>
             <Text>No settings data available</Text>
           </Box>
@@ -548,7 +548,7 @@ const SettingsPage: React.FC = () => {
 
   return (
     <ProtectedModule module="settings">
-      <SimpleLayout allowedRoles={['admin']}>
+      <SimpleLayout>
         <Box>
           <VStack spacing={6} alignItems="start">
             <HStack justify="space-between" width="full">

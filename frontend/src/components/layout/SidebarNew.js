@@ -76,20 +76,20 @@ const getMenuGroups = (t, companyType) => {
         { name: ctLabel('purchases', 'navigation.purchases'), icon: FiShoppingCart, href: '/purchases', module: 'purchases', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
         { name: t('navigation.payments'), icon: FiTrendingUp, href: '/payments', module: 'payments', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
         { name: t('navigation.cashBank'), icon: FiCompass, href: '/cash-bank', module: 'cash_bank', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-        { name: t('navigation.journal'), icon: FiFileText, href: '/journal', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+        { name: t('navigation.journal'), icon: FiFileText, href: '/journal', module: 'journal', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
       ]
     },
     {
       title: t('navigation.reports'),
       items: [
-        { name: t('navigation.reports'), icon: FiBarChart, href: '/reports', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+        { name: t('navigation.reports'), icon: FiBarChart, href: '/reports', module: 'reports', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
       ]
     },
     {
       title: t('navigation.sidebar.system'),
       items: [
-        { name: t('navigation.users'), icon: FiUser, href: '/users', module: null, permission: null, roles: ['ADMIN'] },
-        { name: t('navigation.settings'), icon: FiSettings, href: '/settings', module: null, permission: null, roles: ['ADMIN'] },
+        { name: t('navigation.users'), icon: FiUser, href: '/users', module: 'users', permission: 'view', roles: ['ADMIN'] },
+        { name: t('navigation.settings'), icon: FiSettings, href: '/settings', module: 'settings', permission: 'view', roles: ['ADMIN'] },
       ]
     },
   ];
