@@ -136,7 +136,14 @@ func main() {
 	// CORS middleware with dynamic origins
 	allowedOrigins := config.GetAllowedOrigins(cfg)
 	r.Use(cors.New(cors.Config{
-		AllowOrigins: allowedOrigins,
+		AllowOriginFunc: func(origin string) bool {
+			for _, allowedOrigin := range allowedOrigins {
+				if allowedOrigin == "*" || allowedOrigin == origin {
+					return true
+				}
+			}
+			return false
+		},
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		// Include Cache-Control to satisfy browser preflight checks (Axios often sends it)
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "Cache-Control"},
