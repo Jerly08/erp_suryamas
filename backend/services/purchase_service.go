@@ -174,6 +174,10 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		MatchingStatus:    models.PurchaseMatchingPending,
 	}
 
+	// Assign PR and Project if linked
+	purchase.PurchaseRequestID = request.PurchaseRequestID
+	purchase.ProjectID = request.ProjectID
+
 	// Calculate totals and create purchase items
 	fmt.Printf("ℹ Calculating purchase totals for %d items\n", len(request.Items))
 	err = s.calculatePurchaseTotals(purchase, request.Items)
@@ -182,6 +186,38 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		return nil, fmt.Errorf("failed to calculate purchase totals: %v", err)
 	}
 	fmt.Printf("✅ Purchase totals calculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
+
+	// INVOICE MATCHING: HARD BLOCK VALIDATION
+	// If this purchase is linked to a Purchase Request, validate against its estimated amount
+	if purchase.PurchaseRequestID != nil {
+		var pr models.PurchaseRequest
+		if err := s.db.First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
+			return nil, fmt.Errorf("linked purchase request not found: %v", err)
+		}
+
+		// Ensure the PR is approved
+		if pr.Status != "APPROVED" {
+			return nil, fmt.Errorf("cannot create purchase from unapproved request (Status: %s)", pr.Status)
+		}
+
+		// Inherit ProjectID from PR if the request didn't explicitly set one
+		if purchase.ProjectID == nil && pr.ProjectID != nil {
+			purchase.ProjectID = pr.ProjectID
+		}
+
+		// Menghitung Base Net Amount (Subtotal - Diskon) tanpa PPN dan Pajak Lainnya
+		netPurchaseAmount := purchase.SubtotalBeforeDiscount - purchase.Discount
+
+		// Hard Block Rule: Tolerance 0%. Net Invoice must be <= PR Estimate.
+		if netPurchaseAmount > pr.TotalEstimatedAmount {
+			errMsg := fmt.Sprintf("HARD BLOCK: Base Invoice Amount (%.2f) exceeds Approved Purchase Request Amount (%.2f). Note: Taxes are excluded from this limit check. Please revise invoice or request a new PR.", netPurchaseAmount, pr.TotalEstimatedAmount)
+			fmt.Printf("❌ %s\n", errMsg)
+			return nil, errors.New(errMsg)
+		}
+
+		// Set Matching Status since it passed
+		purchase.MatchingStatus = "MATCHED"
+	}
 
 	// Determine approval basis and base amount for later use
 	fmt.Printf("ℹ Determining approval requirements for purchase with amount %.2f\n", purchase.TotalAmount)
@@ -297,6 +333,26 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		return nil, fmt.Errorf("failed to recalculate purchase totals: %v", err)
 	}
 	fmt.Printf("✅ Purchase %d totals recalculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", id, purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
+
+	// INVOICE MATCHING: HARD BLOCK VALIDATION FOR UPDATE
+	if purchase.PurchaseRequestID != nil {
+		var pr models.PurchaseRequest
+		if err := s.db.First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
+			return nil, fmt.Errorf("linked purchase request not found: %v", err)
+		}
+
+		// Menghitung Base Net Amount (Subtotal - Diskon) tanpa PPN dan Pajak Lainnya
+		netPurchaseAmount := purchase.SubtotalBeforeDiscount - purchase.Discount
+
+		// Hard Block Rule
+		if netPurchaseAmount > pr.TotalEstimatedAmount {
+			errMsg := fmt.Sprintf("HARD BLOCK: Updated Base Invoice Amount (%.2f) exceeds Approved Purchase Request Amount (%.2f). Note: Taxes are excluded from this limit check. Update rejected.", netPurchaseAmount, pr.TotalEstimatedAmount)
+			fmt.Printf("❌ %s\n", errMsg)
+			return nil, errors.New(errMsg)
+		}
+		purchase.MatchingStatus = "MATCHED"
+	}
+
 	// Re-evaluate approval base
 	s.setApprovalBasisAndBase(purchase)
 
@@ -358,8 +414,37 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 		fmt.Printf("⚠ Warning: failed to soft-delete SSOT journal lines for purchase %d: %v\n", id, err)
 	}
 
+	// CRITICAL FIX: Update project actual cost if purchase was approved/completed/paid
+	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending && purchase.Status != models.PurchaseStatusCancelled {
+		fmt.Printf("📉 Decreasing project actual cost due to purchase deletion\n")
+		err = s.updateProjectCostForPurchase(purchase, false)
+		if err != nil {
+			fmt.Printf("⚠️ Warning: Failed to decrease project actual cost for purchase %d: %v\n", id, err)
+		} else {
+			fmt.Printf("✅ Successfully decreased project actual cost for project %d\n", *purchase.ProjectID)
+		}
+	}
+
 	fmt.Printf("✅ Purchase %d deleted successfully\n", id)
 	return nil
+}
+
+// updateProjectCostForPurchase updates the total_actual_cost for a linked project.
+// If increase=true, it adds to actual cost. If increase=false, it subtracts.
+// It uses NetBeforeTax to trace the core actual cost.
+func (s *PurchaseService) updateProjectCostForPurchase(purchase *models.Purchase, increase bool) error {
+	if purchase.ProjectID == nil {
+		// Not linked to any project
+		return nil
+	}
+
+	cost := purchase.NetBeforeTax
+	if !increase {
+		cost = -cost
+	}
+
+	result := s.db.Exec("UPDATE projects SET total_actual_cost = total_actual_cost + ? WHERE id = ?", cost, *purchase.ProjectID)
+	return result.Error
 }
 
 // Approval Integration
@@ -1112,6 +1197,17 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 			fmt.Printf("⚠️ Warning: Failed to update immediate payment tracking: %v\n", err)
 		} else {
 			fmt.Printf("💵 Marked immediate payment as fully paid\n")
+		}
+	}
+
+	// 5. Update Project Actual Cost (if linked to project)
+	if purchase.ProjectID != nil {
+		fmt.Printf("📈 Increasing project actual cost for approved purchase %d\n", purchaseID)
+		err = s.updateProjectCostForPurchase(purchase, true)
+		if err != nil {
+			fmt.Printf("⚠️ Warning: Failed to increase project actual cost: %v\n", err)
+		} else {
+			fmt.Printf("✅ Successfully increased project actual cost for project %d\n", *purchase.ProjectID)
 		}
 	}
 

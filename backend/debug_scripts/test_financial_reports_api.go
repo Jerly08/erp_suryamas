@@ -12,13 +12,13 @@ import (
 )
 
 type APITestResult struct {
-	Endpoint    string      `json:"endpoint"`
-	Status      int         `json:"status"`
-	Success     bool        `json:"success"`
-	ResponseSize int        `json:"response_size"`
-	HasData     bool        `json:"has_data"`
-	DataPreview interface{} `json:"data_preview,omitempty"`
-	Error       string      `json:"error,omitempty"`
+	Endpoint     string      `json:"endpoint"`
+	Status       int         `json:"status"`
+	Success      bool        `json:"success"`
+	ResponseSize int         `json:"response_size"`
+	HasData      bool        `json:"has_data"`
+	DataPreview  interface{} `json:"data_preview,omitempty"`
+	Error        string      `json:"error,omitempty"`
 }
 
 func main() {
@@ -66,9 +66,9 @@ func main() {
 	// Test each endpoint
 	for i, endpoint := range endpoints {
 		fmt.Printf("%d. Testing %s...\n", i+1, endpoint.name)
-		
+
 		// Build URL with parameters
-		url := fmt.Sprintf("%s%s?start_date=%s&end_date=%s&format=json", 
+		url := fmt.Sprintf("%s%s?start_date=%s&end_date=%s&format=json",
 			baseURL, endpoint.path, startDate, endDate)
 
 		result := testEndpoint(url, endpoint.name, endpoint.path)
@@ -76,13 +76,13 @@ func main() {
 
 		// Print result summary
 		if result.Success {
-			fmt.Printf("   ✅ Status: %d, Size: %d bytes, Has Data: %t\n", 
+			fmt.Printf("   ✅ Status: %d, Size: %d bytes, Has Data: %t\n",
 				result.Status, result.ResponseSize, result.HasData)
 		} else {
 			fmt.Printf("   ❌ Status: %d, Error: %s\n", result.Status, result.Error)
 		}
 		fmt.Println()
-		
+
 		// Small delay between requests
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -90,10 +90,10 @@ func main() {
 	// Print summary
 	fmt.Println("📋 Summary Report")
 	fmt.Println("================")
-	
+
 	successCount := 0
 	dataAvailableCount := 0
-	
+
 	for _, result := range results {
 		status := "❌ Failed"
 		if result.Success {
@@ -106,10 +106,10 @@ func main() {
 				status += " (No Data)"
 			}
 		}
-		
+
 		fmt.Printf("%-30s: %s\n", result.Endpoint, status)
 	}
-	
+
 	fmt.Printf("\n🎯 Results:\n")
 	fmt.Printf("- Total endpoints tested: %d\n", len(results))
 	fmt.Printf("- Successful responses: %d\n", successCount)
@@ -182,7 +182,7 @@ func testEndpoint(url, name, path string) APITestResult {
 		if err := json.Unmarshal(body, &jsonData); err == nil {
 			// Check if response contains actual data
 			result.HasData = checkForData(bodyStr, jsonData)
-			
+
 			// Create data preview
 			if result.HasData {
 				result.DataPreview = createDataPreview(jsonData)
@@ -253,8 +253,8 @@ func checkForData(bodyStr string, jsonData interface{}) bool {
 	for _, indicator := range dataIndicators {
 		if strings.Contains(bodyLower, strings.ToLower(indicator)) {
 			// Additional check: make sure it's not zero
-			if !strings.Contains(bodyLower, indicator+"0") && 
-			   !strings.Contains(bodyLower, indicator+"null") {
+			if !strings.Contains(bodyLower, indicator+"0") &&
+				!strings.Contains(bodyLower, indicator+"null") {
 				return true
 			}
 		}
@@ -266,7 +266,7 @@ func checkForData(bodyStr string, jsonData interface{}) bool {
 		if data, exists := dataMap["data"]; exists && data != nil {
 			return true
 		}
-		
+
 		// Check for non-zero numeric values
 		for _, value := range dataMap {
 			if numVal, ok := value.(float64); ok && numVal != 0 {
@@ -280,7 +280,7 @@ func checkForData(bodyStr string, jsonData interface{}) bool {
 
 func containsDataKeywords(body string) bool {
 	keywords := []string{
-		"revenue", "expense", "profit", "loss", "balance", 
+		"revenue", "expense", "profit", "loss", "balance",
 		"asset", "liability", "equity", "debit", "credit",
 		"journal", "account", "transaction",
 	}
@@ -298,16 +298,16 @@ func createDataPreview(jsonData interface{}) interface{} {
 	// Create a simplified preview of the data
 	if dataMap, ok := jsonData.(map[string]interface{}); ok {
 		preview := make(map[string]interface{})
-		
+
 		// Extract key fields for preview
 		keyFields := []string{"total", "amount", "balance", "revenue", "expenses", "entries", "count"}
-		
+
 		for _, field := range keyFields {
 			if value, exists := dataMap[field]; exists {
 				preview[field] = value
 			}
 		}
-		
+
 		// If data field exists, extract some info from it
 		if data, exists := dataMap["data"]; exists {
 			if dataDict, ok := data.(map[string]interface{}); ok {
@@ -318,11 +318,11 @@ func createDataPreview(jsonData interface{}) interface{} {
 				}
 			}
 		}
-		
+
 		if len(preview) > 0 {
 			return preview
 		}
 	}
-	
+
 	return nil
 }

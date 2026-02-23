@@ -245,7 +245,7 @@
   "navigation": {
     "dashboard": "Dashboard",
     "accounts": "Accounts",
-    "products": "Products",
+    "products": "Items & Benchmarks",
     "contacts": "Contacts",
     "assets": "Assets",
     "sales": "Sales",
@@ -889,9 +889,9 @@
     "categoryLabel": "Category",
     "unit": "Unit",
     "price": "Price",
-    "purchasePrice": "Purchase Price",
+    "purchasePrice": "Purchase Benchmark Price",
     "costPrice": "Cost Price (COGS)",
-    "salePrice": "Sale Price",
+    "salePrice": "Sale Benchmark Price",
     "pricingTier": "Pricing Tier",
     "stock": "Stock",
     "currentStock": "Current Stock",
@@ -1302,7 +1302,8 @@
       "quotation": "Quotation",
       "salesPerson": "Sales Person",
       "invoiceNumber": "Invoice Number",
-      "cashBankAccount": "Cash/Bank Account"
+      "cashBankAccount": "Cash/Bank Account",
+      "location": "Delivery Location"
     },
     "tooltips": {
       "customer": "Select customer for this transaction",

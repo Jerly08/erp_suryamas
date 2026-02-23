@@ -174,7 +174,9 @@
       "description": "Deskripsi",
       "code": "Kode",
       "balance": "Saldo",
-      "type": "Tipe"
+      "type": "Tipe",
+      "notification": "Notifikasi",
+      "requestedBy": "Diminta Oleh"
     },
     "buttons": {
       "save": "Simpan",
@@ -248,7 +250,7 @@
   "navigation": {
     "dashboard": "Dasbor",
     "accounts": "Akun",
-    "products": "Produk",
+    "products": "Items & Benchmarks",
     "contacts": "Kontak",
     "assets": "Aset",
     "sales": "Penjualan",
@@ -377,6 +379,7 @@
   "purchases": {
     "title": "Manajemen Pembelian",
     "createNew": "Buat Pembelian Baru",
+    "purchaseOrder": "Pesanan Pembelian",
     "export": "Ekspor",
     "cannotRecordPayment": "Tidak Dapat Mencatat Pembayaran",
     "cannotRecordPaymentTitle": "Tidak Dapat Mencatat Pembayaran",
@@ -891,9 +894,9 @@
     "categoryLabel": "Kategori",
     "unit": "Satuan",
     "price": "Harga",
-    "purchasePrice": "Harga Beli",
+    "purchasePrice": "Acuan Harga Beli",
     "costPrice": "Harga Pokok (COGS)",
-    "salePrice": "Harga Jual",
+    "salePrice": "Acuan Harga Jual",
     "pricingTier": "Tingkat Harga",
     "stock": "Stok",
     "currentStock": "Stok Saat Ini",
@@ -1304,7 +1307,8 @@
       "quotation": "Penawaran",
       "salesPerson": "Sales Person",
       "invoiceNumber": "Nomor Faktur",
-      "cashBankAccount": "Akun Kas/Bank"
+      "cashBankAccount": "Akun Kas/Bank",
+      "location": "Lokasi Pengiriman"
     },
     "tooltips": {
       "customer": "Pilih pelanggan untuk transaksi ini",

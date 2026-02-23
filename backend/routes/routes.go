@@ -188,6 +188,11 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	notificationHandler := handlers.NewNotificationHandler(notificationService, stockMonitoringService)
 	dashboardController := controllers.NewDashboardController(db, stockMonitoringService)
 
+	// Purchase Requests Management - Init
+	purchaseRequestRepo := repositories.NewPurchaseRequestRepository(db)
+	purchaseRequestService := services.NewPurchaseRequestService(db, purchaseRequestRepo, notificationService)
+	purchaseRequestController := controllers.NewPurchaseRequestController(purchaseRequestService)
+
 	// Update ProductController with stockMonitoringService
 	productController := controllers.NewProductController(db, stockMonitoringService)
 
@@ -209,6 +214,11 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 	// Initialize Period Validation Middleware
 	periodValidationMiddleware := middleware.NewPeriodValidationMiddleware(unifiedPeriodClosingService)
+
+	// Project repositories, services and controllers
+	projectRepo := repositories.NewProjectRepository(db)
+	projectService := services.NewProjectService(projectRepo)
+	projectController := controllers.NewProjectController(projectService)
 
 	// Purchase repositories, services and controllers
 	purchaseRepo := repositories.NewPurchaseRepository(db)
@@ -668,6 +678,28 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				notifs.GET("/approvals", notificationHandler.GetApprovalNotifications)
 			}
 
+			// Purchase Requests routes with permission checks
+			purchaseRequests := protected.Group("/purchase-requests")
+			{
+				purchaseRequests.GET("", permMiddleware.CanView("purchases"), purchaseRequestController.GetAll)
+				purchaseRequests.GET("/:id", permMiddleware.CanView("purchases"), purchaseRequestController.GetByID)
+				purchaseRequests.POST("", permMiddleware.CanCreate("purchases"), purchaseRequestController.Create)
+
+				// Approval & Rejection workflows
+				purchaseRequests.PUT("/:id/approve", middleware.RoleRequired("admin", "finance", "director"), purchaseRequestController.Approve)
+				purchaseRequests.PUT("/:id/reject", middleware.RoleRequired("admin", "finance", "director"), purchaseRequestController.Reject)
+			}
+
+			// Projects routes with permission checks
+			projects := protected.Group("/projects")
+			{
+				projects.GET("", permMiddleware.CanView("projects"), projectController.GetAll)
+				projects.GET("/:id", permMiddleware.CanView("projects"), projectController.GetByID)
+				projects.POST("", permMiddleware.CanCreate("projects"), projectController.Create)
+				projects.PUT("/:id", permMiddleware.CanEdit("projects"), projectController.Update)
+				projects.DELETE("/:id", permMiddleware.CanDelete("projects"), projectController.Delete)
+			}
+
 			// Sales routes with permission checks
 			sales := protected.Group("/sales")
 			{
@@ -855,8 +887,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.GET("/pending-approvals", permMiddleware.CanApprove("purchases"), purchaseController.GetPendingApprovals)
 
 				// Export routes dengan permission checks
-				purchases.GET("/export/pdf", permMiddleware.CanExport("purchases"), purchaseController.ExportPurchasesReportPDF)
-				purchases.GET("/export/csv", permMiddleware.CanExport("purchases"), purchaseController.ExportPurchasesReportCSV)
+				purchases.GET("/export/pdf", permMiddleware.CanView("purchases"), purchaseController.ExportPurchasesReportPDF)
+				purchases.GET("/export/csv", permMiddleware.CanView("purchases"), purchaseController.ExportPurchasesReportCSV)
 				purchases.GET("/dashboard", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseDashboard)
 				purchases.GET("/vendor/:vendor_id/summary", permMiddleware.CanView("purchases"), purchaseController.GetVendorPurchaseSummary)
 

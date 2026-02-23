@@ -77,6 +77,7 @@ type PDFTranslations struct {
 	Product                  string
 	No                       string
 	Qty                      string
+	Location                 string
 }
 
 // getPDFTranslations returns translations based on language
@@ -135,6 +136,7 @@ func getPDFTranslations(lang string) PDFTranslations {
 			Product:                  "Produk",
 			No:                       "No.",
 			Qty:                      "Jml",
+			Location:                 "Lokasi Pengiriman",
 		}
 	}
 
@@ -192,6 +194,7 @@ func getPDFTranslations(lang string) PDFTranslations {
 		Product:                  "Product",
 		No:                       "No.",
 		Qty:                      "Qty",
+		Location:                 "Delivery Location",
 	}
 }
 
@@ -912,14 +915,16 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 	pdf.SetLineWidth(0.4)
 
 	// Calculate column widths for clean layout
-	numWidth := contentW * 0.08
-	descWidth := contentW * 0.45
-	qtyWidth := contentW * 0.12
+	numWidth := contentW * 0.05
+	descWidth := contentW * 0.28
+	locWidth := contentW * 0.22
+	qtyWidth := contentW * 0.10
 	priceWidth := contentW * 0.17
 	totalWidth := contentW * 0.18
 
 	pdf.CellFormat(numWidth, 6, tr.No, "1", 0, "C", true, 0, "")
 	pdf.CellFormat(descWidth, 6, tr.Description, "1", 0, "L", true, 0, "")
+	pdf.CellFormat(locWidth, 6, tr.Location, "1", 0, "L", true, 0, "")
 	pdf.CellFormat(qtyWidth, 6, tr.Qty, "1", 0, "C", true, 0, "")
 	pdf.CellFormat(priceWidth, 6, tr.UnitPrice, "1", 0, "R", true, 0, "")
 	pdf.CellFormat(totalWidth, 6, tr.Total, "1", 0, "R", true, 0, "")
@@ -943,6 +948,7 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 			pdf.SetTextColor(51, 51, 51)
 			pdf.CellFormat(numWidth, 6, tr.No, "1", 0, "C", true, 0, "")
 			pdf.CellFormat(descWidth, 6, tr.Description, "1", 0, "L", true, 0, "")
+			pdf.CellFormat(locWidth, 6, tr.Location, "1", 0, "L", true, 0, "")
 			pdf.CellFormat(qtyWidth, 6, tr.Qty, "1", 0, "C", true, 0, "")
 			pdf.CellFormat(priceWidth, 6, tr.UnitPrice, "1", 0, "R", true, 0, "")
 			pdf.CellFormat(totalWidth, 6, tr.Total, "1", 0, "R", true, 0, "")
@@ -981,6 +987,7 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 
 		pdf.CellFormat(numWidth, 5, itemNumber, "1", 0, "C", true, 0, "")
 		pdf.CellFormat(descWidth, 5, description, "1", 0, "L", true, 0, "")
+		pdf.CellFormat(locWidth, 5, item.Location, "1", 0, "L", true, 0, "")
 		pdf.CellFormat(qtyWidth, 5, quantity, "1", 0, "C", true, 0, "")
 		pdf.CellFormat(priceWidth, 5, unitPrice, "1", 0, "R", true, 0, "")
 		pdf.CellFormat(totalWidth, 5, totalPrice, "1", 0, "R", true, 0, "")
@@ -1389,9 +1396,10 @@ func (p *PDFService) GenerateInvoicePDFWithTypeAndLanguage(sale *models.Sale, do
 	// Items table header
 	pdf.SetFont("Arial", "B", 10)
 	pdf.SetFillColor(220, 220, 220)
-	pdf.CellFormat(15, 8, tr.No, "1", 0, "C", true, 0, "")
-	pdf.CellFormat(65, 8, tr.Description, "1", 0, "L", true, 0, "")
-	pdf.CellFormat(20, 8, tr.Qty, "1", 0, "C", true, 0, "")
+	pdf.CellFormat(10, 8, tr.No, "1", 0, "C", true, 0, "")
+	pdf.CellFormat(50, 8, tr.Description, "1", 0, "L", true, 0, "")
+	pdf.CellFormat(25, 8, tr.Location, "1", 0, "L", true, 0, "")
+	pdf.CellFormat(15, 8, tr.Qty, "1", 0, "C", true, 0, "")
 	pdf.CellFormat(45, 8, tr.UnitPrice, "1", 0, "R", true, 0, "")
 	pdf.CellFormat(45, 8, tr.Total, "1", 0, "R", true, 0, "")
 	pdf.Ln(8)
@@ -1408,9 +1416,10 @@ func (p *PDFService) GenerateInvoicePDFWithTypeAndLanguage(sale *models.Sale, do
 			// Re-add headers
 			pdf.SetFont("Arial", "B", 10)
 			pdf.SetFillColor(220, 220, 220)
-			pdf.CellFormat(15, 8, tr.No, "1", 0, "C", true, 0, "")
-			pdf.CellFormat(65, 8, tr.Description, "1", 0, "L", true, 0, "")
-			pdf.CellFormat(20, 8, tr.Qty, "1", 0, "C", true, 0, "")
+			pdf.CellFormat(10, 8, tr.No, "1", 0, "C", true, 0, "")
+			pdf.CellFormat(50, 8, tr.Description, "1", 0, "L", true, 0, "")
+			pdf.CellFormat(25, 8, tr.Location, "1", 0, "L", true, 0, "")
+			pdf.CellFormat(15, 8, tr.Qty, "1", 0, "C", true, 0, "")
 			pdf.CellFormat(45, 8, tr.UnitPrice, "1", 0, "R", true, 0, "")
 			pdf.CellFormat(45, 8, tr.Total, "1", 0, "R", true, 0, "")
 			pdf.Ln(8)
@@ -1429,9 +1438,10 @@ func (p *PDFService) GenerateInvoicePDFWithTypeAndLanguage(sale *models.Sale, do
 		unitPrice := p.formatRupiah(item.UnitPrice)
 		totalPrice := p.formatRupiah(item.TotalPrice)
 
-		pdf.CellFormat(15, 6, itemNumber, "1", 0, "C", false, 0, "")
-		pdf.CellFormat(65, 6, description, "1", 0, "L", false, 0, "")
-		pdf.CellFormat(20, 6, quantity, "1", 0, "C", false, 0, "")
+		pdf.CellFormat(10, 6, itemNumber, "1", 0, "C", false, 0, "")
+		pdf.CellFormat(50, 6, description, "1", 0, "L", false, 0, "")
+		pdf.CellFormat(25, 6, item.Location, "1", 0, "L", false, 0, "")
+		pdf.CellFormat(15, 6, quantity, "1", 0, "C", false, 0, "")
 		pdf.CellFormat(45, 6, unitPrice, "1", 0, "R", false, 0, "")
 		pdf.CellFormat(45, 6, totalPrice, "1", 0, "R", false, 0, "")
 		pdf.Ln(6)

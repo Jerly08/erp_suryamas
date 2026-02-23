@@ -98,40 +98,8 @@ func (s *UnifiedJournalService) CreateJournalEntry(entry interface{}) (*models.S
 			}
 		}
 
-		// ✅ UPDATE ACCOUNT BALANCES if journal is auto-posted
 		if req.AutoPost && status == models.SSOTStatusPosted {
-			log.Printf("🔄 Updating account balances for posted journal entry ID=%d", entryModel.ID)
-
-			for _, line := range req.Lines {
-				// Get account to determine normal balance type
-				var account models.Account
-				if err := tx.First(&account, line.AccountID).Error; err != nil {
-					log.Printf("⚠️ Warning: Failed to get account %d for balance update: %v", line.AccountID, err)
-					continue
-				}
-
-				// Calculate balance change based on normal balance
-				// Debit increases Asset/Expense, Credit increases Liability/Equity/Revenue
-				var balanceChange float64
-				if account.Type == models.AccountTypeAsset || account.Type == models.AccountTypeExpense {
-					// Normal balance = DEBIT
-					// Debit increases (+), Credit decreases (-)
-					balanceChange = line.DebitAmount.InexactFloat64() - line.CreditAmount.InexactFloat64()
-				} else {
-					// Normal balance = CREDIT (Liability, Equity, Revenue)
-					// Credit increases (+), Debit decreases (-)
-					balanceChange = line.CreditAmount.InexactFloat64() - line.DebitAmount.InexactFloat64()
-				}
-
-				// Update account balance
-				if err := tx.Model(&models.Account{}).
-					Where("id = ?", line.AccountID).
-					UpdateColumn("balance", gorm.Expr("balance + ?", balanceChange)).Error; err != nil {
-					return fmt.Errorf("failed to update account %d balance: %w", line.AccountID, err)
-				}
-
-				log.Printf("✅ Updated account %d (%s) balance: %+.2f", line.AccountID, account.Code, balanceChange)
-			}
+			log.Printf("🔄 Journal entry ID=%d posted successfully. Balances are synchronized by database triggers.", entryModel.ID)
 		}
 
 		return nil
@@ -654,27 +622,6 @@ func (s *CashBankSSOTJournalAdapter) createActualOpeningBalanceJournalEntry(tx *
 	journal.Status = "POSTED" // Update in-memory object
 	log.Printf("✅ [SSOT ADAPTER] Journal entry posted: ID=%d", journal.ID)
 
-	// Step 6: Update accounts.balance since journal is POSTED
-	log.Printf("💰 [SSOT ADAPTER] Step 6: Updating account balances")
-
-	// Update Cash/Bank Account (Debit = increase for Asset)
-	if err := tx.Model(&models.Account{}).
-		Where("id = ?", cashBank.AccountID).
-		UpdateColumn("balance", gorm.Expr("balance + ?", request.Amount.InexactFloat64())).Error; err != nil {
-		log.Printf("❌ [SSOT ADAPTER] Failed to update cash/bank account %d balance: %v", cashBank.AccountID, err)
-		return nil, fmt.Errorf("failed to update cash/bank account %d balance: %v", cashBank.AccountID, err)
-	}
-	log.Printf("✅ [SSOT ADAPTER] Cash/Bank account %d balance updated (+%.2f)", cashBank.AccountID, request.Amount.InexactFloat64())
-
-	// Update Equity Account (Credit = increase for Equity)
-	if err := tx.Model(&models.Account{}).
-		Where("id = ?", equityID).
-		UpdateColumn("balance", gorm.Expr("balance + ?", request.Amount.InexactFloat64())).Error; err != nil {
-		log.Printf("❌ [SSOT ADAPTER] Failed to update equity account %d balance: %v", equityID, err)
-		return nil, fmt.Errorf("failed to update equity account %d balance: %v", equityID, err)
-	}
-	log.Printf("✅ [SSOT ADAPTER] Equity account %d balance updated (+%.2f)", equityID, request.Amount.InexactFloat64())
-
 	log.Printf("🎉 [SSOT ADAPTER] Opening balance journal entry completed successfully: JournalID=%d, EntryNumber=%s",
 		journal.ID, journal.EntryNumber)
 
@@ -763,40 +710,8 @@ func (s *UnifiedJournalService) CreateJournalEntryWithTx(tx *gorm.DB, request *J
 		}
 	}
 
-	// ✅ UPDATE ACCOUNT BALANCES if journal is auto-posted
 	if request.AutoPost && status == models.SSOTStatusPosted {
-		log.Printf("🔄 Updating account balances for posted journal entry ID=%d", entryModel.ID)
-
-		for _, line := range request.Lines {
-			// Get account to determine normal balance type
-			var account models.Account
-			if err := tx.First(&account, line.AccountID).Error; err != nil {
-				log.Printf("⚠️ Warning: Failed to get account %d for balance update: %v", line.AccountID, err)
-				continue
-			}
-
-			// Calculate balance change based on normal balance
-			// Debit increases Asset/Expense, Credit increases Liability/Equity/Revenue
-			var balanceChange float64
-			if account.Type == models.AccountTypeAsset || account.Type == models.AccountTypeExpense {
-				// Normal balance = DEBIT
-				// Debit increases (+), Credit decreases (-)
-				balanceChange = line.DebitAmount.InexactFloat64() - line.CreditAmount.InexactFloat64()
-			} else {
-				// Normal balance = CREDIT (Liability, Equity, Revenue)
-				// Credit increases (+), Debit decreases (-)
-				balanceChange = line.CreditAmount.InexactFloat64() - line.DebitAmount.InexactFloat64()
-			}
-
-			// Update account balance
-			if err := tx.Model(&models.Account{}).
-				Where("id = ?", line.AccountID).
-				UpdateColumn("balance", gorm.Expr("balance + ?", balanceChange)).Error; err != nil {
-				return nil, fmt.Errorf("failed to update account %d balance: %w", line.AccountID, err)
-			}
-
-			log.Printf("✅ Updated account %d (%s) balance: %+.2f", line.AccountID, account.Code, balanceChange)
-		}
+		log.Printf("🔄 Journal entry ID=%d posted successfully. Balances are synchronized by database triggers.", entryModel.ID)
 	}
 
 	return entryModel, nil

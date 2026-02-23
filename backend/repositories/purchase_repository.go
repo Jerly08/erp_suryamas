@@ -1,8 +1,9 @@
 package repositories
 
 import (
-	"fmt"
 	"app-sistem-akuntansi/models"
+	"fmt"
+
 	"gorm.io/gorm"
 )
 
@@ -90,6 +91,10 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 
 	if filter.VendorID != "" {
 		query = query.Where("vendor_id = ?", filter.VendorID)
+	}
+
+	if filter.ProjectID != "" {
+		query = query.Where("project_id = ?", filter.ProjectID)
 	}
 
 	// Filter by user_id (for employee role - restrict to their own purchases)
@@ -318,7 +323,7 @@ func (r *PurchaseRepository) GetPurchasesSummary(startDate, endDate string) (*mo
 	// Only include non-rejected purchases in total amount calculation
 	query.Where("status != ? AND approval_status != ?", models.PurchaseStatusCancelled, models.PurchaseApprovalRejected).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&totalAmount)
-	
+
 	// Calculate approved purchases total
 	query2 := r.db.Model(&models.Purchase{})
 	if startDate != "" {
@@ -327,13 +332,13 @@ func (r *PurchaseRepository) GetPurchasesSummary(startDate, endDate string) (*mo
 	if endDate != "" {
 		query2 = query2.Where("date <= ?", endDate)
 	}
-	
+
 	// Debug: Log the values being used in query
 	fmt.Printf("[DEBUG] Approved query - Status values: %v, Approval status: %v\n", []string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}, models.PurchaseApprovalApproved)
-	
+
 	query2.Where("status IN (?) AND approval_status = ?", []string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}, models.PurchaseApprovalApproved).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&totalApprovedAmount)
-	
+
 	// Debug: Log the result
 	fmt.Printf("[DEBUG] Total approved amount calculated: %f\n", totalApprovedAmount)
 
@@ -390,7 +395,7 @@ func (r *PurchaseRepository) GetVendorPurchaseSummary(vendorID uint) (*models.Ve
 func (r *PurchaseRepository) CountByMonth(year, month int) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.Purchase{}).
-		Where("EXTRACT(year FROM created_at) = ? AND EXTRACT(month FROM created_at) = ?", 
+		Where("EXTRACT(year FROM created_at) = ? AND EXTRACT(month FROM created_at) = ?",
 			year, month).
 		Count(&count).Error
 
@@ -401,16 +406,16 @@ func (r *PurchaseRepository) CountByMonth(year, month int) (int64, error) {
 func (r *PurchaseRepository) GetLastPurchaseNumberByMonth(year, month int) (int, error) {
 	var purchase models.Purchase
 	var lastNumber int
-	
+
 	// Query for purchases with codes matching the pattern for this year/month
 	// Include deleted records since unique constraint applies to all records
 	pattern := fmt.Sprintf("PO/%04d/%02d/%%", year, month)
-	
+
 	err := r.db.Unscoped().Model(&models.Purchase{}).
 		Where("code LIKE ?", pattern).
 		Order("code DESC").
 		First(&purchase).Error
-	
+
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			// No purchases found for this month, return 0
@@ -418,7 +423,7 @@ func (r *PurchaseRepository) GetLastPurchaseNumberByMonth(year, month int) (int,
 		}
 		return 0, err
 	}
-	
+
 	// Extract the number from the code
 	if purchase.Code != "" {
 		// Parse the last 4 digits of the code
@@ -431,7 +436,7 @@ func (r *PurchaseRepository) GetLastPurchaseNumberByMonth(year, month int) (int,
 			}
 		}
 	}
-	
+
 	return lastNumber, nil
 }
 
@@ -537,7 +542,7 @@ func (r *PurchaseRepository) UpdateReceipt(receipt *models.PurchaseReceipt) (*mo
 func (r *PurchaseRepository) CountReceiptsByMonth(year, month int) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.PurchaseReceipt{}).
-		Where("EXTRACT(year FROM received_date) = ? AND EXTRACT(month FROM received_date) = ?", 
+		Where("EXTRACT(year FROM received_date) = ? AND EXTRACT(month FROM received_date) = ?",
 			year, month).
 		Count(&count).Error
 	return count, err
@@ -547,7 +552,7 @@ func (r *PurchaseRepository) CountReceiptsByMonth(year, month int) (int64, error
 func (r *PurchaseRepository) CountJournalsByMonth(year, month int) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.Journal{}).
-		Where("reference_type = ? AND EXTRACT(year FROM date) = ? AND EXTRACT(month FROM date) = ?", 
+		Where("reference_type = ? AND EXTRACT(year FROM date) = ? AND EXTRACT(month FROM date) = ?",
 			models.JournalRefTypePurchase, year, month).
 		Count(&count).Error
 	return count, err
@@ -558,11 +563,11 @@ func (r *PurchaseRepository) GetPurchaseSummary(startDate, endDate string) (*mod
 	return r.GetPurchasesSummary(startDate, endDate)
 }
 
-// GetPayablesReport gets payables report  
+// GetPayablesReport gets payables report
 func (r *PurchaseRepository) GetPayablesReport() (*models.PayablesReportResponse, error) {
 	// This is a placeholder implementation - you may need to adjust based on your models
 	var payables []models.PayablesReportData
-	
+
 	err := r.db.Model(&models.Purchase{}).
 		Select(`
 			purchases.id as purchase_id,
@@ -576,7 +581,7 @@ func (r *PurchaseRepository) GetPayablesReport() (*models.PayablesReportResponse
 			purchases.status
 		`).
 		Joins("JOIN contacts ON contacts.id = purchases.vendor_id").
-		Where("purchases.outstanding_amount > 0 AND purchases.status IN (?)", 
+		Where("purchases.outstanding_amount > 0 AND purchases.status IN (?)",
 			[]string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}).
 		Order("purchases.due_date ASC").
 		Scan(&payables).Error

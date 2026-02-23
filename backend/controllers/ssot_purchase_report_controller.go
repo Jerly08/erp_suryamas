@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -30,11 +31,11 @@ func NewSSOTPurchaseReportController(db *gorm.DB) *SSOTPurchaseReportController 
 
 // GetPurchaseReportResponse represents the API response structure
 type GetPurchaseReportResponse struct {
-	Success   bool                            `json:"success"`
-	Message   string                         `json:"message"`
-	Data      *services.PurchaseReportData   `json:"data,omitempty"`
-	Error     string                         `json:"error,omitempty"`
-	Timestamp time.Time                      `json:"timestamp"`
+	Success   bool                         `json:"success"`
+	Message   string                       `json:"message"`
+	Data      *services.PurchaseReportData `json:"data,omitempty"`
+	Error     string                       `json:"error,omitempty"`
+	Timestamp time.Time                    `json:"timestamp"`
 }
 
 // @Summary Generate Purchase Report
@@ -116,15 +117,15 @@ func (c *SSOTPurchaseReportController) GetPurchaseReport(ctx *gin.Context) {
 	case "pdf":
 		// Get user ID from context (assuming it's set by auth middleware)
 		userID := uint(1) // Default fallback, should be extracted from JWT/session
-		if userIDValue, exists := ctx.Get("userID"); exists {
+		if userIDValue, exists := ctx.Get("user_id"); exists {
 			if uid, ok := userIDValue.(uint); ok {
 				userID = uid
 			}
 		}
-		
+
 		pdfBytes, err := c.exportService.ExportToPDF(report, userID)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, GetPurchaseReportResponse{Success:false, Message:"Failed to generate PDF", Error: err.Error(), Timestamp: time.Now()})
+			ctx.JSON(http.StatusInternalServerError, GetPurchaseReportResponse{Success: false, Message: "Failed to generate PDF", Error: err.Error(), Timestamp: time.Now()})
 			return
 		}
 		filename := fmt.Sprintf("SSOT_Purchase_Report_%s_to_%s.pdf", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
@@ -135,15 +136,15 @@ func (c *SSOTPurchaseReportController) GetPurchaseReport(ctx *gin.Context) {
 	case "csv":
 		// Get user ID from context (assuming it's set by auth middleware)
 		userID := uint(1) // Default fallback, should be extracted from JWT/session
-		if userIDValue, exists := ctx.Get("userID"); exists {
+		if userIDValue, exists := ctx.Get("user_id"); exists {
 			if uid, ok := userIDValue.(uint); ok {
 				userID = uid
 			}
 		}
-		
+
 		csvBytes, err := c.exportService.ExportToCSV(report, userID)
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, GetPurchaseReportResponse{Success:false, Message:"Failed to generate CSV", Error: err.Error(), Timestamp: time.Now()})
+			ctx.JSON(http.StatusInternalServerError, GetPurchaseReportResponse{Success: false, Message: "Failed to generate CSV", Error: err.Error(), Timestamp: time.Now()})
 			return
 		}
 		filename := fmt.Sprintf("SSOT_Purchase_Report_%s_to_%s.csv", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
@@ -152,7 +153,7 @@ func (c *SSOTPurchaseReportController) GetPurchaseReport(ctx *gin.Context) {
 		ctx.Header("Content-Length", strconv.Itoa(len(csvBytes)))
 		ctx.Data(http.StatusOK, "text/csv", csvBytes)
 	default:
-		ctx.JSON(http.StatusBadRequest, GetPurchaseReportResponse{Success:false, Message:"Unsupported format. Use json, pdf, or csv", Timestamp: time.Now()})
+		ctx.JSON(http.StatusBadRequest, GetPurchaseReportResponse{Success: false, Message: "Unsupported format. Use json, pdf, or csv", Timestamp: time.Now()})
 	}
 }
 
@@ -227,9 +228,9 @@ func (c *SSOTPurchaseReportController) GetPurchaseSummary(ctx *gin.Context) {
 		"message":   "Purchase summary generated successfully",
 		"timestamp": time.Now(),
 		"summary": map[string]interface{}{
-			"total_purchases":       report.TotalPurchases,
-			"completed_purchases":   report.CompletedPurchases,
-			"total_amount":          report.TotalAmount,
+			"total_purchases":      report.TotalPurchases,
+			"completed_purchases":  report.CompletedPurchases,
+			"total_amount":         report.TotalAmount,
 			"total_paid":           report.TotalPaid,
 			"outstanding_payables": report.OutstandingPayables,
 			"currency":             report.Currency,
@@ -239,16 +240,16 @@ func (c *SSOTPurchaseReportController) GetPurchaseSummary(ctx *gin.Context) {
 			},
 		},
 		"payment_breakdown": map[string]interface{}{
-			"cash_purchases":     report.PaymentAnalysis.CashPurchases,
-			"credit_purchases":   report.PaymentAnalysis.CreditPurchases,
-			"cash_amount":        report.PaymentAnalysis.CashAmount,
-			"credit_amount":      report.PaymentAnalysis.CreditAmount,
-			"cash_percentage":    report.PaymentAnalysis.CashPercentage,
-			"credit_percentage":  report.PaymentAnalysis.CreditPercentage,
+			"cash_purchases":    report.PaymentAnalysis.CashPurchases,
+			"credit_purchases":  report.PaymentAnalysis.CreditPurchases,
+			"cash_amount":       report.PaymentAnalysis.CashAmount,
+			"credit_amount":     report.PaymentAnalysis.CreditAmount,
+			"cash_percentage":   report.PaymentAnalysis.CashPercentage,
+			"credit_percentage": report.PaymentAnalysis.CreditPercentage,
 		},
-		"vendor_count":    len(report.PurchasesByVendor),
-		"category_count":  len(report.PurchasesByCategory),
-		"monthly_count":   len(report.PurchasesByMonth),
+		"vendor_count":   len(report.PurchasesByVendor),
+		"category_count": len(report.PurchasesByCategory),
+		"monthly_count":  len(report.PurchasesByMonth),
 	}
 
 	ctx.JSON(http.StatusOK, summary)
@@ -337,10 +338,10 @@ func (c *SSOTPurchaseReportController) ValidatePurchaseReport(ctx *gin.Context) 
 	expectedOutstanding := report.TotalAmount - report.TotalPaid
 	outstandingValid := abs(report.OutstandingPayables-expectedOutstanding) <= 0.01
 	checks["outstanding_calculation"] = map[string]interface{}{
-		"valid":         outstandingValid,
-		"expected":      expectedOutstanding,
-		"actual":        report.OutstandingPayables,
-		"description":   "Outstanding = Total Amount - Total Paid",
+		"valid":       outstandingValid,
+		"expected":    expectedOutstanding,
+		"actual":      report.OutstandingPayables,
+		"description": "Outstanding = Total Amount - Total Paid",
 	}
 
 	// Check 2: Payment percentage totals
@@ -361,23 +362,23 @@ func (c *SSOTPurchaseReportController) ValidatePurchaseReport(ctx *gin.Context) 
 	}
 	vendorTotalsValid := len(report.PurchasesByVendor) == 0 || abs(vendorTotalAmount-report.TotalAmount) <= 0.01
 	checks["vendor_totals"] = map[string]interface{}{
-		"valid":              vendorTotalsValid,
-		"vendor_total":       vendorTotalAmount,
-		"summary_total":      report.TotalAmount,
-		"vendor_count":       len(report.PurchasesByVendor),
-		"description":        "Sum of vendor amounts should equal summary total",
+		"valid":         vendorTotalsValid,
+		"vendor_total":  vendorTotalAmount,
+		"summary_total": report.TotalAmount,
+		"vendor_count":  len(report.PurchasesByVendor),
+		"description":   "Sum of vendor amounts should equal summary total",
 	}
 
 	// Check 4: Payment amount consistency
 	paymentTotalAmount := report.PaymentAnalysis.CashAmount + report.PaymentAnalysis.CreditAmount
 	paymentAmountValid := paymentTotalAmount == 0 || abs(paymentTotalAmount-report.TotalAmount) <= 0.01
 	checks["payment_amounts"] = map[string]interface{}{
-		"valid":           paymentAmountValid,
-		"cash_amount":     report.PaymentAnalysis.CashAmount,
-		"credit_amount":   report.PaymentAnalysis.CreditAmount,
-		"payment_total":   paymentTotalAmount,
-		"summary_total":   report.TotalAmount,
-		"description":     "Cash amount + Credit amount should equal total amount",
+		"valid":         paymentAmountValid,
+		"cash_amount":   report.PaymentAnalysis.CashAmount,
+		"credit_amount": report.PaymentAnalysis.CreditAmount,
+		"payment_total": paymentTotalAmount,
+		"summary_total": report.TotalAmount,
+		"description":   "Cash amount + Credit amount should equal total amount",
 	}
 
 	// Overall validation status

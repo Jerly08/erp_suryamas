@@ -2,35 +2,36 @@ package models
 
 import (
 	"time"
+
 	"gorm.io/gorm"
 )
 
 // ModulePermissionRecord represents a specific permission for modules
 type ModulePermissionRecord struct {
-	ID          uint           `json:"id" gorm:"primaryKey;table:module_permissions"`
-	UserID      uint           `json:"user_id" gorm:"not null;index"`
-	Module      string         `json:"module" gorm:"not null;size:50;index"` // accounts, products, contacts, assets, sales, purchases, payments, cash_bank, settings
-	CanView     bool           `json:"can_view" gorm:"default:false"`
-	CanCreate   bool           `json:"can_create" gorm:"default:false"`
-	CanEdit     bool           `json:"can_edit" gorm:"default:false"`
-	CanDelete   bool           `json:"can_delete" gorm:"default:false"`
-	CanApprove  bool           `json:"can_approve" gorm:"default:false"`
-	CanExport   bool           `json:"can_export" gorm:"default:false"`
-	CanMenu     bool           `json:"can_menu" gorm:"default:false"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
-	
+	ID         uint           `json:"id" gorm:"primaryKey;table:module_permissions"`
+	UserID     uint           `json:"user_id" gorm:"not null;index"`
+	Module     string         `json:"module" gorm:"not null;size:50;index"` // accounts, products, contacts, assets, sales, purchases, payments, cash_bank, settings
+	CanView    bool           `json:"can_view" gorm:"default:false"`
+	CanCreate  bool           `json:"can_create" gorm:"default:false"`
+	CanEdit    bool           `json:"can_edit" gorm:"default:false"`
+	CanDelete  bool           `json:"can_delete" gorm:"default:false"`
+	CanApprove bool           `json:"can_approve" gorm:"default:false"`
+	CanExport  bool           `json:"can_export" gorm:"default:false"`
+	CanMenu    bool           `json:"can_menu" gorm:"default:false"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `json:"-" gorm:"index"`
+
 	// Relations
 	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
 }
 
 // UserPermission is a simplified structure for API responses
 type UserPermission struct {
-	UserID      uint                    `json:"user_id"`
-	Username    string                  `json:"username"`
-	Email       string                  `json:"email"`
-	Role        string                  `json:"role"`
+	UserID      uint                         `json:"user_id"`
+	Username    string                       `json:"username"`
+	Email       string                       `json:"email"`
+	Role        string                       `json:"role"`
 	Permissions map[string]*ModulePermission `json:"permissions"`
 }
 
@@ -48,8 +49,8 @@ type ModulePermission struct {
 // GetDefaultPermissions returns default permissions based on role
 func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	permissions := make(map[string]*ModulePermission)
-	modules := []string{"accounts", "products", "contacts", "assets", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings"}
-	
+	modules := []string{"accounts", "products", "contacts", "assets", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings", "purchase_requests", "projects"}
+
 	switch role {
 	case "admin":
 		// Admin has full access to everything
@@ -66,7 +67,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		}
 	case "finance", "finance_manager":
 		// Finance and Finance Manager have full access to financial modules
-		financialModules := []string{"accounts", "payments", "cash_bank", "sales", "purchases", "journal"}
+		financialModules := []string{"accounts", "payments", "cash_bank", "sales", "purchases", "journal", "purchase_requests", "projects"}
 		for _, module := range modules {
 			if contains(financialModules, module) {
 				permissions[module] = &ModulePermission{
@@ -117,7 +118,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		coreInventoryModules := []string{"products", "purchases", "sales"}
 		supportingModules := []string{"contacts", "assets", "reports"}
 		financialSupportModules := []string{"accounts", "payments", "cash_bank", "journal"}
-		
+
 		for _, module := range modules {
 			if contains(coreInventoryModules, module) {
 				// Full access to core inventory modules
@@ -183,8 +184,8 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 				// Employee needs view access to contacts for vendor/customer data loading
 				// but should NOT have menu access to browse contacts directly
 				permissions[module] = &ModulePermission{
-					CanView:    true,  // Essential for loading vendor/customer lists in purchases
-					CanCreate:  true,  // Can create vendors/customers when needed
+					CanView:    true, // Essential for loading vendor/customer lists in purchases
+					CanCreate:  true, // Can create vendors/customers when needed
 					CanEdit:    false,
 					CanDelete:  false,
 					CanApprove: false,
@@ -204,7 +205,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 			} else if module == "accounts" {
 				// Employee needs view access to accounts for purchase form dropdowns
 				permissions[module] = &ModulePermission{
-					CanView:    true,  // Essential for purchase forms
+					CanView:    true, // Essential for purchase forms
 					CanCreate:  false,
 					CanEdit:    false,
 					CanDelete:  false,
@@ -212,16 +213,16 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 					CanExport:  false,
 					CanMenu:    false, // No menu access to accounts
 				}
-			} else if module == "purchases" {
-				// Employee should be able to create purchases
+			} else if module == "purchases" || module == "purchase_requests" {
+				// Employee should be able to create purchases and purchase requests
 				permissions[module] = &ModulePermission{
 					CanView:    true,
 					CanCreate:  true,  // Employees can create purchase requests
-					CanEdit:    true,  // Can edit their own purchases
+					CanEdit:    true,  // Can edit their own requests/purchases
 					CanDelete:  false, // Cannot delete purchases
 					CanApprove: false, // Cannot approve purchases
 					CanExport:  false,
-					CanMenu:    true, // Can access purchases menu
+					CanMenu:    true, // Can access purchases and requests menu
 				}
 			} else if module == "users" {
 				// Users module is admin-only - no access for employees
@@ -249,7 +250,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	case "director":
 		// Director has view, approve, and limited create/edit access
 		for _, module := range modules {
-			if module == "purchases" || module == "sales" || module == "payments" || module == "cash_bank" || module == "journal" {
+			if module == "purchases" || module == "purchase_requests" || module == "sales" || module == "payments" || module == "cash_bank" || module == "journal" || module == "projects" {
 				// Directors need create/edit access for purchases to create receipts,
 				// and for sales/payments for operational oversight
 				permissions[module] = &ModulePermission{
@@ -310,7 +311,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 			}
 		}
 	}
-	
+
 	return permissions
 }
 

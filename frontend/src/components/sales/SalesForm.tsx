@@ -110,6 +110,7 @@ interface FormData {
     id?: number;
     product_id: number;
     description: string;
+    location?: string;
     quantity: number;
     unit_price: number;
     discount_percent: number;
@@ -216,6 +217,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         {
           product_id: 0,
           description: '',
+          location: '',
           quantity: 1,
           unit_price: 0,
           discount_percent: 0,
@@ -531,6 +533,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           id: item.id,
           product_id: item.product_id || 0,
           description: item.description || '',
+          location: item.location || '',
           quantity: item.quantity || 1,
           unit_price: item.unit_price || 0,
           discount_percent: item.discount_percent || 0,
@@ -540,6 +543,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         : [{
           product_id: 0,
           description: '',
+          location: '',
           quantity: 1,
           unit_price: 0,
           discount_percent: 0,
@@ -574,6 +578,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         {
           product_id: 0,
           description: '',
+          location: '',
           quantity: 1,
           unit_price: 0,
           discount_percent: 0,
@@ -727,6 +732,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
     append({
       product_id: 0,
       description: '',
+      location: '',
       quantity: 1,
       unit_price: 0,
       discount_percent: 0,
@@ -817,6 +823,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             id: item.id,
             product_id: item.product_id,
             description: item.description,
+            location: item.location || '',
             quantity: item.quantity,
             unit_price: item.unit_price,
             discount: item.discount_percent || item.discount || 0, // Map to backend field
@@ -865,6 +872,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           items: validItems.map(item => ({
             product_id: item.product_id,
             description: item.description || '',
+            location: item.location || '',
             quantity: Math.max(1, Math.floor(item.quantity || 1)), // Ensure positive integer
             unit_price: Math.min(999999999999.99, Math.max(0, item.unit_price || 0)), // Cap to prevent overflow
             discount: Math.min(999999.99, Math.max(0, item.discount_percent || 0)), // Legacy field as flat amount
@@ -1303,6 +1311,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                         <Tr>
                           <Th>{t('sales.form.product')}</Th>
                           <Th>{t('sales.form.description')}</Th>
+                          <Th>{t('sales.form.location', 'Lokasi Pengiriman')}</Th>
                           <Th>{t('sales.form.quantity')}</Th>
                           <Th>{t('sales.form.unitPrice')}</Th>
                           <Th>{t('sales.form.itemDiscount')}</Th>
@@ -1353,6 +1362,16 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 bg={isManualEntry(index) ? 'orange.50' : inputBg}
                                 _focus={{ bg: isManualEntry(index) ? 'orange.100' : inputFocusBg }}
                                 borderColor={isManualEntry(index) ? 'orange.200' : 'gray.200'}
+                              />
+                            </Td>
+                            <Td>
+                              <Input
+                                size="sm"
+                                {...register(`items.${index}.location`)}
+                                placeholder="Gedung A, dll"
+                                bg={inputBg}
+                                _focus={{ bg: inputFocusBg }}
+                                borderColor="gray.200"
                               />
                             </Td>
                             <Td>

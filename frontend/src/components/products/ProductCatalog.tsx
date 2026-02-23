@@ -327,7 +327,7 @@ const ProductCatalog: React.FC = () => {
       <Box>
         <Flex justify="space-between" align="center" mb={6}>
           <Box>
-            <Heading as="h1" size="xl" mb={2}>{getLabel('products')} - {t('products.productCatalog')}</Heading>
+            <Heading as="h1" size="xl" mb={2}>{getLabel('products')} - Katalog Items & Price Benchmarks</Heading>
           </Box>
 
           {/* Management Buttons */}
@@ -464,7 +464,9 @@ const ProductCatalog: React.FC = () => {
               <Th>{t('products.table.productId')}</Th>
               <Th>{t('products.table.name')}</Th>
               <Th>{t('products.table.category')}</Th>
-              <Th>{t('products.table.warehouseLocation')}</Th>
+              {hasInventory && <Th>{t('products.table.warehouseLocation')}</Th>}
+              {hasInventory && <Th>Acuan Harga Beli</Th>}
+              <Th>Acuan Harga Jual</Th>
               <Th>{t('products.table.actions')}</Th>
             </Tr>
           </Thead>
@@ -474,7 +476,9 @@ const ProductCatalog: React.FC = () => {
                 <Td>{product.code}</Td>
                 <Td>{product.name}</Td>
                 <Td>{product.category?.name}</Td>
-                <Td>{product.warehouse_location?.name || t('products.table.noLocation')}</Td>
+                {hasInventory && <Td>{product.warehouse_location?.name || t('products.table.noLocation')}</Td>}
+                {hasInventory && <Td color="green.600" fontWeight="semibold">{formatCurrencyDetailed(product.purchase_price || 0)}</Td>}
+                <Td color="blue.600" fontWeight="semibold">{formatCurrencyDetailed(product.sale_price || 0)}</Td>
                 <Td>
                   <Button
                     size="sm"

@@ -1,13 +1,14 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 	"strings"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/utils"
+	"time"
+
 	"gorm.io/gorm"
 )
 
@@ -17,7 +18,7 @@ type PostApprovalCallback interface {
 }
 
 type ApprovalService struct {
-	db *gorm.DB
+	db                   *gorm.DB
 	postApprovalCallback PostApprovalCallback
 }
 
@@ -86,11 +87,11 @@ func (s *ApprovalService) CreateWorkflow(req models.CreateApprovalWorkflowReques
 func (s *ApprovalService) GetWorkflows(module string) ([]models.ApprovalWorkflow, error) {
 	var workflows []models.ApprovalWorkflow
 	query := s.db.Preload("Steps").Where("is_active = ?", true)
-	
+
 	if module != "" {
 		query = query.Where("module = ?", module)
 	}
-	
+
 	err := query.Find(&workflows).Error
 	return workflows, err
 }
@@ -256,7 +257,7 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 		newStatus = models.ApprovalStatusApproved
 		historyAction = models.ApprovalActionApproved
 	} else if action.Action == "REJECT" {
-		newStatus = models.ApprovalStatusRejected  
+		newStatus = models.ApprovalStatusRejected
 		historyAction = models.ApprovalActionRejected
 	} else {
 		tx.Rollback()
@@ -317,7 +318,7 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 				}
 			}
 		}
-		
+
 		// Process any steps the user can approve directly
 		if len(userCanApproveOtherSteps) > 0 {
 			// User can approve other steps - complete them automatically
@@ -327,12 +328,12 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 				step.Comments = "Auto-approved: User has multiple role permissions"
 				step.ActionDate = &now
 				step.IsActive = false
-				
+
 				if err := tx.Save(step).Error; err != nil {
 					tx.Rollback()
 					return err
 				}
-				
+
 				// Create history for auto-approval
 				autoHistory := models.ApprovalHistory{
 					RequestID: requestID,
@@ -341,59 +342,81 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 					Comments:  fmt.Sprintf("Auto-approved %s step: User has %s role permissions", step.Step.ApproverRole, step.Step.ApproverRole),
 					Metadata:  "{\"auto_approved\": true}",
 				}
-				
+
 				if err := tx.Create(&autoHistory).Error; err != nil {
 					tx.Rollback()
 					return err
 				}
 			}
 		}
-		
+
 		// Now check for next steps to activate
-		nextStep := s.getNextStep(approvalReq.ApprovalSteps, currentAction.Step.StepOrder)
-		if nextStep != nil {
+		var activeNextStep *models.ApprovalStep
+		var tempCurrentOrder = currentAction.Step.StepOrder
+		for {
+			nextStep := s.getNextStep(approvalReq.ApprovalSteps, tempCurrentOrder)
+			if nextStep == nil {
+				break
+			}
+
+			// Should we skip this step?
+			if strings.ToLower(nextStep.ApproverRole) == "director" && nextStep.IsOptional && !approvalReq.Workflow.RequireDirector {
+				// Skip this nextStep and keep looking for the one after it
+				tempCurrentOrder = nextStep.StepOrder
+				continue
+			}
+
+			activeNextStep = nextStep
+			break
+		}
+
+		if activeNextStep != nil {
 			// Check if the next step was already auto-approved above
 			nextStepAlreadyApproved := false
 			for i := range approvalReq.ApprovalSteps {
-				if approvalReq.ApprovalSteps[i].StepID == nextStep.ID {
+				if approvalReq.ApprovalSteps[i].StepID == activeNextStep.ID {
 					if approvalReq.ApprovalSteps[i].Status == models.ApprovalStatusApproved {
 						nextStepAlreadyApproved = true
 					}
 					break
 				}
 			}
-			
+
 			if !nextStepAlreadyApproved {
 				// Activate next step
 				for i := range approvalReq.ApprovalSteps {
-					if approvalReq.ApprovalSteps[i].StepID == nextStep.ID {
+					if approvalReq.ApprovalSteps[i].StepID == activeNextStep.ID {
 						approvalReq.ApprovalSteps[i].IsActive = true
 						if err := tx.Save(&approvalReq.ApprovalSteps[i]).Error; err != nil {
 							tx.Rollback()
 							return err
 						}
 						// Notify next approvers
-						go s.notifyApprovers(&approvalReq, *nextStep)
+						go s.notifyApprovers(&approvalReq, *activeNextStep)
 						break
 					}
 				}
 			}
 		}
-		
+
 		// Check if ALL required steps are now completed
 		allStepsCompleted := true
 		for i := range approvalReq.ApprovalSteps {
 			step := &approvalReq.ApprovalSteps[i]
-			// Skip optional director steps unless they were specifically activated
+			// Skip optional director steps unless they were specifically activated or workflow requires it
 			if strings.ToLower(step.Step.ApproverRole) == "director" && step.Step.IsOptional && !step.IsActive {
-				continue
+				if approvalReq.Workflow.RequireDirector {
+					// Workflow actively requires it! Don't skip it.
+				} else {
+					continue
+				}
 			}
 			if step.Status != models.ApprovalStatusApproved {
 				allStepsCompleted = false
 				break
 			}
 		}
-		
+
 		if allStepsCompleted {
 			// All required steps are completed - mark request as approved
 			approvalReq.Status = models.ApprovalStatusApproved
@@ -414,13 +437,13 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 			var pendingDirectorStep *models.ApprovalAction
 			for i := range approvalReq.ApprovalSteps {
 				step := &approvalReq.ApprovalSteps[i]
-				if strings.ToLower(step.Step.ApproverRole) == "director" && 
-				   step.Status == models.ApprovalStatusPending && !step.IsActive {
+				if strings.ToLower(step.Step.ApproverRole) == "director" &&
+					step.Status == models.ApprovalStatusPending && !step.IsActive {
 					pendingDirectorStep = step
 					break
 				}
 			}
-			
+
 			if pendingDirectorStep != nil {
 				// Activate the pending director step
 				pendingDirectorStep.IsActive = true
@@ -439,7 +462,7 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 	if approvalReq.Status == models.ApprovalStatusApproved && approvalReq.EntityType == models.EntityTypePurchase {
 		purchaseToProcess = &approvalReq.EntityID
 	}
-	
+
 	if err := tx.Commit().Error; err != nil {
 		return err
 	}
@@ -461,7 +484,7 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 	return nil
 }
 
-	// GetApprovalRequests returns approval requests with filters
+// GetApprovalRequests returns approval requests with filters
 func (s *ApprovalService) GetApprovalRequests(userID uint, userRole string, status string, module string, page, limit int) ([]models.ApprovalRequest, int64, error) {
 	query := s.db.Model(&models.ApprovalRequest{}).
 		Preload("Workflow").Preload("Requester").
@@ -503,7 +526,7 @@ func (s *ApprovalService) GetPendingApprovals(userID uint, userRole string) ([]m
 	var requests []models.ApprovalRequest
 
 	userRoleNorm := strings.ToLower(strings.TrimSpace(userRole))
-	
+
 	err := s.db.Preload("Workflow").Preload("Requester").
 		Preload("ApprovalSteps.Step").Preload("ApprovalSteps.Approver").
 		Where("status = ? AND id IN (SELECT request_id FROM approval_actions WHERE is_active = ? AND step_id IN (SELECT id FROM approval_steps WHERE LOWER(approver_role) = LOWER(?)))",
@@ -641,14 +664,14 @@ func (s *ApprovalService) updateEntityStatus(tx *gorm.DB, entityType string, ent
 		if err != nil {
 			return err
 		}
-		
+
 		// POST-APPROVAL PROCESSING for approved purchases
 		if approvalStatus == "APPROVED" {
 			// Note: We'll trigger post-approval processing after transaction commits
 			// This is handled by the calling function via callback
 			fmt.Printf("✅ Purchase %d approved - will trigger post-approval processing\n", entityID)
 		}
-		
+
 		return nil
 	default:
 		return errors.New("unsupported entity type")
@@ -698,7 +721,7 @@ func (s *ApprovalService) notifyRequester(request *models.ApprovalRequest, actio
 		if request.Status == models.ApprovalStatusApproved {
 			notificationType = models.NotificationTypeApprovalApproved
 			title = "Request Approved"
-		message = fmt.Sprintf("Your request '%s' has been approved", request.RequestTitle)
+			message = fmt.Sprintf("Your request '%s' has been approved", request.RequestTitle)
 		} else {
 			return // Don't notify on intermediate approvals
 		}
@@ -732,12 +755,12 @@ func (s *ApprovalService) isDuplicateApprovalNotification(userID uint, requestID
 	// Check for existing notification with same request_id, user_id, and type within last 1 hour
 	var count int64
 	oneHourAgo := time.Now().Add(-1 * time.Hour)
-	
+
 	err := s.db.Model(&models.Notification{}).
-		Where("user_id = ? AND type = ? AND created_at >= ? AND data::json->>'request_id' = ?", 
+		Where("user_id = ? AND type = ? AND created_at >= ? AND data::json->>'request_id' = ?",
 			userID, notificationType, oneHourAgo, fmt.Sprintf("%d", requestID)).
 		Count(&count).Error
-	
+
 	if err != nil {
 		return false // If error, allow creation
 	}
@@ -755,16 +778,16 @@ func (s *ApprovalService) createNotificationData(request *models.ApprovalRequest
 			actualAmount = purchase.TotalAmount // Use TotalAmount instead of ApprovalBaseAmount
 		}
 	}
-	
+
 	data := map[string]interface{}{
-		"request_id":   request.ID,
-		"entity_type":  request.EntityType,
-		"entity_id":    request.EntityID,
-		"amount":       actualAmount, // Use actualAmount instead of request.Amount
-		"status":       request.Status,
+		"request_id":    request.ID,
+		"entity_type":   request.EntityType,
+		"entity_id":     request.EntityID,
+		"amount":        actualAmount, // Use actualAmount instead of request.Amount
+		"status":        request.Status,
 		"purchase_code": "", // Will be filled if this is a purchase
 	}
-	
+
 	// Add purchase code for better identification
 	if request.EntityType == models.EntityTypePurchase {
 		var purchase models.Purchase
@@ -835,7 +858,7 @@ func (s *ApprovalService) EscalateToDirector(requestID uint, escalatedByUserID u
 	var directorAction models.ApprovalAction
 	err = tx.Where("request_id = ? AND step_id = ?", requestID, directorStep.ID).
 		First(&directorAction).Error
-	
+
 	if err == gorm.ErrRecordNotFound {
 		// Create new action for director
 		directorAction = models.ApprovalAction{
@@ -868,7 +891,7 @@ func (s *ApprovalService) EscalateToDirector(requestID uint, escalatedByUserID u
 	// Keep the current step active until it's properly processed
 	// Only deactivate other steps if they are not the currently active finance step
 	if err := tx.Model(&models.ApprovalAction{}).
-		Where("request_id = ? AND id != ? AND is_active = ? AND status != ?", 
+		Where("request_id = ? AND id != ? AND is_active = ? AND status != ?",
 			requestID, directorAction.ID, false, models.ApprovalStatusPending).
 		Update("is_active", false).Error; err != nil {
 		tx.Rollback()
@@ -913,12 +936,12 @@ func (s *ApprovalService) CreateApprovalHistory(requestID uint, userID uint, act
 		Comments:  comments,
 		Metadata:  "{}",
 	}
-	
+
 	err := s.db.Create(&history).Error
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -937,14 +960,14 @@ func (s *ApprovalService) CreateMinimalApprovalRequestForRejection(entityType st
 	// Create minimal approval request without workflow - use a default/dummy workflow
 	// First, try to get any active workflow for the module as a fallback
 	var workflowID uint = 1 // Default fallback - assume workflow ID 1 exists
-	
+
 	// Try to find any active workflow for the module
 	var workflow models.ApprovalWorkflow
 	module := "PURCHASE"
 	if entityType == models.EntityTypeSale {
 		module = "SALES"
 	}
-	
+
 	err := s.db.Where("module = ? AND is_active = ?", module, true).First(&workflow).Error
 	if err == nil {
 		workflowID = workflow.ID
@@ -1012,7 +1035,7 @@ func (s *ApprovalService) notifyDirectors(request *models.ApprovalRequest, escal
 		fmt.Printf("Error finding directors for notification: %v\n", err)
 		return
 	}
-	
+
 	fmt.Printf("Found %d active directors to notify for request %d\n", len(directors), request.ID)
 
 	// Get the actual purchase to show correct amount
@@ -1033,7 +1056,7 @@ func (s *ApprovalService) notifyDirectors(request *models.ApprovalRequest, escal
 			Priority: models.ApprovalPriorityUrgent,
 			Data:     s.createNotificationData(request),
 		}
-		
+
 		err := s.db.Create(&notification).Error
 		if err != nil {
 			fmt.Printf("Failed to create notification for director %d: %v\n", director.ID, err)

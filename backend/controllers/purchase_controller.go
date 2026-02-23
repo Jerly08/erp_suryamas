@@ -57,6 +57,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	status := c.Query("status")
 	vendorID := c.Query("vendor_id")
+	projectID := c.Query("project_id")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	search := c.Query("search")
@@ -75,6 +76,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 	filter := models.PurchaseFilter{
 		Status:           status,
 		VendorID:         vendorID,
+		ProjectID:        projectID,
 		StartDate:        startDate,
 		EndDate:          endDate,
 		Search:           search,
@@ -1250,6 +1252,7 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 	endDate := c.Query("end_date")
 	status := c.Query("status")
 	vendorID := c.Query("vendor_id")
+	projectID := c.Query("project_id")
 	search := c.Query("search")
 	approvalStatus := c.Query("approval_status")
 
@@ -1265,6 +1268,7 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 	filter := models.PurchaseFilter{
 		Status:         status,
 		VendorID:       vendorID,
+		ProjectID:      projectID,
 		StartDate:      startDate,
 		EndDate:        endDate,
 		Search:         search,
@@ -1325,6 +1329,7 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 	endDate := c.Query("end_date")
 	status := c.Query("status")
 	vendorID := c.Query("vendor_id")
+	projectID := c.Query("project_id")
 	search := c.Query("search")
 	approvalStatus := c.Query("approval_status")
 
@@ -1340,6 +1345,7 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 	filter := models.PurchaseFilter{
 		Status:         status,
 		VendorID:       vendorID,
+		ProjectID:      projectID,
 		StartDate:      startDate,
 		EndDate:        endDate,
 		Search:         search,

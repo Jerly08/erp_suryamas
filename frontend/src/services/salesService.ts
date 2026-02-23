@@ -56,7 +56,7 @@ export interface Sale {
   reference?: string;
   created_at: string;
   updated_at: string;
-  
+
   // Relations
   customer?: any;
   user?: any;
@@ -64,10 +64,10 @@ export interface Sale {
   sale_items?: SaleItem[];
   sale_payments?: SalePayment[];
   sale_returns?: SaleReturn[];
-  
+
   // Backward compatibility
   items?: SaleItem[];
-  
+
 }
 
 export interface SaleItem {
@@ -75,6 +75,7 @@ export interface SaleItem {
   sale_id?: number;
   product_id: number;
   description?: string;
+  location?: string;
   quantity: number;
   unit_price: number;
   discount_percent: number;
@@ -87,12 +88,12 @@ export interface SaleItem {
   final_amount: number;
   revenue_account_id?: number;
   tax_account_id?: number;
-  
+
   // Legacy fields for backward compatibility
   total_price: number; // Same as line_total
   discount: number;    // Legacy discount field
   tax: number;         // Legacy tax field
-  
+
   // Relations
   product?: any;
 }
@@ -109,7 +110,7 @@ export interface SalePayment {
   account_id?: number; // Make optional to match backend
   notes?: string;
   user_id: number;
-  
+
   // Relations
   cash_bank?: any;
   account?: any;
@@ -130,7 +131,7 @@ export interface SaleReturn {
   user_id: number;
   approved_by?: number;
   approved_at?: string;
-  
+
   // Relations
   return_items?: SaleReturnItem[];
 }
@@ -182,6 +183,7 @@ export interface SaleCreateRequest {
 export interface SaleItemRequest {
   product_id: number;
   description?: string;
+  location?: string;
   quantity: number;
   unit_price: number;
   discount?: number; // Legacy field - will be mapped to discount_percent
@@ -226,6 +228,7 @@ export interface SaleItemUpdateRequest {
   id?: number;
   product_id: number;
   description?: string;
+  location?: string;
   quantity: number;
   unit_price: number;
   discount?: number; // Legacy field - will be mapped to discount_percent
@@ -329,7 +332,7 @@ export interface ReceivableItem {
 
 class SalesService {
   // Basic CRUD Operations
-  
+
   async getSales(filter: SalesFilter = {}): Promise<SalesResult> {
     const params = new URLSearchParams();
     Object.entries(filter).forEach(([key, value]) => {
@@ -337,7 +340,7 @@ class SalesService {
         params.append(key, value.toString());
       }
     });
-    
+
     const response = await api.get(`${API_ENDPOINTS.SALES}?${params}`);
     return response.data;
   }
@@ -363,7 +366,7 @@ class SalesService {
   }
 
   // Status Management
-  
+
   async confirmSale(id: number): Promise<void> {
     await api.post(API_ENDPOINTS.SALES_CONFIRM(id));
   }
@@ -378,7 +381,7 @@ class SalesService {
   }
 
   // Payment Management
-  
+
   async getSalePayments(saleId: number): Promise<SalePayment[]> {
     const response = await api.get(API_ENDPOINTS.SALES_PAYMENTS(saleId));
     return response.data;
@@ -417,7 +420,7 @@ class SalesService {
   }
 
   // Returns and Credit Notes
-  
+
   async createSaleReturn(saleId: number, data: SaleReturnRequest): Promise<SaleReturn> {
     // Transform frontend format to backend format
     const backendData = {
@@ -437,12 +440,12 @@ class SalesService {
   }
 
   // Reporting and Analytics
-  
+
   async getSalesSummary(startDate?: string, endDate?: string): Promise<SalesSummary> {
     const params = new URLSearchParams();
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
-    
+
     const response = await api.get(`${API_ENDPOINTS.SALES_SUMMARY}?${params}`);
     // Backend wraps responses as { status, message, data }
     return (response.data && response.data.data) ? response.data.data : response.data;
@@ -459,7 +462,7 @@ class SalesService {
   }
 
   // Customer Portal
-  
+
   async getCustomerSales(customerId: number, page: number = 1, limit: number = 10): Promise<Sale[]> {
     const response = await api.get(`${API_ENDPOINTS.SALES_CUSTOMER(customerId)}?page=${page}&limit=${limit}`);
     return response.data;
@@ -471,7 +474,7 @@ class SalesService {
   }
 
   // PDF Export
-  
+
   async exportInvoicePDF(saleId: number): Promise<Blob> {
     try {
       const response = await api.get(API_ENDPOINTS.SALES_INVOICE_PDF(saleId), {
@@ -496,7 +499,7 @@ class SalesService {
           } catch {
             err.message = text || err.message;
           }
-        } catch {}
+        } catch { }
       }
       throw err;
     }
@@ -508,7 +511,7 @@ class SalesService {
     if (endDate) params.append('end_date', endDate);
     if (status) params.append('status', status);
     if (search) params.append('search', search);
-    
+
     const response = await api.get(`${API_ENDPOINTS.SALES_REPORT_PDF}?${params}`, {
       responseType: 'blob'
     });
@@ -549,14 +552,14 @@ class SalesService {
           } catch {
             err.message = text || err.message;
           }
-        } catch {}
+        } catch { }
       }
       throw err;
     }
   }
 
   // Helper methods for frontend
-  
+
   getStatusColor(status: string): string {
     const colors: { [key: string]: string } = {
       'DRAFT': 'gray',
@@ -608,7 +611,7 @@ class SalesService {
     if (amount === null || amount === undefined || isNaN(amount) || !isFinite(amount)) {
       amount = 0;
     }
-    
+
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: currency,
@@ -627,26 +630,26 @@ class SalesService {
   }
 
   // Validation helpers
-  
+
   validateSaleData(data: SaleCreateRequest): string[] {
     const errors: string[] = [];
-    
+
     if (!data.customer_id) {
       errors.push('Customer is required');
     }
-    
+
     if (!data.type) {
       errors.push('Sale type is required');
     }
-    
+
     if (!data.date) {
       errors.push('Date is required');
     }
-    
+
     if (!data.items || data.items.length === 0) {
       errors.push('At least one item is required');
     }
-    
+
     data.items?.forEach((item, index) => {
       if (!item.product_id && (!item.description || item.description.trim() === '')) {
         errors.push(`Product or description is required for item ${index + 1}`);
@@ -658,12 +661,12 @@ class SalesService {
         errors.push(`Valid unit price is required for item ${index + 1}`);
       }
     });
-    
+
     return errors;
   }
 
   // Generate PDF download
-  
+
   async downloadInvoicePDF(saleId: number, invoiceNumber: string): Promise<void> {
     try {
       const blob = await this.exportInvoicePDF(saleId);

@@ -13,6 +13,8 @@ export interface PurchaseItemRequest {
 
 export interface PurchaseCreateRequest {
   vendor_id: number;
+  purchase_request_id?: number;
+  project_id?: number;
   date: string; // ISO string
   due_date?: string; // ISO string
   discount?: number;
@@ -25,6 +27,7 @@ export interface PurchaseCreateRequest {
 export interface PurchaseFilterParams {
   status?: string;
   vendor_id?: string;
+  project_id?: string;
   start_date?: string;
   end_date?: string;
   search?: string;
@@ -153,7 +156,7 @@ export interface PurchasePayment {
   payment_id?: number;
   created_at: string;
   updated_at: string;
-  
+
   // Relations
   cash_bank?: any;
   user?: any;
@@ -182,17 +185,20 @@ export interface PurchaseForPayment {
 class PurchaseService {
   async list(params: PurchaseFilterParams): Promise<PurchaseListResponse> {
     const toUpper = (v?: string) => (v ? v.toUpperCase() : undefined);
-    const response = await api.get(API_ENDPOINTS.PURCHASES, { params: {
-      status: toUpper(params.status),
-      vendor_id: params.vendor_id,
-      start_date: params.start_date,
-      end_date: params.end_date,
-      search: params.search,
-      approval_status: toUpper(params.approval_status),
-      requires_approval: params.requires_approval,
-      page: params.page ?? 1,
-      limit: params.limit ?? 10,
-    }});
+    const response = await api.get(API_ENDPOINTS.PURCHASES, {
+      params: {
+        status: toUpper(params.status),
+        vendor_id: params.vendor_id,
+        project_id: params.project_id,
+        start_date: params.start_date,
+        end_date: params.end_date,
+        search: params.search,
+        approval_status: toUpper(params.approval_status),
+        requires_approval: params.requires_approval,
+        page: params.page ?? 1,
+        limit: params.limit ?? 10,
+      }
+    });
     return response.data;
   }
 
@@ -263,14 +269,14 @@ class PurchaseService {
   // NEW: Direct Payment Management Integration
   async createPurchasePayment(purchaseId: number, data: PurchasePaymentRequest): Promise<any> {
     // This method uses the new /purchases/:id/payments endpoint that integrates with Payment Management
-    
+
     // Ensure date is properly formatted
     let formattedDate = data.payment_date;
     if (formattedDate && !formattedDate.includes('T')) {
       // If date is just YYYY-MM-DD, add time component for consistency
       formattedDate = `${formattedDate}T00:00:00.000Z`;
     }
-    
+
     const backendData = {
       amount: data.amount,
       date: formattedDate,  // Send as properly formatted date string
@@ -279,7 +285,7 @@ class PurchaseService {
       reference: data.reference || '',
       notes: data.notes || ''
     };
-    
+
     console.log('Sending payment data to backend:', backendData);
     // Use extended timeout for payment operations (30 seconds)
     const response = await api.post(API_ENDPOINTS.PURCHASES_PAYMENTS(purchaseId), backendData, {
@@ -298,8 +304,8 @@ class PurchaseService {
     const status = (purchase.status || '').toUpperCase();
     const eligibleStatus = status === 'APPROVED' || status === 'COMPLETED' || status === 'PAID';
     return eligibleStatus &&
-           purchase.payment_method === 'CREDIT' &&
-           (purchase.outstanding_amount || 0) > 0;
+      purchase.payment_method === 'CREDIT' &&
+      (purchase.outstanding_amount || 0) > 0;
   }
 
   // Helper method to format currency for payment display
@@ -313,13 +319,14 @@ class PurchaseService {
   }
 
   // Export functionality
-  
+
   async exportPurchasesPDF(filters?: PurchaseFilterParams): Promise<Blob> {
     try {
       const params = new URLSearchParams();
-      
+
       if (filters?.status) params.append('status', filters.status);
       if (filters?.vendor_id) params.append('vendor_id', filters.vendor_id);
+      if (filters?.project_id) params.append('project_id', filters.project_id);
       if (filters?.start_date) params.append('start_date', filters.start_date);
       if (filters?.end_date) params.append('end_date', filters.end_date);
       if (filters?.search) params.append('search', filters.search);
@@ -330,7 +337,7 @@ class PurchaseService {
         responseType: 'blob',
         headers: { Accept: 'application/pdf' }
       });
-      
+
       return response.data;
     } catch (error: any) {
       console.error('Error exporting purchases PDF:', error);
@@ -341,9 +348,10 @@ class PurchaseService {
   async exportPurchasesCSV(filters?: PurchaseFilterParams): Promise<Blob> {
     try {
       const params = new URLSearchParams();
-      
+
       if (filters?.status) params.append('status', filters.status);
       if (filters?.vendor_id) params.append('vendor_id', filters.vendor_id);
+      if (filters?.project_id) params.append('project_id', filters.project_id);
       if (filters?.start_date) params.append('start_date', filters.start_date);
       if (filters?.end_date) params.append('end_date', filters.end_date);
       if (filters?.search) params.append('search', filters.search);
@@ -354,7 +362,7 @@ class PurchaseService {
         responseType: 'blob',
         headers: { Accept: 'text/csv' }
       });
-      
+
       return response.data;
     } catch (error: any) {
       console.error('Error exporting purchases CSV:', error);
@@ -363,14 +371,14 @@ class PurchaseService {
   }
 
   // Download helper methods
-  
+
   async downloadPurchasesPDF(filters?: PurchaseFilterParams): Promise<void> {
     try {
       const blob = await this.exportPurchasesPDF(filters);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      
+
       // Create filename based on filters
       let filename = 'purchases-report';
       if (filters?.start_date && filters?.end_date) {
@@ -381,7 +389,7 @@ class PurchaseService {
         filename += `_until_${filters.end_date}`;
       }
       filename += '.pdf';
-      
+
       link.download = filename;
       document.body.appendChild(link);
       link.click();
@@ -399,7 +407,7 @@ class PurchaseService {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      
+
       // Create filename based on filters
       let filename = 'purchases-report';
       if (filters?.start_date && filters?.end_date) {
@@ -410,7 +418,7 @@ class PurchaseService {
         filename += `_until_${filters.end_date}`;
       }
       filename += '.csv';
-      
+
       link.download = filename;
       document.body.appendChild(link);
       link.click();

@@ -186,8 +186,8 @@ export const EmployeeDashboard = () => {
               </CardHeader>
               <CardBody>
                 <List spacing={3}>
-                  {employeeData.pending_approvals.slice(0, 5).map((approval) => (
-                    <ListItem key={approval.id} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
+                  {employeeData.pending_approvals.slice(0, 5).map((approval, index) => (
+                    <ListItem key={`approval-${approval.id}-${index}`} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
                       <ListIcon as={FiBell} color={approval.priority === 'HIGH' ? 'red.500' : 'orange.500'} />
                       <Box flex="1">
                         <Text fontWeight="medium">{approval.request_title || approval.request_code}</Text>
@@ -222,8 +222,8 @@ export const EmployeeDashboard = () => {
               </CardHeader>
               <CardBody>
                 <List spacing={3}>
-                  {employeeData.submitted_requests.slice(0, 5).map((req) => (
-                    <ListItem key={req.id} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
+                  {employeeData.submitted_requests.slice(0, 5).map((req, index) => (
+                    <ListItem key={`req-${req.id}-${index}`} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
                       <ListIcon as={FiFileText} color="blue.500" />
                       <Box flex="1">
                         <Text fontWeight="medium">{req.request_title || req.request_code}</Text>
@@ -258,8 +258,8 @@ export const EmployeeDashboard = () => {
               </CardHeader>
               <CardBody>
                 <List spacing={3}>
-                  {employeeData.recent_notifications.slice(0, 5).map((notif) => (
-                    <ListItem key={notif.id} display="flex" alignItems="center" p={3} bg={notif.is_read ? 'gray.50' : 'blue.50'} borderRadius="md">
+                  {employeeData.recent_notifications.slice(0, 5).map((notif, index) => (
+                    <ListItem key={`notif-${notif.id}-${index}`} display="flex" alignItems="center" p={3} bg={notif.is_read ? 'gray.50' : 'blue.50'} borderRadius="md">
                       <ListIcon as={FiBell} color={notif.is_read ? 'gray.400' : 'blue.500'} />
                       <Box flex="1">
                         <Text fontWeight={notif.is_read ? 'normal' : 'bold'}>{notif.title}</Text>

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -54,13 +55,13 @@ func (c *SSOTReportIntegrationController) GetIntegratedFinancialReports(ctx *gin
 
 	startDate, err := c.parseDateBySettings(startDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"status":"error","message": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
 	endDate, err := c.parseDateBySettings(endDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"status":"error","message": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
@@ -108,13 +109,13 @@ func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) 
 
 	startDate, err := c.parseDateBySettings(startDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"status":"error","message": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
 	endDate, err := c.parseDateBySettings(endDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"status":"error","message": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
@@ -136,7 +137,7 @@ func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) 
 			"status": "success",
 			"data":   salesSummary,
 		})
-case "pdf":
+	case "pdf":
 		// Generate PDF using Sales Export service (similar to Purchase Report)
 		pdfBytes, err := c.salesExportService.ExportToPDF(salesSummary, 0)
 		if err != nil {
@@ -151,7 +152,7 @@ case "pdf":
 		ctx.Header("Content-Disposition", "attachment; filename=SSOT_Sales_Summary.pdf")
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
-case "csv":
+	case "csv":
 		// Follow SSOT P&L style: return JSON metadata for client-side CSV
 		meta := gin.H{
 			"start_date":    startDate.Format("2006-01-02"),
@@ -162,7 +163,7 @@ case "csv":
 			"csv_headers":   []string{"Section", "Name", "Value"},
 			"report_title":  "SSOT Sales Summary",
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status":"success","data":meta,"format":"csv"})
+		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": meta, "format": "csv"})
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -186,8 +187,8 @@ case "csv":
 func (c *SSOTReportIntegrationController) GetSSOTVendorAnalysis(ctx *gin.Context) {
 	// Deprecated: Use GetSSOTPurchaseReport instead
 	ctx.JSON(http.StatusMovedPermanently, gin.H{
-		"status":  "deprecated",
-		"message": "This endpoint has been replaced by /api/v1/ssot-reports/purchase-report",
+		"status":       "deprecated",
+		"message":      "This endpoint has been replaced by /api/v1/ssot-reports/purchase-report",
 		"redirect_url": "/api/v1/ssot-reports/purchase-report",
 	})
 }
@@ -235,7 +236,7 @@ func (c *SSOTReportIntegrationController) GetSSOTPurchaseReport(ctx *gin.Context
 		return
 	}
 
-// Generate purchase report from SSOT
+	// Generate purchase report from SSOT
 	purchaseService := services.NewSSOTPurchaseReportService(c.integrationService.GetDB())
 	purchaseReport, err := purchaseService.GeneratePurchaseReport(ctx, startDate, endDate)
 	if err != nil {
@@ -347,26 +348,26 @@ func (c *SSOTReportIntegrationController) GetSSOTTrialBalance(ctx *gin.Context) 
 			"status": "success",
 			"data":   trialBalance,
 		})
-case "pdf":
-pdfBytes, err := c.pdfService.GenerateTrialBalancePDF(trialBalance, asOfDate.Format("2006-01-02"))
+	case "pdf":
+		pdfBytes, err := c.pdfService.GenerateTrialBalancePDF(trialBalance, asOfDate.Format("2006-01-02"))
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"status":"error","message":"Failed to generate PDF","error":err.Error()})
+			ctx.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to generate PDF", "error": err.Error()})
 			return
 		}
 		ctx.Header("Content-Type", "application/pdf")
 		ctx.Header("Content-Disposition", "attachment; filename=SSOT_Trial_Balance.pdf")
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
-case "csv":
+	case "csv":
 		meta := gin.H{
-			"as_of_date":   asOfDate.Format("2006-01-02"),
-			"data":        trialBalance,
-			"export_ready": true,
-			"export_format":"csv",
-			"csv_headers": []string{"Account Code","Account Name","Debit Balance","Credit Balance"},
-			"report_title":"SSOT Trial Balance",
+			"as_of_date":    asOfDate.Format("2006-01-02"),
+			"data":          trialBalance,
+			"export_ready":  true,
+			"export_format": "csv",
+			"csv_headers":   []string{"Account Code", "Account Name", "Debit Balance", "Credit Balance"},
+			"report_title":  "SSOT Trial Balance",
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status":"success","data":meta,"format":"csv"})
+		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": meta, "format": "csv"})
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -452,27 +453,27 @@ func (c *SSOTReportIntegrationController) GetSSOTGeneralLedger(ctx *gin.Context)
 			"status": "success",
 			"data":   generalLedger,
 		})
-case "pdf":
+	case "pdf":
 		pdfBytes, err := c.pdfService.GenerateGeneralLedgerPDF(generalLedger, "All Accounts", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"status":"error","message":"Failed to generate PDF","error":err.Error()})
+			ctx.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to generate PDF", "error": err.Error()})
 			return
 		}
 		ctx.Header("Content-Type", "application/pdf")
 		ctx.Header("Content-Disposition", "attachment; filename=SSOT_General_Ledger.pdf")
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
-case "csv":
+	case "csv":
 		meta := gin.H{
-			"start_date":  startDate.Format("2006-01-02"),
-			"end_date":    endDate.Format("2006-01-02"),
-			"data":        generalLedger,
-			"export_ready": true,
-			"export_format":"csv",
-			"csv_headers": []string{"Date","Account Code","Account Name","Description","Debit","Credit","Balance"},
-			"report_title":"SSOT General Ledger",
+			"start_date":    startDate.Format("2006-01-02"),
+			"end_date":      endDate.Format("2006-01-02"),
+			"data":          generalLedger,
+			"export_ready":  true,
+			"export_format": "csv",
+			"csv_headers":   []string{"Date", "Account Code", "Account Name", "Description", "Debit", "Credit", "Balance"},
+			"report_title":  "SSOT General Ledger",
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status":"success","data":meta,"format":"csv"})
+		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": meta, "format": "csv"})
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -508,13 +509,13 @@ func (c *SSOTReportIntegrationController) GetSSOTJournalAnalysis(ctx *gin.Contex
 
 	startDate, err := c.parseDateBySettings(startDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"status":"error","message": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
 	endDate, err := c.parseDateBySettings(endDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"status":"error","message": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
@@ -536,27 +537,27 @@ func (c *SSOTReportIntegrationController) GetSSOTJournalAnalysis(ctx *gin.Contex
 			"status": "success",
 			"data":   journalAnalysis,
 		})
-case "pdf":
+	case "pdf":
 		pdfBytes, err := c.pdfService.GenerateJournalAnalysisPDF(journalAnalysis, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, gin.H{"status":"error","message":"Failed to generate PDF","error":err.Error()})
+			ctx.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to generate PDF", "error": err.Error()})
 			return
 		}
 		ctx.Header("Content-Type", "application/pdf")
 		ctx.Header("Content-Disposition", "attachment; filename=SSOT_Journal_Analysis.pdf")
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
-case "csv":
+	case "csv":
 		meta := gin.H{
-			"start_date":  startDate.Format("2006-01-02"),
-			"end_date":    endDate.Format("2006-01-02"),
-			"data":        journalAnalysis,
-			"export_ready": true,
-			"export_format":"csv",
-			"csv_headers": []string{"Journal ID","Date","Account","Debit","Credit","Description"},
-			"report_title":"SSOT Journal Entry Analysis",
+			"start_date":    startDate.Format("2006-01-02"),
+			"end_date":      endDate.Format("2006-01-02"),
+			"data":          journalAnalysis,
+			"export_ready":  true,
+			"export_format": "csv",
+			"csv_headers":   []string{"Journal ID", "Date", "Account", "Debit", "Credit", "Description"},
+			"report_title":  "SSOT Journal Entry Analysis",
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status":"success","data":meta,"format":"csv"})
+		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": meta, "format": "csv"})
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -605,13 +606,13 @@ func (c *SSOTReportIntegrationController) GetSSOTReportStatus(ctx *gin.Context) 
 	// This would typically include health checks, statistics, etc.
 	status := gin.H{
 		"ssot_integration": gin.H{
-			"status":              "active",
-			"version":             "1.0",
-			"last_update":         time.Now(),
+			"status":      "active",
+			"version":     "1.0",
+			"last_update": time.Now(),
 		},
 		"available_reports": []string{
 			"profit_loss",
-			"balance_sheet", 
+			"balance_sheet",
 			"cash_flow",
 			"sales_summary",
 			"vendor_analysis",
@@ -621,8 +622,8 @@ func (c *SSOTReportIntegrationController) GetSSOTReportStatus(ctx *gin.Context) 
 		},
 		"features": gin.H{
 			"concurrent_generation": true,
-			"data_integrity_check": true,
-			"audit_trail":          true,
+			"data_integrity_check":  true,
+			"audit_trail":           true,
 		},
 	}
 
@@ -664,4 +665,3 @@ func (c *SSOTReportIntegrationController) TriggerReportRefresh(ctx *gin.Context)
 		},
 	})
 }
-

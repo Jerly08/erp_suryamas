@@ -1,10 +1,11 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
 	"log"
 	"strings"
-	"app-sistem-akuntansi/models"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -31,11 +32,11 @@ func (s *InventoryCOGSService) updateAccountBalance(db *gorm.DB, accountID uint6
 		account.Balance -= netChange
 	}
 
-	if err := db.Save(&account).Error; err != nil {
+	if err := db.Model(&account).Select("Balance").Updates(models.Account{Balance: account.Balance}).Error; err != nil {
 		return fmt.Errorf("failed to save account balance: %v", err)
 	}
 
-	log.Printf("💰 [COGS] Updated account %s (%s) balance: Dr=%.2f, Cr=%.2f, Change=%.2f, New Balance=%.2f", 
+	log.Printf("💰 [COGS] Updated account %s (%s) balance: Dr=%.2f, Cr=%.2f, Change=%.2f, New Balance=%.2f",
 		account.Code, account.Name, debit, credit, netChange, account.Balance)
 
 	return nil

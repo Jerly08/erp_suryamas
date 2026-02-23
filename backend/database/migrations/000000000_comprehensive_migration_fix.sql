@@ -68,6 +68,15 @@ BEGIN
         RAISE NOTICE '✅ Added missing transaction_uuid column';
     END IF;
 
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'unified_journal_ledger')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name = 'unified_journal_ledger' 
+                       AND column_name = 'project_id') THEN
+        ALTER TABLE unified_journal_ledger 
+        ADD COLUMN project_id BIGINT;
+        RAISE NOTICE '✅ Added missing project_id column';
+    END IF;
+
     -- ============================================================
     -- 3. FIX/CREATE INDEXES
     -- ============================================================

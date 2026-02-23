@@ -164,6 +164,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                 <Tr>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.purchaseNumber')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.vendor')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">PR / Project</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.date')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.total')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.paidAmount')}</Th>
@@ -191,6 +192,24 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                       <Text fontWeight="medium" color={primaryTextColor} fontSize="sm">
                         {purchase.vendor?.name || 'N/A'}
                       </Text>
+                    </Td>
+                    <Td borderColor={borderColor} py={3}>
+                      {(purchase as any).purchase_request_id || (purchase as any).project_id ? (
+                        <Flex direction="column" align="flex-start" gap={1}>
+                          {(purchase as any).purchase_request_id && (
+                            <Badge colorScheme="blue" variant="subtle" fontSize="2xs">
+                              PR: {(purchase as any).purchase_request?.request_number || `#${(purchase as any).purchase_request_id}`}
+                            </Badge>
+                          )}
+                          {(purchase as any).project_id && (
+                            <Badge colorScheme="purple" variant="subtle" fontSize="2xs">
+                              PROJ: {(purchase as any).project?.code || `#${(purchase as any).project_id}`}
+                            </Badge>
+                          )}
+                        </Flex>
+                      ) : (
+                        <Text fontSize="xs" color="gray.400">-</Text>
+                      )}
                     </Td>
                     <Td borderColor={borderColor} py={3}>
                       <Text fontSize="sm" color={textColor}>

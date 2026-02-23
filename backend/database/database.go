@@ -658,6 +658,10 @@ func AutoMigrate(db *gorm.DB) {
 		&models.PurchaseReceipt{},
 		&models.PurchaseReceiptItem{},
 
+		// Purchase Requests
+		&models.PurchaseRequest{},
+		&models.PurchaseRequestItem{},
+
 		// Expenses
 		&models.ExpenseCategory{},
 		&models.Expense{},
@@ -1155,6 +1159,87 @@ func CreateMissingColumns(db *gorm.DB) {
 				log.Printf("Warning: Failed to add revenue_account_id column to sale_items table: %v", err)
 			} else {
 				log.Println("Added revenue_account_id column to sale_items table successfully")
+			}
+		}
+	}
+
+	// Check if settings table exists
+	var settingsTableExists bool
+	db.Raw(`SELECT EXISTS (
+		SELECT 1 FROM information_schema.tables 
+		WHERE table_name = 'settings'
+	)`).Scan(&settingsTableExists)
+
+	if settingsTableExists {
+		// Check and add missing purchase_next_number column to settings table
+		var purchaseNextNumberColumnExists bool
+		db.Raw(`SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'settings' AND column_name = 'purchase_next_number'
+		)`).Scan(&purchaseNextNumberColumnExists)
+
+		if !purchaseNextNumberColumnExists {
+			log.Println("Adding missing purchase_next_number column to settings table...")
+			err := db.Exec(`
+				ALTER TABLE settings 
+				ADD COLUMN purchase_next_number INTEGER DEFAULT 1;
+			`).Error
+			if err != nil {
+				log.Printf("Warning: Failed to add purchase_next_number column to settings table: %v", err)
+			} else {
+				log.Println("Added purchase_next_number column to settings table successfully")
+			}
+		}
+
+		// Also check for invoice_next_number, sales_next_number, quote_next_number
+		var invoiceNextNumberColumnExists bool
+		db.Raw(`SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'settings' AND column_name = 'invoice_next_number'
+		)`).Scan(&invoiceNextNumberColumnExists)
+
+		if !invoiceNextNumberColumnExists {
+			log.Println("Adding missing invoice_next_number column to settings table...")
+			err := db.Exec(`
+				ALTER TABLE settings 
+				ADD COLUMN invoice_next_number INTEGER DEFAULT 1;
+			`).Error
+			if err != nil {
+				log.Printf("Warning: Failed to add invoice_next_number column to settings table: %v", err)
+			}
+		}
+
+		var salesNextNumberColumnExists bool
+		db.Raw(`SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'settings' AND column_name = 'sales_next_number'
+		)`).Scan(&salesNextNumberColumnExists)
+
+		if !salesNextNumberColumnExists {
+			log.Println("Adding missing sales_next_number column to settings table...")
+			err := db.Exec(`
+				ALTER TABLE settings 
+				ADD COLUMN sales_next_number INTEGER DEFAULT 1;
+			`).Error
+			if err != nil {
+				log.Printf("Warning: Failed to add sales_next_number column to settings table: %v", err)
+			}
+		}
+
+		var quoteNextNumberColumnExists bool
+		db.Raw(`SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'settings' AND column_name = 'quote_next_number'
+		)`).Scan(&quoteNextNumberColumnExists)
+
+		if !quoteNextNumberColumnExists {
+			log.Println("Adding missing quote_next_number column to settings table...")
+			err := db.Exec(`
+				ALTER TABLE settings 
+				ADD COLUMN quote_next_number INTEGER DEFAULT 1;
+			`).Error
+			if err != nil {
+				log.Printf("Warning: Failed to add quote_next_number column to settings table: %v", err)
 			}
 		}
 	}

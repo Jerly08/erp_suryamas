@@ -114,6 +114,8 @@ import { API_ENDPOINTS } from '@/config/api';
 // Types for form data
 interface PurchaseFormData {
   vendor_id: string;
+  purchase_request_id: string;
+  project_id: string;
   date: string;
   due_date: string;
   notes: string;
@@ -426,6 +428,7 @@ const PurchasesPage: React.FC = () => {
   const [filters, setFilters] = useState<PurchaseFilterParams>({
     status: '',
     vendor_id: '',
+    project_id: '',
     approval_status: '',
     search: '',
     start_date: '',
@@ -468,6 +471,10 @@ const PurchasesPage: React.FC = () => {
 
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [selectedPurchaseForPayment, setSelectedPurchaseForPayment] = useState<Purchase | null>(null);
+  const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [loadingPRs, setLoadingPRs] = useState(false);
+  const [loadingProjects, setLoadingProjects] = useState(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<GLAccount[]>([]);
@@ -482,6 +489,8 @@ const PurchasesPage: React.FC = () => {
   const [defaultTaxRate, setDefaultTaxRate] = useState<number>(0);
   const [formData, setFormData] = useState<PurchaseFormData>({
     vendor_id: '',
+    purchase_request_id: '',
+    project_id: '',
     date: new Date().toISOString().split('T')[0],
     due_date: '',
     notes: '',
@@ -1566,6 +1575,46 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
+  // Fetch Purchase Requests
+  const fetchPurchaseRequests = async () => {
+    if (!token) return;
+    try {
+      setLoadingPRs(true);
+      const response = await fetch('/api/v1/purchase-requests', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const prs = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+        // Only show APPROVED PRs
+        setPurchaseRequests(prs.filter((pr: any) => pr.status === 'APPROVED'));
+      }
+    } catch (err: any) {
+      console.error('Error fetching PRs:', err);
+    } finally {
+      setLoadingPRs(false);
+    }
+  };
+
+  // Fetch Projects
+  const fetchProjects = async () => {
+    if (!token) return;
+    try {
+      setLoadingProjects(true);
+      const response = await fetch('/api/v1/projects', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setProjects(Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []));
+      }
+    } catch (err: any) {
+      console.error('Error fetching projects:', err);
+    } finally {
+      setLoadingProjects(false);
+    }
+  };
+
   // Fetch products for dropdown
   const fetchProductsList = async () => {
     try {
@@ -2249,6 +2298,8 @@ const PurchasesPage: React.FC = () => {
       });
 
       await fetchVendors(); // Load vendors for dropdown
+      await fetchPurchaseRequests(); // Load Purchase Requests
+      await fetchProjects(); // Load Projects
       await fetchProductsList(); // Load products for dropdown
       await fetchExpenseAccounts(); // Load expense accounts for dropdown
       await fetchBankAccounts(); // Load bank accounts for dropdown
@@ -2270,6 +2321,8 @@ const PurchasesPage: React.FC = () => {
     // Reset form data
     setFormData({
       vendor_id: '',
+      purchase_request_id: '',
+      project_id: '',
       date: new Date().toISOString().split('T')[0], // Today's date
       due_date: '',
       notes: '',
@@ -2297,6 +2350,8 @@ const PurchasesPage: React.FC = () => {
     });
     setSelectedPurchase(null);
     await fetchVendors(); // Load vendors for dropdown
+    await fetchPurchaseRequests(); // Load Purchase Requests
+    await fetchProjects(); // Load Projects
     await fetchProductsList(); // Load products for dropdown
     await fetchExpenseAccounts(); // Load expense accounts for dropdown
     await fetchBankAccounts(); // Load bank accounts for dropdown
@@ -2348,7 +2403,7 @@ const PurchasesPage: React.FC = () => {
       setLoading(true);
 
       // Format the payload with proper tax rates
-      const payload = {
+      const payload: any = {
         vendor_id: parseInt(formData.vendor_id),
         date: formData.date ? `${formData.date}T00:00:00Z` : new Date().toISOString(),
         due_date: formData.due_date ? `${formData.due_date}T00:00:00Z` : undefined,
@@ -2374,6 +2429,13 @@ const PurchasesPage: React.FC = () => {
           expense_account_id: parseInt(item.expense_account_id),
         })),
       };
+
+      if (formData.purchase_request_id) {
+        payload.purchase_request_id = parseInt(formData.purchase_request_id);
+      }
+      if (formData.project_id) {
+        payload.project_id = parseInt(formData.project_id);
+      }
 
       let response;
 
@@ -2466,6 +2528,8 @@ const PurchasesPage: React.FC = () => {
       // We can run these in parallel to speed up
       await Promise.all([
         fetchVendors(),
+        fetchPurchaseRequests(),
+        fetchProjects(),
         fetchProductsList(),
         fetchExpenseAccounts(),
         fetchBankAccounts(),
@@ -3252,6 +3316,24 @@ const PurchasesPage: React.FC = () => {
 
                     <Box minW="160px">
                       <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                        Project
+                      </Text>
+                      <Select
+                        placeholder="All Projects"
+                        value={filters.project_id || ''}
+                        onChange={(e) => handleFilterChange({ project_id: e.target.value })}
+                        bg={cardBg}
+                      >
+                        {projects.map((proj) => (
+                          <option key={proj.id} value={proj.id.toString()}>
+                            {proj.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Box>
+
+                    <Box minW="160px">
+                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
                         {t('purchases.filterByStatus')}
                       </Text>
                       <Select
@@ -3324,6 +3406,7 @@ const PurchasesPage: React.FC = () => {
                           limit: 10,
                           status: '',
                           vendor_id: '',
+                          project_id: '',
                           approval_status: '',
                           search: '',
                           start_date: '',
@@ -3620,7 +3703,7 @@ const PurchasesPage: React.FC = () => {
                   <ModalBody>
                     <VStack spacing={4} align="stretch">
                       <Text fontSize="md" fontWeight="semibold" color={headingColor}>Basic Info</Text>
-                      <SimpleGrid columns={2} spacing={4}>
+                      <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
                         <FormControl>
                           <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
                           <Input value={selectedPurchase?.code || ''} isReadOnly bg="gray.50" />
@@ -3656,6 +3739,57 @@ const PurchasesPage: React.FC = () => {
                               _hover={{ bg: 'green.50' }}
                             />
                           </HStack>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel>Purchase Request</FormLabel>
+                          {loadingPRs ? (
+                            <Spinner size="sm" />
+                          ) : (
+                            <Select
+                              placeholder="Select PR (Optional)"
+                              value={formData.purchase_request_id}
+                              onChange={(e) => {
+                                const selectedPrId = e.target.value;
+                                const selectedPr = purchaseRequests.find(pr => pr.id.toString() === selectedPrId);
+
+                                setFormData(prev => ({
+                                  ...prev,
+                                  purchase_request_id: selectedPrId,
+                                  // Auto-fill project if PR has one, otherwise keep existing
+                                  project_id: selectedPr?.project_id ? selectedPr.project_id.toString() : prev.project_id
+                                }));
+                              }}
+                            >
+                              {purchaseRequests.map(pr => (
+                                <option key={pr.id} value={pr.id}>
+                                  {pr.pr_number} - {pr.department ? `${pr.department}` : ''} ({formatCurrency(pr.total_estimated_amount)})
+                                </option>
+                              ))}
+                            </Select>
+                          )}
+                          <FormHelperText fontSize="xs" color="orange.600">
+                            Warning: Amount cannot exceed PR limit
+                          </FormHelperText>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel>Project</FormLabel>
+                          {loadingProjects ? (
+                            <Spinner size="sm" />
+                          ) : (
+                            <Select
+                              placeholder="Select Project (Optional)"
+                              value={formData.project_id}
+                              onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                            >
+                              {projects.map(proj => (
+                                <option key={proj.id} value={proj.id}>
+                                  {proj.name} ({proj.code})
+                                </option>
+                              ))}
+                            </Select>
+                          )}
                         </FormControl>
 
                         <FormControl isRequired>
@@ -4549,7 +4683,7 @@ const PurchasesPage: React.FC = () => {
                           </Text>
                         </CardHeader>
                         <CardBody pt={0}>
-                          <SimpleGrid columns={3} spacing={4}>
+                          <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
                             <FormControl>
                               <FormLabel fontSize="sm" fontWeight="medium">{t('purchases.purchaseCode')}</FormLabel>
                               <Input value={t('purchases.autoGenerated')} isReadOnly bg="gray.100" size="sm" color="gray.500" />
@@ -4587,6 +4721,59 @@ const PurchasesPage: React.FC = () => {
                                   _hover={{ bg: 'green.50' }}
                                 />
                               </HStack>
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel fontSize="sm" fontWeight="medium">Purchase Request</FormLabel>
+                              {loadingPRs ? (
+                                <Spinner size="sm" />
+                              ) : (
+                                <Select
+                                  placeholder="Select PR (Optional)"
+                                  value={formData.purchase_request_id}
+                                  onChange={(e) => {
+                                    const selectedPrId = e.target.value;
+                                    const selectedPr = purchaseRequests.find(pr => pr.id.toString() === selectedPrId);
+
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      purchase_request_id: selectedPrId,
+                                      // Auto-fill project if PR has one, otherwise keep existing
+                                      project_id: selectedPr?.project_id ? selectedPr.project_id.toString() : prev.project_id
+                                    }));
+                                  }}
+                                  size="sm"
+                                >
+                                  {purchaseRequests.map(pr => (
+                                    <option key={pr.id} value={pr.id}>
+                                      {pr.pr_number} - {pr.department ? `${pr.department}` : ''} ({formatCurrency(pr.total_estimated_amount)})
+                                    </option>
+                                  ))}
+                                </Select>
+                              )}
+                              <FormHelperText fontSize="xs" color="orange.600">
+                                Warning: Amount cannot exceed PR limit
+                              </FormHelperText>
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel fontSize="sm" fontWeight="medium">Project</FormLabel>
+                              {loadingProjects ? (
+                                <Spinner size="sm" />
+                              ) : (
+                                <Select
+                                  placeholder="Select Project (Optional)"
+                                  value={formData.project_id}
+                                  onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                                  size="sm"
+                                >
+                                  {projects.map(proj => (
+                                    <option key={proj.id} value={proj.id}>
+                                      {proj.name} ({proj.code})
+                                    </option>
+                                  ))}
+                                </Select>
+                              )}
                             </FormControl>
 
                             <FormControl isRequired>

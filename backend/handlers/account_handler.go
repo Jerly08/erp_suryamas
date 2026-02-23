@@ -1,6 +1,10 @@
 package handlers
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/utils"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -9,24 +13,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/repositories"
-	"app-sistem-akuntansi/services"
-	"app-sistem-akuntansi/utils"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 // AccountHandler handles account-related operations
 type AccountHandler struct {
-	repo repositories.AccountRepository
+	repo          repositories.AccountRepository
 	exportService services.ExportService
 }
 
 // NewAccountHandler creates a new account handler
 func NewAccountHandler(repo repositories.AccountRepository, exportService services.ExportService) *AccountHandler {
 	return &AccountHandler{
-		repo: repo,
+		repo:          repo,
 		exportService: exportService,
 	}
 }
@@ -57,7 +58,7 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 // GetAccount gets a single account by code
 func (h *AccountHandler) GetAccount(c *gin.Context) {
 	code := c.Param("code")
-	
+
 	account, err := h.repo.FindByCode(c.Request.Context(), code)
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
@@ -76,7 +77,7 @@ func (h *AccountHandler) GetAccount(c *gin.Context) {
 func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 	code := c.Param("code")
 	log.Printf("UpdateAccount called with code: %s", code)
-	
+
 	var req models.AccountUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Printf("Failed to bind JSON: %v", err)
@@ -84,7 +85,7 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 		c.JSON(appError.StatusCode, appError.ToErrorResponse(""))
 		return
 	}
-	
+
 	log.Printf("Update request data: %+v", req)
 
 	account, err := h.repo.Update(c.Request.Context(), code, &req)
@@ -98,7 +99,7 @@ func (h *AccountHandler) UpdateAccount(c *gin.Context) {
 		}
 		return
 	}
-	
+
 	log.Printf("Account updated successfully: %+v", account)
 	c.JSON(http.StatusOK, gin.H{"data": account})
 }
@@ -124,20 +125,20 @@ func (h *AccountHandler) DeleteAccount(c *gin.Context) {
 // AdminDeleteAccount deletes an account with admin privileges
 func (h *AccountHandler) AdminDeleteAccount(c *gin.Context) {
 	code := c.Param("code")
-	
+
 	// Parse request body for cascade options
 	type AdminDeleteRequest struct {
 		CascadeDelete bool  `json:"cascade_delete"`
 		NewParentID   *uint `json:"new_parent_id"`
 	}
-	
+
 	var req AdminDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		// Default to no cascade, move to root
 		req.CascadeDelete = false
 		req.NewParentID = nil
 	}
-	
+
 	err := h.repo.(*repositories.AccountRepo).AdminDelete(c.Request.Context(), code, req.CascadeDelete, req.NewParentID)
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
@@ -148,7 +149,7 @@ func (h *AccountHandler) AdminDeleteAccount(c *gin.Context) {
 		}
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "Account deleted successfully (admin)", "cascade": req.CascadeDelete})
 }
 
@@ -157,13 +158,13 @@ func (h *AccountHandler) ListAccounts(c *gin.Context) {
 	accountType := c.Query("type")
 	var accounts []models.Account
 	var err error
-	
+
 	if accountType != "" {
 		accounts, err = h.repo.FindByType(c.Request.Context(), accountType)
 	} else {
 		accounts, err = h.repo.FindAll(c.Request.Context())
 	}
-	
+
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
 			c.JSON(appErr.StatusCode, appErr.ToErrorResponse(""))
@@ -288,12 +289,12 @@ func (h *AccountHandler) ImportAccounts(c *gin.Context) {
 func (h *AccountHandler) ExportAccountsPDF(c *gin.Context) {
 	// Get user ID from context (assuming it's set by auth middleware)
 	userID := uint(1) // Default fallback, should be extracted from JWT/session
-	if userIDValue, exists := c.Get("userID"); exists {
+	if userIDValue, exists := c.Get("user_id"); exists {
 		if uid, ok := userIDValue.(uint); ok {
 			userID = uid
 		}
 	}
-	
+
 	pdfData, err := h.exportService.ExportAccountsPDF(c.Request.Context(), userID)
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
@@ -318,7 +319,7 @@ func (h *AccountHandler) ExportAccountsPDF(c *gin.Context) {
 // This endpoint is for authenticated users to select accounts in purchases and payments
 func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 	accountType := c.Query("type")
-	
+
 	// Allow specific types for purchase/payment operations
 	allowedTypes := []string{"EXPENSE", "ASSET", "LIABILITY"}
 	if accountType != "" {
@@ -335,10 +336,10 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	var accounts []models.Account
 	var err error
-	
+
 	if accountType != "" {
 		// Get accounts for specific type
 		accounts, err = h.repo.FindByType(c.Request.Context(), accountType)
@@ -354,7 +355,7 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 			accounts = append(accounts, typeAccounts...)
 		}
 	}
-	
+
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
 			c.JSON(appErr.StatusCode, appErr.ToErrorResponse(""))
@@ -364,7 +365,7 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 		}
 		return
 	}
-	
+
 	// Return minimal data only - no balance or hierarchy
 	type AccountCatalogItem struct {
 		ID     uint   `json:"id"`
@@ -372,7 +373,7 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 		Name   string `json:"name"`
 		Active bool   `json:"active"`
 	}
-	
+
 	catalog := make([]AccountCatalogItem, 0, len(accounts))
 	for _, account := range accounts {
 		// Only include active expense accounts
@@ -385,7 +386,7 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 			})
 		}
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"data": catalog, "count": len(catalog)})
 }
 
@@ -393,12 +394,12 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 func (h *AccountHandler) ExportAccountsExcel(c *gin.Context) {
 	// Get user ID from context (assuming it's set by auth middleware)
 	userID := uint(1) // Default fallback, should be extracted from JWT/session
-	if userIDValue, exists := c.Get("userID"); exists {
+	if userIDValue, exists := c.Get("user_id"); exists {
 		if uid, ok := userIDValue.(uint); ok {
 			userID = uid
 		}
 	}
-	
+
 	excelData, err := h.exportService.ExportAccountsExcel(c.Request.Context(), userID)
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
@@ -445,7 +446,7 @@ func (h *AccountHandler) ValidateAccountCode(c *gin.Context) {
 			// Code is available
 			c.JSON(http.StatusOK, gin.H{
 				"available": true,
-				"message": "Account code is available",
+				"message":   "Account code is available",
 			})
 		} else {
 			internalErr := utils.NewInternalError("Failed to validate account code", err)
@@ -457,9 +458,9 @@ func (h *AccountHandler) ValidateAccountCode(c *gin.Context) {
 	// Code is not available
 	c.JSON(http.StatusOK, gin.H{
 		"available": false,
-		"message": fmt.Sprintf("Account code '%s' is already used by: %s", code, account.Name),
+		"message":   fmt.Sprintf("Account code '%s' is already used by: %s", code, account.Name),
 		"existing_account": gin.H{
-			"id": account.ID,
+			"id":   account.ID,
 			"code": account.Code,
 			"name": account.Name,
 		},

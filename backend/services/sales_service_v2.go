@@ -238,6 +238,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		item := models.SaleItem{
 			ProductID:        itemRequest.ProductID,
 			Description:      itemRequest.Description,
+			Location:         itemRequest.Location,
 			Quantity:         int(itemRequest.Quantity),
 			UnitPrice:        itemRequest.UnitPrice,
 			DiscountPercent:  *discountPercent,
@@ -509,6 +510,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				SaleID:           sale.ID,
 				ProductID:        itemRequest.ProductID,
 				Description:      itemRequest.Description,
+				Location:         itemRequest.Location,
 				Quantity:         int(itemRequest.Quantity),
 				UnitPrice:        itemRequest.UnitPrice,
 				DiscountPercent:  *discountPercent,

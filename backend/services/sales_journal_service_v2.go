@@ -660,7 +660,7 @@ func (s *SalesJournalServiceV2) updateAccountBalanceForPayment(db *gorm.DB, acco
 		account.Balance -= netChange
 	}
 
-	if err := db.Save(&account).Error; err != nil {
+	if err := db.Model(&account).Select("Balance").Updates(models.Account{Balance: account.Balance}).Error; err != nil {
 		return fmt.Errorf("failed to save account balance: %v", err)
 	}
 

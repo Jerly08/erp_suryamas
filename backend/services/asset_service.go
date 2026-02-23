@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
 	"gorm.io/gorm"
 )
 
@@ -34,28 +35,28 @@ type AssetService struct {
 }
 
 type DepreciationEntry struct {
-	Year             int       `json:"year"`
-	Date             time.Time `json:"date"`
-	DepreciationCost float64   `json:"depreciation_cost"`
-	AccumulatedDepreciation float64 `json:"accumulated_depreciation"`
-	BookValue        float64   `json:"book_value"`
+	Year                    int       `json:"year"`
+	Date                    time.Time `json:"date"`
+	DepreciationCost        float64   `json:"depreciation_cost"`
+	AccumulatedDepreciation float64   `json:"accumulated_depreciation"`
+	BookValue               float64   `json:"book_value"`
 }
 
 type AssetsSummary struct {
-	TotalAssets      int64   `json:"total_assets"`
-	ActiveAssets     int64   `json:"active_assets"`
-	TotalValue       float64 `json:"total_value"`
+	TotalAssets       int64   `json:"total_assets"`
+	ActiveAssets      int64   `json:"active_assets"`
+	TotalValue        float64 `json:"total_value"`
 	TotalDepreciation float64 `json:"total_depreciation"`
-	NetBookValue     float64 `json:"net_book_value"`
+	NetBookValue      float64 `json:"net_book_value"`
 }
 
 type AssetDepreciationReport struct {
-	Asset                   models.Asset `json:"asset"`
-	AnnualDepreciation      float64      `json:"annual_depreciation"`
-	MonthlyDepreciation     float64      `json:"monthly_depreciation"`
-	RemainingDepreciation   float64      `json:"remaining_depreciation"`
-	RemainingYears          int          `json:"remaining_years"`
-	CurrentBookValue        float64      `json:"current_book_value"`
+	Asset                 models.Asset `json:"asset"`
+	AnnualDepreciation    float64      `json:"annual_depreciation"`
+	MonthlyDepreciation   float64      `json:"monthly_depreciation"`
+	RemainingDepreciation float64      `json:"remaining_depreciation"`
+	RemainingYears        int          `json:"remaining_years"`
+	CurrentBookValue      float64      `json:"current_book_value"`
 }
 
 func NewAssetService(assetRepo repositories.AssetRepositoryInterface, db *gorm.DB) AssetServiceInterface {
@@ -122,7 +123,7 @@ func (s *AssetService) CreateAsset(asset *models.Asset) error {
 			// Success!
 			return nil
 		}
-		
+
 		// Check if it's a unique constraint violation on asset code
 		if isUniqueCodeError(err) && attempt < maxRetries {
 			// Generate new code and retry
@@ -133,11 +134,11 @@ func (s *AssetService) CreateAsset(asset *models.Asset) error {
 			asset.Code = newCode
 			continue // Retry with new code
 		}
-		
+
 		// If it's not a unique constraint error or we've exhausted retries, return the error
 		return err
 	}
-	
+
 	// Should never reach here, but just in case
 	return errors.New("exhausted all retry attempts")
 }
@@ -189,7 +190,7 @@ func (s *AssetService) CreateAssetWithJournal(asset *models.Asset, userId uint, 
 		if tx.Error != nil {
 			return tx.Error
 		}
-		
+
 		// Try to create the asset
 		createErr := tx.Create(asset).Error
 		if createErr == nil {
@@ -209,10 +210,10 @@ func (s *AssetService) CreateAssetWithJournal(asset *models.Asset, userId uint, 
 			// Commit transaction and return success
 			return tx.Commit().Error
 		}
-		
+
 		// Rollback failed transaction immediately
 		tx.Rollback()
-		
+
 		// Check if it's a unique constraint violation on asset code
 		if isUniqueCodeError(createErr) && attempt < maxRetries {
 			// Generate new code and retry with fresh transaction
@@ -223,11 +224,11 @@ func (s *AssetService) CreateAssetWithJournal(asset *models.Asset, userId uint, 
 			asset.Code = newCode
 			continue // Retry with new code and fresh transaction
 		}
-		
+
 		// If it's not a unique constraint error or we've exhausted retries, return the error
 		return createErr
 	}
-	
+
 	// Should never reach here, but just in case
 	return errors.New("exhausted all retry attempts")
 
@@ -275,11 +276,11 @@ func (s *AssetService) GenerateAssetCode(category string) (string, error) {
 	}
 
 	year := time.Now().Format("2006")
-	
+
 	// Start from sequence 1 and find the next available number
 	for sequence := 1; sequence <= 9999; sequence++ {
 		code := prefix + "-" + year + "-" + padLeft(strconv.Itoa(sequence), 3, "0")
-		
+
 		// Check if code exists in database
 		_, err := s.assetRepo.FindByCode(code)
 		if err != nil {
@@ -288,7 +289,7 @@ func (s *AssetService) GenerateAssetCode(category string) (string, error) {
 		}
 		// Code exists, try next sequence
 	}
-	
+
 	// If we reach here, all sequences are exhausted
 	return "", errors.New("unable to generate unique asset code: all sequences exhausted for category " + category)
 }
@@ -306,7 +307,7 @@ func (s *AssetService) CalculateDepreciation(asset *models.Asset, asOfDate time.
 	}
 
 	depreciableAmount := asset.PurchasePrice - asset.SalvageValue
-	
+
 	switch asset.DepreciationMethod {
 	case models.DepreciationMethodStraightLine:
 		return s.calculateStraightLineDepreciation(depreciableAmount, asset.UsefulLife, monthsSincePurchase), nil
@@ -324,12 +325,12 @@ func (s *AssetService) GetDepreciationSchedule(asset *models.Asset) ([]Depreciat
 	}
 
 	var schedule []DepreciationEntry
-	
+
 	for year := 1; year <= asset.UsefulLife; year++ {
 		date := asset.PurchaseDate.AddDate(year-1, 0, 0)
-		
+
 		depreciation, _ := s.CalculateDepreciation(asset, date.AddDate(1, 0, -1))
-		
+
 		var annualDepreciation float64
 		if year == 1 {
 			annualDepreciation = depreciation
@@ -337,12 +338,12 @@ func (s *AssetService) GetDepreciationSchedule(asset *models.Asset) ([]Depreciat
 			prevDepreciation, _ := s.CalculateDepreciation(asset, date.AddDate(0, 0, -1))
 			annualDepreciation = depreciation - prevDepreciation
 		}
-		
+
 		bookValue := asset.PurchasePrice - depreciation
 		if bookValue < asset.SalvageValue {
 			bookValue = asset.SalvageValue
 		}
-		
+
 		entry := DepreciationEntry{
 			Year:                    year,
 			Date:                    date,
@@ -350,15 +351,15 @@ func (s *AssetService) GetDepreciationSchedule(asset *models.Asset) ([]Depreciat
 			AccumulatedDepreciation: depreciation,
 			BookValue:               bookValue,
 		}
-		
+
 		schedule = append(schedule, entry)
-		
+
 		// Stop if we've reached salvage value
 		if bookValue <= asset.SalvageValue {
 			break
 		}
 	}
-	
+
 	return schedule, nil
 }
 
@@ -403,28 +404,28 @@ func (s *AssetService) GetAssetsForDepreciationReport() ([]AssetDepreciationRepo
 	}
 
 	var reports []AssetDepreciationReport
-	
+
 	for _, asset := range assets {
 		// Calculate annual depreciation
 		depreciableAmount := asset.PurchasePrice - asset.SalvageValue
 		var annualDepreciation float64
-		
+
 		if asset.DepreciationMethod == models.DepreciationMethodStraightLine {
 			annualDepreciation = depreciableAmount / float64(asset.UsefulLife)
 		} else {
 			// For declining balance, use first year depreciation as estimate
 			annualDepreciation = depreciableAmount * 0.2 // 20% declining balance
 		}
-		
+
 		monthlyDepreciation := annualDepreciation / 12
 		currentBookValue := asset.PurchasePrice - asset.AccumulatedDepreciation
-		remainingDepreciation := math.Max(0, currentBookValue - asset.SalvageValue)
-		
+		remainingDepreciation := math.Max(0, currentBookValue-asset.SalvageValue)
+
 		var remainingYears int
 		if annualDepreciation > 0 {
 			remainingYears = int(math.Ceil(remainingDepreciation / annualDepreciation))
 		}
-		
+
 		report := AssetDepreciationReport{
 			Asset:                 asset,
 			AnnualDepreciation:    annualDepreciation,
@@ -433,10 +434,10 @@ func (s *AssetService) GetAssetsForDepreciationReport() ([]AssetDepreciationRepo
 			RemainingYears:        remainingYears,
 			CurrentBookValue:      currentBookValue,
 		}
-		
+
 		reports = append(reports, report)
 	}
-	
+
 	return reports, nil
 }
 
@@ -498,15 +499,15 @@ func monthsDifference(startDate, endDate time.Time) int {
 	if endDate.Before(startDate) {
 		return 0
 	}
-	
+
 	months := int(endDate.Month()) - int(startDate.Month())
 	months += (endDate.Year() - startDate.Year()) * 12
-	
+
 	// Add partial month if end date day is >= start date day
 	if endDate.Day() >= startDate.Day() {
 		months++
 	}
-	
+
 	return months
 }
 
@@ -518,27 +519,27 @@ func (s *AssetService) calculateStraightLineDepreciation(depreciableAmount float
 func (s *AssetService) calculateDecliningBalanceDepreciation(purchasePrice, salvageValue float64, usefulLifeYears int, monthsSincePurchase int) float64 {
 	rate := 2.0 / float64(usefulLifeYears) // Double declining balance
 	monthlyRate := rate / 12
-	
+
 	accumulated := 0.0
 	bookValue := purchasePrice
-	
+
 	for month := 0; month < monthsSincePurchase; month++ {
 		monthlyDepreciation := bookValue * monthlyRate
-		
+
 		// Don't depreciate below salvage value
 		if bookValue-monthlyDepreciation < salvageValue {
 			monthlyDepreciation = bookValue - salvageValue
 		}
-		
+
 		accumulated += monthlyDepreciation
 		bookValue -= monthlyDepreciation
-		
+
 		// Stop if we reach salvage value
 		if bookValue <= salvageValue {
 			break
 		}
 	}
-	
+
 	return accumulated
 }
 
@@ -601,7 +602,7 @@ func (s *AssetService) updateAccountBalances(tx *gorm.DB, journalEntry *models.J
 
 		// Update account balance
 		account.Balance += balanceChange
-		if err := tx.Save(&account).Error; err != nil {
+		if err := tx.Model(&account).Select("Balance").Updates(models.Account{Balance: account.Balance}).Error; err != nil {
 			return err
 		}
 	}
@@ -647,9 +648,9 @@ func isUniqueCodeError(err error) bool {
 	}
 	errorStr := err.Error()
 	// PostgreSQL unique violation - check for multiple possible constraint names
-	return strings.Contains(errorStr, "SQLSTATE 23505") && 
+	return strings.Contains(errorStr, "SQLSTATE 23505") &&
 		(strings.Contains(errorStr, "assets_code_key") ||
-		 strings.Contains(errorStr, "uni_assets_code") ||
-		 strings.Contains(errorStr, "assets_code_unique") ||
-		 strings.Contains(errorStr, "idx_assets_code"))
+			strings.Contains(errorStr, "uni_assets_code") ||
+			strings.Contains(errorStr, "assets_code_unique") ||
+			strings.Contains(errorStr, "idx_assets_code"))
 }
