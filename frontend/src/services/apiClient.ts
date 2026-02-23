@@ -5,10 +5,10 @@
  * monitoring, caching, and comprehensive error handling
  */
 
-import { 
-  ApiClientConfig, 
-  ApiRequestConfig, 
-  ServiceResponse, 
+import {
+  ApiClientConfig,
+  ApiRequestConfig,
+  ServiceResponse,
   IApiService,
   HttpMethod,
   ApiMetrics,
@@ -18,6 +18,7 @@ import {
   DEFAULT_API_CONFIG,
   PRODUCTION_API_CONFIG
 } from '@/types/api';
+import API_BASE_URL from '@/config/api';
 
 // Simple in-memory cache for production
 class ApiCache {
@@ -32,7 +33,7 @@ class ApiCache {
     // Remove oldest entries if cache is full
     if (this.cache.size >= this.maxSize) {
       const oldestKey = this.cache.keys().next().value;
-      this.cache.delete(oldestKey);
+      if (oldestKey) this.cache.delete(oldestKey);
     }
 
     this.cache.set(key, {
@@ -71,13 +72,13 @@ export class ProductionApiClient implements IApiService {
   private requestId = 0;
 
   constructor(config?: Partial<ApiClientConfig>) {
-    const baseConfig = process.env.NODE_ENV === 'production' 
-      ? PRODUCTION_API_CONFIG 
+    const baseConfig = process.env.NODE_ENV === 'production'
+      ? PRODUCTION_API_CONFIG
       : DEFAULT_API_CONFIG;
-    
+
     this.config = { ...baseConfig, ...config };
     this.cache = new ApiCache(this.config.cache?.maxSize || 100);
-    
+
     console.log(`🚀 API Client initialized for ${process.env.NODE_ENV} environment`);
   }
 
@@ -105,20 +106,9 @@ export class ProductionApiClient implements IApiService {
       return this.config.baseURL;
     }
 
-    // For production, use the environment variable
-    if (process.env.NODE_ENV === 'production') {
-      return process.env.NEXT_PUBLIC_API_URL || '';
-    }
-
-    // For development, check if we should use Next.js proxy (relative URLs)
-    // or direct connection to backend
-    if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-      // In browser, use relative URLs to leverage Next.js rewrites
-      return '';
-    }
-    
-    // For server-side rendering or direct API calls, use environment variable or empty
-    return process.env.NEXT_PUBLIC_API_URL || '';
+    // Use centralized configuration from config/api.ts
+    // This correctly handles SSR vs Client in Docker & Dev environments
+    return API_BASE_URL;
   }
 
   /**
@@ -126,13 +116,13 @@ export class ProductionApiClient implements IApiService {
    */
   private buildURL(endpoint: string): string {
     const baseURL = this.getBaseURL();
-    
+
     // Remove trailing slash from baseURL if present
     const cleanBaseURL = baseURL.replace(/\/$/, '');
-    
+
     // Ensure endpoint starts with /
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    
+
     return `${cleanBaseURL}${cleanEndpoint}`;
   }
 
@@ -301,7 +291,7 @@ export class ProductionApiClient implements IApiService {
         console.log(`📍 Full URL: ${fullURL}`);
         console.log(`🔧 Base URL: ${this.getBaseURL()}`);
         console.log(`🎯 Environment: ${process.env.NODE_ENV}`);
-        
+
         const response = await fetch(fullURL, requestConfig);
         clearTimeout(timeoutId);
 
@@ -348,12 +338,12 @@ export class ProductionApiClient implements IApiService {
         }
 
         // Handle error response
-        const errorMessage = responseData?.error || responseData?.message || 
-                            `HTTP ${response.status}: ${response.statusText}`;
-        
+        const errorMessage = responseData?.error || responseData?.message ||
+          `HTTP ${response.status}: ${response.statusText}`;
+
         const apiError = new Error(errorMessage);
         const context = this.createErrorContext(endpoint, method, requestId, data, responseData);
-        
+
         // For client errors (4xx), don't retry
         if (response.status >= 400 && response.status < 500) {
           this.recordMetrics(endpoint, method, responseTime, response.status, false, errorMessage);
@@ -371,7 +361,7 @@ export class ProductionApiClient implements IApiService {
       } catch (error: any) {
         const responseTime = Date.now() - startTime;
         const context = this.createErrorContext(endpoint, method, requestId, data);
-        
+
         lastError = error;
 
         // Handle timeout
@@ -381,7 +371,7 @@ export class ProductionApiClient implements IApiService {
             config.timeout ?? this.config.timeout,
             context
           );
-          
+
           if (attempt === maxRetries) {
             this.recordMetrics(endpoint, method, responseTime, 0, false, 'Timeout');
             throw timeoutError;
@@ -398,19 +388,19 @@ export class ProductionApiClient implements IApiService {
             error: error.message,
             stack: error.stack
           });
-          
+
           const networkError = new ApiNetworkError(
             `Network error - unable to connect to server at ${fullURL}. ${error.message}`,
             context,
             error
           );
-          
+
           if (attempt === maxRetries) {
             this.recordMetrics(endpoint, method, responseTime, 0, false, 'Network Error');
             console.error('🚫 All retry attempts failed for network connection');
             throw networkError;
           }
-          
+
           console.log(`🔄 Retrying network request (${attempt + 1}/${maxRetries}) in ${this.config.retryDelay}ms...`);
           continue;
         }
@@ -503,11 +493,11 @@ export class ProductionApiClient implements IApiService {
    */
   async healthCheck(): Promise<{ healthy: boolean; responseTime: number; error?: string }> {
     const startTime = Date.now();
-    
+
     try {
       const response = await this.get('/api/v1/health', { timeout: 5000, retries: 1 });
       const responseTime = Date.now() - startTime;
-      
+
       return {
         healthy: response.success,
         responseTime,
@@ -528,12 +518,12 @@ export class ProductionApiClient implements IApiService {
 export const apiClient = new ProductionApiClient();
 
 // Development instance with more verbose logging
-export const devApiClient = process.env.NODE_ENV === 'development' 
+export const devApiClient = process.env.NODE_ENV === 'development'
   ? new ProductionApiClient({
-      timeout: 5000,
-      retries: 1,
-      cache: { enabled: false, ttl: 0, maxSize: 0 }
-    })
+    timeout: 5000,
+    retries: 1,
+    cache: { enabled: false, ttl: 0, maxSize: 0 }
+  })
   : apiClient;
 
 export default apiClient;

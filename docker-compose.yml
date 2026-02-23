@@ -48,6 +48,8 @@ services:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8080}
     container_name: erp_frontend
     environment:
+      # Use an explicit internal URL for Server-Side and Proxy Rewrites (not accessible to browsers)
+      - API_INTERNAL_URL=http://backend:8080
       # This points the frontend's Next.js API proxy to the backend container (accessible via 'backend' hostname in docker network)
       # For client side, Next.js proxy rewrite will redirect /api/* to this container
       - NEXT_PUBLIC_API_URL=http://backend:8080

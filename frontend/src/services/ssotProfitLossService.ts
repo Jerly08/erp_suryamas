@@ -1,8 +1,5 @@
-import { API_ENDPOINTS, API_V1_BASE } from '@/config/api';
+import API_BASE_URL, { API_ENDPOINTS, API_V1_BASE } from '@/config/api';
 import { getAuthHeaders } from '@/utils/authTokenUtils';
-
-// Base URL for API calls
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 // Types for SSOT Profit Loss Report
 export interface SSOTProfitLossData {
@@ -22,13 +19,13 @@ export interface SSOTProfitLossData {
   message?: string;
   hasData: boolean;
   enhanced?: boolean;
-  
+
   // Summary fields for display
   total_revenue: number;
   total_expenses: number;
   net_profit: number;
   net_loss: number;
-  
+
   // Detailed breakdown
   sections?: Array<{
     name: string;
@@ -40,7 +37,7 @@ export interface SSOTProfitLossData {
       is_percentage?: boolean;
     }>;
   }>;
-  
+
   // Financial metrics
   financialMetrics?: {
     grossProfit: number;
@@ -50,14 +47,14 @@ export interface SSOTProfitLossData {
     netIncome: number;
     netIncomeMargin: number;
   };
-  
+
   // Revenue and expense details
   revenue_details?: Array<{
     account_id: number;
     account_name: string;
     amount: number;
   }>;
-  
+
   expense_details?: Array<{
     account_id: number;
     account_name: string;
@@ -76,9 +73,9 @@ class SSOTProfitLossService {
     return getAuthHeaders();
   }
 
-  private buildQueryString(params: Record<string, string | number | boolean | undefined>): string {
+  private buildQueryString(params: Record<string, any>): string {
     const searchParams = new URLSearchParams();
-    
+
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') {
         searchParams.append(key, String(value));
@@ -102,12 +99,12 @@ class SSOTProfitLossService {
     // Remove any trailing slash from API_BASE_URL to prevent double slashes
     const baseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
     const url = `${baseUrl}${API_V1_BASE}/reports/ssot-profit-loss${queryString ? '?' + queryString : ''}`;
-    
+
     console.log('API_BASE_URL:', API_BASE_URL);
     console.log('API_V1_BASE:', API_V1_BASE);
     console.log('Making SSOT Profit Loss request to:', url);
     console.log('Query params:', params);
-    
+
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });
@@ -124,9 +121,9 @@ class SSOTProfitLossService {
     // Check if response is a file (PDF/CSV) based on content-type or format param
     const contentType = response.headers.get('content-type') || '';
     const isFileDownload = params.format === 'pdf' || params.format === 'csv' ||
-                          contentType.includes('application/pdf') ||
-                          contentType.includes('text/csv') ||
-                          contentType.includes('application/octet-stream');
+      contentType.includes('application/pdf') ||
+      contentType.includes('text/csv') ||
+      contentType.includes('application/octet-stream');
 
     if (isFileDownload) {
       // Return as Blob for file downloads
@@ -135,16 +132,16 @@ class SSOTProfitLossService {
 
     // Parse as JSON for regular data
     const result = await response.json();
-    
+
     // Handle different response formats
     if (result.data) {
       return result.data;
     }
-    
+
     if (result.status === 'success' && result.data) {
       return result.data;
     }
-    
+
     return result;
   }
 
@@ -158,11 +155,11 @@ class SSOTProfitLossService {
       ...params,
       format: 'pdf'
     });
-    
+
     if (result instanceof Blob) {
       return result;
     }
-    
+
     throw new Error('Expected PDF blob but received other data type');
   }
 
@@ -176,11 +173,11 @@ class SSOTProfitLossService {
       ...params,
       format: 'csv'
     });
-    
+
     if (result instanceof Blob) {
       return result;
     }
-    
+
     throw new Error('Expected CSV blob but received other data type');
   }
 

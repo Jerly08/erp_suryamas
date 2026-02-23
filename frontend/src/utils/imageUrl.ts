@@ -3,16 +3,12 @@
  * Fixes issues with undefined base URLs and ensures proper image loading
  */
 
-// Get the API base URL from environment variables
-const getApiBaseUrl = (): string => {
-  // Try different environment variable names
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 
-                process.env.NEXT_PUBLIC_API_BASE_URL || 
-                process.env.API_URL ||
-                ''; // Fallback to relative URLs
+import API_BASE_URL from '@/config/api';
 
+// Get the API base URL from the global config
+const getApiBaseUrl = (): string => {
   // Remove /api/v1 suffix if present since we're accessing static files directly
-  return apiUrl.replace(/\/api\/v1\/?$/, '');
+  return API_BASE_URL.replace(/\/api\/v1\/?$/, '');
 };
 
 // Get the full static file base URL
@@ -63,11 +59,11 @@ export const getImageUrl = (imagePath: string | null | undefined): string | null
  * @returns Image URL or placeholder
  */
 export const getProductImageUrl = (
-  imagePath: string | null | undefined, 
+  imagePath: string | null | undefined,
   fallbackToPlaceholder: boolean = true
 ): string | null => {
   const imageUrl = getImageUrl(imagePath);
-  
+
   if (imageUrl) {
     return imageUrl;
   }
@@ -87,11 +83,11 @@ export const getProductImageUrl = (
  * @returns Image URL or placeholder
  */
 export const getAssetImageUrl = (
-  imagePath: string | null | undefined, 
+  imagePath: string | null | undefined,
   fallbackToPlaceholder: boolean = true
 ): string | null => {
   const imageUrl = getImageUrl(imagePath);
-  
+
   if (imageUrl) {
     return imageUrl;
   }

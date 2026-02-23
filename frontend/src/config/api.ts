@@ -1,13 +1,15 @@
 // API Configuration
-// For development, use empty string to leverage Next.js proxy rewrites
-// For production, use the full API URL
+// For Server-Side Rendering (SSR) in Next.js, we MUST use the full backend URL.
+// For Client-Side navigation, we use empty string '' to leverage Next.js proxy rewrites in next.config.ts
 const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || '';
-const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const isServer = typeof window === 'undefined';
 
-// Use empty string for localhost to leverage Next.js proxy, otherwise use full URL
-export const API_BASE_URL = isLocalhost ? '' : (rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl);
-// For local development, we use relative URLs since Next.js handles rewrites
-// This allows Next.js proxy to handle the backend communication
+// If running on the server (SSR in Docker), point directly to the backend container
+// If running on the client (Browser), point to the Next.js frontend proxy (empty string)
+export const API_BASE_URL = isServer
+  ? (rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl)
+  : '';
+
 export const API_V1_BASE = `/api/v1`;
 
 // COMPREHENSIVE API Endpoints - Based on Backend Routes Analysis

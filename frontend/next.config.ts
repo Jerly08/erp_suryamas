@@ -34,8 +34,8 @@ const nextConfig: NextConfig = {
 		},
 	}),
 	async rewrites() {
-		// Use environment variable for API destination, fallback to localhost for development
-		const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+		// Use specific environment variable for internal Docker routing, fallback to public API URL, then localhost
+		const apiBaseUrl = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://backend:8080';
 		return [
 			{
 				source: '/api/:path*',

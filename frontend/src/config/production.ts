@@ -6,6 +6,7 @@
  */
 
 import { EnvironmentVariables, ProductionEnvVars, DevelopmentEnvVars } from '@/types/api';
+import API_BASE_URL from '@/config/api';
 
 // Environment configuration interface
 export interface EnvironmentConfig {
@@ -115,7 +116,7 @@ export function validateEnvironmentVariables(): {
   // Build configuration object
   const config: EnvironmentConfig = {
     api: {
-      baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080',
+      baseURL: API_BASE_URL || 'http://localhost:8080',
       timeout: Number(process.env.API_TIMEOUT) || (nodeEnv === 'production' ? 15000 : 10000),
       retries: Number(process.env.API_RETRIES) || (nodeEnv === 'production' ? 3 : 1),
       validateEndpoints: process.env.VALIDATE_ENDPOINTS !== 'false'
@@ -215,7 +216,7 @@ export async function checkProductionReadiness(): Promise<{
 }> {
   console.log('🚀 Checking production readiness...');
 
-  const checks = [];
+  const checks: { name: string; status: 'pass' | 'fail' | 'warn'; message: string; }[] = [];
   const config = getEnvironmentConfig();
 
   // Environment variables check
@@ -223,8 +224,8 @@ export async function checkProductionReadiness(): Promise<{
   checks.push({
     name: 'Environment Variables',
     status: envValidation.isValid ? 'pass' : 'fail',
-    message: envValidation.isValid ? 
-      'All required environment variables are configured' : 
+    message: envValidation.isValid ?
+      'All required environment variables are configured' :
       `Missing or invalid variables: ${envValidation.errors.join(', ')}`
   });
 
@@ -237,14 +238,14 @@ export async function checkProductionReadiness(): Promise<{
       signal: controller.signal,
       headers: { 'Cache-Control': 'no-cache' }
     });
-    
+
     clearTimeout(timeout);
 
     checks.push({
       name: 'API Connectivity',
       status: response.ok ? 'pass' : 'warn',
-      message: response.ok ? 
-        'API server is reachable' : 
+      message: response.ok ?
+        'API server is reachable' :
         `API server returned ${response.status}: ${response.statusText}`
     });
   } catch (error: any) {
@@ -260,8 +261,8 @@ export async function checkProductionReadiness(): Promise<{
     checks.push({
       name: 'HTTPS Security',
       status: config.api.baseURL.startsWith('https://') ? 'pass' : 'fail',
-      message: config.api.baseURL.startsWith('https://') ? 
-        'API uses HTTPS' : 
+      message: config.api.baseURL.startsWith('https://') ?
+        'API uses HTTPS' :
         'API should use HTTPS in production'
     });
   }
@@ -271,8 +272,8 @@ export async function checkProductionReadiness(): Promise<{
   checks.push({
     name: 'Error Monitoring',
     status: hasMonitoring || process.env.NODE_ENV !== 'production' ? 'pass' : 'warn',
-    message: hasMonitoring ? 
-      'Error monitoring is configured' : 
+    message: hasMonitoring ?
+      'Error monitoring is configured' :
       'Consider configuring error monitoring (Sentry, New Relic, etc.)'
   });
 
@@ -281,8 +282,8 @@ export async function checkProductionReadiness(): Promise<{
   checks.push({
     name: 'Performance Optimizations',
     status: performanceOptimized ? 'pass' : 'warn',
-    message: performanceOptimized ? 
-      'Caching and compression are enabled' : 
+    message: performanceOptimized ?
+      'Caching and compression are enabled' :
       'Consider enabling caching and compression for better performance'
   });
 
@@ -291,8 +292,8 @@ export async function checkProductionReadiness(): Promise<{
   checks.push({
     name: 'Security Configuration',
     status: securityConfigured || process.env.NODE_ENV !== 'production' ? 'pass' : 'warn',
-    message: securityConfigured ? 
-      'Security features are properly configured' : 
+    message: securityConfigured ?
+      'Security features are properly configured' :
       'Consider enabling HTTPS enforcement and origin validation'
   });
 
