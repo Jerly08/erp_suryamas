@@ -43,6 +43,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Default fallback to the docker internal network backend
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8080}
     container_name: erp_frontend
     environment:
       # This points the frontend's Next.js API proxy to the backend container (accessible via 'backend' hostname in docker network)
