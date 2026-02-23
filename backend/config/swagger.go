@@ -18,7 +18,7 @@ type SwaggerConfig struct {
 // GetSwaggerConfig returns dynamic Swagger configuration based on environment
 func GetSwaggerConfig() *SwaggerConfig {
 	cfg := LoadConfig()
-	
+
 	// Determine host dynamically
 	host := cfg.SwaggerHost
 	if host == "" {
@@ -45,7 +45,7 @@ func GetSwaggerConfig() *SwaggerConfig {
 			host = fmt.Sprintf("localhost:%s", port)
 		}
 	}
-	
+
 	// Determine scheme
 	scheme := cfg.SwaggerScheme
 	if scheme == "" {
@@ -55,7 +55,7 @@ func GetSwaggerConfig() *SwaggerConfig {
 			scheme = "http"
 		}
 	}
-	
+
 	return &SwaggerConfig{
 		Host:        host,
 		Scheme:      scheme,
@@ -81,12 +81,12 @@ func GetAllowedOrigins(cfg *Config) []string {
 	if len(cfg.AllowedOrigins) > 0 {
 		return cfg.AllowedOrigins
 	}
-	
+
 	// Generate based on environment
 	if cfg.Environment == "production" {
 		// In production, should be explicitly set, but provide sensible defaults
 		origins := []string{}
-		
+
 		// Try to determine from various environment variables
 		if domain := os.Getenv("FRONTEND_URL"); domain != "" {
 			origins = append(origins, domain)
@@ -99,19 +99,19 @@ func GetAllowedOrigins(cfg *Config) []string {
 		} else if appURL := os.Getenv("APP_URL"); appURL != "" {
 			origins = append(origins, appURL)
 		}
-		
+
 		// If still empty, warn and provide fallback
 		if len(origins) == 0 {
 			fmt.Println("⚠️  WARNING: No CORS origins configured for production. Please set ALLOWED_ORIGINS or FRONTEND_URL")
 			origins = []string{"https://yourdomain.com"}
 		}
-		
+
 		return origins
 	} else {
 		// Development defaults
 		return []string{
 			"http://localhost:3000",
-			"http://localhost:3001", 
+			"http://localhost:3001",
 			"http://localhost:3002",
 			"http://127.0.0.1:3000",
 			"http://127.0.0.1:3001",
