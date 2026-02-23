@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_customer_period ON sales(customer_id, date,
 CREATE INDEX IF NOT EXISTS idx_purchases_vendor_period ON purchases(vendor_id, date, total_amount) WHERE status = 'APPROVED';
 
 -- Cash flow indexes
-CREATE INDEX IF NOT EXISTS idx_cash_bank_transactions_flow ON cash_bank_transactions(transaction_date, transaction_type, amount);
+CREATE INDEX IF NOT EXISTS idx_cash_bank_transactions_flow ON cash_bank_transactions(transaction_date, amount);
 CREATE INDEX IF NOT EXISTS idx_payments_cash_flow ON payments(date, method, amount) WHERE status = 'COMPLETED';
 
 -- Aging analysis indexes
@@ -105,7 +105,7 @@ CREATE OR REPLACE VIEW critical_audit_changes AS
 SELECT 
     al.*,
     u.username,
-    u.full_name
+    TRIM(CONCAT(u.first_name, ' ', u.last_name)) as full_name
 FROM audit_logs al
 LEFT JOIN users u ON al.user_id = u.id
 WHERE al.action IN ('DELETE', 'UPDATE')

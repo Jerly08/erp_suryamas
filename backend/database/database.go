@@ -850,6 +850,7 @@ func EnsureSSOTTables(db *gorm.DB) {
 			source_type    VARCHAR(50) NOT NULL,
 			source_id      BIGINT,
 			source_code    VARCHAR(100),
+			project_id     BIGINT,
 			entry_date     TIMESTAMP NOT NULL,
 			description    TEXT NOT NULL,
 			reference      VARCHAR(200),
@@ -873,6 +874,16 @@ func EnsureSSOTTables(db *gorm.DB) {
 
 	// Add unique index for entry_number if not exists
 	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unified_journal_entry_number ON unified_journal_ledger(entry_number);`)
+
+	// Safely add project_id column if table already exists from an older version
+	db.Exec(`
+		DO $$
+		BEGIN
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='project_id') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN project_id BIGINT;
+			END IF;
+		END $$;
+	`)
 
 	// unified_journal_lines
 	db.Exec(`
@@ -3002,7 +3013,7 @@ func createAccountingPerformanceIndexes(db *gorm.DB) {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_purchases_vendor_period ON purchases(vendor_id, date, total_amount) WHERE status = 'APPROVED'`)
 
 	// Cash flow indexes
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_cash_bank_transactions_flow ON cash_bank_transactions(transaction_date, transaction_type, amount)`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_cash_bank_transactions_flow ON cash_bank_transactions(transaction_date, amount)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_payments_cash_flow ON payments(date, method, amount) WHERE status = 'COMPLETED'`)
 
 	// Aging analysis indexes
@@ -3092,7 +3103,7 @@ func createAuditTrailEnhancements(db *gorm.DB) {
 		SELECT 
 			al.*,
 			u.username,
-			u.full_name
+			COALESCE(CONCAT(u.first_name, ' ', u.last_name), u.username, 'Unknown User') as full_name
 		FROM audit_logs al
 		LEFT JOIN users u ON al.user_id = u.id
 		WHERE al.action IN ('DELETE', 'UPDATE')
