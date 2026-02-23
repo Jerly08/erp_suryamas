@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
 	eslint: {
 		ignoreDuringBuilds: true,
 	},
+	output: 'standalone',
 	// Konfigurasi Webpack hanya untuk mode non-Turbopack
 	...(!process.env.TURBOPACK && {
 		webpack: (config, { isServer }) => {
