@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: erp_db
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-sistem_akuntansi}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    restart: unless-stopped
+    networks:
+      - erp_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: erp_backend
+    environment:
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-sistem_akuntansi}?sslmode=disable
+      - ENVIRONMENT=production
+      - SERVER_PORT=8080
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-your-very-secure-access-secret-minimum-32-chars-long!}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-very-secure-refresh-secret-minimum-32-chars-long!}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - ALLOWED_ORIGINS=${FRONTEND_URL:-http://localhost:3000}
+    ports:
+      - "8084:8080"
+    depends_on:
+      - db
+    restart: unless-stopped
+    volumes:
+      - erp_uploads:/app/uploads
+    networks:
+      - erp_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: erp_frontend
+    environment:
+      # This points the frontend's Next.js API proxy to the backend container (accessible via 'backend' hostname in docker network)
+      # For client side, Next.js proxy rewrite will redirect /api/* to this container
+      - NEXT_PUBLIC_API_URL=http://backend:8080
+    ports:
+      - "3003:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - erp_network
+
+volumes:
+  postgres_data:
+  erp_uploads:
+
+networks:
+  erp_network:
+    driver: bridge
