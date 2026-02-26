@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/services"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,12 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
-
 
 type ProductController struct {
 	DB                     *gorm.DB
@@ -29,27 +29,62 @@ func NewProductController(db *gorm.DB, stockMonitoringService *services.StockMon
 
 func (pc *ProductController) GetProducts(c *gin.Context) {
 	var products []models.Product
-	
+
 	query := pc.DB.Where("is_active = ?", true).Preload("Category").Preload("WarehouseLocation")
-	
+
 	// Add search functionality
 	if search := c.Query("search"); search != "" {
 		query = query.Where("name ILIKE ? OR code ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
-	
+
 	// Add category filter
 	if categoryID := c.Query("category"); categoryID != "" {
 		query = query.Where("category_id = ?", categoryID)
 	}
-	
-	if err := query.Find(&products).Error; err != nil {
+
+	// Add is_assembly filter for Tab separation
+	if isAssemblyStr := c.Query("is_assembly"); isAssemblyStr != "" {
+		isAssembly, _ := strconv.ParseBool(isAssemblyStr)
+		query = query.Where("is_assembly = ?", isAssembly)
+	}
+
+	// Count total records before pagination
+	var total int64
+	if err := query.Model(&models.Product{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count products"})
+		return
+	}
+
+	// Pagination parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if limit < 1 {
+		limit = 50
+	}
+
+	offset := (page - 1) * limit
+
+	// Fetch data with pagination
+	if err := query.Limit(limit).Offset(offset).Order("name ASC").Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
 		return
 	}
 
+	// Calculate total pages
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Products retrieved successfully",
 		"data":    products,
+		"meta": gin.H{
+			"current_page": page,
+			"per_page":     limit,
+			"total":        total,
+			"total_pages":  totalPages,
+		},
 	})
 }
 
@@ -75,8 +110,8 @@ func (pc *ProductController) GetProduct(c *gin.Context) {
 // AdjustStock handles stock adjustments for products
 func (pc *ProductController) AdjustStock(c *gin.Context) {
 	var input struct {
-		ProductID uint `json:"product_id" binding:"required"`
-		Quantity  int  `json:"quantity" binding:"required"`
+		ProductID uint   `json:"product_id" binding:"required"`
+		Quantity  int    `json:"quantity" binding:"required"`
 		Type      string `json:"type" binding:"required,oneof=IN OUT"`
 		Notes     string `json:"notes"`
 	}
@@ -93,11 +128,11 @@ func (pc *ProductController) AdjustStock(c *gin.Context) {
 	}
 
 	inventory := models.Inventory{
-		ProductID:     input.ProductID,
-		Type:          input.Type,
-		Quantity:      input.Quantity,
+		ProductID:       input.ProductID,
+		Type:            input.Type,
+		Quantity:        input.Quantity,
 		TransactionDate: time.Now(),
-		Notes:         input.Notes,
+		Notes:           input.Notes,
 	}
 
 	if err := pc.DB.Save(&inventory).Error; err != nil {
@@ -133,8 +168,8 @@ func (pc *ProductController) AdjustStock(c *gin.Context) {
 // Opname processes stock opname
 func (pc *ProductController) Opname(c *gin.Context) {
 	var input struct {
-		ProductID uint `json:"product_id" binding:"required"`
-		NewStock  int  `json:"new_stock" binding:"required"`
+		ProductID uint   `json:"product_id" binding:"required"`
+		NewStock  int    `json:"new_stock" binding:"required"`
 		Notes     string `json:"notes"`
 	}
 
@@ -150,11 +185,11 @@ func (pc *ProductController) Opname(c *gin.Context) {
 	}
 
 	inventory := models.Inventory{
-		ProductID:     input.ProductID,
-		Type:          models.InventoryTypeIn,
-		Quantity:      input.NewStock - product.Stock,
+		ProductID:       input.ProductID,
+		Type:            models.InventoryTypeIn,
+		Quantity:        input.NewStock - product.Stock,
 		TransactionDate: time.Now(),
-		Notes:         input.Notes,
+		Notes:           input.Notes,
 	}
 
 	if err := pc.DB.Save(&inventory).Error; err != nil {
@@ -193,13 +228,13 @@ func (pc *ProductController) CreateProduct(c *gin.Context) {
 	// ✅ VALIDATE PRICES - Prevent unreasonable values
 	// Maximum reasonable price: 10 Billion (10,000,000,000)
 	const maxReasonablePrice = 10000000000.0
-	
+
 	// ✅ AUTO-SET: If cost_price is 0, default to purchase_price
 	if product.CostPrice == 0 && product.PurchasePrice > 0 {
 		product.CostPrice = product.PurchasePrice
 		log.Printf("ℹ️ Auto-set cost_price = purchase_price (%.2f) for product '%s'", product.CostPrice, product.Name)
 	}
-	
+
 	if product.CostPrice < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Cost price cannot be negative",
@@ -207,19 +242,19 @@ func (pc *ProductController) CreateProduct(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	if product.CostPrice > maxReasonablePrice {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Cost price is unreasonably high",
-			"message": fmt.Sprintf("Cost price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)", 
+			"error": "Cost price is unreasonably high",
+			"message": fmt.Sprintf("Cost price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)",
 				product.CostPrice, maxReasonablePrice),
-			"field":   "cost_price",
-			"value":   product.CostPrice,
-			"max":     maxReasonablePrice,
+			"field": "cost_price",
+			"value": product.CostPrice,
+			"max":   maxReasonablePrice,
 		})
 		return
 	}
-	
+
 	if product.PurchasePrice < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Purchase price cannot be negative",
@@ -227,17 +262,17 @@ func (pc *ProductController) CreateProduct(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	if product.PurchasePrice > maxReasonablePrice {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Purchase price is unreasonably high",
-			"message": fmt.Sprintf("Purchase price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)", 
+			"error": "Purchase price is unreasonably high",
+			"message": fmt.Sprintf("Purchase price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)",
 				product.PurchasePrice, maxReasonablePrice),
-			"field":   "purchase_price",
+			"field": "purchase_price",
 		})
 		return
 	}
-	
+
 	if product.SalePrice < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Sale price cannot be negative",
@@ -245,18 +280,18 @@ func (pc *ProductController) CreateProduct(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	if product.SalePrice > maxReasonablePrice {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Sale price is unreasonably high",
-			"message": fmt.Sprintf("Sale price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)", 
+			"error": "Sale price is unreasonably high",
+			"message": fmt.Sprintf("Sale price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)",
 				product.SalePrice, maxReasonablePrice),
-			"field":   "sale_price",
+			"field": "sale_price",
 		})
 		return
 	}
-	
-	log.Printf("✅ Price validation passed for product '%s': CostPrice=%.2f, PurchasePrice=%.2f, SalePrice=%.2f", 
+
+	log.Printf("✅ Price validation passed for product '%s': CostPrice=%.2f, PurchasePrice=%.2f, SalePrice=%.2f",
 		product.Name, product.CostPrice, product.PurchasePrice, product.SalePrice)
 
 	// Check if product code already exists
@@ -305,13 +340,13 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 	// ✅ VALIDATE PRICES - Prevent unreasonable values
 	// Maximum reasonable price: 10 Billion (10,000,000,000)
 	const maxReasonablePrice = 10000000000.0
-	
+
 	// ✅ AUTO-SET: If cost_price is 0, default to purchase_price
 	if updateData.CostPrice == 0 && updateData.PurchasePrice > 0 {
 		updateData.CostPrice = updateData.PurchasePrice
 		log.Printf("ℹ️ Auto-set cost_price = purchase_price (%.2f) for product update ID=%d", updateData.CostPrice, id)
 	}
-	
+
 	if updateData.CostPrice < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Cost price cannot be negative",
@@ -319,19 +354,19 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	if updateData.CostPrice > maxReasonablePrice {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Cost price is unreasonably high",
-			"message": fmt.Sprintf("Cost price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)", 
+			"error": "Cost price is unreasonably high",
+			"message": fmt.Sprintf("Cost price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)",
 				updateData.CostPrice, maxReasonablePrice),
-			"field":   "cost_price",
-			"value":   updateData.CostPrice,
-			"max":     maxReasonablePrice,
+			"field": "cost_price",
+			"value": updateData.CostPrice,
+			"max":   maxReasonablePrice,
 		})
 		return
 	}
-	
+
 	if updateData.PurchasePrice < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Purchase price cannot be negative",
@@ -339,17 +374,17 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	if updateData.PurchasePrice > maxReasonablePrice {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Purchase price is unreasonably high",
-			"message": fmt.Sprintf("Purchase price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)", 
+			"error": "Purchase price is unreasonably high",
+			"message": fmt.Sprintf("Purchase price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)",
 				updateData.PurchasePrice, maxReasonablePrice),
-			"field":   "purchase_price",
+			"field": "purchase_price",
 		})
 		return
 	}
-	
+
 	if updateData.SalePrice < 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Sale price cannot be negative",
@@ -357,18 +392,18 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	if updateData.SalePrice > maxReasonablePrice {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Sale price is unreasonably high",
-			"message": fmt.Sprintf("Sale price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)", 
+			"error": "Sale price is unreasonably high",
+			"message": fmt.Sprintf("Sale price (Rp %.0f) exceeds maximum allowed (Rp %.0f / 10 Miliar)",
 				updateData.SalePrice, maxReasonablePrice),
-			"field":   "sale_price",
+			"field": "sale_price",
 		})
 		return
 	}
-	
-	log.Printf("✅ Price validation passed for product update ID=%d: CostPrice=%.2f, PurchasePrice=%.2f, SalePrice=%.2f", 
+
+	log.Printf("✅ Price validation passed for product update ID=%d: CostPrice=%.2f, PurchasePrice=%.2f, SalePrice=%.2f",
 		id, updateData.CostPrice, updateData.PurchasePrice, updateData.SalePrice)
 
 	// Check if new code conflicts with existing products
@@ -378,6 +413,11 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "Product code already exists"})
 			return
 		}
+	}
+
+	// Make sure service products don't have a warehouse assigned
+	if updateData.IsService {
+		updateData.WarehouseLocationID = nil
 	}
 
 	// FIXED: Use Select() with Updates() to ensure zero values are updated
@@ -527,8 +567,105 @@ func (pc *ProductController) UploadProductImage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Image uploaded successfully",
+		"message":  "Image uploaded successfully",
 		"filename": filename,
-		"path": relativeImagePath,
+		"path":     relativeImagePath,
+	})
+}
+
+// ImportProducts bulk imports products from JSON
+func (pc *ProductController) ImportProducts(c *gin.Context) {
+	var inputProducts []models.Product
+	if err := c.ShouldBindJSON(&inputProducts); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid format, expected JSON array of products"})
+		return
+	}
+
+	importedCount := 0
+	updatedCount := 0
+
+	// Use a transaction for bulk operations
+	err := pc.DB.Transaction(func(tx *gorm.DB) error {
+		for i, p := range inputProducts {
+			// Ensure basic validation
+			if p.Name == "" {
+				continue
+			}
+
+			// Auto-set cost_price if missing
+			if p.CostPrice == 0 && p.PurchasePrice > 0 {
+				p.CostPrice = p.PurchasePrice
+			}
+
+			// Try to find if the product exists by code (if provided) or name
+			var existing models.Product
+			var query *gorm.DB
+			if p.Code != "" {
+				query = tx.Where("code = ? OR name = ?", p.Code, p.Name)
+			} else {
+				query = tx.Where("name = ?", p.Name)
+			}
+
+			err := query.First(&existing).Error
+
+			if err == nil {
+				// Product exists, update pricing and other provided fields
+				updateFields := map[string]interface{}{}
+				if p.PurchasePrice > 0 {
+					updateFields["purchase_price"] = p.PurchasePrice
+				}
+				if p.CostPrice > 0 {
+					updateFields["cost_price"] = p.CostPrice
+				}
+				if p.SalePrice > 0 {
+					updateFields["sale_price"] = p.SalePrice
+				}
+				if p.Code != "" && existing.Code == "" {
+					updateFields["code"] = p.Code
+				}
+				if p.Unit != "" {
+					updateFields["unit"] = p.Unit
+				}
+				if p.CategoryID != nil && *p.CategoryID != 0 {
+					updateFields["category_id"] = p.CategoryID
+				}
+				if p.Description != "" {
+					updateFields["description"] = p.Description
+				}
+
+				if len(updateFields) > 0 {
+					if err := tx.Model(&existing).Updates(updateFields).Error; err != nil {
+						return err
+					}
+					updatedCount++
+				}
+			} else {
+				// Product doesn't exist, create it
+				if p.Code == "" {
+					// Generate a simple unique code based on time and loop index to prevent duplicates in fast loop
+					p.Code = fmt.Sprintf("PRD-%d-%d", time.Now().Unix(), i)
+				}
+				if p.Unit == "" {
+					p.Unit = "Pcs" // default unit
+				}
+				p.IsActive = true
+				if err := tx.Create(&p).Error; err != nil {
+					return fmt.Errorf("failed to create product %s: %v", p.Name, err)
+				}
+				importedCount++
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to import products: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Import completed successfully",
+		"imported": importedCount,
+		"updated":  updatedCount,
 	})
 }

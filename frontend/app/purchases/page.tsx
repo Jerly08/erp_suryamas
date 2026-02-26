@@ -3929,11 +3929,12 @@ const PurchasesPage: React.FC = () => {
                                                 _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
                                               >
                                                 {products.map((p) => {
-                                                  if (isServiceCompany) {
-                                                    // Service companies: simple product list without stock info
+                                                  if (isServiceCompany || p?.is_service || p?.is_assembly) {
+                                                    // Service companies OR non-stock products: simple product list without stock info
+                                                    const suffix = p?.is_assembly ? ' - Tidak Perlu Stok (Auto-Kit)' : (p?.is_service ? ' - Jasa' : '');
                                                     return (
                                                       <option key={p.id} value={p.id?.toString()}>
-                                                        {p?.code} - {p?.name}
+                                                        {p?.code} - {p?.name}{suffix}
                                                       </option>
                                                     );
                                                   }
@@ -3974,23 +3975,22 @@ const PurchasesPage: React.FC = () => {
                                                     <option
                                                       key={p.id}
                                                       value={p.id?.toString()}
-                                                      disabled={isOutOfStock}
                                                       style={{
                                                         color: stockColor,
                                                         fontWeight: (isLowStock || isOutOfStock) ? '600' : 'normal',
                                                         backgroundColor: isOutOfStock ? '#f7fafc' : 'white'
                                                       }}
                                                     >
-                                                      🏆 NEW: {p?.code} - {p?.name} | Stock: {stockLevel} {productUnit}{stockStatus}
+                                                      🏆 NEW: {p?.code} - {p?.name} | Stok Saat Ini: {stockLevel} {productUnit}{stockStatus}
                                                     </option>
                                                   );
                                                 })}
                                               </Select>
 
-                                              {/* Stock status indicator for selected product — hidden for service companies */}
+                                              {/* Stock status indicator for selected product — hidden for service companies and non-stock items */}
                                               {!isServiceCompany && item.product_id && (() => {
                                                 const selectedProduct = products.find(p => p.id?.toString() === item.product_id);
-                                                if (selectedProduct) {
+                                                if (selectedProduct && !selectedProduct.is_service && !selectedProduct.is_assembly) {
                                                   const stockLevel = selectedProduct.stock || 0;
                                                   const minStock = selectedProduct.min_stock || 0;
 
@@ -4050,8 +4050,11 @@ const PurchasesPage: React.FC = () => {
                                         )}
                                       </Td>
                                       <Td isNumeric>
-                                        {isServiceCompany ? (
-                                          /* Service companies: simple qty input without stock validation */
+                                        {(() => {
+                                          const p = products.find(prod => prod.id?.toString() === item.product_id);
+                                          return isServiceCompany || (p && (p.is_service || p.is_assembly));
+                                        })() ? (
+                                          /* Service companies or non-stock: simple qty input without stock validation */
                                           <NumberInput
                                             size="sm"
                                             min={1}

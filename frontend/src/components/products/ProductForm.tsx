@@ -33,11 +33,12 @@ import { useTranslation } from '@/hooks/useTranslation';
 
 interface ProductFormProps {
   product?: Product;
+  defaultIsAssembly?: boolean;
   onSave: (product: Product) => void;
   onCancel: () => void;
 }
 
-const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) => {
+const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, onSave, onCancel }) => {
   const { t } = useTranslation();
   const [formData, setFormData] = useState<Partial<Product>>({
     code: '',
@@ -62,6 +63,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
     dimensions: '',
     is_active: true,
     is_service: false,
+    is_assembly: false,
     taxable: true,
     image_path: '',
     notes: '',
@@ -81,8 +83,10 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
     fetchWarehouseLocations();
     if (product) {
       setFormData(product);
+    } else if (defaultIsAssembly) {
+      setFormData(prev => ({ ...prev, is_assembly: true, purchase_price: 0, cost_price: 0 }));
     }
-  }, [product]);
+  }, [product, defaultIsAssembly]);
 
   const fetchCategories = async () => {
     try {
@@ -127,6 +131,16 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
   };
 
   const handleInputChange = (field: keyof Product, value: any) => {
+    if (field === 'is_assembly') {
+      setFormData(prev => ({
+        ...prev,
+        is_assembly: value,
+        purchase_price: value ? 0 : prev.purchase_price,
+        cost_price: value ? 0 : prev.cost_price,
+        is_service: value ? false : prev.is_service,
+      }));
+      return;
+    }
     setFormData(prev => ({
       ...prev,
       [field]: value,
@@ -195,10 +209,18 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
 
     try {
       let result;
+      // Copy formData to avoid mutating state
+      const submitData = { ...formData };
+
+      // Sanitasi nilai gudang jika produk adalah Jasa
+      if (submitData.is_service) {
+        submitData.warehouse_location_id = undefined;
+      }
+
       if (product?.id) {
-        result = await ProductService.updateProduct(product.id, formData);
+        result = await ProductService.updateProduct(product.id, submitData);
       } else {
-        result = await ProductService.createProduct(formData as Product);
+        result = await ProductService.createProduct(submitData as Product);
       }
 
       toast({
@@ -244,8 +266,31 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                 <Switch
                   id="is_service"
                   isChecked={formData.is_service}
-                  onChange={(e) => handleInputChange('is_service', e.target.checked)}
+                  onChange={(e) => {
+                    handleInputChange('is_service', e.target.checked);
+                    if (e.target.checked && formData.is_assembly) {
+                      handleInputChange('is_assembly', false);
+                    }
+                  }}
                   size="lg"
+                />
+              </FormControl>
+
+              <Divider borderColor="blue.100" />
+
+              <FormControl display="flex" alignItems="center">
+                <FormLabel htmlFor="is_assembly" mb="0" fontWeight="bold" flex="1">
+                  Produk Hasil Rakitan (Target Assembly)
+                  <Text fontSize="sm" fontWeight="normal" color="gray.600">
+                    Aktifkan jika produk dibuat dari berbagai komponen (BOM). Biaya pokok akan dihitung otomatis.
+                  </Text>
+                </FormLabel>
+                <Switch
+                  id="is_assembly"
+                  isChecked={formData.is_assembly}
+                  onChange={(e) => handleInputChange('is_assembly', e.target.checked)}
+                  size="lg"
+                  colorScheme="teal"
                 />
               </FormControl>
 
@@ -458,7 +503,8 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                   onChange={(value) => handleInputChange('purchase_price', value)}
                   label={t('products.purchasePrice')}
                   placeholder="Contoh: Rp 50.000"
-                  isRequired={true}
+                  isRequired={!formData.is_assembly}
+                  isDisabled={formData.is_assembly}
                   size="md"
                   min={0}
                 />
@@ -472,7 +518,8 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                   onChange={(value) => handleInputChange('cost_price', value)}
                   label={t('products.costPrice')}
                   placeholder="Contoh: Rp 300.000"
-                  isRequired={true}
+                  isRequired={!formData.is_assembly}
+                  isDisabled={formData.is_assembly}
                   size="md"
                   min={0}
                 />
@@ -485,7 +532,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, onSave, onCancel }) 
                 onChange={(value) => handleInputChange('sale_price', value)}
                 label={t('products.salePrice')}
                 placeholder="Contoh: Rp 1.200.000"
-                isRequired={true}
+                isRequired={!formData.is_assembly}
                 size="md"
                 min={0}
               />

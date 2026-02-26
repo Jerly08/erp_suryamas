@@ -45,6 +45,10 @@ func (dc *DashboardController) GetStockAlertsBanner(c *gin.Context) {
 		// Don't block the response if the check fails; continue with best-effort data
 		fmt.Printf("Warning: CheckMinimumStock failed: %v\n", err)
 	}
+	// Auto-check out of stock alerts too
+	if err := dc.stockMonitoringService.CheckOutOfStock(); err != nil {
+		fmt.Printf("Warning: CheckOutOfStock failed: %v\n", err)
+	}
 	// Resolve alerts for items that have recovered above minimum
 	if err := dc.stockMonitoringService.ResolveStockAlerts(); err != nil {
 		fmt.Printf("Warning: ResolveStockAlerts failed: %v\n", err)

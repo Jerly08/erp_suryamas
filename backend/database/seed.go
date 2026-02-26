@@ -474,6 +474,25 @@ func seedPermissions(db *gorm.DB) {
 		{Name: "budgets:create", Resource: "budgets", Action: "create", Description: "Create budgets"},
 		{Name: "budgets:update", Resource: "budgets", Action: "update", Description: "Update budgets"},
 		{Name: "budgets:delete", Resource: "budgets", Action: "delete", Description: "Delete budgets"},
+
+		// BOM permissions
+		{Name: "boms:read", Resource: "boms", Action: "read", Description: "View BOMs"},
+		{Name: "boms:create", Resource: "boms", Action: "create", Description: "Create BOMs"},
+		{Name: "boms:update", Resource: "boms", Action: "update", Description: "Update BOMs"},
+		{Name: "boms:delete", Resource: "boms", Action: "delete", Description: "Delete BOMs"},
+
+		// Project permissions
+		{Name: "projects:read", Resource: "projects", Action: "read", Description: "View projects"},
+		{Name: "projects:create", Resource: "projects", Action: "create", Description: "Create projects"},
+		{Name: "projects:update", Resource: "projects", Action: "update", Description: "Update projects"},
+		{Name: "projects:delete", Resource: "projects", Action: "delete", Description: "Delete projects"},
+
+		// Purchase Requests permissions
+		{Name: "purchase_requests:read", Resource: "purchase_requests", Action: "read", Description: "View purchase requests"},
+		{Name: "purchase_requests:create", Resource: "purchase_requests", Action: "create", Description: "Create purchase requests"},
+		{Name: "purchase_requests:update", Resource: "purchase_requests", Action: "update", Description: "Update purchase requests"},
+		{Name: "purchase_requests:delete", Resource: "purchase_requests", Action: "delete", Description: "Delete purchase requests"},
+		{Name: "purchase_requests:approve", Resource: "purchase_requests", Action: "approve", Description: "Approve purchase requests"},
 	}
 
 	// Use PostgreSQL native UPSERT to avoid all duplicate key errors
@@ -497,12 +516,10 @@ func seedPermissions(db *gorm.DB) {
 }
 
 func seedRolePermissions(db *gorm.DB) {
-	// Check if role permissions already exist
+	// We no longer abort if count > 0 to allow new role permissions to be added.
 	var count int64
 	db.Model(&models.RolePermission{}).Count(&count)
-	if count > 0 {
-		return
-	}
+	log.Printf("Current role permissions count: %d", count)
 
 	// Get all permissions
 	var permissions []models.Permission
@@ -513,7 +530,6 @@ func seedRolePermissions(db *gorm.DB) {
 		permissionMap[perm.Name] = perm.ID
 	}
 
-	// Define role permissions
 	rolePermissions := map[string][]string{
 		"admin": {
 			"users:read", "users:create", "users:update", "users:delete", "users:manage",
@@ -526,6 +542,9 @@ func seedRolePermissions(db *gorm.DB) {
 			"contacts:read", "contacts:create", "contacts:update", "contacts:delete",
 			"assets:read", "assets:create", "assets:update", "assets:delete",
 			"budgets:read", "budgets:create", "budgets:update", "budgets:delete",
+			"boms:read", "boms:create", "boms:update", "boms:delete",
+			"projects:read", "projects:create", "projects:update", "projects:delete",
+			"purchase_requests:read", "purchase_requests:create", "purchase_requests:update", "purchase_requests:delete", "purchase_requests:approve",
 		},
 		"finance": {
 			"accounts:read", "accounts:create", "accounts:update",
@@ -536,6 +555,9 @@ func seedRolePermissions(db *gorm.DB) {
 			"contacts:read", "contacts:update",
 			"assets:read", "assets:update",
 			"budgets:read", "budgets:create", "budgets:update",
+			"boms:read",
+			"projects:read",
+			"purchase_requests:read", "purchase_requests:approve",
 		},
 		"director": {
 			"users:read",
@@ -548,6 +570,9 @@ func seedRolePermissions(db *gorm.DB) {
 			"contacts:read",
 			"assets:read",
 			"budgets:read", "budgets:create", "budgets:update",
+			"boms:read",
+			"projects:read",
+			"purchase_requests:read", "purchase_requests:approve",
 		},
 		"inventory_manager": {
 			// Core inventory modules
@@ -559,6 +584,9 @@ func seedRolePermissions(db *gorm.DB) {
 			"assets:read", "assets:create", "assets:update",
 			"accounts:read",
 			"reports:read",
+			"boms:read", "boms:create", "boms:update", "boms:delete",
+			"projects:read",
+			"purchase_requests:read",
 		},
 		"employee": {
 			// Align employee defaults with module-level Manage Permissions
@@ -569,6 +597,8 @@ func seedRolePermissions(db *gorm.DB) {
 			"accounts:read",
 			// Allow employees to create and edit their purchase requests
 			"purchases:read", "purchases:create", "purchases:update",
+			"boms:read",
+			"purchase_requests:read", "purchase_requests:create", "purchase_requests:update",
 		},
 	}
 
@@ -576,11 +606,11 @@ func seedRolePermissions(db *gorm.DB) {
 	for role, perms := range rolePermissions {
 		for _, permName := range perms {
 			if permID, exists := permissionMap[permName]; exists {
-				rolePermission := models.RolePermission{
+				var rp models.RolePermission
+				db.Where("role = ? AND permission_id = ?", role, permID).FirstOrCreate(&rp, models.RolePermission{
 					Role:         role,
 					PermissionID: permID,
-				}
-				db.Create(&rolePermission)
+				})
 			}
 		}
 	}

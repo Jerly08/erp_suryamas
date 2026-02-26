@@ -34,6 +34,9 @@ import {
   FiHome,
   FiLayers,
   FiUser,
+  FiBox,
+  FiBriefcase,
+  FiClipboard,
 } from 'react-icons/fi';
 import { useAuth } from '@/contexts/AuthContext';
 import { normalizeRole } from '@/utils/roles';
@@ -65,15 +68,16 @@ const getMenuGroups = (t, companyType) => {
       items: [
         { name: t('navigation.accounts'), icon: FiFileText, href: '/accounts', module: 'accounts', permission: 'view', roles: ['ADMIN', 'FINANCE'] },
         { name: ctLabel('products', 'Items & Benchmarks'), icon: FiLayers, href: '/products', module: 'products', permission: 'view', roles: ['ADMIN', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
+        { name: 'Master BOMs', icon: FiBox, href: '/boms', module: 'boms', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
         { name: t('navigation.contacts'), icon: FiUsers, href: '/contacts', module: 'contacts', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
         { name: t('navigation.assets'), icon: FiStar, href: '/assets', module: 'assets', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-        { name: 'Projects', icon: FiLayers, href: '/projects', module: 'projects', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+        { name: 'Projects', icon: FiBriefcase, href: '/projects', module: 'projects', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
       ]
     },
     {
       title: t('navigation.sidebar.financial'),
       items: [
-        { name: 'Purchase Requests', icon: FiFileText, href: '/purchase-requests', module: 'purchase_requests', permission: 'view', roles: ['ADMIN', 'FINANCE', 'EMPLOYEE', 'DIRECTOR'] },
+        { name: 'Purchase Requests', icon: FiClipboard, href: '/purchase-requests', module: 'purchase_requests', permission: 'view', roles: ['ADMIN', 'FINANCE', 'EMPLOYEE', 'DIRECTOR'] },
         { name: ctLabel('sales', 'navigation.sales'), icon: FiDollarSign, href: '/sales', module: 'sales', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR', 'EMPLOYEE'] },
         { name: ctLabel('purchases', 'navigation.purchases'), icon: FiShoppingCart, href: '/purchases', module: 'purchases', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
         { name: t('navigation.payments'), icon: FiTrendingUp, href: '/payments', module: 'payments', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },

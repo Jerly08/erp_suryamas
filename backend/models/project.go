@@ -8,28 +8,29 @@ import (
 
 // Project represents a cost center or tracking entity for budgeting vs actuals
 type Project struct {
-	ID               uint           `json:"id" gorm:"primaryKey"`
-	Code             string         `json:"code" gorm:"unique;not null;size:50"`
-	Name             string         `json:"name" gorm:"not null;size:150"`
-	Description      string         `json:"description" gorm:"type:text"`
-	Status           string         `json:"status" gorm:"size:20;default:'ACTIVE'"` // ACTIVE, COMPLETED, ON_HOLD, CANCELLED
-	
-	StartDate        *time.Time     `json:"start_date"`
-	EndDate          *time.Time     `json:"end_date"`
+	ID          uint   `json:"id" gorm:"primaryKey"`
+	Code        string `json:"code" gorm:"unique;not null;size:50"`
+	Name        string `json:"name" gorm:"not null;size:150"`
+	Description string `json:"description" gorm:"type:text"`
+	Status      string `json:"status" gorm:"size:20;default:'ACTIVE'"` // ACTIVE, COMPLETED, ON_HOLD, CANCELLED
+
+	StartDate *time.Time `json:"start_date"`
+	EndDate   *time.Time `json:"end_date"`
 
 	// Financial Tracking
-	TotalBudget      float64        `json:"total_budget" gorm:"type:decimal(15,2);default:0"`
-	TotalActualCost  float64        `json:"total_actual_cost" gorm:"type:decimal(15,2);default:0"`
-	
-	// Relations (Manager, etc.)
-	ManagerID        *uint          `json:"manager_id" gorm:"index"`
+	TotalBudget     float64 `json:"total_budget" gorm:"type:decimal(15,2);default:0"`
+	TotalActualCost float64 `json:"total_actual_cost" gorm:"type:decimal(15,2);default:0"`
 
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt `json:"-" gorm:"index"`
+	// Relations (Manager, etc.)
+	ManagerID *uint `json:"manager_id" gorm:"index"`
+
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Foreign Keys
-	Manager          *User          `json:"manager,omitempty" gorm:"foreignKey:ManagerID"`
+	Manager     *User        `json:"manager,omitempty" gorm:"foreignKey:ManagerID"`
+	ProjectBOMs []ProjectBOM `json:"project_boms" gorm:"foreignKey:ProjectID"`
 }
 
 // Project Status Constants
@@ -42,21 +43,21 @@ const (
 
 // DTOs for Create/Update API
 type ProjectCreateRequest struct {
-	Code             string     `json:"code" binding:"required"`
-	Name             string     `json:"name" binding:"required"`
-	Description      string     `json:"description"`
-	StartDate        *time.Time `json:"start_date"`
-	EndDate          *time.Time `json:"end_date"`
-	TotalBudget      float64    `json:"total_budget"`
-	ManagerID        *uint      `json:"manager_id"`
+	Code        string     `json:"code" binding:"required"`
+	Name        string     `json:"name" binding:"required"`
+	Description string     `json:"description"`
+	StartDate   *time.Time `json:"start_date"`
+	EndDate     *time.Time `json:"end_date"`
+	TotalBudget float64    `json:"total_budget"`
+	ManagerID   *uint      `json:"manager_id"`
 }
 
 type ProjectUpdateRequest struct {
-	Name             *string    `json:"name"`
-	Description      *string    `json:"description"`
-	Status           *string    `json:"status"`
-	StartDate        *time.Time `json:"start_date"`
-	EndDate          *time.Time `json:"end_date"`
-	TotalBudget      *float64   `json:"total_budget"`
-	ManagerID        *uint      `json:"manager_id"`
+	Name        *string    `json:"name"`
+	Description *string    `json:"description"`
+	Status      *string    `json:"status"`
+	StartDate   *time.Time `json:"start_date"`
+	EndDate     *time.Time `json:"end_date"`
+	TotalBudget *float64   `json:"total_budget"`
+	ManagerID   *uint      `json:"manager_id"`
 }

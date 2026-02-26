@@ -738,9 +738,9 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 			return nil, fmt.Errorf("failed to load product %d: %v", item.ProductID, err)
 		}
 
-		// Skip stock check for service products
-		if product.IsService {
-			log.Printf("ℹ️ Product %d (%s) is a service, skipping stock validation", product.ID, product.Name)
+		// Skip stock check for service products and assembly products
+		if product.IsService || product.IsAssembly {
+			log.Printf("ℹ️ Product %d (%s) is a service or assembly, skipping direct stock validation", product.ID, product.Name)
 			continue
 		}
 
@@ -930,6 +930,43 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 				continue
 			}
 
+			// 🚀 AUTO-KITTING LOGIC: If it's an assembly, reduce component stock instead
+			if product.IsAssembly {
+				log.Printf("⚙️ Product %d (%s) is an assembly, performing auto-kitting...", product.ID, product.Name)
+
+				var bom models.BOM
+				if err := tx.Preload("Items.ComponentProduct").Where("target_product_id = ?", product.ID).First(&bom).Error; err != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("Resep (BOM) tidak ditemukan untuk produk rakitan '%s' (ID: %d): tidak bisa melakukan auto-kitting", product.Name, product.ID)
+				}
+
+				for _, bomItem := range bom.Items {
+					// Calculate required quantity (bom ratio * sold quantity)
+					// Handle as int since stock is int
+					requiredQty := int(bomItem.RequirementQuantity * float64(item.Quantity))
+					if requiredQty <= 0 {
+						continue
+					}
+
+					// Ensure component stock is sufficient (optional early check, but ReduceStock will also check)
+					if bomItem.ComponentProduct.Stock < requiredQty {
+						tx.Rollback()
+						return nil, fmt.Errorf("Stock bahan baku '%s' tidak cukup untuk merakit '%s'. Tersedia: %d, Dibutuhkan: %d",
+							bomItem.ComponentProduct.Name, product.Name, bomItem.ComponentProduct.Stock, requiredQty)
+					}
+
+					if err := s.stockService.ReduceStock(bomItem.ComponentProductID, requiredQty, tx); err != nil {
+						tx.Rollback()
+						return nil, fmt.Errorf("Gagal memotong stok komponen '%s' untuk perakitan '%s': %v", bomItem.ComponentProduct.Name, product.Name, err)
+					}
+
+					log.Printf("✅ Kitting: Stock reduced for component %d (%s): %d → %d",
+						bomItem.ComponentProductID, bomItem.ComponentProduct.Name, bomItem.ComponentProduct.Stock, bomItem.ComponentProduct.Stock-requiredQty)
+				}
+				log.Printf("✅ Auto-kitting completed for assembly %d (%s)", product.ID, product.Name)
+				continue
+			}
+
 			// Check stock availability BEFORE reducing
 			if product.Stock < item.Quantity {
 				tx.Rollback()
@@ -1109,8 +1146,33 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 	// Restore stock if needed
 	if s.stockService != nil && (oldStatus == "INVOICED" || oldStatus == "PAID") {
 		var saleItems []models.SaleItem
-		if err := tx.Where("sale_id = ?", sale.ID).Find(&saleItems).Error; err == nil {
+		if err := tx.Where("sale_id = ?", sale.ID).Preload("Product").Find(&saleItems).Error; err == nil {
 			for _, item := range saleItems {
+				if item.Product.IsService {
+					// Services don't need stock restoration
+					continue
+				}
+
+				if item.Product.IsAssembly {
+					// 🚀 AUTO-KITTING RESTORE LOGIC: Restore component stocks
+					var bom models.BOM
+					if err := tx.Preload("Items").Where("target_product_id = ?", item.ProductID).First(&bom).Error; err == nil {
+						for _, bomItem := range bom.Items {
+							requiredQty := int(bomItem.RequirementQuantity * float64(item.Quantity))
+							if requiredQty > 0 {
+								if err := s.stockService.RestoreStock(bomItem.ComponentProductID, requiredQty, tx); err != nil {
+									log.Printf("⚠️ Warning: Failed to restore stock for component %d of assembly %d: %v", bomItem.ComponentProductID, item.ProductID, err)
+								}
+							}
+						}
+						log.Printf("✅ Kitting Restore: Component stocks restored for cancelled assembly %d (%s)", item.ProductID, item.Product.Name)
+					} else {
+						log.Printf("⚠️ Warning: BOM not found for assembly %d during stock restoration", item.ProductID)
+					}
+					continue
+				}
+
+				// Standard stock restoration
 				if err := s.stockService.RestoreStock(item.ProductID, item.Quantity, tx); err != nil {
 					log.Printf("⚠️ Warning: Failed to restore stock for product %d: %v", item.ProductID, err)
 				}
@@ -1295,8 +1357,10 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 			continue
 		}
 
-		// Services do not require stock
-		if p.IsService {
+		// Services and Assemblies do not require direct stock numbers
+		if p.IsService || p.IsAssembly {
+			// For assemblies, we technically bypass root stock warnings
+			// but could emit warnings for components later.
 			result.Items = append(result.Items, models.StockValidationItem{
 				ProductID:    p.ID,
 				ProductCode:  p.Code,
@@ -1305,7 +1369,7 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 				AvailableQty: 0,
 				MinStock:     p.MinStock,
 				ReorderLevel: p.ReorderLevel,
-				IsService:    true,
+				IsService:    p.IsService,
 				IsSufficient: true,
 				Warning:      "",
 			})

@@ -639,6 +639,10 @@ func AutoMigrate(db *gorm.DB) {
 		&models.ProductUnit{},
 		&models.WarehouseLocation{},
 		&models.Inventory{},
+		&models.BOM{},
+		&models.BOMItem{},
+		&models.ProjectBOM{},
+		&models.ProjectBOMItem{},
 
 		// Sales
 		&models.Sale{},

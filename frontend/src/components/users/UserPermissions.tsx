@@ -67,18 +67,21 @@ interface UserPermissionsProps {
 }
 
 const modules = [
-  { key: 'accounts', label: 'Accounts', description: 'Chart of Accounts & Accounting' },
-  { key: 'products', label: 'Products', description: 'Product & Inventory Management' },
-  { key: 'contacts', label: 'Contacts', description: 'Customer, Vendor & Employee' },
-  { key: 'assets', label: 'Assets', description: 'Fixed Assets Management' },
-  { key: 'sales', label: 'Sales', description: 'Sales & Invoicing' },
-  { key: 'purchases', label: 'Purchases', description: 'Purchase Orders & Receipts' },
-  { key: 'payments', label: 'Payments', description: 'Payment Processing' },
-  { key: 'cash_bank', label: 'Cash & Bank', description: 'Cash & Bank Management' },
-  { key: 'journal', label: 'Journal', description: 'General Journal & Journal Entries' },
-  { key: 'reports', label: 'Reports', description: 'Financial & Business Reports' },
-  { key: 'users', label: 'Users', description: 'User Management (Admin Only)' },
-  { key: 'settings', label: 'Settings', description: 'System Settings & Invoice Types Management' },
+  { key: 'accounts', label: 'Accounts', description: 'Chart of Accounts & Accounting', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'products', label: 'Products', description: 'Product & Inventory Management', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'boms', label: 'Master BOMs', description: 'Bill of Materials Templates', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
+  { key: 'projects', label: 'Projects', description: 'Project Management & Budgets', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
+  { key: 'contacts', label: 'Contacts', description: 'Customer, Vendor & Employee', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'assets', label: 'Assets', description: 'Fixed Assets Management', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'purchase_requests', label: 'Purchase Requests', description: 'Purchase Requests & Approvals', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
+  { key: 'sales', label: 'Sales', description: 'Sales & Invoicing', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
+  { key: 'purchases', label: 'Purchases', description: 'Purchase Orders & Receipts', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
+  { key: 'payments', label: 'Payments', description: 'Payment Processing', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
+  { key: 'cash_bank', label: 'Cash & Bank', description: 'Cash & Bank Management', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
+  { key: 'journal', label: 'Journal', description: 'General Journal & Journal Entries', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'reports', label: 'Reports', description: 'Financial & Business Reports', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'users', label: 'Users', description: 'User Management (Admin Only)', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
+  { key: 'settings', label: 'Settings', description: 'System Settings & Invoice Types Management', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
 ];
 
 const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user, token }) => {
@@ -136,21 +139,25 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
     });
   };
 
-  const handleToggleAll = (module: string, value: boolean) => {
+  const handleToggleAll = (moduleKey: string, value: boolean, moduleActions: string[]) => {
     if (!permissions) return;
+
+    const newPerms = { ...permissions.permissions[moduleKey] };
+    if (moduleActions.includes('view')) newPerms.can_view = value;
+    if (moduleActions.includes('create')) newPerms.can_create = value;
+    if (moduleActions.includes('edit')) newPerms.can_edit = value;
+    if (moduleActions.includes('delete')) newPerms.can_delete = value;
+    if (moduleActions.includes('approve')) newPerms.can_approve = value;
+    if (moduleActions.includes('export')) newPerms.can_export = value;
+    if (moduleActions.includes('menu')) newPerms.can_menu = value;
 
     setPermissions({
       ...permissions,
       permissions: {
         ...permissions.permissions,
-        [module]: {
-          can_view: value,
-          can_create: value,
-          can_edit: value,
-          can_delete: value,
-          can_approve: value,
-          can_export: value,
-          can_menu: value,
+        [moduleKey]: {
+          ...permissions.permissions[moduleKey],
+          ...newPerms,
         },
       },
     });
@@ -305,8 +312,16 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
                         can_menu: false,
                       };
 
-                      const allChecked = Object.values(perm).every(v => v === true);
-                      const someChecked = Object.values(perm).some(v => v === true);
+                      const activePermsCount = module.actions.reduce((count, action) => {
+                        const val = action === 'menu' ? perm.can_menu
+                          : action === 'approve' ? perm.can_approve
+                            : action === 'export' ? perm.can_export
+                              : perm[`can_${action}` as keyof typeof perm] as boolean;
+                        return count + (val ? 1 : 0);
+                      }, 0);
+
+                      const allChecked = activePermsCount === module.actions.length;
+                      const someChecked = activePermsCount > 0 && activePermsCount < module.actions.length;
 
                       return (
                         <Tr key={module.key} _hover={{ bg: 'gray.50' }}>
@@ -317,52 +332,66 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
                             </VStack>
                           </Td>
                           <Td textAlign="center">
-                            <Checkbox
-                              isChecked={perm.can_view}
-                              onChange={(e) => handlePermissionChange(module.key, 'can_view', e.target.checked)}
-                            />
+                            {module.actions.includes('view') && (
+                              <Checkbox
+                                isChecked={perm.can_view}
+                                onChange={(e) => handlePermissionChange(module.key, 'can_view', e.target.checked)}
+                              />
+                            )}
                           </Td>
                           <Td textAlign="center">
-                            <Checkbox
-                              isChecked={perm.can_create}
-                              onChange={(e) => handlePermissionChange(module.key, 'can_create', e.target.checked)}
-                              isDisabled={!perm.can_view}
-                            />
+                            {module.actions.includes('create') && (
+                              <Checkbox
+                                isChecked={perm.can_create}
+                                onChange={(e) => handlePermissionChange(module.key, 'can_create', e.target.checked)}
+                                isDisabled={!perm.can_view}
+                              />
+                            )}
                           </Td>
                           <Td textAlign="center">
-                            <Checkbox
-                              isChecked={perm.can_edit}
-                              onChange={(e) => handlePermissionChange(module.key, 'can_edit', e.target.checked)}
-                              isDisabled={!perm.can_view}
-                            />
+                            {module.actions.includes('edit') && (
+                              <Checkbox
+                                isChecked={perm.can_edit}
+                                onChange={(e) => handlePermissionChange(module.key, 'can_edit', e.target.checked)}
+                                isDisabled={!perm.can_view}
+                              />
+                            )}
                           </Td>
                           <Td textAlign="center">
-                            <Checkbox
-                              isChecked={perm.can_delete}
-                              onChange={(e) => handlePermissionChange(module.key, 'can_delete', e.target.checked)}
-                              isDisabled={!perm.can_view}
-                            />
+                            {module.actions.includes('delete') && (
+                              <Checkbox
+                                isChecked={perm.can_delete}
+                                onChange={(e) => handlePermissionChange(module.key, 'can_delete', e.target.checked)}
+                                isDisabled={!perm.can_view}
+                              />
+                            )}
                           </Td>
                           <Td textAlign="center">
-                            <Checkbox
-                              isChecked={perm.can_approve}
-                              onChange={(e) => handlePermissionChange(module.key, 'can_approve', e.target.checked)}
-                              isDisabled={!perm.can_view}
-                            />
+                            {module.actions.includes('approve') && (
+                              <Checkbox
+                                isChecked={perm.can_approve}
+                                onChange={(e) => handlePermissionChange(module.key, 'can_approve', e.target.checked)}
+                                isDisabled={!perm.can_view}
+                              />
+                            )}
                           </Td>
                           <Td textAlign="center">
-                            <Checkbox
-                              isChecked={perm.can_export}
-                              onChange={(e) => handlePermissionChange(module.key, 'can_export', e.target.checked)}
-                              isDisabled={!perm.can_view}
-                            />
+                            {module.actions.includes('export') && (
+                              <Checkbox
+                                isChecked={perm.can_export}
+                                onChange={(e) => handlePermissionChange(module.key, 'can_export', e.target.checked)}
+                                isDisabled={!perm.can_view}
+                              />
+                            )}
                           </Td>
                           <Td textAlign="center">
-                            <Checkbox
-                              isChecked={perm.can_menu}
-                              onChange={(e) => handlePermissionChange(module.key, 'can_menu', e.target.checked)}
-                              isDisabled={!perm.can_view}
-                            />
+                            {module.actions.includes('menu') && (
+                              <Checkbox
+                                isChecked={perm.can_menu}
+                                onChange={(e) => handlePermissionChange(module.key, 'can_menu', e.target.checked)}
+                                isDisabled={!perm.can_view}
+                              />
+                            )}
                           </Td>
                           <Td textAlign="center">
                             <HStack justify="center">
@@ -370,7 +399,7 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
                                 size="xs"
                                 variant={allChecked ? "solid" : someChecked ? "outline" : "ghost"}
                                 colorScheme={allChecked ? "green" : "gray"}
-                                onClick={() => handleToggleAll(module.key, !allChecked)}
+                                onClick={() => handleToggleAll(module.key, !allChecked, module.actions)}
                               >
                                 {allChecked ? 'All' : someChecked ? 'Some' : 'None'}
                               </Button>

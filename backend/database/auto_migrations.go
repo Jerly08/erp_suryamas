@@ -2056,6 +2056,7 @@ func SyncAllSeededSequences(db *gorm.DB) error {
 		"report_templates",
 		"asset_categories",
 		"invoice_types",
+		"module_permissions",
 	}
 
 	for _, tableName := range tablesToSync {

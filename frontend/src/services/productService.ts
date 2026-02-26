@@ -25,6 +25,7 @@ export interface Product {
   dimensions?: string;
   is_active: boolean;
   is_service: boolean;
+  is_assembly?: boolean;
   taxable: boolean;
   image_path?: string;
   notes?: string;
@@ -117,6 +118,7 @@ class ProductService {
     category?: string;
     page?: number;
     limit?: number;
+    is_assembly?: boolean;
   }, token?: string) {
     try {
       // Always use axios api instance which handles auth automatically
@@ -146,6 +148,11 @@ class ProductService {
 
   async deleteProduct(id: number) {
     const response = await api.delete(API_ENDPOINTS.PRODUCTS_BY_ID(id));
+    return response.data;
+  }
+
+  async importProducts(products: Partial<Product>[]) {
+    const response = await api.post(API_ENDPOINTS.PRODUCTS_IMPORT, products);
     return response.data;
   }
 
@@ -367,7 +374,7 @@ class ProductService {
     const formData = new FormData();
     formData.append('image', file);
     formData.append('product_id', productId.toString());
-    
+
     const response = await api.post(API_ENDPOINTS.PRODUCTS_UPLOAD_IMAGE, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',

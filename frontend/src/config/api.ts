@@ -38,6 +38,7 @@ export const API_ENDPOINTS = {
   PRODUCTS_ADJUST_STOCK: '/api/v1/products/adjust-stock',
   PRODUCTS_OPNAME: '/api/v1/products/opname',
   PRODUCTS_UPLOAD_IMAGE: '/api/v1/products/upload-image',
+  PRODUCTS_IMPORT: '/api/v1/products/import',
 
   // Categories (with /api/v1 prefix)
   CATEGORIES: '/api/v1/categories',

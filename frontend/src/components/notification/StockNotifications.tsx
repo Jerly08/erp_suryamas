@@ -71,24 +71,53 @@ const StockNotifications: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      
-      // Get MIN_STOCK notifications
-      const response = await axios.get(`${API_BASE_URL}/api/v1/notifications`, {
-        params: { type: 'MIN_STOCK', limit: 10 },
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      if (response.data.notifications) {
-        setNotifications(response.data.notifications);
-      }
 
-      // Get unread count for MIN_STOCK
-      const countResponse = await axios.get(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
-        params: { type: 'MIN_STOCK' },
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      setUnreadCount(countResponse.data.count || 0);
+      // Get MIN_STOCK, REORDER_ALERT and STOCK_OUT notifications
+      const [minStockResponse, reorderResponse, stockOutResponse] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/v1/notifications`, {
+          params: { type: 'MIN_STOCK', limit: 10 },
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        axios.get(`${API_BASE_URL}/api/v1/notifications`, {
+          params: { type: 'REORDER_ALERT', limit: 10 },
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        axios.get(`${API_BASE_URL}/api/v1/notifications`, {
+          params: { type: 'STOCK_OUT', limit: 10 },
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+
+      const minStockNotifs = minStockResponse.data.notifications || [];
+      const reorderNotifs = reorderResponse.data.notifications || [];
+      const stockOutNotifs = stockOutResponse.data.notifications || [];
+
+      const allNotifs = [...minStockNotifs, ...reorderNotifs, ...stockOutNotifs]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 10);
+
+      setNotifications(allNotifs);
+
+      // Get unread count for all types
+      const [minStockCount, reorderCount, stockOutCount] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
+          params: { type: 'MIN_STOCK' },
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        axios.get(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
+          params: { type: 'REORDER_ALERT' },
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        axios.get(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
+          params: { type: 'STOCK_OUT' },
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+
+      const totalUnread = (minStockCount.data.count || 0) +
+        (reorderCount.data.count || 0) +
+        (stockOutCount.data.count || 0);
+      setUnreadCount(totalUnread);
     } catch (error) {
       console.error('Failed to fetch stock notifications:', error);
     } finally {
@@ -102,7 +131,7 @@ const StockNotifications: React.FC = () => {
       const response = await axios.get(`${API_BASE_URL}/api/v1/dashboard/stock-alerts`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.data?.alerts) {
         setStockAlerts(response.data.data.alerts);
       }
@@ -119,8 +148,8 @@ const StockNotifications: React.FC = () => {
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      
-      setNotifications(prev => 
+
+      setNotifications(prev =>
         prev.map(n => n.id === notificationId ? { ...n, is_read: true } : n)
       );
       setUnreadCount(prev => Math.max(0, prev - 1));
@@ -137,7 +166,7 @@ const StockNotifications: React.FC = () => {
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      
+
       setStockAlerts(prev => prev.filter(a => a.id !== alertId));
     } catch (error) {
       console.error('Failed to dismiss alert:', error);
@@ -168,14 +197,14 @@ const StockNotifications: React.FC = () => {
     const date = new Date(dateString);
     const now = new Date();
     const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-    
+
     if (diffInHours < 1) return 'Baru saja';
     if (diffInHours < 24) return `${Math.floor(diffInHours)} jam lalu`;
-    return date.toLocaleDateString('id-ID', { 
-      month: 'short', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit' 
+    return date.toLocaleDateString('id-ID', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
   };
 
@@ -192,13 +221,13 @@ const StockNotifications: React.FC = () => {
         <Box position="relative">
           <FiPackage />
           {totalAlerts > 0 && (
-            <Badge 
-              colorScheme="red" 
-              borderRadius="full" 
-              position="absolute" 
-              top={-2} 
-              right={-2} 
-              fontSize="0.6em" 
+            <Badge
+              colorScheme="red"
+              borderRadius="full"
+              position="absolute"
+              top={-2}
+              right={-2}
+              fontSize="0.6em"
               px={2}
             >
               {totalAlerts}
@@ -206,20 +235,20 @@ const StockNotifications: React.FC = () => {
           )}
         </Box>
       </MenuButton>
-      
+
       <MenuList minW="400px" maxW="90vw">
         <Box px={3} pt={2} pb={1}>
           <Text fontSize="md" fontWeight="bold">Stock Alerts</Text>
           {totalAlerts > 0 && (
             <Text fontSize="xs" color="gray.500">
-              {stockAlerts.length} active alert{stockAlerts.length !== 1 ? 's' : ''}, 
+              {stockAlerts.length} active alert{stockAlerts.length !== 1 ? 's' : ''},
               {unreadCount} unread
             </Text>
           )}
         </Box>
-        
+
         <Divider />
-        
+
         {loading ? (
           <MenuItem isDisabled>
             <HStack spacing={2}>
@@ -247,21 +276,21 @@ const StockNotifications: React.FC = () => {
                         {alert.urgency}
                       </Badge>
                     </HStack>
-                    
+
                     <Text fontSize="xs" color="gray.600">
                       Code: {alert.product_code} {alert.category_name && `• ${alert.category_name}`}
                     </Text>
-                    
+
                     <Alert status="warning" size="sm" borderRadius="md">
                       <AlertIcon />
                       <Text fontSize="xs">
                         Stock: {alert.current_stock} / Min: {alert.threshold_stock}
                       </Text>
                     </Alert>
-                    
-                    <Button 
-                      size="xs" 
-                      colorScheme="gray" 
+
+                    <Button
+                      size="xs"
+                      colorScheme="gray"
                       onClick={() => dismissAlert(alert.id)}
                     >
                       Dismiss
@@ -270,7 +299,7 @@ const StockNotifications: React.FC = () => {
                 </HStack>
               </Box>
             ))}
-            
+
             {/* Notifications */}
             {notifications.map((notif) => {
               const data = typeof notif.data === 'string' ? JSON.parse(notif.data) : notif.data;
@@ -292,17 +321,17 @@ const StockNotifications: React.FC = () => {
                         </Text>
                         {!notif.is_read && <Box w={2} h={2} bg="orange.500" borderRadius="full" />}
                       </HStack>
-                      
+
                       <Text fontSize="xs" color="gray.600" noOfLines={2}>
                         {notif.message}
                       </Text>
-                      
+
                       {data && (
                         <Text fontSize="xs" color="gray.500">
                           Stock: {data.current_stock} / Min: {data.minimum_stock}
                         </Text>
                       )}
-                      
+
                       <Text fontSize="xs" color="gray.500">
                         {formatDate(notif.created_at)}
                       </Text>
@@ -313,11 +342,11 @@ const StockNotifications: React.FC = () => {
             })}
           </Box>
         )}
-        
+
         {(stockAlerts.length > 0 || notifications.length > 0) && (
           <>
             <Divider />
-            <MenuItem 
+            <MenuItem
               onClick={() => window.location.href = '/inventory'}
             >
               <Text w="full" textAlign="center" fontSize="sm" color="blue.600">

@@ -1,9 +1,10 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/models"
 	"net/http"
 	"strconv"
-	"app-sistem-akuntansi/models"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -53,8 +54,7 @@ func (ic *InventoryController) GetInventoryMovements(c *gin.Context) {
 // GetLowStockProducts retrieves products with stock below minimum level
 func (ic *InventoryController) GetLowStockProducts(c *gin.Context) {
 	var products []models.Product
-	
-	if err := ic.DB.Where("stock <= min_stock AND is_active = ?", true).Find(&products).Error; err != nil {
+	if err := ic.DB.Where("stock <= min_stock AND min_stock > 0 AND is_active = ? AND is_assembly = ?", true, false).Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch low stock products"})
 		return
 	}
@@ -101,7 +101,7 @@ func (ic *InventoryController) GetStockValuation(c *gin.Context) {
 func (ic *InventoryController) BulkPriceUpdate(c *gin.Context) {
 	var input struct {
 		Updates []struct {
-			ProductID     uint    `json:"product_id" binding:"required"`
+			ProductID     uint     `json:"product_id" binding:"required"`
 			PurchasePrice *float64 `json:"purchase_price,omitempty"`
 			SalePrice     *float64 `json:"sale_price,omitempty"`
 		} `json:"updates" binding:"required"`
@@ -152,7 +152,7 @@ func (ic *InventoryController) BulkPriceUpdate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Bulk price update completed successfully",
+		"message":       "Bulk price update completed successfully",
 		"updated_count": updatedCount,
 	})
 }
@@ -163,7 +163,7 @@ func (ic *InventoryController) GetStockReport(c *gin.Context) {
 	var totalValue float64
 
 	query := ic.DB.Where("is_active = ?", true)
-	
+
 	// Filter by category if provided
 	if categoryID := c.Query("category_id"); categoryID != "" {
 		query = query.Where("category_id = ?", categoryID)
@@ -180,15 +180,15 @@ func (ic *InventoryController) GetStockReport(c *gin.Context) {
 		totalValue += value
 
 		reportData = append(reportData, map[string]interface{}{
-			"product_id":     product.ID,
-			"code":           product.Code,
-			"name":           product.Name,
-			"category":       product.Category,
-			"current_stock":  product.Stock,
-			"min_stock":      product.MinStock,
-			"unit_cost":      product.PurchasePrice,
-			"total_value":    value,
-			"status":         ic.getStockStatus(product),
+			"product_id":    product.ID,
+			"code":          product.Code,
+			"name":          product.Name,
+			"category":      product.Category,
+			"current_stock": product.Stock,
+			"min_stock":     product.MinStock,
+			"unit_cost":     product.PurchasePrice,
+			"total_value":   value,
+			"status":        ic.getStockStatus(product),
 		})
 	}
 

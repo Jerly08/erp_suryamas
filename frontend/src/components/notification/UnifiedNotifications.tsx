@@ -140,8 +140,8 @@ const UnifiedNotifications: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
 
-      // Get both MIN_STOCK and REORDER_ALERT notifications
-      const [minStockResponse, reorderResponse] = await Promise.all([
+      // Get MIN_STOCK, REORDER_ALERT, and STOCK_OUT notifications
+      const [minStockResponse, reorderResponse, stockOutResponse] = await Promise.all([
         axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_BY_TYPE('MIN_STOCK')}`, {
           params: { limit: 5 },
           headers: { Authorization: `Bearer ${token}` }
@@ -149,13 +149,18 @@ const UnifiedNotifications: React.FC = () => {
         axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_BY_TYPE('REORDER_ALERT')}`, {
           params: { limit: 5 },
           headers: { Authorization: `Bearer ${token}` }
+        }),
+        axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_BY_TYPE('STOCK_OUT')}`, {
+          params: { limit: 5 },
+          headers: { Authorization: `Bearer ${token}` }
         })
       ]);
 
-      // Combine both types of notifications
+      // Combine all types of notifications
       const minStockNotifs = minStockResponse.data.notifications || [];
       const reorderNotifs = reorderResponse.data.notifications || [];
-      const allStockNotifs = [...minStockNotifs, ...reorderNotifs]
+      const stockOutNotifs = stockOutResponse.data.notifications || [];
+      const allStockNotifs = [...minStockNotifs, ...reorderNotifs, ...stockOutNotifs]
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 10); // Limit to 10 most recent
 

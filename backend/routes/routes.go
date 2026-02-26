@@ -199,6 +199,9 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	// Initialize WarehouseLocationController
 	warehouseLocationController := controllers.NewWarehouseLocationController(db)
 
+	// Initialize BOMController
+	bomController := controllers.NewBOMController(db)
+
 	// Fiscal Year Closing Service removed - now using Unified Period Closing Service
 	// which provides more flexibility and consistent closing logic
 
@@ -219,6 +222,10 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	projectRepo := repositories.NewProjectRepository(db)
 	projectService := services.NewProjectService(projectRepo)
 	projectController := controllers.NewProjectController(projectService)
+
+	// Initialize ProjectBOMController
+	projectBOMController := controllers.NewProjectBOMController(db)
+	bomProcurementController := controllers.NewBOMProcurementController(db)
 
 	// Purchase repositories, services and controllers
 	purchaseRepo := repositories.NewPurchaseRepository(db)
@@ -491,6 +498,16 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				products.POST("/adjust-stock", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), productController.AdjustStock)
 				products.POST("/opname", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), productController.Opname)
 				products.POST("/upload-image", permMiddleware.CanEdit("products"), productController.UploadProductImage)
+				products.POST("/import", permMiddleware.CanCreate("products"), productController.ImportProducts)
+			}
+
+			// 📋 BOM (Bill of Materials) routes
+			boms := protected.Group("/boms")
+			{
+				boms.GET("", permMiddleware.CanView("boms"), bomController.GetBOMs)
+				boms.GET("/:id", permMiddleware.CanView("boms"), bomController.GetBOM)
+				boms.POST("", permMiddleware.CanCreate("boms"), bomController.CreateBOM)
+				boms.DELETE("/:id", permMiddleware.CanDelete("boms"), bomController.DeleteBOM)
 			}
 
 			// 📂 Category routes with enhanced permission checks
@@ -681,13 +698,13 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			// Purchase Requests routes with permission checks
 			purchaseRequests := protected.Group("/purchase-requests")
 			{
-				purchaseRequests.GET("", permMiddleware.CanView("purchases"), purchaseRequestController.GetAll)
-				purchaseRequests.GET("/:id", permMiddleware.CanView("purchases"), purchaseRequestController.GetByID)
-				purchaseRequests.POST("", permMiddleware.CanCreate("purchases"), purchaseRequestController.Create)
+				purchaseRequests.GET("", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetAll)
+				purchaseRequests.GET("/:id", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetByID)
+				purchaseRequests.POST("", permMiddleware.CanCreate("purchase_requests"), purchaseRequestController.Create)
 
 				// Approval & Rejection workflows
-				purchaseRequests.PUT("/:id/approve", middleware.RoleRequired("admin", "finance", "director"), purchaseRequestController.Approve)
-				purchaseRequests.PUT("/:id/reject", middleware.RoleRequired("admin", "finance", "director"), purchaseRequestController.Reject)
+				purchaseRequests.PUT("/:id/approve", permMiddleware.CanApprove("purchase_requests"), purchaseRequestController.Approve)
+				purchaseRequests.PUT("/:id/reject", permMiddleware.CanApprove("purchase_requests"), purchaseRequestController.Reject)
 			}
 
 			// Projects routes with permission checks
@@ -698,6 +715,12 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				projects.POST("", permMiddleware.CanCreate("projects"), projectController.Create)
 				projects.PUT("/:id", permMiddleware.CanEdit("projects"), projectController.Update)
 				projects.DELETE("/:id", permMiddleware.CanDelete("projects"), projectController.Delete)
+
+				// BOM Integration
+				projects.GET("/:id/boms", permMiddleware.CanView("projects"), projectBOMController.GetProjectBOMs)
+				projects.POST("/:id/boms", permMiddleware.CanEdit("projects"), projectBOMController.AddBOMToProject)
+				projects.DELETE("/:id/boms/:bomId", permMiddleware.CanEdit("projects"), projectBOMController.RemoveBOMFromProject)
+				projects.POST("/:id/generate-pr", permMiddleware.CanCreate("purchase_requests"), bomProcurementController.GeneratePR)
 			}
 
 			// Sales routes with permission checks

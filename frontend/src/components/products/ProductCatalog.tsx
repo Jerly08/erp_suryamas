@@ -57,6 +57,7 @@ import WarehouseLocationManagement from './WarehouseLocationManagement';
 import { ProductUnit } from './UnitForm';
 import { formatIDR, formatCurrencyDetailed } from '@/utils/currency';
 import { getProductImageUrl, debugImageUrl } from '@/utils/imageUrl';
+import ProductImportModal from './ProductImportModal';
 
 const ProductCatalog: React.FC = () => {
   const { user } = useAuth();
@@ -85,8 +86,17 @@ const ProductCatalog: React.FC = () => {
   const { isOpen: isAlertOpen, onOpen: onAlertOpen, onClose: onAlertClose } = useDisclosure();
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
   const { isOpen: isManagementModalOpen, onOpen: onManagementModalOpen, onClose: onManagementModalClose } = useDisclosure();
+  const { isOpen: isImportModalOpen, onOpen: onImportModalOpen, onClose: onImportModalClose } = useDisclosure();
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
+  const [tabIndex, setTabIndex] = useState(0);
+  const [defaultIsAssembly, setDefaultIsAssembly] = useState(false);
   const toast = useToast();
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const limit = 50; // Default items per page
 
   // Tooltip descriptions for product page
   const tooltips = {
@@ -113,18 +123,31 @@ const ProductCatalog: React.FC = () => {
     fetchWarehouseLocations();
   }, []);
 
+  // Reset page to 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, tabIndex]);
+
   useEffect(() => {
     fetchProducts();
-  }, [searchTerm, categoryFilter, warehouseLocationFilter, statusFilter]);
+  }, [searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, currentPage, tabIndex]);
 
   const fetchProducts = async () => {
     try {
-      const params: any = {};
+      const params: any = {
+        page: currentPage,
+        limit,
+        is_assembly: tabIndex === 1
+      };
       if (searchTerm) params.search = searchTerm;
       if (categoryFilter) params.category = categoryFilter;
 
-      const data = await ProductService.getProducts(params);
-      setProducts(data.data);
+      const response = await ProductService.getProducts(params);
+      setProducts(response.data || []);
+      if (response.meta) {
+        setTotalPages(response.meta.total_pages || 1);
+        setTotalItems(response.meta.total || 0);
+      }
     } catch (error) {
       toast({
         title: 'Failed to fetch products',
@@ -174,6 +197,7 @@ const ProductCatalog: React.FC = () => {
   const handleAddProductClick = () => {
     if (!canCreate) return;
     setSelectedProduct(null);
+    setDefaultIsAssembly(tabIndex === 1);
     setIsModalOpen(true);
   };
 
@@ -305,7 +329,8 @@ const ProductCatalog: React.FC = () => {
           product.warehouse_location?.id === Number(warehouseLocationFilter) : true;
         const matchesStatus = statusFilter ?
           (statusFilter === 'active' ? product.is_active : !product.is_active) : true;
-        return matchesSearch && matchesCategory && matchesWarehouseLocation && matchesStatus;
+        const matchesAssembly = !!product.is_assembly === (tabIndex === 1);
+        return matchesSearch && matchesCategory && matchesWarehouseLocation && matchesStatus && matchesAssembly;
       })
       .sort((a, b) => {
         let comparison = 0;
@@ -320,7 +345,7 @@ const ProductCatalog: React.FC = () => {
         }
         return comparison;
       });
-  }, [products, searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, sortBy, sortOrder]);
+  }, [products, searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, sortBy, sortOrder, tabIndex]);
 
   return (
     <SimpleLayout allowedRoles={['admin', 'inventory_manager', 'employee', 'finance', 'director']}>
@@ -334,6 +359,15 @@ const ProductCatalog: React.FC = () => {
           <HStack spacing={3}>
             {canCreate && (
               <>
+                <Button
+                  leftIcon={<FiUpload />}
+                  colorScheme="blue"
+                  size="lg"
+                  onClick={onImportModalOpen}
+                  variant="outline"
+                >
+                  Import
+                </Button>
                 <Button
                   leftIcon={<FiSettings />}
                   rightIcon={<FiChevronDown />}
@@ -356,6 +390,14 @@ const ProductCatalog: React.FC = () => {
             )}
           </HStack>
         </Flex>
+
+        {/* Tabs for Component vs Assembly Separation */}
+        <Tabs variant="enclosed" colorScheme="blue" index={tabIndex} onChange={(index) => setTabIndex(index)} mb={6}>
+          <TabList>
+            <Tab fontWeight="bold">🧱 Komponen & Bahan Baku</Tab>
+            <Tab fontWeight="bold">🎯 Master Produk Rakitan</Tab>
+          </TabList>
+        </Tabs>
 
         {/* Search and Filters */}
         <Box mb={6}>
@@ -453,7 +495,7 @@ const ProductCatalog: React.FC = () => {
 
           {/* Results Summary */}
           <Text fontSize="sm" color="gray.600">
-            {t('products.showing')} {filteredAndSortedProducts.length} {filteredAndSortedProducts.length !== 1 ? t('products.productsPlural') : t('products.product')}
+            {t('products.showing')} {filteredAndSortedProducts.length} dari {totalItems} {t('products.product')}
             {(searchTerm || categoryFilter || warehouseLocationFilter || statusFilter) ? ` ${t('products.filtered')}` : ''}
           </Text>
         </Box>
@@ -465,7 +507,10 @@ const ProductCatalog: React.FC = () => {
               <Th>{t('products.table.name')}</Th>
               <Th>{t('products.table.category')}</Th>
               {hasInventory && <Th>{t('products.table.warehouseLocation')}</Th>}
-              {hasInventory && <Th>Acuan Harga Beli</Th>}
+              {hasInventory && <Th>Stok</Th>}
+              {hasInventory && (
+                <Th>{tabIndex === 1 ? 'Harga Pokok / HPP' : 'Acuan Harga Beli'}</Th>
+              )}
               <Th>Acuan Harga Jual</Th>
               <Th>{t('products.table.actions')}</Th>
             </Tr>
@@ -477,7 +522,24 @@ const ProductCatalog: React.FC = () => {
                 <Td>{product.name}</Td>
                 <Td>{product.category?.name}</Td>
                 {hasInventory && <Td>{product.warehouse_location?.name || t('products.table.noLocation')}</Td>}
-                {hasInventory && <Td color="green.600" fontWeight="semibold">{formatCurrencyDetailed(product.purchase_price || 0)}</Td>}
+                {hasInventory && (
+                  <Td>
+                    {product.is_assembly ? (
+                      <Text color="gray.500" fontStyle="italic">
+                        Tidak Perlu Stok (Auto-Kit)
+                      </Text>
+                    ) : (
+                      <Text fontWeight="bold" color={product.stock <= (product.min_stock || 0) ? "red.500" : "gray.800"}>
+                        {product.stock} {product.unit}
+                      </Text>
+                    )}
+                  </Td>
+                )}
+                {hasInventory && (
+                  <Td color={tabIndex === 1 ? "orange.600" : "green.600"} fontWeight="semibold">
+                    {formatCurrencyDetailed(tabIndex === 1 ? (product.cost_price || 0) : (product.purchase_price || 0))}
+                  </Td>
+                )}
                 <Td color="blue.600" fontWeight="semibold">{formatCurrencyDetailed(product.sale_price || 0)}</Td>
                 <Td>
                   <Button
@@ -535,6 +597,31 @@ const ProductCatalog: React.FC = () => {
           </Tbody>
         </Table>
 
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <Flex justify="space-between" align="center" mt={4} bg="gray.50" p={3} borderRadius="md" border="1px" borderColor="gray.200">
+            <Text fontSize="sm" color="gray.600">
+              Menampilkan Halaman {currentPage} dari {totalPages} ({totalItems} total data)
+            </Text>
+            <HStack>
+              <Button
+                size="sm"
+                isDisabled={currentPage === 1}
+                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                isDisabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(currentPage + 1)}
+              >
+                Next
+              </Button>
+            </HStack>
+          </Flex>
+        )}
+
         {/* Add/Edit Product Modal */}
         {canEdit && (
           <Modal isOpen={isModalOpen || !!selectedProduct} onClose={handleCloseModal} size="6xl">
@@ -547,6 +634,7 @@ const ProductCatalog: React.FC = () => {
               <ModalBody pb={6}>
                 <ProductForm
                   product={selectedProduct || undefined}
+                  defaultIsAssembly={defaultIsAssembly}
                   onSave={handleSaveProduct}
                   onCancel={handleCloseModal}
                 />
@@ -871,6 +959,16 @@ const ProductCatalog: React.FC = () => {
             </AlertDialogContent>
           </AlertDialogOverlay>
         </AlertDialog>
+
+        {/* Product Import Modal */}
+        {canCreate && (
+          <ProductImportModal
+            isOpen={isImportModalOpen}
+            onClose={onImportModalClose}
+            onSuccess={fetchProducts}
+            categories={categories}
+          />
+        )}
       </Box>
     </SimpleLayout>
   );
