@@ -3,7 +3,6 @@ package services
 import (
 	"fmt"
 	"log"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -115,39 +114,39 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 	log.Printf("📋 PPN Masukan: %s - %s (Balance: %.2f)", ppnMasukanAccount.Code, ppnMasukanAccount.Name, ppnMasukanAccount.Balance)
 	log.Printf("📋 PPN Keluaran: %s - %s (Balance: %.2f)", ppnKeluaranAccount.Code, ppnKeluaranAccount.Name, ppnKeluaranAccount.Balance)
 
-	// Calculate PPN Terutang (PPN yang harus dibayar)
+	// Calculate PPN Terutang (PPN yang harus dibayar) using decimal for precision
 	// PPN Terutang = PPN Keluaran - PPN Masukan
 	//
 	// ⚠️ IMPORTANT: PPN Masukan (2102-002) is classified as LIABILITY in the COA.
 	// Liability accounts store balance as Credit - Debit, so PPN Masukan (which is
 	// debited on purchases) will have a NEGATIVE balance (e.g., -1,100,000).
-	// We MUST use math.Abs() to get the correct magnitude, otherwise:
-	//   BAD:  6,600,000 - (-1,100,000) = 7,700,000 (WRONG!)
-	//   GOOD: 6,600,000 - 1,100,000   = 5,500,000 (CORRECT)
+	// We MUST use .Abs() to get the correct magnitude.
 	//
-	// This also future-proofs against the account type being changed to ASSET.
-	ppnMasukanAbs := math.Abs(ppnMasukanAccount.Balance)
-	ppnKeluaranAbs := math.Abs(ppnKeluaranAccount.Balance)
-	ppnTerutang := ppnKeluaranAbs - ppnMasukanAbs
+	// ⚠️ CRITICAL: All amounts use decimal.Decimal to avoid floating-point rounding
+	// errors that cause unbalanced journal entries (e.g., 0.04 difference).
+	ppnMasukanDec := decimal.NewFromFloat(ppnMasukanAccount.Balance).Abs()
+	ppnKeluaranDec := decimal.NewFromFloat(ppnKeluaranAccount.Balance).Abs()
+	ppnTerutangDec := ppnKeluaranDec.Sub(ppnMasukanDec)
 
-	log.Printf("📊 Calculated PPN Terutang: %.2f (Keluaran: %.2f [raw: %.2f] - Masukan: %.2f [raw: %.2f])",
-		ppnTerutang, ppnKeluaranAbs, ppnKeluaranAccount.Balance, ppnMasukanAbs, ppnMasukanAccount.Balance)
+	log.Printf("📊 Calculated PPN Terutang: %s (Keluaran: %s [raw: %.2f] - Masukan: %s [raw: %.2f])",
+		ppnTerutangDec.StringFixed(2), ppnKeluaranDec.StringFixed(2), ppnKeluaranAccount.Balance, ppnMasukanDec.StringFixed(2), ppnMasukanAccount.Balance)
 
 	// Validate PPN Terutang
-	if ppnTerutang <= 0 {
+	if ppnTerutangDec.LessThanOrEqual(decimal.Zero) {
 		tx.Rollback()
-		return nil, fmt.Errorf("tidak ada PPN yang harus dibayar. PPN Terutang: %.2f (PPN Masukan lebih besar dari PPN Keluaran)", ppnTerutang)
+		return nil, fmt.Errorf("tidak ada PPN yang harus dibayar. PPN Terutang: %s (PPN Masukan lebih besar dari PPN Keluaran)", ppnTerutangDec.StringFixed(2))
 	}
 
-	// Always pay full PPN Terutang (no partial/cicilan to avoid balance bugs)
-	roundedTerutang := math.Round(ppnTerutang)
-	paymentAmount := roundedTerutang
-	log.Printf("✅ Full PPN Terutang payment: %.2f (raw: %.2f)", paymentAmount, ppnTerutang)
+	// Payment amount = exact PPN Terutang (no rounding to ensure journal balance)
+	// Cash/Bank credit = PPN Keluaran debit - PPN Masukan credit (always balanced)
+	paymentAmountDec := ppnTerutangDec
+	paymentAmount := paymentAmountDec.InexactFloat64()
+	log.Printf("✅ Full PPN Terutang payment: %s", paymentAmountDec.StringFixed(2))
 
 	// Validate cash/bank balance
-	if cashBank.Balance < paymentAmount {
+	if decimal.NewFromFloat(cashBank.Balance).LessThan(paymentAmountDec) {
 		tx.Rollback()
-		return nil, fmt.Errorf("insufficient cash/bank balance. Available: %.2f, Required: %.2f", cashBank.Balance, paymentAmount)
+		return nil, fmt.Errorf("insufficient cash/bank balance. Available: %.2f, Required: %s", cashBank.Balance, paymentAmountDec.StringFixed(2))
 	}
 
 	// Generate payment code for PPN remittance
@@ -166,7 +165,7 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 		Method:      models.PaymentMethodBankTransfer, // Default untuk setor PPN
 		Reference:   req.Reference,
 		Status:      models.PaymentStatusCompleted, // PPN remittance langsung completed
-		Notes:       fmt.Sprintf("Setor PPN - Terutang: %.2f. %s", ppnTerutang, req.Notes),
+		Notes:       fmt.Sprintf("Setor PPN - Terutang: %s. %s", ppnTerutangDec.StringFixed(2), req.Notes),
 		PaymentType: models.PaymentTypeTaxPPN,
 	}
 
@@ -179,47 +178,48 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 	// Create journal entry per PSAK (FULL payment only - no proportional kompensasi)
 	// Debit:  PPN Keluaran (full balance - zero out liability)
 	// Credit: PPN Masukan (full balance - zero out kompensasi)
-	// Credit: Cash/Bank (pembayaran neto = PPN Terutang)
+	// Credit: Cash/Bank (pembayaran neto = PPN Keluaran - PPN Masukan, always balanced)
 	//
 	// Example: PPN Keluaran 50jt, PPN Masukan 30jt, Terutang 20jt
 	// Debit:  PPN Keluaran 50jt (zero out)
 	// Credit: PPN Masukan 30jt (zero out)
-	// Credit: Cash/Bank 20jt (bayar neto)
-	kompensasiAmount := ppnMasukanAbs  // Full PPN Masukan
-	ppnKeluaranDebit := ppnKeluaranAbs // Full PPN Keluaran
+	// Credit: Cash/Bank 20jt (bayar neto = 50jt - 30jt)
+	ppnKeluaranDebitDec := ppnKeluaranDec                         // Full PPN Keluaran
+	ppnMasukanCreditDec := ppnMasukanDec                          // Full PPN Masukan
+	cashCreditDec := ppnKeluaranDebitDec.Sub(ppnMasukanCreditDec) // Exact balancing amount
 
-	log.Printf("📋 Journal Entry breakdown: PPN Keluaran Debit=%.2f, PPN Masukan Credit=%.2f, Cash Credit=%.2f",
-		ppnKeluaranDebit, kompensasiAmount, paymentAmount)
+	log.Printf("📋 Journal Entry breakdown: PPN Keluaran Debit=%s, PPN Masukan Credit=%s, Cash Credit=%s",
+		ppnKeluaranDebitDec.StringFixed(2), ppnMasukanCreditDec.StringFixed(2), cashCreditDec.StringFixed(2))
 
 	// Build journal lines (only include non-zero amounts)
 	journalLines := []JournalLineRequest{}
 
 	// Debit PPN Keluaran (liability berkurang) - always include if > 0
-	if ppnKeluaranDebit > 0 {
+	if ppnKeluaranDebitDec.GreaterThan(decimal.Zero) {
 		journalLines = append(journalLines, JournalLineRequest{
 			AccountID:    uint64(settings.SalesOutputVATAccountID),
 			Description:  fmt.Sprintf("Setor PPN - %s", payment.Code),
-			DebitAmount:  decimal.NewFromFloat(ppnKeluaranDebit),
+			DebitAmount:  ppnKeluaranDebitDec,
 			CreditAmount: decimal.Zero,
 		})
 	}
 
 	// Credit PPN Masukan (asset berkurang - kompensasi) - only if > 0
-	if kompensasiAmount > 0 {
+	if ppnMasukanCreditDec.GreaterThan(decimal.Zero) {
 		journalLines = append(journalLines, JournalLineRequest{
 			AccountID:    uint64(settings.PurchaseInputVATAccountID),
 			Description:  fmt.Sprintf("Setor PPN - Kompensasi - %s", payment.Code),
 			DebitAmount:  decimal.Zero,
-			CreditAmount: decimal.NewFromFloat(kompensasiAmount),
+			CreditAmount: ppnMasukanCreditDec,
 		})
 	}
 
-	// Credit Cash/Bank (pembayaran neto) - always include
+	// Credit Cash/Bank (pembayaran neto) - exact balancing amount
 	journalLines = append(journalLines, JournalLineRequest{
 		AccountID:    uint64(cashBank.AccountID),
 		Description:  fmt.Sprintf("Setor PPN - Pembayaran Neto - %s", payment.Code),
 		DebitAmount:  decimal.Zero,
-		CreditAmount: decimal.NewFromFloat(paymentAmount),
+		CreditAmount: cashCreditDec,
 	})
 
 	// Create SSOT journal entry
@@ -228,7 +228,7 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 		SourceID:    uint64(payment.ID),
 		Reference:   payment.Code,
 		EntryDate:   payment.Date,
-		Description: fmt.Sprintf("Setor PPN ke Negara - %s (Terutang: %.2f)", payment.Code, ppnTerutang),
+		Description: fmt.Sprintf("Setor PPN ke Negara - %s (Terutang: %s)", payment.Code, ppnTerutangDec.StringFixed(2)),
 		Lines:       journalLines,
 		AutoPost:    true,
 		CreatedBy:   uint64(userID),
@@ -243,24 +243,9 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 
 	log.Printf("✅ Journal entry created: ID=%d, EntryNumber=%s", journalResponse.ID, journalResponse.EntryNumber)
 
-	// ⚠️ CRITICAL FIX: Correct PPN Masukan balance after journal auto-post.
-	// PPN Masukan (2102-002) is classified as LIABILITY in COA, but its positive balance
-	// represents a tax credit (conceptually ASSET-like). The standard PSAK journal
-	// credits PPN Masukan for kompensasi, and auto-post increases LIABILITY balance.
-	// But we WANT it to decrease (we're using the tax credit).
-	// Fix: Reverse the auto-post's +kompensasi and apply the correct -kompensasi.
-	// Net effect: balance changes by -2*kompensasi (undo +kompensasi, apply -kompensasi).
-	if kompensasiAmount > 0 {
-		ppnMasukanCorrection := -2 * kompensasiAmount
-		if err := tx.Model(&models.Account{}).
-			Where("id = ?", settings.PurchaseInputVATAccountID).
-			UpdateColumn("balance", gorm.Expr("balance + ?", ppnMasukanCorrection)).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to correct PPN Masukan balance: %v", err)
-		}
-		log.Printf("🔧 PPN Masukan balance corrected: %+.2f (undo auto-post +%.2f, apply -%.2f)",
-			ppnMasukanCorrection, kompensasiAmount, kompensasiAmount)
-	}
+	// NOTE: Account balances (PPN Masukan, PPN Keluaran) are automatically
+	// recalculated by the DB trigger `sync_account_balance_from_ssot` whenever
+	// journal lines are inserted. No manual balance correction needed.
 
 	// Update payment with journal reference
 	journalEntryID := uint(journalResponse.ID)
@@ -299,7 +284,7 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 		return nil, fmt.Errorf("failed to commit transaction: %v", err)
 	}
 
-	log.Printf("✅ PPN Remittance (Setor PPN) successfully created: %s (Amount: %.2f, PPN Terutang: %.2f)", payment.Code, paymentAmount, ppnTerutang)
+	log.Printf("✅ PPN Remittance (Setor PPN) successfully created: %s (Amount: %.2f, PPN Terutang: %s)", payment.Code, paymentAmount, ppnTerutangDec.StringFixed(2))
 
 	// Load relations for response
 	if err := s.db.Preload("Contact").Preload("User").First(payment, payment.ID).Error; err != nil {
@@ -453,8 +438,8 @@ func (s *TaxPaymentService) GetPPNBalance(ppnType string) (float64, error) {
 	// ⚠️ IMPORTANT: Always return absolute value of balance.
 	// PPN Masukan (2102-002) is classified as LIABILITY, so its balance
 	// may be stored as negative. Consumers (frontend) expect a positive number.
-	// Using math.Abs future-proofs against account type changes.
-	absBalance := math.Abs(account.Balance)
+	// Using decimal.Abs future-proofs against account type changes.
+	absBalance := decimal.NewFromFloat(account.Balance).Abs().InexactFloat64()
 	log.Printf("📊 PPN %s Balance: %.2f (raw: %.2f, Account: %s - %s, Type: %s)",
 		ppnType, absBalance, account.Balance, account.Code, account.Name, account.Type)
 

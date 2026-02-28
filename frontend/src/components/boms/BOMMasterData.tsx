@@ -33,6 +33,7 @@ const BOMMasterData: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedBOM, setSelectedBOM] = useState<BOM | null>(null);
+    const [isViewOnly, setIsViewOnly] = useState(false);
     const toast = useToast();
 
     useEffect(() => {
@@ -67,12 +68,20 @@ const BOMMasterData: React.FC = () => {
     const handleAddClick = () => {
         if (!canCreate) return;
         setSelectedBOM(null);
+        setIsViewOnly(false);
         setIsModalOpen(true);
     };
 
     const handleEditClick = (bom: BOM) => {
         if (!canEdit) return;
         setSelectedBOM(bom);
+        setIsViewOnly(false);
+        setIsModalOpen(true);
+    };
+
+    const handleViewClick = (bom: BOM) => {
+        setSelectedBOM(bom);
+        setIsViewOnly(true);
         setIsModalOpen(true);
     };
 
@@ -134,7 +143,8 @@ const BOMMasterData: React.FC = () => {
                                 <Th>Name</Th>
                                 <Th>Target Product</Th>
                                 <Th isNumeric>Target Qty</Th>
-                                <Th isNumeric>Total Unit Cost</Th>
+                                <Th isNumeric>Cost / Unit</Th>
+                                <Th isNumeric>Batch Cost</Th>
                                 <Th>Items Count</Th>
                                 <Th textAlign="center">Actions</Th>
                             </Tr>
@@ -142,7 +152,7 @@ const BOMMasterData: React.FC = () => {
                         <Tbody>
                             {filteredBOMs.length === 0 ? (
                                 <Tr>
-                                    <Td colSpan={7} textAlign="center" py={4} color="gray.500">
+                                    <Td colSpan={8} textAlign="center" py={4} color="gray.500">
                                         No BOM templates found.
                                     </Td>
                                 </Tr>
@@ -156,6 +166,9 @@ const BOMMasterData: React.FC = () => {
                                         <Td isNumeric fontWeight="bold" color="blue.600">
                                             {formatCurrencyDetailed(bom.total_cost)}
                                         </Td>
+                                        <Td isNumeric fontWeight="bold" color={(bom.target_quantity || 1) > 1 ? 'orange.500' : 'blue.600'}>
+                                            {formatCurrencyDetailed(bom.total_cost * (bom.target_quantity || 1))}
+                                        </Td>
                                         <Td>
                                             <Badge colorScheme="purple" variant="subtle">
                                                 {bom.items?.length || 0} Components
@@ -163,6 +176,15 @@ const BOMMasterData: React.FC = () => {
                                         </Td>
                                         <Td>
                                             <HStack spacing={2} justify="center">
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    colorScheme="gray"
+                                                    onClick={() => handleViewClick(bom)}
+                                                    title="View Details"
+                                                >
+                                                    <Icon as={FiEye} />
+                                                </Button>
                                                 {canEdit && (
                                                     <Button
                                                         size="sm"
@@ -201,6 +223,7 @@ const BOMMasterData: React.FC = () => {
                     onClose={() => setIsModalOpen(false)}
                     onSuccess={fetchBOMs}
                     existingBOM={selectedBOM}
+                    isViewOnly={isViewOnly}
                 />
             )}
         </SimpleLayout>

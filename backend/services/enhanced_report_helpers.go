@@ -118,15 +118,17 @@ func (ers *EnhancedReportService) getDefaultTaxNumber() string {
 // ===== ACCOUNT CALCULATION HELPERS =====
 
 // calculateAccountBalance calculates account balance up to a specific date
+// Uses SSOT (unified_journal_ledger + unified_journal_lines) as the source of truth
+// Includes ALL journal entries including CLOSING entries (for balance sheet)
 func (ers *EnhancedReportService) calculateAccountBalance(accountID uint, asOfDate time.Time) float64 {
 	var totalDebit, totalCredit float64
 
-	// Query journal lines for this account up to the specified date
-	ers.db.Table("journal_lines").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Where("journal_lines.account_id = ? AND journal_entries.entry_date <= ? AND journal_entries.status = ?",
-			accountID, asOfDate, models.JournalStatusPosted).
-		Select("COALESCE(SUM(journal_lines.debit_amount), 0) as total_debit, COALESCE(SUM(journal_lines.credit_amount), 0) as total_credit").
+	// Query from SSOT unified journal tables
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Where("unified_journal_lines.account_id = ? AND unified_journal_ledger.entry_date <= ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL",
+			accountID, asOfDate, models.SSOTStatusPosted).
+		Select("COALESCE(SUM(unified_journal_lines.debit_amount), 0) as total_debit, COALESCE(SUM(unified_journal_lines.credit_amount), 0) as total_credit").
 		Row().Scan(&totalDebit, &totalCredit)
 
 	// Get account to determine normal balance type
@@ -145,15 +147,17 @@ func (ers *EnhancedReportService) calculateAccountBalance(accountID uint, asOfDa
 }
 
 // calculateAccountBalanceForPeriod calculates account balance for a specific period
+// Uses SSOT and EXCLUDES CLOSING entries so P&L shows actual activity
 func (ers *EnhancedReportService) calculateAccountBalanceForPeriod(accountID uint, startDate, endDate time.Time) float64 {
 	var totalDebit, totalCredit float64
 
-	// Query journal lines for this account within the period
-	ers.db.Table("journal_lines").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Where("journal_lines.account_id = ? AND journal_entries.entry_date BETWEEN ? AND ? AND journal_entries.status = ?",
-			accountID, startDate, endDate, models.JournalStatusPosted).
-		Select("COALESCE(SUM(journal_lines.debit_amount), 0) as total_debit, COALESCE(SUM(journal_lines.credit_amount), 0) as total_credit").
+	// Query from SSOT unified journal tables, EXCLUDING CLOSING entries
+	// CLOSING entries zero out revenue/expense; P&L must show pre-closing activity
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Where("unified_journal_lines.account_id = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			accountID, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.debit_amount), 0) as total_debit, COALESCE(SUM(unified_journal_lines.credit_amount), 0) as total_credit").
 		Row().Scan(&totalDebit, &totalCredit)
 
 	// Get account to determine normal balance direction
@@ -711,40 +715,42 @@ func (ers *EnhancedReportService) getLiabilityCategory(category string) string {
 }
 
 // calculateNetIncome calculates net income for a period (simplified)
+// Uses SSOT and EXCLUDES CLOSING entries to show actual period performance
 func (ers *EnhancedReportService) calculateNetIncome(startDate, endDate time.Time) float64 {
 	var totalRevenue, totalExpense float64
 
-	// Get revenue accounts
-	ers.db.Table("journal_lines").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Joins("JOIN accounts ON journal_lines.account_id = accounts.id").
-		Where("accounts.type = ? AND journal_entries.entry_date BETWEEN ? AND ? AND journal_entries.status = ?",
-			models.AccountTypeRevenue, startDate, endDate, models.JournalStatusPosted).
-		Select("COALESCE(SUM(journal_lines.credit_amount - journal_lines.debit_amount), 0)").
+	// Get revenue from SSOT, excluding CLOSING entries
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.type = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			models.AccountTypeRevenue, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
 		Row().Scan(&totalRevenue)
 
-	// Get expense accounts
-	ers.db.Table("journal_lines").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Joins("JOIN accounts ON journal_lines.account_id = accounts.id").
-		Where("accounts.type = ? AND journal_entries.entry_date BETWEEN ? AND ? AND journal_entries.status = ?",
-			models.AccountTypeExpense, startDate, endDate, models.JournalStatusPosted).
-		Select("COALESCE(SUM(journal_lines.debit_amount - journal_lines.credit_amount), 0)").
+	// Get expense from SSOT, excluding CLOSING entries
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.type = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			models.AccountTypeExpense, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
 		Row().Scan(&totalExpense)
 
 	return totalRevenue - totalExpense
 }
 
 // calculateDepreciationExpense calculates depreciation expense for period
+// Uses SSOT tables
 func (ers *EnhancedReportService) calculateDepreciationExpense(startDate, endDate time.Time) float64 {
 	var depreciation float64
 
-	ers.db.Table("journal_lines").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Joins("JOIN accounts ON journal_lines.account_id = accounts.id").
-		Where("accounts.category = ? AND journal_entries.entry_date BETWEEN ? AND ? AND journal_entries.status = ?",
-			models.CategoryDepreciationExp, startDate, endDate, models.JournalStatusPosted).
-		Select("COALESCE(SUM(journal_lines.debit_amount), 0)").
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL",
+			models.CategoryDepreciationExp, startDate, endDate, models.SSOTStatusPosted).
+		Select("COALESCE(SUM(unified_journal_lines.debit_amount), 0)").
 		Row().Scan(&depreciation)
 
 	return depreciation
@@ -771,15 +777,16 @@ func (ers *EnhancedReportService) calculateFinancingTransactions(startDate, endD
 }
 
 // calculateRevenueForPeriod calculates total revenue for a period
+// Uses SSOT and EXCLUDES CLOSING entries
 func (ers *EnhancedReportService) calculateRevenueForPeriod(startDate, endDate time.Time) float64 {
 	var revenue float64
 
-	ers.db.Table("journal_lines").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Joins("JOIN accounts ON journal_lines.account_id = accounts.id").
-		Where("accounts.type = ? AND journal_entries.entry_date BETWEEN ? AND ? AND journal_entries.status = ?",
-			models.AccountTypeRevenue, startDate, endDate, models.JournalStatusPosted).
-		Select("COALESCE(SUM(journal_lines.credit_amount - journal_lines.debit_amount), 0)").
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.type = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			models.AccountTypeRevenue, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
 		Row().Scan(&revenue)
 
 	return revenue

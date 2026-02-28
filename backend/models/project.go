@@ -18,8 +18,9 @@ type Project struct {
 	EndDate   *time.Time `json:"end_date"`
 
 	// Financial Tracking
-	TotalBudget     float64 `json:"total_budget" gorm:"type:decimal(15,2);default:0"`
-	TotalActualCost float64 `json:"total_actual_cost" gorm:"type:decimal(15,2);default:0"`
+	TotalBudget       float64 `json:"total_budget" gorm:"type:decimal(15,2);default:0"`
+	TotalActualCost   float64 `json:"total_actual_cost" gorm:"type:decimal(15,2);default:0"`
+	TotalSalesRevenue float64 `json:"total_sales_revenue" gorm:"type:decimal(15,2);default:0"`
 
 	// Relations (Manager, etc.)
 	ManagerID *uint `json:"manager_id" gorm:"index"`

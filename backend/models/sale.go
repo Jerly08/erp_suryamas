@@ -13,6 +13,7 @@ type Sale struct {
 	UserID            uint       `json:"user_id" gorm:"not null;index"`
 	SalesPersonID     *uint      `json:"sales_person_id" gorm:"index"`
 	InvoiceTypeID     *uint      `json:"invoice_type_id" gorm:"index"`
+	ProjectID         *uint      `json:"project_id" gorm:"index"`
 	Type              string     `json:"type" gorm:"size:20;default:'INVOICE'"` // QUOTATION, ORDER, INVOICE
 	Date              time.Time  `json:"date"`
 	DueDate           time.Time  `json:"due_date"`
@@ -76,6 +77,7 @@ type Sale struct {
 	User         User          `json:"user" gorm:"foreignKey:UserID"`
 	SalesPerson  *Contact      `json:"sales_person" gorm:"foreignKey:SalesPersonID"`
 	InvoiceType  *InvoiceType  `json:"invoice_type" gorm:"foreignKey:InvoiceTypeID"`
+	Project      *Project      `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
 	SaleItems    []SaleItem    `json:"sale_items" gorm:"foreignKey:SaleID"`
 	SalePayments []SalePayment `json:"sale_payments" gorm:"foreignKey:SaleID"`
 	SaleReturns  []SaleReturn  `json:"sale_returns" gorm:"foreignKey:SaleID"`
@@ -155,6 +157,7 @@ type SaleCreateRequest struct {
 	CustomerID      uint       `json:"customer_id" binding:"required"`
 	SalesPersonID   *uint      `json:"sales_person_id"`
 	InvoiceTypeID   *uint      `json:"invoice_type_id"`
+	ProjectID       *uint      `json:"project_id"`
 	Type            string     `json:"type" binding:"required"`
 	Date            time.Time  `json:"date" binding:"required"`
 	DueDate         time.Time  `json:"due_date"`
@@ -191,6 +194,7 @@ type SaleCreateRequest struct {
 type SaleUpdateRequest struct {
 	CustomerID      *uint      `json:"customer_id"`
 	SalesPersonID   *uint      `json:"sales_person_id"`
+	ProjectID       *uint      `json:"project_id"`
 	Date            *time.Time `json:"date"`
 	DueDate         *time.Time `json:"due_date"`
 	ValidUntil      *time.Time `json:"valid_until"`

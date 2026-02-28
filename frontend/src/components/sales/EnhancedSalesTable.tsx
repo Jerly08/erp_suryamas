@@ -148,6 +148,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                 <Tr>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('sales.table.code')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('sales.table.customer')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">Proyek</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('sales.table.date')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('sales.table.total')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('sales.table.outstanding')}</Th>
@@ -172,6 +173,11 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                     <Td borderColor={borderColor} py={3}>
                       <Text fontWeight="medium" color={primaryTextColor} fontSize="sm">
                         {sale.customer?.name || 'N/A'}
+                      </Text>
+                    </Td>
+                    <Td borderColor={borderColor} py={3}>
+                      <Text fontSize="sm" color={textColor}>
+                        {sale.project?.name || '-'}
                       </Text>
                     </Td>
                     <Td borderColor={borderColor} py={3}>

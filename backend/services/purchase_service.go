@@ -607,6 +607,16 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 			fmt.Printf("Warning: Purchase %d rejected but no approval request ID found\n", purchaseID)
 		}
 
+		// 🚫 CRITICAL: Reverse all accounting effects (journal, stock, cash/bank, project cost)
+		fmt.Printf("🔔 Calling OnPurchaseRejected cleanup for purchase %d\n", purchaseID)
+		cleanupErr := s.OnPurchaseRejected(purchaseID)
+		if cleanupErr != nil {
+			fmt.Printf("⚠️ Warning: Post-rejection cleanup failed for purchase %d: %v\n", purchaseID, cleanupErr)
+			// Continue — rejection should still succeed even if cleanup has issues
+		} else {
+			fmt.Printf("✅ Post-rejection cleanup completed for purchase %d\n", purchaseID)
+		}
+
 		result["message"] = "Purchase rejected"
 		result["purchase_id"] = purchaseID
 		result["status"] = "REJECTED"
@@ -1212,6 +1222,153 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	}
 
 	fmt.Printf("✅ Post-approval processing completed for purchase %s\n", purchase.Code)
+	return nil
+}
+
+// OnPurchaseRejected reverses all accounting effects when a purchase is rejected.
+// This handles cleanup for purchases that were previously approved (journal, stock, cash/bank, project cost).
+func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
+	fmt.Printf("🚫 Starting post-rejection cleanup for purchase %d\n", purchaseID)
+
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return fmt.Errorf("failed to get purchase for rejection cleanup: %v", err)
+	}
+
+	fmt.Printf("🔄 Cleaning up rejected purchase %s (method: %s, amount: %.2f)\n",
+		purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
+
+	// 1. Reset payment tracking amounts
+	fmt.Printf("💰 Resetting payment tracking for rejected purchase %d\n", purchaseID)
+	oldOutstanding := purchase.OutstandingAmount
+	oldPaid := purchase.PaidAmount
+	purchase.OutstandingAmount = 0
+	purchase.PaidAmount = 0
+	_, err = s.purchaseRepo.Update(purchase)
+	if err != nil {
+		fmt.Printf("⚠️ Warning: Failed to reset payment tracking: %v\n", err)
+	} else {
+		fmt.Printf("✅ Payment tracking reset: Outstanding %.2f→0, Paid %.2f→0\n", oldOutstanding, oldPaid)
+	}
+
+	// 2. Soft-delete SSOT journal entries (hutang usaha / beban)
+	fmt.Printf("📒 Removing SSOT journal entries for rejected purchase %d\n", purchaseID)
+	if err := s.db.Session(&gorm.Session{AllowGlobalUpdate: true}).
+		Model(&models.SSOTJournalEntry{}).
+		Where("source_type = 'PURCHASE' AND source_id = ? AND deleted_at IS NULL", purchaseID).
+		Update("deleted_at", time.Now()).Error; err != nil {
+		fmt.Printf("⚠️ Warning: Failed to soft-delete SSOT journal entries: %v\n", err)
+	} else {
+		fmt.Printf("✅ SSOT journal entries soft-deleted for purchase %d\n", purchaseID)
+	}
+
+	// Also soft-delete unified_journal_lines
+	if err := s.db.Exec(`
+		UPDATE unified_journal_lines 
+		SET deleted_at = CURRENT_TIMESTAMP
+		WHERE deleted_at IS NULL AND journal_id IN (
+			SELECT id FROM unified_journal_ledger 
+			WHERE source_type = 'PURCHASE' AND source_id = ?
+		)
+	`, purchaseID).Error; err != nil {
+		fmt.Printf("⚠️ Warning: Failed to soft-delete SSOT journal lines: %v\n", err)
+	} else {
+		fmt.Printf("✅ SSOT journal lines soft-deleted for purchase %d\n", purchaseID)
+	}
+
+	// Soft-delete the unified_journal_ledger entries themselves
+	if err := s.db.Exec(`
+		UPDATE unified_journal_ledger 
+		SET deleted_at = CURRENT_TIMESTAMP
+		WHERE source_type = 'PURCHASE' AND source_id = ? AND deleted_at IS NULL
+	`, purchaseID).Error; err != nil {
+		fmt.Printf("⚠️ Warning: Failed to soft-delete unified_journal_ledger entries: %v\n", err)
+	} else {
+		fmt.Printf("✅ Unified journal ledger entries soft-deleted for purchase %d\n", purchaseID)
+	}
+
+	// 3. Reverse product stock (subtract the quantities that were added on approval)
+	fmt.Printf("📦 Reversing product stock for rejected purchase %s\n", purchase.Code)
+	for _, item := range purchase.PurchaseItems {
+		product, err := s.productRepo.FindByID(item.ProductID)
+		if err != nil {
+			fmt.Printf("⚠️ Warning: Product %d not found for stock reversal: %v\n", item.ProductID, err)
+			continue
+		}
+
+		oldStock := product.Stock
+		product.Stock -= item.Quantity
+		if product.Stock < 0 {
+			fmt.Printf("⚠️ Warning: Stock for product %d would go negative (%d), setting to 0\n", product.ID, product.Stock)
+			product.Stock = 0
+		}
+
+		err = s.productRepo.Update(context.Background(), product)
+		if err != nil {
+			fmt.Printf("⚠️ Warning: Failed to reverse stock for product %d: %v\n", product.ID, err)
+		} else {
+			fmt.Printf("✅ Product %d stock reversed: %d → %d\n", product.ID, oldStock, product.Stock)
+		}
+	}
+
+	// 4. Reverse cash/bank balance for immediate payment purchases
+	if isImmediatePayment(purchase.PaymentMethod) && purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
+		fmt.Printf("💰 Restoring cash/bank balance for rejected immediate payment purchase\n")
+
+		var cashBank models.CashBank
+		if err := s.db.First(&cashBank, *purchase.BankAccountID).Error; err != nil {
+			fmt.Printf("⚠️ Warning: Failed to find bank account %d for balance restoration: %v\n", *purchase.BankAccountID, err)
+		} else {
+			oldBalance := cashBank.Balance
+			cashBank.Balance += purchase.TotalAmount // Add back (restore)
+
+			if err := s.db.Save(&cashBank).Error; err != nil {
+				fmt.Printf("⚠️ Warning: Failed to restore cash/bank balance: %v\n", err)
+			} else {
+				fmt.Printf("✅ Cash/bank balance restored: %s %.2f → %.2f (+%.2f)\n",
+					cashBank.Name, oldBalance, cashBank.Balance, purchase.TotalAmount)
+			}
+
+			// Create reversal transaction record
+			reversalTx := &models.CashBankTransaction{
+				CashBankID:      *purchase.BankAccountID,
+				ReferenceType:   "PURCHASE_REVERSAL",
+				ReferenceID:     purchase.ID,
+				Amount:          purchase.TotalAmount, // Positive = incoming (reversal)
+				BalanceAfter:    cashBank.Balance,
+				TransactionDate: time.Now(),
+				Notes:           fmt.Sprintf("Reversal: Purchase %s rejected", purchase.Code),
+			}
+
+			if err := s.db.Create(reversalTx).Error; err != nil {
+				fmt.Printf("⚠️ Warning: Failed to create reversal transaction record: %v\n", err)
+			} else {
+				fmt.Printf("📝 Reversal cash/bank transaction record created: ID %d\n", reversalTx.ID)
+			}
+		}
+
+		// Soft-delete the original cash/bank transaction
+		if err := s.db.Exec(`
+			UPDATE cash_bank_transactions 
+			SET deleted_at = CURRENT_TIMESTAMP
+			WHERE reference_type = 'PURCHASE' AND reference_id = ? AND deleted_at IS NULL
+		`, purchaseID).Error; err != nil {
+			fmt.Printf("⚠️ Warning: Failed to soft-delete original cash/bank transaction: %v\n", err)
+		}
+	}
+
+	// 5. Reverse project actual cost (if linked to a project)
+	if purchase.ProjectID != nil {
+		fmt.Printf("📉 Decreasing project actual cost for rejected purchase %d\n", purchaseID)
+		err = s.updateProjectCostForPurchase(purchase, false) // false = decrease
+		if err != nil {
+			fmt.Printf("⚠️ Warning: Failed to decrease project actual cost: %v\n", err)
+		} else {
+			fmt.Printf("✅ Project %d actual cost decreased by %.2f\n", *purchase.ProjectID, purchase.NetBeforeTax)
+		}
+	}
+
+	fmt.Printf("✅ Post-rejection cleanup completed for purchase %s\n", purchase.Code)
 	return nil
 }
 

@@ -18,12 +18,14 @@ import (
 type ProductController struct {
 	DB                     *gorm.DB
 	stockMonitoringService *services.StockMonitoringService
+	bomService             *services.BOMService
 }
 
-func NewProductController(db *gorm.DB, stockMonitoringService *services.StockMonitoringService) *ProductController {
+func NewProductController(db *gorm.DB, stockMonitoringService *services.StockMonitoringService, bomService *services.BOMService) *ProductController {
 	return &ProductController{
 		DB:                     db,
 		stockMonitoringService: stockMonitoringService,
+		bomService:             bomService,
 	}
 }
 
@@ -420,6 +422,10 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		updateData.WarehouseLocationID = nil
 	}
 
+	// Capture the old prices to check if they've changed
+	oldPurchasePrice := product.PurchasePrice
+	oldCostPrice := product.CostPrice
+
 	// FIXED: Use Select() with Updates() to ensure zero values are updated
 	// This fixes the issue where stock=0 or prices=0 would not be updated
 	// Only update specific fields to avoid foreign key constraint issues
@@ -450,6 +456,28 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		// Also resolve any existing alerts if stock is now above threshold
 		if err := pc.stockMonitoringService.ResolveStockAlerts(); err != nil {
 			log.Printf("Failed to resolve stock alerts: %v", err)
+		}
+	}
+
+	// Check if the cost/purchase price changed, and sync BOMs if it did
+	if pc.bomService != nil {
+		priceChanged := false
+		newSyncPrice := product.PurchasePrice // Fallback to newly bound PurchasePrice
+
+		if updateData.PurchasePrice > 0 && updateData.PurchasePrice != oldPurchasePrice {
+			priceChanged = true
+			newSyncPrice = updateData.PurchasePrice
+		} else if updateData.CostPrice > 0 && updateData.CostPrice != oldCostPrice {
+			// If purchase price didn't change but cost price did
+			priceChanged = true
+			newSyncPrice = updateData.CostPrice
+		}
+
+		if priceChanged {
+			log.Printf("ℹ️ Product %d price changed, triggering BOM costs sync (new price: %.2f)", id, newSyncPrice)
+			if err := pc.bomService.SyncBOMCostsForProduct(uint(id), newSyncPrice); err != nil {
+				log.Printf("⚠️ Failed to sync BOM costs for product %d: %v", id, err)
+			}
 		}
 	}
 
@@ -637,6 +665,25 @@ func (pc *ProductController) ImportProducts(c *gin.Context) {
 					if err := tx.Model(&existing).Updates(updateFields).Error; err != nil {
 						return err
 					}
+
+					// Track price changes for BOM sync
+					if pc.bomService != nil {
+						var newSyncPrice float64 = 0
+						if p.PurchasePrice > 0 && p.PurchasePrice != existing.PurchasePrice {
+							newSyncPrice = p.PurchasePrice
+						} else if p.CostPrice > 0 && p.CostPrice != existing.CostPrice {
+							newSyncPrice = p.CostPrice
+						}
+
+						if newSyncPrice > 0 {
+							// We can't safely call sync inside this transaction loop easily without potentially slowing it down immensely,
+							// so we collect them and do it after. But for simplicity, we'll sync right here since it's an import.
+							if err := pc.bomService.SyncBOMCostsForProduct(existing.ID, newSyncPrice); err != nil {
+								log.Printf("⚠️ Failed to sync BOM costs for imported product %d: %v", existing.ID, err)
+							}
+						}
+					}
+
 					updatedCount++
 				}
 			} else {

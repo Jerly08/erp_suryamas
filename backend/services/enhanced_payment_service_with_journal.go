@@ -27,9 +27,9 @@ type EnhancedPaymentServiceWithJournal struct {
 }
 
 // ExpensePaymentRequest represents a direct expense payment mapped from COA.
-// Contact must be explicitly selected (no more fallback to system contact).
+// Contact is optional — for bulk payments like salaries, no specific contact is needed.
 type ExpensePaymentRequest struct {
-	ContactID         uint      `json:"contact_id" binding:"required"`
+	ContactID         uint      `json:"contact_id"`
 	ExpenseAccountID  uint      `json:"expense_account_id" binding:"required"`
 	CashBankID        uint      `json:"cash_bank_id" binding:"required"`
 	Date              time.Time `json:"date" binding:"required"`
@@ -40,6 +40,11 @@ type ExpensePaymentRequest struct {
 	Description       string    `json:"description"`
 	AutoCreateJournal bool      `json:"auto_create_journal"`
 	UserID            uint      `json:"user_id"`
+
+	// PPh withholding tax fields (optional)
+	PPHType   string  `json:"pph_type"`   // PPH_21, PPH_23, PPH_4_2, PPH_22, or empty
+	PPHRate   float64 `json:"pph_rate"`   // Tax rate percentage (e.g. 2 for 2%)
+	PPHAmount float64 `json:"pph_amount"` // Calculated tax amount
 }
 
 // ListPayments returns paginated payments with filters (SSOT-compatible)
@@ -137,9 +142,6 @@ type PaymentProcessingSummary struct {
 // It also updates CashBank balance & history via applyCashBankMovement.
 func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpensePaymentRequest) (*models.Payment, error) {
 	// Basic validation
-	if req.ContactID == 0 {
-		return nil, fmt.Errorf("contact ID is required for expense payments")
-	}
 	if req.Amount <= 0 {
 		return nil, fmt.Errorf("payment amount must be positive")
 	}
@@ -182,13 +184,14 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			return fmt.Errorf("expense account not found: %w", err)
 		}
 
-		// Load and validate contact; expense payments must be linked to a vendor contact.
-		contact, err := eps.contactRepo.GetByID(req.ContactID)
-		if err != nil {
-			return fmt.Errorf("contact not found: %w", err)
-		}
-		if strings.ToUpper(contact.Type) != "VENDOR" {
-			return fmt.Errorf("expense payments can only be linked to vendor contacts")
+		// Load contact if provided (optional for bulk payments like salaries)
+		contactName := "Umum"
+		if req.ContactID > 0 {
+			contact, err := eps.contactRepo.GetByID(req.ContactID)
+			if err != nil {
+				return fmt.Errorf("contact not found: %w", err)
+			}
+			contactName = contact.Name
 		}
 
 		// Build payment model (cash out, treated similar to PAY prefix)
@@ -201,7 +204,10 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			Reference:   req.Reference,
 			Status:      models.PaymentStatusCompleted,
 			PaymentType: models.PaymentTypeExpense,
-			Notes:       req.Notes,
+			Notes:       fmt.Sprintf("%s [Contact: %s]", req.Notes, contactName),
+			PPHType:     req.PPHType,
+			PPHRate:     req.PPHRate,
+			PPHAmount:   req.PPHAmount,
 		}
 
 		// Generate payment code using vendor-style prefix (PAY-YYYY/MM-XXXX)
@@ -216,20 +222,67 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			return fmt.Errorf("failed to create expense payment: %w", err)
 		}
 
-		// Prepare journal entry: Debit Expense, Credit Cash/Bank
-		journalLines := []JournalLineRequest{
-			{
-				AccountID:    uint64(expenseAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(req.Amount),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("Expense Payment %s - %s", payment.Code, req.Description),
-			},
-			{
-				AccountID:    uint64(cashBank.AccountID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(req.Amount),
-				Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
-			},
+		// Prepare journal entry
+		var journalLines []JournalLineRequest
+		grossAmount := decimal.NewFromFloat(req.Amount)
+
+		if req.PPHAmount > 0 && req.PPHType != "" {
+			// === 3-LINE JOURNAL WITH PPh WITHHOLDING ===
+			// Debit: Beban (gross)  = Full expense amount
+			// Credit: Bank (net)    = Amount actually paid out
+			// Credit: Hutang PPh    = Tax withheld (to be remitted to government)
+			pphAmount := decimal.NewFromFloat(req.PPHAmount)
+			netAmount := grossAmount.Sub(pphAmount) // Amount actually leaving bank
+
+			// Resolve PPh liability account based on type
+			pphAccountID, err := eps.resolvePPHAccountID(tx, req.PPHType)
+			if err != nil {
+				return fmt.Errorf("failed to resolve PPh account: %w", err)
+			}
+
+			journalLines = []JournalLineRequest{
+				{
+					AccountID:    uint64(expenseAccount.ID),
+					DebitAmount:  grossAmount,
+					CreditAmount: decimal.Zero,
+					Description:  fmt.Sprintf("Beban %s - %s (bruto)", expenseAccount.Name, payment.Code),
+				},
+				{
+					AccountID:    uint64(cashBank.AccountID),
+					DebitAmount:  decimal.Zero,
+					CreditAmount: netAmount,
+					Description:  fmt.Sprintf("Pembayaran neto via %s - %s", cashBank.Name, payment.Code),
+				},
+				{
+					AccountID:    pphAccountID,
+					DebitAmount:  decimal.Zero,
+					CreditAmount: pphAmount,
+					Description:  fmt.Sprintf("Hutang %s dipotong - %s (%.1f%%)", req.PPHType, payment.Code, req.PPHRate),
+				},
+			}
+
+			log.Printf("📋 Expense with PPh: Gross=%.2f, PPh(%s %.1f%%)=%.2f, Net=%.2f",
+				req.Amount, req.PPHType, req.PPHRate, req.PPHAmount, netAmount.InexactFloat64())
+
+			// IMPORTANT: CashBank movement should use NET amount (what actually leaves the bank)
+			req.Amount = netAmount.InexactFloat64()
+		} else {
+			// === STANDARD 2-LINE JOURNAL (no tax) ===
+			// Debit: Expense, Credit: Cash/Bank
+			journalLines = []JournalLineRequest{
+				{
+					AccountID:    uint64(expenseAccount.ID),
+					DebitAmount:  grossAmount,
+					CreditAmount: decimal.Zero,
+					Description:  fmt.Sprintf("Expense Payment %s - %s", payment.Code, req.Description),
+				},
+				{
+					AccountID:    uint64(cashBank.AccountID),
+					DebitAmount:  decimal.Zero,
+					CreditAmount: grossAmount,
+					Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
+				},
+			}
 		}
 
 		journalRequest := &JournalEntryRequest{
@@ -352,27 +405,90 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 
 		log.Printf("✅ Payment created: ID=%d, Code=%s", payment.ID, payment.Code)
 
-		// Step 5: Create journal entry (if requested)
+		// Step 5: Create SSOT journal entry directly (bypass disabled PaymentJournalFactory)
 		if req.AutoCreateJournal {
+			var journalLines []JournalLineRequest
+			var journalDescription string
+
 			if contact.Type == "CUSTOMER" {
-				journalResult, err = eps.journalFactory.CreateReceivablePaymentJournal(payment, contact, cashBank)
+				// Receivable Payment Journal: Debit Cash/Bank, Credit Piutang Usaha
+				arAccountID, arErr := eps.resolveReceivableAccountID(tx)
+				if arErr != nil {
+					return fmt.Errorf("failed to resolve accounts receivable: %w", arErr)
+				}
+				journalLines = []JournalLineRequest{
+					{
+						AccountID:    uint64(cashBank.AccountID),
+						DebitAmount:  decimal.NewFromFloat(req.Amount),
+						CreditAmount: decimal.Zero,
+						Description:  fmt.Sprintf("Payment received from %s - %s", contact.Name, payment.Code),
+					},
+					{
+						AccountID:    arAccountID,
+						DebitAmount:  decimal.Zero,
+						CreditAmount: decimal.NewFromFloat(req.Amount),
+						Description:  fmt.Sprintf("AR reduction - %s", payment.Code),
+					},
+				}
+				journalDescription = fmt.Sprintf("Customer Payment %s - %s", payment.Code, contact.Name)
+
 			} else if contact.Type == "VENDOR" {
-				journalResult, err = eps.journalFactory.CreatePayablePaymentJournal(payment, contact, cashBank)
+				// Payable Payment Journal: Debit Utang Usaha, Credit Cash/Bank
+				apAccountID, apErr := eps.resolvePayableAccountID(tx)
+				if apErr != nil {
+					return fmt.Errorf("failed to resolve accounts payable: %w", apErr)
+				}
+				journalLines = []JournalLineRequest{
+					{
+						AccountID:    apAccountID,
+						DebitAmount:  decimal.NewFromFloat(req.Amount),
+						CreditAmount: decimal.Zero,
+						Description:  fmt.Sprintf("AP reduction - %s", payment.Code),
+					},
+					{
+						AccountID:    uint64(cashBank.AccountID),
+						DebitAmount:  decimal.Zero,
+						CreditAmount: decimal.NewFromFloat(req.Amount),
+						Description:  fmt.Sprintf("Payment made to %s - %s", contact.Name, payment.Code),
+					},
+				}
+				journalDescription = fmt.Sprintf("Vendor Payment %s - %s", payment.Code, contact.Name)
+
 			} else {
-				return fmt.Errorf("unsupported contact type: %s", contact.Type)
+				return fmt.Errorf("unsupported contact type for journal creation: %s", contact.Type)
 			}
+
+			// Create SSOT journal entry using UnifiedJournalService
+			journalRequest := &JournalEntryRequest{
+				SourceType:  models.SSOTSourceTypePayment,
+				SourceID:    uint64(payment.ID),
+				Reference:   payment.Code,
+				EntryDate:   payment.Date,
+				Description: journalDescription,
+				Lines:       journalLines,
+				AutoPost:    true,
+				CreatedBy:   uint64(req.UserID),
+			}
+
+			journalService := NewUnifiedJournalService(tx)
+			journalEntry, err := journalService.CreateJournalEntryWithTx(tx, journalRequest)
 			if err != nil {
-				return fmt.Errorf("failed to create journal entry: %w", err)
+				return fmt.Errorf("failed to create payment journal entry: %w", err)
 			}
 
 			// Update payment with journal entry ID
-			if journalResult.JournalEntry != nil {
-				journalEntryID := uint(journalResult.JournalEntry.ID)
-				payment.JournalEntryID = &journalEntryID
-				if err := tx.Save(payment).Error; err != nil {
-					return fmt.Errorf("failed to update payment with journal reference: %w", err)
-				}
-				log.Printf("✅ Journal entry created: %s", journalResult.JournalEntry.EntryNumber)
+			journalEntryID := uint(journalEntry.ID)
+			payment.JournalEntryID = &journalEntryID
+			if err := tx.Save(payment).Error; err != nil {
+				return fmt.Errorf("failed to update payment with journal reference: %w", err)
+			}
+			log.Printf("✅ SSOT Journal entry created: ID=%d, EntryNumber=%s", journalEntry.ID, journalEntry.EntryNumber)
+
+			// Build result for response
+			journalResult = &PaymentJournalResult{
+				Success:      true,
+				JournalEntry: journalEntry,
+				Message:      fmt.Sprintf("Journal entry %s created and posted", journalEntry.EntryNumber),
 			}
 		}
 
@@ -520,13 +636,50 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 			return fmt.Errorf("only completed payments can be reversed")
 		}
 
-		// Reverse journal entry if exists
+		// Reverse SSOT journal entry if exists
 		var journalResult *PaymentJournalResult
 		if payment.JournalEntryID != nil {
-			var err error
-			journalResult, err = eps.journalFactory.ReversePaymentJournal(uint64(payment.ID), reason, uint64(userID))
-			if err != nil {
-				return fmt.Errorf("failed to reverse journal entry: %w", err)
+			// Load original journal entry with lines
+			var originalJournal models.SSOTJournalEntry
+			if err := tx.Preload("Lines").First(&originalJournal, *payment.JournalEntryID).Error; err != nil {
+				log.Printf("⚠️ Warning: Could not load original journal entry %d for reversal: %v", *payment.JournalEntryID, err)
+			} else {
+				// Build reversed journal lines (swap debit/credit)
+				var reversalLines []JournalLineRequest
+				for _, line := range originalJournal.Lines {
+					reversalLines = append(reversalLines, JournalLineRequest{
+						AccountID:    line.AccountID,
+						DebitAmount:  line.CreditAmount, // swap
+						CreditAmount: line.DebitAmount,  // swap
+						Description:  fmt.Sprintf("Reversal - %s", line.Description),
+					})
+				}
+
+				if len(reversalLines) >= 2 {
+					reversalRequest := &JournalEntryRequest{
+						SourceType:  models.SSOTSourceTypePayment,
+						SourceID:    uint64(payment.ID),
+						Reference:   fmt.Sprintf("REV-%s", payment.Code),
+						EntryDate:   time.Now(),
+						Description: fmt.Sprintf("Reversal of %s - %s", payment.Code, reason),
+						Lines:       reversalLines,
+						AutoPost:    true,
+						CreatedBy:   uint64(userID),
+					}
+
+					journalService := NewUnifiedJournalService(tx)
+					reversalEntry, revErr := journalService.CreateJournalEntryWithTx(tx, reversalRequest)
+					if revErr != nil {
+						log.Printf("⚠️ Warning: Failed to create reversal journal entry: %v", revErr)
+					} else {
+						log.Printf("✅ Reversal journal created: ID=%d", reversalEntry.ID)
+						journalResult = &PaymentJournalResult{
+							Success:      true,
+							JournalEntry: reversalEntry,
+							Message:      fmt.Sprintf("Reversal journal %s created", reversalEntry.EntryNumber),
+						}
+					}
+				}
 			}
 		}
 
@@ -607,6 +760,99 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 }
 
 // Helper methods
+
+// resolveReceivableAccountID finds the Accounts Receivable (Piutang Usaha) GL account ID
+// using the standard fallback chain: 1102-001 → 1102 → 1201 → name search
+func (eps *EnhancedPaymentServiceWithJournal) resolveReceivableAccountID(tx *gorm.DB) (uint64, error) {
+	var account models.Account
+
+	// Try specific AR leaf account first
+	if err := tx.Where("code = ? AND deleted_at IS NULL", "1102-001").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	// Try general AR account
+	if err := tx.Where("code = ? AND deleted_at IS NULL", "1102").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	// Try legacy AR account
+	if err := tx.Where("code = ? AND deleted_at IS NULL", "1201").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	// Fallback: search by name
+	if err := tx.Where("LOWER(name) LIKE ? AND deleted_at IS NULL", "%piutang%usaha%").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	return 0, fmt.Errorf("accounts receivable (Piutang Usaha) account not found - please create account with code 1102 or 1102-001")
+}
+
+// resolvePayableAccountID finds the Accounts Payable (Utang Usaha) GL account ID
+// using the standard fallback chain: 2101-001 → 2101 → name search
+func (eps *EnhancedPaymentServiceWithJournal) resolvePayableAccountID(tx *gorm.DB) (uint64, error) {
+	var account models.Account
+
+	// Try specific AP leaf account first
+	if err := tx.Where("code = ? AND deleted_at IS NULL", "2101-001").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	// Try general AP account
+	if err := tx.Where("code = ? AND deleted_at IS NULL", "2101").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	// Fallback: search by name (hutang usaha / utang usaha)
+	if err := tx.Where("LOWER(name) LIKE ? AND deleted_at IS NULL", "%utang%usaha%").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+	if err := tx.Where("LOWER(name) LIKE ? AND deleted_at IS NULL", "%hutang%usaha%").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	return 0, fmt.Errorf("accounts payable (Utang Usaha) account not found - please create account with code 2101 or 2101-001")
+}
+
+// resolvePPHAccountID resolves the liability account for PPh withholding tax based on type.
+// Maps: PPH_21→2102-003, PPH_23→2102-004, PPH_4_2→2102-005, PPH_22→2102-006
+func (eps *EnhancedPaymentServiceWithJournal) resolvePPHAccountID(tx *gorm.DB, pphType string) (uint64, error) {
+	// Map PPh type to account code (aligned with account_templates.go base COA)
+	pphAccountCodes := map[string]struct {
+		code string
+		name string
+	}{
+		"PPH_21":  {code: "2102-003", name: "Hutang PPh Pasal 21"},
+		"PPH_23":  {code: "2102-004", name: "Hutang PPh Pasal 23"},
+		"PPH_4_2": {code: "2102-005", name: "Hutang PPh Pasal 4(2) Final"},
+		"PPH_22":  {code: "2102-006", name: "Hutang PPh Pasal 22"},
+	}
+
+	mapping, exists := pphAccountCodes[pphType]
+	if !exists {
+		return 0, fmt.Errorf("unsupported PPh type: %s (supported: PPH_21, PPH_23, PPH_4_2, PPH_22)", pphType)
+	}
+
+	// Try to find the specific PPh account
+	var account models.Account
+	if err := tx.Where("code = ? AND deleted_at IS NULL", mapping.code).First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	// Try parent account 2102 (Utang Pajak) as fallback
+	if err := tx.Where("code = ? AND deleted_at IS NULL", "2102").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	// Fallback: search by name
+	if err := tx.Where("LOWER(name) LIKE ? AND deleted_at IS NULL", "%hutang%pph%").First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	return 0, fmt.Errorf("PPh liability account %s (%s) not found - please create it in Chart of Accounts under code %s",
+		mapping.name, mapping.code, mapping.code)
+}
 
 // applyCashBankMovement updates cash_banks.balance and records a CashBankTransaction for the payment
 // without generating additional journal entries (SSOT already handled journal posting).

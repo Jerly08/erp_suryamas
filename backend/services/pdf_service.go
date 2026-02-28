@@ -3011,26 +3011,72 @@ func (p *PDFService) GeneratePaymentDetailPDF(data interface{}) ([]byte, error) 
 
 	subtotal := 0.0
 	if len(allocations) == 0 {
-		// Single line fallback
-		pdf.CellFormat(numW, 6, "1", "1", 0, "C", false, 0, "")
-		desc := "Payment transaction"
+		// Check if this is an expense payment with PPh
+		if payment.PPHAmount > 0 && payment.PPHType != "" {
+			// === PPh Expense Payment: show 3-line breakdown ===
+			grossAmount := payment.Amount // Amount stored IS already the gross expense amount
 
-		// Check if this is a PPN payment
-		if payment.PaymentType == models.PaymentTypeTaxPPN ||
-			payment.PaymentType == models.PaymentTypeTaxPPNInput ||
-			payment.PaymentType == models.PaymentTypeTaxPPNOutput ||
-			strings.HasPrefix(payment.Code, "SETOR-PPN") {
-			desc = "Setor PPN ke Negara (Tax Remittance to Government)"
-		} else if strings.ToUpper(payment.Contact.Type) == "CUSTOMER" {
-			desc = "Payment received"
+			// Determine PPh label from type
+			pphLabel := "PPh"
+			switch payment.PPHType {
+			case "PPH_21":
+				pphLabel = "PPh Pasal 21"
+			case "PPH_23":
+				pphLabel = "PPh Pasal 23"
+			case "PPH_4_2":
+				pphLabel = "PPh Pasal 4(2) Final"
+			case "PPH_22":
+				pphLabel = "PPh Pasal 22"
+			}
+
+			// Line 1: Beban (Bruto)
+			pdf.CellFormat(numW, 6, "1", "1", 0, "C", false, 0, "")
+			pdf.CellFormat(descW, 6, fmt.Sprintf("Beban / Expense (Bruto)"), "1", 0, "L", false, 0, "")
+			pdf.CellFormat(amtW, 6, p.formatRupiah(grossAmount), "1", 0, "R", false, 0, "")
+			pdf.Ln(6)
+
+			// Line 2: PPh Dipotong (deduction - shown as negative)
+			pdf.SetTextColor(220, 53, 69)
+			pdf.CellFormat(numW, 6, "2", "1", 0, "C", false, 0, "")
+			pdf.CellFormat(descW, 6, fmt.Sprintf("%s Dipotong (%.1f%%)", pphLabel, payment.PPHRate), "1", 0, "L", false, 0, "")
+			pdf.CellFormat(amtW, 6, fmt.Sprintf("- %s", p.formatRupiah(payment.PPHAmount)), "1", 0, "R", false, 0, "")
+			pdf.Ln(6)
+			pdf.SetTextColor(102, 102, 102) // Reset color
+
+			// Line 3: Total Dibayarkan (Neto)
+			netAmount := grossAmount - payment.PPHAmount
+			pdf.SetFont("Arial", "B", 8)
+			pdf.SetTextColor(40, 167, 69)
+			pdf.CellFormat(numW, 6, "3", "1", 0, "C", false, 0, "")
+			pdf.CellFormat(descW, 6, "Jumlah Dibayarkan (Neto)", "1", 0, "L", false, 0, "")
+			pdf.CellFormat(amtW, 6, p.formatRupiah(netAmount), "1", 0, "R", false, 0, "")
+			pdf.Ln(6)
+			pdf.SetFont("Arial", "", 8)
+			pdf.SetTextColor(102, 102, 102) // Reset
+
+			subtotal = grossAmount
 		} else {
-			desc = "Payment made"
-		}
+			// Single line fallback (no PPh)
+			pdf.CellFormat(numW, 6, "1", "1", 0, "C", false, 0, "")
+			desc := "Payment transaction"
 
-		pdf.CellFormat(descW, 6, desc, "1", 0, "L", false, 0, "")
-		pdf.CellFormat(amtW, 6, p.formatRupiah(payment.Amount), "1", 0, "R", false, 0, "")
-		pdf.Ln(6)
-		subtotal = payment.Amount
+			// Check if this is a PPN payment
+			if payment.PaymentType == models.PaymentTypeTaxPPN ||
+				payment.PaymentType == models.PaymentTypeTaxPPNInput ||
+				payment.PaymentType == models.PaymentTypeTaxPPNOutput ||
+				strings.HasPrefix(payment.Code, "SETOR-PPN") {
+				desc = "Setor PPN ke Negara (Tax Remittance to Government)"
+			} else if strings.ToUpper(payment.Contact.Type) == "CUSTOMER" {
+				desc = "Payment received"
+			} else {
+				desc = "Payment made"
+			}
+
+			pdf.CellFormat(descW, 6, desc, "1", 0, "L", false, 0, "")
+			pdf.CellFormat(amtW, 6, p.formatRupiah(payment.Amount), "1", 0, "R", false, 0, "")
+			pdf.Ln(6)
+			subtotal = payment.Amount
+		}
 	} else {
 		for i, alloc := range allocations {
 			rowNo := strconv.Itoa(i + 1)
@@ -3060,14 +3106,48 @@ func (p *PDFService) GeneratePaymentDetailPDF(data interface{}) ([]byte, error) 
 	pdf.Ln(5)
 	pdf.SetFont("Arial", "B", 10)
 	pdf.SetTextColor(0, 0, 0)
-	pdf.Cell(contentW-50, 6, "")
-	pdf.Cell(25, 6, "Subtotal:")
-	pdf.Cell(25, 6, p.formatRupiah(subtotal))
-	pdf.Ln(6)
-	pdf.SetFont("Arial", "B", 12)
-	pdf.Cell(contentW-50, 8, "")
-	pdf.Cell(25, 8, "TOTAL:")
-	pdf.Cell(25, 8, p.formatRupiah(payment.Amount))
+
+	if payment.PPHAmount > 0 && payment.PPHType != "" {
+		// PPh summary: show Subtotal → PPh → Total Dibayarkan
+		grossAmount := payment.Amount // payment.Amount IS the gross amount
+		netAmount := grossAmount - payment.PPHAmount
+
+		pdf.Cell(contentW-50, 6, "")
+		pdf.Cell(25, 6, "Subtotal:")
+		pdf.Cell(25, 6, p.formatRupiah(grossAmount))
+		pdf.Ln(6)
+
+		// PPh line
+		pphLabel := fmt.Sprintf("PPh (%s):", payment.PPHType)
+		pdf.SetFont("Arial", "", 10)
+		pdf.SetTextColor(220, 53, 69)
+		pdf.Cell(contentW-50, 6, "")
+		pdf.Cell(25, 6, pphLabel)
+		pdf.Cell(25, 6, fmt.Sprintf("- %s", p.formatRupiah(payment.PPHAmount)))
+		pdf.Ln(6)
+
+		// Total Dibayarkan
+		pdf.SetFont("Arial", "B", 12)
+		pdf.SetTextColor(0, 0, 0)
+		pdf.Cell(contentW-50, 8, "")
+		pdf.Cell(25, 8, "TOTAL:")
+		pdf.Cell(25, 8, p.formatRupiah(netAmount))
+		pdf.Ln(5)
+		pdf.SetFont("Arial", "I", 8)
+		pdf.SetTextColor(102, 102, 102)
+		pdf.Cell(contentW, 4, "(Jumlah yang dibayarkan setelah pemotongan pajak)")
+		pdf.SetTextColor(0, 0, 0)
+	} else {
+		// Standard summary (no PPh)
+		pdf.Cell(contentW-50, 6, "")
+		pdf.Cell(25, 6, "Subtotal:")
+		pdf.Cell(25, 6, p.formatRupiah(subtotal))
+		pdf.Ln(6)
+		pdf.SetFont("Arial", "B", 12)
+		pdf.Cell(contentW-50, 8, "")
+		pdf.Cell(25, 8, "TOTAL:")
+		pdf.Cell(25, 8, p.formatRupiah(payment.Amount))
+	}
 	pdf.Ln(12)
 
 	// Extra info

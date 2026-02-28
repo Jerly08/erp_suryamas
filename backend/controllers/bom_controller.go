@@ -21,8 +21,14 @@ func NewBOMController(db *gorm.DB) *BOMController {
 func (bc *BOMController) GetBOMs(c *gin.Context) {
 	var boms []models.BOM
 
+	query := bc.DB.Preload("TargetProduct").Preload("Items.ComponentProduct")
+
+	if targetProductID := c.Query("target_product_id"); targetProductID != "" {
+		query = query.Where("target_product_id = ?", targetProductID)
+	}
+
 	// Preload the target product to show in listings
-	if err := bc.DB.Preload("TargetProduct").Preload("Items").Find(&boms).Error; err != nil {
+	if err := query.Find(&boms).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch BOMs"})
 		return
 	}
@@ -70,17 +76,19 @@ func (bc *BOMController) CreateBOM(c *gin.Context) {
 				return err
 			}
 
-			// Calculation
-			itemTotalCost := itemPayload.RequirementQuantity * itemPayload.UnitPrice
+			// Always use DB price — never trust frontend-supplied unit_price
+			// This prevents price manipulation via raw API requests
+			actualUnitPrice := componentProduct.PurchasePrice
+			itemTotalCost := itemPayload.RequirementQuantity * actualUnitPrice
 			totalCost += itemTotalCost
 
 			items = append(items, models.BOMItem{
 				ComponentProductID:  itemPayload.ComponentProductID,
 				CategoryStr:         itemPayload.CategoryStr,
-				BaseQuantity:        itemPayload.BaseQuantity,
+				BaseQuantity:        float64(componentProduct.Stock), // snapshot stok saat BOM dibuat
 				BaseUnit:            itemPayload.BaseUnit,
 				Notes:               itemPayload.Notes,
-				UnitPrice:           itemPayload.UnitPrice,
+				UnitPrice:           actualUnitPrice, // dari DB, bukan dari frontend
 				RequirementQuantity: itemPayload.RequirementQuantity,
 				TotalCost:           itemTotalCost,
 			})
@@ -94,13 +102,16 @@ func (bc *BOMController) CreateBOM(c *gin.Context) {
 		}
 
 		// Create BOM
+		// TotalCost = sum(RequirementQty * UnitPrice) = cost to produce 1 unit.
+		// TargetQuantity is the batch size (how many units per production run).
+		// It does NOT affect unit cost — it is used downstream for procurement scaling.
 		bom := models.BOM{
 			Code:            payload.Code,
 			TargetProductID: payload.TargetProductID,
 			TargetQuantity:  payload.TargetQuantity,
 			Name:            payload.Name,
 			Description:     payload.Description,
-			TotalCost:       totalCost,
+			TotalCost:       totalCost, // cost per 1 output unit
 			Items:           items,
 		}
 
@@ -108,7 +119,7 @@ func (bc *BOMController) CreateBOM(c *gin.Context) {
 			return err
 		}
 
-		// Update target product's cost price
+		// Update target product's cost price to match BOM unit cost
 		if err := tx.Model(&targetProduct).Updates(map[string]interface{}{
 			"cost_price":     totalCost,
 			"purchase_price": totalCost,
@@ -125,6 +136,115 @@ func (bc *BOMController) CreateBOM(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": "BOM created successfully"})
+}
+
+// UpdateBOM updates an existing Master BOM Template
+func (bc *BOMController) UpdateBOM(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid BOM ID"})
+		return
+	}
+
+	var payload models.BOMCreateRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check BOM exists
+	var existingBOM models.BOM
+	if err := bc.DB.First(&existingBOM, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "BOM not found"})
+		return
+	}
+
+	// Validate Target Product exists
+	var targetProduct models.Product
+	if err := bc.DB.First(&targetProduct, payload.TargetProductID).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Target product not found"})
+		return
+	}
+
+	err = bc.DB.Transaction(func(tx *gorm.DB) error {
+		// Delete old items first
+		if err := tx.Where("bom_id = ?", id).Delete(&models.BOMItem{}).Error; err != nil {
+			return err
+		}
+
+		// Calculate total cost from items
+		var totalCost float64 = 0
+		var items []models.BOMItem
+
+		for _, itemPayload := range payload.Items {
+			// Validate component product exists
+			var componentProduct models.Product
+			if err := tx.First(&componentProduct, itemPayload.ComponentProductID).Error; err != nil {
+				return err
+			}
+
+			// Always use DB price — never trust frontend-supplied unit_price
+			actualUnitPrice := componentProduct.PurchasePrice
+			itemTotalCost := itemPayload.RequirementQuantity * actualUnitPrice
+			totalCost += itemTotalCost
+
+			items = append(items, models.BOMItem{
+				BOMID:               uint(id),
+				ComponentProductID:  itemPayload.ComponentProductID,
+				CategoryStr:         itemPayload.CategoryStr,
+				BaseQuantity:        float64(componentProduct.Stock),
+				BaseUnit:            itemPayload.BaseUnit,
+				Notes:               itemPayload.Notes,
+				UnitPrice:           actualUnitPrice,
+				RequirementQuantity: itemPayload.RequirementQuantity,
+				TotalCost:           itemTotalCost,
+			})
+		}
+
+		// Calculate percentages
+		for i := range items {
+			if totalCost > 0 {
+				items[i].CostPercentage = (items[i].TotalCost / totalCost) * 100
+			}
+		}
+
+		// Create new items
+		if len(items) > 0 {
+			if err := tx.Create(&items).Error; err != nil {
+				return err
+			}
+		}
+
+		// Update BOM header
+		if err := tx.Model(&existingBOM).Updates(map[string]interface{}{
+			"code":              payload.Code,
+			"target_product_id": payload.TargetProductID,
+			"target_quantity":   payload.TargetQuantity,
+			"name":              payload.Name,
+			"description":       payload.Description,
+			"total_cost":        totalCost,
+		}).Error; err != nil {
+			return err
+		}
+
+		// Update target product's cost price to match BOM unit cost
+		if err := tx.Model(&targetProduct).Updates(map[string]interface{}{
+			"cost_price":     totalCost,
+			"purchase_price": totalCost,
+		}).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update BOM: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "BOM updated successfully"})
 }
 
 // DeleteBOM deletes a BOM

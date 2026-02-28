@@ -3,6 +3,7 @@ package controllers
 import (
 	"app-sistem-akuntansi/models"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -28,7 +29,18 @@ func (bpc *BOMProcurementController) GeneratePR(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	userID := uint(userIDVal.(float64))
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case uint64:
+		userID = uint(v)
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID type in context"})
+		return
+	}
 
 	var project models.Project
 	if err := bpc.DB.First(&project, projectID).Error; err != nil {
@@ -86,10 +98,10 @@ func (bpc *BOMProcurementController) GeneratePR(c *gin.Context) {
 
 				prItems = append(prItems, models.PurchaseRequestItem{
 					ProductID:           product.ID,
-					Quantity:            int(shortage), // Assuming PR deals in whole units for now, if it needs floats, Product struct needs update first
+					Quantity:            int(math.Ceil(shortage)), // Round up to ensure enough is purchased (0.7 → 1)
 					EstimatedPrice:      itemEstimatedPrice,
 					TotalEstimatedPrice: itemTotal,
-					Notes:               "Auto-Procurement from Project BOM: " + req.Notes,
+					Notes:               "Auto-Procurement dari Project BOM: " + req.Notes,
 				})
 			}
 		}
@@ -98,12 +110,13 @@ func (bpc *BOMProcurementController) GeneratePR(c *gin.Context) {
 			return fmt.Errorf("all required BOM components are already fully stocked in the warehouse")
 		}
 
-		// 3. Create Draft Purchase Request
+		// 3. Create Purchase Request (directly as PENDING_APPROVAL for auto-procurement flow)
 		now := time.Now()
 		projectIDUint := project.ID
 
-		// Generate PR Number (e.g., PR-YYYYMMDD-ProjectCode)
-		prNumber := fmt.Sprintf("PR-%s-%s", now.Format("20060102"), project.Code)
+		// Generate PR Number with Unix timestamp suffix to prevent daily collision
+		// e.g. PR-20260227-PROJ001-1740589366
+		prNumber := fmt.Sprintf("PR-%s-%s-%d", now.Format("20060102"), project.Code, now.Unix())
 
 		newPR := models.PurchaseRequest{
 			PRNumber:             prNumber,
@@ -111,8 +124,8 @@ func (bpc *BOMProcurementController) GeneratePR(c *gin.Context) {
 			Department:           "Projects",
 			ProjectID:            &projectIDUint,
 			TotalEstimatedAmount: totalEstimatedAmount,
-			Status:               models.PRStatusDraft,
-			Notes:                fmt.Sprintf("Auto-generated PR for Project: %s to fulfill BOM shortages", project.Name),
+			Status:               models.PRStatusPendingApproval, // Auto-generated PRs go directly to approval queue
+			Notes:                fmt.Sprintf("Auto-generated PR untuk Project: %s (dari BOM shortage)", project.Name),
 			Items:                prItems,
 		}
 

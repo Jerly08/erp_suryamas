@@ -11,6 +11,7 @@ export interface Project {
     end_date: string | null;
     total_budget: number;
     total_actual_cost: number;
+    total_sales_revenue: number;
     manager_id: number | null;
     created_at: string;
     updated_at: string;

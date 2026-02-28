@@ -194,17 +194,10 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 	// For legacy compatibility, set TaxAmount to PPN amount
 	purchase.TaxAmount = purchase.PPNAmount
 
-	// Set payment amounts based on payment method
-	if isImmediatePayment(purchase.PaymentMethod) {
-		// For cash/transfer purchases - fully paid
-		purchase.PaidAmount = purchase.TotalAmount
-		purchase.OutstandingAmount = 0
-	} else {
-		// For credit purchases - outstanding amount
-		purchase.PaidAmount = 0
-		purchase.OutstandingAmount = purchase.TotalAmount
-	}
-	// Final sanitize
+	// NOTE: OutstandingAmount and PaidAmount are NOT set here.
+	// They remain 0 until the purchase is APPROVED (set by OnPurchaseApproved).
+	// Before approval, no financial obligation exists, so Sisa should be 0.
+	// Final sanitize (keep existing values if already set by approval)
 	purchase.PaidAmount = sanitizeFloat(clampNonNegative(purchase.PaidAmount))
 	purchase.OutstandingAmount = sanitizeFloat(clampNonNegative(purchase.OutstandingAmount))
 
@@ -297,6 +290,18 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 
 	// For legacy compatibility, set TaxAmount to PPN amount
 	purchase.TaxAmount = purchase.PPNAmount
+
+	// CRITICAL FIX: If purchase is NOT yet approved, OutstandingAmount and PaidAmount
+	// should be 0. These are only set during OnPurchaseApproved.
+	// This also fixes existing purchases created before the fix.
+	approvedStatuses := map[string]bool{
+		models.PurchaseStatusApproved:  true,
+		models.PurchaseStatusCompleted: true,
+	}
+	if !approvedStatuses[purchase.Status] {
+		purchase.OutstandingAmount = 0
+		purchase.PaidAmount = 0
+	}
 
 	return nil
 }

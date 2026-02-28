@@ -49,7 +49,9 @@ func (rm *RBACManager) RequireRole(roles ...string) gin.HandlerFunc {
 	}
 }
 
-// RequirePermission checks if user has specific permission
+// RequirePermission checks if user has specific permission for a resource.
+// Uses per-user ModulePermissionRecord first, then falls back to role-based defaults.
+// Does NOT depend on the legacy role_permissions/permissions tables.
 func (rm *RBACManager) RequirePermission(resource, action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole, exists := c.Get("role")
@@ -62,7 +64,7 @@ func (rm *RBACManager) RequirePermission(resource, action string) gin.HandlerFun
 			return
 		}
 
-		// Try to get user_id for per-user Manage Permission (module-level) override
+		// Get user_id for per-user permission override
 		var userID uint
 		if v, ok := c.Get("user_id"); ok {
 			switch t := v.(type) {
@@ -78,64 +80,16 @@ func (rm *RBACManager) RequirePermission(resource, action string) gin.HandlerFun
 		roleStr := userRole.(string)
 		permissionName := resource + ":" + action
 
-		// 1) Primary: if user has a module permission record in settings, use it
-		if userID != 0 {
-			if exists, err := rm.userModuleRecordExists(userID, resource); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": "Error checking user permissions",
-					"code":  "PERMISSION_CHECK_ERROR",
-				})
-				c.Abort()
-				return
-			} else if exists {
-				ok, err := rm.userHasModulePermission(userID, roleStr, resource, action)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"error": "Error checking user permissions",
-						"code":  "PERMISSION_CHECK_ERROR",
-					})
-					c.Abort()
-					return
-				}
-				if !ok {
-					c.JSON(http.StatusForbidden, gin.H{
-						"error":               "Insufficient permissions",
-						"code":                "INSUFFICIENT_PERMISSION",
-						"required_permission": permissionName,
-						"user_role":           roleStr,
-					})
-					c.Abort()
-					return
-				}
-				// Allowed via Manage Permission
-				c.Next()
-				return
-			}
-		}
-
-		// 2) Role permission table check
-		hasPermission, err := rm.hasPermission(roleStr, permissionName)
+		// userHasModulePermission checks per-user module_permission_records first,
+		// then falls back to GetDefaultPermissions(role) — covers all cases.
+		hasPermission, err := rm.userHasModulePermission(userID, roleStr, resource, action)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Error checking permissions",
+				"error": "Error checking user permissions",
 				"code":  "PERMISSION_CHECK_ERROR",
 			})
 			c.Abort()
 			return
-		}
-
-		// 3) If role table denies, fallback to role-based module defaults
-		if !hasPermission {
-			ok, err := rm.userHasModulePermission(userID, roleStr, resource, action)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": "Error checking user permissions",
-					"code":  "PERMISSION_CHECK_ERROR",
-				})
-				c.Abort()
-				return
-			}
-			hasPermission = ok
 		}
 
 		if !hasPermission {
@@ -517,14 +471,18 @@ func (rm *RBACManager) hasPermission(role, permissionName string) (bool, error) 
 	resource := parts[0]
 	action := parts[1]
 
-	// Check if role has the specific permission
+	// Check if role has the specific permission in role_permissions table.
+	// If the table doesn't exist yet, gracefully return false (no permission)
+	// so the caller can fall back to userHasModulePermission() defaults.
 	err := rm.DB.Table("role_permissions rp").
 		Joins("JOIN permissions p ON rp.permission_id = p.id").
 		Where("rp.role = ? AND p.resource = ? AND p.action = ?", role, resource, action).
 		Count(&count).Error
 
 	if err != nil {
-		return false, err
+		// Table may not exist — treat as "no permission found via role table",
+		// let the caller fall back to module-level defaults.
+		return false, nil
 	}
 
 	return count > 0, nil

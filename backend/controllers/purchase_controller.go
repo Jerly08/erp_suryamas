@@ -69,10 +69,6 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 		requiresApproval = &val
 	}
 
-	// Get user role and ID from context
-	userRole, _ := c.Get("role")
-	userID, _ := c.Get("user_id")
-
 	filter := models.PurchaseFilter{
 		Status:           status,
 		VendorID:         vendorID,
@@ -86,12 +82,8 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 		Limit:            limit,
 	}
 
-	// RBAC: Employee role can only see their own purchases
-	if userRole != nil && userRole.(string) == models.RoleEmployee {
-		if userID != nil {
-			filter.UserID = userID.(uint)
-		}
-	}
+	// All roles can view all purchases in the list
+	// Edit/delete restrictions are enforced at individual operation endpoints
 
 	result, err := pc.purchaseService.GetPurchases(filter)
 	if err != nil {
@@ -357,12 +349,29 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 	}
 
 	if purchase.Status == models.PurchaseStatusDraft {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":           "Cannot approve DRAFT purchase - please submit for approval first",
-			"current_status":  purchase.Status,
-			"required_action": "Use 'Submit for Approval' button first",
-		})
-		return
+		roleNorm := strings.ToLower(strings.TrimSpace(userRole))
+		if roleNorm == "finance" || roleNorm == "admin" || roleNorm == "director" {
+			// Auto-submit the purchase for approval
+			if err := pc.purchaseService.SubmitForApproval(uint(id), userID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Failed to auto-submit purchase for approval: %v", err),
+				})
+				return
+			}
+			// Reload purchase after submission
+			purchase, err = pc.purchaseService.GetPurchaseByID(uint(id))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reload purchase after submission"})
+				return
+			}
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":           "Cannot approve DRAFT purchase - please submit for approval first",
+				"current_status":  purchase.Status,
+				"required_action": "Use 'Submit for Approval' button first",
+			})
+			return
+		}
 	}
 
 	// Parse request body to check for escalation

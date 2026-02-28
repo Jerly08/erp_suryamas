@@ -2487,7 +2487,7 @@
     "form": {
       "contact": "Contact",
       "contactTooltip": "Select a vendor or contact for this payment",
-      "contactHelper": "Select the vendor for this expense payment",
+      "contactHelper": "Select recipient contact (vendor, employee, etc)",
       "contactRequired": "Contact is required",
       "paymentDate": "Payment Date",
       "dateRequired": "Date is required",

@@ -53,6 +53,8 @@ func (pbc *ProjectBOMController) AddBOMToProject(c *gin.Context) {
 		}
 
 		// 2. Create ProjectBOM Snapshot
+		// BOM.TotalCost = biaya per 1 unit (Cost / Unit di halaman Master BOM).
+		// Proyek butuh payload.Quantity unit → TotalCost = BOM.TotalCost * Quantity.
 		projectBOM := models.ProjectBOM{
 			ProjectID:       uint(projectID),
 			BOMID:           masterBOM.ID,
@@ -60,7 +62,7 @@ func (pbc *ProjectBOMController) AddBOMToProject(c *gin.Context) {
 			TargetProductID: masterBOM.TargetProductID,
 			Quantity:        payload.Quantity,
 			UnitCost:        masterBOM.TotalCost,
-			TotalCost:       float64(payload.Quantity) * masterBOM.TotalCost,
+			TotalCost:       masterBOM.TotalCost * float64(payload.Quantity),
 		}
 
 		if err := tx.Create(&projectBOM).Error; err != nil {
@@ -68,6 +70,8 @@ func (pbc *ProjectBOMController) AddBOMToProject(c *gin.Context) {
 		}
 
 		// 3. Create ProjectBOMItem Snapshots
+		// RequirementQuantity sudah per unit (karena BOM.TotalCost = sum item costs = cost per unit).
+		// Total kebutuhan untuk proyek = RequirementQuantity * payload.Quantity.
 		for _, masterItem := range masterBOM.Items {
 			reqQty := masterItem.RequirementQuantity * float64(payload.Quantity)
 			totalItemCost := reqQty * masterItem.UnitPrice

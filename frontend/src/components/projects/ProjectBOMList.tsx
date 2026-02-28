@@ -31,6 +31,11 @@ import {
     AlertTitle,
     AlertDescription,
     Divider,
+    NumberInput,
+    NumberInputField,
+    NumberInputStepper,
+    NumberIncrementStepper,
+    NumberDecrementStepper,
 } from '@chakra-ui/react';
 import { FiPlus, FiTrash2, FiShoppingCart, FiEye } from 'react-icons/fi';
 import { projectBOMService, bomService } from '@/services/bomService';
@@ -50,12 +55,20 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
     const [bomOptions, setBomOptions] = useState<{ id: string | number; name: string }[]>([]);
     const [loading, setLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isGeneratingPR, setIsGeneratingPR] = useState(false);
     const toast = useToast();
 
     const { isOpen, onOpen, onClose } = useDisclosure();
 
     const [selectedBomId, setSelectedBomId] = useState<number>(0);
-    const [quantity, setQuantity] = useState<number>(1);
+    const [unitQuantity, setUnitQuantity] = useState<number>(1);
+
+    // Derived: find selected BOM info for display
+    const selectedBom = availableBOMs.find(b => b.id === selectedBomId);
+
+    // total_cost di BOM = biaya per 1 unit
+    const costPerUnit = selectedBom?.total_cost || 0;
+    const totalCostPreview = costPerUnit * unitQuantity;
 
     useEffect(() => {
         fetchProjectBOMs();
@@ -88,7 +101,10 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
             if (response.success && response.data) {
                 setAvailableBOMs(response.data);
                 setBomOptions(
-                    response.data.map((bom) => ({ id: bom.id, name: `${bom.code} - ${bom.name}` }))
+                    response.data.map((bom) => ({
+                        id: bom.id,
+                        name: `${bom.code} - ${bom.name} → ${bom.target_quantity ?? 1} unit`
+                    }))
                 );
             }
         } catch (error) {
@@ -97,14 +113,14 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
     };
 
     const handleAddBOM = async () => {
-        if (!selectedBomId || quantity < 1) return;
+        if (!selectedBomId || unitQuantity < 1) return;
         setIsSubmitting(true);
         try {
-            await projectBOMService.addBOMToProject(projectId, { bom_id: selectedBomId, quantity });
+            await projectBOMService.addBOMToProject(projectId, { bom_id: selectedBomId, quantity: unitQuantity });
             toast({ title: 'BOM added to project successfully', status: 'success' });
             onClose();
             fetchProjectBOMs();
-            onBudgetUpdated(); // Notify parent to refresh total project budget
+            onBudgetUpdated();
         } catch (error: any) {
             toast({
                 title: 'Failed to add BOM',
@@ -134,27 +150,29 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
 
     const handleGeneratePR = async () => {
         try {
-            setIsSubmitting(true);
+            setIsGeneratingPR(true);
             await projectBOMService.generatePR(projectId);
             toast({
-                title: 'Procurement triggered',
-                description: 'Mocking PR creation as Auto-Procurement generates draft Purchase Requests in the backend. You can find them in the Purchase Request menu.',
+                title: 'Purchase Request berhasil dibuat',
+                description: 'Draft PR telah dibuat dari BOM shortages. Silakan cek menu Purchase Request untuk review dan approval.',
                 status: 'success',
                 duration: 5000,
             });
         } catch (error: any) {
             toast({
                 title: 'Auto-Procurement Check',
-                description: error.message, // "all required BOM components are already fully stocked in the warehouse"
-                status: error.message.includes('fully stocked') ? 'info' : 'warning',
+                description: error.message,
+                status: error.message?.includes('fully stocked') ? 'info' : 'warning',
                 duration: 5000,
             });
         } finally {
-            setIsSubmitting(false);
+            setIsGeneratingPR(false);
         }
     };
 
     const totalAddedBudget = projectBOMs.reduce((sum, pbom) => sum + pbom.total_cost, 0);
+
+    const formatIDR = (value: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(value);
 
     return (
         <Box>
@@ -168,7 +186,8 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                             size="sm"
                             variant="outline"
                             onClick={handleGeneratePR}
-                            isLoading={isSubmitting}
+                            isLoading={isGeneratingPR}
+                            loadingText="Checking..."
                         >
                             Generate PR (Stock Check)
                         </Button>
@@ -180,7 +199,7 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                             size="sm"
                             onClick={() => {
                                 setSelectedBomId(0);
-                                setQuantity(1);
+                                setUnitQuantity(1);
                                 onOpen();
                             }}
                         >
@@ -204,8 +223,8 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                     <Thead bg="gray.100">
                         <Tr>
                             <Th>Template Name</Th>
-                            <Th isNumeric>Quantity Req.</Th>
-                            <Th isNumeric>Unit Base Cost</Th>
+                            <Th isNumeric>Qty (Unit)</Th>
+                            <Th isNumeric>Cost / Unit</Th>
                             <Th isNumeric>Total Cost</Th>
                             <Th width="80px">Actions</Th>
                         </Tr>
@@ -219,7 +238,9 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                             projectBOMs.map((pb) => (
                                 <Tr key={pb.id}>
                                     <Td fontWeight="medium">{pb.bom_name}</Td>
-                                    <Td isNumeric>{pb.quantity}</Td>
+                                    <Td isNumeric>
+                                        <Text fontWeight="medium">{pb.quantity} unit</Text>
+                                    </Td>
                                     <Td isNumeric>{formatCurrencyDetailed(pb.unit_cost)}</Td>
                                     <Td isNumeric fontWeight="bold" color="blue.600">{formatCurrencyDetailed(pb.total_cost)}</Td>
                                     <Td>
@@ -259,24 +280,63 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                                 <SearchableSelect
                                     options={bomOptions}
                                     value={selectedBomId ? selectedBomId.toString() : ''}
-                                    onChange={(val) => setSelectedBomId(typeof val === 'string' ? parseInt(val) : (val as number))}
+                                    onChange={(val) => {
+                                        setSelectedBomId(typeof val === 'string' ? parseInt(val) : (val as number));
+                                        setUnitQuantity(1);
+                                    }}
                                     placeholder="Select template..."
                                 />
                             </FormControl>
-                            <FormControl isRequired>
-                                <FormLabel>Deployment Quantity</FormLabel>
-                                <Input
-                                    type="number"
-                                    min={1}
-                                    value={quantity}
-                                    onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
-                                />
-                            </FormControl>
+
+                            {selectedBom && (
+                                <>
+                                    <FormControl isRequired>
+                                        <FormLabel>Jumlah Unit</FormLabel>
+                                        <NumberInput
+                                            min={1}
+                                            max={9999}
+                                            value={unitQuantity}
+                                            onChange={(_, val) => setUnitQuantity(val || 1)}
+                                        >
+                                            <NumberInputField />
+                                            <NumberInputStepper>
+                                                <NumberIncrementStepper />
+                                                <NumberDecrementStepper />
+                                            </NumberInputStepper>
+                                        </NumberInput>
+                                    </FormControl>
+
+                                    <Box w="100%" p={3} bg="blue.50" borderRadius="md" borderWidth="1px" borderColor="blue.200">
+                                        <VStack spacing={1} align="stretch">
+                                            <HStack justify="space-between">
+                                                <Text fontSize="sm" color="blue.700">Cost / Unit:</Text>
+                                                <Text fontSize="sm" color="blue.700">
+                                                    {formatIDR(costPerUnit)}
+                                                </Text>
+                                            </HStack>
+                                            <Divider borderColor="blue.200" />
+                                            <HStack justify="space-between">
+                                                <Text fontSize="sm" fontWeight="bold" color="blue.800">Total ({unitQuantity} unit):</Text>
+                                                <Text fontSize="md" fontWeight="bold" color="blue.800">
+                                                    {formatIDR(totalCostPreview)}
+                                                </Text>
+                                            </HStack>
+                                        </VStack>
+                                    </Box>
+                                </>
+                            )}
                         </VStack>
                     </ModalBody>
                     <ModalFooter>
                         <Button variant="ghost" mr={3} onClick={onClose} isDisabled={isSubmitting}>Cancel</Button>
-                        <Button colorScheme="blue" onClick={handleAddBOM} isLoading={isSubmitting}>Add to Project</Button>
+                        <Button
+                            colorScheme="blue"
+                            onClick={handleAddBOM}
+                            isLoading={isSubmitting}
+                            isDisabled={!selectedBomId || unitQuantity < 1}
+                        >
+                            Add to Project
+                        </Button>
                     </ModalFooter>
                 </ModalContent>
             </Modal>

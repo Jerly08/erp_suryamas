@@ -310,7 +310,9 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			if err := dbToUse.First(&revAcc, accID).Error; err == nil && revAcc.IsHeader {
 				log.Printf("⚠️ [SSOT] SaleItem #%d has header revenue account %s (ID=%d), finding leaf", item.ID, revAcc.Code, revAcc.ID)
 				var leafAcc models.Account
-				if err := dbToUse.Where("parent_id = ? AND is_header = false AND deleted_at IS NULL", revAcc.ID).First(&leafAcc).Error; err == nil {
+				// Order by code ASC to deterministically pick the primary revenue child (e.g., 4101-001)
+				// instead of random child (could be 4102 Retur & Potongan Penjualan)
+				if err := dbToUse.Where("parent_id = ? AND is_header = false AND deleted_at IS NULL", revAcc.ID).Order("code ASC").First(&leafAcc).Error; err == nil {
 					accID = uint64(leafAcc.ID)
 					log.Printf("✅ [SSOT] Redirected to leaf account %s (ID=%d)", leafAcc.Code, leafAcc.ID)
 				} else {

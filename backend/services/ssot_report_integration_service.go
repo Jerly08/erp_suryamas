@@ -885,7 +885,7 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 		FROM unified_journal_lines sjl
 		JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 		LEFT JOIN accounts a ON a.id = sjl.account_id
-		WHERE sje.entry_date <= ?
+		WHERE DATE(sje.entry_date) <= ?
 			AND sje.status = ?
 			AND UPPER(sje.source_type) != 'CLOSING'
 		GROUP BY sjl.account_id, a.code, a.name
@@ -1006,7 +1006,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			LEFT JOIN accounts a ON a.id = sjl.account_id
 			WHERE sje.status = ? 
-				AND sje.entry_date BETWEEN ? AND ?
+				AND DATE(sje.entry_date) BETWEEN ? AND ?
 				AND UPPER(sje.source_type) != 'CLOSING'
 				AND sje.id IN (
 					SELECT DISTINCT sjl2.journal_id 
@@ -1035,7 +1035,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			LEFT JOIN accounts a ON a.id = sjl.account_id
 			WHERE sje.status = ? 
-				AND sje.entry_date BETWEEN ? AND ?
+				AND DATE(sje.entry_date) BETWEEN ? AND ?
 				AND UPPER(sje.source_type) != 'CLOSING'
 			ORDER BY sje.entry_date, sje.id, sjl.line_number
 		`

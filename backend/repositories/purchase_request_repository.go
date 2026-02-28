@@ -39,7 +39,7 @@ func (r *purchaseRequestRepository) GetByID(id uint) (*models.PurchaseRequest, e
 
 func (r *purchaseRequestRepository) GetAll(department string, status string) ([]models.PurchaseRequest, error) {
 	var prs []models.PurchaseRequest
-	query := r.db.Preload("Requester").Preload("Project")
+	query := r.db.Preload("Requester").Preload("Project").Preload("Items").Preload("Items.Product")
 
 	if department != "" {
 		query = query.Where("department = ?", department)

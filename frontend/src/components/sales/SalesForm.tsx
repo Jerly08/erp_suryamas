@@ -38,6 +38,7 @@ import {
   NumberDecrementStepper,
   Switch,
   Badge,
+  Tooltip,
   Flex,
   Card,
   CardHeader,
@@ -76,6 +77,7 @@ interface SalesFormProps {
 interface FormData {
   customer_id: number;
   sales_person_id?: number;
+  project_id?: number;
   invoice_type_id?: number;
   type: string;
   date: string;
@@ -130,6 +132,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [salesPersons, setSalesPersons] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -200,6 +203,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       type: 'INVOICE',
       currency: 'IDR',
       exchange_rate: 1,
+      project_id: undefined,
       discount_percent: 0,
       // Legacy tax fields — will be overridden by system settings in loadFormData
       ppn_percent: 0,
@@ -417,6 +421,13 @@ const SalesForm: React.FC<SalesFormProps> = ({
         setCustomers([]);
       }
 
+      // We inserted projects at index 1 in the Promise.allSettled array, so let's adjust indices for extracting results
+      const allResults = [customersResult, productsResult, salesPersonsResult, accountsResult, cashBankResult, invoiceTypesResult, settingsResult];
+      // Note: we dynamically added projectsResult to the Promise array, but to avoid modifying all indices, 
+      // let's grab it directly from the Promise.allSettled return value which we know is a tuple.
+      // Wait, Promise.allSettled doesn't let us easily insert an item without shifting indices.
+      // Let's use a simpler approach: fetch projects separately just below to not break the indices.
+
       // Process products
       if (productsResult.status === 'fulfilled' && productsResult.value?.data && Array.isArray(productsResult.value.data)) {
         setProducts(productsResult.value.data);
@@ -437,10 +448,12 @@ const SalesForm: React.FC<SalesFormProps> = ({
         setSalesPersons([]);
       }
 
-      // Process accounts
+      // Process accounts - ONLY show leaf accounts (is_header=false) that can receive journal postings
+      // Selecting a parent/header account causes backend to pick a random child, leading to wrong revenue classification
       if (accountsResult.status === 'fulfilled' && Array.isArray(accountsResult.value)) {
-        console.log('SalesForm: Revenue accounts loaded successfully:', accountsResult.value);
-        setAccounts(accountsResult.value);
+        const leafAccounts = accountsResult.value.filter((acc: { is_header?: boolean }) => !acc.is_header);
+        console.log('SalesForm: Revenue accounts loaded (leaf only):', leafAccounts.length, 'of', accountsResult.value.length);
+        setAccounts(leafAccounts);
       } else {
         console.warn('Failed to load accounts:', accountsResult.status === 'rejected' ? accountsResult.reason : 'No data');
         console.log('SalesForm: AccountsResult details:', accountsResult);
@@ -491,6 +504,15 @@ const SalesForm: React.FC<SalesFormProps> = ({
     } finally {
       setLoadingData(false);
     }
+
+    // Load projects separately to avoid disrupting the Promise.allSettled indices
+    try {
+      const { projectService } = await import('@/services/projectService');
+      const projectsData = await projectService.getAll();
+      setProjects(projectsData || []);
+    } catch (error) {
+      console.warn('SalesForm: Failed to load projects', error);
+    }
   };
 
   const populateFormWithSale = (saleData: Sale) => {
@@ -499,6 +521,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
     reset({
       customer_id: saleData.customer_id,
       sales_person_id: saleData.sales_person_id || undefined,
+      project_id: saleData.project_id || undefined,
       invoice_type_id: saleData.invoice_type_id || undefined,
       type: saleData.type || 'INVOICE',
       date: saleData.date ? saleData.date.split('T')[0] : new Date().toISOString().split('T')[0],
@@ -588,12 +611,58 @@ const SalesForm: React.FC<SalesFormProps> = ({
     });
   };
 
-  const handleProductChange = (index: number, productId: number) => {
+  const handleProductChange = async (index: number, productId: number) => {
     const product = products.find(p => p.id === parseInt(productId.toString()));
     if (product) {
       setValue(`items.${index}.product_id`, product.id);
       setValue(`items.${index}.description`, product.name);
       setValue(`items.${index}.unit_price`, product.price);
+
+      // --- Auto-Kitting Validation Logic ---
+      if (product.is_assembly) {
+        try {
+          const { bomService } = await import('@/services/bomService');
+          const response = await bomService.getBOMs({ target_product_id: product.id });
+
+          if (response.success && response.data && response.data.length > 0) {
+            const bom = response.data[0];
+            const insufficientComponents: string[] = [];
+
+            bom.items?.forEach(item => {
+              const comp = item.component_product;
+              // Calculate required quantity for 1 unit of assembly
+              const qtyNeeded = (item.requirement_quantity / (bom.target_quantity || 1));
+              if (comp && comp.stock < qtyNeeded) {
+                insufficientComponents.push(`- ${comp.name} (Stok: ${comp.stock}, Butuh: ${qtyNeeded.toFixed(2)})`);
+              }
+            });
+
+            if (insufficientComponents.length > 0) {
+              toast({
+                title: 'Stok Bahan Baku Tidak Cukup (Auto-Kitting)',
+                description: `Bahan baku untuk merakit 1 ${product.name} tidak mencukupi:\n${insufficientComponents.join('\n')}`,
+                status: 'error',
+                duration: 8000,
+                isClosable: true,
+                position: 'top-right'
+              });
+            } else {
+              toast({
+                title: 'Stok Bahan Baku Tersedia',
+                description: `Bahan baku untuk merakit ${product.name} mencukupi.`,
+                status: 'success',
+                duration: 3000,
+                isClosable: true,
+                position: 'top-right'
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Failed to check assembly component stock", error);
+        }
+      }
+      // --- End Validation Logic ---
+
     } else {
       // When manual entry is selected (productId = 0), clear the fields
       setValue(`items.${index}.product_id`, 0);
@@ -794,6 +863,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         const updateData: SaleUpdateRequest = {
           customer_id: data.customer_id,
           sales_person_id: data.sales_person_id,
+          project_id: data.project_id || 0, // Send 0 to explicitly clear project if user removed it
           date: data.date ? `${data.date}T00:00:00Z` : undefined, // Convert to ISO datetime format
           due_date: data.due_date ? `${data.due_date}T00:00:00Z` : undefined,
           valid_until: data.valid_until ? `${data.valid_until}T00:00:00Z` : undefined,
@@ -833,6 +903,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           }))
         };
 
+        console.log('Sending updateData:', updateData);
         await salesService.updateSale(sale.id, updateData);
         ErrorHandler.handleSuccess(t('sales.messages.saleUpdated'), toast, 'update sale');
       } else {
@@ -840,6 +911,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         const createData: SaleCreateRequest = {
           customer_id: data.customer_id,
           sales_person_id: data.sales_person_id,
+          project_id: data.project_id,
           invoice_type_id: data.invoice_type_id,
           type: data.type,
           date: `${data.date}T00:00:00Z`, // Convert to ISO datetime format for Go backend
@@ -883,6 +955,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           }))
         };
 
+        console.log('Sending createData:', createData);
         await salesService.createSale(createData);
         ErrorHandler.handleSuccess(t('sales.messages.saleCreated'), toast, 'create sale');
       }
@@ -1103,7 +1176,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                     📋 {t('sales.form.basicInfo')}
                   </Heading>
                   <VStack spacing={4}>
-                    <HStack w="full" spacing={4}>
+                    <HStack w="full" spacing={4} align="flex-start">
                       <FormControl isRequired isInvalid={!!errors.customer_id}>
                         <FormLabel>{t('sales.customer')}</FormLabel>
                         <Select
@@ -1153,6 +1226,31 @@ const SalesForm: React.FC<SalesFormProps> = ({
                         </Select>
                         <FormHelperText color={textColor}>
                           {t('sales.tooltips.salesPerson')}
+                        </FormHelperText>
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel>Proyek (Opsional)</FormLabel>
+                        <Select
+                          {...register('project_id', {
+                            setValueAs: value => value ? parseInt(value) : undefined
+                          })}
+                          bg={inputBg}
+                          _focus={{ bg: inputFocusBg }}
+                          isDisabled={loadingData}
+                        >
+                          <option value="">
+                            {loadingData ? t('common.loading') :
+                              projects.length === 0 ? t('common.noData') : 'Pilih Proyek'}
+                          </option>
+                          {projects.map(project => (
+                            <option key={project.id} value={project.id}>
+                              {project.code} - {project.name}
+                            </option>
+                          ))}
+                        </Select>
+                        <FormHelperText color={textColor}>
+                          Pilih proyek untuk mengaitkan penjualan ini
                         </FormHelperText>
                       </FormControl>
 
@@ -1348,6 +1446,21 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                     {t('sales.form.manualEntry')}
                                   </Badge>
                                 )}
+                                {(() => {
+                                  const itemValue = watchItems?.[index];
+                                  if (!itemValue || !itemValue.product_id) return null;
+                                  const prod = products.find(p => p.id === itemValue.product_id);
+                                  if (prod?.is_assembly) {
+                                    return (
+                                      <Tooltip label="Stok komponen akan otomatis dipotong saat penjualan disetujui (Auto-Kitting)">
+                                        <Badge colorScheme="purple" size="xs" cursor="help">
+                                          🚀 Auto-Kitting
+                                        </Badge>
+                                      </Tooltip>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                               </VStack>
                             </Td>
                             <Td>

@@ -97,7 +97,7 @@ class PaymentService {
   async getPayments(filters: PaymentFilters = {}): Promise<PaymentResult> {
     try {
       const params = new URLSearchParams();
-      
+
       if (filters.page) params.append('page', filters.page.toString());
       if (filters.limit) params.append('limit', filters.limit.toString());
       if (filters.contact_id) params.append('contact_id', filters.contact_id.toString());
@@ -164,7 +164,7 @@ class PaymentService {
           invoice_allocations: data.allocations
         })
       };
-      
+
       // Use a more generous timeout specifically for payment creation,
       // because backend payment + journal processing can legitimately take longer.
       const response = await api.post(API_ENDPOINTS.PAYMENTS.SSOT.RECEIVABLE, ssotData, {
@@ -181,7 +181,7 @@ class PaymentService {
         responseStatus: error.response?.status,
         responseData: error.response?.data
       });
-      
+
       // Explicit handling for network timeouts so the UI can show a clearer message
       if (error.code === 'ECONNABORTED' || (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'))) {
         throw new Error('Permintaan pembuatan pembayaran terlalu lama (timeout). Cek koneksi / status server, lalu pastikan pembayaran belum tercatat sebelum mencoba lagi.');
@@ -208,7 +208,7 @@ class PaymentService {
       } else if (error.message) {
         throw new Error(error.message);
       }
-      
+
       throw error;
     }
   }
@@ -232,7 +232,7 @@ class PaymentService {
           bill_allocations: data.bill_allocations
         })
       };
-      
+
       const response = await api.post(API_ENDPOINTS.PAYMENTS.SSOT.PAYABLE, ssotData, {
         timeout: 60000 // 60 seconds timeout for payable payment operations
       });
@@ -247,7 +247,7 @@ class PaymentService {
         responseStatus: error.response?.status,
         responseData: error.response?.data
       });
-      
+
       // Explicit handling for network timeouts so the UI can show a clearer message
       if (error.code === 'ECONNABORTED' || (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'))) {
         throw new Error('Permintaan pembayaran hutang terlalu lama (timeout). Cek koneksi / status server, lalu pastikan pembayaran belum tercatat sebelum mencoba lagi.');
@@ -274,7 +274,7 @@ class PaymentService {
       } else if (error.message) {
         throw new Error(error.message);
       }
-      
+
       throw error;
     }
   }
@@ -303,7 +303,7 @@ class PaymentService {
   async exportPayments(filters?: PaymentFilters): Promise<Blob> {
     try {
       const params = new URLSearchParams();
-      
+
       if (filters?.page) params.append('page', filters.page.toString());
       if (filters?.limit) params.append('limit', filters.limit.toString());
       if (filters?.contact_id) params.append('contact_id', filters.contact_id.toString());
@@ -315,7 +315,7 @@ class PaymentService {
       const response = await api.get(API_ENDPOINTS.PAYMENTS.EXPORT + `?${params}`, {
         responseType: 'blob',
       });
-      
+
       return response.data;
     } catch (error: any) {
       console.error('Error exporting payments:', error);
@@ -327,7 +327,7 @@ class PaymentService {
   async exportPaymentReportPDF(startDate?: string, endDate?: string, status?: string, method?: string): Promise<Blob> {
     try {
       const params = new URLSearchParams();
-      
+
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
       if (status) params.append('status', status);
@@ -336,7 +336,7 @@ class PaymentService {
       const response = await api.get(API_ENDPOINTS.PAYMENTS.REPORT.PDF + `?${params}`, {
         responseType: 'blob',
       });
-      
+
       return response.data;
     } catch (error: any) {
       console.error('Error exporting payment report PDF:', error);
@@ -348,7 +348,7 @@ class PaymentService {
   async exportPaymentReportExcel(startDate?: string, endDate?: string, status?: string, method?: string): Promise<Blob> {
     try {
       const params = new URLSearchParams();
-      
+
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
       if (status) params.append('status', status);
@@ -357,7 +357,7 @@ class PaymentService {
       const response = await api.get(API_ENDPOINTS.PAYMENTS.EXPORT_EXCEL + `?${params}`, {
         responseType: 'blob',
       });
-      
+
       return response.data;
     } catch (error: any) {
       console.error('Error exporting payment report Excel:', error);
@@ -371,7 +371,7 @@ class PaymentService {
       const response = await api.get(API_ENDPOINTS.PAYMENTS.PDF(paymentId), {
         responseType: 'blob',
       });
-      
+
       return response.data;
     } catch (error: any) {
       console.error('Error exporting payment detail PDF:', error);
@@ -386,7 +386,7 @@ class PaymentService {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      
+
       const filename = `Payment_Report_${startDate || 'all'}_to_${endDate || 'all'}.pdf`;
       link.download = filename;
       document.body.appendChild(link);
@@ -424,7 +424,7 @@ class PaymentService {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      
+
       const filename = `Payment_Report_${startDate || 'all'}_to_${endDate || 'all'}.xlsx`;
       link.download = filename;
       document.body.appendChild(link);
@@ -569,7 +569,7 @@ class PaymentService {
       'DEBIT_CARD': 'Kartu Debit',
       'OTHER': 'Lainnya'
     };
-    
+
     return methodMap[method] || method;
   }
 
@@ -579,9 +579,9 @@ class PaymentService {
     if (dateString.includes('T')) {
       return dateString;
     }
-    
+
     let date: Date;
-    
+
     // Try to parse DD/MM/YYYY or MM/DD/YYYY format first (from date picker)
     if (dateString.includes('/')) {
       const parts = dateString.split('/');
@@ -598,12 +598,12 @@ class PaymentService {
       // Convert YYYY-MM-DD to YYYY-MM-DDTHH:mm:ssZ (assume local timezone)
       date = new Date(dateString + 'T00:00:00');
     }
-    
+
     // Check if date is valid
     if (isNaN(date.getTime())) {
       throw new Error('Invalid date format');
     }
-    
+
     // Return in ISO format with local timezone
     return date.toISOString();
   }
@@ -651,14 +651,14 @@ class PaymentService {
         date: this.formatDateForAPI(data.date),
         auto_create_journal: data.auto_create_journal ?? true
       };
-      
+
       const response = await api.post(API_ENDPOINTS.PAYMENTS.ENHANCED_WITH_JOURNAL, formattedData, {
         timeout: 60000 // 60 seconds timeout for journal-heavy payment operations
       });
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error creating payment with journal:', error);
-      
+
       // Explicit handling for network timeouts so the UI can show a clearer message
       if (error.code === 'ECONNABORTED' || (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'))) {
         throw new Error('Proses pembayaran + jurnal terlalu lama (timeout). Sistem mungkin sedang sibuk, silakan cek kembali status pembayaran sebelum mengulang.');
@@ -669,7 +669,7 @@ class PaymentService {
       } else if (error.response?.data?.details) {
         throw new Error(error.response.data.details);
       }
-      
+
       throw error;
     }
   }
@@ -681,7 +681,7 @@ class PaymentService {
         ...data,
         date: this.formatDateForAPI(data.date)
       };
-      
+
       const response = await api.post(API_ENDPOINTS.PAYMENTS.PREVIEW_JOURNAL, formattedData);
       return response.data.data;
     } catch (error: any) {
@@ -782,21 +782,27 @@ class PaymentService {
         description: data.description || 'Expense Payment',
         payment_type: 'EXPENSE',
         auto_create_journal: data.auto_create_journal ?? true,
+        // PPh withholding tax fields (only send if provided)
+        ...(data.pph_type && data.pph_amount && data.pph_amount > 0 && {
+          pph_type: data.pph_type,
+          pph_rate: data.pph_rate || 0,
+          pph_amount: data.pph_amount,
+        }),
       };
-      
+
       // Check if SSOT expense payment endpoint exists, otherwise use regular endpoint
-      const endpoint = (API_ENDPOINTS as any).PAYMENTS?.SSOT?.EXPENSE || 
-                      API_ENDPOINTS.PAYMENTS.CREATE;
-      
+      const endpoint = (API_ENDPOINTS as any).PAYMENTS?.SSOT?.EXPENSE ||
+        API_ENDPOINTS.PAYMENTS.CREATE;
+
       const response = await api.post(endpoint, formattedData, {
         timeout: 60000 // 60 seconds timeout for expense payment operations
       });
-      
+
       // Handle response format variations
       return response.data?.data?.payment || response.data?.payment || response.data;
     } catch (error: any) {
       console.error('PaymentService - Error creating expense payment:', error);
-      
+
       // Explicit handling for network timeouts so the UI can show a clearer message
       if (error.code === 'ECONNABORTED' || (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'))) {
         throw new Error('Permintaan pembayaran beban terlalu lama (timeout). Cek koneksi / status server, lalu pastikan transaksi belum tercatat sebelum mencoba lagi.');
@@ -822,7 +828,7 @@ class PaymentService {
       } else if (error.message) {
         throw new Error(error.message);
       }
-      
+
       throw new Error('An unexpected error occurred while creating expense payment');
     }
   }
@@ -1005,6 +1011,10 @@ export interface ExpensePaymentRequest {
   notes?: string;
   description?: string;
   auto_create_journal?: boolean;
+  // PPh withholding tax (optional)
+  pph_type?: string;   // PPH_21, PPH_23, PPH_4_2, PPH_22
+  pph_rate?: number;   // e.g. 2 for 2%
+  pph_amount?: number; // calculated tax amount
 }
 
 export default new PaymentService();

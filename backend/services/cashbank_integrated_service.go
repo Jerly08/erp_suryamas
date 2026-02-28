@@ -7,6 +7,7 @@ import (
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -36,85 +37,85 @@ func NewCashBankIntegratedService(
 
 // IntegratedAccountResponse represents response for integrated account details
 type IntegratedAccountResponse struct {
-	Account                *IntegratedAccountDetail      `json:"account"`
-	RecentTransactions     []IntegratedTransaction       `json:"recent_transactions"`
-	RecentJournalEntries   []IntegratedJournalEntry      `json:"recent_journal_entries"`
-	LastSyncedAt           *time.Time                    `json:"last_synced_at"`
+	Account              *IntegratedAccountDetail `json:"account"`
+	RecentTransactions   []IntegratedTransaction  `json:"recent_transactions"`
+	RecentJournalEntries []IntegratedJournalEntry `json:"recent_journal_entries"`
+	LastSyncedAt         *time.Time               `json:"last_synced_at"`
 }
 
 // IntegratedAccountDetail represents account with calculated fields
 type IntegratedAccountDetail struct {
-	ID                     uint            `json:"id"`
-	AccountID              uint            `json:"account_id"`
-	Name                   string          `json:"name"`
-	Code                   string          `json:"code"`
-	Type                   string          `json:"type"`
-	Balance                decimal.Decimal `json:"balance"`
-	SSOTBalance            decimal.Decimal `json:"ssot_balance"`
-	Variance               decimal.Decimal `json:"variance"`
-	ReconciliationStatus   string          `json:"reconciliation_status"`
-	LastTransactionDate    *time.Time      `json:"last_transaction_date"`
-	TotalJournalEntries    int             `json:"total_journal_entries"`
-	IsActive               bool            `json:"is_active"`
-	CreatedAt              time.Time       `json:"created_at"`
-	UpdatedAt              time.Time       `json:"updated_at"`
+	ID                   uint            `json:"id"`
+	AccountID            uint            `json:"account_id"`
+	Name                 string          `json:"name"`
+	Code                 string          `json:"code"`
+	Type                 string          `json:"type"`
+	Balance              decimal.Decimal `json:"balance"`
+	SSOTBalance          decimal.Decimal `json:"ssot_balance"`
+	Variance             decimal.Decimal `json:"variance"`
+	ReconciliationStatus string          `json:"reconciliation_status"`
+	LastTransactionDate  *time.Time      `json:"last_transaction_date"`
+	TotalJournalEntries  int             `json:"total_journal_entries"`
+	IsActive             bool            `json:"is_active"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 // IntegratedTransaction represents transaction with journal reference
 type IntegratedTransaction struct {
-	ID                  uint                `json:"id"`
-	Amount              decimal.Decimal     `json:"amount"`
-	Type                string              `json:"type"`
-	Number              string              `json:"number"`
-	CreatedAt           time.Time           `json:"created_at"`
-	Description         string              `json:"description"`
-	BalanceAfter        decimal.Decimal     `json:"balance_after"`
-	ReferenceNumber     string              `json:"reference_number"`
-	JournalEntryID      *uint64             `json:"journal_entry_id,omitempty"`
-	JournalEntryNumber  string              `json:"journal_entry_number,omitempty"`
+	ID                 uint            `json:"id"`
+	Amount             decimal.Decimal `json:"amount"`
+	Type               string          `json:"type"`
+	Number             string          `json:"number"`
+	CreatedAt          time.Time       `json:"created_at"`
+	Description        string          `json:"description"`
+	BalanceAfter       decimal.Decimal `json:"balance_after"`
+	ReferenceNumber    string          `json:"reference_number"`
+	JournalEntryID     *uint64         `json:"journal_entry_id,omitempty"`
+	JournalEntryNumber string          `json:"journal_entry_number,omitempty"`
 }
 
 // IntegratedJournalEntry represents journal entry with cash/bank context
 type IntegratedJournalEntry struct {
-	ID            uint64                    `json:"id"`
-	EntryNumber   string                    `json:"entry_number"`
-	EntryDate     time.Time                 `json:"entry_date"`
-	Description   string                    `json:"description"`
-	SourceType    string                    `json:"source_type"`
-	TotalDebit    decimal.Decimal           `json:"total_debit"`
-	TotalCredit   decimal.Decimal           `json:"total_credit"`
-	Status        string                    `json:"status"`
-	Lines         []IntegratedJournalLine   `json:"lines"`
-	CreatedAt     time.Time                 `json:"created_at"`
+	ID          uint64                  `json:"id"`
+	EntryNumber string                  `json:"entry_number"`
+	EntryDate   time.Time               `json:"entry_date"`
+	Description string                  `json:"description"`
+	SourceType  string                  `json:"source_type"`
+	TotalDebit  decimal.Decimal         `json:"total_debit"`
+	TotalCredit decimal.Decimal         `json:"total_credit"`
+	Status      string                  `json:"status"`
+	Lines       []IntegratedJournalLine `json:"lines"`
+	CreatedAt   time.Time               `json:"created_at"`
 }
 
 // IntegratedJournalLine represents journal line with account details
 type IntegratedJournalLine struct {
-	ID            uint64          `json:"id"`
-	AccountID     uint64          `json:"account_id"`
-	AccountCode   string          `json:"account_code"`
-	AccountName   string          `json:"account_name"`
-	Description   string          `json:"description"`
-	DebitAmount   decimal.Decimal `json:"debit_amount"`
-	CreditAmount  decimal.Decimal `json:"credit_amount"`
+	ID           uint64          `json:"id"`
+	AccountID    uint64          `json:"account_id"`
+	AccountCode  string          `json:"account_code"`
+	AccountName  string          `json:"account_name"`
+	Description  string          `json:"description"`
+	DebitAmount  decimal.Decimal `json:"debit_amount"`
+	CreditAmount decimal.Decimal `json:"credit_amount"`
 }
 
 // IntegratedSummaryResponse represents summary of all cash/bank accounts with SSOT data
 type IntegratedSummaryResponse struct {
-	Summary          IntegratedBalanceSummary    `json:"summary"`
-	Accounts         []IntegratedAccountSummary  `json:"accounts"`
-	RecentActivities []IntegratedActivity        `json:"recent_activities"`
-	SyncStatus       SyncStatus                  `json:"sync_status"`
+	Summary          IntegratedBalanceSummary   `json:"summary"`
+	Accounts         []IntegratedAccountSummary `json:"accounts"`
+	RecentActivities []IntegratedActivity       `json:"recent_activities"`
+	SyncStatus       SyncStatus                 `json:"sync_status"`
 }
 
 // IntegratedBalanceSummary represents overall balance summary
 type IntegratedBalanceSummary struct {
-	TotalCash         decimal.Decimal `json:"total_cash"`
-	TotalBank         decimal.Decimal `json:"total_bank"`
-	TotalBalance      decimal.Decimal `json:"total_balance"`
-	TotalSSOTBalance  decimal.Decimal `json:"total_ssot_balance"`
-	BalanceVariance   decimal.Decimal `json:"balance_variance"`
-	VarianceCount     int             `json:"variance_count"`
+	TotalCash        decimal.Decimal `json:"total_cash"`
+	TotalBank        decimal.Decimal `json:"total_bank"`
+	TotalBalance     decimal.Decimal `json:"total_balance"`
+	TotalSSOTBalance decimal.Decimal `json:"total_ssot_balance"`
+	BalanceVariance  decimal.Decimal `json:"balance_variance"`
+	VarianceCount    int             `json:"variance_count"`
 }
 
 // IntegratedAccountSummary represents account summary with SSOT data
@@ -153,40 +154,40 @@ type SyncStatus struct {
 
 // Reconcile request/response types
 type ReconcileRequest struct {
-	Strategy   string `json:"strategy"`              // to_ssot | to_transactions | to_coa
+	Strategy   string `json:"strategy"` // to_ssot | to_transactions | to_coa
 	DryRun     bool   `json:"dry_run"`
 	AccountIDs []uint `json:"account_ids"`
 }
 
 type ReconcileItem struct {
-	CashBankID      uint            `json:"cash_bank_id"`
-	COAAccountID    uint            `json:"coa_account_id"`
-	CashBankBefore  decimal.Decimal `json:"cashbank_before"`
-	COABefore       decimal.Decimal `json:"coa_before"`
-	SSOTBalance     decimal.Decimal `json:"ssot_balance"`
-	TransactionSum  decimal.Decimal `json:"transaction_sum"`
-	NewBalance      decimal.Decimal `json:"new_balance"`
-	Applied         bool            `json:"applied"`
+	CashBankID     uint            `json:"cash_bank_id"`
+	COAAccountID   uint            `json:"coa_account_id"`
+	CashBankBefore decimal.Decimal `json:"cashbank_before"`
+	COABefore      decimal.Decimal `json:"coa_before"`
+	SSOTBalance    decimal.Decimal `json:"ssot_balance"`
+	TransactionSum decimal.Decimal `json:"transaction_sum"`
+	NewBalance     decimal.Decimal `json:"new_balance"`
+	Applied        bool            `json:"applied"`
 }
 
 type ReconcileResult struct {
-	Strategy string           `json:"strategy"`
-	DryRun   bool             `json:"dry_run"`
-	Items    []ReconcileItem  `json:"items"`
+	Strategy string          `json:"strategy"`
+	DryRun   bool            `json:"dry_run"`
+	Items    []ReconcileItem `json:"items"`
 }
 
 // ReconciliationData represents detailed reconciliation information
 type ReconciliationData struct {
-	AccountID            uint           `json:"account_id"`
-	AccountName          string         `json:"account_name"`
+	AccountID            uint            `json:"account_id"`
+	AccountName          string          `json:"account_name"`
 	CashBankBalance      decimal.Decimal `json:"cashbank_balance"`
 	SSOTBalance          decimal.Decimal `json:"ssot_balance"`
 	Difference           decimal.Decimal `json:"difference"`
-	HasDiscrepancy       bool           `json:"has_discrepancy"`
-	ReconciliationStatus string         `json:"reconciliation_status"`
-	LastReconciledAt     time.Time      `json:"last_reconciled_at"`
-	Details              []string       `json:"details"`
-	Recommendations      []string       `json:"recommendations"`
+	HasDiscrepancy       bool            `json:"has_discrepancy"`
+	ReconciliationStatus string          `json:"reconciliation_status"`
+	LastReconciledAt     time.Time       `json:"last_reconciled_at"`
+	Details              []string        `json:"details"`
+	Recommendations      []string        `json:"recommendations"`
 }
 
 // PaginationInfo represents pagination metadata
@@ -297,10 +298,10 @@ func (s *CashBankIntegratedService) GetIntegratedAccountDetails(accountID uint) 
 
 	now := time.Now()
 	return &IntegratedAccountResponse{
-		Account:                accountDetail,
-		RecentTransactions:     recentTransactions,
-		RecentJournalEntries:   journalEntries,
-		LastSyncedAt:           &now,
+		Account:              accountDetail,
+		RecentTransactions:   recentTransactions,
+		RecentJournalEntries: journalEntries,
+		LastSyncedAt:         &now,
 	}, nil
 }
 
@@ -519,8 +520,9 @@ func (s *CashBankIntegratedService) getJournalEntriesForAccount(accountID uint, 
 
 // ReconcileBalances reconciles CashBank and COA balances according to strategy.
 // strategy: to_ssot (default) => set both to SSOT account_balances.current_balance
-//           to_transactions => set both to sum(cash_bank_transactions.amount)
-//           to_coa => set both to current COA balance
+//
+//	to_transactions => set both to sum(cash_bank_transactions.amount)
+//	to_coa => set both to current COA balance
 func (s *CashBankIntegratedService) ReconcileBalances(req ReconcileRequest) (*ReconcileResult, error) {
 	if req.Strategy == "" {
 		req.Strategy = "to_ssot"
@@ -528,7 +530,12 @@ func (s *CashBankIntegratedService) ReconcileBalances(req ReconcileRequest) (*Re
 	res := &ReconcileResult{Strategy: req.Strategy, DryRun: req.DryRun}
 
 	// Collect accounts to process
-	type pair struct { ID uint; AccountID uint; CB float64; COA float64 }
+	type pair struct {
+		ID        uint
+		AccountID uint
+		CB        float64
+		COA       float64
+	}
 	q := s.db.Table("cash_banks cb").
 		Select("cb.id as id, cb.account_id as account_id, cb.balance as cb, a.balance as coa").
 		Joins("JOIN accounts a ON a.id = cb.account_id").
@@ -537,7 +544,9 @@ func (s *CashBankIntegratedService) ReconcileBalances(req ReconcileRequest) (*Re
 		q = q.Where("cb.id IN ?", req.AccountIDs)
 	}
 	var pairs []pair
-	if err := q.Scan(&pairs).Error; err != nil { return nil, err }
+	if err := q.Scan(&pairs).Error; err != nil {
+		return nil, err
+	}
 
 	returnErr := s.db.Transaction(func(tx *gorm.DB) error {
 		for _, p := range pairs {
@@ -550,7 +559,9 @@ func (s *CashBankIntegratedService) ReconcileBalances(req ReconcileRequest) (*Re
 				var sum float64
 				if err := tx.Table("cash_bank_transactions").
 					Where("cash_bank_id = ? AND deleted_at IS NULL", p.ID).
-					Select("COALESCE(SUM(amount), 0)").Scan(&sum).Error; err != nil { return err }
+					Select("COALESCE(SUM(amount), 0)").Scan(&sum).Error; err != nil {
+					return err
+				}
 				item.TransactionSum = decimal.NewFromFloat(sum)
 				target = item.TransactionSum
 			case "to_coa":
@@ -559,7 +570,9 @@ func (s *CashBankIntegratedService) ReconcileBalances(req ReconcileRequest) (*Re
 				var ssot struct{ CurrentBalance decimal.Decimal }
 				if err := tx.Table("account_balances").
 					Where("account_id = ?", p.AccountID).
-					Select("current_balance").Scan(&ssot).Error; err != nil { return err }
+					Select("current_balance").Scan(&ssot).Error; err != nil {
+					return err
+				}
 				item.SSOTBalance = ssot.CurrentBalance
 				target = ssot.CurrentBalance
 			}
@@ -567,8 +580,12 @@ func (s *CashBankIntegratedService) ReconcileBalances(req ReconcileRequest) (*Re
 			item.NewBalance = target
 			if !req.DryRun {
 				// Apply to both tables
-				if err := tx.Exec("UPDATE cash_banks SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", target.InexactFloat64(), p.ID).Error; err != nil { return err }
-				if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", target.InexactFloat64(), p.AccountID).Error; err != nil { return err }
+				if err := tx.Exec("UPDATE cash_banks SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", target.InexactFloat64(), p.ID).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", target.InexactFloat64(), p.AccountID).Error; err != nil {
+					return err
+				}
 				item.Applied = true
 			}
 			res.Items = append(res.Items, item)
@@ -617,11 +634,11 @@ func (s *CashBankIntegratedService) findRelatedJournalEntry(tx models.CashBankTr
 	// This is a simplified implementation
 	// In practice, you'd need more sophisticated matching logic
 	var entry models.SSOTJournalEntry
-	
+
 	// Try to match by reference or timing
 	err := s.db.Where("source_type = ? AND entry_date::date = ?", "CASH_BANK", tx.TransactionDate.Format("2006-01-02")).
 		First(&entry).Error
-	
+
 	if err != nil {
 		return nil, ""
 	}
@@ -632,7 +649,7 @@ func (s *CashBankIntegratedService) findRelatedJournalEntry(tx models.CashBankTr
 func (s *CashBankIntegratedService) getRecentActivities(limit int) ([]IntegratedActivity, error) {
 	// Get recent journal entries related to cash/bank accounts
 	var activities []IntegratedActivity
-	
+
 	query := `
 		SELECT 
 			'JOURNAL_ENTRY' as type,
@@ -785,7 +802,7 @@ func (s *CashBankIntegratedService) GetTransactionHistoryPaginated(accountID uin
 	// Get paginated transactions
 	var transactions []models.CashBankTransaction
 	err = s.db.Where("cash_bank_id = ?", accountID).
-		Order("transaction_date DESC").
+		Order("created_at DESC, id DESC").
 		Offset(offset).
 		Limit(limit).
 		Find(&transactions).Error

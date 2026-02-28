@@ -162,7 +162,7 @@ func (s *SSOTBalanceSheetService) getAccountBalancesFromSSOT(asOfDate string) ([
 	  AND a.deleted_at IS NULL
 	  AND uje.status = 'POSTED'
 	  AND uje.deleted_at IS NULL
-	  AND uje.entry_date <= ?
+	  AND DATE(uje.entry_date) <= ?
 	GROUP BY a.code, UPPER(a.type)
 		HAVING COALESCE(SUM(ujl.debit_amount), 0) <> 0 
 		    OR COALESCE(SUM(ujl.credit_amount), 0) <> 0
@@ -354,7 +354,7 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 		INNER JOIN unified_journal_lines ujl ON ujl.account_id = a.id
 		INNER JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 		WHERE uje.status = 'POSTED' AND uje.deleted_at IS NULL
-		AND uje.entry_date <= ?
+		AND DATE(uje.entry_date) <= ?
 	AND COALESCE(a.is_header, false) = false
 	AND (
 		TRIM(a.type) ILIKE 'REVENUE' OR TRIM(a.type) ILIKE 'PENDAPATAN%' OR 

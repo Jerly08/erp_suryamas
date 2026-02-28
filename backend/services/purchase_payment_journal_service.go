@@ -255,11 +255,37 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntryWithTx(
 	cashBankID uint,
 	userID uint,
 ) error {
+	// ✅ GUARD: Skip PPN/tax payments — they already have their own journal
+	// created by tax_payment_service.go (Debit PPN Keluaran, Credit PPN Masukan, Credit Bank)
+	// Creating a PURCHASE_PAYMENT journal for them would incorrectly debit UTANG USAHA
+	if payment.IsTaxPayment() {
+		log.Printf("⚠️ [SSOT] Skipping purchase payment journal for Payment #%d (PaymentType: %s) — tax payments have their own journal", payment.ID, payment.PaymentType)
+		return nil
+	}
+
+	// ✅ GUARD: Skip EXPENSE payments — they already have their own journal
+	// (Debit Beban, Credit Bank) created by CreateExpensePayment
+	if payment.PaymentType == models.PaymentTypeExpense {
+		log.Printf("⚠️ [SSOT] Skipping purchase payment journal for Payment #%d (PaymentType: EXPENSE) — expense payments have their own journal", payment.ID)
+		return nil
+	}
+
+	// ✅ GUARD: Skip SALES/RECEIVABLE payments — these already have SALES_PAYMENT journals
+	// created by SalesJournalServiceV2.CreateSalesPaymentJournal (Debit Bank, Credit Piutang)
+	// Creating a PURCHASE_PAYMENT journal would incorrectly debit UTANG USAHA and credit Bank
+	paymentID := uint64(payment.ID)
+	var salesJournalCount int64
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where("source_type = ? AND source_id = ?", "SALES_PAYMENT", paymentID).
+		Count(&salesJournalCount).Error; err == nil && salesJournalCount > 0 {
+		log.Printf("⚠️ [SSOT] Skipping purchase payment journal for Payment #%d — already has %d SALES_PAYMENT journal(s)", payment.ID, salesJournalCount)
+		return nil
+	}
+
 	log.Printf("📝 [SSOT] Creating purchase payment SSOT journal for Payment #%d (Amount: %.2f)...", payment.ID, payment.Amount)
 
-	// Check if SSOT journal already exists for this payment
+	// Check if SSOT journal already exists for this payment (purchase type)
 	var existingCount int64
-	paymentID := uint64(payment.ID)
 	if err := tx.Model(&models.SSOTJournalEntry{}).
 		Where("source_type = ? AND source_id = ?", "PURCHASE_PAYMENT", paymentID).
 		Count(&existingCount).Error; err == nil && existingCount > 0 {
@@ -446,9 +472,35 @@ func (s *PurchasePaymentJournalService) MigrateExistingPaymentsToSSOT() (int, in
 	skipped := 0
 
 	for _, payment := range payments {
+		// ✅ GUARD: Skip PPN/tax payments — they have their own dedicated journal
+		if payment.IsTaxPayment() {
+			skipped++
+			continue
+		}
+
+		// ✅ GUARD: Skip EXPENSE payments — they already have their own journal
+		// (Debit Beban, Credit Bank) created by CreateExpensePayment
+		// Creating a PURCHASE_PAYMENT journal would incorrectly debit UTANG USAHA
+		if payment.PaymentType == models.PaymentTypeExpense {
+			skipped++
+			continue
+		}
+
+		// ✅ GUARD: Skip SALES/RECEIVABLE payments — they already have SALES_PAYMENT journals
+		// created by SalesJournalServiceV2.CreateSalesPaymentJournal (Debit Bank, Credit Piutang)
+		// Creating a PURCHASE_PAYMENT journal would incorrectly debit UTANG USAHA and credit Bank
+		paymentID := uint64(payment.ID)
+		var salesJournalCount int64
+		if err := s.db.Model(&models.SSOTJournalEntry{}).
+			Where("source_type = ? AND source_id = ? AND deleted_at IS NULL", "SALES_PAYMENT", paymentID).
+			Count(&salesJournalCount).Error; err == nil && salesJournalCount > 0 {
+			log.Printf("⚠️ [MIGRATION] Skipping Payment #%d (%s) — already has %d SALES_PAYMENT journal(s)", payment.ID, payment.Code, salesJournalCount)
+			skipped++
+			continue
+		}
+
 		// Check if SSOT journal already exists (check ALL possible source types and patterns)
 		var existingCount int64
-		paymentID := uint64(payment.ID)
 		if err := s.db.Model(&models.SSOTJournalEntry{}).
 			Where("source_id = ? AND source_type IN ('PAYMENT', 'PURCHASE_PAYMENT') AND deleted_at IS NULL", paymentID).
 			Count(&existingCount).Error; err == nil && existingCount > 0 {
@@ -502,6 +554,51 @@ func (s *PurchasePaymentJournalService) MigrateExistingPaymentsToSSOT() (int, in
 // payment with the SAME amount. If not, it's an orphan from old buggy code — soft-delete it.
 func (s *PurchasePaymentJournalService) cleanupDuplicatePaymentJournals() {
 	log.Printf("🧹 [CLEANUP] Checking for orphaned/duplicate payment journal entries...")
+
+	// === Phase 0: Clean up phantom PURCHASE_PAYMENT entries created for sales/PPN payments ===
+	// These were incorrectly created by the migration for payments that have SALES_PAYMENT journals
+	log.Printf("🧹 [CLEANUP] Phase 0: Removing phantom PURCHASE_PAYMENT entries for sales/PPN payments...")
+	var purchasePaymentEntries []struct {
+		ID         uint64 `gorm:"column:id"`
+		SourceID   uint64 `gorm:"column:source_id"`
+		SourceCode string `gorm:"column:source_code"`
+	}
+	if err := s.db.Raw(`SELECT id, source_id, source_code FROM unified_journal_ledger 
+		WHERE source_type = 'PURCHASE_PAYMENT' AND deleted_at IS NULL`).Scan(&purchasePaymentEntries).Error; err == nil {
+		phantomDeleted := 0
+		for _, entry := range purchasePaymentEntries {
+			// Check if this payment also has a SALES_PAYMENT journal
+			var salesCount int64
+			s.db.Raw(`SELECT COUNT(*) FROM unified_journal_ledger 
+				WHERE source_type = 'SALES_PAYMENT' AND source_id = ? AND deleted_at IS NULL`, entry.SourceID).Scan(&salesCount)
+
+			if salesCount > 0 {
+				// This is a phantom! Soft-delete it
+				s.db.Exec("UPDATE unified_journal_lines SET deleted_at = CURRENT_TIMESTAMP WHERE journal_entry_id = ? AND deleted_at IS NULL", entry.ID)
+				s.db.Exec("UPDATE unified_journal_ledger SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL", entry.ID)
+				log.Printf("🗑️ [CLEANUP] Removed phantom PURCHASE_PAYMENT entry ID=%d (Code: %s) — payment has SALES_PAYMENT journal", entry.ID, entry.SourceCode)
+				phantomDeleted++
+			}
+
+			// Also check for SETOR-PPN codes (tax payment processed as purchase payment)
+			if strings.HasPrefix(entry.SourceCode, "SETOR-PPN") {
+				var taxCount int64
+				s.db.Raw(`SELECT COUNT(*) FROM unified_journal_ledger
+					WHERE source_type = 'PAYMENT' AND source_code = ? AND deleted_at IS NULL`, entry.SourceCode).Scan(&taxCount)
+				if taxCount > 0 {
+					s.db.Exec("UPDATE unified_journal_lines SET deleted_at = CURRENT_TIMESTAMP WHERE journal_entry_id = ? AND deleted_at IS NULL", entry.ID)
+					s.db.Exec("UPDATE unified_journal_ledger SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL", entry.ID)
+					log.Printf("🗑️ [CLEANUP] Removed phantom PURCHASE_PAYMENT entry ID=%d (Code: %s) — PPN tax payment", entry.ID, entry.SourceCode)
+					phantomDeleted++
+				}
+			}
+		}
+		if phantomDeleted > 0 {
+			log.Printf("🧹 [CLEANUP] Phase 0 complete: Removed %d phantom PURCHASE_PAYMENT entries", phantomDeleted)
+		} else {
+			log.Printf("✅ [CLEANUP] Phase 0 complete: No phantom entries found")
+		}
+	}
 
 	// Get all real payments and build a map of paymentID → amount
 	var payments []models.Payment

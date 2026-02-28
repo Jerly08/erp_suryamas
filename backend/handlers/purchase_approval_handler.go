@@ -34,7 +34,7 @@ func (h *PurchaseApprovalHandler) SubmitPurchaseForApproval(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
@@ -48,7 +48,7 @@ func (h *PurchaseApprovalHandler) SubmitPurchaseForApproval(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Purchase submitted for approval successfully",
+		"message":     "Purchase submitted for approval successfully",
 		"purchase_id": purchaseID,
 	})
 }
@@ -61,7 +61,7 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
@@ -69,8 +69,8 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 	}
 
 	var request struct {
-		Comments string `json:"comments"`
-		EscalateToDirector bool `json:"escalate_to_director"`
+		Comments           string `json:"comments"`
+		EscalateToDirector bool   `json:"escalate_to_director"`
 	}
 	// Body optional; ignore bind error when empty
 	_ = c.ShouldBindJSON(&request)
@@ -81,17 +81,35 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
 		return
 	}
-	
-	// SAFETY CHECK: Prevent direct approval of DRAFT purchases
+
+	// AUTO-SUBMIT: If purchase is DRAFT and user is finance/admin/director, auto-submit for approval first
 	if purchase.Status == models.PurchaseStatusDraft {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Cannot approve DRAFT purchase - please submit for approval first",
-			"current_status": purchase.Status,
-			"required_action": "Use 'Submit for Approval' endpoint first",
-		})
-		return
+		userRole, _ := utils.GetUserRoleFromToken(c)
+		roleNorm := strings.ToLower(strings.TrimSpace(userRole))
+		if roleNorm == "finance" || roleNorm == "admin" || roleNorm == "director" {
+			// Auto-submit the purchase for approval
+			if err := h.purchaseService.SubmitForApproval(uint(purchaseID), userID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Failed to auto-submit purchase for approval: %v", err),
+				})
+				return
+			}
+			// Reload purchase after submission
+			purchase, err = h.purchaseService.GetPurchaseByID(uint(purchaseID))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reload purchase after submission"})
+				return
+			}
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":           "Cannot approve DRAFT purchase - please submit for approval first",
+				"current_status":  purchase.Status,
+				"required_action": "Use 'Submit for Approval' endpoint first",
+			})
+			return
+		}
 	}
-	
+
 	if purchase.ApprovalRequestID == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No approval request associated with this purchase"})
 		return
@@ -99,7 +117,7 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 
 	// Get user role to check if finance
 	userRole, _ := utils.GetUserRoleFromToken(c)
-	
+
 	// If finance role and escalate flag is set, handle escalation
 	if strings.ToLower(userRole) == "finance" && request.EscalateToDirector {
 		// Check if purchase is already approved
@@ -107,7 +125,7 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Purchase is already approved - cannot escalate"})
 			return
 		}
-		
+
 		// Create approval request if it doesn't exist
 		if purchase.ApprovalRequestID == nil {
 			// This should not happen in normal flow, but handle it gracefully
@@ -120,19 +138,19 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 			c.JSON(http.StatusOK, result)
 			return
 		}
-		
+
 		// Check if approval request is still pending
 		approvalRequest, err := h.approvalService.GetApprovalRequest(*purchase.ApprovalRequestID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get approval request: " + err.Error()})
 			return
 		}
-		
+
 		if approvalRequest.Status != models.ApprovalStatusPending {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Cannot escalate - approval request is already %s", approvalRequest.Status)})
 			return
 		}
-		
+
 		// First escalate to director, then approve the finance step
 		escalationReason := "Requires Director approval as requested by Finance"
 		if request.Comments != "" {
@@ -142,28 +160,28 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to escalate to Director: " + err.Error()})
 			return
 		}
-		
+
 		// Reload purchase with updated approval steps to get accurate status
 		updatedPurchase, err := h.purchaseService.GetPurchaseByID(uint(purchaseID))
 		if err == nil && updatedPurchase != nil {
 			purchase = updatedPurchase
 		}
-		
+
 		// Get current active step after escalation
 		currentStep := h.getCurrentApprovalStep(approvalRequest)
-		
+
 		c.JSON(http.StatusOK, gin.H{
-			"message": "Purchase escalated to Director for approval",
-			"purchase_id": purchaseID,
-			"escalated": true,
-			"status": "PENDING",
+			"message":         "Purchase escalated to Director for approval",
+			"purchase_id":     purchaseID,
+			"escalated":       true,
+			"status":          "PENDING",
 			"approval_status": "PENDING",
-			"current_step": currentStep,
-			"waiting_for": "director",
+			"current_step":    currentStep,
+			"waiting_for":     "director",
 		})
 		return
 	}
-	
+
 	// Normal approval process
 	action := models.ApprovalActionDTO{Action: "APPROVE", Comments: request.Comments}
 	if err := h.approvalService.ProcessApprovalAction(*purchase.ApprovalRequestID, userID, action); err != nil {
@@ -172,7 +190,7 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Purchase approved successfully",
+		"message":     "Purchase approved successfully",
 		"purchase_id": purchaseID,
 	})
 }
@@ -185,7 +203,7 @@ func (h *PurchaseApprovalHandler) RejectPurchase(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
@@ -195,7 +213,7 @@ func (h *PurchaseApprovalHandler) RejectPurchase(c *gin.Context) {
 	var request struct {
 		Comments string `json:"comments" binding:"required"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -206,11 +224,11 @@ func (h *PurchaseApprovalHandler) RejectPurchase(c *gin.Context) {
 
 	// Use ProcessPurchaseApprovalWithEscalation for consistent handling
 	result, err := h.purchaseService.ProcessPurchaseApprovalWithEscalation(
-		uint(purchaseID), 
+		uint(purchaseID),
 		false, // rejected
-		userID, 
-		strings.ToLower(userRole), 
-		request.Comments, 
+		userID,
+		strings.ToLower(userRole),
+		request.Comments,
 		false, // no escalation for rejection
 	)
 	if err != nil {
@@ -229,14 +247,14 @@ func (h *PurchaseApprovalHandler) GetPurchasesForApproval(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	// Get user role to determine what approvals they can see
 	userRole, err := utils.GetUserRoleFromToken(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	filter := models.PurchaseFilter{
 		ApprovalStatus: models.PurchaseApprovalPending,
 		Page:           1,
@@ -249,7 +267,7 @@ func (h *PurchaseApprovalHandler) GetPurchasesForApproval(c *gin.Context) {
 			filter.Page = p
 		}
 	}
-	
+
 	if limit := c.Query("limit"); limit != "" {
 		if l, err := strconv.Atoi(limit); err == nil && l > 0 && l <= 100 {
 			filter.Limit = l
@@ -264,12 +282,12 @@ func (h *PurchaseApprovalHandler) GetPurchasesForApproval(c *gin.Context) {
 
 	// Filter based on user's approval authority
 	filteredPurchases := h.filterPurchasesByApprovalAuthority(purchases.Data, userRole, userID)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"purchases": filteredPurchases,
-		"total": len(filteredPurchases),
-		"page": filter.Page,
-		"limit": filter.Limit,
+		"total":     len(filteredPurchases),
+		"page":      filter.Page,
+		"limit":     filter.Limit,
 	})
 }
 
@@ -291,11 +309,11 @@ func (h *PurchaseApprovalHandler) GetApprovalHistory(c *gin.Context) {
 	if purchase.ApprovalRequestID == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"approval_history": []interface{}{},
-			"message": "No approval required for this purchase",
-			"status": "NOT_STARTED",
+			"message":          "No approval required for this purchase",
+			"status":           "NOT_STARTED",
 			"debug_info": gin.H{
-				"purchase_status": purchase.Status,
-				"approval_status": purchase.ApprovalStatus,
+				"purchase_status":     purchase.Status,
+				"approval_status":     purchase.ApprovalStatus,
 				"approval_request_id": purchase.ApprovalRequestID,
 			},
 		})
@@ -318,11 +336,11 @@ func (h *PurchaseApprovalHandler) GetApprovalHistory(c *gin.Context) {
 
 	// Enhanced response with detailed information
 	response := gin.H{
-		"purchase_id": purchaseID,
+		"purchase_id":      purchaseID,
 		"approval_history": history,
-		"approval_status": approvalRequest.Status,
-		"workflow_name": approvalRequest.Workflow.Name,
-		"current_step": h.getCurrentApprovalStep(approvalRequest),
+		"approval_status":  approvalRequest.Status,
+		"workflow_name":    approvalRequest.Workflow.Name,
+		"current_step":     h.getCurrentApprovalStep(approvalRequest),
 	}
 
 	// Add rejection reason if rejected
@@ -370,7 +388,7 @@ func (h *PurchaseApprovalHandler) CreateApprovalWorkflow(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	// Only admin can create workflows
 	if userRole != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can create approval workflows"})
@@ -390,7 +408,7 @@ func (h *PurchaseApprovalHandler) CreateApprovalWorkflow(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "Approval workflow created successfully",
+		"message":  "Approval workflow created successfully",
 		"workflow": workflow,
 	})
 }
@@ -440,8 +458,15 @@ func (h *PurchaseApprovalHandler) filterPurchasesByApprovalAuthority(purchases [
 			if _, ok := reqAllowed[*p.ApprovalRequestID]; ok {
 				// Avoid duplicates
 				already := false
-				for _, e := range filtered { if e.ID == p.ID { already = true; break } }
-				if !already { filtered = append(filtered, p) }
+				for _, e := range filtered {
+					if e.ID == p.ID {
+						already = true
+						break
+					}
+				}
+				if !already {
+					filtered = append(filtered, p)
+				}
 			}
 		}
 	}
@@ -461,7 +486,7 @@ func (h *PurchaseApprovalHandler) GetApprovalStats(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	// Only admin, finance, director can see stats
 	if userRole != "admin" && userRole != "finance" && userRole != "director" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
@@ -470,17 +495,17 @@ func (h *PurchaseApprovalHandler) GetApprovalStats(c *gin.Context) {
 
 	// Base stats structure
 	stats := map[string]interface{}{
-		"pending_approvals":   0,
-		"approved_this_month": 0,
-		"rejected_this_month": 0,
+		"pending_approvals":    0,
+		"approved_this_month":  0,
+		"rejected_this_month":  0,
 		"total_amount_pending": 0.0,
 	}
-	
+
 	// Pull all pending purchases, then filter by user's approval authority
 	pendingFilter := models.PurchaseFilter{
 		ApprovalStatus: models.PurchaseApprovalPending,
-		Page:          1,
-		Limit:         1000,
+		Page:           1,
+		Limit:          1000,
 	}
 
 	pendingPurchases, err := h.purchaseService.GetPurchases(pendingFilter)
@@ -503,32 +528,32 @@ func (h *PurchaseApprovalHandler) getCurrentApprovalStep(approvalRequest *models
 	for _, step := range approvalRequest.ApprovalSteps {
 		if step.IsActive && step.Status == models.ApprovalStatusPending {
 			return map[string]interface{}{
-				"step_name":      step.Step.StepName,
-				"approver_role":  step.Step.ApproverRole,
-				"step_order":     step.Step.StepOrder,
-				"is_active":      step.IsActive,
-				"status":         step.Status,
+				"step_name":     step.Step.StepName,
+				"approver_role": step.Step.ApproverRole,
+				"step_order":    step.Step.StepOrder,
+				"is_active":     step.IsActive,
+				"status":        step.Status,
 			}
 		}
 	}
 	return map[string]interface{}{
-		"step_name":      "Completed",
-		"approver_role":  "",
-		"step_order":     0,
-		"is_active":      false,
-		"status":         approvalRequest.Status,
+		"step_name":     "Completed",
+		"approver_role": "",
+		"step_order":    0,
+		"is_active":     false,
+		"status":        approvalRequest.Status,
 	}
 }
 
 // buildApprovalSummary creates a summary of approval/rejection comments
 func (h *PurchaseApprovalHandler) buildApprovalSummary(history []models.ApprovalHistory) map[string]interface{} {
 	summary := map[string]interface{}{
-		"total_actions":     len(history),
-		"approvals":         []map[string]interface{}{},
-		"rejections":        []map[string]interface{}{},
-		"latest_comment":    "",
-		"latest_action":     "",
-		"latest_user":       "",
+		"total_actions":    len(history),
+		"approvals":        []map[string]interface{}{},
+		"rejections":       []map[string]interface{}{},
+		"latest_comment":   "",
+		"latest_action":    "",
+		"latest_user":      "",
 		"latest_timestamp": nil,
 	}
 
@@ -537,11 +562,11 @@ func (h *PurchaseApprovalHandler) buildApprovalSummary(history []models.Approval
 
 	for _, h := range history {
 		actionData := map[string]interface{}{
-			"action":     h.Action,
-			"comments":   h.Comments,
-			"user":       h.User.Username,
-			"user_role":  h.User.Role,
-			"timestamp":  h.CreatedAt,
+			"action":    h.Action,
+			"comments":  h.Comments,
+			"user":      h.User.Username,
+			"user_role": h.User.Role,
+			"timestamp": h.CreatedAt,
 		}
 
 		switch h.Action {

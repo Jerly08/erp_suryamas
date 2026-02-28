@@ -25,7 +25,8 @@ func main() {
 	fmt.Println("  4) RESET SALDO MASTER — Reset balance COA & Cash Bank (tanpa hapus akun)")
 	fmt.Println("  5) HAPUS PERIODE CLOSING — Hapus semua periode closing yang sudah pernah di-close")
 	fmt.Println("  6) RESET COMPANY TYPE — Set company_type ke NULL (untuk test onboarding flow)")
-	fmt.Println("  7) TRUNCATE & RESET ID — Hapus SEMUA data transaksi + reset semua ID dari 1")
+	fmt.Println("  7) TRUNCATE & RESET ID — Hapus SEMUA data transaksi + BOM/Project/PR + reset semua ID dari 0")
+	fmt.Println("  8) HAPUS MODUL — Hapus data modul tertentu (BOMs, Projects, PR, Products) secara selektif")
 	fmt.Println("")
 	mode := askResetMode()
 
@@ -66,10 +67,18 @@ func main() {
 		fmt.Println("   - Data lain TIDAK akan dihapus")
 	} else if mode == 7 {
 		fmt.Println("🔥 MODE TRUNCATE & RESET ID: HAPUS TOTAL + RESET ID")
-		fmt.Println("   - Melakukan TRUNCATE CASCADE pada SEMUA tabel transaksi")
+		fmt.Println("   - Melakukan TRUNCATE CASCADE pada SEMUA tabel transaksi + BOM/Project/PR")
+		fmt.Println("   - Termasuk soft-delete (hard delete semua, deleted_at tidak dipertimbangkan)")
 		fmt.Println("   - Reset SEMUA sequence ID dari 1 (ID baru akan mulai dari 1)")
-		fmt.Println("   - COA, Products, Contacts, Cash Banks TETAP ADA (hanya balance/stock direset)")
+		fmt.Println("   - COA, Contacts, Cash Banks TETAP ADA (hanya balance direset)")
+		fmt.Println("   - Products TETAP ADA (stock direset ke 0)")
 		fmt.Println("   - ⚠️  PERINGATAN: Ini operasi yang sangat merusak!")
+	} else if mode == 8 {
+		fmt.Println("🗂️  MODE HAPUS MODUL: Hapus data modul tertentu secara selektif")
+		fmt.Println("   - Pilih modul mana yang ingin dihapus: BOMs, Projects, Purchase Requests, Products")
+		fmt.Println("   - Setiap modul dihapus beserta soft-delete-nya (hard delete)")
+		fmt.Println("   - Sequence ID direset untuk modul yang dipilih")
+		fmt.Println("   - Modul lain TIDAK terpengaruh")
 	} else {
 		fmt.Println("🔄 MODE RECOVERY: Akan mengembalikan semua soft deleted data")
 		fmt.Println("   - Set kolom 'deleted_at = NULL' untuk semua record yang soft deleted")
@@ -158,6 +167,12 @@ func main() {
 			log.Printf("❌ Gagal truncate & reset ID: %v", err)
 			return
 		}
+	} else if mode == 8 {
+		fmt.Println("\n🗂️  STEP 3: HAPUS MODUL...")
+		if err := executeDeleteModuleDataWithGORM(db); err != nil {
+			log.Printf("❌ Gagal hapus modul: %v", err)
+			return
+		}
 	} else {
 		fmt.Println("\n🔄 STEP 3: Mengeksekusi RECOVERY soft deleted data...")
 		if err := executeRecoveryAllWithGORM(db); err != nil {
@@ -194,9 +209,13 @@ func main() {
 		fmt.Println("Silakan login kembali untuk melihat tampilan pemilihan jenis perusahaan.")
 	} else if mode == 7 {
 		fmt.Println("\n🎉 TRUNCATE & RESET ID SELESAI!")
-		fmt.Println("Semua tabel transaksi telah di-TRUNCATE dan ID direset dari 1.")
-		fmt.Println("COA, Products, Contacts, Cash Banks tetap ada dengan balance/stock = 0.")
+		fmt.Println("Semua tabel transaksi + BOM/Project/PR telah di-TRUNCATE dan ID direset dari 1.")
+		fmt.Println("COA, Contacts, Cash Banks tetap ada dengan balance = 0.")
+		fmt.Println("Products tetap ada dengan stock = 0.")
 		fmt.Println("Transaksi baru akan dimulai dari ID = 1.")
+	} else if mode == 8 {
+		fmt.Println("\n🎉 HAPUS MODUL SELESAI!")
+		fmt.Println("Modul yang dipilih telah dihapus beserta semua data terkait dan soft-delete-nya.")
 	} else {
 		fmt.Println("\n🎉 RECOVERY SELESAI!")
 		fmt.Println("Semua data yang soft deleted telah dipulihkan (deleted_at = NULL).")
@@ -206,7 +225,7 @@ func main() {
 
 func askResetMode() int {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Masukkan pilihan [1/2/3/4/5/6/7] (default 1): ")
+	fmt.Print("Masukkan pilihan [1/2/3/4/5/6/7/8] (default 1): ")
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "2" {
@@ -221,6 +240,8 @@ func askResetMode() int {
 		return 6
 	} else if input == "7" {
 		return 7
+	} else if input == "8" {
+		return 8
 	}
 	return 1
 }
@@ -1163,6 +1184,15 @@ func executeTruncateAndResetIDWithGORM(db *gorm.DB) error {
 		"purchase_documents",
 		"purchase_items",
 		"purchases",
+		// Purchase Request system
+		"purchase_request_items",
+		"purchase_requests",
+		// BOM & Project system
+		"project_bom_items",
+		"project_boms",
+		"projects",
+		"bom_items",
+		"boms",
 		// Other transactions
 		"payment_allocations",
 		"cash_bank_transactions",
@@ -1320,4 +1350,114 @@ func shouldSkipSequence(seqName string) bool {
 		}
 	}
 	return false
+}
+
+// ============================================================================
+// MODE 8 — HAPUS MODUL TERTENTU SECARA SELEKTIF
+// ============================================================================
+
+// executeDeleteModuleDataWithGORM menghapus data modul tertentu secara selektif.
+// User memilih satu atau lebih modul: BOMs, Projects, Purchase Requests, Products.
+func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
+	start := time.Now()
+
+	fmt.Println("")
+	fmt.Println("🗂️  Pilih modul yang ingin dihapus (bisa pilih lebih dari satu):")
+	fmt.Println("  a) BOMs (master template BOM + items)")
+	fmt.Println("  b) Projects (semua project + project BOMs + project BOM items)")
+	fmt.Println("  c) Purchase Requests (semua PR + PR items + approval)")
+	fmt.Println("  d) Products (semua produk + stock)")
+	fmt.Println("  all) Hapus semua modul di atas")
+	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c atau all): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+
+	deleteAll := input == "all"
+	parts := strings.Split(input, ",")
+	selected := map[string]bool{}
+	for _, p := range parts {
+		selected[strings.TrimSpace(p)] = true
+	}
+
+	// Disable FK constraints
+	if err := db.Exec("SET session_replication_role = 'replica'").Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Gagal disable triggers: %v\n", err)
+	}
+
+	truncateAndReset := func(tables []string, label string) {
+		fmt.Printf("\n   🗑️  Menghapus modul: %s...\n", label)
+		for _, table := range tables {
+			var exists bool
+			db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?)", table).Scan(&exists)
+			if exists {
+				if err := db.Exec(fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table)).Error; err != nil {
+					fmt.Printf("   ⚠️  Warning: Gagal truncate %s: %v\n", table, err)
+				} else {
+					fmt.Printf("   ✅ Truncated: %s\n", table)
+				}
+				// Reset sequence
+				seqName := table + "_id_seq"
+				var seqExists bool
+				db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = ? AND relkind = 'S')", seqName).Scan(&seqExists)
+				if seqExists {
+					if err := db.Exec(fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH 1", seqName)).Error; err != nil {
+						fmt.Printf("   ⚠️  Warning: Gagal reset sequence %s: %v\n", seqName, err)
+					} else {
+						fmt.Printf("   ✅ Reset seq: %s\n", seqName)
+					}
+				}
+			} else {
+				fmt.Printf("   ⏭️  Skip (tidak ada): %s\n", table)
+			}
+		}
+	}
+
+	// Hapus modul BOM Master
+	if deleteAll || selected["a"] {
+		truncateAndReset([]string{
+			"bom_items",
+			"boms",
+		}, "BOMs (master template)")
+	}
+
+	// Hapus modul Projects (termasuk project_boms & project_bom_items)
+	if deleteAll || selected["b"] {
+		truncateAndReset([]string{
+			"project_bom_items",
+			"project_boms",
+			"projects",
+		}, "Projects (+ Project BOMs)")
+	}
+
+	// Hapus modul Purchase Requests
+	if deleteAll || selected["c"] {
+		// Hapus approval_actions dan approval_requests yang terkait PR
+		db.Exec("DELETE FROM approval_actions WHERE approval_request_id IN (SELECT id FROM approval_requests WHERE reference_type = 'purchase_request')")
+		db.Exec("DELETE FROM approval_histories WHERE reference_type = 'purchase_request'")
+		db.Exec("DELETE FROM approval_requests WHERE reference_type = 'purchase_request'")
+		truncateAndReset([]string{
+			"purchase_request_items",
+			"purchase_requests",
+		}, "Purchase Requests")
+	}
+
+	// Hapus modul Products
+	if deleteAll || selected["d"] {
+		truncateAndReset([]string{
+			"inventories",
+			"stock_alerts",
+			"products",
+		}, "Products")
+	}
+
+	// Re-enable FK constraints
+	if err := db.Exec("SET session_replication_role = 'origin'").Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Gagal re-enable triggers: %v\n", err)
+	}
+
+	duration := time.Since(start)
+	fmt.Printf("\n✅ Hapus modul selesai dalam waktu: %s\n", duration.String())
+	return nil
 }

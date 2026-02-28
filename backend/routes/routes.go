@@ -193,8 +193,10 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	purchaseRequestService := services.NewPurchaseRequestService(db, purchaseRequestRepo, notificationService)
 	purchaseRequestController := controllers.NewPurchaseRequestController(purchaseRequestService)
 
-	// Update ProductController with stockMonitoringService
-	productController := controllers.NewProductController(db, stockMonitoringService)
+	bomService := services.NewBOMService(db)
+
+	// Update ProductController with stockMonitoringService and bomService
+	productController := controllers.NewProductController(db, stockMonitoringService, bomService)
 
 	// Initialize WarehouseLocationController
 	warehouseLocationController := controllers.NewWarehouseLocationController(db)
@@ -507,6 +509,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				boms.GET("", permMiddleware.CanView("boms"), bomController.GetBOMs)
 				boms.GET("/:id", permMiddleware.CanView("boms"), bomController.GetBOM)
 				boms.POST("", permMiddleware.CanCreate("boms"), bomController.CreateBOM)
+				boms.PUT("/:id", permMiddleware.CanEdit("boms"), bomController.UpdateBOM)
 				boms.DELETE("/:id", permMiddleware.CanDelete("boms"), bomController.DeleteBOM)
 			}
 

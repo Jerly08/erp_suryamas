@@ -95,6 +95,8 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
   const ppnCardBg = useColorModeValue('blue.50', 'blue.900');
   const resultBgKurangBayar = useColorModeValue('red.50', 'red.900');
   const resultBgLebihBayar = useColorModeValue('green.50', 'green.900');
+  const lebihBayarBg = useColorModeValue('blue.50', 'blue.900');
+  const lebihBayarInfoBg = useColorModeValue('white', 'gray.700');
 
   const {
     control,
@@ -414,21 +416,8 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                 </Alert>
               )}
 
-              {/* PPN Already Paid / No Outstanding */}
-              {!loadingBalance && ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang === 0 && (
-                <Alert status="success" borderRadius="md">
-                  <AlertIcon />
-                  <Box fontSize="sm">
-                    <Text fontWeight="bold">✅ PPN Sudah Lunas</Text>
-                    <Text mt={1}>
-                      Tidak ada PPN yang harus dibayar saat ini. Semua kewajiban PPN sudah diselesaikan.
-                    </Text>
-                  </Box>
-                </Alert>
-              )}
-
-              {/* PPN Calculation Card */}
-              {!loadingBalance && ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang > 0 && (
+              {/* PPN Calculation Card - Always show when balance loaded */}
+              {!loadingBalance && ppnBalanceInfo !== null && (
                 <Card bg={ppnCardBg} borderColor={borderColor} borderWidth="2px">
                   <CardBody>
                     <VStack align="stretch" spacing={4}>
@@ -466,41 +455,102 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                         </Text>
                       </Box>
 
-                      {/* Result */}
-                      <Box
-                        borderTop="2px"
-                        borderColor={ppnBalanceInfo.ppn_terutang > 0 ? 'red.400' : 'green.400'}
-                        pt={3}
-                        bg={ppnBalanceInfo.ppn_terutang > 0 ? resultBgKurangBayar : resultBgLebihBayar}
-                        p={3}
-                        borderRadius="md"
-                      >
-                        <HStack justify="space-between" mb={2}>
-                          <Text fontSize="lg" fontWeight="bold" color={ppnBalanceInfo.ppn_terutang > 0 ? 'red.600' : 'green.600'}>
-                            PPN Terutang:
-                          </Text>
-                          <Text fontSize="xl" fontWeight="bold" color={ppnBalanceInfo.ppn_terutang > 0 ? 'red.600' : 'green.600'}>
-                            {formatRupiah(Math.abs(ppnBalanceInfo.ppn_terutang))}
-                          </Text>
-                        </HStack>
-                        <Badge
-                          colorScheme={ppnBalanceInfo.ppn_terutang > 0 ? 'red' : 'green'}
-                          fontSize="xs"
-                          px={2}
-                          py={1}
+                      {/* Result - Kurang Bayar */}
+                      {ppnBalanceInfo.ppn_terutang > 0 && (
+                        <Box
+                          borderTop="2px"
+                          borderColor="red.400"
+                          pt={3}
+                          bg={resultBgKurangBayar}
+                          p={3}
+                          borderRadius="md"
                         >
-                          {ppnBalanceInfo.ppn_terutang > 0
-                            ? '⚠️ KURANG BAYAR - Harus dibayar ke negara'
-                            : '✅ LEBIH BAYAR - Bisa dikompensasi periode berikutnya'
-                          }
-                        </Badge>
-
-                        {ppnBalanceInfo.ppn_terutang > 0 && (
+                          <HStack justify="space-between" mb={2}>
+                            <Text fontSize="lg" fontWeight="bold" color="red.600">
+                              PPN Terutang:
+                            </Text>
+                            <Text fontSize="xl" fontWeight="bold" color="red.600">
+                              {formatRupiah(ppnBalanceInfo.ppn_terutang)}
+                            </Text>
+                          </HStack>
+                          <Badge colorScheme="red" fontSize="xs" px={2} py={1}>
+                            ⚠️ KURANG BAYAR - Harus dibayar ke negara
+                          </Badge>
                           <Text fontSize="xs" color={mutedColor} mt={2} fontStyle="italic">
                             * Jumlah ini yang harus disetor ke negara melalui e-Billing DJP
                           </Text>
-                        )}
-                      </Box>
+                        </Box>
+                      )}
+
+                      {/* Result - Sudah Lunas */}
+                      {ppnBalanceInfo.ppn_terutang === 0 && (
+                        <Box
+                          borderTop="2px"
+                          borderColor="green.400"
+                          pt={3}
+                          bg={resultBgLebihBayar}
+                          p={3}
+                          borderRadius="md"
+                        >
+                          <HStack justify="space-between" mb={2}>
+                            <Text fontSize="lg" fontWeight="bold" color="green.600">
+                              PPN Terutang:
+                            </Text>
+                            <Text fontSize="xl" fontWeight="bold" color="green.600">
+                              Rp 0
+                            </Text>
+                          </HStack>
+                          <Badge colorScheme="green" fontSize="xs" px={2} py={1}>
+                            ✅ LUNAS - Tidak ada kewajiban PPN saat ini
+                          </Badge>
+                          <Text fontSize="xs" color={mutedColor} mt={2}>
+                            PPN Keluaran dan PPN Masukan sudah seimbang. Tidak ada pembayaran yang perlu dilakukan.
+                          </Text>
+                        </Box>
+                      )}
+
+                      {/* Result - Lebih Bayar */}
+                      {ppnBalanceInfo.ppn_terutang < 0 && (
+                        <Box
+                          borderTop="2px"
+                          borderColor="blue.400"
+                          pt={3}
+                          bg={lebihBayarBg}
+                          p={3}
+                          borderRadius="md"
+                        >
+                          <HStack justify="space-between" mb={2}>
+                            <Text fontSize="lg" fontWeight="bold" color="blue.600">
+                              PPN Lebih Bayar:
+                            </Text>
+                            <Text fontSize="xl" fontWeight="bold" color="blue.600">
+                              {formatRupiah(Math.abs(ppnBalanceInfo.ppn_terutang))}
+                            </Text>
+                          </HStack>
+                          <Badge colorScheme="blue" fontSize="xs" px={2} py={1}>
+                            💡 LEBIH BAYAR - PPN Masukan lebih besar dari PPN Keluaran
+                          </Badge>
+                          <Box mt={3} p={3} bg={lebihBayarInfoBg} borderRadius="md" border="1px" borderColor={borderColor}>
+                            <Text fontSize="sm" fontWeight="bold" mb={2} color="blue.600">
+                              ℹ️ Apa artinya PPN Lebih Bayar?
+                            </Text>
+                            <VStack align="stretch" spacing={2}>
+                              <Text fontSize="xs">
+                                PPN Masukan (kredit pajak dari pembelian) Anda lebih besar dari PPN Keluaran (PPN yang dipungut dari penjualan).
+                                Artinya perusahaan Anda memiliki <strong>kelebihan kredit pajak sebesar {formatRupiah(Math.abs(ppnBalanceInfo.ppn_terutang))}</strong>.
+                              </Text>
+                              <Text fontSize="sm" fontWeight="bold" mt={1}>
+                                Apa yang bisa dilakukan?
+                              </Text>
+                              <Box pl={3}>
+                                <Text fontSize="xs">• <strong>Kompensasi:</strong> Kelebihan PPN akan otomatis dikompensasi ke periode pajak berikutnya. Saldo PPN Masukan akan berkurang seiring penjualan baru.</Text>
+                                <Text fontSize="xs">• <strong>Restitusi:</strong> Ajukan permohonan pengembalian (restitusi) ke DJP jika jumlah lebih bayar signifikan.</Text>
+                                <Text fontSize="xs">• <strong>Tidak perlu pembayaran:</strong> Tidak ada uang yang harus disetor ke negara saat ini.</Text>
+                              </Box>
+                            </VStack>
+                          </Box>
+                        </Box>
+                      )}
                     </VStack>
                   </CardBody>
                 </Card>
@@ -527,153 +577,156 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                 <FormErrorMessage>{errors.date?.message}</FormErrorMessage>
               </FormControl>
 
-              {/* Amount (Read-only - always full PPN Terutang) */}
-              <FormControl>
-                <FormLabel>
-                  Jumlah Pembayaran
-                  <Tooltip label="Pembayaran PPN selalu menggunakan jumlah penuh PPN Terutang">
-                    <span>
-                      <Icon as={FiInfo} ml={2} color={mutedColor} />
-                    </span>
-                  </Tooltip>
-                </FormLabel>
-                <Box
-                  p={3}
-                  bg={useColorModeValue('blue.50', 'blue.900')}
-                  borderRadius="md"
-                  border="1px solid"
-                  borderColor={useColorModeValue('blue.200', 'blue.700')}
-                >
-                  <Text fontSize="lg" fontWeight="bold" color={useColorModeValue('blue.700', 'blue.200')}>
-                    {ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0
-                      ? formatRupiah(ppnBalanceInfo.ppn_terutang)
-                      : 'Rp 0'}
-                  </Text>
-                  <Text fontSize="xs" color={mutedColor} mt={1}>
-                    Pembayaran penuh PPN Terutang (tidak bisa cicilan)
-                  </Text>
-                </Box>
-              </FormControl>
-
-              {/* Cash/Bank Account */}
-              <FormControl isInvalid={!!errors.cash_bank_id}>
-                <FormLabel>
-                  Akun Kas/Bank
-                  <Tooltip label="Pilih akun kas/bank yang digunakan untuk membayar PPN">
-                    <span>
-                      <Icon as={FiInfo} ml={2} color={mutedColor} />
-                    </span>
-                  </Tooltip>
-                </FormLabel>
-                <Controller
-                  name="cash_bank_id"
-                  control={control}
-                  rules={{ required: 'Akun kas/bank wajib dipilih' }}
-                  render={({ field }) => (
-                    <Select
-                      {...field}
-                      placeholder="Pilih akun kas/bank"
-                      onChange={(e) => field.onChange(parseInt(e.target.value))}
-                    >
-                      {cashBanks.map((cashBank) => (
-                        <option key={cashBank.id} value={cashBank.id}>
-                          {cashBank.name} - Saldo: {formatRupiah(cashBank.balance)}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                />
-                <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
-              </FormControl>
-
-              {/* Balance Validation */}
-              {ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0 && selectedCashBankId > 0 && (() => {
-                const selectedCB = getSelectedCashBank();
-                if (selectedCB && ppnBalanceInfo.ppn_terutang > selectedCB.balance) {
-                  return (
-                    <Alert status="warning" borderRadius="md">
-                      <AlertIcon />
-                      <Text fontSize="sm">
-                        Saldo kas/bank tidak mencukupi. Saldo: {formatRupiah(selectedCB.balance)}
-                      </Text>
-                    </Alert>
-                  );
-                }
-                return null;
-              })()}
-
-              {/* Reference */}
-              <FormControl>
-                <FormLabel>
-                  Nomor Referensi (Opsional)
-                  <Tooltip label="Nomor referensi pembayaran seperti nomor SSP atau kode billing">
-                    <span>
-                      <Icon as={FiInfo} ml={2} color={mutedColor} />
-                    </span>
-                  </Tooltip>
-                </FormLabel>
-                <Controller
-                  name="reference"
-                  control={control}
-                  render={({ field }) => (
-                    <Input
-                      {...field}
-                      placeholder="Contoh: SSP-123456 atau kode billing"
-                    />
-                  )}
-                />
-              </FormControl>
-
-              {/* Notes */}
-              <FormControl>
-                <FormLabel>
-                  Catatan (Opsional)
-                  <Tooltip label="Catatan tambahan untuk pembayaran PPN ini">
-                    <span>
-                      <Icon as={FiInfo} ml={2} color={mutedColor} />
-                    </span>
-                  </Tooltip>
-                </FormLabel>
-                <Controller
-                  name="notes"
-                  control={control}
-                  render={({ field }) => (
-                    <Textarea
-                      {...field}
-                      placeholder="Catatan tambahan..."
-                      rows={3}
-                    />
-                  )}
-                />
-              </FormControl>
-
-              {/* Summary */}
+              {/* Amount (Read-only - only show when there's PPN to pay) */}
               {ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0 && (
-                <Card bg={summaryBg} borderColor={borderColor}>
-                  <CardBody>
-                    <VStack align="stretch" spacing={2}>
-                      <Text fontWeight="bold" fontSize="sm">Ringkasan:</Text>
-                      <HStack justify="space-between">
-                        <Text fontSize="sm">Jumlah Pembayaran:</Text>
-                        <Text fontSize="sm" fontWeight="bold">
-                          {formatRupiah(ppnBalanceInfo.ppn_terutang)}
-                        </Text>
-                      </HStack>
-                      <HStack justify="space-between">
-                        <Text fontSize="sm">PPN Keluaran:</Text>
-                        <Badge colorScheme="red">Berkurang (Debit)</Badge>
-                      </HStack>
-                      <HStack justify="space-between">
-                        <Text fontSize="sm">PPN Masukan:</Text>
-                        <Badge colorScheme="green">Dikompensasi (Credit)</Badge>
-                      </HStack>
-                      <HStack justify="space-between">
-                        <Text fontSize="sm">Kas/Bank:</Text>
-                        <Badge colorScheme="red">Keluar (Credit)</Badge>
-                      </HStack>
-                    </VStack>
-                  </CardBody>
-                </Card>
+                <FormControl>
+                  <FormLabel>
+                    Jumlah Pembayaran
+                    <Tooltip label="Pembayaran PPN selalu menggunakan jumlah penuh PPN Terutang">
+                      <span>
+                        <Icon as={FiInfo} ml={2} color={mutedColor} />
+                      </span>
+                    </Tooltip>
+                  </FormLabel>
+                  <Box
+                    p={3}
+                    bg={lebihBayarBg}
+                    borderRadius="md"
+                    border="1px solid"
+                    borderColor={borderColor}
+                  >
+                    <Text fontSize="lg" fontWeight="bold" color="blue.600">
+                      {formatRupiah(ppnBalanceInfo.ppn_terutang)}
+                    </Text>
+                    <Text fontSize="xs" color={mutedColor} mt={1}>
+                      Pembayaran penuh PPN Terutang (tidak bisa cicilan)
+                    </Text>
+                  </Box>
+                </FormControl>
+              )}
+
+              {/* Payment details - only show when PPN needs to be paid */}
+              {ppnBalanceInfo && ppnBalanceInfo.ppn_terutang > 0 && (
+                <>
+                  {/* Cash/Bank Account */}
+                  <FormControl isInvalid={!!errors.cash_bank_id}>
+                    <FormLabel>
+                      Akun Kas/Bank
+                      <Tooltip label="Pilih akun kas/bank yang digunakan untuk membayar PPN">
+                        <span>
+                          <Icon as={FiInfo} ml={2} color={mutedColor} />
+                        </span>
+                      </Tooltip>
+                    </FormLabel>
+                    <Controller
+                      name="cash_bank_id"
+                      control={control}
+                      rules={{ required: 'Akun kas/bank wajib dipilih' }}
+                      render={({ field }) => (
+                        <Select
+                          {...field}
+                          placeholder="Pilih akun kas/bank"
+                          onChange={(e) => field.onChange(parseInt(e.target.value))}
+                        >
+                          {cashBanks.map((cashBank) => (
+                            <option key={cashBank.id} value={cashBank.id}>
+                              {cashBank.name} - Saldo: {formatRupiah(cashBank.balance)}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                    />
+                    <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
+                  </FormControl>
+
+                  {/* Balance Validation */}
+                  {selectedCashBankId > 0 && (() => {
+                    const selectedCB = getSelectedCashBank();
+                    if (selectedCB && ppnBalanceInfo.ppn_terutang > selectedCB.balance) {
+                      return (
+                        <Alert status="warning" borderRadius="md">
+                          <AlertIcon />
+                          <Text fontSize="sm">
+                            Saldo kas/bank tidak mencukupi. Saldo: {formatRupiah(selectedCB.balance)}
+                          </Text>
+                        </Alert>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  {/* Reference */}
+                  <FormControl>
+                    <FormLabel>
+                      Nomor Referensi (Opsional)
+                      <Tooltip label="Nomor referensi pembayaran seperti nomor SSP atau kode billing">
+                        <span>
+                          <Icon as={FiInfo} ml={2} color={mutedColor} />
+                        </span>
+                      </Tooltip>
+                    </FormLabel>
+                    <Controller
+                      name="reference"
+                      control={control}
+                      render={({ field }) => (
+                        <Input
+                          {...field}
+                          placeholder="Contoh: SSP-123456 atau kode billing"
+                        />
+                      )}
+                    />
+                  </FormControl>
+
+                  {/* Notes */}
+                  <FormControl>
+                    <FormLabel>
+                      Catatan (Opsional)
+                      <Tooltip label="Catatan tambahan untuk pembayaran PPN ini">
+                        <span>
+                          <Icon as={FiInfo} ml={2} color={mutedColor} />
+                        </span>
+                      </Tooltip>
+                    </FormLabel>
+                    <Controller
+                      name="notes"
+                      control={control}
+                      render={({ field }) => (
+                        <Textarea
+                          {...field}
+                          placeholder="Catatan tambahan..."
+                          rows={3}
+                        />
+                      )}
+                    />
+                  </FormControl>
+
+                  {/* Summary */}
+                  <Card bg={summaryBg} borderColor={borderColor}>
+                    <CardBody>
+                      <VStack align="stretch" spacing={2}>
+                        <Text fontWeight="bold" fontSize="sm">Ringkasan Jurnal:</Text>
+                        <HStack justify="space-between">
+                          <Text fontSize="sm">Jumlah Pembayaran:</Text>
+                          <Text fontSize="sm" fontWeight="bold">
+                            {formatRupiah(ppnBalanceInfo.ppn_terutang)}
+                          </Text>
+                        </HStack>
+                        <HStack justify="space-between">
+                          <Text fontSize="sm">PPN Keluaran:</Text>
+                          <Badge colorScheme="red">Berkurang (Debit) {formatRupiah(ppnBalanceInfo.ppn_keluaran)}</Badge>
+                        </HStack>
+                        <HStack justify="space-between">
+                          <Text fontSize="sm">PPN Masukan:</Text>
+                          <Badge colorScheme="green">Dikompensasi (Credit) {formatRupiah(ppnBalanceInfo.ppn_masukan)}</Badge>
+                        </HStack>
+                        <HStack justify="space-between">
+                          <Text fontSize="sm">Kas/Bank:</Text>
+                          <Badge colorScheme="red">Keluar (Credit) {formatRupiah(ppnBalanceInfo.ppn_terutang)}</Badge>
+                        </HStack>
+                      </VStack>
+                    </CardBody>
+                  </Card>
+                </>
               )}
             </VStack>
           </ModalBody>
@@ -687,11 +740,13 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
               type="submit"
               isLoading={loading}
               loadingText="Memproses..."
-              isDisabled={ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang === 0}
+              isDisabled={ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang <= 0}
             >
               {ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang === 0
                 ? '✅ Sudah Lunas'
-                : 'Bayar PPN'
+                : ppnBalanceInfo !== null && ppnBalanceInfo.ppn_terutang < 0
+                  ? '💡 Tidak Perlu Bayar (Lebih Bayar)'
+                  : 'Bayar PPN'
               }
             </Button>
           </ModalFooter>

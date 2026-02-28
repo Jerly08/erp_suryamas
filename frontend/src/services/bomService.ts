@@ -9,8 +9,8 @@ export const bomService = {
     /**
      * Fetch all Master BOM templates
      */
-    async getBOMs(): Promise<ServiceResponse<BOM[]>> {
-        const response = await api.get('/api/v1/boms');
+    async getBOMs(params?: { target_product_id?: number }): Promise<ServiceResponse<BOM[]>> {
+        const response = await api.get('/api/v1/boms', { params });
         return { data: response.data.data, success: true, status: response.status };
     },
 
@@ -27,6 +27,14 @@ export const bomService = {
      */
     async createBOM(data: BOMCreateRequest): Promise<ServiceResponse<any>> {
         const response = await api.post('/api/v1/boms', data);
+        return { data: response.data, success: true, status: response.status };
+    },
+
+    /**
+     * Update an existing Master BOM template
+     */
+    async updateBOM(id: number, data: BOMCreateRequest): Promise<ServiceResponse<any>> {
+        const response = await api.put(`/api/v1/boms/${id}`, data);
         return { data: response.data, success: true, status: response.status };
     },
 

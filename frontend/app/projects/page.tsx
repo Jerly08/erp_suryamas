@@ -263,6 +263,7 @@ export default function ProjectsPage() {
                                         <Th>Status</Th>
                                         <Th isNumeric>Total Anggaran</Th>
                                         <Th isNumeric>Biaya Aktual</Th>
+                                        <Th isNumeric>Pendapatan Penjualan</Th>
                                         <Th>Tanggal Mulai</Th>
                                         <Th>Aksi</Th>
                                     </Tr>
@@ -270,11 +271,11 @@ export default function ProjectsPage() {
                                 <Tbody>
                                     {loading ? (
                                         <Tr>
-                                            <Td colSpan={7} textAlign="center" py={4}>Memuat data...</Td>
+                                            <Td colSpan={8} textAlign="center" py={4}>Memuat data...</Td>
                                         </Tr>
                                     ) : filteredProjects.length === 0 ? (
                                         <Tr>
-                                            <Td colSpan={7} textAlign="center" py={4}>Tidak ada data proyek</Td>
+                                            <Td colSpan={8} textAlign="center" py={4}>Tidak ada data proyek</Td>
                                         </Tr>
                                     ) : (
                                         filteredProjects.map((project) => (
@@ -290,6 +291,9 @@ export default function ProjectsPage() {
                                                 <Td isNumeric>{formatCurrency(project.total_budget)}</Td>
                                                 <Td isNumeric color={project.total_actual_cost > project.total_budget ? 'red.500' : 'inherit'}>
                                                     {formatCurrency(project.total_actual_cost)}
+                                                </Td>
+                                                <Td isNumeric color="green.500" fontWeight="semibold">
+                                                    {formatCurrency(project.total_sales_revenue || 0)}
                                                 </Td>
                                                 <Td>{project.start_date ? new Date(project.start_date).toLocaleDateString('id-ID') : '-'}</Td>
                                                 <Td>

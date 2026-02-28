@@ -27,8 +27,8 @@ func InitializeDatabase(db *gorm.DB) {
 	// Seed initial data
 	SeedData(db)
 
-	// Update existing purchase data with new payment tracking fields
-	UpdateExistingPurchaseData(db)
+	// NOTE: UpdateExistingPurchaseData removed — it was resetting outstanding_amount
+	// for paid purchases every startup, corrupting payment data
 
 	// Note: Balance sync migration is now handled in database.go after environment variable checks
 	// to prevent balance resets during development
@@ -67,8 +67,7 @@ func InitializeDatabase(db *gorm.DB) {
 	// Fix journal entry date constraint for period closing
 	FixJournalEntryDateConstraintMigration(db)
 
-	// UNCOMMENT BELOW IF YOU NEED TO FORCE RE-RUN THE DATE CONSTRAINT FIX
-	ForceRunDateConstraintFix(db)
+	// NOTE: ForceRunDateConstraintFix removed — already applied, no need to run every startup
 
 	log.Println("Database initialization completed")
 }

@@ -216,6 +216,12 @@ func (sc *SalesController) CreateSale(c *gin.Context) {
 		return
 	}
 
+	if request.ProjectID != nil {
+		log.Printf("📥 Check CreateSale Request ProjectID: %d", *request.ProjectID)
+	} else {
+		log.Printf("📥 Check CreateSale Request ProjectID is NIL!")
+	}
+
 	// Get user ID from context with error handling
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
@@ -293,6 +299,12 @@ func (sc *SalesController) UpdateSale(c *gin.Context) {
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if request.ProjectID != nil {
+		log.Printf("📥 Check UpdateSale Request ProjectID: %d", *request.ProjectID)
+	} else {
+		log.Printf("📥 Check UpdateSale Request ProjectID is NIL!")
 	}
 
 	userID := c.MustGet("user_id").(uint)

@@ -323,6 +323,28 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 				log.Printf("[UNIFIED CLOSING] Recalculated balance set: account_id=%d type=%s new_balance=%.2f", r.AccountID, r.AccType, r.Correct)
 			}
 
+			// Also zero out parent/header revenue and expense accounts that don't have SSOT journal lines
+			// These accounts have stale cached balances from child account aggregation
+			// The closing only creates journal lines for leaf accounts (those in SSOT),
+			// so parent accounts need explicit zeroing.
+			var parentAccounts []models.Account
+			if err := tx.Where(
+				"type IN (?) AND ABS(balance) > 0.01 AND id NOT IN (?)",
+				[]string{"REVENUE", "EXPENSE"},
+				affectedIDs,
+			).Find(&parentAccounts).Error; err != nil {
+				return fmt.Errorf("failed to find parent accounts to zero: %v", err)
+			}
+			for _, acc := range parentAccounts {
+				if err := tx.Model(&models.Account{}).
+					Where("id = ?", acc.ID).
+					Update("balance", 0).Error; err != nil {
+					return fmt.Errorf("failed to zero parent account %s: %v", acc.Code, err)
+				}
+				log.Printf("[UNIFIED CLOSING] Zeroed parent/header account: %s (%s) old_balance=%.2f → 0",
+					acc.Code, acc.Name, acc.Balance)
+			}
+
 			// VALIDATION: Verify that all Revenue and Expense accounts are now ZERO
 			var nonZeroCount int64
 			if err := tx.Model(&models.Account{}).

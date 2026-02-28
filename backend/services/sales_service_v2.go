@@ -148,6 +148,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		UserID:          userID,
 		SalesPersonID:   request.SalesPersonID,
 		InvoiceTypeID:   request.InvoiceTypeID,
+		ProjectID:       request.ProjectID,
 		Type:            request.Type,
 		Status:          "DRAFT", // Always start with DRAFT
 		Date:            request.Date,
@@ -343,6 +344,11 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		return nil, fmt.Errorf("failed to commit transaction: %v", err)
 	}
 
+	// Recalculate project sales revenue if sale is linked to a project
+	if sale.ProjectID != nil && *sale.ProjectID > 0 {
+		s.recalculateProjectSalesRevenue(*sale.ProjectID)
+	}
+
 	return sale, nil
 }
 
@@ -371,6 +377,13 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	}
 	if request.SalesPersonID != nil {
 		sale.SalesPersonID = request.SalesPersonID
+	}
+	if request.ProjectID != nil {
+		if *request.ProjectID == 0 {
+			sale.ProjectID = nil // Allow unsetting the project
+		} else {
+			sale.ProjectID = request.ProjectID
+		}
 	}
 	if request.Date != nil {
 		sale.Date = *request.Date
@@ -652,6 +665,11 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 
 	// Reload with relationships
 	s.db.Preload("Customer").Preload("SaleItems.Product").First(&sale, sale.ID)
+
+	// Recalculate project sales revenue if sale is linked to a project
+	if sale.ProjectID != nil && *sale.ProjectID > 0 {
+		s.recalculateProjectSalesRevenue(*sale.ProjectID)
+	}
 
 	return &sale, nil
 }
@@ -1000,6 +1018,11 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 		return nil, fmt.Errorf("failed to reload sale after commit: %v", err)
 	}
 
+	// Recalculate project sales revenue if sale is linked to a project
+	if sale.ProjectID != nil && *sale.ProjectID > 0 {
+		s.recalculateProjectSalesRevenue(*sale.ProjectID)
+	}
+
 	return &sale, nil
 }
 
@@ -1024,11 +1047,26 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 		return nil, fmt.Errorf("payment can only be made for INVOICED sales")
 	}
 
+	// ✅ ACCOUNTING GUARD: Prevent over-payment (piutang tidak boleh negatif)
+	// If sale is already fully paid, reject
+	if sale.OutstandingAmount <= 0 {
+		tx.Rollback()
+		return nil, fmt.Errorf("penjualan ini sudah lunas (outstanding: Rp 0), tidak bisa menerima pembayaran lagi")
+	}
+
+	// Cap payment amount to outstanding to prevent negative receivables
+	actualAmount := paymentRequest.Amount
+	if actualAmount > sale.OutstandingAmount {
+		log.Printf("⚠️ [OVER-PAY] Payment amount %.2f exceeds outstanding %.2f for Sale #%d. Capping to outstanding.",
+			actualAmount, sale.OutstandingAmount, sale.ID)
+		actualAmount = sale.OutstandingAmount
+	}
+
 	// Create payment record
 	payment := &models.SalePayment{
 		SaleID:        saleID,
 		PaymentDate:   paymentRequest.PaymentDate,
-		Amount:        paymentRequest.Amount,
+		Amount:        actualAmount,
 		PaymentMethod: paymentRequest.PaymentMethod,
 		Reference:     paymentRequest.Reference,
 		CashBankID:    paymentRequest.CashBankID,
@@ -1106,6 +1144,11 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 		return nil, fmt.Errorf("failed to commit transaction: %v", err)
 	}
 
+	// Recalculate project sales revenue if sale is linked to a project
+	if sale.ProjectID != nil && *sale.ProjectID > 0 {
+		s.recalculateProjectSalesRevenue(*sale.ProjectID)
+	}
+
 	return payment, nil
 }
 
@@ -1119,7 +1162,7 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 	}()
 
 	var sale models.Sale
-	if err := tx.First(&sale, saleID).Error; err != nil {
+	if err := tx.Preload("SaleItems.Product").First(&sale, saleID).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("sale not found")
 	}
@@ -1129,58 +1172,146 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 	sale.InternalNotes = fmt.Sprintf("Cancelled: %s", reason)
 	sale.UpdatedAt = time.Now()
 
+	// 1. Reset payment tracking amounts
+	log.Printf("💰 Resetting payment tracking for cancelled Sale #%d (Outstanding: %.2f→0, Paid: %.2f→0)",
+		sale.ID, sale.OutstandingAmount, sale.PaidAmount)
+	sale.OutstandingAmount = 0
+	sale.PaidAmount = 0
+
 	if err := tx.Save(&sale).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to cancel sale: %v", err)
 	}
 
-	// Remove journal entries if they exist (for INVOICED/PAID status)
+	// 2. Remove SALES journal entries if they exist (for INVOICED/PAID status)
 	if s.salesJournalService.ShouldPostToJournal(oldStatus) {
 		if err := s.salesJournalService.DeleteSalesJournal(sale.ID, tx); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to remove journal entries: %v", err)
 		}
-		log.Printf("🗑️ Removed journal entries for cancelled Sale #%d", sale.ID)
+		log.Printf("🗑️ Removed SALES journal entries for cancelled Sale #%d", sale.ID)
 	}
 
-	// Restore stock if needed
-	if s.stockService != nil && (oldStatus == "INVOICED" || oldStatus == "PAID") {
-		var saleItems []models.SaleItem
-		if err := tx.Where("sale_id = ?", sale.ID).Preload("Product").Find(&saleItems).Error; err == nil {
-			for _, item := range saleItems {
-				if item.Product.IsService {
-					// Services don't need stock restoration
-					continue
+	// 3. Remove SALES_PAYMENT journal entries (from ProcessPayment)
+	var salePayments []models.SalePayment
+	if err := tx.Where("sale_id = ?", sale.ID).Find(&salePayments).Error; err == nil && len(salePayments) > 0 {
+		log.Printf("🗑️ Found %d payment records for cancelled Sale #%d, cleaning up...", len(salePayments), sale.ID)
+		for _, payment := range salePayments {
+			// Delete the payment journal entry (SALES_PAYMENT type)
+			sourceID := uint64(payment.ID)
+			var paymentJournal models.SSOTJournalEntry
+			if err := tx.Where("source_type = ? AND source_id = ?", "SALES_PAYMENT", sourceID).
+				First(&paymentJournal).Error; err == nil {
+				// Get journal lines for COA balance reversal
+				var journalLines []models.SSOTJournalLine
+				if err := tx.Where("journal_id = ?", paymentJournal.ID).Find(&journalLines).Error; err == nil {
+					for _, line := range journalLines {
+						// Reverse COA balance
+						negDebit := line.DebitAmount.Neg()
+						negCredit := line.CreditAmount.Neg()
+						if err := s.salesJournalService.updateAccountBalanceForPayment(tx, line.AccountID, negDebit, negCredit); err != nil {
+							log.Printf("⚠️ Warning: Failed to reverse COA balance for payment journal account %d: %v", line.AccountID, err)
+						}
+						if err := s.salesJournalService.updateParentAccountBalances(tx, uint(line.AccountID)); err != nil {
+							log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", line.AccountID, err)
+						}
+					}
 				}
 
-				if item.Product.IsAssembly {
-					// 🚀 AUTO-KITTING RESTORE LOGIC: Restore component stocks
-					var bom models.BOM
-					if err := tx.Preload("Items").Where("target_product_id = ?", item.ProductID).First(&bom).Error; err == nil {
-						for _, bomItem := range bom.Items {
-							requiredQty := int(bomItem.RequirementQuantity * float64(item.Quantity))
-							if requiredQty > 0 {
-								if err := s.stockService.RestoreStock(bomItem.ComponentProductID, requiredQty, tx); err != nil {
-									log.Printf("⚠️ Warning: Failed to restore stock for component %d of assembly %d: %v", bomItem.ComponentProductID, item.ProductID, err)
-								}
+				// Delete journal lines and entry
+				tx.Where("journal_id = ?", paymentJournal.ID).Delete(&models.SSOTJournalLine{})
+				tx.Delete(&paymentJournal)
+				log.Printf("🗑️ Deleted SALES_PAYMENT journal for payment #%d", payment.ID)
+			}
+
+			// 4. Reverse cash/bank balance for this payment
+			if payment.CashBankID != nil && *payment.CashBankID > 0 {
+				var cashBank models.CashBank
+				if err := tx.First(&cashBank, *payment.CashBankID).Error; err == nil {
+					oldBalance := cashBank.Balance
+					cashBank.Balance -= payment.Amount // Reverse: subtract the payment that was added
+					if err := tx.Save(&cashBank).Error; err != nil {
+						log.Printf("⚠️ Warning: Failed to reverse cash/bank balance for payment #%d: %v", payment.ID, err)
+					} else {
+						log.Printf("✅ Cash/bank balance reversed for payment #%d: %s %.2f → %.2f (-%.2f)",
+							payment.ID, cashBank.Name, oldBalance, cashBank.Balance, payment.Amount)
+					}
+				}
+			}
+		}
+
+		// Soft-delete cash/bank transaction records for SALES_PAYMENT
+		tx.Exec(`
+			UPDATE cash_bank_transactions 
+			SET deleted_at = CURRENT_TIMESTAMP
+			WHERE reference_type = 'SALES_PAYMENT' AND reference_id IN (
+				SELECT id FROM sale_payments WHERE sale_id = ?
+			) AND deleted_at IS NULL
+		`, sale.ID)
+		log.Printf("🗑️ Soft-deleted SALES_PAYMENT cash/bank transactions for Sale #%d", sale.ID)
+	}
+
+	// 5. Reverse cash/bank for immediate-payment sales (CASH/BANK auto-paid on invoice)
+	pm := strings.ToUpper(strings.TrimSpace(sale.PaymentMethodType))
+	if (oldStatus == "INVOICED" || oldStatus == "PAID") && (pm == "CASH" || strings.HasPrefix(pm, "BANK")) {
+		if sale.CashBankID != nil && *sale.CashBankID > 0 {
+			var cashBank models.CashBank
+			if err := tx.First(&cashBank, *sale.CashBankID).Error; err == nil {
+				oldBalance := cashBank.Balance
+				cashBank.Balance -= sale.TotalAmount // Reverse: subtract the auto-payment
+				if err := tx.Save(&cashBank).Error; err != nil {
+					log.Printf("⚠️ Warning: Failed to reverse cash/bank for immediate-payment sale: %v", err)
+				} else {
+					log.Printf("✅ Cash/bank reversed for auto-paid Sale #%d: %s %.2f → %.2f (-%.2f)",
+						sale.ID, cashBank.Name, oldBalance, cashBank.Balance, sale.TotalAmount)
+				}
+			}
+		}
+
+		// Soft-delete the SALE cash/bank transaction record
+		tx.Exec(`
+			UPDATE cash_bank_transactions 
+			SET deleted_at = CURRENT_TIMESTAMP
+			WHERE reference_type = 'SALE' AND reference_id = ? AND deleted_at IS NULL
+		`, sale.ID)
+		log.Printf("🗑️ Soft-deleted SALE cash/bank transaction for Sale #%d", sale.ID)
+	}
+
+	// 6. Restore stock if needed
+	if s.stockService != nil && (oldStatus == "INVOICED" || oldStatus == "PAID") {
+		for _, item := range sale.SaleItems {
+			if item.Product.IsService {
+				// Services don't need stock restoration
+				continue
+			}
+
+			if item.Product.IsAssembly {
+				// 🚀 AUTO-KITTING RESTORE LOGIC: Restore component stocks
+				var bom models.BOM
+				if err := tx.Preload("Items").Where("target_product_id = ?", item.ProductID).First(&bom).Error; err == nil {
+					for _, bomItem := range bom.Items {
+						requiredQty := int(bomItem.RequirementQuantity * float64(item.Quantity))
+						if requiredQty > 0 {
+							if err := s.stockService.RestoreStock(bomItem.ComponentProductID, requiredQty, tx); err != nil {
+								log.Printf("⚠️ Warning: Failed to restore stock for component %d of assembly %d: %v", bomItem.ComponentProductID, item.ProductID, err)
 							}
 						}
-						log.Printf("✅ Kitting Restore: Component stocks restored for cancelled assembly %d (%s)", item.ProductID, item.Product.Name)
-					} else {
-						log.Printf("⚠️ Warning: BOM not found for assembly %d during stock restoration", item.ProductID)
 					}
-					continue
+					log.Printf("✅ Kitting Restore: Component stocks restored for cancelled assembly %d (%s)", item.ProductID, item.Product.Name)
+				} else {
+					log.Printf("⚠️ Warning: BOM not found for assembly %d during stock restoration", item.ProductID)
 				}
+				continue
+			}
 
-				// Standard stock restoration
-				if err := s.stockService.RestoreStock(item.ProductID, item.Quantity, tx); err != nil {
-					log.Printf("⚠️ Warning: Failed to restore stock for product %d: %v", item.ProductID, err)
-				}
+			// Standard stock restoration
+			if err := s.stockService.RestoreStock(item.ProductID, item.Quantity, tx); err != nil {
+				log.Printf("⚠️ Warning: Failed to restore stock for product %d: %v", item.ProductID, err)
 			}
 		}
 	}
 
-	log.Printf("❌ Sale #%d cancelled (status: %s → CANCELLED)", sale.ID, oldStatus)
+	log.Printf("❌ Sale #%d cancelled (status: %s → CANCELLED) - Full accounting cleanup completed", sale.ID, oldStatus)
 
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %v", err)
@@ -1191,7 +1322,7 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 
 // GetSales retrieves sales with filters
 func (s *SalesServiceV2) GetSales(filter models.SalesFilter) (*models.SalesResult, error) {
-	query := s.db.Model(&models.Sale{}).Preload("Customer").Preload("SaleItems")
+	query := s.db.Model(&models.Sale{}).Preload("Customer").Preload("SaleItems").Preload("Project")
 
 	// Apply filters
 	if filter.Status != "" {
@@ -1254,6 +1385,7 @@ func (s *SalesServiceV2) GetSaleByID(saleID uint) (*models.Sale, error) {
 	if err := s.db.Preload("Customer").
 		Preload("User").
 		Preload("SalesPerson").
+		Preload("Project").
 		Preload("SaleItems.Product").
 		Preload("SalePayments").
 		First(&sale, saleID).Error; err != nil {
@@ -1570,4 +1702,27 @@ func (s *SalesServiceV2) getTopCustomers(startDate, endDate *time.Time) ([]model
 	}
 
 	return topCustomers, nil
+}
+
+// recalculateProjectSalesRevenue recalculates the total sales revenue for a project
+// by aggregating TotalAmount from all sales linked to this project
+func (s *SalesServiceV2) recalculateProjectSalesRevenue(projectID uint) {
+	var totalRevenue float64
+	err := s.db.Model(&models.Sale{}).
+		Where("project_id = ? AND deleted_at IS NULL AND status IN ('INVOICED', 'PAID', 'CONFIRMED', 'DRAFT')", projectID).
+		Select("COALESCE(SUM(total_amount), 0)").
+		Scan(&totalRevenue).Error
+
+	if err != nil {
+		log.Printf("⚠️ Failed to recalculate project sales revenue for project %d: %v", projectID, err)
+		return
+	}
+
+	if err := s.db.Model(&models.Project{}).Where("id = ?", projectID).
+		Update("total_sales_revenue", totalRevenue).Error; err != nil {
+		log.Printf("⚠️ Failed to update project sales revenue for project %d: %v", projectID, err)
+		return
+	}
+
+	log.Printf("✅ Updated project %d sales revenue: %.2f", projectID, totalRevenue)
 }

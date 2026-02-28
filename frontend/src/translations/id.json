@@ -2521,7 +2521,7 @@
     "form": {
       "contact": "Kontak",
       "contactTooltip": "Pilih vendor atau kontak untuk pembayaran ini",
-      "contactHelper": "Pilih vendor untuk pembayaran beban ini",
+      "contactHelper": "Pilih kontak penerima (vendor, karyawan, dll)",
       "contactRequired": "Kontak wajib dipilih",
       "paymentDate": "Tanggal Pembayaran",
       "dateRequired": "Tanggal wajib diisi",

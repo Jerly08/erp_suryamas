@@ -329,7 +329,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                                 {new Date(transaction.transaction_date).toLocaleDateString('id-ID')}
                               </Text>
                               <Text fontSize="xs" color="gray.500">
-                                {new Date(transaction.transaction_date).toLocaleTimeString('id-ID')}
+                                {new Date(transaction.created_at).toLocaleTimeString('id-ID')}
                               </Text>
                             </Td>
                             <Td>

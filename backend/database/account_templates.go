@@ -55,8 +55,10 @@ func GetStandardCOA(companyType string) []models.Account {
 		{Code: "2102", Name: "UTANG PAJAK", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 3, IsHeader: true, IsActive: true},
 		{Code: "2102-001", Name: "PPN KELUARAN", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true},
 		{Code: "2102-002", Name: "PPN MASUKAN", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true}, // Note: Usually Contra-Asset or Liability with Debit balance, using Liability here as per user struct
-		{Code: "2102-003", Name: "PPH PASAL 21", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
-		{Code: "2102-004", Name: "PPH PASAL 23", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
+		{Code: "2102-003", Name: "HUTANG PPH PASAL 21", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
+		{Code: "2102-004", Name: "HUTANG PPH PASAL 23", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
+		{Code: "2102-005", Name: "HUTANG PPH PASAL 4(2) FINAL", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
+		{Code: "2102-006", Name: "HUTANG PPH PASAL 22", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
 
 		{Code: "2103", Name: "BIAYA YANG MASIH HARUS DIBAYAR", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 3, IsHeader: true, IsActive: true},
 		{Code: "2103-001", Name: "UTANG GAJI", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},

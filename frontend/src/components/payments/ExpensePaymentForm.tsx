@@ -43,7 +43,8 @@ import {
   FiFileText,
   FiInfo,
   FiBookOpen,
-  FiBriefcase
+  FiBriefcase,
+  FiPercent
 } from 'react-icons/fi';
 import paymentService from '@/services/paymentService';
 import accountService from '@/services/accountService';
@@ -69,7 +70,18 @@ interface ExpensePaymentFormData {
   reference: string;
   notes: string;
   description: string;
+  enable_pph: boolean;
+  pph_type: string;
+  pph_rate: number;
 }
+
+// PPh types with default rates
+const PPH_TYPES = [
+  { value: 'PPH_21', label: 'PPh 21 - Penghasilan Karyawan', defaultRate: 5 },
+  { value: 'PPH_23', label: 'PPh 23 - Jasa, Sewa, Royalti', defaultRate: 2 },
+  { value: 'PPH_4_2', label: 'PPh 4(2) Final - Sewa Tanah/Bangunan', defaultRate: 10 },
+  { value: 'PPH_22', label: 'PPh 22 - Pembelian Barang', defaultRate: 1.5 },
+];
 
 // For expense payments we only support two methods: Cash and Bank Transfer
 const PAYMENT_METHODS = [
@@ -92,6 +104,10 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const textColor = useColorModeValue('gray.600', 'gray.300');
   const labelColor = useColorModeValue('gray.700', 'gray.200');
   const selectedAccountBg = useColorModeValue('gray.50', 'gray.700');
+  const pphBg = useColorModeValue('blue.50', 'blue.900');
+  const pphBorderColor = useColorModeValue('blue.200', 'blue.700');
+  const pphPreviewBg = useColorModeValue('white', 'gray.800');
+  const greenColor = useColorModeValue('green.600', 'green.300');
 
   const [loading, setLoading] = useState(false);
   const [contacts, setContacts] = useState<SelectContact[]>([]);
@@ -117,21 +133,31 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       reference: '',
       notes: '',
       description: '',
+      enable_pph: false,
+      pph_type: '',
+      pph_rate: 0,
     },
   });
 
   const selectedAccountId = watch('expense_account_id');
   const selectedMethod = watch('method');
   const paymentDate = watch('date');
+  const enablePPH = watch('enable_pph');
+  const pphType = watch('pph_type');
+  const pphRate = watch('pph_rate');
+  const amount = watch('amount');
+
+  // Calculate PPh amounts
+  const pphAmount = enablePPH && pphRate > 0 && amount > 0
+    ? Math.round(amount * (pphRate / 100))
+    : 0;
+  const netPayment = amount - pphAmount;
+
   const selectedAccount = [...expenseAccounts, ...liabilityAccounts].find(
     acc => acc.id === Number(selectedAccountId)
   );
-  // Filter cash/bank accounts based on selected payment method
-  const filteredCashBanks = cashBanks.filter(cb => {
-    if (selectedMethod === 'CASH') return cb.type === 'CASH';
-    if (selectedMethod === 'BANK_TRANSFER') return cb.type === 'BANK';
-    return true;
-  });
+  // Show all cash/bank accounts (no filtering by payment method)
+  const filteredCashBanks = cashBanks;
 
   // Load accounts and cash banks
   useEffect(() => {
@@ -189,8 +215,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       const cashBankData = await cashbankService.getPaymentAccounts();
       setCashBanks(cashBankData || []);
 
-      // Load contacts (vendors) for tagging expense payee
-      const contactData = await searchableSelectService.getContacts({ type: 'VENDOR', is_active: true });
+      // Load contacts (all types for expense payee — vendors, employees, etc.)
+      const contactData = await searchableSelectService.getContacts({ is_active: true });
       setContacts(contactData || []);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -206,22 +232,11 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   };
 
   const onSubmit = async (data: ExpensePaymentFormData) => {
-    // Validate contact selection
-    if (!data.contact_id || data.contact_id === 0) {
-      toast({
-        title: 'Contact Required',
-        description: 'Please select a contact for expense payment',
-        status: 'error',
-        duration: 3000,
-      });
-      return;
-    }
-
     setLoading(true);
     try {
       // Create expense payment via unified PaymentService so it appears in Payment Management
       await paymentService.createExpensePayment({
-        contact_id: Number(data.contact_id),
+        contact_id: data.contact_id ? Number(data.contact_id) : 0,
         expense_account_id: Number(data.expense_account_id),
         cash_bank_id: Number(data.cash_bank_id),
         date: data.date,
@@ -234,6 +249,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
           `Payment for ${selectedAccount?.code || ''} ${selectedAccount?.name || 'Expense'}`.trim(),
         description: data.description || selectedAccount?.name || 'Expense Payment',
         auto_create_journal: true,
+        // PPh fields
+        ...(data.enable_pph && pphAmount > 0 && {
+          pph_type: data.pph_type,
+          pph_rate: data.pph_rate,
+          pph_amount: pphAmount,
+        }),
       });
 
       toast({
@@ -293,12 +314,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                 </Box>
               ) : (
                 <>
-                  {/* Contact */}
-                  <FormControl isInvalid={!!errors.contact_id} isRequired>
+                  {/* Contact (Optional) */}
+                  <FormControl>
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiCreditCard} />
-                        <Text>{t('payments.form.contact')}</Text>
+                        <Text>{t('payments.form.contact')} (Opsional)</Text>
                         <Tooltip label={t('payments.form.contactTooltip')}>
                           <Icon as={FiInfo} boxSize={3} color={textColor} />
                         </Tooltip>
@@ -307,16 +328,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <Controller
                       name="contact_id"
                       control={control}
-                      rules={{ required: t('payments.form.contactRequired') }}
                       render={({ field }) => (
                         <Select
                           {...field}
-                          placeholder={t('payments.form.selectContact')}
+                          placeholder="Tanpa kontak (opsional)"
                           borderColor={borderColor}
                         >
                           {contacts.map(contact => (
                             <option key={contact.id} value={contact.id}>
-                              {contact.name} (Vendor)
+                              {contact.name} ({contact.type || 'Contact'})
                             </option>
                           ))}
                         </Select>
@@ -325,7 +345,6 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormHelperText color={textColor}>
                       {t('payments.form.contactHelper')}
                     </FormHelperText>
-                    <FormErrorMessage>{errors.contact_id?.message}</FormErrorMessage>
                   </FormControl>
 
                   {/* Expense/Liability Account Selection */}
@@ -411,7 +430,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
                   </FormControl>
 
-                  <HStack width="full" spacing={4}>
+                  <HStack width="full" spacing={4} alignItems="flex-start">
                     {/* Payment Date */}
                     <FormControl isInvalid={!!errors.date || isDateClosed} isRequired flex={1}>
                       <FormLabel color={labelColor}>
@@ -448,8 +467,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                             onChange={(e) => {
                               const newMethod = e.target.value;
                               field.onChange(newMethod);
-                              // Reset selected cash/bank account when payment method changes
-                              setValue('cash_bank_id', undefined as any);
+                              // No need to reset cash_bank_id — we show all accounts regardless of method
                             }}
                           >
                             {PAYMENT_METHODS.map(method => (
@@ -507,6 +525,148 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       Optional: External reference number for this payment
                     </FormHelperText>
                   </FormControl>
+
+                  {/* === PPh Tax Configuration === */}
+                  <Divider />
+                  <FormControl display="flex" alignItems="center">
+                    <FormLabel color={labelColor} mb={0} htmlFor="enable-pph">
+                      <HStack spacing={1}>
+                        <Icon as={FiPercent} />
+                        <Text>Kenakan PPh (Pemotongan Pajak)</Text>
+                      </HStack>
+                    </FormLabel>
+                    <Controller
+                      name="enable_pph"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          id="enable-pph"
+                          type="checkbox"
+                          checked={field.value}
+                          onChange={(e) => {
+                            field.onChange(e.target.checked);
+                            if (!e.target.checked) {
+                              setValue('pph_type', '');
+                              setValue('pph_rate', 0);
+                            }
+                          }}
+                          style={{ width: 20, height: 20, cursor: 'pointer' }}
+                        />
+                      )}
+                    />
+                  </FormControl>
+
+                  {enablePPH && (
+                    <Box
+                      width="full"
+                      p={4}
+                      borderRadius="md"
+                      bg={pphBg}
+                      borderWidth={1}
+                      borderColor={pphBorderColor}
+                    >
+                      <VStack spacing={3} align="stretch">
+                        <HStack spacing={4} alignItems="flex-start">
+                          {/* PPh Type */}
+                          <FormControl isRequired flex={2}>
+                            <FormLabel color={labelColor} fontSize="sm">Jenis PPh</FormLabel>
+                            <Controller
+                              name="pph_type"
+                              control={control}
+                              rules={{ required: enablePPH ? 'Pilih jenis PPh' : false }}
+                              render={({ field }) => (
+                                <Select
+                                  {...field}
+                                  placeholder="Pilih jenis PPh"
+                                  borderColor={borderColor}
+                                  size="sm"
+                                  onChange={(e) => {
+                                    field.onChange(e.target.value);
+                                    const selected = PPH_TYPES.find(t => t.value === e.target.value);
+                                    if (selected) {
+                                      setValue('pph_rate', selected.defaultRate);
+                                    }
+                                  }}
+                                >
+                                  {PPH_TYPES.map(type => (
+                                    <option key={type.value} value={type.value}>
+                                      {type.label} ({type.defaultRate}%)
+                                    </option>
+                                  ))}
+                                </Select>
+                              )}
+                            />
+                          </FormControl>
+
+                          {/* PPh Rate */}
+                          <FormControl isRequired flex={1}>
+                            <FormLabel color={labelColor} fontSize="sm">Tarif (%)</FormLabel>
+                            <Controller
+                              name="pph_rate"
+                              control={control}
+                              render={({ field }) => (
+                                <NumberInput
+                                  value={field.value}
+                                  onChange={(_, val) => field.onChange(val || 0)}
+                                  min={0}
+                                  max={100}
+                                  precision={1}
+                                  size="sm"
+                                >
+                                  <NumberInputField borderColor={borderColor} />
+                                </NumberInput>
+                              )}
+                            />
+                          </FormControl>
+                        </HStack>
+
+                        {/* Tax Calculation Preview */}
+                        {pphAmount > 0 && (
+                          <Box
+                            p={3}
+                            borderRadius="md"
+                            bg={pphPreviewBg}
+                            borderWidth={1}
+                            borderColor={borderColor}
+                          >
+                            <VStack spacing={1} align="stretch" fontSize="sm">
+                              <HStack justify="space-between">
+                                <Text color={textColor}>Jumlah Bruto (Beban)</Text>
+                                <Text fontWeight="bold">
+                                  {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount)}
+                                </Text>
+                              </HStack>
+                              <HStack justify="space-between">
+                                <Text color="red.500">
+                                  PPh Dipotong ({pphRate}%)
+                                </Text>
+                                <Text fontWeight="bold" color="red.500">
+                                  - {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(pphAmount)}
+                                </Text>
+                              </HStack>
+                              <Divider />
+                              <HStack justify="space-between">
+                                <Text fontWeight="bold" color={greenColor}>
+                                  Dibayarkan (Neto)
+                                </Text>
+                                <Text fontWeight="bold" color={greenColor}>
+                                  {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(netPayment)}
+                                </Text>
+                              </HStack>
+                              <Alert status="info" borderRadius="md" mt={1} py={1}>
+                                <AlertIcon boxSize={3} />
+                                <AlertDescription fontSize="xs">
+                                  Jurnal: Debit Beban {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount)},
+                                  Credit Bank {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(netPayment)},
+                                  Credit Hutang PPh {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(pphAmount)}
+                                </AlertDescription>
+                              </Alert>
+                            </VStack>
+                          </Box>
+                        )}
+                      </VStack>
+                    </Box>
+                  )}
 
                   {/* Description */}
                   <FormControl>

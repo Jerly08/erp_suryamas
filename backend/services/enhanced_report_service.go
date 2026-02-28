@@ -1782,14 +1782,14 @@ func (ers *EnhancedReportService) GenerateGeneralLedger(accountID uint, startDat
 		return nil, fmt.Errorf("failed to fetch account: %v", err)
 	}
 
-	// Query journal entries for this account
-	var journalLines []models.JournalLine
-	if err := ers.db.Preload("JournalEntry").
-		Preload("JournalEntry.Creator").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Where("journal_lines.account_id = ? AND journal_entries.entry_date BETWEEN ? AND ?", accountID, startDate, endDate).
-		Where("journal_entries.status = ?", models.JournalStatusPosted).
-		Order("journal_entries.entry_date ASC, journal_entries.created_at ASC").
+	// Query journal lines from SSOT for this account
+	var journalLines []models.SSOTJournalLine
+	if err := ers.db.Preload("Journal").
+		Preload("Journal.Creator").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Where("unified_journal_lines.account_id = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ?", accountID, startDate, endDate).
+		Where("unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL", models.SSOTStatusPosted).
+		Order("unified_journal_ledger.entry_date ASC, unified_journal_ledger.created_at ASC").
 		Find(&journalLines).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch journal entries: %v", err)
 	}
@@ -1813,50 +1813,56 @@ func (ers *EnhancedReportService) GenerateGeneralLedger(accountID uint, startDat
 	monthlyMap := make(map[string]*MonthlyLedgerSummary)
 
 	for _, line := range journalLines {
+		if line.Journal == nil {
+			continue
+		}
+		debitAmt := line.DebitAmount.InexactFloat64()
+		creditAmt := line.CreditAmount.InexactFloat64()
+
 		// Update running balance
-		if line.DebitAmount > 0 {
+		if debitAmt > 0 {
 			if account.GetNormalBalance() == models.NormalBalanceDebit {
-				runningBalance += line.DebitAmount
+				runningBalance += debitAmt
 			} else {
-				runningBalance -= line.DebitAmount
+				runningBalance -= debitAmt
 			}
-			generalLedger.TotalDebits += line.DebitAmount
+			generalLedger.TotalDebits += debitAmt
 		} else {
 			if account.GetNormalBalance() == models.NormalBalanceCredit {
-				runningBalance += line.CreditAmount
+				runningBalance += creditAmt
 			} else {
-				runningBalance -= line.CreditAmount
+				runningBalance -= creditAmt
 			}
-			generalLedger.TotalCredits += line.CreditAmount
+			generalLedger.TotalCredits += creditAmt
 		}
 
 		// Create transaction entry
 		entry := GeneralLedgerEntry{
-			Date:         line.JournalEntry.EntryDate,
-			JournalCode:  line.JournalEntry.Code,
+			Date:         line.Journal.EntryDate,
+			JournalCode:  line.Journal.EntryNumber,
 			Description:  line.Description,
-			Reference:    line.JournalEntry.Reference,
-			DebitAmount:  line.DebitAmount,
-			CreditAmount: line.CreditAmount,
+			Reference:    line.Journal.Reference,
+			DebitAmount:  debitAmt,
+			CreditAmount: creditAmt,
 			Balance:      runningBalance,
-			EntryType:    line.JournalEntry.ReferenceType,
+			EntryType:    line.Journal.SourceType,
 		}
 		generalLedger.Transactions = append(generalLedger.Transactions, entry)
 
 		// Update monthly summary
-		monthKey := line.JournalEntry.EntryDate.Format("2006-01")
+		monthKey := line.Journal.EntryDate.Format("2006-01")
 		if summary, exists := monthlyMap[monthKey]; exists {
-			summary.Debits += line.DebitAmount
-			summary.Credits += line.CreditAmount
+			summary.Debits += debitAmt
+			summary.Credits += creditAmt
 			summary.NetMovement = summary.Debits - summary.Credits
 			summary.EndBalance = runningBalance
 		} else {
 			monthlyMap[monthKey] = &MonthlyLedgerSummary{
-				Month:       line.JournalEntry.EntryDate.Format("January"),
-				Year:        line.JournalEntry.EntryDate.Year(),
-				Debits:      line.DebitAmount,
-				Credits:     line.CreditAmount,
-				NetMovement: line.DebitAmount - line.CreditAmount,
+				Month:       line.Journal.EntryDate.Format("January"),
+				Year:        line.Journal.EntryDate.Year(),
+				Debits:      debitAmt,
+				Credits:     creditAmt,
+				NetMovement: debitAmt - creditAmt,
 				EndBalance:  runningBalance,
 			}
 		}
@@ -1879,13 +1885,13 @@ func (ers *EnhancedReportService) GenerateGeneralLedger(accountID uint, startDat
 
 // GenerateGeneralLedgerAll creates general ledger report for all accounts with transactions
 func (ers *EnhancedReportService) GenerateGeneralLedgerAll(startDate, endDate time.Time) (*GeneralLedgerAllData, error) {
-	// Query accounts that have journal entries in the period
+	// Query accounts that have SSOT journal entries in the period
 	var accounts []models.Account
 	if err := ers.db.Select("DISTINCT accounts.*").
-		Joins("JOIN journal_lines ON accounts.id = journal_lines.account_id").
-		Joins("JOIN journal_entries ON journal_lines.journal_entry_id = journal_entries.id").
-		Where("journal_entries.entry_date BETWEEN ? AND ?", startDate, endDate).
-		Where("journal_entries.status = ?", models.JournalStatusPosted).
+		Joins("JOIN unified_journal_lines ON accounts.id = unified_journal_lines.account_id").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Where("unified_journal_ledger.entry_date BETWEEN ? AND ?", startDate, endDate).
+		Where("unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL", models.SSOTStatusPosted).
 		Where("accounts.is_active = true AND accounts.is_header = false").
 		Order("accounts.code ASC").
 		Find(&accounts).Error; err != nil {
