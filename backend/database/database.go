@@ -1,4 +1,4 @@
-package database
+﻿package database
 
 import (
 	"app-sistem-akuntansi/config"
@@ -68,10 +68,10 @@ func cleanupConstraints(db *gorm.DB) {
 					if err != nil {
 						log.Printf("Note: Failed to drop %s (may not exist): %v", existing, err)
 					} else {
-						log.Printf("✅ Dropped index %s", existing)
+						log.Printf("âœ… Dropped index %s", existing)
 					}
 				} else {
-					log.Printf("✅ Dropped constraint %s", existing)
+					log.Printf("âœ… Dropped constraint %s", existing)
 				}
 				break
 			}
@@ -110,7 +110,7 @@ func cleanupConstraints(db *gorm.DB) {
 		if err != nil {
 			log.Printf("Note: Failed to drop unique constraint %s: %v", constraint, err)
 		} else {
-			log.Printf("✅ Dropped unique constraint %s on code column", constraint)
+			log.Printf("âœ… Dropped unique constraint %s on code column", constraint)
 		}
 	}
 
@@ -125,7 +125,7 @@ func cleanupConstraints(db *gorm.DB) {
 	`).Scan(&targetIndexExists)
 
 	if targetIndexExists {
-		log.Println("✅ Target partial unique index idx_accounts_code_active already exists")
+		log.Println("âœ… Target partial unique index idx_accounts_code_active already exists")
 	} else {
 		// Create proper partial unique index for accounts code (only for non-deleted records)
 		log.Println("Creating partial unique index for active accounts...")
@@ -145,10 +145,10 @@ func cleanupConstraints(db *gorm.DB) {
 			if err2 != nil {
 				log.Printf("Error: Still failed to create partial unique index: %v", err2)
 			} else {
-				log.Println("✅ Created proper partial unique index on accounts.code for active records")
+				log.Println("âœ… Created proper partial unique index on accounts.code for active records")
 			}
 		} else {
-			log.Println("✅ Created proper partial unique index on accounts.code for active records")
+			log.Println("âœ… Created proper partial unique index on accounts.code for active records")
 		}
 	}
 
@@ -197,7 +197,7 @@ func FixPaymentDateNullValues(db *gorm.DB) {
 				log.Printf("Warning: Failed to add payment_date column: %v", err)
 				return
 			}
-			log.Println("✅ Added payment_date column successfully")
+			log.Println("âœ… Added payment_date column successfully")
 		}
 
 		// Update NULL payment_date values with created_at or a default date
@@ -210,7 +210,7 @@ func FixPaymentDateNullValues(db *gorm.DB) {
 		if result.Error != nil {
 			log.Printf("Warning: Failed to update NULL payment_date values: %v", result.Error)
 		} else {
-			log.Printf("✅ Updated %d NULL payment_date values in sale_payments table", result.RowsAffected)
+			log.Printf("âœ… Updated %d NULL payment_date values in sale_payments table", result.RowsAffected)
 		}
 
 		// Now make the column NOT NULL
@@ -219,7 +219,7 @@ func FixPaymentDateNullValues(db *gorm.DB) {
 		if err != nil {
 			log.Printf("Warning: Failed to set payment_date as NOT NULL: %v", err)
 		} else {
-			log.Println("✅ Set payment_date column as NOT NULL successfully")
+			log.Println("âœ… Set payment_date column as NOT NULL successfully")
 		}
 
 		// Handle payment_method column
@@ -237,7 +237,7 @@ func FixPaymentDateNullValues(db *gorm.DB) {
 				log.Printf("Warning: Failed to add payment_method column: %v", err)
 				return
 			}
-			log.Println("✅ Added payment_method column successfully")
+			log.Println("âœ… Added payment_method column successfully")
 		}
 
 		// Update NULL payment_method values with a default value
@@ -250,7 +250,7 @@ func FixPaymentDateNullValues(db *gorm.DB) {
 		if result2.Error != nil {
 			log.Printf("Warning: Failed to update NULL payment_method values: %v", result2.Error)
 		} else {
-			log.Printf("✅ Updated %d NULL payment_method values in sale_payments table", result2.RowsAffected)
+			log.Printf("âœ… Updated %d NULL payment_method values in sale_payments table", result2.RowsAffected)
 		}
 
 		// Now make the payment_method column NOT NULL
@@ -259,7 +259,7 @@ func FixPaymentDateNullValues(db *gorm.DB) {
 		if err2 != nil {
 			log.Printf("Warning: Failed to set payment_method as NOT NULL: %v", err2)
 		} else {
-			log.Println("✅ Set payment_method column as NOT NULL successfully")
+			log.Println("âœ… Set payment_method column as NOT NULL successfully")
 		}
 	}
 
@@ -297,7 +297,7 @@ func cleanupProductUnitConstraints(db *gorm.DB) {
 		if err != nil {
 			log.Printf("Warning: Failed to drop uni_product_units_code constraint: %v", err)
 		} else {
-			log.Println("✅ Dropped uni_product_units_code constraint successfully")
+			log.Println("âœ… Dropped uni_product_units_code constraint successfully")
 		}
 	} else {
 		log.Println("uni_product_units_code constraint does not exist, nothing to drop")
@@ -321,7 +321,7 @@ func cleanupProductUnitConstraints(db *gorm.DB) {
 			if err != nil {
 				log.Printf("Warning: Failed to drop constraint %s: %v", constraint, err)
 			} else {
-				log.Printf("✅ Dropped constraint %s successfully", constraint)
+				log.Printf("âœ… Dropped constraint %s successfully", constraint)
 			}
 		}
 	}
@@ -378,7 +378,7 @@ func cleanupJournalEntriesConstraints(db *gorm.DB) {
 			if err != nil {
 				log.Printf("Warning: Failed to drop constraint %s: %v", constraint, err)
 			} else {
-				log.Printf("✅ Dropped constraint %s successfully", constraint)
+				log.Printf("âœ… Dropped constraint %s successfully", constraint)
 			}
 		}
 	} else {
@@ -405,7 +405,7 @@ func cleanupJournalEntriesConstraints(db *gorm.DB) {
 }
 
 func cleanupAllConstraintConflicts(db *gorm.DB) {
-	log.Println("🔧 Running comprehensive constraint cleanup...")
+	log.Println("ðŸ”§ Running comprehensive constraint cleanup...")
 
 	// List of tables and their problematic constraints
 	tablesToClean := map[string][]string{
@@ -449,7 +449,7 @@ func cleanupAllConstraintConflicts(db *gorm.DB) {
 				if err != nil {
 					log.Printf("Warning: Failed to drop %s: %v", constraint, err)
 				} else {
-					log.Printf("✅ Dropped %s successfully", constraint)
+					log.Printf("âœ… Dropped %s successfully", constraint)
 				}
 			}
 		}
@@ -471,16 +471,16 @@ func cleanupAllConstraintConflicts(db *gorm.DB) {
 			if err != nil {
 				log.Printf("Warning: Failed to drop %s: %v", constraint, err)
 			} else {
-				log.Printf("✅ Dropped %s successfully", constraint)
+				log.Printf("âœ… Dropped %s successfully", constraint)
 			}
 		}
 	}
 
-	log.Println("✅ Comprehensive constraint cleanup completed")
+	log.Println("âœ… Comprehensive constraint cleanup completed")
 }
 
 func dropAllProblematicConstraints(db *gorm.DB) {
-	log.Println("🚀 Running aggressive constraint cleanup for all database objects...")
+	log.Println("ðŸš€ Running aggressive constraint cleanup for all database objects...")
 
 	// List of all possible problematic constraints across the entire database
 	problematicConstraints := []string{
@@ -515,7 +515,7 @@ func dropAllProblematicConstraints(db *gorm.DB) {
 			if err != nil {
 				log.Printf("Warning: Failed to drop %s: %v", constraint, err)
 			} else {
-				log.Printf("✅ Dropped constraint %s successfully", constraint)
+				log.Printf("âœ… Dropped constraint %s successfully", constraint)
 			}
 		} else {
 			// Try dropping from common table names
@@ -523,7 +523,7 @@ func dropAllProblematicConstraints(db *gorm.DB) {
 			for _, table := range tableGuesses {
 				err := db.Exec(fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s CASCADE", table, constraint)).Error
 				if err == nil {
-					log.Printf("✅ Dropped constraint %s from %s", constraint, table)
+					log.Printf("âœ… Dropped constraint %s from %s", constraint, table)
 					break
 				}
 			}
@@ -550,11 +550,11 @@ func dropAllProblematicConstraints(db *gorm.DB) {
 		if err != nil {
 			log.Printf("Warning: Failed to drop %s: %v", constraint.ConstraintName, err)
 		} else {
-			log.Printf("✅ Dropped %s successfully", constraint.ConstraintName)
+			log.Printf("âœ… Dropped %s successfully", constraint.ConstraintName)
 		}
 	}
 
-	log.Println("✅ Aggressive constraint cleanup completed")
+	log.Println("âœ… Aggressive constraint cleanup completed")
 }
 
 func ConnectDB() *gorm.DB {
@@ -800,20 +800,20 @@ func AutoMigrate(db *gorm.DB) {
 
 	// PRODUCTION SAFETY: All balance synchronization logic disabled to prevent account balance resets
 	// Balance sync operations have been permanently disabled to protect production data
-	log.Println("🛡️  PRODUCTION MODE: All balance synchronization disabled to protect account balances")
-	log.Println("✅ Account balances will never be automatically modified during startup")
+	log.Println("ðŸ›¡ï¸  PRODUCTION MODE: All balance synchronization disabled to protect account balances")
+	log.Println("âœ… Account balances will never be automatically modified during startup")
 
 	// Run cleanup duplicate notifications migration
 	CleanupDuplicateNotificationsMigration(db)
 
 	// Add description column to accounting_periods table
 	if err := AddAccountingPeriodDescription(db); err != nil {
-		log.Printf("⚠️  Accounting period description migration warning: %v", err)
+		log.Printf("âš ï¸  Accounting period description migration warning: %v", err)
 	}
 
 	// Fix accounting_periods table structure (make year/month nullable)
 	if err := FixAccountingPeriodsStructure(db); err != nil {
-		log.Printf("⚠️  Accounting period structure fix warning: %v", err)
+		log.Printf("âš ï¸  Accounting period structure fix warning: %v", err)
 	}
 
 	// Create indexes for better performance
@@ -1909,6 +1909,15 @@ func EnhanceNewSalesFields(db *gorm.DB) {
 
 // FixSalesDataIntegrity performs comprehensive sales data integrity fixes and validation
 func FixSalesDataIntegrity(db *gorm.DB) {
+	migrationID := "sales_data_integrity_fix_v1.0"
+
+	// Check if this migration has already been run
+	var existingMigration models.MigrationRecord
+	if err := db.Where("migration_id = ?", migrationID).First(&existingMigration).Error; err == nil {
+		log.Printf("âœ… Sales Data Integrity Fix already applied at %v, skipping", existingMigration.AppliedAt)
+		return
+	}
+
 	log.Println("=== Starting Sales Data Integrity Fix ===")
 
 	// Check if we have sales records to fix
@@ -1940,7 +1949,18 @@ func FixSalesDataIntegrity(db *gorm.DB) {
 	// 6. Update legacy computed fields
 	updateLegacyComputedFields(db)
 
-	log.Println("✅ Sales Data Integrity Fix completed successfully")
+	// Record this migration as completed so it doesn't run again
+	migrationRecord := models.MigrationRecord{
+		MigrationID: migrationID,
+		Description: fmt.Sprintf("Sales data integrity fix applied for %d sales", salesCount),
+		Version:     "1.0",
+		AppliedAt:   time.Now(),
+	}
+	if err := db.Create(&migrationRecord).Error; err != nil {
+		log.Printf("âš ï¸  Failed to record sales data integrity migration: %v", err)
+	}
+
+	log.Println("âœ… Sales Data Integrity Fix completed successfully")
 }
 
 // fixMissingSaleCodes generates codes for sales that don't have them
@@ -2310,497 +2330,17 @@ func updateLegacyComputedFields(db *gorm.DB) {
 	}
 }
 
-// SyncCashBankGLBalances - DISABLED FOR PRODUCTION SAFETY
-// This function has been permanently disabled to prevent account balance resets in production
+// SyncCashBankGLBalances - PERMANENTLY DISABLED
+// Balance synchronization is handled exclusively by SSOT journal entries.
+// This stub is kept for API compatibility only.
 func SyncCashBankGLBalances(db *gorm.DB) {
-	log.Println("🛡️  PRODUCTION SAFETY: SyncCashBankGLBalances DISABLED")
-	log.Println("⚠️  Balance synchronization skipped to protect account data")
-	log.Println("✅ All account balances remain unchanged")
-	return // Exit immediately - no balance operations will be performed
-
-	// Check if both tables exist first
-	var cashBankTableExists, accountsTableExists bool
-
-	db.Raw(`SELECT EXISTS (
-		SELECT 1 FROM information_schema.tables 
-		WHERE table_name = 'cash_banks'
-	)`).Scan(&cashBankTableExists)
-
-	db.Raw(`SELECT EXISTS (
-		SELECT 1 FROM information_schema.tables 
-		WHERE table_name = 'accounts'
-	)`).Scan(&accountsTableExists)
-
-	if !cashBankTableExists || !accountsTableExists {
-		log.Println("Required tables not found, skipping CashBank-GL balance sync")
-		return
-	}
-
-	// Check if we have any cash bank accounts to sync
-	var totalCashBankCount int64
-	db.Raw(`SELECT COUNT(*) FROM cash_banks WHERE deleted_at IS NULL`).Scan(&totalCashBankCount)
-
-	if totalCashBankCount == 0 {
-		log.Println("No cash/bank accounts found, skipping balance sync")
-		return
-	}
-
-	// Check for unsynchronized accounts
-	var unsyncCount int64
-	db.Raw(`
-		SELECT COUNT(*) 
-		FROM cash_banks cb 
-		INNER JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND cb.balance != acc.balance
-	`).Scan(&unsyncCount)
-
-	if unsyncCount == 0 {
-		log.Println("✅ All CashBank accounts are already synchronized with GL accounts")
-		return
-	}
-
-	log.Printf("Found %d unsynchronized CashBank-GL account pairs", unsyncCount)
-
-	// Get details of unsynchronized accounts for logging
-	type UnsyncAccount struct {
-		CashBankCode    string  `json:"cash_bank_code"`
-		CashBankName    string  `json:"cash_bank_name"`
-		CashBankBalance float64 `json:"cash_bank_balance"`
-		GLCode          string  `json:"gl_code"`
-		GLBalance       float64 `json:"gl_balance"`
-		Difference      float64 `json:"difference"`
-	}
-
-	var unsyncAccounts []UnsyncAccount
-	db.Raw(`
-		SELECT 
-			cb.code as cash_bank_code,
-			cb.name as cash_bank_name,
-			cb.balance as cash_bank_balance,
-			acc.code as gl_code,
-			acc.balance as gl_balance,
-			cb.balance - acc.balance as difference
-		FROM cash_banks cb 
-		INNER JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND cb.balance != acc.balance
-		ORDER BY cb.type, cb.code
-		LIMIT 10
-	`).Scan(&unsyncAccounts)
-
-	// Log sample of unsynchronized accounts
-	log.Println("Sample unsynchronized accounts:")
-	for _, account := range unsyncAccounts {
-		log.Printf("  %s (%s): CB=%.2f, GL=%.2f, Diff=%.2f",
-			account.CashBankCode, account.CashBankName,
-			account.CashBankBalance, account.GLBalance, account.Difference)
-	}
-
-	if len(unsyncAccounts) < int(unsyncCount) {
-		log.Printf("  ... and %d more accounts", unsyncCount-int64(len(unsyncAccounts)))
-	}
-
-	// Begin transaction for safe bulk update
-	tx := db.Begin()
-
-	// Synchronize GL account balances with CashBank balances
-	log.Println("Synchronizing GL account balances with CashBank balances...")
-
-	// Use a single UPDATE query to sync all unsynchronized accounts
-	err := tx.Exec(`
-		UPDATE accounts 
-		SET balance = cb.balance,
-		    updated_at = CURRENT_TIMESTAMP
-		FROM cash_banks cb 
-		WHERE accounts.id = cb.account_id 
-		  AND cb.deleted_at IS NULL
-		  AND accounts.balance != cb.balance
-	`).Error
-
-	if err != nil {
-		log.Printf("❌ Failed to synchronize balances: %v", err)
-		tx.Rollback()
-		return
-	}
-
-	// Commit the transaction
-	if err := tx.Commit().Error; err != nil {
-		log.Printf("❌ Failed to commit balance synchronization: %v", err)
-		return
-	}
-
-	// Verify synchronization completed successfully
-	var remainingUnsyncCount int64
-	db.Raw(`
-		SELECT COUNT(*) 
-		FROM cash_banks cb 
-		INNER JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND cb.balance != acc.balance
-	`).Scan(&remainingUnsyncCount)
-
-	if remainingUnsyncCount == 0 {
-		log.Printf("✅ Successfully synchronized %d CashBank-GL account pairs", unsyncCount)
-		log.Println("✅ All CashBank accounts are now synchronized with their GL accounts")
-	} else {
-		log.Printf("⚠️  Warning: %d accounts still remain unsynchronized after migration", remainingUnsyncCount)
-	}
-
-	log.Println("CashBank-GL Balance Synchronization completed")
+	log.Println("ðŸ›¡ï¸  SyncCashBankGLBalances: disabled (balances managed by SSOT journals)")
 }
 
-// RunBalanceSyncFix performs comprehensive balance synchronization checks and fixes
-// This function runs after every migration to ensure balance consistency across the system
+// RunBalanceSyncFix - PERMANENTLY DISABLED
+// Balance fixes should be done manually by administrator if needed.
 func RunBalanceSyncFix(db *gorm.DB) {
-	log.Println("🔧 Starting Comprehensive Balance Synchronization Fix...")
-
-	// Check if required tables exist
-	var cashBankTableExists, accountsTableExists bool
-
-	db.Raw(`SELECT EXISTS (
-		SELECT 1 FROM information_schema.tables 
-		WHERE table_name = 'cash_banks'
-	)`).Scan(&cashBankTableExists)
-
-	db.Raw(`SELECT EXISTS (
-		SELECT 1 FROM information_schema.tables 
-		WHERE table_name = 'accounts'
-	)`).Scan(&accountsTableExists)
-
-	if !cashBankTableExists || !accountsTableExists {
-		log.Println("Required tables not found, skipping comprehensive balance sync fix")
-		return
-	}
-
-	// Step 1: Fix missing account_id relationships
-	fixMissingAccountRelationships(db)
-
-	// Step 2: Recalculate CashBank balances from transactions
-	recalculateCashBankBalances(db)
-
-	// Step 3: Ensure GL accounts match CashBank balances
-	ensureGLAccountSync(db)
-
-	// Step 4: Validate and report final synchronization status
-	validateFinalSyncStatus(db)
-
-	log.Println("✅ Comprehensive Balance Synchronization Fix completed")
-}
-
-// fixMissingAccountRelationships ensures all CashBank accounts have proper GL account relationships
-func fixMissingAccountRelationships(db *gorm.DB) {
-	log.Println("Step 1: Fixing missing account relationships...")
-
-	// Check for CashBank accounts without GL account links
-	var orphanedCount int64
-	db.Raw(`
-		SELECT COUNT(*) 
-		FROM cash_banks cb 
-		LEFT JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND (cb.account_id IS NULL OR cb.account_id = 0 OR acc.id IS NULL)
-	`).Scan(&orphanedCount)
-
-	if orphanedCount > 0 {
-		log.Printf("Found %d CashBank accounts without proper GL account links", orphanedCount)
-
-		// Get details of orphaned accounts
-		type OrphanedAccount struct {
-			CashBankID   uint    `json:"cash_bank_id"`
-			CashBankCode string  `json:"cash_bank_code"`
-			CashBankName string  `json:"cash_bank_name"`
-			AccountID    *uint   `json:"account_id"`
-			Balance      float64 `json:"balance"`
-		}
-
-		var orphanedAccounts []OrphanedAccount
-		db.Raw(`
-			SELECT 
-				cb.id as cash_bank_id,
-				cb.code as cash_bank_code,
-				cb.name as cash_bank_name,
-				cb.account_id,
-				cb.balance
-			FROM cash_banks cb 
-			LEFT JOIN accounts acc ON cb.account_id = acc.id
-			WHERE cb.deleted_at IS NULL 
-			  AND (cb.account_id IS NULL OR cb.account_id = 0 OR acc.id IS NULL)
-			ORDER BY cb.type, cb.code
-		`).Scan(&orphanedAccounts)
-
-		// Log orphaned accounts for manual review
-		log.Println("Orphaned CashBank accounts:")
-		for _, account := range orphanedAccounts {
-			log.Printf("  ID=%d, Code=%s, Name=%s, Balance=%.2f, AccountID=%v",
-				account.CashBankID, account.CashBankCode, account.CashBankName,
-				account.Balance, account.AccountID)
-		}
-
-		log.Printf("⚠️  Warning: Found %d orphaned CashBank accounts requiring manual GL account assignment", orphanedCount)
-	} else {
-		log.Println("✅ All CashBank accounts have proper GL account relationships")
-	}
-}
-
-// recalculateCashBankBalances recalculates CashBank balances from transaction history
-func recalculateCashBankBalances(db *gorm.DB) {
-	log.Println("Step 2: Recalculating CashBank balances from transaction history...")
-
-	// Check if cash_bank_transactions table exists
-	var transactionTableExists bool
-	db.Raw(`SELECT EXISTS (
-		SELECT 1 FROM information_schema.tables 
-		WHERE table_name = 'cash_bank_transactions'
-	)`).Scan(&transactionTableExists)
-
-	if !transactionTableExists {
-		log.Println("Cash bank transactions table not found, skipping balance recalculation")
-		return
-	}
-
-	// Recalculate balances for all CashBank accounts
-	err := db.Exec(`
-		UPDATE cash_banks 
-		SET balance = COALESCE((
-			SELECT SUM(amount) 
-			FROM cash_bank_transactions cbt 
-			WHERE cbt.cash_bank_id = cash_banks.id 
-			  AND cbt.deleted_at IS NULL
-		), 0),
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE deleted_at IS NULL
-	`).Error
-
-	if err != nil {
-		log.Printf("Warning: Failed to recalculate CashBank balances: %v", err)
-	} else {
-		log.Println("✅ Recalculated CashBank balances from transaction history")
-	}
-}
-
-// ensureGLAccountSync ensures GL accounts are synchronized with CashBank balances
-func ensureGLAccountSync(db *gorm.DB) {
-	log.Println("Step 3: Ensuring GL accounts are synchronized with CashBank balances...")
-
-	// Check for unsynchronized accounts
-	var unsyncCount int64
-	db.Raw(`
-		SELECT COUNT(*) 
-		FROM cash_banks cb 
-		INNER JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND ABS(cb.balance - acc.balance) > 0.01  -- Allow for small rounding differences
-	`).Scan(&unsyncCount)
-
-	if unsyncCount == 0 {
-		log.Println("✅ All GL accounts are already synchronized with CashBank balances")
-		return
-	}
-
-	log.Printf("Found %d GL accounts that need synchronization", unsyncCount)
-
-	// Get details of unsynchronized accounts
-	type UnsyncGLAccount struct {
-		CashBankID      uint    `json:"cash_bank_id"`
-		CashBankCode    string  `json:"cash_bank_code"`
-		CashBankName    string  `json:"cash_bank_name"`
-		CashBankBalance float64 `json:"cash_bank_balance"`
-		GLAccountID     uint    `json:"gl_account_id"`
-		GLCode          string  `json:"gl_code"`
-		GLBalance       float64 `json:"gl_balance"`
-		Difference      float64 `json:"difference"`
-	}
-
-	var unsyncAccounts []UnsyncGLAccount
-	db.Raw(`
-		SELECT 
-			cb.id as cash_bank_id,
-			cb.code as cash_bank_code,
-			cb.name as cash_bank_name,
-			cb.balance as cash_bank_balance,
-			acc.id as gl_account_id,
-			acc.code as gl_code,
-			acc.balance as gl_balance,
-			cb.balance - acc.balance as difference
-		FROM cash_banks cb 
-		INNER JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND ABS(cb.balance - acc.balance) > 0.01
-		ORDER BY ABS(cb.balance - acc.balance) DESC
-		LIMIT 10
-	`).Scan(&unsyncAccounts)
-
-	// Log accounts that will be synchronized
-	log.Println("Accounts to be synchronized:")
-	for _, account := range unsyncAccounts {
-		log.Printf("  CB: %s (%.2f) -> GL: %s (%.2f) | Diff: %.2f",
-			account.CashBankCode, account.CashBankBalance,
-			account.GLCode, account.GLBalance, account.Difference)
-	}
-
-	if len(unsyncAccounts) < int(unsyncCount) {
-		log.Printf("  ... and %d more accounts", unsyncCount-int64(len(unsyncAccounts)))
-	}
-
-	// Begin transaction for safe bulk update
-	tx := db.Begin()
-
-	// Synchronize GL account balances with CashBank balances
-	err := tx.Exec(`
-		UPDATE accounts 
-		SET balance = cb.balance,
-		    updated_at = CURRENT_TIMESTAMP
-		FROM cash_banks cb 
-		WHERE accounts.id = cb.account_id 
-		  AND cb.deleted_at IS NULL
-		  AND ABS(cb.balance - accounts.balance) > 0.01
-	`).Error
-
-	if err != nil {
-		log.Printf("❌ Failed to synchronize GL accounts: %v", err)
-		tx.Rollback()
-		return
-	}
-
-	// Commit the transaction
-	if err := tx.Commit().Error; err != nil {
-		log.Printf("❌ Failed to commit GL account synchronization: %v", err)
-		return
-	}
-
-	log.Printf("✅ Successfully synchronized %d GL accounts with CashBank balances", unsyncCount)
-}
-
-// validateFinalSyncStatus performs final validation and reports synchronization status
-func validateFinalSyncStatus(db *gorm.DB) {
-	log.Println("Step 4: Validating final synchronization status...")
-
-	// Count total CashBank accounts
-	var totalCount int64
-	db.Raw(`SELECT COUNT(*) FROM cash_banks WHERE deleted_at IS NULL`).Scan(&totalCount)
-
-	// Count synchronized accounts
-	var syncedCount int64
-	db.Raw(`
-		SELECT COUNT(*) 
-		FROM cash_banks cb 
-		INNER JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND ABS(cb.balance - acc.balance) <= 0.01  -- Allow for small rounding differences
-	`).Scan(&syncedCount)
-
-	// Count unsynchronized accounts
-	var unsyncedCount int64
-	db.Raw(`
-		SELECT COUNT(*) 
-		FROM cash_banks cb 
-		INNER JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND ABS(cb.balance - acc.balance) > 0.01
-	`).Scan(&unsyncedCount)
-
-	// Count orphaned accounts (no GL account link)
-	var orphanedCount int64
-	db.Raw(`
-		SELECT COUNT(*) 
-		FROM cash_banks cb 
-		LEFT JOIN accounts acc ON cb.account_id = acc.id
-		WHERE cb.deleted_at IS NULL 
-		  AND (cb.account_id IS NULL OR cb.account_id = 0 OR acc.id IS NULL)
-	`).Scan(&orphanedCount)
-
-	// Report final status
-	log.Println("=== Final Balance Synchronization Status ===")
-	log.Printf("Total CashBank accounts: %d", totalCount)
-	log.Printf("Synchronized accounts: %d", syncedCount)
-	log.Printf("Unsynchronized accounts: %d", unsyncedCount)
-	log.Printf("Orphaned accounts (no GL link): %d", orphanedCount)
-
-	syncPercentage := float64(syncedCount) / float64(totalCount) * 100
-	log.Printf("Synchronization rate: %.1f%%", syncPercentage)
-
-	if unsyncedCount == 0 && orphanedCount == 0 {
-		log.Println("✅ Perfect synchronization achieved! All accounts are properly synced.")
-	} else if syncPercentage >= 95 {
-		log.Printf("✅ Excellent synchronization (%.1f%%). System operating normally.", syncPercentage)
-	} else if syncPercentage >= 85 {
-		log.Printf("✅ Good synchronization (%.1f%%). Minor discrepancies are within acceptable range.", syncPercentage)
-	} else if syncPercentage >= 70 {
-		log.Printf("⚠️  Moderate synchronization (%.1f%%). Some accounts need attention.", syncPercentage)
-	} else {
-		log.Printf("❌ Poor synchronization (%.1f%%). Significant issues detected, manual intervention required.", syncPercentage)
-	}
-
-	// If there are still issues, log them for investigation
-	if unsyncedCount > 0 || orphanedCount > 0 {
-		log.Println("\n⚠️  Accounts requiring attention:")
-
-		if unsyncedCount > 0 {
-			var problemAccounts []struct {
-				CashBankCode    string  `json:"cash_bank_code"`
-				CashBankName    string  `json:"cash_bank_name"`
-				CashBankBalance float64 `json:"cash_bank_balance"`
-				GLCode          string  `json:"gl_code"`
-				GLBalance       float64 `json:"gl_balance"`
-				Difference      float64 `json:"difference"`
-			}
-
-			db.Raw(`
-				SELECT 
-					cb.code as cash_bank_code,
-					cb.name as cash_bank_name,
-					cb.balance as cash_bank_balance,
-					acc.code as gl_code,
-					acc.balance as gl_balance,
-					cb.balance - acc.balance as difference
-				FROM cash_banks cb 
-				INNER JOIN accounts acc ON cb.account_id = acc.id
-				WHERE cb.deleted_at IS NULL 
-				  AND ABS(cb.balance - acc.balance) > 0.01
-				ORDER BY ABS(cb.balance - acc.balance) DESC
-				LIMIT 5
-			`).Scan(&problemAccounts)
-
-			log.Printf("  Unsynchronized accounts (top 5):")
-			for _, account := range problemAccounts {
-				log.Printf("    %s: CB=%.2f, GL=%.2f, Diff=%.2f",
-					account.CashBankCode, account.CashBankBalance,
-					account.GLBalance, account.Difference)
-			}
-		}
-
-		if orphanedCount > 0 {
-			var orphanedAccounts []struct {
-				CashBankCode string  `json:"cash_bank_code"`
-				CashBankName string  `json:"cash_bank_name"`
-				Balance      float64 `json:"balance"`
-				AccountID    *uint   `json:"account_id"`
-			}
-
-			db.Raw(`
-				SELECT 
-					cb.code as cash_bank_code,
-					cb.name as cash_bank_name,
-					cb.balance,
-					cb.account_id
-				FROM cash_banks cb 
-				LEFT JOIN accounts acc ON cb.account_id = acc.id
-				WHERE cb.deleted_at IS NULL 
-				  AND (cb.account_id IS NULL OR cb.account_id = 0 OR acc.id IS NULL)
-				ORDER BY cb.balance DESC
-				LIMIT 5
-			`).Scan(&orphanedAccounts)
-
-			log.Printf("  Orphaned accounts (top 5):")
-			for _, account := range orphanedAccounts {
-				log.Printf("    %s: Balance=%.2f, AccountID=%v",
-					account.CashBankCode, account.Balance, account.AccountID)
-			}
-		}
-	}
-
-	log.Println("=== Balance Synchronization Validation Complete ===")
+	log.Println("ðŸ›¡ï¸  RunBalanceSyncFix: disabled (balances managed by SSOT journals)")
 }
 
 // RunPaymentPerformanceOptimization applies the payment performance optimization migration
@@ -2923,7 +2463,7 @@ func RunPaymentPerformanceOptimization(db *gorm.DB) {
 		FROM journal_entries
 	`)
 
-	log.Println("✅ Payment Performance Optimization Migration completed successfully")
+	log.Println("âœ… Payment Performance Optimization Migration completed successfully")
 }
 
 // RunDatabaseEnhancements applies comprehensive database enhancements for the accounting system
@@ -2938,7 +2478,7 @@ func RunDatabaseEnhancements(db *gorm.DB) {
 		return
 	}
 
-	log.Println("🚀 Starting comprehensive database enhancements migration...")
+	log.Println("ðŸš€ Starting comprehensive database enhancements migration...")
 
 	// Step 1: Create enhanced indexes for journal entries and related tables
 	createJournalEntryIndexes(db)
@@ -2966,10 +2506,10 @@ func RunDatabaseEnhancements(db *gorm.DB) {
 	if err := db.Create(&migrationRecord).Error; err != nil {
 		log.Printf("Warning: Failed to record migration completion: %v", err)
 	} else {
-		log.Println("✅ Database enhancements migration recorded successfully")
+		log.Println("âœ… Database enhancements migration recorded successfully")
 	}
 
-	log.Println("✅ Comprehensive database enhancements migration completed successfully")
+	log.Println("âœ… Comprehensive database enhancements migration completed successfully")
 }
 
 // createJournalEntryIndexes creates indexes for journal entries and lines for better performance
@@ -2994,7 +2534,7 @@ func createJournalEntryIndexes(db *gorm.DB) {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_journal_entries_complete ON journal_entries(entry_date, status, reference_type) WHERE status = 'POSTED'`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_journal_lines_balance ON journal_lines(account_id, debit_amount, credit_amount)`)
 
-	log.Println("✅ Journal entry indexes created successfully")
+	log.Println("âœ… Journal entry indexes created successfully")
 }
 
 // createAccountingPerformanceIndexes creates indexes for better accounting query performance
@@ -3024,7 +2564,7 @@ func createAccountingPerformanceIndexes(db *gorm.DB) {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sales_aging ON sales(due_date, outstanding_amount) WHERE outstanding_amount > 0`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_purchases_aging ON purchases(due_date, outstanding_amount) WHERE outstanding_amount > 0`)
 
-	log.Println("✅ Accounting performance indexes created successfully")
+	log.Println("âœ… Accounting performance indexes created successfully")
 }
 
 // createValidationConstraints creates database constraints for data integrity
@@ -3071,7 +2611,7 @@ func createValidationConstraints(db *gorm.DB) {
 		CHECK (status IN ('DRAFT', 'POSTED', 'REVERSED'))
 	`)
 
-	log.Println("✅ Validation constraints created successfully")
+	log.Println("âœ… Validation constraints created successfully")
 }
 
 // createAuditTrailEnhancements creates enhanced audit trail functionality
@@ -3116,7 +2656,7 @@ func createAuditTrailEnhancements(db *gorm.DB) {
 		ORDER BY al.created_at DESC
 	`)
 
-	log.Println("✅ Audit trail enhancements created successfully")
+	log.Println("âœ… Audit trail enhancements created successfully")
 }
 
 // optimizeExistingAccountingData performs data optimization and cleanup
@@ -3152,5 +2692,5 @@ func optimizeExistingAccountingData(db *gorm.DB) {
 	log.Println("Performing database maintenance...")
 	db.Exec(`VACUUM ANALYZE`)
 
-	log.Println("✅ Existing accounting data optimized successfully")
+	log.Println("âœ… Existing accounting data optimized successfully")
 }

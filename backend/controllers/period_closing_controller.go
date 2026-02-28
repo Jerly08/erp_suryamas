@@ -2,10 +2,12 @@ package controllers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -202,10 +204,26 @@ func (pcc *PeriodClosingController) ExecuteClosing(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/v1/period-closing/history [get]
 func (pcc *PeriodClosingController) GetClosingHistory(c *gin.Context) {
-	// TODO: Implement GetClosingHistory in UnifiedPeriodClosingService
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"success": false,
-		"error":   "This feature is temporarily unavailable during migration to unified journal system",
+	limitStr := c.DefaultQuery("limit", "20")
+	limit := 20
+	if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+		limit = parsed
+	}
+
+	history, err := pcc.service.GetClosingHistory(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get closing history",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    history,
+		"total":   len(history),
 	})
 }
 
@@ -257,7 +275,7 @@ func (pcc *PeriodClosingController) CheckDateInClosedPeriod(c *gin.Context) {
 
 // ReopenPeriod godoc
 // @Summary Reopen a closed period
-// @Description Reopen a previously closed period (if not locked)
+// @Description Reopen a previously closed period, reversing the closing journal entries
 // @Tags Period Closing
 // @Accept json
 // @Produce json
@@ -265,9 +283,72 @@ func (pcc *PeriodClosingController) CheckDateInClosedPeriod(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/v1/period-closing/reopen [post]
 func (pcc *PeriodClosingController) ReopenPeriod(c *gin.Context) {
-	// TODO: Implement ReopenPeriod in UnifiedPeriodClosingService
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"success": false,
-		"error":   "This feature is temporarily unavailable during migration to unified journal system",
+	var req models.PeriodReopenRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Data tidak valid. Pastikan start_date, end_date, dan reason diisi.",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Parse dates
+	startDate, err := time.Parse("2006-01-02", req.StartDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Format start_date tidak valid. Gunakan YYYY-MM-DD",
+		})
+		return
+	}
+
+	endDate, err := time.Parse("2006-01-02", req.EndDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Format end_date tidak valid. Gunakan YYYY-MM-DD",
+		})
+		return
+	}
+
+	// Get user ID from context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"error":   "User tidak terautentikasi",
+		})
+		return
+	}
+
+	var userIDUint64 uint64
+	switch v := userID.(type) {
+	case uint:
+		userIDUint64 = uint64(v)
+	case uint64:
+		userIDUint64 = v
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Tipe user_id tidak valid",
+		})
+		return
+	}
+
+	err = pcc.service.ReopenPeriod(c.Request.Context(), startDate, endDate, req.Reason, userIDUint64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Gagal membuka kembali periode",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Periode berhasil dibuka kembali. Jurnal penutup telah dihapus dan saldo akun telah dihitung ulang.",
 	})
 }

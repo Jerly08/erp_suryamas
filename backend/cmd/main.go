@@ -40,10 +40,8 @@ func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
 
-	// Set Gin mode based on configuration
-	if cfg.Environment == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
+	// Set Gin mode to release to hide debug logs
+	gin.SetMode(gin.ReleaseMode)
 
 	// Connect to database
 	db := database.ConnectDB()

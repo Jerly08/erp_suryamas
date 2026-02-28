@@ -371,6 +371,101 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	// Store old status for journal update logic
 	oldStatus := sale.Status
 
+	// ✅ GUARD: For non-DRAFT sales, only allow updating non-financial fields
+	// Financial fields (items, customer, tax, discount) are locked after invoicing
+	if sale.Status != "DRAFT" {
+		log.Printf("📝 [UpdateSale] Partial edit mode for %s sale #%d", sale.Status, sale.ID)
+
+		// Block financial field changes
+		if request.CustomerID != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("tidak bisa mengubah customer pada penjualan yang sudah difakturkan")
+		}
+		if request.Items != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("tidak bisa mengubah item pada penjualan yang sudah difakturkan")
+		}
+		if request.DiscountPercent != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("tidak bisa mengubah diskon pada penjualan yang sudah difakturkan")
+		}
+		if request.PPNPercent != nil || request.PPNRate != nil || request.PPhPercent != nil || request.PPhType != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("tidak bisa mengubah pajak pada penjualan yang sudah difakturkan")
+		}
+		if request.PPh21Rate != nil || request.PPh23Rate != nil || request.OtherTaxAdditions != nil || request.OtherTaxDeductions != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("tidak bisa mengubah pajak pada penjualan yang sudah difakturkan")
+		}
+		if request.ShippingCost != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("tidak bisa mengubah biaya pengiriman pada penjualan yang sudah difakturkan")
+		}
+
+		// Only allow non-financial field updates
+		if request.DueDate != nil {
+			sale.DueDate = *request.DueDate
+		}
+		if request.PaymentTerms != nil {
+			sale.PaymentTerms = *request.PaymentTerms
+		}
+		if request.PaymentMethod != nil {
+			sale.PaymentMethod = *request.PaymentMethod
+		}
+		if request.PaymentMethodType != nil {
+			sale.PaymentMethodType = *request.PaymentMethodType
+		}
+		if request.CashBankID != nil {
+			sale.CashBankID = request.CashBankID
+		}
+		if request.ShippingMethod != nil {
+			sale.ShippingMethod = *request.ShippingMethod
+		}
+		if request.BillingAddress != nil {
+			sale.BillingAddress = *request.BillingAddress
+		}
+		if request.ShippingAddress != nil {
+			sale.ShippingAddress = *request.ShippingAddress
+		}
+		if request.Notes != nil {
+			sale.Notes = *request.Notes
+		}
+		if request.InternalNotes != nil {
+			sale.InternalNotes = *request.InternalNotes
+		}
+		if request.Reference != nil {
+			sale.Reference = *request.Reference
+		}
+		if request.SalesPersonID != nil {
+			sale.SalesPersonID = request.SalesPersonID
+		}
+		if request.ProjectID != nil {
+			if *request.ProjectID == 0 {
+				sale.ProjectID = nil
+			} else {
+				sale.ProjectID = request.ProjectID
+			}
+		}
+
+		// Save and return (skip item/tax recalculation)
+		if err := tx.Save(&sale).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to update sale: %v", err)
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			return nil, fmt.Errorf("failed to commit transaction: %v", err)
+		}
+
+		// Reload with relationships
+		s.db.Preload("Customer").Preload("SaleItems.Product").Preload("InvoiceType").First(&sale, sale.ID)
+
+		log.Printf("✅ [UpdateSale] Partial edit completed for %s sale #%d", sale.Status, sale.ID)
+		return &sale, nil
+	}
+
+	// === DRAFT-ONLY: Full edit allowed below ===
+
 	// Update fields if provided
 	if request.CustomerID != nil {
 		sale.CustomerID = *request.CustomerID
@@ -1386,6 +1481,7 @@ func (s *SalesServiceV2) GetSaleByID(saleID uint) (*models.Sale, error) {
 		Preload("User").
 		Preload("SalesPerson").
 		Preload("Project").
+		Preload("InvoiceType").
 		Preload("SaleItems.Product").
 		Preload("SalePayments").
 		First(&sale, saleID).Error; err != nil {

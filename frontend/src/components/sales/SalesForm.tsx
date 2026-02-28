@@ -171,6 +171,9 @@ const SalesForm: React.FC<SalesFormProps> = ({
   // For new sales, check create permission; for editing, check edit permission
   const hasPermission = sale ? canEditSales : canCreateSales;
 
+  // Partial Edit: if sale is not DRAFT, lock financial fields (items, customer, tax, discount)
+  const isInvoiced = !!(sale && sale.status && sale.status !== 'DRAFT');
+
   // If modal is opened but user doesn't have permission, close it and show error
   useEffect(() => {
     if (isOpen && user && !hasPermission) {
@@ -819,89 +822,113 @@ const SalesForm: React.FC<SalesFormProps> = ({
     try {
       setLoading(true);
 
-      // Validate items - allow items without product_id if products are not available
-      const validItems = data.items.filter(item => {
-        // If products are available, require product_id
-        if (products.length > 0) {
-          return item.product_id > 0;
+      // For invoiced sales, skip item validation (items are locked)
+      let validItems: typeof data.items = [];
+      if (!isInvoiced) {
+        // Validate items - allow items without product_id if products are not available
+        validItems = data.items.filter(item => {
+          // If products are available, require product_id
+          if (products.length > 0) {
+            return item.product_id > 0;
+          }
+          // If no products available, just check for description and price
+          return item.description && item.description.trim() !== '' && item.unit_price > 0;
+        });
+
+        if (validItems.length === 0) {
+          const errorMsg = products.length > 0
+            ? t('sales.messages.atLeastOneItem')
+            : t('sales.messages.atLeastOneItemManual');
+          ErrorHandler.handleValidationError([errorMsg], toast, 'sales form');
+          return;
         }
-        // If no products available, just check for description and price
-        return item.description && item.description.trim() !== '' && item.unit_price > 0;
-      });
 
-      if (validItems.length === 0) {
-        const errorMsg = products.length > 0
-          ? t('sales.messages.atLeastOneItem')
-          : t('sales.messages.atLeastOneItemManual');
-        ErrorHandler.handleValidationError([errorMsg], toast, 'sales form');
-        return;
-      }
+        // Additional validation
+        const validationErrors = salesService.validateSaleData({
+          ...data,
+          items: validItems.map(item => ({
+            product_id: item.product_id,
+            description: item.description || '',
+            quantity: Math.max(1, Math.floor(item.quantity || 1)),
+            unit_price: Math.min(999999999999.99, Math.max(0, item.unit_price || 0)),
+            discount: Math.min(999999.99, Math.max(0, item.discount_percent || 0)),
+            discount_percent: Math.min(100, Math.max(0, item.discount_percent || 0)),
+            tax: 0,
+            taxable: item.taxable !== false,
+            revenue_account_id: item.revenue_account_id || 0
+          }))
+        });
 
-      // Additional validation
-      const validationErrors = salesService.validateSaleData({
-        ...data,
-        items: validItems.map(item => ({
-          product_id: item.product_id,
-          description: item.description || '',
-          quantity: Math.max(1, Math.floor(item.quantity || 1)), // Ensure positive integer
-          unit_price: Math.min(999999999999.99, Math.max(0, item.unit_price || 0)), // Cap to prevent overflow
-          discount: Math.min(999999.99, Math.max(0, item.discount_percent || 0)), // Legacy field as flat amount
-          discount_percent: Math.min(100, Math.max(0, item.discount_percent || 0)), // New field as percentage
-          tax: 0, // Tax will be calculated by backend based on taxable flag
-          taxable: item.taxable !== false, // Default to true if not specified
-          revenue_account_id: item.revenue_account_id || 0
-        }))
-      });
-
-      if (validationErrors.length > 0) {
-        ErrorHandler.handleValidationError(validationErrors, toast, 'sales form');
-        return;
+        if (validationErrors.length > 0) {
+          ErrorHandler.handleValidationError(validationErrors, toast, 'sales form');
+          return;
+        }
       }
 
       if (sale) {
         // Update existing sale
-        const updateData: SaleUpdateRequest = {
-          customer_id: data.customer_id,
-          sales_person_id: data.sales_person_id,
-          project_id: data.project_id || 0, // Send 0 to explicitly clear project if user removed it
-          date: data.date ? `${data.date}T00:00:00Z` : undefined, // Convert to ISO datetime format
-          due_date: data.due_date ? `${data.due_date}T00:00:00Z` : undefined,
-          valid_until: data.valid_until ? `${data.valid_until}T00:00:00Z` : undefined,
-          discount_percent: data.discount_percent,
-          // Legacy tax fields
-          ppn_percent: data.ppn_percent,
-          pph_percent: data.pph_percent,
-          pph_type: data.pph_type,
-          // Enhanced tax configuration
-          ppn_rate: data.ppn_rate,
-          other_tax_additions: data.other_tax_additions,
-          pph21_rate: data.pph21_rate,
-          pph23_rate: data.pph23_rate,
-          other_tax_deductions: data.other_tax_deductions,
-          payment_terms: data.payment_terms,
-          payment_method: data.payment_method,
-          payment_method_type: data.payment_method_type,
-          cash_bank_id: data.cash_bank_id,
-          shipping_method: data.shipping_method,
-          shipping_cost: data.shipping_cost,
-          billing_address: data.billing_address,
-          shipping_address: data.shipping_address,
-          notes: data.notes,
-          internal_notes: data.internal_notes,
-          reference: data.reference,
-          items: validItems.map(item => ({
-            id: item.id,
-            product_id: item.product_id,
-            description: item.description,
-            location: item.location || '',
-            quantity: item.quantity,
-            unit_price: item.unit_price,
-            discount: item.discount_percent || item.discount || 0, // Map to backend field
-            tax: 0, // Tax will be calculated by backend based on taxable flag
-            revenue_account_id: item.revenue_account_id,
-            delete: item.delete || false
-          }))
-        };
+        let updateData: SaleUpdateRequest;
+
+        if (isInvoiced) {
+          // Partial edit: only send non-financial fields for invoiced/overdue sales
+          updateData = {
+            sales_person_id: data.sales_person_id,
+            project_id: data.project_id || 0,
+            due_date: data.due_date ? `${data.due_date}T00:00:00Z` : undefined,
+            payment_terms: data.payment_terms,
+            payment_method: data.payment_method,
+            payment_method_type: data.payment_method_type,
+            cash_bank_id: data.cash_bank_id,
+            shipping_method: data.shipping_method,
+            billing_address: data.billing_address,
+            shipping_address: data.shipping_address,
+            notes: data.notes,
+            internal_notes: data.internal_notes,
+            reference: data.reference,
+          };
+        } else {
+          // Full edit: send all fields for DRAFT sales
+          updateData = {
+            customer_id: data.customer_id,
+            sales_person_id: data.sales_person_id,
+            project_id: data.project_id || 0,
+            date: data.date ? `${data.date}T00:00:00Z` : undefined,
+            due_date: data.due_date ? `${data.due_date}T00:00:00Z` : undefined,
+            valid_until: data.valid_until ? `${data.valid_until}T00:00:00Z` : undefined,
+            discount_percent: data.discount_percent,
+            ppn_percent: data.ppn_percent,
+            pph_percent: data.pph_percent,
+            pph_type: data.pph_type,
+            ppn_rate: data.ppn_rate,
+            other_tax_additions: data.other_tax_additions,
+            pph21_rate: data.pph21_rate,
+            pph23_rate: data.pph23_rate,
+            other_tax_deductions: data.other_tax_deductions,
+            payment_terms: data.payment_terms,
+            payment_method: data.payment_method,
+            payment_method_type: data.payment_method_type,
+            cash_bank_id: data.cash_bank_id,
+            shipping_method: data.shipping_method,
+            shipping_cost: data.shipping_cost,
+            billing_address: data.billing_address,
+            shipping_address: data.shipping_address,
+            notes: data.notes,
+            internal_notes: data.internal_notes,
+            reference: data.reference,
+            items: validItems.map(item => ({
+              id: item.id,
+              product_id: item.product_id,
+              description: item.description,
+              location: item.location || '',
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              discount: item.discount_percent || item.discount || 0,
+              tax: 0,
+              revenue_account_id: item.revenue_account_id,
+              delete: item.delete || false
+            }))
+          };
+        }
 
         console.log('Sending updateData:', updateData);
         await salesService.updateSale(sale.id, updateData);
@@ -968,8 +995,8 @@ const SalesForm: React.FC<SalesFormProps> = ({
     } catch (error: any) {
       console.error('SalesForm submission error:', error);
 
-      // Check if it's a period closed error (403)
-      if (error?.response?.status === 403 && error?.response?.data?.code === 'PERIOD_CLOSED') {
+      // Check if it's a period closed error (400 - business validation)
+      if (error?.response?.status === 400 && error?.response?.data?.code === 'PERIOD_CLOSED') {
         const errorData = error.response.data;
         toast({
           title: errorData.error || 'Periode Sudah Ditutup',
@@ -1171,6 +1198,16 @@ const SalesForm: React.FC<SalesFormProps> = ({
                 )}
 
                 {/* Basic Information */}
+                {/* Partial Edit Warning for Invoiced Sales */}
+                {isInvoiced && (
+                  <Alert status="info" borderRadius="md" mb={4}>
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      ⚠️ Penjualan sudah difakturkan. Hanya field non-finansial yang bisa diedit (jatuh tempo, payment terms, catatan, alamat). Item, customer, diskon, dan pajak tidak bisa diubah.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 <Box>
                   <Heading size="md" mb={4} color={subHeadingColor}>
                     📋 {t('sales.form.basicInfo')}
@@ -1186,7 +1223,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           })}
                           bg={inputBg}
                           _focus={{ bg: inputFocusBg }}
-                          isDisabled={loadingData}
+                          isDisabled={loadingData || isInvoiced}
                         >
                           <option value="">
                             {loadingData ? t('common.loading') :
@@ -1262,7 +1299,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           })}
                           bg={inputBg}
                           _focus={{ bg: inputFocusBg }}
-                          isDisabled={loadingData}
+                          isDisabled={loadingData || isInvoiced}
                         >
                           <option value="">
                             {loadingData ? t('common.loading') :
@@ -1365,6 +1402,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                       colorScheme="blue"
                       leftIcon={<FiPlus />}
                       onClick={addItem}
+                      isDisabled={isInvoiced}
                     >
                       {t('sales.form.addItem')}
                     </Button>
@@ -1433,6 +1471,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   bg={inputBg}
                                   _focus={{ bg: inputFocusBg }}
                                   placeholder={t('common.placeholders.selectProduct')}
+                                  isDisabled={isInvoiced}
                                 >
                                   <option value="">{t('sales.form.manualEntry')}</option>
                                   {products.map(product => (
@@ -1475,6 +1514,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 bg={isManualEntry(index) ? 'orange.50' : inputBg}
                                 _focus={{ bg: isManualEntry(index) ? 'orange.100' : inputFocusBg }}
                                 borderColor={isManualEntry(index) ? 'orange.200' : 'gray.200'}
+                                isDisabled={isInvoiced}
                               />
                             </Td>
                             <Td>
@@ -1488,7 +1528,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               />
                             </Td>
                             <Td>
-                              <NumberInput size="sm" min={1}>
+                              <NumberInput size="sm" min={1} isDisabled={isInvoiced}>
                                 <NumberInputField
                                   {...register(`items.${index}.quantity`, {
                                     required: 'Quantity is required',
@@ -1510,10 +1550,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 size="sm"
                                 min={0}
                                 showLabel={false}
+                                isDisabled={isInvoiced}
                               />
                             </Td>
                             <Td>
-                              <NumberInput size="sm" min={0} max={100}>
+                              <NumberInput size="sm" min={0} max={100} isDisabled={isInvoiced}>
                                 <NumberInputField
                                   {...register(`items.${index}.discount_percent`, {
                                     setValueAs: value => parseFloat(value) || 0
@@ -1527,6 +1568,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   size="sm"
                                   {...register(`items.${index}.taxable`)}
                                   colorScheme="green"
+                                  isDisabled={isInvoiced}
                                 />
                                 <Text fontSize="xs" color={watchItems[index]?.taxable !== false ? 'green.600' : 'gray.500'}>
                                   {watchItems[index]?.taxable !== false ? 'Tax' : 'No Tax'}
@@ -1542,6 +1584,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 bg={inputBg}
                                 _focus={{ bg: inputFocusBg }}
                                 placeholder={t('common.placeholders.selectAccount')}
+                                isDisabled={isInvoiced}
                               >
                                 <option value="">{t('sales.form.revenueAccount')}</option>
                                 {accounts.map(account => (
@@ -1563,7 +1606,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 variant="ghost"
                                 icon={<FiTrash2 />}
                                 onClick={() => removeItem(index)}
-                                isDisabled={fields.length === 1}
+                                isDisabled={fields.length === 1 || isInvoiced}
                                 aria-label={t('accessibility.removeItem')}
                               />
                             </Td>
@@ -1595,7 +1638,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           </Badge>
                         </FormLabel>
                         {discountType === 'percentage' ? (
-                          <NumberInput min={0} max={100} size="sm">
+                          <NumberInput min={0} max={100} size="sm" isDisabled={isInvoiced}>
                             <NumberInputField
                               {...register('discount_percent', {
                                 setValueAs: value => parseFloat(value) || 0
@@ -1615,6 +1658,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                             bg={inputBg}
                             _focus={{ bg: inputFocusBg }}
                             size="sm"
+                            isDisabled={isInvoiced}
                           />
                         )}
                         <FormHelperText fontSize="xs" color={textColor}>
@@ -1637,6 +1681,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               max={100}
                               step={0.1}
                               size="sm"
+                              isDisabled={isInvoiced}
                             >
                               <NumberInputField
                                 {...register('ppn_rate', {
@@ -1661,6 +1706,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               min={0}
                               showLabel={false}
                               size="sm"
+                              isDisabled={isInvoiced}
                             />
                             <FormHelperText fontSize="xs">{t('sales.tooltips.otherTaxAdditions')}</FormHelperText>
                           </FormControl>
@@ -1674,6 +1720,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               min={0}
                               showLabel={false}
                               size="sm"
+                              isDisabled={isInvoiced}
                             />
                             <FormHelperText fontSize="xs">{t('sales.tooltips.shippingCost')}</FormHelperText>
                           </FormControl>
@@ -1695,6 +1742,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               max={100}
                               step={0.1}
                               size="sm"
+                              isDisabled={isInvoiced}
                             >
                               <NumberInputField
                                 {...register('pph21_rate', {
@@ -1717,6 +1765,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               max={100}
                               step={0.1}
                               size="sm"
+                              isDisabled={isInvoiced}
                             >
                               <NumberInputField
                                 {...register('pph23_rate', {
@@ -1741,6 +1790,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               min={0}
                               showLabel={false}
                               size="sm"
+                              isDisabled={isInvoiced}
                             />
                             <FormHelperText fontSize="xs">Potongan pajak lainnya (flat amount)</FormHelperText>
                           </FormControl>

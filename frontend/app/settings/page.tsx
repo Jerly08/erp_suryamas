@@ -7,6 +7,7 @@ import { useModulePermissions } from '@/hooks/usePermissions';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import api from '@/services/api';
+import { ReopenPeriodDialog } from '@/components/periods/ReopenPeriodDialog';
 import { API_ENDPOINTS } from '@/config/api';
 import { getImageUrl } from '@/utils/imageUrl';
 import {
@@ -56,7 +57,7 @@ import {
   Tooltip,
   Badge
 } from '@chakra-ui/react';
-import { FiHome, FiSettings, FiGlobe, FiCalendar, FiDollarSign, FiSave, FiX, FiCreditCard, FiTrendingUp, FiCheckCircle, FiInfo, FiAlertTriangle, FiPackage } from 'react-icons/fi';
+import { FiHome, FiSettings, FiGlobe, FiCalendar, FiDollarSign, FiSave, FiX, FiCreditCard, FiTrendingUp, FiCheckCircle, FiInfo, FiAlertTriangle, FiPackage, FiUnlock, FiClock } from 'react-icons/fi';
 import Link from 'next/link';
 
 // Helper for converting fiscal year formats between backend and date input
@@ -241,6 +242,15 @@ const SettingsPage: React.FC = () => {
   const [executingPeriodClosing, setExecutingPeriodClosing] = useState(false);
   const [lastClosingInfo, setLastClosingInfo] = useState<any | null>(null);
 
+  // Reopen period
+  const [showReopenDialog, setShowReopenDialog] = useState(false);
+  const [reopenStartDate, setReopenStartDate] = useState('');
+  const [reopenEndDate, setReopenEndDate] = useState('');
+
+  // Closing history
+  const [closingHistory, setClosingHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   // Move useColorModeValue to top level to fix hooks order
   const blueColor = useColorModeValue('blue.500', 'blue.300');
   const greenColor = useColorModeValue('green.500', 'green.300');
@@ -288,6 +298,21 @@ const SettingsPage: React.FC = () => {
     } catch (err) {
       console.error('❌ Failed to fetch last closing info:', err);
       // On error, just let user input dates manually
+    }
+  };
+
+  // Fetch closing history
+  const fetchClosingHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const response = await api.get('/api/v1/period-closing/history?limit=10');
+      if (response.data.success) {
+        setClosingHistory(response.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch closing history:', err);
+    } finally {
+      setLoadingHistory(false);
     }
   };
 
@@ -402,6 +427,7 @@ const SettingsPage: React.FC = () => {
     fetchSettings();
     fetchTaxAccountSettings();
     fetchLastClosingInfo();
+    fetchClosingHistory();
   }, []);
 
   // Keep ISO date in sync when settings are populated later
@@ -866,12 +892,26 @@ const SettingsPage: React.FC = () => {
                     {lastClosingInfo?.has_previous_closing && lastClosingInfo?.last_closing_date && (
                       <Alert status="info" borderRadius="md" size="sm">
                         <AlertIcon />
-                        <Box>
+                        <Box flex="1">
                           <AlertTitle fontSize="sm">📅 {t('settings.periodClosingLabels.lastClosingTitle')}</AlertTitle>
                           <AlertDescription fontSize="xs">
                             {t('settings.periodClosingLabels.lastClosed')}: {new Date(lastClosingInfo.last_closing_date).toLocaleDateString()}
                           </AlertDescription>
                         </Box>
+                        <Button
+                          size="xs"
+                          colorScheme="orange"
+                          variant="solid"
+                          leftIcon={<FiUnlock />}
+                          onClick={() => {
+                            setReopenStartDate(lastClosingInfo.last_period_start_date || lastClosingInfo.last_closing_date);
+                            setReopenEndDate(lastClosingInfo.last_period_end_date || lastClosingInfo.last_closing_date);
+                            setShowReopenDialog(true);
+                          }}
+                          ml={2}
+                        >
+                          Buka Kembali
+                        </Button>
                       </Alert>
                     )}
 
@@ -952,6 +992,96 @@ const SettingsPage: React.FC = () => {
                     >
                       {t('settings.periodClosingLabels.previewButton')}
                     </Button>
+
+                    {/* Closing History Section */}
+                    <Divider />
+                    <HStack justify="space-between" width="full">
+                      <HStack spacing={2}>
+                        <Icon as={FiClock} color="gray.600" />
+                        <Text fontWeight="semibold" fontSize="sm">Riwayat Tutup Buku</Text>
+                      </HStack>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={fetchClosingHistory}
+                        isLoading={loadingHistory}
+                      >
+                        Refresh
+                      </Button>
+                    </HStack>
+
+                    {loadingHistory ? (
+                      <HStack justify="center" py={3}>
+                        <Spinner size="sm" />
+                        <Text fontSize="xs">Loading...</Text>
+                      </HStack>
+                    ) : closingHistory.length === 0 ? (
+                      <Text fontSize="xs" color="gray.500" textAlign="center" py={2}>
+                        Belum ada riwayat tutup buku
+                      </Text>
+                    ) : (
+                      <VStack spacing={2} width="full" alignItems="stretch">
+                        {closingHistory.map((item: any) => (
+                          <Box
+                            key={item.id}
+                            p={3}
+                            borderRadius="md"
+                            border="1px"
+                            borderColor={item.is_closed ? 'green.200' : 'orange.200'}
+                            bg={item.is_closed ? 'green.50' : 'orange.50'}
+                          >
+                            <HStack justify="space-between" mb={1}>
+                              <HStack spacing={2}>
+                                <Badge
+                                  colorScheme={item.is_closed ? 'green' : 'orange'}
+                                  fontSize="2xs"
+                                >
+                                  {item.is_closed ? '🔒 Tertutup' : '🔓 Terbuka'}
+                                </Badge>
+                                <Text fontSize="xs" fontWeight="semibold">
+                                  {item.start_date && !item.start_date.startsWith('0001')
+                                    ? new Date(item.start_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+                                    : '—'}
+                                  {' — '}
+                                  {item.end_date && !item.end_date.startsWith('0001')
+                                    ? new Date(item.end_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+                                    : '—'}
+                                </Text>
+                              </HStack>
+                              {item.is_closed && (
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  colorScheme="orange"
+                                  leftIcon={<FiUnlock />}
+                                  onClick={() => {
+                                    setReopenStartDate(item.start_date);
+                                    setReopenEndDate(item.end_date);
+                                    setShowReopenDialog(true);
+                                  }}
+                                >
+                                  Buka Kembali
+                                </Button>
+                              )}
+                            </HStack>
+                            <HStack spacing={4} fontSize="xs" color="gray.600">
+                              <Text>Revenue: Rp {(item.total_revenue || 0).toLocaleString('id-ID')}</Text>
+                              <Text>Expense: Rp {(item.total_expense || 0).toLocaleString('id-ID')}</Text>
+                              <Text fontWeight="semibold" color={item.net_income >= 0 ? 'green.600' : 'red.600'}>
+                                Net: Rp {(item.net_income || 0).toLocaleString('id-ID')}
+                              </Text>
+                            </HStack>
+                            {
+                              item.notes && (
+                                <Text fontSize="xs" color="gray.500" mt={1} fontStyle="italic">
+                                  {item.notes}
+                                </Text>
+                              )
+                            }
+                          </Box>
+                        ))}
+                      </VStack>
+                    )}
                   </VStack>
                 </CardBody>
               </Card>
@@ -1316,8 +1446,20 @@ const SettingsPage: React.FC = () => {
           </ModalContent>
         </Modal>
 
+        {/* Reopen Period Dialog */}
+        <ReopenPeriodDialog
+          isOpen={showReopenDialog}
+          onClose={() => setShowReopenDialog(false)}
+          startDate={reopenStartDate}
+          endDate={reopenEndDate}
+          onSuccess={() => {
+            fetchLastClosingInfo();
+            fetchClosingHistory();
+          }}
+        />
+
       </SimpleLayout>
-    </ProtectedModule>
+    </ProtectedModule >
   );
 };
 

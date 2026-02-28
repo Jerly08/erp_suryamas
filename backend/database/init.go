@@ -244,30 +244,6 @@ func CreateIndexes(db *gorm.DB) {
 	log.Println("Additional database indexes created successfully")
 }
 
-// UpdateExistingPurchaseData updates existing purchase records with new payment tracking fields
-func UpdateExistingPurchaseData(db *gorm.DB) {
-	log.Println("Updating existing purchase data with payment tracking fields...")
-
-	// Update existing purchases where outstanding_amount is 0 or null
-	// Set outstanding_amount to total_amount for unpaid purchases
-	result := db.Exec(`
-		UPDATE purchases 
-		SET outstanding_amount = total_amount,
-			paid_amount = 0,
-			matching_status = 'PENDING'
-		WHERE (outstanding_amount IS NULL OR outstanding_amount = 0)
-			AND total_amount > 0
-	`)
-
-	if result.Error != nil {
-		log.Printf("Error updating existing purchase data: %v", result.Error)
-	} else {
-		log.Printf("Updated %d purchase records with payment tracking fields", result.RowsAffected)
-	}
-
-	log.Println("Existing purchase data update completed")
-}
-
 // CleanupDuplicateNotificationsMigration removes duplicate notifications
 func CleanupDuplicateNotificationsMigration(db *gorm.DB) {
 	migrationID := "cleanup_duplicate_notifications_v1.0"

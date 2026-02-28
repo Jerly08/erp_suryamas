@@ -826,7 +826,21 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 	pdf.SetX(lm)
 	pdf.SetFont("Arial", "B", 22)
 	pdf.SetTextColor(51, 51, 51)
-	pdf.Cell(contentW, 10, tr.Invoice)
+
+	// Use InvoiceType.Name if available, fallback to generic "FAKTUR"/"INVOICE"
+	invoiceTitle := tr.Invoice
+	invoiceLabel := tr.InvoiceNumber
+	if sale.InvoiceType != nil && strings.TrimSpace(sale.InvoiceType.Name) != "" {
+		invoiceTitle = strings.ToUpper(strings.TrimSpace(sale.InvoiceType.Name))
+		// Build label: "Nomor [TypeName]" or "TypeName Number"
+		if lang == "id" || lang == "ID" {
+			invoiceLabel = "Nomor " + strings.TrimSpace(sale.InvoiceType.Name)
+		} else {
+			invoiceLabel = strings.TrimSpace(sale.InvoiceType.Name) + " Number"
+		}
+	}
+
+	pdf.Cell(contentW, 10, invoiceTitle)
 	pdf.SetTextColor(0, 0, 0) // Reset
 	pdf.Ln(10)
 
@@ -841,7 +855,7 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 
 	// Left side details
 	pdf.SetX(lm)
-	pdf.Cell(30, 5, tr.InvoiceNumber+":")
+	pdf.Cell(30, 5, invoiceLabel+":")
 	pdf.SetFont("Arial", "", 9)
 	pdf.SetTextColor(102, 102, 102)
 	pdf.Cell(50, 5, invoiceNum)

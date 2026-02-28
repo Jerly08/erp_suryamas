@@ -104,7 +104,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
           // Fetch latest purchase data from server to get accurate outstanding amount
           const latestPurchase = await purchaseService.getById(purchase.id);
           setFreshPurchase(latestPurchase);
-          
+
           const defaultAmount = latestPurchase.outstanding_amount || 0;
           setFormData({
             amount: defaultAmount,
@@ -144,7 +144,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         setFreshPurchase(null);
       }
     };
-    
+
     fetchFreshPurchase();
   }, [isOpen, purchase?.id, cashBanks]);
 
@@ -219,7 +219,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         });
         return;
       }
-      
+
       if (roundedAmount > selectedAccount.balance) {
         toast({
           title: t('purchases.payment.insufficientBalance') + ' ⚠️',
@@ -236,7 +236,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     try {
       // Use the new Payment Management integration endpoint
       const result = await purchaseService.createPurchasePayment(currentPurchase.id, dataToSubmit);
-      
+
       // Avoid duplicate success toasts.
       // If a parent onSuccess handler is provided, let the parent show the toast.
       if (onSuccess) {
@@ -254,9 +254,9 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       onClose();
     } catch (error: any) {
       console.error('Error recording payment:', error);
-      
-      // Check if it's a period closed error (403)
-      if (error?.response?.status === 403 && error?.response?.data?.code === 'PERIOD_CLOSED') {
+
+      // Check if it's a period closed error (400 - business validation)
+      if (error?.response?.status === 400 && error?.response?.data?.code === 'PERIOD_CLOSED') {
         const errorData = error.response.data;
         toast({
           title: errorData.error || 'Periode Sudah Ditutup',
@@ -268,15 +268,15 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         setLoading(false);
         return;
       }
-      
+
       // Check if this is a timeout error
       const isTimeoutError = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
-      
+
       // Check if this is an insufficient balance error
-      const isInsufficientBalance = error.response?.data?.error_type === 'INSUFFICIENT_BALANCE' || 
-                                   error.response?.data?.error?.includes('Saldo rekening tidak mencukupi') ||
-                                   error.message?.includes('insufficient balance');
-      
+      const isInsufficientBalance = error.response?.data?.error_type === 'INSUFFICIENT_BALANCE' ||
+        error.response?.data?.error?.includes('Saldo rekening tidak mencukupi') ||
+        error.message?.includes('insufficient balance');
+
       if (isTimeoutError) {
         toast({
           title: 'Request Timeout ⏱️',
@@ -288,12 +288,12 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       } else if (isInsufficientBalance) {
         const availableBalance = error.response?.data?.details?.match(/Available: ([\d\.]+)/);
         const requestedAmount = error.response?.data?.requested_amount || formData.amount;
-        
+
         let errorMessage = 'Saldo rekening bank yang dipilih tidak mencukupi untuk melakukan pembayaran ini.';
         if (availableBalance) {
           errorMessage += ` Saldo tersedia: ${formatCurrency(parseFloat(availableBalance[1]))}, yang dibutuhkan: ${formatCurrency(requestedAmount)}.`;
         }
-        
+
         toast({
           title: 'Saldo Tidak Mencukupi ⚠️',
           description: errorMessage,
@@ -305,7 +305,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         // Generic error handling
         let errorTitle = 'Payment Failed';
         let errorDescription = 'Failed to record payment. Please try again.';
-        
+
         if (error.response?.data?.message) {
           errorDescription = error.response.data.message;
         } else if (error.response?.data?.error) {
@@ -313,7 +313,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         } else if (error.message) {
           errorDescription = error.message;
         }
-        
+
         // Add specific guidance based on error type
         if (error.response?.status === 401) {
           errorTitle = 'Authentication Error';
@@ -325,7 +325,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
           errorTitle = 'Server Error';
           errorDescription = 'A server error occurred. Please try again later or contact support.';
         }
-        
+
         toast({
           title: errorTitle,
           description: errorDescription,
@@ -342,15 +342,15 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
   // Handle amount input change with Rupiah formatting
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputValue = e.target.value;
-    
+
     // Only allow numbers, dots, commas, spaces, and "Rp"
     const allowedCharsRegex = /^[Rp\d.,\s]*$/;
     if (!allowedCharsRegex.test(inputValue)) {
       return; // Ignore invalid characters
     }
-    
+
     const numericValue = parseRupiah(inputValue);
-    
+
     // Validate max amount using fresh purchase data
     const currentPurchase = freshPurchase || purchase;
     const maxAmount = currentPurchase?.outstanding_amount || 0;
@@ -364,10 +364,10 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       });
       // Still allow the input but show validation message
     }
-    
+
     // Update form value
     setFormData(prev => ({ ...prev, amount: numericValue }));
-    
+
     // Update display value
     setDisplayAmount(formatRupiah(numericValue));
   };
@@ -376,12 +376,12 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     let value: string | number = e.target.value;
-    
+
     // Special handling for cash_bank_id field
     if (field === 'cash_bank_id') {
       value = parseFloat(e.target.value) || 0;
     }
-    
+
     setFormData(prev => ({
       ...prev,
       [field]: value,
@@ -407,7 +407,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
   // Use fresh purchase data if available, fallback to prop
   const currentPurchase = freshPurchase || purchase;
-  
+
   if (!purchase) return null;
 
   return (
@@ -424,327 +424,327 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                 <Text>{t('common.loading')}</Text>
               </VStack>
             ) : (
-            <VStack spacing={4} align="stretch">
-              {/* Purchase Information */}
-              <Box p={4} bg="gray.50" borderRadius="md">
-                <Text fontSize="sm" fontWeight="bold" color="gray.600" mb={2}>
-                  {t('purchases.payment.purchaseInfo').toUpperCase()}
-                </Text>
-                <HStack justify="space-between">
-                  <Box>
-                    <Text fontSize="sm" color="gray.600">{t('purchases.purchaseNumber')}</Text>
-                    <Text fontWeight="bold">{currentPurchase?.code}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" color="gray.600">{t('purchases.vendor')}</Text>
-                    <Text fontWeight="bold">{currentPurchase?.vendor?.name}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" color="gray.600">{t('purchases.date')}</Text>
-                    <Text fontWeight="bold">{formatDate(currentPurchase?.date || '')}</Text>
-                  </Box>
-                </HStack>
-                <Divider my={2} />
-                <HStack justify="space-between">
-                  <Box>
-                    <Text fontSize="sm" color="gray.600">{t('purchases.payment.totalAmount')}</Text>
-                    <Text fontWeight="bold">{formatCurrency(currentPurchase?.total_amount || 0)}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" color="gray.600">{t('purchases.payment.paidAmount')}</Text>
-                    <Text fontWeight="bold">{formatCurrency(currentPurchase?.paid_amount || 0)}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontSize="sm" color={currentPurchase?.outstanding_amount === 0 ? "green.600" : "red.600"}>
-                      {t('purchases.payment.outstanding')}
-                    </Text>
-                    <Text fontWeight="bold" color={currentPurchase?.outstanding_amount === 0 ? "green.600" : "red.600"}>
-                      {formatCurrency(currentPurchase?.outstanding_amount || 0)}
-                    </Text>
-                  </Box>
-                </HStack>
-                {currentPurchase?.outstanding_amount === 0 && (
-                  <Alert status="success" mt={3}>
-                    <AlertIcon />
-                    <Text fontSize="sm">{t('purchases.payment.paymentSuccess')}</Text>
-                  </Alert>
-                )}
-              </Box>
-
-              <Alert status="info">
-                <AlertIcon />
-                <Text fontSize="sm">
-                  {t('purchases.payment.paymentSuccessDesc')}
-                  {loading && (
-                    <><br />⏳ <strong>{t('purchases.payment.processing')}</strong></>
+              <VStack spacing={4} align="stretch">
+                {/* Purchase Information */}
+                <Box p={4} bg="gray.50" borderRadius="md">
+                  <Text fontSize="sm" fontWeight="bold" color="gray.600" mb={2}>
+                    {t('purchases.payment.purchaseInfo').toUpperCase()}
+                  </Text>
+                  <HStack justify="space-between">
+                    <Box>
+                      <Text fontSize="sm" color="gray.600">{t('purchases.purchaseNumber')}</Text>
+                      <Text fontWeight="bold">{currentPurchase?.code}</Text>
+                    </Box>
+                    <Box>
+                      <Text fontSize="sm" color="gray.600">{t('purchases.vendor')}</Text>
+                      <Text fontWeight="bold">{currentPurchase?.vendor?.name}</Text>
+                    </Box>
+                    <Box>
+                      <Text fontSize="sm" color="gray.600">{t('purchases.date')}</Text>
+                      <Text fontWeight="bold">{formatDate(currentPurchase?.date || '')}</Text>
+                    </Box>
+                  </HStack>
+                  <Divider my={2} />
+                  <HStack justify="space-between">
+                    <Box>
+                      <Text fontSize="sm" color="gray.600">{t('purchases.payment.totalAmount')}</Text>
+                      <Text fontWeight="bold">{formatCurrency(currentPurchase?.total_amount || 0)}</Text>
+                    </Box>
+                    <Box>
+                      <Text fontSize="sm" color="gray.600">{t('purchases.payment.paidAmount')}</Text>
+                      <Text fontWeight="bold">{formatCurrency(currentPurchase?.paid_amount || 0)}</Text>
+                    </Box>
+                    <Box>
+                      <Text fontSize="sm" color={currentPurchase?.outstanding_amount === 0 ? "green.600" : "red.600"}>
+                        {t('purchases.payment.outstanding')}
+                      </Text>
+                      <Text fontWeight="bold" color={currentPurchase?.outstanding_amount === 0 ? "green.600" : "red.600"}>
+                        {formatCurrency(currentPurchase?.outstanding_amount || 0)}
+                      </Text>
+                    </Box>
+                  </HStack>
+                  {currentPurchase?.outstanding_amount === 0 && (
+                    <Alert status="success" mt={3}>
+                      <AlertIcon />
+                      <Text fontSize="sm">{t('purchases.payment.paymentSuccess')}</Text>
+                    </Alert>
                   )}
-                </Text>
-              </Alert>
+                </Box>
 
-              {/* Payment Form */}
-              <FormControl isRequired>
-                <FormLabel>{t('purchases.payment.amount')} *</FormLabel>
-                <Input
-                  placeholder="Rp 0"
-                  value={`Rp ${displayAmount}`}
-                  onChange={handleAmountChange}
-                  textAlign="right"
-                  fontWeight="medium"
-                  fontSize="md"
-                  pl={8}
-                />
-                
-                {/* Quick Payment Amount Buttons */}
-                <HStack spacing={2} mt={3} flexWrap="wrap">
-                  <Text fontSize="sm" color="gray.600" minW="fit-content">Quick Select:</Text>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    colorScheme="blue"
-                    onClick={() => {
-                      // Use floor to ensure consistent integer amounts
-                      const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.25);
-                      setFormData(prev => ({ ...prev, amount }));
-                      setDisplayAmount(formatRupiah(amount));
-                    }}
-                    disabled={!currentPurchase?.outstanding_amount}
-                  >
-                    25%
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    colorScheme="blue"
-                    onClick={() => {
-                      // Use floor to ensure total doesn't exceed outstanding when split 50/50
-                      const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.5);
-                      setFormData(prev => ({ ...prev, amount }));
-                      setDisplayAmount(formatRupiah(amount));
-                    }}
-                    disabled={!currentPurchase?.outstanding_amount}
-                  >
-                    50%
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    colorScheme="orange"
-                    onClick={() => {
-                      // Use floor to ensure consistent integer amounts
-                      const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.8);
-                      setFormData(prev => ({ ...prev, amount }));
-                      setDisplayAmount(formatRupiah(amount));
-                    }}
-                    disabled={!currentPurchase?.outstanding_amount}
-                  >
-                    80%
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="solid"
-                    colorScheme="green"
-                    onClick={() => {
-                      const amount = currentPurchase?.outstanding_amount || 0;
-                      setFormData(prev => ({ ...prev, amount }));
-                      setDisplayAmount(formatRupiah(amount));
-                    }}
-                    disabled={!currentPurchase?.outstanding_amount}
-                  >
-                    100% Full Pay
-                  </Button>
-                </HStack>
-                
-                {/* Payment Amount Info */}
-                {formData.amount > 0 && (
-                  <Text fontSize="sm" color="gray.600" mt={2}>
-                    💰 Payment: <Text as="span" fontWeight="bold" color="green.600">
-                      {formatCurrency(formData.amount)}
+                <Alert status="info">
+                  <AlertIcon />
+                  <Text fontSize="sm">
+                    {t('purchases.payment.paymentSuccessDesc')}
+                    {loading && (
+                      <><br />⏳ <strong>{t('purchases.payment.processing')}</strong></>
+                    )}
+                  </Text>
+                </Alert>
+
+                {/* Payment Form */}
+                <FormControl isRequired>
+                  <FormLabel>{t('purchases.payment.amount')} *</FormLabel>
+                  <Input
+                    placeholder="Rp 0"
+                    value={`Rp ${displayAmount}`}
+                    onChange={handleAmountChange}
+                    textAlign="right"
+                    fontWeight="medium"
+                    fontSize="md"
+                    pl={8}
+                  />
+
+                  {/* Quick Payment Amount Buttons */}
+                  <HStack spacing={2} mt={3} flexWrap="wrap">
+                    <Text fontSize="sm" color="gray.600" minW="fit-content">Quick Select:</Text>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      colorScheme="blue"
+                      onClick={() => {
+                        // Use floor to ensure consistent integer amounts
+                        const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.25);
+                        setFormData(prev => ({ ...prev, amount }));
+                        setDisplayAmount(formatRupiah(amount));
+                      }}
+                      disabled={!currentPurchase?.outstanding_amount}
+                    >
+                      25%
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      colorScheme="blue"
+                      onClick={() => {
+                        // Use floor to ensure total doesn't exceed outstanding when split 50/50
+                        const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.5);
+                        setFormData(prev => ({ ...prev, amount }));
+                        setDisplayAmount(formatRupiah(amount));
+                      }}
+                      disabled={!currentPurchase?.outstanding_amount}
+                    >
+                      50%
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      colorScheme="orange"
+                      onClick={() => {
+                        // Use floor to ensure consistent integer amounts
+                        const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.8);
+                        setFormData(prev => ({ ...prev, amount }));
+                        setDisplayAmount(formatRupiah(amount));
+                      }}
+                      disabled={!currentPurchase?.outstanding_amount}
+                    >
+                      80%
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="solid"
+                      colorScheme="green"
+                      onClick={() => {
+                        const amount = currentPurchase?.outstanding_amount || 0;
+                        setFormData(prev => ({ ...prev, amount }));
+                        setDisplayAmount(formatRupiah(amount));
+                      }}
+                      disabled={!currentPurchase?.outstanding_amount}
+                    >
+                      100% Full Pay
+                    </Button>
+                  </HStack>
+
+                  {/* Payment Amount Info */}
+                  {formData.amount > 0 && (
+                    <Text fontSize="sm" color="gray.600" mt={2}>
+                      💰 Payment: <Text as="span" fontWeight="bold" color="green.600">
+                        {formatCurrency(formData.amount)}
+                      </Text>
+                      {formData.amount < (currentPurchase?.outstanding_amount || 0) && (
+                        <Text as="span" color="orange.500">
+                          {' • '} Remaining: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
+                        </Text>
+                      )}
+                      {formData.amount === (currentPurchase?.outstanding_amount || 0) && (
+                        <Text as="span" color="green.500">
+                          {' • '} ✅ Full Payment
+                        </Text>
+                      )}
                     </Text>
-                    {formData.amount < (currentPurchase?.outstanding_amount || 0) && (
-                      <Text as="span" color="orange.500">
-                        {' • '} Remaining: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
-                      </Text>
-                    )}
-                    {formData.amount === (currentPurchase?.outstanding_amount || 0) && (
-                      <Text as="span" color="green.500">
-                        {' • '} ✅ Full Payment
-                      </Text>
-                    )}
-                  </Text>
-                )}
-                
-                {/* Validation Messages */}
-                {formData.amount > (currentPurchase?.outstanding_amount || 0) && (
-                  <Text fontSize="sm" color="red.500" mt={1}>
-                    ⚠️ Amount exceeds outstanding balance of {formatCurrency(currentPurchase?.outstanding_amount || 0)}
-                  </Text>
-                )}
-                {formData.amount > 0 && formData.amount <= (currentPurchase?.outstanding_amount || 0) && formData.amount < (currentPurchase?.outstanding_amount || 0) && (
-                  <Text fontSize="sm" color="blue.600" mt={1}>
-                    ✓ Partial payment - Remaining balance: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
-                  </Text>
-                )}
-                {formData.amount === (currentPurchase?.outstanding_amount || 0) && formData.amount > 0 && (
-                  <Text fontSize="sm" color="green.600" mt={1} fontWeight="medium">
-                    🎉 This will fully pay the purchase!
-                  </Text>
-                )}
-              </FormControl>
+                  )}
 
-              <FormControl isRequired>
-                <FormLabel>{t('purchases.payment.paymentDate')}</FormLabel>
-                <Input
-                  type="date"
-                  value={formData.payment_date}
-                  onChange={handleChange('payment_date')}
-                />
-              </FormControl>
+                  {/* Validation Messages */}
+                  {formData.amount > (currentPurchase?.outstanding_amount || 0) && (
+                    <Text fontSize="sm" color="red.500" mt={1}>
+                      ⚠️ Amount exceeds outstanding balance of {formatCurrency(currentPurchase?.outstanding_amount || 0)}
+                    </Text>
+                  )}
+                  {formData.amount > 0 && formData.amount <= (currentPurchase?.outstanding_amount || 0) && formData.amount < (currentPurchase?.outstanding_amount || 0) && (
+                    <Text fontSize="sm" color="blue.600" mt={1}>
+                      ✓ Partial payment - Remaining balance: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
+                    </Text>
+                  )}
+                  {formData.amount === (currentPurchase?.outstanding_amount || 0) && formData.amount > 0 && (
+                    <Text fontSize="sm" color="green.600" mt={1} fontWeight="medium">
+                      🎉 This will fully pay the purchase!
+                    </Text>
+                  )}
+                </FormControl>
 
-              <FormControl isRequired>
-                <FormLabel>{t('purchases.payment.paymentMethod')}</FormLabel>
-                <Select
-                  value={formData.payment_method}
-                  onChange={handleChange('payment_method')}
-                >
-                  <option value="Bank Transfer">{t('purchases.payment.bankTransfer')}</option>
-                  <option value="Cash">{t('purchases.payment.cash')}</option>
-                  <option value="Check">{t('purchases.payment.check')}</option>
-                  <option value="Other">{t('common.other')}</option>
-                </Select>
-              </FormControl>
+                <FormControl isRequired>
+                  <FormLabel>{t('purchases.payment.paymentDate')}</FormLabel>
+                  <Input
+                    type="date"
+                    value={formData.payment_date}
+                    onChange={handleChange('payment_date')}
+                  />
+                </FormControl>
 
-              <FormControl isRequired>
-                <FormLabel>
-                  {t('purchases.payment.cashBankAccount')}
-                </FormLabel>
-                <Select
-                  value={formData.cash_bank_id || ''}
-                  onChange={handleChange('cash_bank_id')}
-                  placeholder={t('purchases.payment.selectAccount')}
-                >
-                  {cashBanks
-                    .filter(account => {
-                      // Filter based on payment method
-                      if (formData.payment_method === 'Cash') {
-                        return account.account_code?.toUpperCase().includes('CASH') || 
-                               account.name?.toUpperCase().includes('CASH') ||
-                               (account as any).type === 'CASH';
-                      } else {
-                        return account.account_code?.toUpperCase().includes('BANK') || 
-                               account.name?.toUpperCase().includes('BANK') ||
-                               (account as any).type === 'BANK' ||
-                               (!account.account_code?.toUpperCase().includes('CASH') && 
-                                !account.name?.toUpperCase().includes('CASH'));
-                      }
-                    })
-                    .map((account) => {
-                      const isInsufficientBalance = account.balance < formData.amount;
-                      const isZeroBalance = account.balance <= 0;
-                      const balanceStatus = isZeroBalance ? ' ❌ NO BALANCE' : 
-                                           isInsufficientBalance ? ' ⚠️ INSUFFICIENT' : 
-                                           ' ✅';
-                      
-                      return (
-                        <option 
-                          key={account.id} 
-                          value={account.id}
-                          style={{ 
-                            color: isZeroBalance ? '#e53e3e' : 
-                                   isInsufficientBalance ? '#dd6b20' : 
-                                   '#38a169',
-                            backgroundColor: isZeroBalance ? '#fed7d7' : 
-                                           isInsufficientBalance ? '#feebc8' : 
-                                           '#f0fff4'
-                          }}
-                        >
-                          {account.name} ({account.account_code}) - {formatCurrency(account.balance)}{balanceStatus}
-                        </option>
-                      );
-                    })}
-                  {/* If no filtered accounts, show all accounts */}
-                  {cashBanks.filter(account => {
-                    if (formData.payment_method === 'Cash') {
-                      return account.account_code?.toUpperCase().includes('CASH') || 
-                             account.name?.toUpperCase().includes('CASH') ||
-                             (account as any).type === 'CASH';
-                    } else {
-                      return account.account_code?.toUpperCase().includes('BANK') || 
-                             account.name?.toUpperCase().includes('BANK') ||
-                             (account as any).type === 'BANK' ||
-                             (!account.account_code?.toUpperCase().includes('CASH') && 
+                <FormControl isRequired>
+                  <FormLabel>{t('purchases.payment.paymentMethod')}</FormLabel>
+                  <Select
+                    value={formData.payment_method}
+                    onChange={handleChange('payment_method')}
+                  >
+                    <option value="Bank Transfer">{t('purchases.payment.bankTransfer')}</option>
+                    <option value="Cash">{t('purchases.payment.cash')}</option>
+                    <option value="Check">{t('purchases.payment.check')}</option>
+                    <option value="Other">{t('common.other')}</option>
+                  </Select>
+                </FormControl>
+
+                <FormControl isRequired>
+                  <FormLabel>
+                    {t('purchases.payment.cashBankAccount')}
+                  </FormLabel>
+                  <Select
+                    value={formData.cash_bank_id || ''}
+                    onChange={handleChange('cash_bank_id')}
+                    placeholder={t('purchases.payment.selectAccount')}
+                  >
+                    {cashBanks
+                      .filter(account => {
+                        // Filter based on payment method
+                        if (formData.payment_method === 'Cash') {
+                          return account.account_code?.toUpperCase().includes('CASH') ||
+                            account.name?.toUpperCase().includes('CASH') ||
+                            (account as any).type === 'CASH';
+                        } else {
+                          return account.account_code?.toUpperCase().includes('BANK') ||
+                            account.name?.toUpperCase().includes('BANK') ||
+                            (account as any).type === 'BANK' ||
+                            (!account.account_code?.toUpperCase().includes('CASH') &&
                               !account.name?.toUpperCase().includes('CASH'));
+                        }
+                      })
+                      .map((account) => {
+                        const isInsufficientBalance = account.balance < formData.amount;
+                        const isZeroBalance = account.balance <= 0;
+                        const balanceStatus = isZeroBalance ? ' ❌ NO BALANCE' :
+                          isInsufficientBalance ? ' ⚠️ INSUFFICIENT' :
+                            ' ✅';
+
+                        return (
+                          <option
+                            key={account.id}
+                            value={account.id}
+                            style={{
+                              color: isZeroBalance ? '#e53e3e' :
+                                isInsufficientBalance ? '#dd6b20' :
+                                  '#38a169',
+                              backgroundColor: isZeroBalance ? '#fed7d7' :
+                                isInsufficientBalance ? '#feebc8' :
+                                  '#f0fff4'
+                            }}
+                          >
+                            {account.name} ({account.account_code}) - {formatCurrency(account.balance)}{balanceStatus}
+                          </option>
+                        );
+                      })}
+                    {/* If no filtered accounts, show all accounts */}
+                    {cashBanks.filter(account => {
+                      if (formData.payment_method === 'Cash') {
+                        return account.account_code?.toUpperCase().includes('CASH') ||
+                          account.name?.toUpperCase().includes('CASH') ||
+                          (account as any).type === 'CASH';
+                      } else {
+                        return account.account_code?.toUpperCase().includes('BANK') ||
+                          account.name?.toUpperCase().includes('BANK') ||
+                          (account as any).type === 'BANK' ||
+                          (!account.account_code?.toUpperCase().includes('CASH') &&
+                            !account.name?.toUpperCase().includes('CASH'));
+                      }
+                    }).length === 0 && cashBanks.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name} ({account.account_code}) - {formatCurrency(account.balance)}
+                      </option>
+                    ))}
+                  </Select>
+
+                  {/* Real-time Balance Warning */}
+                  {formData.cash_bank_id && (() => {
+                    const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
+                    if (!selectedAccount) return null;
+
+                    const isZeroBalance = selectedAccount.balance <= 0;
+                    const isInsufficientBalance = formData.amount > selectedAccount.balance;
+                    const remainingBalance = selectedAccount.balance - formData.amount;
+
+                    if (isZeroBalance) {
+                      return (
+                        <Text fontSize="sm" color="red.500" mt={2} fontWeight="medium">
+                          ❌ <strong>No Balance Available</strong><br />
+                          Account "{selectedAccount.name}" has {formatCurrency(selectedAccount.balance)} balance. Cannot process any payments.
+                        </Text>
+                      );
                     }
-                  }).length === 0 && cashBanks.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name} ({account.account_code}) - {formatCurrency(account.balance)}
-                    </option>
-                  ))}
-                </Select>
-                
-                {/* Real-time Balance Warning */}
-                {formData.cash_bank_id && (() => {
-                  const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
-                  if (!selectedAccount) return null;
-                  
-                  const isZeroBalance = selectedAccount.balance <= 0;
-                  const isInsufficientBalance = formData.amount > selectedAccount.balance;
-                  const remainingBalance = selectedAccount.balance - formData.amount;
-                  
-                  if (isZeroBalance) {
-                    return (
-                      <Text fontSize="sm" color="red.500" mt={2} fontWeight="medium">
-                        ❌ <strong>No Balance Available</strong><br/>
-                        Account "{selectedAccount.name}" has {formatCurrency(selectedAccount.balance)} balance. Cannot process any payments.
-                      </Text>
-                    );
-                  }
-                  
-                  if (isInsufficientBalance && formData.amount > 0) {
-                    return (
-                      <Text fontSize="sm" color="orange.500" mt={2} fontWeight="medium">
-                        ⚠️ <strong>Insufficient Balance</strong><br/>
-                        Available: {formatCurrency(selectedAccount.balance)} | Required: {formatCurrency(formData.amount)} | 
-                        Short by: {formatCurrency(formData.amount - selectedAccount.balance)}
-                      </Text>
-                    );
-                  }
-                  
-                  if (formData.amount > 0 && remainingBalance >= 0) {
-                    return (
-                      <Text fontSize="sm" color="green.600" mt={2}>
-                        ✅ <strong>Sufficient Balance</strong><br/>
-                        Available: {formatCurrency(selectedAccount.balance)} | After payment: {formatCurrency(remainingBalance)}
-                      </Text>
-                    );
-                  }
-                  
-                  return (
-                    <Text fontSize="sm" color="blue.600" mt={2}>
-                      💰 <strong>Account Balance:</strong> {formatCurrency(selectedAccount.balance)}
-                    </Text>
-                  );
-                })()}
-              </FormControl>
 
-              <FormControl>
-                <FormLabel>{t('purchases.payment.reference')}</FormLabel>
-                <Input
-                  value={formData.reference}
-                  onChange={handleChange('reference')}
-                  placeholder={t('common.placeholders.referenceNumber')}
-                />
-              </FormControl>
+                    if (isInsufficientBalance && formData.amount > 0) {
+                      return (
+                        <Text fontSize="sm" color="orange.500" mt={2} fontWeight="medium">
+                          ⚠️ <strong>Insufficient Balance</strong><br />
+                          Available: {formatCurrency(selectedAccount.balance)} | Required: {formatCurrency(formData.amount)} |
+                          Short by: {formatCurrency(formData.amount - selectedAccount.balance)}
+                        </Text>
+                      );
+                    }
 
-              <FormControl>
-                <FormLabel>{t('purchases.payment.notes')}</FormLabel>
-                <Textarea
-                  value={formData.notes}
-                  onChange={handleChange('notes')}
-                  placeholder={t('common.placeholders.notes')}
-                  rows={3}
-                />
-              </FormControl>
-            </VStack>
+                    if (formData.amount > 0 && remainingBalance >= 0) {
+                      return (
+                        <Text fontSize="sm" color="green.600" mt={2}>
+                          ✅ <strong>Sufficient Balance</strong><br />
+                          Available: {formatCurrency(selectedAccount.balance)} | After payment: {formatCurrency(remainingBalance)}
+                        </Text>
+                      );
+                    }
+
+                    return (
+                      <Text fontSize="sm" color="blue.600" mt={2}>
+                        💰 <strong>Account Balance:</strong> {formatCurrency(selectedAccount.balance)}
+                      </Text>
+                    );
+                  })()}
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>{t('purchases.payment.reference')}</FormLabel>
+                  <Input
+                    value={formData.reference}
+                    onChange={handleChange('reference')}
+                    placeholder={t('common.placeholders.referenceNumber')}
+                  />
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>{t('purchases.payment.notes')}</FormLabel>
+                  <Textarea
+                    value={formData.notes}
+                    onChange={handleChange('notes')}
+                    placeholder={t('common.placeholders.notes')}
+                    rows={3}
+                  />
+                </FormControl>
+              </VStack>
             )}
           </ModalBody>
 
@@ -752,16 +752,16 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
             <Button variant="ghost" mr={3} onClick={onClose} disabled={loading}>
               {t('common.cancel')}
             </Button>
-            <Button 
-              colorScheme="green" 
-              type="submit" 
+            <Button
+              colorScheme="green"
+              type="submit"
               disabled={loading || loadingPurchase || (() => {
                 // Disable if no account selected
                 if (!formData.cash_bank_id) return true;
-                
+
                 // Disable if amount is invalid
                 if (!formData.amount || formData.amount <= 0) return true;
-                
+
                 // Check balance availability
                 const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
                 if (selectedAccount) {
@@ -770,7 +770,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     return true;
                   }
                 }
-                
+
                 return false;
               })()}
               leftIcon={loading ? <Spinner size="sm" /> : undefined}
@@ -779,7 +779,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
             >
               {(() => {
                 if (loading) return t('purchases.payment.processing');
-                
+
                 // Check for balance issues
                 const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
                 if (selectedAccount && formData.cash_bank_id) {
@@ -790,9 +790,9 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     return t('purchases.payment.insufficientBalance');
                   }
                 }
-                
+
                 return t('purchases.payment.recordPayment');
-              })()} 
+              })()}
             </Button>
           </ModalFooter>
         </form>

@@ -739,20 +739,20 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				sales.DELETE("/:id", permMiddleware.CanDelete("sales"), salesController.DeleteSale)
 
 				// Status management
-				sales.POST("/:id/confirm", middleware.RoleRequired("admin", "finance", "director"), salesController.ConfirmSale)
-				sales.POST("/:id/invoice", middleware.RoleRequired("admin", "finance", "director"), salesController.InvoiceSale)
-				sales.POST("/:id/cancel", middleware.RoleRequired("admin", "finance", "director"), salesController.CancelSale)
+				sales.POST("/:id/confirm", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.ConfirmSale)
+				sales.POST("/:id/invoice", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.InvoiceSale)
+				sales.POST("/:id/cancel", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.CancelSale)
 
 				// Payment management
 				sales.GET("/:id/payments", middleware.RoleRequired("admin", "finance", "director", "employee"), salesController.GetSalePayments)
-				sales.POST("/:id/payments", middleware.RoleRequired("admin", "finance", "director"), salesController.CreateSalePayment)
+				sales.POST("/:id/payments", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.CreateSalePayment)
 
 				// Integrated Payment Management routes
 				sales.GET("/:id/for-payment", middleware.RoleRequired("admin", "finance", "director"), salesController.GetSaleForPayment)
-				sales.POST("/:id/integrated-payment", middleware.RoleRequired("admin", "finance", "director"), salesController.CreateIntegratedPayment)
+				sales.POST("/:id/integrated-payment", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.CreateIntegratedPayment)
 
 				// Returns management
-				sales.POST("/:id/returns", middleware.RoleRequired("admin", "finance", "director"), salesController.CreateSaleReturn)
+				sales.POST("/:id/returns", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.CreateSaleReturn)
 				sales.GET("/returns", middleware.RoleRequired("admin", "finance", "director"), salesController.GetSaleReturns)
 
 				// Analytics and reporting
@@ -887,9 +887,9 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.DELETE("/:id", permMiddleware.CanDelete("purchases"), purchaseController.DeletePurchase)
 
 				// Approval operations dengan permission checks
-				purchases.POST("/:id/submit-approval", permMiddleware.CanCreate("purchases"), purchaseController.SubmitForApproval)
-				purchases.POST("/:id/approve", permMiddleware.CanApprove("purchases"), purchaseController.ApprovePurchase)
-				purchases.POST("/:id/reject", permMiddleware.CanApprove("purchases"), purchaseController.RejectPurchase)
+				purchases.POST("/:id/submit-approval", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.SubmitForApproval)
+				purchases.POST("/:id/approve", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.ApprovePurchase)
+				purchases.POST("/:id/reject", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.RejectPurchase)
 				// Approval history endpoint (accessible by those who can view purchases)
 				purchases.GET("/:id/approval-history", permMiddleware.CanView("purchases"), purchaseApprovalHandler.GetApprovalHistory)
 				// Pending approvals (for those who can approve)
@@ -901,7 +901,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.DELETE("/documents/:document_id", permMiddleware.CanDelete("purchases"), purchaseController.DeleteDocument)
 
 				// Receipt operations dengan permission checks
-				purchases.POST("/receipts", permMiddleware.CanEdit("purchases"), purchaseController.CreatePurchaseReceipt)
+				purchases.POST("/receipts", permMiddleware.CanEdit("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchaseReceipt)
 				purchases.GET("/:id/receipts", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseReceipts)
 
 				// Receipt PDF exports dengan permission checks
@@ -920,11 +920,11 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 				// Payment management (similar to sales payment management)
 				purchases.GET("/:id/payments", middleware.RoleRequired("admin", "finance", "director", "employee"), purchaseController.GetPurchasePayments)
-				purchases.POST("/:id/payments", middleware.RoleRequired("admin", "finance", "director"), purchaseController.CreatePurchasePayment)
+				purchases.POST("/:id/payments", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchasePayment)
 
 				// Integrated Payment Management routes
 				purchases.GET("/:id/for-payment", middleware.RoleRequired("admin", "finance", "director"), purchaseController.GetPurchaseForPayment)
-				purchases.POST("/:id/integrated-payment", middleware.RoleRequired("admin", "finance", "director"), purchaseController.CreateIntegratedPayment)
+				purchases.POST("/:id/integrated-payment", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreateIntegratedPayment)
 
 				// Three-way matching dengan permission checks
 				purchases.GET("/:id/matching", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseMatching)

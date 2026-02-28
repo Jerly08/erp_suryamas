@@ -252,7 +252,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                           )}
 
 
-                          {sale.status === 'DRAFT' && canEdit && onEdit && (
+                          {(sale.status === 'DRAFT' || sale.status === 'INVOICED' || sale.status === 'OVERDUE') && canEdit && onEdit && (
                             <MenuItem
                               icon={<FiEdit />}
                               onClick={() => {

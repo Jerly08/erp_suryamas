@@ -93,7 +93,7 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 	router.GET("/payments/:id/with-journal", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentWithJournal)
 	router.GET("/payments/:id/account-updates", permissionMiddleware.CanView("payments"), ssotPaymentController.GetAccountBalanceUpdates)
 	// Alias for reverse
-	router.POST("/payments/:id/reverse", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ReversePayment)
+	router.POST("/payments/:id/reverse", periodValidationMiddleware.ValidateTransactionPeriod(), permissionMiddleware.CanEdit("payments"), ssotPaymentController.ReversePayment)
 
 	// Mark legacy payment routes as deprecated by adding a redirect route
 	legacyPayments := router.Group("/payments")
