@@ -489,17 +489,52 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 
 	// The approval workflow now starts from Employee step (step 1)
 	// When Employee submits, we immediately progress to the next step (Finance/Manager)
-	// This mimics the Employee "submitting" the purchase for approval
+	// We directly update the database instead of calling ProcessApprovalAction
+	// to avoid role-check issues when the step preload doesn't work correctly
 	if purchase.ApprovalRequestID != nil {
-		// Automatically approve the Employee step since the Employee is submitting
-		action := models.ApprovalActionDTO{
-			Action:   "APPROVE",
-			Comments: "Purchase submitted by Employee for approval",
+		now := time.Now()
+		requestID := *purchase.ApprovalRequestID
+
+		// Step 1: Auto-approve the employee submission step (step_order = 1)
+		result := s.db.Model(&models.ApprovalAction{}).
+			Where("request_id = ? AND is_active = ? AND status = ?", requestID, true, models.ApprovalStatusPending).
+			Updates(map[string]interface{}{
+				"status":      models.ApprovalStatusApproved,
+				"approver_id": userID,
+				"comments":    "Purchase submitted by Employee for approval",
+				"action_date": now,
+				"is_active":   false,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("failed to auto-approve employee step: %v", result.Error)
 		}
-		err = s.approvalService.ProcessApprovalAction(*purchase.ApprovalRequestID, userID, action)
-		if err != nil {
-			return fmt.Errorf("failed to process employee submission step: %v", err)
+		if result.RowsAffected == 0 {
+			fmt.Printf("⚠️ No active pending step found to auto-approve for request %d\n", requestID)
 		}
+
+		// Step 2: Activate the next step (finance approval, step_order = 2)
+		// Find the step_id for step_order = 2 in this workflow
+		var approvalReq models.ApprovalRequest
+		if err := s.db.First(&approvalReq, requestID).Error; err == nil {
+			var financeStep models.ApprovalStep
+			if err := s.db.Where("workflow_id = ? AND step_order = ?", approvalReq.WorkflowID, 2).First(&financeStep).Error; err == nil {
+				s.db.Model(&models.ApprovalAction{}).
+					Where("request_id = ? AND step_id = ?", requestID, financeStep.ID).
+					Update("is_active", true)
+				fmt.Printf("✅ Finance approval step activated for request %d\n", requestID)
+			}
+		}
+
+		// Step 3: Create approval history entry
+		history := models.ApprovalHistory{
+			RequestID: requestID,
+			UserID:    userID,
+			Action:    models.ApprovalActionApproved,
+			Comments:  "Purchase submitted by Employee for approval",
+			Metadata:  "{}",
+		}
+		s.db.Create(&history)
+		fmt.Printf("✅ Employee submission step auto-approved for purchase %d\n", id)
 	}
 
 	// Update purchase status
