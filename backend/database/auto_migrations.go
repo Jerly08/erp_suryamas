@@ -51,7 +51,9 @@ func RunAutoMigrations(db *gorm.DB) error {
 	// Get migration files
 	migrationFiles, err := getMigrationFiles()
 	if err != nil {
-		return fmt.Errorf("failed to get migration files: %v", err)
+		log.Printf("⚠️  Migration files not found (expected in Docker): %v", err)
+		log.Println("⚠️  Skipping SQL file migrations, but continuing with essential setup...")
+		migrationFiles = nil // Continue with empty list
 	}
 
 	// Reset idempotent skip counter

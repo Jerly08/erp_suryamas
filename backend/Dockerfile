@@ -18,6 +18,8 @@ WORKDIR /app
 COPY --from=builder /src/api .
 # Copy templates and static files if necessary
 COPY --from=builder /src/templates ./templates
+# Copy SQL migration files so RunAutoMigrations can find them
+COPY --from=builder /src/migrations ./migrations
 RUN mkdir -p uploads
 
 EXPOSE 8080
