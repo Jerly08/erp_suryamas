@@ -24,6 +24,8 @@ import {
 import { useTranslation } from '@/hooks/useTranslation';
 import { ssotBalanceSheetReportService, SSOTBalanceSheetData, BSAccountItem } from '@/services/ssotBalanceSheetReportService';
 import { FiRefreshCw } from 'react-icons/fi';
+import ExportButton from '@/components/common/ExportButton';
+import { exportBalanceSheetToPDF, exportBalanceSheetToCSV } from '@/utils/journalExport';
 
 export default function BalanceSheetView() {
     const { t } = useTranslation();
@@ -32,15 +34,45 @@ export default function BalanceSheetView() {
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<SSOTBalanceSheetData | null>(null);
 
-    const [asOfDate, setAsOfDate] = useState(
+    const [startDate, setStartDate] = useState(
+        new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
+    );
+    const [endDate, setEndDate] = useState(
         new Date().toISOString().split('T')[0]
     );
+    const [exporting, setExporting] = useState(false);
+
+    const handleExportPDF = () => {
+        if (!data) return;
+        try {
+            setExporting(true);
+            exportBalanceSheetToPDF(data, endDate);
+            toast({ title: t('common.success'), description: 'PDF berhasil diunduh', status: 'success', duration: 3000 });
+        } catch (error) {
+            toast({ title: t('common.error'), description: 'Gagal mengexport PDF', status: 'error', duration: 3000 });
+        } finally {
+            setExporting(false);
+        }
+    };
+
+    const handleExportCSV = () => {
+        if (!data) return;
+        try {
+            setExporting(true);
+            exportBalanceSheetToCSV(data, endDate);
+            toast({ title: t('common.success'), description: 'CSV berhasil diunduh', status: 'success', duration: 3000 });
+        } catch (error) {
+            toast({ title: t('common.error'), description: 'Gagal mengexport CSV', status: 'error', duration: 3000 });
+        } finally {
+            setExporting(false);
+        }
+    };
 
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
             const result = await ssotBalanceSheetReportService.generateSSOTBalanceSheet({
-                as_of_date: asOfDate,
+                as_of_date: endDate,
             });
             setData(result);
         } catch (error) {
@@ -54,7 +86,7 @@ export default function BalanceSheetView() {
         } finally {
             setLoading(false);
         }
-    }, [asOfDate, t, toast]);
+    }, [endDate, t, toast]);
 
     useEffect(() => {
         fetchData();
@@ -96,11 +128,21 @@ export default function BalanceSheetView() {
                     <HStack justify="space-between">
                         <HStack spacing={4} align="flex-end">
                             <Box>
-                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.asOfDate') || 'As of Date'}</Text>
+                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.startDate')}</Text>
                                 <Input
                                     type="date"
-                                    value={asOfDate}
-                                    onChange={(e) => setAsOfDate(e.target.value)}
+                                    value={startDate}
+                                    onChange={(e) => setStartDate(e.target.value)}
+                                    size="sm"
+                                    width="140px"
+                                />
+                            </Box>
+                            <Box>
+                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.endDate')}</Text>
+                                <Input
+                                    type="date"
+                                    value={endDate}
+                                    onChange={(e) => setEndDate(e.target.value)}
                                     size="sm"
                                     width="140px"
                                 />
@@ -112,9 +154,19 @@ export default function BalanceSheetView() {
                                 onClick={fetchData}
                                 isLoading={loading}
                             >
-                                {t('common.refresh')}
+                                {t('journal.filters.generate')}
                             </Button>
                         </HStack>
+                        <ExportButton
+                            onExportPDF={handleExportPDF}
+                            onExportCSV={handleExportCSV}
+                            isLoading={exporting}
+                            disabled={!data}
+                            showExcel={false}
+                            showPDF={true}
+                            showCSV={true}
+                            size="sm"
+                        />
                     </HStack>
                 </CardBody>
             </Card>
@@ -130,7 +182,9 @@ export default function BalanceSheetView() {
                             <Box textAlign="center" mb={4}>
                                 <Heading size="lg">{data.company?.name}</Heading>
                                 <Text fontSize="xl" fontWeight="medium">{t('journal.balanceSheet')}</Text>
-                                <Text color="gray.500">{t('journal.balanceSheetReport.asOf', { date: new Date(data.as_of_date).toLocaleDateString('id-ID', { dateStyle: 'long' }) })}</Text>
+                                <Text color="gray.500">
+                                    {t('journal.balanceSheetReport.period') || 'Periode'}: {new Date(startDate).toLocaleDateString('id-ID', { dateStyle: 'long' })} - {new Date(endDate).toLocaleDateString('id-ID', { dateStyle: 'long' })}
+                                </Text>
                             </Box>
 
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={8}>

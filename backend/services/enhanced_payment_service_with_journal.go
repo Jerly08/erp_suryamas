@@ -636,6 +636,11 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 			return fmt.Errorf("only completed payments can be reversed")
 		}
 
+		// Guard: check if payment date is in a closed accounting period
+		if err := CheckClosedPeriod(eps.db, payment.Date); err != nil {
+			return err
+		}
+
 		// Reverse SSOT journal entry if exists
 		var journalResult *PaymentJournalResult
 		if payment.JournalEntryID != nil {

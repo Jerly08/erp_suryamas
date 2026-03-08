@@ -641,6 +641,8 @@ func AutoMigrate(db *gorm.DB) {
 		&models.Inventory{},
 		&models.BOM{},
 		&models.BOMItem{},
+		&models.ComponentTemplate{},
+		&models.ComponentTemplateItem{},
 		&models.ProjectBOM{},
 		&models.ProjectBOMItem{},
 

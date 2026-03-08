@@ -117,6 +117,11 @@ func main() {
 	sessionCleanupService := services.NewSessionCleanupService(db)
 	go sessionCleanupService.StartCleanupWorker()
 
+	// Initialize and start depreciation auto-scheduler
+	// Runs daily check; auto-processes previous month's depreciation on 1st-5th of each month
+	depreciationScheduler := services.NewDepreciationScheduler(db)
+	go depreciationScheduler.Start()
+
 	// Initialize Gin router without default middleware
 	r := gin.New()
 

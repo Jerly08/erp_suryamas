@@ -369,63 +369,53 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 }
 
 func (s *PurchaseService) DeletePurchase(id uint) error {
-	fmt.Printf("ℹ Starting purchase deletion for ID %d\n", id)
+	fmt.Printf("ℹ Starting purchase cancellation for ID %d (cancel instead of delete)\n", id)
 	purchase, err := s.purchaseRepo.FindByID(id)
 	if err != nil {
-		fmt.Printf("❌ Failed to find purchase %d for deletion: %v\n", id, err)
+		fmt.Printf("❌ Failed to find purchase %d for cancellation: %v\n", id, err)
 		return fmt.Errorf("purchase not found (ID: %d): %v", id, err)
 	}
 
-	// Allow deletion of draft purchases by all authorized roles
-	// Allow deletion of non-draft purchases only by admin (validation handled at controller level)
-	fmt.Printf("ℹ Checking deletion permissions for purchase %d (status: %s)\n", id, purchase.Status)
-	if purchase.Status != models.PurchaseStatusDraft {
-		fmt.Printf("⚠ Purchase %d is not in DRAFT status, requiring admin privileges\n", id)
-		// This will require role-based validation in the controller
-		// For now, we'll allow deletion and let controller handle admin check
-	} else {
-		fmt.Printf("✅ Purchase %d is in DRAFT status, deletion allowed\n", id)
+	// If already cancelled, nothing to do
+	if purchase.Status == models.PurchaseStatusCancelled {
+		fmt.Printf("ℹ Purchase %d is already CANCELLED, nothing to do\n", id)
+		return nil
 	}
 
-	fmt.Printf("ℹ Deleting purchase %d from database\n", id)
-	err = s.purchaseRepo.Delete(id)
-	if err != nil {
-		fmt.Printf("❌ Failed to delete purchase %d: %v\n", id, err)
-		return fmt.Errorf("failed to delete purchase: %v", err)
+	// Guard: check if purchase date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return err
 	}
 
-	// CRITICAL FIX: Also soft-delete any SSOT unified_journal_ledger entries linked to this purchase
-	if err := s.db.Session(&gorm.Session{AllowGlobalUpdate: true}).
-		Model(&models.SSOTJournalEntry{}).
-		Where("source_type = 'PURCHASE' AND source_id = ?", id).
-		Update("deleted_at", time.Now()).Error; err != nil {
-		fmt.Printf("⚠ Warning: failed to soft-delete SSOT journal entries for purchase %d: %v\n", id, err)
-	}
-
-	// Also soft-delete any unified_journal_lines
-	if err := s.db.Exec(`
-		UPDATE unified_journal_lines 
-		SET deleted_at = CURRENT_TIMESTAMP
-		WHERE deleted_at IS NULL AND journal_id IN (
-			SELECT id FROM unified_journal_ledger 
-			WHERE source_type = 'PURCHASE' AND source_id = ?
-		)
-	`, id).Error; err != nil {
-		fmt.Printf("⚠ Warning: failed to soft-delete SSOT journal lines for purchase %d: %v\n", id, err)
-	}
-
-	// CRITICAL FIX: Update project actual cost if purchase was approved/completed/paid
-	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending && purchase.Status != models.PurchaseStatusCancelled {
-		fmt.Printf("📉 Decreasing project actual cost due to purchase deletion\n")
-		err = s.updateProjectCostForPurchase(purchase, false)
-		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to decrease project actual cost for purchase %d: %v\n", id, err)
+	// For non-DRAFT purchases that have been approved/completed/paid,
+	// perform full accounting reversal (stock, cash/bank, journal, project cost)
+	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending {
+		fmt.Printf("🔄 Purchase %d has status %s, performing full accounting reversal via OnPurchaseRejected\n", id, purchase.Status)
+		if err := s.OnPurchaseRejected(id); err != nil {
+			fmt.Printf("⚠️ Warning: Post-rejection cleanup had issues for purchase %d: %v\n", id, err)
+			// Continue with cancellation even if cleanup has partial issues
 		} else {
-			fmt.Printf("✅ Successfully decreased project actual cost for project %d\n", *purchase.ProjectID)
+			fmt.Printf("✅ Full accounting reversal completed for purchase %d\n", id)
 		}
+	} else {
+		fmt.Printf("✅ Purchase %d is in %s status, no accounting reversal needed\n", id, purchase.Status)
 	}
 
-	fmt.Printf("✅ Purchase %d deleted successfully\n", id)
+	// Set status to CANCELLED (do NOT soft-delete — maintain audit trail)
+	now := time.Now()
+	purchase.Status = models.PurchaseStatusCancelled
+	purchase.ApprovalStatus = models.PurchaseApprovalRejected
+	purchase.UpdatedAt = now
+	purchase.OutstandingAmount = 0
+	purchase.PaidAmount = 0
+
+	_, err = s.purchaseRepo.Update(purchase)
+	if err != nil {
+		fmt.Printf("❌ Failed to update purchase %d status to CANCELLED: %v\n", id, err)
+		return fmt.Errorf("failed to cancel purchase: %v", err)
+	}
+
+	fmt.Printf("✅ Purchase %d cancelled successfully (status: CANCELLED, audit trail preserved)\n", id)
 	return nil
 }
 
@@ -912,7 +902,7 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 			inventoryAccountID = inv.ID
 		}
 		var defaultFAAccountID uint
-		if fa, err := s.accountRepo.FindByCode(nil, "1501"); err == nil {
+		if fa, err := s.accountRepo.FindByCode(nil, "1201-004"); err == nil {
 			defaultFAAccountID = fa.ID
 		}
 		// Map request items by PurchaseItemID for quick lookup of flags
@@ -939,8 +929,20 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 			}
 			// SAFEGUARD: if purchase item booked to Inventory (expense_account_id == 0), skip capitalization to avoid double handling
 			if purchaseItem.ExpenseAccountID == 0 {
-				fmt.Printf("ℹ️ Capitalization disabled for inventory (1301) item %d. Skipping.\n", itemReq.PurchaseItemID)
+				fmt.Printf("ℹ️ Capitalization disabled for inventory item %d. Skipping.\n", itemReq.PurchaseItemID)
 				continue
+			}
+			// DOUBLE-POSTING PREVENTION: If the purchase item was already debited to a Fixed Asset account
+			// (e.g., 1201-xxx) in the purchase journal, skip capitalization to prevent duplicate entries
+			if purchaseItem.ExpenseAccountID != 0 {
+				var itemAccount models.Account
+				if accErr := s.db.First(&itemAccount, purchaseItem.ExpenseAccountID).Error; accErr == nil {
+					if strings.ToUpper(itemAccount.Category) == models.CategoryFixedAsset {
+						fmt.Printf("⏭️ Capitalization skipped for item %d: already debited to Fixed Asset account %s (%s) in purchase journal\n",
+							itemReq.PurchaseItemID, itemAccount.Code, itemAccount.Name)
+						continue
+					}
+				}
 			}
 			// Determine source account (override > item expense > inventory)
 			sourceAccountID := inventoryAccountID
@@ -1256,8 +1258,153 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 		}
 	}
 
+	// 6. Auto-create Asset records for items debited to Fixed Asset accounts (PSAK 16 - Accrual Basis)
+	// When purchase items target a Fixed Asset account (1201-xxx), automatically create Asset register records
+	// so that depreciation starts immediately from purchase date, not after payment/receipt
+	s.autoCreateAssetsFromPurchase(purchase)
+
 	fmt.Printf("✅ Post-approval processing completed for purchase %s\n", purchase.Code)
 	return nil
+}
+
+// autoCreateAssetsFromPurchase creates Asset records for purchase items debited to Fixed Asset accounts.
+// This implements PSAK 16 accrual basis: assets are recognized at purchase time, not at payment.
+func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase) {
+	if len(purchase.PurchaseItems) == 0 {
+		return
+	}
+
+	assetRepo := repositories.NewAssetRepository(s.db)
+	assetService := NewAssetService(assetRepo, s.db)
+	assetJournalSvc := NewAssetJournalServiceSSOT(s.db)
+
+	for _, item := range purchase.PurchaseItems {
+		if item.ExpenseAccountID == 0 {
+			continue
+		}
+
+		// Check if the expense account is a Fixed Asset account (FIXED_ASSET category)
+		var account models.Account
+		if err := s.db.First(&account, item.ExpenseAccountID).Error; err != nil {
+			continue
+		}
+
+		if strings.ToUpper(account.Category) != models.CategoryFixedAsset {
+			continue // Not a fixed asset item, skip
+		}
+
+		// Load product name for asset name
+		var product models.Product
+		productName := fmt.Sprintf("Aset dari PO %s", purchase.Code)
+		if err := s.db.First(&product, item.ProductID).Error; err == nil {
+			productName = product.Name
+		}
+
+		// Check if asset already exists for this purchase item (prevent duplicates)
+		var existingCount int64
+		s.db.Model(&models.Asset{}).Where(
+			"notes LIKE ? AND deleted_at IS NULL",
+			fmt.Sprintf("%%PurchaseItem:%d%%", item.ID),
+		).Count(&existingCount)
+		if existingCount > 0 {
+			fmt.Printf("ℹ️ Asset already exists for purchase item %d, skipping\n", item.ID)
+			continue
+		}
+
+		// Determine asset category from the account code
+		category := "Peralatan" // Default
+		switch {
+		case strings.HasPrefix(account.Code, "1201-001"):
+			category = "Tanah"
+		case strings.HasPrefix(account.Code, "1201-002"):
+			category = "Bangunan"
+		case strings.HasPrefix(account.Code, "1201-003"):
+			category = "Kendaraan"
+		case strings.HasPrefix(account.Code, "1201-004"):
+			category = "Peralatan"
+		case strings.HasPrefix(account.Code, "1201-005"):
+			category = "Inventaris Kantor"
+		}
+
+		// Resolve depreciation expense account (Beban Penyusutan)
+		// We look for category DEPRECIATION_EXPENSE or code 6103, but MUST ensure it's an EXPENSE type
+		var depExpAccount models.Account
+		var depExpID *uint
+		if err := s.db.Where("category = ? AND type = 'EXPENSE' AND deleted_at IS NULL", models.CategoryDepreciationExp).First(&depExpAccount).Error; err == nil {
+			depExpID = &depExpAccount.ID
+		} else if err := s.db.Where("code LIKE '6103%' AND type = 'EXPENSE' AND deleted_at IS NULL").First(&depExpAccount).Error; err == nil {
+			depExpID = &depExpAccount.ID
+		}
+
+		// Resolve accumulated depreciation account (1202-xxx mirrors 1201-xxx)
+		accumDepCode := strings.Replace(account.Code, "1201", "1202", 1)
+		var accumDepAccount models.Account
+		var accumDepID *uint
+		if err := s.db.Where("code = ? AND deleted_at IS NULL", accumDepCode).First(&accumDepAccount).Error; err == nil {
+			accumDepID = &accumDepAccount.ID
+		}
+
+		// Set default useful life and depreciation method based on category
+		usefulLife := 5          // Default 5 years
+		depMethod := models.DepreciationMethodStraightLine
+		salvageValue := 0.0
+
+		switch category {
+		case "Tanah":
+			usefulLife = 0        // Tanah tidak disusutkan
+			depMethod = ""
+		case "Bangunan":
+			usefulLife = 20       // 20 tahun
+			salvageValue = item.TotalPrice * 0.10 // 10% salvage
+		case "Kendaraan":
+			usefulLife = 5        // 5 tahun (standard PSAK)
+			salvageValue = item.TotalPrice * 0.10 // 10% salvage
+		case "Peralatan":
+			usefulLife = 4        // 4 tahun
+			salvageValue = item.TotalPrice * 0.05 // 5% salvage
+		case "Inventaris Kantor":
+			usefulLife = 4        // 4 tahun
+			salvageValue = item.TotalPrice * 0.05 // 5% salvage
+		}
+
+		assetAccountID := &account.ID
+		asset := &models.Asset{
+			Name:                  productName,
+			Category:              category,
+			Status:                models.AssetStatusPendingSetup,
+			PurchaseDate:          purchase.Date,
+			PurchasePrice:         item.TotalPrice,
+			SalvageValue:          salvageValue,
+			UsefulLife:            usefulLife,
+			DepreciationMethod:    depMethod,
+			IsActive:              false, // Inactive until user completes setup
+			Notes:                 fmt.Sprintf("Auto-created from Purchase %s (PurchaseItem:%d). Silakan lengkapi masa manfaat, nilai sisa, dan metode penyusutan lalu aktifkan aset.", purchase.Code, item.ID),
+			AssetAccountID:        assetAccountID,
+			DepreciationAccountID: depExpID,
+			AccumulatedDepreciationAccountID: accumDepID,
+		}
+
+		// Find matching asset category by name
+		var assetCat models.AssetCategory
+		if err := s.db.Where("name = ? AND deleted_at IS NULL", category).First(&assetCat).Error; err == nil {
+			asset.CategoryID = &assetCat.ID
+		}
+
+		// Create asset via service (generates code automatically)
+		if err := assetService.CreateAsset(asset); err != nil {
+			fmt.Printf("⚠️ [AUTO-ASSET] Failed to create asset for item %d (%s): %v\n", item.ID, productName, err)
+			continue
+		}
+
+		fmt.Printf("✅ [AUTO-ASSET] Created asset %s (%s) from purchase %s - Rp %.2f, useful life: %d years\n",
+			asset.Code, asset.Name, purchase.Code, asset.PurchasePrice, asset.UsefulLife)
+
+		// NOTE: SSOT journal for this asset is NOT created here because the purchase
+		// journal (step 2) already handles: Dr 1201-xxx / Cr Hutang/Kas/Bank
+		// Creating another journal would cause double posting.
+		// However, we log the link for audit trail
+		_ = assetJournalSvc // Available if needed for future use
+	}
 }
 
 // OnPurchaseRejected reverses all accounting effects when a purchase is rejected.
@@ -1273,6 +1420,11 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 	fmt.Printf("🔄 Cleaning up rejected purchase %s (method: %s, amount: %.2f)\n",
 		purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
 
+	// Guard: check if purchase date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return err
+	}
+
 	// 1. Reset payment tracking amounts
 	fmt.Printf("💰 Resetting payment tracking for rejected purchase %d\n", purchaseID)
 	oldOutstanding := purchase.OutstandingAmount
@@ -1286,18 +1438,26 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		fmt.Printf("✅ Payment tracking reset: Outstanding %.2f→0, Paid %.2f→0\n", oldOutstanding, oldPaid)
 	}
 
-	// 2. Soft-delete SSOT journal entries (hutang usaha / beban)
+	// 2. Delete SSOT journal entries with COA balance reversal
 	fmt.Printf("📒 Removing SSOT journal entries for rejected purchase %d\n", purchaseID)
+	if s.journalServiceSSOT != nil {
+		// Use the SSOT journal service which properly reverses COA balances
+		if err := s.journalServiceSSOT.DeletePurchaseJournal(purchaseID, nil); err != nil {
+			fmt.Printf("⚠️ Warning: Failed to delete SSOT journal via service for purchase %d: %v\n", purchaseID, err)
+		} else {
+			fmt.Printf("✅ SSOT journal entries deleted with COA reversal for purchase %d\n", purchaseID)
+		}
+	}
+
+	// Fallback: Also soft-delete any remaining SSOT entries that might have been missed
 	if err := s.db.Session(&gorm.Session{AllowGlobalUpdate: true}).
 		Model(&models.SSOTJournalEntry{}).
 		Where("source_type = 'PURCHASE' AND source_id = ? AND deleted_at IS NULL", purchaseID).
 		Update("deleted_at", time.Now()).Error; err != nil {
-		fmt.Printf("⚠️ Warning: Failed to soft-delete SSOT journal entries: %v\n", err)
-	} else {
-		fmt.Printf("✅ SSOT journal entries soft-deleted for purchase %d\n", purchaseID)
+		fmt.Printf("⚠️ Warning: Failed to soft-delete remaining SSOT journal entries: %v\n", err)
 	}
 
-	// Also soft-delete unified_journal_lines
+	// Also soft-delete any remaining unified_journal_lines
 	if err := s.db.Exec(`
 		UPDATE unified_journal_lines 
 		SET deleted_at = CURRENT_TIMESTAMP
@@ -1306,20 +1466,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 			WHERE source_type = 'PURCHASE' AND source_id = ?
 		)
 	`, purchaseID).Error; err != nil {
-		fmt.Printf("⚠️ Warning: Failed to soft-delete SSOT journal lines: %v\n", err)
-	} else {
-		fmt.Printf("✅ SSOT journal lines soft-deleted for purchase %d\n", purchaseID)
-	}
-
-	// Soft-delete the unified_journal_ledger entries themselves
-	if err := s.db.Exec(`
-		UPDATE unified_journal_ledger 
-		SET deleted_at = CURRENT_TIMESTAMP
-		WHERE source_type = 'PURCHASE' AND source_id = ? AND deleted_at IS NULL
-	`, purchaseID).Error; err != nil {
-		fmt.Printf("⚠️ Warning: Failed to soft-delete unified_journal_ledger entries: %v\n", err)
-	} else {
-		fmt.Printf("✅ Unified journal ledger entries soft-deleted for purchase %d\n", purchaseID)
+		fmt.Printf("⚠️ Warning: Failed to soft-delete remaining SSOT journal lines: %v\n", err)
 	}
 
 	// 3. Reverse product stock (subtract the quantities that were added on approval)

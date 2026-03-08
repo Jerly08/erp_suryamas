@@ -217,19 +217,80 @@ const AssetForm: React.FC<AssetFormProps> = ({
     }
   };
 
-  // Calculate estimated book value
+  // Calculate months difference matching backend logic
+  const monthsDifference = (startDate: Date, endDate: Date): number => {
+    if (endDate < startDate) return 0;
+    let months = (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth());
+
+    const startDay = startDate.getDate();
+    // Last day of endDate's month
+    const endMonthLastDay = new Date(endDate.getFullYear(), endDate.getMonth() + 1, 0).getDate();
+    const effectiveStartDay = startDay > endMonthLastDay ? endMonthLastDay : startDay;
+    if (endDate.getDate() >= effectiveStartDay) {
+      months++;
+    }
+    return Math.max(0, months);
+  };
+
+  // Calculate estimated book value with monthly precision and method-aware logic
   const calculateCurrentBookValue = () => {
-    const { purchasePrice, salvageValue, usefulLife } = formData;
+    const { purchasePrice, salvageValue, usefulLife, depreciationMethod } = formData;
     if (purchasePrice <= 0 || usefulLife <= 0) return purchasePrice;
 
-    const annualDepreciation = (purchasePrice - (salvageValue || 0)) / usefulLife;
-    const currentYear = new Date().getFullYear();
-    const purchaseYear = new Date(formData.purchaseDate).getFullYear();
-    const yearsElapsed = Math.max(0, currentYear - purchaseYear);
+    const startDate = new Date(formData.purchaseDate);
+    const now = new Date();
+    const monthsElapsed = monthsDifference(startDate, now);
+    if (monthsElapsed <= 0) return purchasePrice;
 
-    const bookValue = purchasePrice - (annualDepreciation * yearsElapsed);
-    return Math.max(bookValue, salvageValue || 0);
+    const sv = salvageValue || 0;
+    const totalMonths = usefulLife * 12;
+
+    if (depreciationMethod === 'DECLINING_BALANCE') {
+      // Double declining balance - iterative per month
+      const rate = 2.0 / usefulLife;
+      const monthlyRate = rate / 12;
+      let bookValue = purchasePrice;
+      for (let m = 0; m < monthsElapsed; m++) {
+        const monthlyDep = bookValue * monthlyRate;
+        if (bookValue - monthlyDep < sv) {
+          bookValue = sv;
+          break;
+        }
+        bookValue -= monthlyDep;
+        if (bookValue <= sv) break;
+      }
+      return Math.max(bookValue, sv);
+    }
+
+    // Straight-line (default)
+    const depreciableAmount = purchasePrice - sv;
+    const monthlyDep = depreciableAmount / totalMonths;
+    const effectiveMonths = Math.min(monthsElapsed, totalMonths);
+    const accumulated = monthlyDep * effectiveMonths;
+    return Math.max(purchasePrice - accumulated, sv);
   };
+
+  // Server-side book value for edit mode
+  const [serverBookValue, setServerBookValue] = useState<number | null>(null);
+  const [isLoadingBookValue, setIsLoadingBookValue] = useState(false);
+
+  useEffect(() => {
+    if (mode === 'edit' && asset?.id) {
+      setIsLoadingBookValue(true);
+      import('@/services/assetService').then(({ assetService }) => {
+        assetService.calculateDepreciation(asset.id)
+          .then((res) => {
+            setServerBookValue(res.data.current_book_value);
+          })
+          .catch((err) => {
+            console.error('Failed to fetch server book value:', err);
+          })
+          .finally(() => {
+            setIsLoadingBookValue(false);
+          });
+      });
+    }
+  }, [mode, asset?.id]);
 
   const currentBookValue = calculateCurrentBookValue();
 
@@ -309,17 +370,25 @@ const AssetForm: React.FC<AssetFormProps> = ({
                     </FormControl>
 
                     <FormControl>
-                      <FormLabel>Status</FormLabel>
+                      <FormLabel>Status Aset</FormLabel>
                       <Select
                         value={formData.status}
                         onChange={handleInputChange('status')}
                         bg="gray.50"
                       >
-                        {ASSET_STATUS.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
+                        {ASSET_STATUS.map((status) => {
+                          const labels: Record<string, string> = {
+                            'PENDING': '⏳ Pending',
+                            'ACTIVE': '🟢 Aktif',
+                            'INACTIVE': '⚪ Tidak Aktif',
+                            'SOLD': '🔴 Terjual',
+                          };
+                          return (
+                            <option key={status} value={status}>
+                              {labels[status] || status}
+                            </option>
+                          );
+                        })}
                       </Select>
                     </FormControl>
 
@@ -431,19 +500,45 @@ const AssetForm: React.FC<AssetFormProps> = ({
 
                   {/* Book Value Estimation */}
                   {formData.purchasePrice > 0 && (
-                    <Alert status="info" borderRadius="md">
-                      <AlertIcon />
-                      <AlertDescription fontSize="sm">
-                        <Text>
-                          <strong>Estimated Current Book Value:</strong> {' '}
-                          {new Intl.NumberFormat('id-ID', {
-                            style: 'currency',
-                            currency: 'IDR',
-                            minimumFractionDigits: 0,
-                          }).format(currentBookValue)}
-                        </Text>
-                      </AlertDescription>
-                    </Alert>
+                    <VStack spacing={2} w="full">
+                      {mode === 'edit' && (
+                        <Alert status={isLoadingBookValue ? "warning" : "success"} borderRadius="md" w="full">
+                          <AlertIcon />
+                          <AlertDescription fontSize="sm">
+                            {isLoadingBookValue ? (
+                              <HStack>
+                                <Spinner size="xs" />
+                                <Text>Loading server book value...</Text>
+                              </HStack>
+                            ) : serverBookValue !== null ? (
+                              <Text>
+                                <strong>Current Book Value (Server):</strong> {' '}
+                                {new Intl.NumberFormat('id-ID', {
+                                  style: 'currency',
+                                  currency: 'IDR',
+                                  minimumFractionDigits: 0,
+                                }).format(serverBookValue)}
+                              </Text>
+                            ) : (
+                              <Text>Unable to fetch server book value</Text>
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      <Alert status="info" borderRadius="md" w="full">
+                        <AlertIcon />
+                        <AlertDescription fontSize="sm">
+                          <Text>
+                            <strong>Estimated Book Value ({formData.depreciationMethod === 'DECLINING_BALANCE' ? 'Declining Balance' : 'Straight-Line'}):</strong> {' '}
+                            {new Intl.NumberFormat('id-ID', {
+                              style: 'currency',
+                              currency: 'IDR',
+                              minimumFractionDigits: 0,
+                            }).format(currentBookValue)}
+                          </Text>
+                        </AlertDescription>
+                      </Alert>
+                    </VStack>
                   )}
                 </VStack>
               </Box>

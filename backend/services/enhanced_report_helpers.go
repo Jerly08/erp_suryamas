@@ -756,12 +756,85 @@ func (ers *EnhancedReportService) calculateDepreciationExpense(startDate, endDat
 	return depreciation
 }
 
-// calculateAssetTransactions calculates asset purchase/sale transactions
+// calculateAssetTransactions calculates asset purchase/sale transactions for cash flow
 func (ers *EnhancedReportService) calculateAssetTransactions(startDate, endDate time.Time) []CashFlowItem {
 	var items []CashFlowItem
 
-	// This is a placeholder - implement based on your asset transaction logic
-	// You might want to track asset purchases and sales separately
+	// 1. Pembelian Aset Tetap (Fixed Asset Purchases)
+	// Query: sum of debit to fixed asset accounts from POSTED journals in the period
+	// This captures both manual asset creation and PO-based asset purchases
+	var fixedAssetPurchases float64
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			models.CategoryFixedAsset, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
+		Row().Scan(&fixedAssetPurchases)
+
+	if fixedAssetPurchases > 0 {
+		// Cash outflow for purchasing fixed assets (negative in cash flow)
+		items = append(items, CashFlowItem{
+			Description: "Pembelian Aset Tetap",
+			Amount:      -fixedAssetPurchases,
+			Category:    "investing",
+		})
+	} else if fixedAssetPurchases < 0 {
+		// Net disposal/sale of fixed assets (positive in cash flow)
+		items = append(items, CashFlowItem{
+			Description: "Penjualan/Pelepasan Aset Tetap",
+			Amount:      -fixedAssetPurchases,
+			Category:    "investing",
+		})
+	}
+
+	// 2. Aset Tak Berwujud (Intangible Assets)
+	var intangiblePurchases float64
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			models.CategoryIntangibleAsset, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
+		Row().Scan(&intangiblePurchases)
+
+	if intangiblePurchases > 0 {
+		items = append(items, CashFlowItem{
+			Description: "Pembelian Aset Tak Berwujud",
+			Amount:      -intangiblePurchases,
+			Category:    "investing",
+		})
+	} else if intangiblePurchases < 0 {
+		items = append(items, CashFlowItem{
+			Description: "Penjualan Aset Tak Berwujud",
+			Amount:      -intangiblePurchases,
+			Category:    "investing",
+		})
+	}
+
+	// 3. Investasi (Investment Assets)
+	var investmentChanges float64
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			models.CategoryInvestmentAsset, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
+		Row().Scan(&investmentChanges)
+
+	if investmentChanges > 0 {
+		items = append(items, CashFlowItem{
+			Description: "Penambahan Investasi",
+			Amount:      -investmentChanges,
+			Category:    "investing",
+		})
+	} else if investmentChanges < 0 {
+		items = append(items, CashFlowItem{
+			Description: "Pencairan Investasi",
+			Amount:      -investmentChanges,
+			Category:    "investing",
+		})
+	}
 
 	return items
 }
@@ -770,8 +843,54 @@ func (ers *EnhancedReportService) calculateAssetTransactions(startDate, endDate 
 func (ers *EnhancedReportService) calculateFinancingTransactions(startDate, endDate time.Time) []CashFlowItem {
 	var items []CashFlowItem
 
-	// This is a placeholder - implement based on your financing transaction logic
-	// Track loan proceeds, loan repayments, capital contributions, dividends, etc.
+	// 1. Perubahan Hutang Jangka Panjang (Long-term Liabilities)
+	// Increase = cash inflow (pinjaman baru), Decrease = cash outflow (pembayaran pinjaman)
+	var longTermLiabilityChanges float64
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
+			models.CategoryLongTermLiability, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
+		Row().Scan(&longTermLiabilityChanges)
+
+	if longTermLiabilityChanges > 0 {
+		items = append(items, CashFlowItem{
+			Description: "Penerimaan Pinjaman Jangka Panjang",
+			Amount:      longTermLiabilityChanges,
+			Category:    "financing",
+		})
+	} else if longTermLiabilityChanges < 0 {
+		items = append(items, CashFlowItem{
+			Description: "Pembayaran Pinjaman Jangka Panjang",
+			Amount:      longTermLiabilityChanges,
+			Category:    "financing",
+		})
+	}
+
+	// 2. Perubahan Modal / Ekuitas (Equity changes - excluding retained earnings & closing)
+	var equityChanges float64
+	ers.db.Table("unified_journal_lines").
+		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
+		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
+		Where("accounts.category IN (?, ?) AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type NOT IN (?, ?)",
+			models.CategoryEquity, models.CategoryShareCapital, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing, models.SSOTSourceTypeReversal).
+		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
+		Row().Scan(&equityChanges)
+
+	if equityChanges > 0 {
+		items = append(items, CashFlowItem{
+			Description: "Setoran Modal",
+			Amount:      equityChanges,
+			Category:    "financing",
+		})
+	} else if equityChanges < 0 {
+		items = append(items, CashFlowItem{
+			Description: "Penarikan Modal / Dividen",
+			Amount:      equityChanges,
+			Category:    "financing",
+		})
+	}
 
 	return items
 }

@@ -390,7 +390,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			unifiedJournals.GET("", permMiddleware.CanView("journal"), unifiedJournalController.GetJournalEntries)
 			unifiedJournals.GET("/:id", permMiddleware.CanView("journal"), unifiedJournalController.GetJournalEntry)
 			unifiedJournals.PUT("/:id", permMiddleware.CanEdit("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.UpdateJournalEntry)
-			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("journal"), unifiedJournalController.DeleteJournalEntry)
+			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.DeleteJournalEntry)
 
 			// Status operations
 			unifiedJournals.PUT("/:id/post", permMiddleware.CanEdit("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.PostJournalEntry)
@@ -497,8 +497,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				products.DELETE("/:id", permMiddleware.CanDelete("products"), productController.DeleteProduct)
 
 				// 📊 Critical inventory operations dengan extra monitoring
-				products.POST("/adjust-stock", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), productController.AdjustStock)
-				products.POST("/opname", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), productController.Opname)
+				products.POST("/adjust-stock", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), periodValidationMiddleware.ValidateTransactionPeriod(), productController.AdjustStock)
+				products.POST("/opname", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), periodValidationMiddleware.ValidateTransactionPeriod(), productController.Opname)
 				products.POST("/upload-image", permMiddleware.CanEdit("products"), productController.UploadProductImage)
 				products.POST("/import", permMiddleware.CanCreate("products"), productController.ImportProducts)
 			}
@@ -511,6 +511,17 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				boms.POST("", permMiddleware.CanCreate("boms"), bomController.CreateBOM)
 				boms.PUT("/:id", permMiddleware.CanEdit("boms"), bomController.UpdateBOM)
 				boms.DELETE("/:id", permMiddleware.CanDelete("boms"), bomController.DeleteBOM)
+			}
+
+			// 📋 Component Templates routes (reusable component presets for BOM)
+			ctController := controllers.NewComponentTemplateController(db)
+			compTemplates := protected.Group("/component-templates")
+			{
+				compTemplates.GET("", permMiddleware.CanView("boms"), ctController.GetTemplates)
+				compTemplates.GET("/:id", permMiddleware.CanView("boms"), ctController.GetTemplate)
+				compTemplates.POST("", permMiddleware.CanCreate("boms"), ctController.CreateTemplate)
+				compTemplates.PUT("/:id", permMiddleware.CanEdit("boms"), ctController.UpdateTemplate)
+				compTemplates.DELETE("/:id", permMiddleware.CanDelete("boms"), ctController.DeleteTemplate)
 			}
 
 			// 📂 Category routes with enhanced permission checks
@@ -884,7 +895,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.GET("/:id", permMiddleware.CanView("purchases"), purchaseController.GetPurchase)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
 				purchases.PUT("/:id", permMiddleware.CanEdit("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
-				purchases.DELETE("/:id", permMiddleware.CanDelete("purchases"), purchaseController.DeletePurchase)
+				purchases.DELETE("/:id", permMiddleware.CanDelete("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.DeletePurchase)
 
 				// Approval operations dengan permission checks
 				purchases.POST("/:id/submit-approval", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.SubmitForApproval)
@@ -943,13 +954,13 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				// Basic CRUD operations dengan enhanced security
 				assets.GET("", permMiddleware.CanView("assets"), assetController.GetAssets)
 				assets.GET("/:id", permMiddleware.CanView("assets"), assetController.GetAsset)
-				assets.POST("", permMiddleware.CanCreate("assets"), assetController.CreateAsset)
-				assets.PUT("/:id", permMiddleware.CanEdit("assets"), assetController.UpdateAsset)
+				assets.POST("", permMiddleware.CanCreate("assets"), periodValidationMiddleware.ValidateTransactionPeriod(), assetController.CreateAsset)
+				assets.PUT("/:id", permMiddleware.CanEdit("assets"), periodValidationMiddleware.ValidateTransactionPeriod(), assetController.UpdateAsset)
 				assets.DELETE("/:id", permMiddleware.CanDelete("assets"), assetController.DeleteAsset)
 				assets.POST("/upload-image", permMiddleware.CanEdit("assets"), assetController.UploadAssetImage)
 
 				// Manual capitalization endpoint
-				assets.POST("/:id/capitalize", permMiddleware.CanEdit("assets"), assetController.CapitalizeAsset)
+				assets.POST("/:id/capitalize", permMiddleware.CanEdit("assets"), periodValidationMiddleware.ValidateTransactionPeriod(), assetController.CapitalizeAsset)
 
 				// Asset categories management
 				assets.GET("/categories", permMiddleware.CanView("assets"), assetController.GetAssetCategories)
@@ -962,6 +973,12 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				assets.GET("/:id/calculate-depreciation", permMiddleware.CanView("assets"), assetController.CalculateCurrentDepreciation)
 
 				// Export routes - REMOVED: Not implemented yet
+
+				// 📊 Monthly depreciation batch processing via SSOT
+				assets.POST("/run-depreciation", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), assetController.RunDepreciation)
+
+				// ✅ Activate asset after user completes depreciation setup
+				assets.POST("/:id/activate", permMiddleware.CanEdit("assets"), periodValidationMiddleware.ValidateTransactionPeriod(), assetController.ActivateAsset)
 			}
 
 			// Note: CashBank routes are already set up via SetupPaymentRoutes

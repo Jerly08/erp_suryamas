@@ -19,13 +19,14 @@ import {
     InputLeftElement,
     Icon,
 } from '@chakra-ui/react';
-import { FiPlus, FiSearch, FiEdit, FiTrash2, FiEye } from 'react-icons/fi';
+import { FiPlus, FiSearch, FiEdit, FiTrash2, FiEye, FiClipboard } from 'react-icons/fi';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import { formatCurrencyDetailed } from '@/utils/currency';
 import { bomService } from '@/services/bomService';
 import { BOM } from '@/types/bom';
 import BOMFormModal from './BOMFormModal';
+import ComponentTemplateManagerModal from './ComponentTemplateManagerModal';
 
 const BOMMasterData: React.FC = () => {
     const { canCreate, canEdit, canDelete } = useModulePermissions('boms');
@@ -34,6 +35,7 @@ const BOMMasterData: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedBOM, setSelectedBOM] = useState<BOM | null>(null);
     const [isViewOnly, setIsViewOnly] = useState(false);
+    const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
     const toast = useToast();
 
     useEffect(() => {
@@ -110,15 +112,25 @@ const BOMMasterData: React.FC = () => {
             <Box bg="white" p={6} borderRadius="lg" shadow="sm">
                 <Flex justify="space-between" align="center" mb={6}>
                     <Heading size="md" color="gray.700">Master BOM Templates</Heading>
-                    {canCreate && (
+                    <HStack spacing={2}>
                         <Button
-                            leftIcon={<FiPlus />}
-                            colorScheme="blue"
-                            onClick={handleAddClick}
+                            leftIcon={<FiClipboard />}
+                            colorScheme="green"
+                            variant="outline"
+                            onClick={() => setTemplateManagerOpen(true)}
                         >
-                            Add New BOM
+                            Manage Templates
                         </Button>
-                    )}
+                        {canCreate && (
+                            <Button
+                                leftIcon={<FiPlus />}
+                                colorScheme="blue"
+                                onClick={handleAddClick}
+                            >
+                                Add New BOM
+                            </Button>
+                        )}
+                    </HStack>
                 </Flex>
 
                 <Flex mb={4} gap={4}>
@@ -226,6 +238,11 @@ const BOMMasterData: React.FC = () => {
                     isViewOnly={isViewOnly}
                 />
             )}
+
+            <ComponentTemplateManagerModal
+                isOpen={templateManagerOpen}
+                onClose={() => setTemplateManagerOpen(false)}
+            />
         </SimpleLayout>
     );
 };

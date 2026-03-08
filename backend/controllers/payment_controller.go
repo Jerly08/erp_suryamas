@@ -280,7 +280,7 @@ func (c *PaymentController) DeletePayment(ctx *gin.Context) {
 	err = c.paymentService.DeletePayment(uint(id), request.Reason, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to delete payment",
+			"error":   err.Error(),
 			"details": err.Error(),
 		})
 		return

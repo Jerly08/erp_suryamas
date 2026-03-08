@@ -284,7 +284,7 @@ func (pc *PurchaseController) DeletePurchase(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Purchase deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Purchase cancelled successfully"})
 }
 
 // Approval Operations

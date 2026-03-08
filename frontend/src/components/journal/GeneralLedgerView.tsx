@@ -30,6 +30,8 @@ import { accountService } from '@/services/accountService';
 import { Account } from '@/types/account';
 import { FiRefreshCw, FiSearch } from 'react-icons/fi';
 import JournalDetailModal from './JournalDetailModal';
+import ExportButton from '@/components/common/ExportButton';
+import { exportGeneralLedgerToPDF, exportGeneralLedgerToCSV } from '@/utils/journalExport';
 
 export default function GeneralLedgerView() {
     const { t } = useTranslation();
@@ -51,6 +53,33 @@ export default function GeneralLedgerView() {
     const [endDate, setEndDate] = useState(
         new Date().toISOString().split('T')[0]
     );
+    const [exporting, setExporting] = useState(false);
+
+    const handleExportPDF = () => {
+        if (!data) return;
+        try {
+            setExporting(true);
+            exportGeneralLedgerToPDF(data, startDate, endDate);
+            toast({ title: t('common.success'), description: 'PDF berhasil diunduh', status: 'success', duration: 3000 });
+        } catch (error) {
+            toast({ title: t('common.error'), description: 'Gagal mengexport PDF', status: 'error', duration: 3000 });
+        } finally {
+            setExporting(false);
+        }
+    };
+
+    const handleExportCSV = () => {
+        if (!data) return;
+        try {
+            setExporting(true);
+            exportGeneralLedgerToCSV(data, startDate, endDate);
+            toast({ title: t('common.success'), description: 'CSV berhasil diunduh', status: 'success', duration: 3000 });
+        } catch (error) {
+            toast({ title: t('common.error'), description: 'Gagal mengexport CSV', status: 'error', duration: 3000 });
+        } finally {
+            setExporting(false);
+        }
+    };
 
     // Load accounts
     useEffect(() => {
@@ -139,51 +168,63 @@ export default function GeneralLedgerView() {
             <VStack spacing={4} align="stretch">
                 <Card variant="outline">
                     <CardBody py={4}>
-                        <HStack wrap="wrap" spacing={4} align="flex-end">
-                            <Box minW="250px">
-                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.account')}</Text>
-                                <Select
-                                    value={accountId}
-                                    onChange={(e) => setAccountId(e.target.value)}
+                        <HStack justify="space-between" wrap="wrap" spacing={4}>
+                            <HStack wrap="wrap" spacing={4} align="flex-end">
+                                <Box minW="250px">
+                                    <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.account')}</Text>
+                                    <Select
+                                        value={accountId}
+                                        onChange={(e) => setAccountId(e.target.value)}
+                                        size="sm"
+                                        placeholder="Select Account"
+                                    >
+                                        {accounts.map(acc => (
+                                            <option key={acc.id} value={acc.id}>
+                                                {acc.code} - {acc.name}
+                                            </option>
+                                        ))}
+                                    </Select>
+                                </Box>
+                                <Box>
+                                    <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.startDate')}</Text>
+                                    <Input
+                                        type="date"
+                                        value={startDate}
+                                        onChange={(e) => setStartDate(e.target.value)}
+                                        size="sm"
+                                        width="140px"
+                                    />
+                                </Box>
+                                <Box>
+                                    <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.endDate')}</Text>
+                                    <Input
+                                        type="date"
+                                        value={endDate}
+                                        onChange={(e) => setEndDate(e.target.value)}
+                                        size="sm"
+                                        width="140px"
+                                    />
+                                </Box>
+                                <Button
+                                    leftIcon={<FiRefreshCw />}
                                     size="sm"
-                                    placeholder="Select Account"
+                                    colorScheme="blue"
+                                    onClick={fetchData}
+                                    isLoading={loading}
                                 >
-                                    {accounts.map(acc => (
-                                        <option key={acc.id} value={acc.id}>
-                                            {acc.code} - {acc.name}
-                                        </option>
-                                    ))}
-                                </Select>
-                            </Box>
-                            <Box>
-                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.startDate')}</Text>
-                                <Input
-                                    type="date"
-                                    value={startDate}
-                                    onChange={(e) => setStartDate(e.target.value)}
-                                    size="sm"
-                                    width="140px"
-                                />
-                            </Box>
-                            <Box>
-                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.endDate')}</Text>
-                                <Input
-                                    type="date"
-                                    value={endDate}
-                                    onChange={(e) => setEndDate(e.target.value)}
-                                    size="sm"
-                                    width="140px"
-                                />
-                            </Box>
-                            <Button
-                                leftIcon={<FiRefreshCw />}
+                                    {t('journal.filters.generate')}
+                                </Button>
+                            </HStack>
+                            <ExportButton
+                                onExportPDF={handleExportPDF}
+                                onExportCSV={handleExportCSV}
+                                isLoading={exporting}
+                                disabled={!data}
+                                showExcel={false}
+                                showPDF={true}
+                                showCSV={true}
                                 size="sm"
-                                colorScheme="blue"
-                                onClick={fetchData}
-                                isLoading={loading}
-                            >
-                                {t('journal.filters.generate')}
-                            </Button>
+                            />
                         </HStack>
                     </CardBody>
                 </Card>
@@ -194,22 +235,32 @@ export default function GeneralLedgerView() {
                             <VStack spacing={4} align="stretch">
                                 <HStack justify="space-between">
                                     <Box>
-                                        <Heading size="sm">{data.account?.account_name}</Heading>
-                                        <Text fontSize="sm" color="gray.500">{data.account?.account_code}</Text>
+                                        {accountId ? (
+                                            <>
+                                                <Heading size="sm">{data.account?.account_name}</Heading>
+                                                <Text fontSize="sm" color="gray.500">{data.account?.account_code}</Text>
+                                            </>
+                                        ) : (
+                                            <Heading size="sm">{t('journal.allAccounts') || 'Semua Akun'}</Heading>
+                                        )}
                                     </Box>
-                                    <VStack align="end" spacing={0}>
-                                        <Text fontSize="xs" color="gray.500">{t('journal.table.closingBalance')}</Text>
-                                        <Text fontWeight="bold" fontSize="lg" color="blue.600">
-                                            {formatCurrency(data.closing_balance)}
-                                        </Text>
-                                    </VStack>
+                                    {accountId && (
+                                        <VStack align="end" spacing={0}>
+                                            <Text fontSize="xs" color="gray.500">{t('journal.table.closingBalance')}</Text>
+                                            <Text fontWeight="bold" fontSize="lg" color="blue.600">
+                                                {formatCurrency(data.closing_balance)}
+                                            </Text>
+                                        </VStack>
+                                    )}
                                 </HStack>
 
                                 <HStack spacing={8} bg="gray.50" p={2} borderRadius="md">
-                                    <Box>
-                                        <Text fontSize="xs" color="gray.500">{t('journal.table.openingBalance')}</Text>
-                                        <Text fontWeight="medium">{formatCurrency(data.opening_balance)}</Text>
-                                    </Box>
+                                    {accountId && (
+                                        <Box>
+                                            <Text fontSize="xs" color="gray.500">{t('journal.table.openingBalance')}</Text>
+                                            <Text fontWeight="medium">{formatCurrency(data.opening_balance)}</Text>
+                                        </Box>
+                                    )}
                                     <Box>
                                         <Text fontSize="xs" color="gray.500">{t('journal.table.totalDebit')}</Text>
                                         <Text fontWeight="medium" color="green.600">{formatCurrency(data.total_debits)}</Text>
@@ -218,6 +269,13 @@ export default function GeneralLedgerView() {
                                         <Text fontSize="xs" color="gray.500">{t('journal.table.totalCredit')}</Text>
                                         <Text fontWeight="medium" color="red.600">{formatCurrency(data.total_credits)}</Text>
                                     </Box>
+                                    {!accountId && (
+                                        <Box>
+                                            <Text fontSize="xs" color="orange.500" fontStyle="italic">
+                                                {t('journal.selectAccountForBalance') || 'Pilih akun spesifik untuk melihat saldo awal & akhir'}
+                                            </Text>
+                                        </Box>
+                                    )}
                                 </HStack>
 
                                 <Box overflowX="auto">

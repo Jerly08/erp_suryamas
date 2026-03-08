@@ -12,6 +12,8 @@ type AssetCategory struct {
     Description string         `json:"description" gorm:"type:text"`
     ParentID    *uint          `json:"parent_id" gorm:"index"`
     IsActive    bool           `json:"is_active" gorm:"default:true"`
+    FixedAssetAccountCode              string `json:"fixed_asset_account_code" gorm:"size:20"`
+    AccumulatedDepreciationAccountCode string `json:"accumulated_depreciation_account_code" gorm:"size:20"`
     CreatedAt   time.Time      `json:"created_at"`
     UpdatedAt   time.Time      `json:"updated_at"`
     DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
@@ -49,17 +51,20 @@ type Asset struct {
     // Relations
     AssetAccountID     *uint     `json:"asset_account_id" gorm:"index"`
     DepreciationAccountID *uint  `json:"depreciation_account_id" gorm:"index"`
+    AccumulatedDepreciationAccountID *uint `json:"accumulated_depreciation_account_id" gorm:"index"`
     AccumulatedDepreciation float64 `json:"accumulated_depreciation" gorm:"type:decimal(15,2);default:0"`
     AssetCategory   *AssetCategory `json:"asset_category,omitempty" gorm:"foreignKey:CategoryID"`
     AssetAccount    *Account     `json:"asset_account" gorm:"foreignKey:AssetAccountID"`
     DepreciationAccount *Account `json:"depreciation_account" gorm:"foreignKey:DepreciationAccountID"`
+    AccumulatedDepreciationAccount *Account `json:"accumulated_depreciation_account" gorm:"foreignKey:AccumulatedDepreciationAccountID"`
 }
 
 // Asset Status Constants
 const (
-    AssetStatusActive   = "ACTIVE"
-    AssetStatusInactive = "INACTIVE"
-    AssetStatusSold     = "SOLD"
+    AssetStatusActive       = "ACTIVE"
+    AssetStatusInactive     = "INACTIVE"
+    AssetStatusSold         = "SOLD"
+    AssetStatusPendingSetup = "PENDING" // Auto-created from purchase, awaiting user to set useful life/salvage/method
 )
 
 // Depreciation Methods Constants

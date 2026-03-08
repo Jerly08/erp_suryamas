@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import SimpleLayout from '@/components/layout/SimpleLayout';
+import { parseClosedPeriodError, formatClosedPeriodDate } from '@/utils/errorHandler';
 import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
 import { DataTable } from '@/components/common/DataTable';
 import EnhancedPurchaseTable from '@/components/purchase/EnhancedPurchaseTable';
@@ -341,7 +342,7 @@ const PurchasesPage: React.FC = () => {
   const { token, user } = useAuth();
   const isServiceCompany = user?.company_type === 'SERVICE';
   const toast = useToast();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { isOpen: isFilterOpen, onOpen: onFilterOpen, onClose: onFilterClose } = useDisclosure();
 
   // Theme colors for enhanced styling - MUST be at top to follow Rules of Hooks
@@ -1154,13 +1155,25 @@ const PurchasesPage: React.FC = () => {
         isClosable: true,
       });
     } catch (err: any) {
-      toast({
-        title: 'Error',
-        description: err.response?.data?.error || 'Failed to delete purchase',
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
+      const errMsg = err.response?.data?.error || err.message || '';
+      const closedPeriod = parseClosedPeriodError(errMsg);
+      if (closedPeriod) {
+        toast({
+          title: t('common.messages.toast.closedPeriodError'),
+          description: t('common.messages.toast.closedPeriodErrorDesc', { date: formatClosedPeriodDate(closedPeriod.date, language) }),
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      } else {
+        toast({
+          title: t('common.messages.toast.error'),
+          description: errMsg || t('purchases.messages.deleteError') || 'Failed to delete purchase',
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      }
     }
   };
 
@@ -1494,29 +1507,16 @@ const PurchasesPage: React.FC = () => {
         setFullyReceivedPurchases(prev => new Set(prev).add(selectedPurchase.id));
       }
 
-      // NEW: Auto create assets for items marked as assets
-      const assetsToCreate = receiptFormData.receipt_items.filter(item => item.create_asset);
+      // NOTE: Asset creation is now automatic at purchase approval time (PSAK 16 accrual basis)
+      // No need to create assets from receipts anymore
 
-      console.log('🔍 Debug - Receipt Items:', receiptFormData.receipt_items);
-      console.log('🔍 Debug - Assets to Create:', assetsToCreate);
-
-      if (assetsToCreate.length > 0) {
-        console.log('🚀 Creating assets from receipt...');
-        await createAssetsFromReceipt(selectedPurchase, assetsToCreate, receiptNumber);
-      } else {
-        console.log('⏭️ No assets to create (no items marked as assets)');
-      }
-
-      const assetCount = assetsToCreate.length;
-      const successMessage = assetCount > 0
-        ? t('purchases.receiptCreatedSuccessDesc', { number: receiptNumber, count: assetCount })
-        : t('purchases.receiptCreatedSuccessDescNoAssets', { number: receiptNumber });
+      const successMessage = t('purchases.receiptCreatedSuccessDescNoAssets', { number: receiptNumber });
 
       toast({
         title: t('purchases.receiptCreatedSuccessTitle'),
         description: successMessage,
         status: 'success',
-        duration: assetCount > 0 ? 7000 : 5000,
+        duration: 5000,
         isClosable: true,
       });
 
@@ -2363,10 +2363,61 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
+  // Calculate total payment amount including taxes for balance validation
+  const calculateFinanceTaxTotal = () => {
+    if (!financeTaxPurchase) return 0;
+    const netBeforeTax = financeTaxPurchase.net_before_tax || financeTaxPurchase.total_amount || 0;
+    const ppnRate = parseFloat(financeTaxForm.ppn_rate) || 0;
+    const otherTaxAdditions = parseFloat(financeTaxForm.other_tax_additions) || 0;
+    const pph21Rate = parseFloat(financeTaxForm.pph21_rate) || 0;
+    const pph23Rate = parseFloat(financeTaxForm.pph23_rate) || 0;
+    const otherTaxDeductions = parseFloat(financeTaxForm.other_tax_deductions) || 0;
+
+    const ppnAmount = netBeforeTax * (ppnRate / 100);
+    const pph21Amount = netBeforeTax * (pph21Rate / 100);
+    const pph23Amount = netBeforeTax * (pph23Rate / 100);
+
+    return netBeforeTax + ppnAmount + otherTaxAdditions - pph21Amount - pph23Amount - otherTaxDeductions;
+  };
+
+  // Check if selected bank/cash account has sufficient balance
+  const getSelectedBankAccount = (): BankAccount | undefined => {
+    if (!financeTaxForm.bank_account_id) return undefined;
+    return bankAccounts.find(a => a.id.toString() === financeTaxForm.bank_account_id);
+  };
+
+  const isBalanceInsufficient = (): boolean => {
+    const paymentMethod = financeTaxForm.payment_method;
+    if (paymentMethod === 'CREDIT') return false;
+    const selectedAccount = getSelectedBankAccount();
+    if (!selectedAccount) return false;
+    const totalPayment = calculateFinanceTaxTotal();
+    return (selectedAccount.balance ?? 0) < totalPayment;
+  };
+
+  // Get accounts with sufficient balance for recommendations
+  const getSufficientAccounts = (): BankAccount[] => {
+    const totalPayment = calculateFinanceTaxTotal();
+    return bankAccounts.filter(a => (a.balance ?? 0) >= totalPayment);
+  };
+
   // Save Finance Tax/Payment Config (only tax + payment fields, NO items)
   // NOTE: Approval is handled separately via "Action Required" button (supports escalation to Director)
   const handleSaveFinanceTax = async () => {
     if (!financeTaxPurchase) return;
+
+    // Guard: block save if selected bank/cash has insufficient balance
+    if (isBalanceInsufficient()) {
+      const selectedAccount = getSelectedBankAccount();
+      toast({
+        title: 'Saldo Tidak Mencukupi',
+        description: `Saldo ${selectedAccount?.name} (${formatCurrency(selectedAccount?.balance ?? 0)}) tidak mencukupi untuk pembayaran ${formatCurrency(calculateFinanceTaxTotal())}. Silakan pilih akun lain.`,
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
     try {
       setSavingFinanceTax(true);
       const payload: any = {
@@ -5233,7 +5284,7 @@ const PurchasesPage: React.FC = () => {
 
                         {/* Receipt Items */}
                         <FormControl>
-                          <FormLabel fontSize="sm">Receipt Items & Asset Creation</FormLabel>
+                          <FormLabel fontSize="sm">Receipt Items</FormLabel>
                           <TableContainer>
                             <Table size="sm" bg={tableBg}>
                               <Thead bg={tableHeaderBg}>
@@ -5243,7 +5294,6 @@ const PurchasesPage: React.FC = () => {
                                   <Th fontSize="xs" isNumeric>Received Qty</Th>
                                   <Th fontSize="xs">Condition</Th>
                                   <Th fontSize="xs">Serial Number</Th>
-                                  <Th fontSize="xs" textAlign="center">🏭 Create Asset</Th>
                                   <Th fontSize="xs">Notes</Th>
                                 </Tr>
                               </Thead>
@@ -5319,106 +5369,6 @@ const PurchasesPage: React.FC = () => {
                                         />
                                       </Td>
 
-                                      {/* Create Asset Checkbox & Options */}
-                                      <Td>
-                                        <VStack spacing={2} align="center">
-                                          {/* Asset Creation Checkbox */}
-                                          <HStack>
-                                            {(() => {
-                                              // Determine account type from selected expense account
-                                              const accId = purchaseItem?.expense_account_id as number | undefined;
-                                              const acc = expenseAccounts.find(a => a.id === accId);
-                                              const code = (acc?.code || '').toString();
-                                              const name = (acc?.name || '').toLowerCase();
-                                              const isFixedAsset = code.startsWith('15') || name.includes('asset tetap') || name.includes('fixed asset') || name.includes('bangunan') || name.includes('gedung');
-                                              // Convenience mode: checkbox always enabled
-                                              const disabled = false;
-                                              // Default-check for Fixed Asset items if user hasn't set it yet
-                                              const checked = receiptItem.create_asset ?? isFixedAsset;
-                                              return (
-                                                <>
-                                                  <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    disabled={disabled}
-                                                    onChange={(e) => {
-                                                      const newItems = [...receiptFormData.receipt_items];
-                                                      newItems[index].create_asset = e.target.checked;
-                                                      // Set defaults when checked
-                                                      if (e.target.checked) {
-                                                        newItems[index].asset_category = newItems[index].asset_category || 'Equipment';
-                                                        newItems[index].asset_useful_life = newItems[index].asset_useful_life || 5;
-                                                        newItems[index].asset_salvage_percentage = newItems[index].asset_salvage_percentage || 10;
-                                                      }
-                                                      setReceiptFormData({
-                                                        ...receiptFormData,
-                                                        receipt_items: newItems
-                                                      });
-                                                    }}
-                                                    style={{ transform: 'scale(1.2)' }}
-                                                  />
-                                                  <VStack spacing={0} align="start">
-                                                    <Text fontSize="xs" fontWeight="medium">
-                                                      Asset
-                                                    </Text>
-                                                    <Text fontSize="10px" color="gray.400">
-                                                      (Shortcut: creates asset record only; journals follow purchase account)
-                                                    </Text>
-                                                  </VStack>
-                                                </>
-                                              );
-                                            })()}
-                                          </HStack>
-
-                                          {/* Asset Options - Show when checked */}
-                                          {receiptItem.create_asset && (
-                                            <VStack spacing={1} w="full">
-                                              <Select
-                                                size="xs"
-                                                value={receiptItem.asset_category || 'Equipment'}
-                                                onChange={(e) => {
-                                                  const newItems = [...receiptFormData.receipt_items];
-                                                  newItems[index].asset_category = e.target.value;
-                                                  setReceiptFormData({
-                                                    ...receiptFormData,
-                                                    receipt_items: newItems
-                                                  });
-                                                }}
-                                              >
-                                                <option value="Equipment">Equipment</option>
-                                                <option value="Vehicle">Vehicle</option>
-                                                <option value="Furniture">Furniture</option>
-                                                <option value="Computer">Computer</option>
-                                                <option value="Machinery">Machinery</option>
-                                                <option value="Building">Building</option>
-                                              </Select>
-
-                                              <HStack spacing={1}>
-                                                <FormControl>
-                                                  <NumberInput
-                                                    size="xs"
-                                                    min={1}
-                                                    max={50}
-                                                    value={receiptItem.asset_useful_life || 5}
-                                                    onChange={(_, value) => {
-                                                      const newItems = [...receiptFormData.receipt_items];
-                                                      newItems[index].asset_useful_life = value || 5;
-                                                      setReceiptFormData({
-                                                        ...receiptFormData,
-                                                        receipt_items: newItems
-                                                      });
-                                                    }}
-                                                    maxW="50px"
-                                                  >
-                                                    <NumberInputField />
-                                                  </NumberInput>
-                                                </FormControl>
-                                                <Text fontSize="xs">yrs</Text>
-                                              </HStack>
-                                            </VStack>
-                                          )}
-                                        </VStack>
-                                      </Td>
 
                                       {/* Notes */}
                                       <Td>
@@ -5444,36 +5394,6 @@ const PurchasesPage: React.FC = () => {
                           </TableContainer>
                         </FormControl>
 
-                        {/* Asset Creation Summary */}
-                        {receiptFormData.receipt_items.some(item => item.create_asset) && (
-                          <Alert status="success" variant="left-accent">
-                            <AlertIcon />
-                            <VStack align="start" spacing={1}>
-                              <AlertTitle fontSize="sm">🎉 Auto Asset Creation Enabled!</AlertTitle>
-                              <AlertDescription fontSize="xs">
-                                {receiptFormData.receipt_items.filter(item => item.create_asset).length} item(s) will be automatically created as assets after receipt completion.
-                                Assets will include purchase reference, vendor info, and depreciation settings.
-                              </AlertDescription>
-                              <HStack mt={2}>
-                                <Button
-                                  size="xs"
-                                  variant="outline"
-                                  colorScheme="blue"
-                                  onClick={() => {
-                                    const assetsToCreate = receiptFormData.receipt_items.filter(item => item.create_asset);
-                                    console.log('🔍 DEBUG - Current receipt form data:', receiptFormData);
-                                    console.log('🔍 DEBUG - Assets to create:', assetsToCreate);
-                                    console.log('🔍 DEBUG - Selected purchase:', selectedPurchase);
-                                    alert(`Debug info logged to console. Assets to create: ${assetsToCreate.length}`);
-                                  }}
-                                >
-                                  🔍 Debug Info
-                                </Button>
-                              </HStack>
-                            </VStack>
-                          </Alert>
-                        )}
-
                         <Alert status="info" variant="left-accent">
                           <AlertIcon />
                           <VStack align="start" spacing={1}>
@@ -5481,7 +5401,7 @@ const PurchasesPage: React.FC = () => {
                             <AlertDescription fontSize="xs">
                               • Creating this receipt will mark the purchase as COMPLETED if all items are fully received.<br />
                               • Stock quantities were already updated when the purchase was approved.<br />
-                              • Check "Create Asset" for fixed assets (vehicles, equipment, machinery) to auto-create asset records.
+                              • Aset tetap (fixed assets) otomatis tercatat saat purchase di-approve. Cek halaman Assets untuk mengatur masa manfaat dan mengaktifkan depresiasi.
                             </AlertDescription>
                           </VStack>
                         </Alert>
@@ -5793,22 +5713,96 @@ const PurchasesPage: React.FC = () => {
                           </FormControl>
 
                           {(financeTaxForm.payment_method === 'CASH' || financeTaxForm.payment_method === 'BANK_TRANSFER' || financeTaxForm.payment_method === 'CHECK') && (
-                            <FormControl>
+                            <FormControl isInvalid={isBalanceInsufficient()}>
                               <FormLabel fontSize="sm">Akun Bank / Kas</FormLabel>
                               <Select
                                 placeholder="Pilih Akun Bank/Kas"
                                 value={financeTaxForm.bank_account_id}
                                 onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, bank_account_id: e.target.value }))}
                                 _hover={{ borderColor: inputHoverBorder }}
-                                _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                                _focus={{ borderColor: isBalanceInsufficient() ? 'red.500' : inputFocusBorder, boxShadow: isBalanceInsufficient() ? '0 0 0 1px red' : inputFocusShadow }}
+                                borderColor={isBalanceInsufficient() ? 'red.500' : undefined}
                               >
-                                {bankAccounts.map(account => (
-                                  <option key={account.id} value={account.id.toString()}>
-                                    {account.name} ({account.code}) - {account.currency}
-                                  </option>
-                                ))}
+                                {bankAccounts.map(account => {
+                                  const balance = account.balance ?? 0;
+                                  const totalPayment = calculateFinanceTaxTotal();
+                                  const isSufficient = balance >= totalPayment;
+                                  return (
+                                    <option key={account.id} value={account.id.toString()}>
+                                      {account.name} ({account.code}) - {account.currency} | Saldo: {formatCurrency(balance)}{!isSufficient ? ' [KURANG]' : ''}
+                                    </option>
+                                  );
+                                })}
                               </Select>
+
+                              {/* Show selected account balance info */}
+                              {financeTaxForm.bank_account_id && getSelectedBankAccount() && !isBalanceInsufficient() && (
+                                <Text fontSize="xs" color="green.600" mt={1} fontWeight="medium">
+                                  Saldo tersedia: {formatCurrency(getSelectedBankAccount()?.balance ?? 0)} (mencukupi)
+                                </Text>
+                              )}
                             </FormControl>
+                          )}
+
+                          {/* Insufficient Balance Warning */}
+                          {isBalanceInsufficient() && (
+                            <Box gridColumn={{ md: 'span 2' }}>
+                              <Alert status="error" borderRadius="lg" variant="left-accent">
+                                <AlertIcon />
+                                <Box flex="1">
+                                  <AlertTitle fontSize="sm">Saldo Tidak Mencukupi</AlertTitle>
+                                  <AlertDescription fontSize="xs">
+                                    <Text>
+                                      Saldo <strong>{getSelectedBankAccount()?.name}</strong> ({formatCurrency(getSelectedBankAccount()?.balance ?? 0)}) tidak mencukupi untuk pembayaran sebesar <strong>{formatCurrency(calculateFinanceTaxTotal())}</strong>.
+                                    </Text>
+                                    <Text mt={1}>
+                                      Kekurangan: <strong>{formatCurrency(calculateFinanceTaxTotal() - (getSelectedBankAccount()?.balance ?? 0))}</strong>
+                                    </Text>
+                                  </AlertDescription>
+                                </Box>
+                              </Alert>
+
+                              {/* Recommended accounts */}
+                              {getSufficientAccounts().length > 0 ? (
+                                <Box mt={3} p={3} bg="green.50" borderRadius="md" borderWidth="1px" borderColor="green.200">
+                                  <Text fontSize="xs" fontWeight="bold" color="green.700" mb={2}>
+                                    Rekomendasi akun dengan saldo mencukupi:
+                                  </Text>
+                                  <VStack align="stretch" spacing={1}>
+                                    {getSufficientAccounts().map(account => (
+                                      <Flex
+                                        key={account.id}
+                                        justify="space-between"
+                                        align="center"
+                                        p={2}
+                                        bg="white"
+                                        borderRadius="md"
+                                        borderWidth="1px"
+                                        borderColor="green.100"
+                                        cursor="pointer"
+                                        _hover={{ bg: 'green.50', borderColor: 'green.300' }}
+                                        onClick={() => setFinanceTaxForm(prev => ({ ...prev, bank_account_id: account.id.toString() }))}
+                                      >
+                                        <Box>
+                                          <Text fontSize="xs" fontWeight="medium">{account.name} ({account.code})</Text>
+                                          <Text fontSize="xs" color="gray.500">{account.currency}</Text>
+                                        </Box>
+                                        <Text fontSize="xs" fontWeight="bold" color="green.600">
+                                          {formatCurrency(account.balance ?? 0)}
+                                        </Text>
+                                      </Flex>
+                                    ))}
+                                  </VStack>
+                                </Box>
+                              ) : (
+                                <Alert status="warning" borderRadius="lg" mt={3} variant="left-accent">
+                                  <AlertIcon />
+                                  <AlertDescription fontSize="xs">
+                                    Tidak ada akun Bank/Kas yang memiliki saldo mencukupi ({formatCurrency(calculateFinanceTaxTotal())}). Pertimbangkan menggunakan metode <strong>Kredit (Bayar Nanti)</strong> atau tambahkan dana ke salah satu akun terlebih dahulu.
+                                  </AlertDescription>
+                                </Alert>
+                              )}
+                            </Box>
                           )}
 
                           {financeTaxForm.payment_method === 'CREDIT' && (
@@ -5855,13 +5849,15 @@ const PurchasesPage: React.FC = () => {
                         Batal
                       </Button>
                       <Button
-                        colorScheme="teal"
+                        colorScheme={isBalanceInsufficient() ? 'red' : 'teal'}
                         onClick={() => handleSaveFinanceTax()}
                         isLoading={savingFinanceTax}
+                        isDisabled={isBalanceInsufficient()}
                         loadingText="Menyimpan..."
                         leftIcon={<FiCheckCircle />}
+                        title={isBalanceInsufficient() ? 'Saldo akun bank/kas tidak mencukupi. Pilih akun lain atau gunakan metode Kredit.' : ''}
                       >
-                        Simpan Konfigurasi
+                        {isBalanceInsufficient() ? 'Saldo Tidak Mencukupi' : 'Simpan Konfigurasi'}
                       </Button>
                     </HStack>
                   </ModalFooter>

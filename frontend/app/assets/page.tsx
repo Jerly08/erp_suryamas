@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useModulePermissions } from '@/hooks/usePermissions';
+import { parseClosedPeriodError, formatClosedPeriodDate } from '@/utils/errorHandler';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
@@ -74,7 +75,7 @@ type AssetFormData = FormData;
 
 const AssetsPage = () => {
   const { token } = useAuth();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('assets');
@@ -146,6 +147,9 @@ const AssetsPage = () => {
   // Account management states (only for optional fixed asset and depreciation accounts)
   const [fixedAssetAccounts, setFixedAssetAccounts] = useState<any[]>([]);
   const [depreciationAccounts, setDepreciationAccounts] = useState<any[]>([]);
+  const [accumulatedDepreciationAccounts, setAccumulatedDepreciationAccounts] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+  const [liabilityAccounts, setLiabilityAccounts] = useState<any[]>([]);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
 
   // Form state
@@ -163,7 +167,9 @@ const AssetsPage = () => {
     location: '',
     coordinates: '',
     serialNumber: '',
-    condition: 'Good'
+    condition: 'Good',
+    entryType: 'purchase',
+    paymentMethod: 'CASH',
   });
 
   // Fetch assets from API
@@ -206,13 +212,19 @@ const AssetsPage = () => {
   const fetchAccounts = async () => {
     try {
       setIsLoadingAccounts(true);
-      const [fixedAssetAccountsRes, depreciationAccountsRes] = await Promise.all([
+      const [fixedAssetAccountsRes, depreciationAccountsRes, accumDepAccountsRes, bankAccountsRes, liabilityAccountsRes] = await Promise.all([
         assetService.getFixedAssetAccounts(),
-        assetService.getDepreciationExpenseAccounts()
+        assetService.getDepreciationExpenseAccounts(),
+        assetService.getAccumulatedDepreciationAccounts(),
+        assetService.getBankAccounts(),
+        assetService.getLiabilityAccounts(),
       ]);
 
       setFixedAssetAccounts(fixedAssetAccountsRes.data || []);
       setDepreciationAccounts(depreciationAccountsRes.data || []);
+      setAccumulatedDepreciationAccounts(accumDepAccountsRes.data || []);
+      setBankAccounts(bankAccountsRes.data || []);
+      setLiabilityAccounts(liabilityAccountsRes.data || []);
     } catch (error: any) {
       console.error('Error fetching accounts:', error);
       // Don't show error toast for accounts as it's not critical
@@ -299,9 +311,10 @@ const AssetsPage = () => {
         condition: formData.condition || 'Good',
         asset_account_id: formData.assetAccountId,
         depreciation_account_id: formData.depreciationAccountId,
-        payment_method: formData.paymentMethod || 'CREDIT',
-        payment_account_id: formData.paymentAccountId,
-        credit_account_id: formData.creditAccountId,
+        accumulated_depreciation_account_id: formData.accumulatedDepreciationAccountId,
+        payment_method: formData.entryType === 'opening' ? 'SALDO_AWAL' : (formData.paymentMethod || 'CASH'),
+        payment_account_id: formData.entryType === 'purchase' && (formData.paymentMethod === 'CASH' || formData.paymentMethod === 'BANK') ? formData.paymentAccountId : undefined,
+        credit_account_id: formData.entryType === 'purchase' && formData.paymentMethod === 'CREDIT' ? formData.creditAccountId : undefined,
         user_id: 1, // TODO: Get from auth context
       };
 
@@ -375,16 +388,30 @@ const AssetsPage = () => {
       // Refresh assets list and summary
       await Promise.all([fetchAssets(), fetchAssetsSummary()]);
     } catch (error: any) {
-      const errorMsg = error.response?.data?.details || error.response?.data?.message || t('assets.messages.deleteError');
-      setError(errorMsg);
-      console.error('Error deleting asset:', error);
-      toast({
-        title: t('common.error'),
-        description: errorMsg,
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
+      const rawMsg = error.response?.data?.error || error.response?.data?.details || error.response?.data?.message || error.message || '';
+      const closedPeriod = parseClosedPeriodError(rawMsg);
+      if (closedPeriod) {
+        const desc = t('common.messages.toast.closedPeriodErrorDesc', { date: formatClosedPeriodDate(closedPeriod.date, language) });
+        setError(desc);
+        toast({
+          title: t('common.messages.toast.closedPeriodError'),
+          description: desc,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      } else {
+        const errorMsg = rawMsg || t('assets.messages.deleteError');
+        setError(errorMsg);
+        console.error('Error deleting asset:', error);
+        toast({
+          title: t('common.error'),
+          description: errorMsg,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      }
     }
   };
 
@@ -404,7 +431,9 @@ const AssetsPage = () => {
       location: '',
       coordinates: '',
       serialNumber: '',
-      condition: 'Good'
+      condition: 'Good',
+      entryType: 'purchase',
+      paymentMethod: 'CASH',
     });
   };
 
@@ -427,6 +456,63 @@ const AssetsPage = () => {
   // Open modal for editing an existing asset
   const handleEdit = (asset: BackendAsset) => {
     setSelectedAsset(asset);
+    
+    // Ensure preloaded accounts are in the dropdown lists so they don't appear empty
+    // This is crucial if a saved account was filtered out by API type/category constraints
+    if (asset.asset_account_id && asset.asset_account) {
+      setFixedAssetAccounts((prev: any[]) => {
+        if (!prev.some(a => a.id === asset.asset_account_id)) {
+          return [...prev, asset.asset_account];
+        }
+        return prev;
+      });
+    }
+    
+    if (asset.depreciation_account_id && asset.depreciation_account) {
+      // Only reject accounts that are clearly accumulated depreciation (1202-xxx)
+      // Any other account type is acceptable since the user explicitly selected it
+      const acc = asset.depreciation_account;
+      const accCode = (acc.code || '').toString();
+      const accName = (acc.name || '').toLowerCase();
+      const isAccumulatedDepreciation = 
+        accCode.startsWith('1202') || accName.includes('akumulasi') || accName.includes('accumulated');
+      
+      if (!isAccumulatedDepreciation) {
+        setDepreciationAccounts((prev: any[]) => {
+          if (!prev.some(a => a.id === asset.depreciation_account_id)) {
+            return [...prev, acc];
+          }
+          return prev;
+        });
+      } else {
+        // 1202-xxx account incorrectly stored as depreciation expense - don't inject it
+        console.warn(`⚠️ Asset ${asset.code}: depreciation_account_id points to accumulated depreciation account (${accCode} - ${acc.name}). Not injecting.`);
+      }
+    }
+    
+    if (asset.accumulated_depreciation_account_id && asset.accumulated_depreciation_account) {
+      setAccumulatedDepreciationAccounts((prev: any[]) => {
+        if (!prev.some(a => a.id === asset.accumulated_depreciation_account_id)) {
+          return [...prev, asset.accumulated_depreciation_account];
+        }
+        return prev;
+      });
+    }
+
+    // Determine if the stored depreciation_account_id is valid
+    // (it must point to a depreciation expense account, not an accumulated depreciation account)
+    let validDepreciationAccountId = asset.depreciation_account_id;
+    if (asset.depreciation_account_id && asset.depreciation_account) {
+      const depAcc = asset.depreciation_account;
+      const depCode = (depAcc.code || '').toString();
+      const depName = (depAcc.name || '').toLowerCase();
+      const isWrongType = depCode.startsWith('1202') || depName.includes('akumulasi') || depName.includes('accumulated');
+      if (isWrongType) {
+        console.warn(`⚠️ Asset ${asset.code}: depreciation_account_id=${asset.depreciation_account_id} points to accumulated depreciation account (${depCode} - ${depAcc.name}). Resetting to undefined.`);
+        validDepreciationAccountId = undefined;
+      }
+    }
+
     // Transform backend data to form format
     setFormData({
       id: asset.id,
@@ -446,7 +532,8 @@ const AssetsPage = () => {
       serialNumber: asset.serial_number || '',
       condition: asset.condition || 'Good',
       assetAccountId: asset.asset_account_id,
-      depreciationAccountId: asset.depreciation_account_id
+      depreciationAccountId: validDepreciationAccountId,
+      accumulatedDepreciationAccountId: asset.accumulated_depreciation_account_id
     });
     setIsModalOpen(true);
   };
@@ -1085,6 +1172,7 @@ const AssetsPage = () => {
                   onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
                   maxW="200px"
                 >
+                  <option value="PENDING">⏳ Pending</option>
                   <option value="ACTIVE">{t('assets.form.statusActive').toUpperCase()}</option>
                   <option value="INACTIVE">{t('assets.form.statusInactive').toUpperCase()}</option>
                   <option value="SOLD">{t('assets.form.statusSold').toUpperCase()}</option>
@@ -1165,7 +1253,7 @@ const AssetsPage = () => {
                           📝 {t('assets.form.manualAssetEntry')}
                         </AlertTitle>
                         <AlertDescription color="blue.600" fontSize="xs" mt={1}>
-                          {t('assets.form.manualAssetEntryDesc')}
+                          {t('assets.form.manualAssetEntryDescUpdated')}
                         </AlertDescription>
                       </Box>
                     </Alert>
@@ -1238,20 +1326,6 @@ const AssetsPage = () => {
                                 <option value="Fair">{t('assets.form.conditionFair')}</option>
                                 <option value="Poor">{t('assets.form.conditionPoor')}</option>
                               </Select>
-                            </FormControl>
-
-                            <FormControl>
-                              <FormLabel fontSize="sm" fontWeight="medium">{t('common.status')}</FormLabel>
-                              <HStack spacing={4} pt={2}>
-                                <Switch
-                                  isChecked={formData.isActive !== false}
-                                  onChange={(e) => handleInputChange('isActive', e.target.checked)}
-                                  colorScheme="green"
-                                />
-                                <Text fontSize="sm" color={formData.isActive ? 'green.600' : 'red.500'}>
-                                  {formData.isActive ? t('assets.form.statusActive') : t('assets.form.statusInactive')}
-                                </Text>
-                              </HStack>
                             </FormControl>
                           </HStack>
                         </VStack>
@@ -1392,9 +1466,10 @@ const AssetsPage = () => {
                               <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.assetStatus')}</FormLabel>
                               <Select
                                 value={formData.status || 'ACTIVE'}
-                                onChange={(e) => handleInputChange('status', e.target.value as 'ACTIVE' | 'INACTIVE' | 'SOLD')}
+                                onChange={(e) => handleInputChange('status', e.target.value)}
                                 size="md"
                               >
+                                <option value="PENDING">⏳ Pending</option>
                                 <option value="ACTIVE">🟢 {t('assets.form.statusActive')}</option>
                                 <option value="INACTIVE">⚪ {t('assets.form.statusInactive')}</option>
                                 <option value="SOLD">🔴 {t('assets.form.statusSold')}</option>
@@ -1407,45 +1482,234 @@ const AssetsPage = () => {
                             <FormControl>
                               <FormLabel fontSize="sm" fontWeight="medium">🏢 {t('assets.form.fixedAssetAccount')}</FormLabel>
                               <Select
-                                value={formData.assetAccountId || ''}
+                                value={formData.assetAccountId ? String(formData.assetAccountId) : ''}
                                 onChange={(e) => handleInputChange('assetAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
                                 placeholder={t('assets.form.chooseFixedAssetAccount')}
                                 size="md"
-                                isDisabled={isLoadingAccounts}
+                                isDisabled={isLoadingAccounts || (selectedAsset?.notes?.includes('Auto-created from Purchase') ?? false)}
                               >
                                 {fixedAssetAccounts.map((account) => (
-                                  <option key={account.id} value={account.id}>
+                                  <option key={account.id} value={String(account.id)}>
                                     {account.code} - {account.name} ({formatCurrency(account.balance)})
                                   </option>
                                 ))}
                               </Select>
                               <Text fontSize="xs" color="gray.500" mt={1}>
-                                💡 {t('assets.form.fixedAssetAccountNote')}
+                                💡 {selectedAsset?.notes?.includes('Auto-created from Purchase') ? t('assets.form.fixedAssetAccountAutoNote') : t('assets.form.fixedAssetAccountNote')}
                               </Text>
                             </FormControl>
 
-                            <FormControl>
+                            <FormControl isInvalid={hasFieldError(validationErrors, 'depreciationAccountId')}>
                               <FormLabel fontSize="sm" fontWeight="medium">📉 {t('assets.form.depreciationExpenseAccount')}</FormLabel>
                               <Select
-                                value={formData.depreciationAccountId || ''}
+                                value={formData.depreciationAccountId ? String(formData.depreciationAccountId) : ''}
                                 onChange={(e) => handleInputChange('depreciationAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
                                 placeholder={t('assets.form.chooseDepreciationAccount')}
                                 size="md"
                                 isDisabled={isLoadingAccounts}
                               >
+                                {/* Fallback option: if saved account isn't in the dropdown list, render it from asset data */}
+                                {formData.depreciationAccountId &&
+                                  selectedAsset?.depreciation_account &&
+                                  !depreciationAccounts.some((a: any) => a.id === formData.depreciationAccountId) && (
+                                  <option key={`fallback-dep-${formData.depreciationAccountId}`} value={String(formData.depreciationAccountId)}>
+                                    {selectedAsset.depreciation_account.code} - {selectedAsset.depreciation_account.name} ({formatCurrency(selectedAsset.depreciation_account.balance || 0)})
+                                  </option>
+                                )}
                                 {depreciationAccounts.map((account) => (
-                                  <option key={account.id} value={account.id}>
+                                  <option key={account.id} value={String(account.id)}>
                                     {account.code} - {account.name} ({formatCurrency(account.balance)})
                                   </option>
                                 ))}
                               </Select>
-                              <Text fontSize="xs" color="gray.500" mt={1}>
-                                💡 {t('assets.form.depreciationAccountNote')}
-                              </Text>
+                              {hasFieldError(validationErrors, 'depreciationAccountId') ? (
+                                <Text fontSize="xs" color="red.500" mt={1}>
+                                  {getFieldError(validationErrors, 'depreciationAccountId')}
+                                </Text>
+                              ) : (
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  💡 {t('assets.form.depreciationAccountNote')}
+                                </Text>
+                              )}
+                            </FormControl>
+                          </HStack>
+
+                          {/* Accumulated Depreciation Account */}
+                          <HStack w="full" spacing={4}>
+                            <FormControl isInvalid={hasFieldError(validationErrors, 'accumulatedDepreciationAccountId')}>
+                              <FormLabel fontSize="sm" fontWeight="medium">📊 {t('assets.form.accumulatedDepreciationAccount')}</FormLabel>
+                              <Select
+                                value={formData.accumulatedDepreciationAccountId ? String(formData.accumulatedDepreciationAccountId) : ''}
+                                onChange={(e) => handleInputChange('accumulatedDepreciationAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
+                                placeholder={t('assets.form.chooseAccumulatedDepreciationAccount')}
+                                size="md"
+                                isDisabled={isLoadingAccounts}
+                              >
+                                {accumulatedDepreciationAccounts.map((account) => (
+                                  <option key={account.id} value={String(account.id)}>
+                                    {account.code} - {account.name} ({formatCurrency(account.balance)})
+                                  </option>
+                                ))}
+                              </Select>
+                              {hasFieldError(validationErrors, 'accumulatedDepreciationAccountId') ? (
+                                <Text fontSize="xs" color="red.500" mt={1}>
+                                  {getFieldError(validationErrors, 'accumulatedDepreciationAccountId')}
+                                </Text>
+                              ) : (
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  💡 {t('assets.form.accumulatedDepreciationAccountNote')}
+                                </Text>
+                              )}
                             </FormControl>
                           </HStack>
                         </VStack>
                       </Box>
+
+                      {/* Entry Type & Payment Method Section - only for create mode */}
+                      {!selectedAsset?.id && (
+                      <Box w="full">
+                        <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={4}>
+                          💳 {t('assets.form.entryType')}
+                        </Text>
+                        <VStack spacing={4}>
+                          {/* Entry Type Selection */}
+                          <FormControl>
+                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.entryType')}</FormLabel>
+                            <HStack spacing={4} w="full">
+                              <Box
+                                flex={1}
+                                p={3}
+                                borderWidth="2px"
+                                borderColor={formData.entryType === 'purchase' ? 'blue.500' : 'gray.200'}
+                                borderRadius="md"
+                                cursor="pointer"
+                                bg={formData.entryType === 'purchase' ? 'blue.50' : 'white'}
+                                onClick={() => {
+                                  handleInputChange('entryType', 'purchase');
+                                  handleInputChange('paymentMethod', 'CASH');
+                                }}
+                                _hover={{ borderColor: 'blue.300' }}
+                              >
+                                <Text fontWeight="semibold" fontSize="sm">🛒 {t('assets.form.entryTypePurchase')}</Text>
+                                <Text fontSize="xs" color="gray.500">{t('assets.form.entryTypePurchaseDesc')}</Text>
+                              </Box>
+                              <Box
+                                flex={1}
+                                p={3}
+                                borderWidth="2px"
+                                borderColor={formData.entryType === 'opening' ? 'green.500' : 'gray.200'}
+                                borderRadius="md"
+                                cursor="pointer"
+                                bg={formData.entryType === 'opening' ? 'green.50' : 'white'}
+                                onClick={() => {
+                                  handleInputChange('entryType', 'opening');
+                                  handleInputChange('paymentMethod', 'SALDO_AWAL');
+                                }}
+                                _hover={{ borderColor: 'green.300' }}
+                              >
+                                <Text fontWeight="semibold" fontSize="sm">📦 {t('assets.form.entryTypeOpening')}</Text>
+                                <Text fontSize="xs" color="gray.500">{t('assets.form.entryTypeOpeningDesc')}</Text>
+                              </Box>
+                            </HStack>
+                          </FormControl>
+
+                          {/* Payment Method - only for Purchase */}
+                          {formData.entryType === 'purchase' && (
+                            <>
+                              <FormControl>
+                                <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.paymentMethod')}</FormLabel>
+                                <Select
+                                  value={formData.paymentMethod || 'CASH'}
+                                  onChange={(e) => {
+                                    handleInputChange('paymentMethod', e.target.value);
+                                    handleInputChange('paymentAccountId', undefined);
+                                    handleInputChange('creditAccountId', undefined);
+                                  }}
+                                  size="md"
+                                >
+                                  <option value="CASH">{t('assets.form.paymentMethodCash')}</option>
+                                  <option value="BANK">{t('assets.form.paymentMethodBank')}</option>
+                                  <option value="CREDIT">{t('assets.form.paymentMethodCredit')}</option>
+                                </Select>
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  💡 {t('assets.form.paymentMethodNote')}
+                                </Text>
+                              </FormControl>
+
+                              {/* Cash/Bank Account Selection */}
+                              {(formData.paymentMethod === 'CASH' || formData.paymentMethod === 'BANK') && (
+                                <FormControl>
+                                  <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.paymentAccount')}</FormLabel>
+                                  <Select
+                                    value={formData.paymentAccountId ? String(formData.paymentAccountId) : ''}
+                                    onChange={(e) => handleInputChange('paymentAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
+                                    placeholder={t('assets.form.selectPaymentAccount')}
+                                    size="md"
+                                    isDisabled={isLoadingAccounts}
+                                  >
+                                    {bankAccounts
+                                      .filter((acc: any) => {
+                                        const type = (acc.type || '').toUpperCase();
+                                        if (formData.paymentMethod === 'CASH') return type === 'CASH';
+                                        if (formData.paymentMethod === 'BANK') return type === 'BANK';
+                                        return true;
+                                      })
+                                      .map((account: any) => (
+                                        <option key={account.id} value={String(account.account_id || account.id)}>
+                                          {account.display_name || `${account.code || ''} - ${account.name}`} ({account.balance_formatted || ''})
+                                        </option>
+                                      ))}
+                                  </Select>
+                                  <Alert status="info" mt={2} borderRadius="md" py={2}>
+                                    <AlertIcon boxSize="14px" />
+                                    <AlertDescription fontSize="xs">
+                                      {t('assets.form.purchaseJournalInfo')} {formData.paymentMethod === 'CASH' ? 'Kas' : 'Bank'}
+                                    </AlertDescription>
+                                  </Alert>
+                                </FormControl>
+                              )}
+
+                              {/* Credit/Liability Account Selection */}
+                              {formData.paymentMethod === 'CREDIT' && (
+                                <FormControl>
+                                  <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.creditAccount')}</FormLabel>
+                                  <Select
+                                    value={formData.creditAccountId ? String(formData.creditAccountId) : ''}
+                                    onChange={(e) => handleInputChange('creditAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
+                                    placeholder={t('assets.form.selectCreditAccount')}
+                                    size="md"
+                                    isDisabled={isLoadingAccounts}
+                                  >
+                                    {(liabilityAccounts?.data || liabilityAccounts || []).filter((acc: any) => !acc.is_header && acc.is_active !== false).map((account: any) => (
+                                      <option key={account.id} value={String(account.id)}>
+                                        {account.code} - {account.name}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                  <Alert status="info" mt={2} borderRadius="md" py={2}>
+                                    <AlertIcon boxSize="14px" />
+                                    <AlertDescription fontSize="xs">
+                                      {t('assets.form.purchaseJournalInfo')} Hutang Usaha
+                                    </AlertDescription>
+                                  </Alert>
+                                </FormControl>
+                              )}
+                            </>
+                          )}
+
+                          {/* Opening Balance Info */}
+                          {formData.entryType === 'opening' && (
+                            <Alert status="success" borderRadius="md">
+                              <AlertIcon />
+                              <Box>
+                                <Text fontWeight="semibold" fontSize="sm">{t('assets.form.openingJournalInfo')}</Text>
+                                <Text fontSize="xs" color="gray.600">{t('assets.form.openingBalanceNote')}</Text>
+                              </Box>
+                            </Alert>
+                          )}
+                        </VStack>
+                      </Box>
+                      )}
 
                       {/* Location Information Section */}
                       <Box w="full">
@@ -1745,14 +2009,11 @@ const AssetsPage = () => {
                               </Box>
                               <Box>
                                 <Text fontSize="sm" color="gray.500" fontWeight="medium">{t('assets.details.status')}</Text>
-                                <HStack spacing={3}>
-                                  <Badge colorScheme={getStatusColor(detailAsset.status)} size="lg" px={3} py={1}>
-                                    {detailAsset.status}
-                                  </Badge>
-                                  <Badge colorScheme={detailAsset.is_active ? 'green' : 'red'} size="lg" px={3} py={1}>
-                                    {detailAsset.is_active ? t('assets.form.statusActive') : t('assets.form.statusInactive')}
-                                  </Badge>
-                                </HStack>
+                                <Badge colorScheme={getStatusColor(detailAsset.status)} size="lg" px={3} py={1}>
+                                  {detailAsset.status === 'PENDING' ? '⏳ Pending' : 
+                                   detailAsset.status === 'ACTIVE' ? '🟢 Aktif' : 
+                                   detailAsset.status === 'SOLD' ? '🔴 Terjual' : '⚪ Tidak Aktif'}
+                                </Badge>
                               </Box>
                             </VStack>
                           </GridItem>

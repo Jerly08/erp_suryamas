@@ -16,8 +16,9 @@ import (
 )
 
 type AssetController struct {
-	assetService services.AssetServiceInterface
-	db           *gorm.DB
+	assetService    services.AssetServiceInterface
+	db              *gorm.DB
+	assetJournalSvc *services.AssetJournalServiceSSOT
 }
 
 type AssetCreateRequest struct {
@@ -39,6 +40,7 @@ type AssetCreateRequest struct {
 	Condition          string    `json:"condition"`
 	AssetAccountID     *uint     `json:"asset_account_id"`
 	DepreciationAccountID *uint  `json:"depreciation_account_id"`
+	AccumulatedDepreciationAccountID *uint `json:"accumulated_depreciation_account_id"`
 	PaymentMethod      string    `json:"payment_method"` // CASH, BANK, CREDIT
 	PaymentAccountID   *uint     `json:"payment_account_id"` // Specific CASH/BANK account
 	CreditAccountID    *uint     `json:"credit_account_id"`  // Specific LIABILITY account
@@ -63,15 +65,18 @@ type AssetUpdateRequest struct {
 	Condition          string    `json:"condition"`
 	AssetAccountID     *uint     `json:"asset_account_id"`
 	DepreciationAccountID *uint  `json:"depreciation_account_id"`
+	AccumulatedDepreciationAccountID *uint `json:"accumulated_depreciation_account_id"`
 }
 
 func NewAssetController(db *gorm.DB) *AssetController {
 	assetRepo := repositories.NewAssetRepository(db)
 	assetService := services.NewAssetService(assetRepo, db)
+	assetJournalSvc := services.NewAssetJournalServiceSSOT(db)
 	
 	return &AssetController{
-		assetService: assetService,
-		db:           db,
+		assetService:    assetService,
+		db:              db,
+		assetJournalSvc: assetJournalSvc,
 	}
 }
 
@@ -149,6 +154,7 @@ func (ac *AssetController) CreateAsset(c *gin.Context) {
 		Condition:             req.Condition,
 		AssetAccountID:        req.AssetAccountID,
 		DepreciationAccountID: req.DepreciationAccountID,
+		AccumulatedDepreciationAccountID: req.AccumulatedDepreciationAccountID,
 	}
 
 	// Set defaults
@@ -165,10 +171,10 @@ func (ac *AssetController) CreateAsset(c *gin.Context) {
 		paymentMethod = "CREDIT" // Default to credit purchase
 	}
 
-	// QUICK FIX: Use CreateAsset without journal entries to avoid account ID issues
-	// TODO: Later implement proper journal entry creation with dynamic account lookup
-	err := ac.assetService.CreateAsset(asset)
-	if err != nil {
+	// Atomically create asset AND acquisition journal in one transaction
+	if err := ac.assetJournalSvc.CreateAssetWithAcquisitionJournal(
+		asset, req.UserID, paymentMethod, req.PaymentAccountID, req.CreditAccountID, ac.assetService,
+	); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Failed to create asset",
 			"details": err.Error(),
@@ -202,37 +208,42 @@ func (ac *AssetController) CapitalizeAsset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data", "details": err.Error()})
 		return
 	}
-	// Resolve accounts
-	accountRepo := repositories.NewAccountRepository(ac.db)
-	journalRepo := repositories.NewJournalEntryRepository(ac.db)
-	capSvc := services.NewAssetCapitalizationService(ac.db, accountRepo, nil, journalRepo)
-	// Defaults
+	// Use SSOT-based capitalization via AssetJournalServiceSSOT
 	date := time.Now()
 	if req.Date != nil {
 		date = *req.Date
 	}
+
+	// Resolve source account (default to 1103-001 Persediaan Barang Dagang)
 	var sourceID uint
 	if req.SourceAccountID != nil {
 		sourceID = *req.SourceAccountID
 	} else {
-		// default to inventory 1301
-		if acc, err := accountRepo.FindByCode(nil, "1301"); err == nil {
-			sourceID = acc.ID
+		var acc models.Account
+		for _, code := range []string{"1103-001", "1103", "1301"} {
+			if err := ac.db.Where("code = ? AND deleted_at IS NULL", code).First(&acc).Error; err == nil {
+				sourceID = acc.ID
+				break
+			}
 		}
 	}
+
+	// Resolve fixed asset account (default to 1201-004 Peralatan)
 	var faID uint
 	if req.FixedAssetAccountID != nil {
 		faID = *req.FixedAssetAccountID
 	} else {
-		// default fixed asset 1501
-		if acc, err := accountRepo.FindByCode(nil, "1501"); err == nil {
+		var acc models.Account
+		if err := ac.db.Where("code = ? AND deleted_at IS NULL", "1201-004").First(&acc).Error; err == nil {
 			faID = acc.ID
 		}
 	}
+
 	if sourceID == 0 || faID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unable to resolve accounts. Provide source_account_id and fixed_asset_account_id explicitly."})
 		return
 	}
+
 	userID := c.MustGet("user_id").(uint)
 	input := services.CapitalizationInput{
 		AssetID:             uint(id),
@@ -246,11 +257,13 @@ func (ac *AssetController) CapitalizeAsset(c *gin.Context) {
 		ReferenceType:       models.JournalRefAsset,
 		ReferenceID:         uint(id),
 	}
-	if err := capSvc.Capitalize(input); err != nil {
+
+	// Use SSOT service for capitalization journal
+	if err := ac.assetJournalSvc.CreateCapitalizationJournal(input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to capitalize asset", "details": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Asset capitalized successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Asset capitalized successfully via SSOT"})
 }
 
 // UpdateAsset updates an existing asset
@@ -298,8 +311,19 @@ func (ac *AssetController) UpdateAsset(c *gin.Context) {
 	existingAsset.MapsURL = generateMapsURL(req.Coordinates)
 	existingAsset.SerialNumber = req.SerialNumber
 	existingAsset.Condition = req.Condition
-	existingAsset.AssetAccountID = req.AssetAccountID
-	existingAsset.DepreciationAccountID = req.DepreciationAccountID
+
+	// Only overwrite account IDs if explicitly provided in the request.
+	// When the frontend omits these fields, Go decodes them as nil pointers,
+	// and GORM Save() would write NULL to the database — wiping existing data.
+	if req.AssetAccountID != nil {
+		existingAsset.AssetAccountID = req.AssetAccountID
+	}
+	if req.DepreciationAccountID != nil {
+		existingAsset.DepreciationAccountID = req.DepreciationAccountID
+	}
+	if req.AccumulatedDepreciationAccountID != nil {
+		existingAsset.AccumulatedDepreciationAccountID = req.AccumulatedDepreciationAccountID
+	}
 
 	err = ac.assetService.UpdateAsset(existingAsset)
 	if err != nil {
@@ -316,7 +340,7 @@ func (ac *AssetController) UpdateAsset(c *gin.Context) {
 	})
 }
 
-// DeleteAsset deletes an asset
+// DeleteAsset deletes an asset and reverses all related journals
 func (ac *AssetController) DeleteAsset(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -325,17 +349,38 @@ func (ac *AssetController) DeleteAsset(c *gin.Context) {
 		return
 	}
 
+	// Step 0: Check closed period BEFORE any mutations
+	asset, err := ac.assetService.GetAssetByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Asset not found", "details": err.Error()})
+		return
+	}
+	if err := services.CheckClosedPeriod(ac.db, asset.PurchaseDate); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Step 1: Reverse all SSOT journals before deleting the asset
+	if err := ac.assetJournalSvc.ReverseAssetJournals(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to reverse asset journals. Asset was NOT deleted.",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Step 2: Soft-delete the asset
 	err = ac.assetService.DeleteAsset(uint(id))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":   "Failed to delete asset",
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to delete asset (journals were reversed)",
 			"details": err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Asset deleted successfully",
+		"message": "Asset deleted successfully and all journals reversed",
 	})
 }
 
@@ -566,13 +611,15 @@ func (ac *AssetController) GetAssetCategories(c *gin.Context) {
 // CreateAssetCategory creates a new asset category
 func (ac *AssetController) CreateAssetCategory(c *gin.Context) {
 	var req struct {
-		Code        string `json:"code" binding:"required"`
-		Name        string `json:"name" binding:"required"`
-		Description string `json:"description"`
-		ParentID    *uint  `json:"parent_id"`
-		IsActive    bool   `json:"is_active"`
+		Code                               string `json:"code" binding:"required"`
+		Name                               string `json:"name" binding:"required"`
+		Description                        string `json:"description"`
+		ParentID                           *uint  `json:"parent_id"`
+		IsActive                           bool   `json:"is_active"`
+		FixedAssetAccountCode              string `json:"fixed_asset_account_code"`
+		AccumulatedDepreciationAccountCode string `json:"accumulated_depreciation_account_code"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid request data",
@@ -582,11 +629,13 @@ func (ac *AssetController) CreateAssetCategory(c *gin.Context) {
 	}
 
 	category := &models.AssetCategory{
-		Code:        req.Code,
-		Name:        req.Name,
-		Description: req.Description,
-		ParentID:    req.ParentID,
-		IsActive:    req.IsActive,
+		Code:                               req.Code,
+		Name:                               req.Name,
+		Description:                        req.Description,
+		ParentID:                           req.ParentID,
+		IsActive:                           req.IsActive,
+		FixedAssetAccountCode:              req.FixedAssetAccountCode,
+		AccumulatedDepreciationAccountCode: req.AccumulatedDepreciationAccountCode,
 	}
 	
 	// Set default IsActive to true if not specified
@@ -605,6 +654,118 @@ func (ac *AssetController) CreateAssetCategory(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Asset category created successfully",
 		"data":    category,
+	})
+}
+
+// RunDepreciation runs monthly depreciation for all active assets via SSOT journal
+func (ac *AssetController) RunDepreciation(c *gin.Context) {
+	var req struct {
+		Year   int  `json:"year" binding:"required"`
+		Month  int  `json:"month" binding:"required,min=1,max=12"`
+		UserID uint `json:"user_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request data. Provide year and month (1-12).",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Use authenticated user if user_id not provided
+	userID := req.UserID
+	if userID == 0 {
+		if uid, exists := c.Get("user_id"); exists {
+			userID = uid.(uint)
+		}
+	}
+	if userID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	result, err := ac.assetJournalSvc.RunMonthlyDepreciation(req.Year, req.Month, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to run depreciation",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Depreciation run completed for %s", result.Period),
+		"data":    result,
+	})
+}
+
+// ActivateAsset activates a PENDING_SETUP asset after user has set depreciation parameters.
+// Validates that useful_life, depreciation_method are set before activating.
+func (ac *AssetController) ActivateAsset(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid asset ID"})
+		return
+	}
+
+	asset, err := ac.assetService.GetAssetByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Asset not found", "details": err.Error()})
+		return
+	}
+
+	// Allow activation from PENDING_SETUP or INACTIVE status
+	if asset.Status != models.AssetStatusPendingSetup && asset.Status != models.AssetStatusInactive {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Asset status is '%s'. Only PENDING_SETUP or INACTIVE assets can be activated.", asset.Status),
+		})
+		return
+	}
+
+	// Validate required depreciation fields are set (skip for Tanah/Land)
+	categoryLower := strings.ToLower(strings.TrimSpace(asset.Category))
+	isLand := categoryLower == "tanah" || categoryLower == "land"
+
+	if !isLand {
+		if asset.UsefulLife <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Masa manfaat (useful_life) harus diisi sebelum mengaktifkan aset. Silakan edit aset terlebih dahulu.",
+			})
+			return
+		}
+		if asset.DepreciationMethod == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Metode penyusutan (depreciation_method) harus dipilih. Pilih STRAIGHT_LINE atau DECLINING_BALANCE.",
+			})
+			return
+		}
+		if asset.DepreciationAccountID == nil || *asset.DepreciationAccountID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Akun beban penyusutan (depreciation_account) harus dipilih sebelum mengaktifkan aset. Silakan edit aset terlebih dahulu.",
+			})
+			return
+		}
+		if asset.AccumulatedDepreciationAccountID == nil || *asset.AccumulatedDepreciationAccountID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Akun akumulasi penyusutan (accumulated_depreciation_account) harus dipilih sebelum mengaktifkan aset. Silakan edit aset terlebih dahulu.",
+			})
+			return
+		}
+	}
+
+	// Activate the asset
+	asset.Status = models.AssetStatusActive
+	asset.IsActive = true
+
+	if err := ac.db.Model(asset).Select("Status", "IsActive").Updates(asset).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to activate asset", "details": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Aset %s (%s) berhasil diaktifkan. Depresiasi akan berjalan mulai bulan depan.", asset.Code, asset.Name),
+		"data":    asset,
 	})
 }
 

@@ -117,6 +117,7 @@ export const ASSET_CATEGORIES = [
 ] as const;
 
 export const ASSET_STATUS = [
+  'PENDING',
   'ACTIVE',
   'INACTIVE',
   'SOLD'

@@ -482,6 +482,8 @@ func GenerateAssetJournalEntry(asset Asset, userId uint, paymentMethod string, p
 }
 
 // Auto-generate depreciation journal entry
+// DEPRECATED: Use AssetJournalServiceSSOT.CreateDepreciationJournal() for SSOT integration
+// This legacy function is kept for backward compatibility but does NOT post to unified_journal_ledger
 func GenerateDepreciationJournalEntry(asset Asset, depreciationAmount float64, userId uint, entryDate time.Time) *JournalEntry {
 	entry := &JournalEntry{
 		Description:     fmt.Sprintf("Monthly Depreciation - %s (%s)", asset.Name, asset.Code),
@@ -499,8 +501,9 @@ func GenerateDepreciationJournalEntry(asset Asset, depreciationAmount float64, u
 
 	var lines []JournalLine
 
-	// 1. Debit: Depreciation Expense
-	depreciationExpenseAccountID := uint(6201) // Default Depreciation Expense account ID
+	// 1. Debit: Depreciation Expense (COA: 6104 Service / 6103 Trading)
+	// Caller MUST provide DepreciationAccountID; fallback to 0 to force explicit resolution
+	depreciationExpenseAccountID := uint(0)
 	if asset.DepreciationAccountID != nil {
 		depreciationExpenseAccountID = *asset.DepreciationAccountID
 	}
@@ -512,8 +515,12 @@ func GenerateDepreciationJournalEntry(asset Asset, depreciationAmount float64, u
 		LineNumber:   1,
 	})
 
-	// 2. Credit: Accumulated Depreciation
-	accumulatedDepreciationAccountID := uint(1501) // Accumulated Depreciation contra-asset account
+	// 2. Credit: Accumulated Depreciation (COA: 1202-xxx based on asset category)
+	// Caller MUST provide AssetAccountID for proper contra-asset; fallback to 0
+	accumulatedDepreciationAccountID := uint(0)
+	if asset.AssetAccountID != nil {
+		accumulatedDepreciationAccountID = *asset.AssetAccountID
+	}
 
 	lines = append(lines, JournalLine{
 		AccountID:    accumulatedDepreciationAccountID,

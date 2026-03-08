@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useModulePermissions } from '@/hooks/usePermissions';
+import { parseClosedPeriodError, formatClosedPeriodDate } from '@/utils/errorHandler';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
@@ -112,7 +113,7 @@ const formatCurrency = (amount: number) => {
 
 const PaymentsPage: React.FC = () => {
   const { token, user } = useAuth();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const toast = useToast();
 
   // Theme colors for dark mode support
@@ -581,12 +582,25 @@ const PaymentsPage: React.FC = () => {
       setSelectedPayment(null);
     } catch (error: any) {
       console.error('Error deleting payment:', error);
-      toast({
-        title: t('common.messages.toast.error'),
-        description: t('payments.messages.deleteError'),
-        status: 'error',
-        duration: 3000
-      });
+      const errMsg = error.message || '';
+      const closedPeriod = parseClosedPeriodError(errMsg);
+      if (closedPeriod) {
+        toast({
+          title: t('common.messages.toast.closedPeriodError'),
+          description: t('common.messages.toast.closedPeriodErrorDesc', { date: formatClosedPeriodDate(closedPeriod.date, language) }),
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      } else {
+        toast({
+          title: t('common.messages.toast.error'),
+          description: errMsg || t('payments.messages.deleteError'),
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      }
     }
   };
 

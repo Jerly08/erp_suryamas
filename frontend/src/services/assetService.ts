@@ -23,6 +23,10 @@ export interface Asset {
   image_path?: string;
   asset_account_id?: number;
   depreciation_account_id?: number;
+  accumulated_depreciation_account_id?: number;
+  asset_account?: { id: number; code: string; name: string; balance?: number };
+  depreciation_account?: { id: number; code: string; name: string; balance?: number };
+  accumulated_depreciation_account?: { id: number; code: string; name: string; balance?: number };
   created_at: string;
   updated_at: string;
 }
@@ -45,6 +49,7 @@ export interface AssetCreateRequest {
   condition?: string;
   asset_account_id?: number;
   depreciation_account_id?: number;
+  accumulated_depreciation_account_id?: number;
   // Backend AssetCreateRequest requires these additional fields (user_id required)
   user_id?: number;
   payment_method?: string;
@@ -69,6 +74,7 @@ export interface AssetUpdateRequest {
   condition?: string;
   asset_account_id?: number;
   depreciation_account_id?: number;
+  accumulated_depreciation_account_id?: number;
 }
 
 export interface AssetsSummary {
@@ -384,8 +390,41 @@ class AssetService {
 
   // Get depreciation expense accounts
   async getDepreciationExpenseAccounts(): Promise<{ data: any[]; message: string }> {
-    const response = await api.get(API_ENDPOINTS.ACCOUNTS.LIST + '?category=DEPRECIATION_EXPENSE&type=EXPENSE');
-    return response.data;
+    // Fetch all EXPENSE type accounts and filter for depreciation expense
+    const response = await api.get(API_ENDPOINTS.ACCOUNTS.LIST + '?type=EXPENSE');
+    const allExpense = response.data?.data || [];
+    const filtered = allExpense.filter((acc: any) => {
+      const code = (acc.code || '').toString();
+      const name = (acc.name || '').toLowerCase();
+      const category = (acc.category || '').toUpperCase();
+      
+      // Match by category first
+      if (category === 'DEPRECIATION_EXPENSE') return true;
+      
+      // Exclude "akumulasi" accounts (those are contra-asset, not expense)
+      if (name.includes('akumulasi')) return false;
+      
+      // Match beban penyusutan accounts by code or name
+      return code.startsWith('6103') || code.startsWith('6104') || 
+             (name.includes('penyusutan') && name.includes('beban')) ||
+             (name.includes('depreciation') && name.includes('expense'));
+    });
+    return { data: filtered, message: 'Depreciation expense accounts loaded' };
+  }
+
+  // Get accumulated depreciation accounts (1202-xxx)
+  async getAccumulatedDepreciationAccounts(): Promise<{ data: any[]; message: string }> {
+    // Fetch ASSET type accounts, then filter for 1202-xxx (accumulated depreciation)
+    const response = await api.get(API_ENDPOINTS.ACCOUNTS.LIST + '?type=ASSET');
+    const data = response.data?.data || [];
+    const filtered = data.filter((acc: any) => {
+      const code = (acc.code || '').toString();
+      const name = (acc.name || '').toLowerCase();
+      return code.startsWith('1202') ||
+             (name.includes('akumulasi') && name.includes('penyusutan')) ||
+             (name.includes('accumulated') && name.includes('depreciation'));
+    });
+    return { data: filtered, message: 'Accumulated depreciation accounts loaded' };
   }
 
   // Export assets data (frontend processing)

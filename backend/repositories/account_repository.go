@@ -23,6 +23,7 @@ type AccountRepository interface {
 	FindByID(ctx context.Context, id uint) (*models.Account, error)
 	FindAll(ctx context.Context) ([]models.Account, error)
 	FindByType(ctx context.Context, accountType string) ([]models.Account, error)
+	FindWithFilter(ctx context.Context, accountType *string, category *string) ([]models.Account, error)
 	GetHierarchy(ctx context.Context) ([]models.Account, error)
 	BulkImport(ctx context.Context, accounts []models.AccountImportRequest) error
 	CalculateBalance(ctx context.Context, accountID uint) (float64, error)
@@ -468,6 +469,24 @@ func (r *AccountRepo) FindByType(ctx context.Context, accountType string) ([]mod
 	var accounts []models.Account
 	if err := r.DB.WithContext(ctx).Where("type = ?", accountType).Order("code").Find(&accounts).Error; err != nil {
 		return nil, utils.NewDatabaseError("find accounts by type", err)
+	}
+	return accounts, nil
+}
+
+// FindWithFilter finds accounts based on optional filters
+func (r *AccountRepo) FindWithFilter(ctx context.Context, accountType *string, category *string) ([]models.Account, error) {
+	var accounts []models.Account
+	query := r.DB.WithContext(ctx)
+
+	if accountType != nil && *accountType != "" {
+		query = query.Where("type = ?", *accountType)
+	}
+	if category != nil && *category != "" {
+		query = query.Where("category = ?", *category)
+	}
+
+	if err := query.Order("code").Find(&accounts).Error; err != nil {
+		return nil, utils.NewDatabaseError("find accounts with filter", err)
 	}
 	return accounts, nil
 }

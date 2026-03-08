@@ -78,6 +78,11 @@ func (s *AssetService) GetAssetByID(id uint) (*models.Asset, error) {
 
 // CreateAsset creates a new asset with generated code
 func (s *AssetService) CreateAsset(asset *models.Asset) error {
+	// Guard: check if purchase date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, asset.PurchaseDate); err != nil {
+		return err
+	}
+
 	// Generate asset code OUTSIDE transaction to avoid transaction abort issues
 	if asset.Code == "" {
 		code, err := s.GenerateAssetCode(asset.Category)
@@ -145,6 +150,11 @@ func (s *AssetService) CreateAsset(asset *models.Asset) error {
 
 // CreateAssetWithJournal creates a new asset and generates corresponding journal entries
 func (s *AssetService) CreateAssetWithJournal(asset *models.Asset, userId uint, paymentMethod string, paymentAccountID *uint, creditAccountID *uint) error {
+	// Guard: check if purchase date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, asset.PurchaseDate); err != nil {
+		return err
+	}
+
 	// Generate asset code OUTSIDE transaction to avoid transaction abort issues
 	if asset.Code == "" {
 		code, err := s.GenerateAssetCode(asset.Category)
@@ -236,6 +246,11 @@ func (s *AssetService) CreateAssetWithJournal(asset *models.Asset, userId uint, 
 
 // UpdateAsset updates an existing asset
 func (s *AssetService) UpdateAsset(asset *models.Asset) error {
+	// Guard: check if purchase date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, asset.PurchaseDate); err != nil {
+		return err
+	}
+
 	// Validate purchase date
 	if asset.PurchaseDate.IsZero() {
 		return errors.New("purchase date is required")
@@ -244,6 +259,15 @@ func (s *AssetService) UpdateAsset(asset *models.Asset) error {
 	// Validate purchase price
 	if asset.PurchasePrice <= 0 {
 		return errors.New("purchase price must be greater than 0")
+	}
+
+	// Sync is_active with status to ensure consistency
+	// Only ACTIVE status should have is_active = true
+	switch asset.Status {
+	case models.AssetStatusActive:
+		asset.IsActive = true
+	case models.AssetStatusInactive, models.AssetStatusSold, models.AssetStatusPendingSetup:
+		asset.IsActive = false
 	}
 
 	// Recalculate depreciation if depreciation-related fields changed
@@ -259,6 +283,17 @@ func (s *AssetService) UpdateAsset(asset *models.Asset) error {
 
 // DeleteAsset deletes an asset
 func (s *AssetService) DeleteAsset(id uint) error {
+	// Fetch asset to check its purchase date against closed periods
+	asset, err := s.assetRepo.FindByID(id)
+	if err != nil {
+		return err
+	}
+
+	// Guard: check if purchase date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, asset.PurchaseDate); err != nil {
+		return err
+	}
+
 	return s.assetRepo.Delete(id)
 }
 
@@ -282,8 +317,11 @@ func (s *AssetService) GenerateAssetCode(category string) (string, error) {
 		code := prefix + "-" + year + "-" + padLeft(strconv.Itoa(sequence), 3, "0")
 
 		// Check if code exists in database
-		_, err := s.assetRepo.FindByCode(code)
+		exists, err := s.assetRepo.CodeExists(code)
 		if err != nil {
+			return "", err
+		}
+		if !exists {
 			// Code doesn't exist, we can use it
 			return code, nil
 		}
@@ -500,14 +538,23 @@ func monthsDifference(startDate, endDate time.Time) int {
 		return 0
 	}
 
-	months := int(endDate.Month()) - int(startDate.Month())
-	months += (endDate.Year() - startDate.Year()) * 12
+	months := (endDate.Year()-startDate.Year())*12 + int(endDate.Month()) - int(startDate.Month())
 
-	// Add partial month if end date day is >= start date day
-	if endDate.Day() >= startDate.Day() {
+	// Cap startDay to the last day of endDate's month to handle edge cases
+	// e.g. Jan 31 -> Feb 28 should count as 1 month
+	startDay := startDate.Day()
+	endMonthLastDay := time.Date(endDate.Year(), endDate.Month()+1, 0, 0, 0, 0, 0, endDate.Location()).Day()
+	effectiveStartDay := startDay
+	if effectiveStartDay > endMonthLastDay {
+		effectiveStartDay = endMonthLastDay
+	}
+	if endDate.Day() >= effectiveStartDay {
 		months++
 	}
 
+	if months < 0 {
+		return 0
+	}
 	return months
 }
 

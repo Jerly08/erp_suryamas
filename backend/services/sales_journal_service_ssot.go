@@ -936,6 +936,24 @@ func (s *SalesJournalServiceSSOT) DeleteSalesJournal(saleID uint, tx *gorm.DB) e
 		return fmt.Errorf("failed to find journal entry: %v", err)
 	}
 
+	// CRITICAL FIX: Reverse COA balances before deleting journal lines
+	// This ensures accounts.balance (COA Tree View) is consistent after deletion
+	var journalLines []models.SSOTJournalLine
+	if err := dbToUse.Where("journal_id = ?", entry.ID).Find(&journalLines).Error; err != nil {
+		log.Printf("⚠️ Warning: Failed to load journal lines for COA reversal: %v", err)
+	} else {
+		for _, line := range journalLines {
+			// Negate debit/credit to reverse the effect on COA balances
+			negDebit := line.DebitAmount.Neg()
+			negCredit := line.CreditAmount.Neg()
+
+			if err := s.updateAccountBalance(dbToUse, line.AccountID, negDebit, negCredit); err != nil {
+				log.Printf("⚠️ Warning: Failed to reverse COA balance for account %d: %v", line.AccountID, err)
+			}
+		}
+		log.Printf("✅ [SSOT] Reversed COA balances for %d journal lines of Sale #%d", len(journalLines), saleID)
+	}
+
 	// Delete lines first (FK constraint)
 	if err := dbToUse.Where("journal_id = ?", entry.ID).Delete(&models.SSOTJournalLine{}).Error; err != nil {
 		return fmt.Errorf("failed to delete journal lines: %v", err)
@@ -946,7 +964,7 @@ func (s *SalesJournalServiceSSOT) DeleteSalesJournal(saleID uint, tx *gorm.DB) e
 		return fmt.Errorf("failed to delete journal entry: %v", err)
 	}
 
-	log.Printf("✅ [SSOT] Deleted journal entry #%d and its lines for Sale #%d", entry.ID, saleID)
+	log.Printf("✅ [SSOT] Deleted journal entry #%d and its lines for Sale #%d (COA balances reversed)", entry.ID, saleID)
 	return nil
 }
 

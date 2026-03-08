@@ -13,7 +13,10 @@ func PreMigrationFixes(db *gorm.DB) {
 	// Fix 1: Drop audit-related views that might conflict with audit_logs table migration
 	dropAuditRelatedViews(db)
 
-	// Fix 2: Handle any other pre-migration conflicts
+	// Fix 2: Drop activity_logs related views that block column type changes
+	dropActivityLogsRelatedViews(db)
+
+	// Fix 3: Handle any other pre-migration conflicts
 	handleColumnTypeConflicts(db)
 
 	log.Println("✅ Pre-migration fixes completed")
@@ -44,6 +47,52 @@ func dropAuditRelatedViews(db *gorm.DB) {
 	log.Println("✅ Audit-related views cleanup completed")
 }
 
+// dropActivityLogsRelatedViews drops views that depend on activity_logs table
+// This is needed because GORM may alter column types (e.g. user_id integer -> bigint)
+// and PostgreSQL blocks ALTER TYPE when a view depends on the column.
+func dropActivityLogsRelatedViews(db *gorm.DB) {
+	log.Println("Dropping activity_logs related views that might block migration...")
+
+	// Known views from SQL migrations
+	knownViews := []string{
+		"activity_logs_summary",
+	}
+
+	for _, view := range knownViews {
+		err := db.Exec("DROP VIEW IF EXISTS " + view + " CASCADE").Error
+		if err != nil {
+			log.Printf("Note: Could not drop view %s: %v", view, err)
+		} else {
+			log.Printf("✅ Dropped view: %s", view)
+		}
+	}
+
+	// Also dynamically find any other views that depend on activity_logs
+	var dependentViews []string
+	db.Raw(`
+		SELECT DISTINCT cl.relname
+		FROM pg_depend d
+		JOIN pg_rewrite r ON d.objid = r.oid
+		JOIN pg_class cl ON r.ev_class = cl.oid
+		JOIN pg_class src ON d.refobjid = src.oid
+		WHERE src.relname = 'activity_logs'
+		AND cl.relkind = 'v'
+		AND cl.relname != 'activity_logs'
+	`).Scan(&dependentViews)
+
+	for _, view := range dependentViews {
+		log.Printf("Found dependent view on activity_logs: %s, dropping...", view)
+		err := db.Exec("DROP VIEW IF EXISTS " + view + " CASCADE").Error
+		if err != nil {
+			log.Printf("Note: Could not drop dependent view %s: %v", view, err)
+		} else {
+			log.Printf("✅ Dropped dependent view: %s", view)
+		}
+	}
+
+	log.Println("✅ Activity logs views cleanup completed")
+}
+
 // handleColumnTypeConflicts handles column type conflicts before migration
 func handleColumnTypeConflicts(db *gorm.DB) {
 	log.Println("Handling column type conflicts...")
@@ -62,7 +111,7 @@ func handleColumnTypeConflicts(db *gorm.DB) {
 
 	// Check current action column size
 	var columnInfo struct {
-		CharacterMaximumLength *int `json:"character_maximum_length"`
+		CharacterMaximumLength *int   `json:"character_maximum_length"`
 		DataType               string `json:"data_type"`
 	}
 
@@ -77,7 +126,7 @@ func handleColumnTypeConflicts(db *gorm.DB) {
 		return
 	}
 
-	log.Printf("Current audit_logs.action column: type=%s, max_length=%v", 
+	log.Printf("Current audit_logs.action column: type=%s, max_length=%v",
 		columnInfo.DataType, columnInfo.CharacterMaximumLength)
 
 	// If column is too small, try to alter it (after dropping views)

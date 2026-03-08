@@ -887,6 +887,7 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 		LEFT JOIN accounts a ON a.id = sjl.account_id
 		WHERE DATE(sje.entry_date) <= ?
 			AND sje.status = ?
+			AND sje.deleted_at IS NULL
 			AND UPPER(sje.source_type) != 'CLOSING'
 		GROUP BY sjl.account_id, a.code, a.name
 		ORDER BY a.code
@@ -986,10 +987,10 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	var args []interface{}
 
 	if accountID != nil {
-		// Query ALL lines from journals that have entries for the selected account
-		// This ensures complete journal entries (debit AND credit pairs) are shown
+		// Query ONLY lines for the selected account
+		// This gives proper per-account debit/credit/balance view (Buku Besar)
 		query = `
-			SELECT 
+			SELECT
 				sje.id as journal_id,
 				sje.entry_number,
 				sje.entry_date,
@@ -1005,14 +1006,11 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			FROM unified_journal_lines sjl
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			LEFT JOIN accounts a ON a.id = sjl.account_id
-			WHERE sje.status = ? 
+			WHERE sje.status = ?
 				AND DATE(sje.entry_date) BETWEEN ? AND ?
+				AND sje.deleted_at IS NULL
 				AND UPPER(sje.source_type) != 'CLOSING'
-				AND sje.id IN (
-					SELECT DISTINCT sjl2.journal_id 
-					FROM unified_journal_lines sjl2 
-					WHERE sjl2.account_id = ?
-				)
+				AND sjl.account_id = ?
 			ORDER BY sje.entry_date, sje.id, sjl.line_number
 		`
 		args = []interface{}{models.SSOTStatusPosted, startDate, endDate, *accountID}
@@ -1036,6 +1034,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			LEFT JOIN accounts a ON a.id = sjl.account_id
 			WHERE sje.status = ? 
 				AND DATE(sje.entry_date) BETWEEN ? AND ?
+				AND sje.deleted_at IS NULL
 				AND UPPER(sje.source_type) != 'CLOSING'
 			ORDER BY sje.entry_date, sje.id, sjl.line_number
 		`
@@ -1098,6 +1097,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			WHERE sje.status = ? 
 				AND sje.entry_date < ?
+				AND sje.deleted_at IS NULL
 				AND sjl.account_id = ?
 		`
 		openingArgs = []interface{}{models.SSOTStatusPosted, startDate, *accountID}
@@ -1110,6 +1110,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			WHERE sje.status = ? 
 				AND sje.entry_date < ?
+				AND sje.deleted_at IS NULL
 		`
 		openingArgs = []interface{}{models.SSOTStatusPosted, startDate}
 	}
@@ -1138,6 +1139,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 				JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 				WHERE sje.status = ? 
 					AND sje.entry_date < ?
+					AND sje.deleted_at IS NULL
 					AND sjl.account_id = ?
 			`
 			var accOpeningFloat float64

@@ -28,6 +28,8 @@ import { ssotJournalService, SSOTJournalEntry } from '@/services/ssotJournalServ
 import { FiRefreshCw, FiCalendar, FiPlus, FiMoreVertical, FiEdit2, FiTrash2, FiCheckCircle, FiEye } from 'react-icons/fi';
 import ManualEntryForm from './ManualEntryForm';
 import JournalDetailModal from './JournalDetailModal';
+import ExportButton from '@/components/common/ExportButton';
+import { exportGeneralJournalToPDF, exportGeneralJournalToCSV } from '@/utils/journalExport';
 
 export default function GeneralJournalView() {
     const { t } = useTranslation();
@@ -50,6 +52,31 @@ export default function GeneralJournalView() {
         new Date().toISOString().split('T')[0]
     );
     const [searchTerm, setSearchTerm] = useState('');
+    const [exporting, setExporting] = useState(false);
+
+    const handleExportPDF = () => {
+        try {
+            setExporting(true);
+            exportGeneralJournalToPDF(entries, startDate, endDate);
+            toast({ title: t('common.success'), description: 'PDF berhasil diunduh', status: 'success', duration: 3000 });
+        } catch (error) {
+            toast({ title: t('common.error'), description: 'Gagal mengexport PDF', status: 'error', duration: 3000 });
+        } finally {
+            setExporting(false);
+        }
+    };
+
+    const handleExportCSV = () => {
+        try {
+            setExporting(true);
+            exportGeneralJournalToCSV(entries, startDate, endDate);
+            toast({ title: t('common.success'), description: 'CSV berhasil diunduh', status: 'success', duration: 3000 });
+        } catch (error) {
+            toast({ title: t('common.error'), description: 'Gagal mengexport CSV', status: 'error', duration: 3000 });
+        } finally {
+            setExporting(false);
+        }
+    };
 
     const fetchEntries = useCallback(async () => {
         setLoading(true);
@@ -215,14 +242,26 @@ export default function GeneralJournalView() {
                         </Box>
                     </HStack>
 
-                    <Button
-                        colorScheme="blue"
-                        leftIcon={<FiPlus />}
-                        onClick={() => { setSelectedEntry(undefined); setShowCreateForm(true); }}
-                        size="sm"
-                    >
-                        {t('journal.createManualEntry')}
-                    </Button>
+                    <HStack spacing={2}>
+                        <ExportButton
+                            onExportPDF={handleExportPDF}
+                            onExportCSV={handleExportCSV}
+                            isLoading={exporting}
+                            disabled={entries.length === 0}
+                            showExcel={false}
+                            showPDF={true}
+                            showCSV={true}
+                            size="sm"
+                        />
+                        <Button
+                            colorScheme="blue"
+                            leftIcon={<FiPlus />}
+                            onClick={() => { setSelectedEntry(undefined); setShowCreateForm(true); }}
+                            size="sm"
+                        >
+                            {t('journal.createManualEntry')}
+                        </Button>
+                    </HStack>
                 </HStack>
 
                 <Box overflowX="auto" borderWidth="1px" borderRadius="lg" bg="white">

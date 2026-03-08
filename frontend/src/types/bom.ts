@@ -66,7 +66,7 @@ export interface ProjectBOM {
     bom_id: number;
     bom_name: string;
     target_product_id: number;
-    quantity: int;
+    quantity: number;
     unit_cost: number;
     total_cost: number;
     created_at: string;
@@ -79,4 +79,37 @@ export interface ProjectBOM {
 export interface ProjectBOMAddPayload {
     bom_id: number;
     quantity: number;
+}
+
+// --- Component Templates (reusable component presets for BOM) ---
+
+export interface ComponentTemplateItem {
+    id: number;
+    template_id: number;
+    component_product_id: number;
+    category_str: string;
+    requirement_quantity: number;
+    base_unit: string;
+    notes: string;
+    component_product?: any;
+}
+
+export interface ComponentTemplate {
+    id: number;
+    name: string;
+    description: string;
+    items: ComponentTemplateItem[];
+    created_at: string;
+}
+
+export interface ComponentTemplateCreateRequest {
+    name: string;
+    description: string;
+    items: {
+        component_product_id: number;
+        category_str: string;
+        requirement_quantity: number;
+        base_unit: string;
+        notes: string;
+    }[];
 }

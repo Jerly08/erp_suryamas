@@ -156,11 +156,21 @@ func (h *AccountHandler) AdminDeleteAccount(c *gin.Context) {
 // ListAccounts lists all accounts with optional filtering
 func (h *AccountHandler) ListAccounts(c *gin.Context) {
 	accountType := c.Query("type")
+	category := c.Query("category")
+	
 	var accounts []models.Account
 	var err error
 
-	if accountType != "" {
-		accounts, err = h.repo.FindByType(c.Request.Context(), accountType)
+	if accountType != "" || category != "" {
+		var typePtr *string
+		var catPtr *string
+		if accountType != "" {
+			typePtr = &accountType
+		}
+		if category != "" {
+			catPtr = &category
+		}
+		accounts, err = h.repo.FindWithFilter(c.Request.Context(), typePtr, catPtr)
 	} else {
 		accounts, err = h.repo.FindAll(c.Request.Context())
 	}

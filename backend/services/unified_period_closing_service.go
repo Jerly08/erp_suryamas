@@ -116,7 +116,7 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 				LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 				WHERE a.id IN ? 
 					AND a.deleted_at IS NULL
-					AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.entry_date <= ?))
+					AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL AND uje.entry_date <= ?))
 				GROUP BY a.id, a.type
 			`, allTempAccountIDs, endDate).Scan(&balances).Error; err != nil {
 				return fmt.Errorf("failed to calculate account balances for closing: %v", err)
@@ -308,7 +308,7 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 				LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
 				LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 				WHERE a.id IN ? AND a.deleted_at IS NULL
-					AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.entry_date <= ?))
+					AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL AND uje.entry_date <= ?))
 				GROUP BY a.id, a.type
 			`, affectedIDs, endDate).Scan(&rows).Error; err != nil {
 				return fmt.Errorf("failed to recalc balances for affected accounts: %v", err)
@@ -504,7 +504,7 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 			LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 			WHERE a.id IN ?
 				AND a.deleted_at IS NULL
-				AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.entry_date <= ?))
+				AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL AND uje.entry_date <= ?))
 			GROUP BY a.id, a.type
 		`, allTempIDs, endDate).Scan(&balances).Error; err != nil {
 			return nil, fmt.Errorf("failed to calculate account balances for preview: %v", err)
@@ -803,7 +803,7 @@ func (s *UnifiedPeriodClosingService) ReopenPeriod(ctx context.Context, startDat
 				LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
 				LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 				WHERE a.id IN ? AND a.deleted_at IS NULL
-					AND (uje.id IS NULL OR uje.status = 'POSTED')
+					AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL))
 				GROUP BY a.id, a.type
 			`, accountIDs).Scan(&rows).Error; err != nil {
 				return fmt.Errorf("gagal menghitung ulang saldo: %v", err)
@@ -845,6 +845,7 @@ func (s *UnifiedPeriodClosingService) GetClosingHistory(ctx context.Context, lim
 
 	var periods []models.AccountingPeriod
 	err := s.db.WithContext(ctx).
+		Where("is_closed = ?", true).
 		Preload("ClosedByUser").
 		Order("end_date DESC").
 		Limit(limit).

@@ -1,5 +1,5 @@
 import api from './api';
-import { BOM, BOMCreateRequest, ProjectBOM, ProjectBOMAddPayload } from '../types/bom';
+import { BOM, BOMCreateRequest, ProjectBOM, ProjectBOMAddPayload, ComponentTemplate, ComponentTemplateCreateRequest } from '../types/bom';
 import { ServiceResponse } from '../types/api';
 
 /**
@@ -81,5 +81,50 @@ export const projectBOMService = {
     async generatePR(projectId: number): Promise<ServiceResponse<any>> {
         const response = await api.post(`/api/v1/projects/${projectId}/generate-pr`);
         return { data: response.data.data, success: true, status: response.status };
+    }
+};
+
+/**
+ * Service to handle reusable Component Templates (presets for BOM)
+ */
+export const componentTemplateService = {
+    /**
+     * Fetch all component templates
+     */
+    async getTemplates(): Promise<ServiceResponse<ComponentTemplate[]>> {
+        const response = await api.get('/api/v1/component-templates');
+        return { data: response.data.data, success: true, status: response.status };
+    },
+
+    /**
+     * Fetch a single component template by ID (with product details)
+     */
+    async getTemplate(id: number): Promise<ServiceResponse<ComponentTemplate>> {
+        const response = await api.get(`/api/v1/component-templates/${id}`);
+        return { data: response.data.data, success: true, status: response.status };
+    },
+
+    /**
+     * Create a new component template
+     */
+    async createTemplate(data: ComponentTemplateCreateRequest): Promise<ServiceResponse<any>> {
+        const response = await api.post('/api/v1/component-templates', data);
+        return { data: response.data, success: true, status: response.status };
+    },
+
+    /**
+     * Update an existing component template
+     */
+    async updateTemplate(id: number, data: ComponentTemplateCreateRequest): Promise<ServiceResponse<any>> {
+        const response = await api.put(`/api/v1/component-templates/${id}`, data);
+        return { data: response.data, success: true, status: response.status };
+    },
+
+    /**
+     * Delete a component template
+     */
+    async deleteTemplate(id: number): Promise<ServiceResponse<any>> {
+        const response = await api.delete(`/api/v1/component-templates/${id}`);
+        return { data: response.data, success: true, status: response.status };
     }
 };

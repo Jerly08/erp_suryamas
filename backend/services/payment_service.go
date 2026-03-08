@@ -864,6 +864,12 @@ func (s *PaymentService) DeletePayment(id uint, reason string, userID uint) erro
 		return fmt.Errorf("payment not found: %v", err)
 	}
 
+	// Guard: check if payment date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, payment.Date); err != nil {
+		tx.Rollback()
+		return err
+	}
+
 	// Check if payment is already failed/cancelled
 	if payment.Status == models.PaymentStatusFailed {
 		// If already failed, just soft delete
@@ -897,6 +903,12 @@ func (s *PaymentService) CancelPayment(id uint, reason string, userID uint) erro
 
 	var payment models.Payment
 	if err := tx.First(&payment, id).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Guard: check if payment date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, payment.Date); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -959,8 +971,45 @@ func (s *PaymentService) cancelPaymentTransaction(tx *gorm.DB, payment *models.P
 		return err
 	}
 
-	// CRITICAL FIX: Also soft-delete any SSOT unified_journal_ledger entries linked to this payment
-	// This prevents the Balance Sheet and Neraca Saldo from counting soft-deleted payments!
+	// CRITICAL FIX: Reverse COA balances BEFORE soft-deleting SSOT journal entries
+	// This ensures accounts.balance (COA Tree View) is consistent after cancellation
+	var ssotEntries []models.SSOTJournalEntry
+	if err := tx.Where("source_type IN (?, ?) AND source_id = ? AND deleted_at IS NULL",
+		"PAYMENT", "PURCHASE_PAYMENT", payment.ID).Find(&ssotEntries).Error; err == nil {
+		for _, entry := range ssotEntries {
+			var journalLines []models.SSOTJournalLine
+			if err := tx.Where("journal_id = ? AND deleted_at IS NULL", entry.ID).Find(&journalLines).Error; err == nil {
+				for _, line := range journalLines {
+					// Reverse the COA balance: negate the original effect
+					var account models.Account
+					if err := tx.First(&account, line.AccountID).Error; err != nil {
+						log.Printf("⚠️ Warning: Account %d not found for COA reversal: %v", line.AccountID, err)
+						continue
+					}
+
+					debit := line.DebitAmount.InexactFloat64()
+					credit := line.CreditAmount.InexactFloat64()
+					var reverseChange float64
+
+					switch account.Type {
+					case "ASSET", "EXPENSE":
+						reverseChange = -(debit - credit) // Negate the original effect
+					case "LIABILITY", "EQUITY", "REVENUE":
+						reverseChange = -(credit - debit) // Negate the original effect
+					}
+
+					if err := tx.Model(&models.Account{}).Where("id = ?", line.AccountID).
+						UpdateColumn("balance", gorm.Expr("balance + ?", reverseChange)).Error; err != nil {
+						log.Printf("⚠️ Warning: Failed to reverse COA balance for account %d: %v", line.AccountID, err)
+					}
+				}
+				log.Printf("✅ Reversed COA balances for %d journal lines of payment %d (entry #%d)", len(journalLines), payment.ID, entry.ID)
+			}
+		}
+	}
+
+	// Soft-delete SSOT unified_journal_ledger entries linked to this payment
+	// This prevents the Balance Sheet and Neraca Saldo from counting cancelled payments
 	if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).
 		Model(&models.SSOTJournalEntry{}).
 		Where("source_type IN (?, ?) AND source_id = ?", "PAYMENT", "PURCHASE_PAYMENT", payment.ID).

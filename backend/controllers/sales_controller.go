@@ -343,7 +343,7 @@ func (sc *SalesController) DeleteSale(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Sale deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Sale cancelled successfully"})
 }
 
 // Sales Status Management

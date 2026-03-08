@@ -34,16 +34,17 @@ import {
     Badge,
     SimpleGrid,
 } from '@chakra-ui/react';
-import { FiPlus, FiTrash2 } from 'react-icons/fi';
+import { FiPlus, FiTrash2, FiClipboard } from 'react-icons/fi';
 import { useForm, Controller, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 
-import { bomService } from '@/services/bomService';
+import { bomService, componentTemplateService } from '@/services/bomService';
 import ProductService, { Product } from '@/services/productService';
 import { BOM } from '@/types/bom';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import CurrencyInput from '@/components/common/CurrencyInput';
+import UseComponentTemplateModal from './UseComponentTemplateModal';
 
 const bomItemSchema = z.object({
     component_product_id: z.number().min(1, 'Product is required'),
@@ -154,7 +155,7 @@ const BOMViewContent: React.FC<{ bom: BOM }> = ({ bom }) => {
                                             </Td>
                                             <Td>
                                                 <Text fontSize="sm" color="gray.700">
-                                                    {item.base_quantity} {item.base_unit || ''}
+                                                    {item.component_product?.stock ?? item.base_quantity} {item.base_unit || ''}
                                                 </Text>
                                             </Td>
                                             <Td>
@@ -204,6 +205,10 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [products, setProducts] = useState<Product[]>([]);
     const [productOptions, setProductOptions] = useState<{ id: string | number; name: string }[]>([]);
+    const [saveAsTemplate, setSaveAsTemplate] = useState(false);
+    const [templateName, setTemplateName] = useState('');
+    const [useTemplateOpen, setUseTemplateOpen] = useState(false);
+    const [existingBOMProductIds, setExistingBOMProductIds] = useState<number[]>([]);
     const toast = useToast();
 
     const {
@@ -271,12 +276,18 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
 
     const fetchProducts = async () => {
         try {
-            const response = await ProductService.getProducts({ limit: 1000 });
-            if (response.data) {
-                setProducts(response.data);
+            const [productResponse, bomResponse] = await Promise.all([
+                ProductService.getProducts({ limit: 1000 }),
+                bomService.getBOMs(),
+            ]);
+            if (productResponse.data) {
+                setProducts(productResponse.data);
                 setProductOptions(
-                    response.data.map((p: Product) => ({ id: p.id, name: `${p.code} - ${p.name}` }))
+                    productResponse.data.map((p: Product) => ({ id: p.id, name: `${p.code} - ${p.name}` }))
                 );
+            }
+            if (bomResponse.data) {
+                setExistingBOMProductIds(bomResponse.data.map((b: any) => b.target_product_id));
             }
         } catch (error) {
             console.error('Failed to fetch products', error);
@@ -295,6 +306,22 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
         }
     };
 
+    const handleLoadTemplate = (templateItems: { component_product_id: number; category_str: string; requirement_quantity: number; base_unit: string; notes: string }[]) => {
+        for (const item of templateItems) {
+            const product = products.find((p) => p.id === item.component_product_id);
+            append({
+                component_product_id: item.component_product_id,
+                category_str: item.category_str,
+                base_quantity: product?.stock ?? 0,
+                base_unit: item.base_unit || product?.unit || '',
+                notes: item.notes || '',
+                unit_price: product?.purchase_price || 0,
+                requirement_quantity: item.requirement_quantity,
+            });
+        }
+        toast({ title: `${templateItems.length} komponen dimuat dari template`, status: 'info', isClosable: true });
+    };
+
     const onSubmit = async (data: FormData) => {
         setIsSubmitting(true);
         const payload = {
@@ -308,28 +335,36 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
         try {
             if (existingBOM) {
                 await bomService.updateBOM(existingBOM.id, payload);
-                toast({
-                    title: 'BOM updated successfully',
-                    status: 'success',
-                    isClosable: true,
-                });
+                toast({ title: 'BOM updated successfully', status: 'success', isClosable: true });
             } else {
                 await bomService.createBOM(payload);
-                toast({
-                    title: 'BOM created successfully',
-                    status: 'success',
-                    isClosable: true,
-                });
+                toast({ title: 'BOM created successfully', status: 'success', isClosable: true });
             }
+
+            // Save as template if checkbox is checked
+            if (saveAsTemplate && templateName.trim() && data.items.length > 0) {
+                try {
+                    await componentTemplateService.createTemplate({
+                        name: templateName.trim(),
+                        description: '',
+                        items: data.items.map(item => ({
+                            component_product_id: item.component_product_id,
+                            category_str: item.category_str,
+                            requirement_quantity: item.requirement_quantity,
+                            base_unit: item.base_unit,
+                            notes: item.notes || '',
+                        })),
+                    });
+                    toast({ title: 'Component template tersimpan', status: 'success', isClosable: true });
+                } catch (tplError: any) {
+                    toast({ title: 'Template gagal disimpan', description: tplError.message, status: 'warning', isClosable: true });
+                }
+            }
+
             onSuccess();
             onClose();
         } catch (error: any) {
-            toast({
-                title: 'Failed to save BOM',
-                description: error.message,
-                status: 'error',
-                isClosable: true,
-            });
+            toast({ title: 'Failed to save BOM', description: error.message, status: 'error', isClosable: true });
         } finally {
             setIsSubmitting(false);
         }
@@ -407,14 +442,24 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                             <Controller
                                                 control={control}
                                                 name="target_product_id"
-                                                render={({ field }) => (
-                                                    <SearchableSelect
-                                                        options={productOptions}
-                                                        value={field.value ? field.value.toString() : ''}
-                                                        onChange={(val) => field.onChange(typeof val === 'string' ? parseInt(val) : val)}
-                                                        placeholder="Search product..."
-                                                    />
-                                                )}
+                                                render={({ field }) => {
+                                                    // Filter out products that already have a BOM (except current when editing)
+                                                    const filteredTargetOptions = productOptions.filter(
+                                                        (opt) => {
+                                                            const optId = typeof opt.id === 'string' ? parseInt(opt.id) : opt.id;
+                                                            if (existingBOM && optId === existingBOM.target_product_id) return true;
+                                                            return !existingBOMProductIds.includes(optId);
+                                                        }
+                                                    );
+                                                    return (
+                                                        <SearchableSelect
+                                                            options={filteredTargetOptions}
+                                                            value={field.value ? field.value.toString() : ''}
+                                                            onChange={(val) => field.onChange(typeof val === 'string' ? parseInt(val) : val)}
+                                                            placeholder="Search product..."
+                                                        />
+                                                    );
+                                                }}
                                             />
                                             <FormErrorMessage>{errors.target_product_id?.message}</FormErrorMessage>
                                         </FormControl>
@@ -450,23 +495,34 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                 <Box>
                                     <Flex justify="space-between" align="center" mb={4}>
                                         <Heading size="sm">Components (Base Cost Calculator)</Heading>
-                                        <Button
-                                            leftIcon={<FiPlus />}
-                                            size="sm"
-                                            colorScheme="blue"
-                                            variant="outline"
-                                            onClick={() => append({
-                                                component_product_id: 0,
-                                                category_str: '',
-                                                base_quantity: 1,
-                                                base_unit: '',
-                                                notes: '',
-                                                unit_price: 0,
-                                                requirement_quantity: 1,
-                                            })}
-                                        >
-                                            Add Component
-                                        </Button>
+                                        <HStack spacing={2}>
+                                            <Button
+                                                leftIcon={<FiClipboard />}
+                                                size="sm"
+                                                colorScheme="green"
+                                                variant="outline"
+                                                onClick={() => setUseTemplateOpen(true)}
+                                            >
+                                                Use Template
+                                            </Button>
+                                            <Button
+                                                leftIcon={<FiPlus />}
+                                                size="sm"
+                                                colorScheme="blue"
+                                                variant="outline"
+                                                onClick={() => append({
+                                                    component_product_id: 0,
+                                                    category_str: '',
+                                                    base_quantity: 1,
+                                                    base_unit: '',
+                                                    notes: '',
+                                                    unit_price: 0,
+                                                    requirement_quantity: 1,
+                                                })}
+                                            >
+                                                Add Component
+                                            </Button>
+                                        </HStack>
                                     </Flex>
 
                                     <Box overflowX="auto" overflowY="auto" maxH="350px" borderWidth="1px" borderRadius="md">
@@ -619,8 +675,42 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                             </Tfoot>
                                         </Table>
                                     </Box>
+
+                                    {/* Save as Template checkbox */}
+                                    <Box mt={4} p={3} borderWidth="1px" borderRadius="md" bg="green.50" borderColor="green.200">
+                                        <Flex align="center" gap={3}>
+                                            <input
+                                                type="checkbox"
+                                                id="saveAsTemplate"
+                                                checked={saveAsTemplate}
+                                                onChange={(e) => setSaveAsTemplate(e.target.checked)}
+                                                style={{ width: '16px', height: '16px', accentColor: '#38A169' }}
+                                            />
+                                            <label htmlFor="saveAsTemplate" style={{ fontSize: '14px', fontWeight: 500, color: '#2D3748', cursor: 'pointer' }}>
+                                                Save components as template
+                                            </label>
+                                        </Flex>
+                                        {saveAsTemplate && (
+                                            <Box mt={2}>
+                                                <Input
+                                                    size="sm"
+                                                    placeholder="Nama template, e.g. Paket Lapangan Padel Standard"
+                                                    value={templateName}
+                                                    onChange={(e) => setTemplateName(e.target.value)}
+                                                    bg="white"
+                                                />
+                                            </Box>
+                                        )}
+                                    </Box>
                                 </Box>
                             </VStack>
+
+                            {/* Use Template Modal */}
+                            <UseComponentTemplateModal
+                                isOpen={useTemplateOpen}
+                                onClose={() => setUseTemplateOpen(false)}
+                                onLoad={handleLoadTemplate}
+                            />
                         </ModalBody>
 
                         <ModalFooter borderTopWidth="1px" bg="gray.50">

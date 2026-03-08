@@ -436,4 +436,27 @@ export const handleLoadingError = ErrorHandler.handleLoadingError.bind(ErrorHand
 export const handleSaveError = ErrorHandler.handleSaveError.bind(ErrorHandler);
 export const handleDeleteError = ErrorHandler.handleDeleteError.bind(ErrorHandler);
 
+/**
+ * Parse closed period error from backend.
+ * Backend returns error in format: "CLOSED_PERIOD:2026-03-07"
+ * Returns { date: string } if matched, null otherwise.
+ */
+export function parseClosedPeriodError(errorMsg: string): { date: string } | null {
+  const match = errorMsg?.match(/CLOSED_PERIOD:(\d{4}-\d{2}-\d{2})/);
+  if (!match) return null;
+  return { date: match[1] };
+}
+
+/**
+ * Format closed period date according to current language.
+ */
+export function formatClosedPeriodDate(dateStr: string, language: string): string {
+  const dateObj = new Date(dateStr + 'T00:00:00');
+  return dateObj.toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
 export default ErrorHandler;

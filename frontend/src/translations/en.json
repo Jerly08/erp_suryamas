@@ -309,6 +309,8 @@
     "generalJournal": "General Journal",
     "generalLedger": "General Ledger",
     "balanceSheet": "Balance Sheet",
+    "allAccounts": "All Accounts",
+    "selectAccountForBalance": "Select a specific account to view opening & closing balance",
     "filters": {
       "account": "Account",
       "startDate": "Start Date",
@@ -369,6 +371,7 @@
       "equitySection": "Equity",
       "totalEquity": "Total Equity",
       "totalLiabilitiesEquity": "TOTAL LIABILITIES & EQUITY",
+      "period": "Period",
       "unbalanced": "⚠️ Unbalanced: Difference of {{amount}}"
     }
   },
@@ -2580,7 +2583,9 @@
       "importSuccess": "Import Successful",
       "importSuccessDesc": "Data has been imported successfully",
       "printSuccess": "Print Successful",
-      "printSuccessDesc": "Document has been printed successfully"
+      "printSuccessDesc": "Document has been printed successfully",
+      "closedPeriodError": "Accounting Period Locked",
+      "closedPeriodErrorDesc": "Cannot modify transaction on {{date}} because the accounting period is already closed. Contact administrator to reopen this period."
     },
     "confirm": {
       "delete": "Are you sure you want to delete this item?",
@@ -2682,10 +2687,10 @@
       "statusSold": "Sold",
       "fixedAssetAccount": "Fixed Asset Account",
       "chooseFixedAssetAccount": "Choose fixed asset account",
-      "fixedAssetAccountNote": "This account will be debited (default: 1500 - Fixed Assets)",
+      "fixedAssetAccountNote": "This account will be debited (default: 1201-xxx - Fixed Assets)",
       "depreciationExpenseAccount": "Depreciation Expense Account",
       "chooseDepreciationAccount": "Choose depreciation expense account",
-      "depreciationAccountNote": "For monthly depreciation entries (default: 6201 - Depreciation Expense)",
+      "depreciationAccountNote": "For monthly depreciation entries (default: 6103 - Depreciation Expense)",
       "physicalLocation": "Physical Location",
       "enterPhysicalLocation": "Enter asset physical location (e.g., Office Building Floor 2, Room 201)",
       "physicalLocationNote": "Describe where this asset is physically located",
@@ -2696,7 +2701,25 @@
       "saveAssetFirst": "Save Asset First to Upload Image",
       "saveAssetFirstDesc": "You can upload an image after creating this asset. Click 'Create Asset' button to save, then edit the asset to add an image.",
       "notes": "Notes",
-      "enterNotes": "Add any additional notes, maintenance history, or important information about this asset..."
+      "enterNotes": "Add any additional notes, maintenance history, or important information about this asset...",
+      "entryType": "Entry Type",
+      "entryTypePurchase": "New Purchase",
+      "entryTypePurchaseDesc": "Asset is newly purchased, financial transaction occurs now",
+      "entryTypeOpening": "Record Existing Asset (Opening Balance)",
+      "entryTypeOpeningDesc": "Asset was already owned before using this application",
+      "paymentMethod": "Payment Method",
+      "paymentMethodCash": "Cash",
+      "paymentMethodBank": "Bank Transfer",
+      "paymentMethodCredit": "Credit / Accounts Payable",
+      "paymentAccount": "Payment Account",
+      "selectPaymentAccount": "Select cash/bank account",
+      "creditAccount": "Liability Account",
+      "selectCreditAccount": "Select liability account",
+      "paymentMethodNote": "Determines the credit account in the asset acquisition journal",
+      "purchaseJournalInfo": "Journal: Dr Fixed Asset / Cr",
+      "openingJournalInfo": "Journal: Dr Fixed Asset / Cr Equity (Opening Balance)",
+      "openingBalanceNote": "Asset will be recorded as opening balance without affecting cash or liabilities",
+      "manualAssetEntryDescUpdated": "Asset acquisition journal will be created automatically. Select the entry type that matches your asset condition."
     },
     "details": {
       "basicInfo": "Basic Information",

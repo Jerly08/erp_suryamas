@@ -795,6 +795,11 @@ func (s *UnifiedJournalService) UpdateJournalEntry(id uint64, req *JournalEntryR
 		return nil, fmt.Errorf("only draft entries can be updated")
 	}
 
+	// Guard: check if journal entry date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, entry.EntryDate); err != nil {
+		return nil, err
+	}
+
 	// Validate lines
 	if len(req.Lines) < 2 {
 		return nil, fmt.Errorf("at least two journal lines are required")
@@ -857,6 +862,11 @@ func (s *UnifiedJournalService) DeleteJournalEntry(id uint64) error {
 		return fmt.Errorf("only draft entries can be deleted")
 	}
 
+	// Guard: check if journal entry date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, entry.EntryDate); err != nil {
+		return err
+	}
+
 	// Hard delete for draft is acceptable, or soft delete if model supports it
 	// Attempt soft delete first if DeletedAt exists
 	return s.db.Delete(&entry).Error
@@ -876,6 +886,11 @@ func (s *UnifiedJournalService) PostJournalEntry(id uint64, userID uint64) (*mod
 	// Validate balance again just in case
 	if !entry.TotalDebit.Equal(entry.TotalCredit) {
 		return nil, fmt.Errorf("journal entry is not balanced")
+	}
+
+	// Guard: check if journal entry date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, entry.EntryDate); err != nil {
+		return nil, err
 	}
 
 	return &entry, s.db.Transaction(func(tx *gorm.DB) error {

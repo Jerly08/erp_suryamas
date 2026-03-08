@@ -368,6 +368,12 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		return nil, fmt.Errorf("sale not found")
 	}
 
+	// Guard: check if sale date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, sale.Date); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	// Store old status for journal update logic
 	oldStatus := sale.Status
 
@@ -1262,6 +1268,12 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 		return fmt.Errorf("sale not found")
 	}
 
+	// Guard: check if sale date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, sale.Date); err != nil {
+		tx.Rollback()
+		return err
+	}
+
 	oldStatus := sale.Status
 	sale.Status = "CANCELLED"
 	sale.InternalNotes = fmt.Sprintf("Cancelled: %s", reason)
@@ -1280,11 +1292,24 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 
 	// 2. Remove SALES journal entries if they exist (for INVOICED/PAID status)
 	if s.salesJournalService.ShouldPostToJournal(oldStatus) {
+		// Delete V2 journal entries (source_type='SALES') — includes COA balance reversal
 		if err := s.salesJournalService.DeleteSalesJournal(sale.ID, tx); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("failed to remove journal entries: %v", err)
+			return fmt.Errorf("failed to remove V2 journal entries: %v", err)
 		}
-		log.Printf("🗑️ Removed SALES journal entries for cancelled Sale #%d", sale.ID)
+		log.Printf("🗑️ Removed V2 SALES journal entries for cancelled Sale #%d", sale.ID)
+
+		// CRITICAL FIX: Also delete SSOT journal entries (source_type='SALE')
+		// The SSOT service uses 'SALE' (not 'SALES') as source_type
+		// Without this, Balance Sheet and Neraca Saldo would still show the cancelled sale
+		if s.salesJournalServiceSSOT != nil {
+			if err := s.salesJournalServiceSSOT.DeleteSalesJournal(sale.ID, tx); err != nil {
+				log.Printf("⚠️ Warning: Failed to remove SSOT journal entries for Sale #%d: %v", sale.ID, err)
+				// Continue - V2 journal was already cleaned up
+			} else {
+				log.Printf("🗑️ Removed SSOT SALE journal entries for cancelled Sale #%d", sale.ID)
+			}
+		}
 	}
 
 	// 3. Remove SALES_PAYMENT journal entries (from ProcessPayment)
@@ -1490,41 +1515,46 @@ func (s *SalesServiceV2) GetSaleByID(saleID uint) (*models.Sale, error) {
 	return &sale, nil
 }
 
-// DeleteSale soft deletes a sale
+// DeleteSale cancels a sale instead of deleting it (proper accounting: maintain audit trail)
 func (s *SalesServiceV2) DeleteSale(saleID uint) error {
-	tx := s.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
+	// Check if sale exists
 	var sale models.Sale
-	if err := tx.First(&sale, saleID).Error; err != nil {
-		tx.Rollback()
+	if err := s.db.First(&sale, saleID).Error; err != nil {
 		return fmt.Errorf("sale not found")
 	}
 
-	// Remove journal entries if they exist
-	if s.salesJournalService.ShouldPostToJournal(sale.Status) {
-		if err := s.salesJournalService.DeleteSalesJournal(sale.ID, tx); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to remove journal entries: %v", err)
-		}
+	// If already cancelled, nothing to do
+	if sale.Status == "CANCELLED" {
+		log.Printf("ℹ️ Sale #%d is already CANCELLED, nothing to do", saleID)
+		return nil
 	}
 
-	// Soft delete the sale
-	if err := tx.Delete(&sale).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to delete sale: %v", err)
+	// Guard: check if sale date is in a closed accounting period
+	if err := CheckClosedPeriod(s.db, sale.Date); err != nil {
+		return err
 	}
 
-	log.Printf("🗑️ Deleted sale #%d", saleID)
-
-	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit transaction: %v", err)
+	// For INVOICED/PAID sales, use CancelSale which handles full accounting reversal
+	// (journal, stock, cash/bank, payments, auto-kitting restore)
+	if sale.Status == "INVOICED" || sale.Status == "PAID" {
+		log.Printf("🔄 Sale #%d has status %s, performing full accounting reversal via CancelSale", saleID, sale.Status)
+		return s.CancelSale(saleID, "Dibatalkan oleh admin", 0)
 	}
 
+	// For DRAFT/CONFIRMED sales (no journal entries yet), just set status to CANCELLED
+	log.Printf("🔄 Sale #%d has status %s, setting status to CANCELLED (no journal reversal needed)", saleID, sale.Status)
+
+	sale.Status = "CANCELLED"
+	sale.InternalNotes = "Dibatalkan oleh admin"
+	sale.UpdatedAt = time.Now()
+	sale.OutstandingAmount = 0
+	sale.PaidAmount = 0
+
+	if err := s.db.Save(&sale).Error; err != nil {
+		return fmt.Errorf("failed to cancel sale: %v", err)
+	}
+
+	log.Printf("✅ Sale #%d cancelled successfully (status: CANCELLED, audit trail preserved)", saleID)
 	return nil
 }
 

@@ -18,6 +18,12 @@ export interface AssetFormData {
   condition?: string;
   assetAccountId?: number;
   depreciationAccountId?: number;
+  accumulatedDepreciationAccountId?: number;
+  coordinates?: string;
+  entryType?: 'purchase' | 'opening';
+  paymentMethod?: string;
+  paymentAccountId?: number;
+  creditAccountId?: number;
 }
 
 export interface ValidationError {
@@ -89,6 +95,19 @@ export const validateAssetForm = (
     errors.push({ field: 'usefulLife', message: 'Useful life must be greater than 0' });
   } else if (data.usefulLife > 100) {
     errors.push({ field: 'usefulLife', message: 'Useful life cannot exceed 100 years' });
+  }
+
+  // Depreciation account validation — required when status is ACTIVE
+  // (skip for land/tanah which doesn't depreciate)
+  const categoryLower = (data.category || '').toLowerCase().trim();
+  const isLand = categoryLower === 'tanah' || categoryLower === 'land';
+  if (data.status === 'ACTIVE' && !isLand) {
+    if (!data.depreciationAccountId) {
+      errors.push({ field: 'depreciationAccountId', message: 'Depreciation expense account is required for active assets' });
+    }
+    if (!data.accumulatedDepreciationAccountId) {
+      errors.push({ field: 'accumulatedDepreciationAccountId', message: 'Accumulated depreciation account is required for active assets' });
+    }
   }
 
   // Serial number validation (if provided)
