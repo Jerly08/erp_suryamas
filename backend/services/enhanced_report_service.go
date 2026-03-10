@@ -65,17 +65,18 @@ func NewEnhancedReportService(
 
 // BalanceSheetData represents a comprehensive balance sheet structure
 type BalanceSheetData struct {
-	Company     CompanyInfo         `json:"company"`
-	AsOfDate    time.Time           `json:"as_of_date"`
-	Currency    string              `json:"currency"`
-	Assets      BalanceSheetSection `json:"assets"`
-	Liabilities BalanceSheetSection `json:"liabilities"`
-	Equity      BalanceSheetSection `json:"equity"`
-	TotalAssets float64             `json:"total_assets"`
-	TotalEquity float64             `json:"total_equity"`
-	IsBalanced  bool                `json:"is_balanced"`
-	Difference  float64             `json:"difference"`
-	GeneratedAt time.Time           `json:"generated_at"`
+	Company                    CompanyInfo         `json:"company"`
+	AsOfDate                   time.Time           `json:"as_of_date"`
+	Currency                   string              `json:"currency"`
+	Assets                     BalanceSheetSection `json:"assets"`
+	Liabilities                BalanceSheetSection `json:"liabilities"`
+	Equity                     BalanceSheetSection `json:"equity"`
+	TotalAssets                float64             `json:"total_assets"`
+	TotalEquity                float64             `json:"total_equity"`
+	TotalLiabilitiesAndEquity  float64             `json:"total_liabilities_and_equity"`
+	IsBalanced                 bool                `json:"is_balanced"`
+	Difference                 float64             `json:"difference"`
+	GeneratedAt                time.Time           `json:"generated_at"`
 }
 
 // ProfitLossData represents a comprehensive P&L statement structure
@@ -398,6 +399,7 @@ type GeneralLedgerEntry struct {
 
 type MonthlyLedgerSummary struct {
 	Month       string  `json:"month"`
+	MonthKey    string  `json:"month_key"` // "2006-01" format for chronological sorting
 	Year        int     `json:"year"`
 	Debits      float64 `json:"debits"`
 	Credits     float64 `json:"credits"`
@@ -764,7 +766,7 @@ func (ers *EnhancedReportService) GenerateBalanceSheet(asOfDate time.Time) (*Bal
 
 	// Calculate total liabilities and equity
 	totalLiabilitiesAndEquity := balanceSheet.Liabilities.Total + balanceSheet.Equity.Total
-	balanceSheet.TotalEquity = totalLiabilitiesAndEquity
+	balanceSheet.TotalLiabilitiesAndEquity = totalLiabilitiesAndEquity
 
 	// Check if balance sheet is balanced
 	balanceSheet.Difference = balanceSheet.TotalAssets - totalLiabilitiesAndEquity
@@ -905,8 +907,8 @@ func (ers *EnhancedReportService) generateProfitLossData(startDate, endDate time
 	// Build comprehensive P&L sections
 	profitLoss.Revenue = PLSection{
 		Name:     "Revenue",
-		Items:    append(operatingRevenueItems, nonOperatingRevenueItems...),
-		Subtotal: totalRevenue,
+		Items:    operatingRevenueItems,
+		Subtotal: totalOperatingRevenue,
 	}
 
 	profitLoss.CostOfGoodsSold = PLSection{
@@ -939,8 +941,9 @@ func (ers *EnhancedReportService) generateProfitLossData(startDate, endDate time
 		profitLoss.GrossProfitMargin = (profitLoss.GrossProfit / totalOperatingRevenue) * 100
 	}
 
-	// Calculate EBITDA (approximation without depreciation detail)
-	profitLoss.EBITDA = profitLoss.GrossProfit - totalOperatingExpenses + totalNonOperatingRevenue - totalNonOperatingExpenses
+	// Calculate EBITDA (approximation without depreciation detail) - operating metric only
+	// Gross Profit - Total Operating Expenses (excluding any non-operating items)
+	profitLoss.EBITDA = profitLoss.GrossProfit - totalOperatingExpenses
 
 	// Calculate EBIT
 	profitLoss.EBIT = profitLoss.EBITDA // Simplified - would subtract depreciation and amortization
@@ -967,8 +970,8 @@ func (ers *EnhancedReportService) generateProfitLossData(startDate, endDate time
 		profitLoss.EarningsPerShare = profitLoss.NetIncome / profitLoss.SharesOutstanding
 		profitLoss.DilutedEPS = profitLoss.EarningsPerShare // Simplified - would account for dilutive securities
 	} else {
-		profitLoss.EarningsPerShare = profitLoss.NetIncome
-		profitLoss.DilutedEPS = profitLoss.NetIncome
+		profitLoss.EarningsPerShare = 0
+		profitLoss.DilutedEPS = 0
 	}
 
 	return profitLoss, nil
@@ -1076,7 +1079,10 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 	}).Debug("Executing sales data query")
 
 	// Use timezone-aware date range for better accuracy
-	queryResult := query.Where("date >= ? AND date <= ?", startDate, endDate).Find(&sales)
+	// Only include APPROVED/COMPLETED sales - exclude DRAFT/CANCELLED
+	queryResult := query.Where("date >= ? AND date <= ?", startDate, endDate).
+		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"}).
+		Find(&sales)
 
 	queryDuration := time.Since(queryStartTime)
 	utils.ReportLog.LogQueryPerformance("SalesQuery", queryDuration, len(sales))
@@ -1210,6 +1216,12 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		customerSet[sale.CustomerID] = true
 
 		// Process customer data
+		// Get customer name safely
+		customerName := "Unknown Customer"
+		if sale.Customer.ID != 0 {
+			customerName = sale.Customer.Name
+		}
+
 		if customerData, exists := customerMap[sale.CustomerID]; exists {
 			customerData.TotalAmount += sale.TotalAmount
 			customerData.TransactionCount++
@@ -1222,7 +1234,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		} else {
 			customerMap[sale.CustomerID] = &CustomerSalesData{
 				CustomerID:       sale.CustomerID,
-				CustomerName:     sale.Customer.Name,
+				CustomerName:     customerName,
 				TotalAmount:      sale.TotalAmount,
 				TransactionCount: 1,
 				LastOrderDate:    sale.Date,
@@ -1261,6 +1273,11 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 
 		// Process product data
 		for _, item := range sale.SaleItems {
+			productName := "Unknown Product"
+			if item.Product.ID != 0 {
+				productName = item.Product.Name
+			}
+
 			if productData, exists := productMap[item.ProductID]; exists {
 				productData.QuantitySold += int64(item.Quantity)
 				productData.TotalAmount += item.LineTotal
@@ -1268,7 +1285,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			} else {
 				productMap[item.ProductID] = &ProductSalesData{
 					ProductID:        item.ProductID,
-					ProductName:      item.Product.Name,
+					ProductName:      productName,
 					QuantitySold:     int64(item.Quantity),
 					TotalAmount:      item.LineTotal,
 					TransactionCount: 1,
@@ -1491,22 +1508,31 @@ func calculateDataQualityScore(sales []models.Sale) float64 {
 
 // GenerateVendorAnalysis creates comprehensive vendor analysis report
 func (ers *EnhancedReportService) GenerateVendorAnalysis(startDate, endDate time.Time) (*VendorAnalysisData, error) {
-	// Query purchase data
+	// Query purchase data - only APPROVED/COMPLETED purchases
 	var purchases []models.Purchase
 	if err := ers.db.Preload("Vendor").
 		Preload("PurchaseItems").
 		Preload("PurchaseItems.Product").
 		Where("date BETWEEN ? AND ?", startDate, endDate).
+		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"}).
 		Find(&purchases).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch purchase data: %v", err)
 	}
 
-	// Query payment data for vendor analysis through purchase payments
+	// Query payment data linked to the purchases within the date range (not independently by payment date)
+	// This ensures payments are matched to their corresponding purchases
+	purchaseIDs := make([]uint, 0, len(purchases))
+	for _, p := range purchases {
+		purchaseIDs = append(purchaseIDs, p.ID)
+	}
+
 	var purchasePayments []models.PurchasePayment
-	if err := ers.db.Preload("Payment").
-		Where("date BETWEEN ? AND ?", startDate, endDate).
-		Find(&purchasePayments).Error; err != nil {
-		return nil, fmt.Errorf("failed to fetch purchase payment data: %v", err)
+	if len(purchaseIDs) > 0 {
+		if err := ers.db.Preload("Payment").
+			Where("purchase_id IN ?", purchaseIDs).
+			Find(&purchasePayments).Error; err != nil {
+			return nil, fmt.Errorf("failed to fetch purchase payment data: %v", err)
+		}
 	}
 
 	// Initialize vendor analysis
@@ -1707,12 +1733,23 @@ func (ers *EnhancedReportService) GenerateTrialBalance(asOfDate time.Time) (*Tri
 		}
 
 		// Set debit or credit balance based on normal balance type
+		// If balance is negative for its normal side, place it on the opposite side
 		if normalBalance == models.NormalBalanceDebit {
-			item.DebitBalance = balance
-			trialBalance.TotalDebits += balance
+			if balance >= 0 {
+				item.DebitBalance = balance
+				trialBalance.TotalDebits += balance
+			} else {
+				item.CreditBalance = -balance
+				trialBalance.TotalCredits += -balance
+			}
 		} else {
-			item.CreditBalance = balance
-			trialBalance.TotalCredits += balance
+			if balance >= 0 {
+				item.CreditBalance = balance
+				trialBalance.TotalCredits += balance
+			} else {
+				item.DebitBalance = -balance
+				trialBalance.TotalDebits += -balance
+			}
 		}
 
 		trialBalance.Accounts = append(trialBalance.Accounts, item)
@@ -1819,7 +1856,21 @@ func (ers *EnhancedReportService) GenerateGeneralLedger(accountID uint, startDat
 		debitAmt := line.DebitAmount.InexactFloat64()
 		creditAmt := line.CreditAmount.InexactFloat64()
 
-		// Update running balance
+		if debitAmt > 0 && creditAmt > 0 {
+			netDiff := debitAmt - creditAmt
+			if netDiff > 0 {
+				debitAmt = netDiff
+				creditAmt = 0
+			} else if netDiff < 0 {
+				creditAmt = -netDiff
+				debitAmt = 0
+			} else {
+				debitAmt = 0
+				creditAmt = 0
+			}
+		}
+
+		// Update running balance - handle debit and credit independently
 		if debitAmt > 0 {
 			if account.GetNormalBalance() == models.NormalBalanceDebit {
 				runningBalance += debitAmt
@@ -1827,7 +1878,8 @@ func (ers *EnhancedReportService) GenerateGeneralLedger(accountID uint, startDat
 				runningBalance -= debitAmt
 			}
 			generalLedger.TotalDebits += debitAmt
-		} else {
+		}
+		if creditAmt > 0 {
 			if account.GetNormalBalance() == models.NormalBalanceCredit {
 				runningBalance += creditAmt
 			} else {
@@ -1838,6 +1890,7 @@ func (ers *EnhancedReportService) GenerateGeneralLedger(accountID uint, startDat
 
 		// Create transaction entry
 		entry := GeneralLedgerEntry{
+			JournalID:    uint64(line.JournalID),
 			Date:         line.Journal.EntryDate,
 			JournalCode:  line.Journal.EntryNumber,
 			Description:  line.Description,
@@ -1871,13 +1924,13 @@ func (ers *EnhancedReportService) GenerateGeneralLedger(accountID uint, startDat
 	generalLedger.ClosingBalance = runningBalance
 
 	// Convert monthly map to sorted slice
-	for _, summary := range monthlyMap {
+	for key, summary := range monthlyMap {
+		summary.MonthKey = key // Store "2006-01" format key for sorting
 		generalLedger.MonthlySummary = append(generalLedger.MonthlySummary, *summary)
 	}
 	sort.Slice(generalLedger.MonthlySummary, func(i, j int) bool {
-		return generalLedger.MonthlySummary[i].Year < generalLedger.MonthlySummary[j].Year ||
-			(generalLedger.MonthlySummary[i].Year == generalLedger.MonthlySummary[j].Year &&
-				generalLedger.MonthlySummary[i].Month < generalLedger.MonthlySummary[j].Month)
+		// Sort chronologically using "2006-01" format key instead of month name
+		return generalLedger.MonthlySummary[i].MonthKey < generalLedger.MonthlySummary[j].MonthKey
 	})
 
 	return generalLedger, nil
@@ -2143,12 +2196,13 @@ func (ers *EnhancedReportService) GenerateJournalEntryAnalysisWithFilters(startD
 
 // GeneratePurchaseSummary creates comprehensive purchase analytics
 func (ers *EnhancedReportService) GeneratePurchaseSummary(startDate, endDate time.Time, groupBy string) (*PurchaseSummaryData, error) {
-	// Query purchase data
+	// Query purchase data - only APPROVED/COMPLETED purchases
 	var purchases []models.Purchase
 	if err := ers.db.Preload("Vendor").
 		Preload("PurchaseItems").
 		Preload("PurchaseItems.Product").
 		Where("date BETWEEN ? AND ?", startDate, endDate).
+		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"}).
 		Find(&purchases).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch purchase data: %v", err)
 	}

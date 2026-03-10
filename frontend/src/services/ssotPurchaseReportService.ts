@@ -271,14 +271,20 @@ class SSOTPurchaseReportService {
     outstanding_count: number;
   } {
     const totalPurchases = data.total_purchases;
-    const paidPurchases = data.purchases_by_vendor.filter(v => v.outstanding <= 0).length;
-    const outstandingCount = data.purchases_by_vendor.filter(v => v.outstanding > 0).length;
-    
+    const totalVendors = data.purchases_by_vendor.length;
+    const paidVendors = data.purchases_by_vendor.filter(v => v.outstanding <= 0).length;
+    const outstandingVendors = data.purchases_by_vendor.filter(v => v.outstanding > 0).length;
+
+    // Calculate efficiency based on amount paid vs total amount (not vendor count vs purchase count)
+    const totalAmount = data.total_amount || 0;
+    const totalPaid = data.total_paid || 0;
+    const efficiencyPercentage = totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0;
+
     return {
       total_purchases: totalPurchases,
-      paid_purchases: paidPurchases,
-      efficiency_percentage: totalPurchases > 0 ? (paidPurchases / totalPurchases) * 100 : 0,
-      outstanding_count: outstandingCount
+      paid_purchases: totalVendors - outstandingVendors,
+      efficiency_percentage: efficiencyPercentage,
+      outstanding_count: outstandingVendors
     };
   }
 

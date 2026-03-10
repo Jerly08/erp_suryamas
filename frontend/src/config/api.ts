@@ -183,6 +183,11 @@ export const API_ENDPOINTS = {
     // Reconciliation (available under /cash-bank group)
     RECONCILE: (id: number) => `/api/v1/cash-bank/accounts/${id}/reconcile`,
 
+    // Frozen Fund Management
+    FREEZE: (id: number) => `/api/v1/cash-bank/accounts/${id}/freeze`,
+    UNFREEZE: (id: number) => `/api/v1/cash-bank/accounts/${id}/unfreeze`,
+    FROZEN_HISTORY: (id: number) => `/api/v1/cash-bank/accounts/${id}/frozen-history`,
+
     // Admin maintenance (kept for compatibility if wired)
     CHECK_GL_LINKS: '/api/v1/admin/check-cashbank-gl-links',
     FIX_GL_LINKS: '/api/v1/admin/fix-cashbank-gl-links',
@@ -347,16 +352,16 @@ export const API_ENDPOINTS = {
     JOURNAL_ANALYSIS: '/api/v1/ssot-reports/journal-analysis',
     VENDOR_ANALYSIS: '/api/v1/ssot-reports/vendor-analysis',
 
-    // Balance Sheet - Using the correct endpoint that matches backend routes
-    BALANCE_SHEET: '/api/v1/reports/ssot/balance-sheet',
-    BALANCE_SHEET_DETAILS: '/api/v1/reports/ssot/balance-sheet/account-details',
-    BALANCE_SHEET_VALIDATE: '/api/v1/reports/ssot/balance-sheet/validate',
-    BALANCE_SHEET_COMPARISON: '/api/v1/reports/ssot/balance-sheet/comparison',
+    // Balance Sheet - matches backend: ssot_report_routes.go registers under /ssot-reports group
+    BALANCE_SHEET: '/api/v1/ssot-reports/balance-sheet',
+    BALANCE_SHEET_DETAILS: '/api/v1/ssot-reports/balance-sheet/account-details',
+    BALANCE_SHEET_VALIDATE: '/api/v1/ssot-reports/balance-sheet/validate',
+    BALANCE_SHEET_COMPARISON: '/api/v1/ssot-reports/balance-sheet/comparison',
 
-    // Cash Flow - Using the correct endpoint that matches backend routes
-    CASH_FLOW: '/api/v1/reports/ssot/cash-flow',
-    CASH_FLOW_SUMMARY: '/api/v1/reports/ssot/cash-flow/summary',
-    CASH_FLOW_VALIDATE: '/api/v1/reports/ssot/cash-flow/validate',
+    // Cash Flow - matches backend: ssot_report_routes.go registers under /ssot-reports group
+    CASH_FLOW: '/api/v1/ssot-reports/cash-flow',
+    CASH_FLOW_SUMMARY: '/api/v1/ssot-reports/cash-flow/summary',
+    CASH_FLOW_VALIDATE: '/api/v1/ssot-reports/cash-flow/validate',
 
     // Account balances for COA sync
     ACCOUNT_BALANCES: '/api/v1/ssot-reports/account-balances',
@@ -447,7 +452,7 @@ export const API_ENDPOINTS = {
   MONITORING_API_USAGE_RESET: '/api/v1/monitoring/api-usage/reset',
   MONITORING_PERFORMANCE_REPORT: '/api/v1/monitoring/performance/report',
   MONITORING_PERFORMANCE_METRICS: '/api/v1/monitoring/performance/metrics',
-  MONITORING_PERFORMANCE_BOTTLENEcks: '/api/v1/monitoring/performance/bottlenecks',
+  MONITORING_PERFORMANCE_BOTTLENECKS: '/api/v1/monitoring/performance/bottlenecks',
   MONITORING_PERFORMANCE_RECOMMENDATIONS: '/api/v1/monitoring/performance/recommendations',
   MONITORING_PERFORMANCE_SYSTEM: '/api/v1/monitoring/performance/system',
   MONITORING_PERFORMANCE_CLEAR: '/api/v1/monitoring/performance/metrics/clear',

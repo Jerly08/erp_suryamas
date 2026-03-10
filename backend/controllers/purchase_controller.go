@@ -157,7 +157,11 @@ func (pc *PurchaseController) CreatePurchase(c *gin.Context) {
 	// Debug log the incoming request
 	fmt.Printf("[DEBUG] CreatePurchase - Incoming request: %+v\n", request)
 	for i, item := range request.Items {
-		fmt.Printf("[DEBUG] Item %d: ProductID=%d, Qty=%d, Price=%.2f\n", i, item.ProductID, item.Quantity, item.UnitPrice)
+		productID := uint(0)
+		if item.ProductID != nil {
+			productID = *item.ProductID
+		}
+		fmt.Printf("[DEBUG] Item %d: ItemType=%s, ProductID=%d, Qty=%d, Price=%.2f\n", i, item.ItemType, productID, item.Quantity, item.UnitPrice)
 	}
 
 	userID := c.MustGet("user_id").(uint)

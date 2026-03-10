@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -138,7 +139,7 @@ func (s *SSOTBalanceSheetService) getAccountBalancesFromSSOT(asOfDate string) ([
 
 	// ALWAYS use journal-based calculation with date filter
 	// This ensures we get accurate balances for any point in time, not just current balance
-	fmt.Printf("[DEBUG] Calculating balances from SSOT journal lines up to %s\n", asOfDate)
+	log.Printf("Calculating balances from SSOT journal lines up to %s", asOfDate)
 
 	journalQuery := `
 		SELECT 
@@ -173,32 +174,32 @@ func (s *SSOTBalanceSheetService) getAccountBalancesFromSSOT(asOfDate string) ([
 		return nil, fmt.Errorf("error executing journal balances query: %v", err)
 	}
 
-	fmt.Printf("[DEBUG] Retrieved %d accounts from journal lines up to %s\n", len(rawBalances), asOfDate)
+	log.Printf("Retrieved %d accounts from journal lines up to %s", len(rawBalances), asOfDate)
 
 	// If still no data, try legacy journals as last resort
 	if len(rawBalances) == 0 {
 		legacy, lerr := s.getAccountBalancesFromLegacy(asOfDate)
 		if lerr == nil && len(legacy) > 0 {
-			fmt.Printf("[DEBUG] Using legacy journals: %d accounts\n", len(legacy))
+			log.Printf("Using legacy journals: %d accounts", len(legacy))
 			return legacy, nil
 		}
 	}
 
-	// Log all liability accounts for debugging
-	fmt.Printf("[DEBUG] === DEDUPLICATED LIABILITY ACCOUNTS ===\n")
+	// Log liability accounts
+	log.Printf("=== DEDUPLICATED LIABILITY ACCOUNTS ===")
 	for _, balance := range rawBalances {
 		if strings.ToUpper(balance.AccountType) == "LIABILITY" {
-			fmt.Printf("[DEBUG] Liability: %s - %s | Balance: %.2f | Debit: %.2f | Credit: %.2f\n",
+			log.Printf("Liability: %s - %s | Balance: %.2f | Debit: %.2f | Credit: %.2f",
 				balance.AccountCode, balance.AccountName, balance.NetBalance,
 				balance.DebitTotal, balance.CreditTotal)
 		}
 	}
 
 	// Log sample accounts for verification
-	fmt.Printf("[DEBUG] === SAMPLE ACCOUNTS (first 10) ===\n")
+	log.Printf("=== SAMPLE ACCOUNTS (first 10) ===")
 	for i, balance := range rawBalances {
 		if i < 10 {
-			fmt.Printf("[DEBUG] %s - %s | Type: %s | Balance: %.2f\n",
+			log.Printf("%s - %s | Type: %s | Balance: %.2f",
 				balance.AccountCode, balance.AccountName, balance.AccountType, balance.NetBalance)
 		}
 	}
@@ -233,10 +234,10 @@ func (s *SSOTBalanceSheetService) getAccountBalancesFromAccountTable() ([]SSOTAc
 		return nil, fmt.Errorf("error executing fallback account balances query: %v", err)
 	}
 
-	fmt.Printf("[DEBUG] Fallback method: Found %d deduplicated accounts with direct balances\n", len(balances))
+	log.Printf("Fallback method: Found %d deduplicated accounts with direct balances", len(balances))
 	for i, balance := range balances {
 		if i < 10 && balance.NetBalance != 0 { // Log first 10 non-zero accounts
-			fmt.Printf("[DEBUG] Fallback Account %s (%s): Type=%s, Balance=%.2f\n",
+			log.Printf("Fallback Account %s (%s): Type=%s, Balance=%.2f",
 				balance.AccountCode, balance.AccountName, balance.AccountType, balance.NetBalance)
 		}
 	}
@@ -276,7 +277,6 @@ func (s *SSOTBalanceSheetService) getAccountBalancesFromLegacy(asOfDate string) 
 	GROUP BY a.code, UPPER(a.type)
 	HAVING COALESCE(SUM(jl.debit_amount), 0) <> 0
 		    OR COALESCE(SUM(jl.credit_amount), 0) <> 0
-		    OR MAX(a.balance) <> 0
 		ORDER BY a.code
 	`
 
@@ -286,7 +286,7 @@ func (s *SSOTBalanceSheetService) getAccountBalancesFromLegacy(asOfDate string) 
 
 	// If no balances found, try to get all accounts with their direct balances (deduplicated)
 	if len(balances) == 0 {
-		fmt.Printf("[DEBUG] No legacy balances found, trying direct account balances\n")
+		log.Printf("No legacy balances found, trying direct account balances")
 		allAccountsQuery := `
 			SELECT 
 				MIN(a.id) as account_id,
@@ -307,7 +307,7 @@ func (s *SSOTBalanceSheetService) getAccountBalancesFromLegacy(asOfDate string) 
 		if err := s.db.Raw(allAccountsQuery).Scan(&balances).Error; err != nil {
 			return nil, fmt.Errorf("error executing all accounts query: %v", err)
 		}
-		fmt.Printf("[DEBUG] Retrieved %d accounts with direct balances (legacy fallback, deduplicated)\n", len(balances))
+		log.Printf("Retrieved %d accounts with direct balances (legacy fallback, deduplicated)", len(balances))
 	}
 
 	return balances, nil
@@ -323,16 +323,16 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 	var row niRow
 	var netIncome float64
 
-	fmt.Printf("[DEBUG] calculateNetIncome START - AsOfDate: %s\n", asOfDate)
+	log.Printf("calculateNetIncome START - AsOfDate: %s", asOfDate)
 
 	// Helper to check for account types including localized names
 	// Revenue: REVENUE, PENDAPATAN%
 	// Expense: EXPENSE, BEBAN%
 
 	// Use ILIKE for case-insensitive matching.
-	// CRITICAL FIX: Removed 'AND COALESCE(a.is_header, false) = false'
-	// Reason: User has balances in Header accounts (e.g. 4101) which are not rolled up.
-	// Excluding headers causes missing Net Income.
+	// NOTE: is_header filter is kept to exclude header accounts from direct balance calculation.
+	// Header accounts should have their balances rolled up into child accounts.
+	// If header accounts have orphan balances, those need to be fixed in the chart of accounts.
 	// Net Income = Revenue - Expenses
 	// Revenue (credit normal): credit_amount - debit_amount = positive income
 	// Expense (debit normal): SUBTRACT from income, so use: -(debit_amount - credit_amount) = credit_amount - debit_amount
@@ -365,9 +365,9 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 
 	if err := s.db.Raw(query, asOfDate).Scan(&row).Error; err == nil {
 		netIncome = row.NetIncome
-		fmt.Printf("[DEBUG] Net Income calculated from SSOT: %.2f\n", netIncome)
+		log.Printf("Net Income calculated from SSOT: %.2f", netIncome)
 	} else {
-		fmt.Printf("[DEBUG] Failed to get net income from SSOT, checking fallbacks: %v\n", err)
+		log.Printf("Failed to get net income from SSOT, checking fallbacks: %v", err)
 	}
 
 	// If SSOT returned zero and tables might be empty, try legacy journals fallback
@@ -397,18 +397,22 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 			AND a.deleted_at IS NULL`
 		if err := s.db.Raw(legacyQuery, asOfDate).Scan(&legacy).Error; err == nil {
 			netIncome = legacy.NetIncome
-			fmt.Printf("[DEBUG] Net Income from legacy journals: %.2f\n", netIncome)
+			log.Printf("Net Income from legacy journals: %.2f", netIncome)
 		} else {
 			// Fallback to accounts table balances as last resort
 			var revenue, expense float64
-			s.db.Raw(`SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE (TRIM(type) ILIKE 'REVENUE' OR TRIM(type) ILIKE 'PENDAPATAN%') AND deleted_at IS NULL`).Scan(&revenue)
-			s.db.Raw(`SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE (TRIM(type) ILIKE 'EXPENSE' OR TRIM(type) ILIKE 'BEBAN%') AND deleted_at IS NULL`).Scan(&expense)
+			if err := s.db.Raw(`SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE (TRIM(type) ILIKE 'REVENUE' OR TRIM(type) ILIKE 'PENDAPATAN%') AND deleted_at IS NULL`).Scan(&revenue).Error; err != nil {
+				log.Printf("Failed to scan fallback revenue: %v", err)
+			}
+			if err := s.db.Raw(`SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE (TRIM(type) ILIKE 'EXPENSE' OR TRIM(type) ILIKE 'BEBAN%') AND deleted_at IS NULL`).Scan(&expense).Error; err != nil {
+				log.Printf("Failed to scan fallback expense: %v", err)
+			}
 			netIncome = revenue - expense
-			fmt.Printf("[DEBUG] Net Income from fallback (Accounts Table) - Revenue: %.2f, Expense: %.2f, Net: %.2f\n", revenue, expense, netIncome)
+			log.Printf("Net Income from fallback (Accounts Table) - Revenue: %.2f, Expense: %.2f, Net: %.2f", revenue, expense, netIncome)
 		}
 	}
 
-	fmt.Printf("[DEBUG] calculateNetIncome END - Final Result: %.2f\n", netIncome)
+	log.Printf("calculateNetIncome END - Final Result: %.2f", netIncome)
 	return netIncome
 }
 
@@ -458,43 +462,38 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 	// We should NOT recalculate Net Income from journal lines as it causes double counting
 
 	// Strategy: Check accounts.balance (not journal lines) to determine if period closed
-	var hasActiveRevenueExpense bool
 	var totalRevenueBalance, totalExpenseBalance float64
 
 	for _, balance := range balances {
 		accountType := strings.ToUpper(balance.AccountType)
 		// Check for English OR Indonesian account types
 		if (accountType == "REVENUE" || accountType == "PENDAPATAN") && balance.NetBalance != 0 {
-			hasActiveRevenueExpense = true
 			totalRevenueBalance += balance.NetBalance
 		} else if (accountType == "EXPENSE" || accountType == "BEBAN") && balance.NetBalance != 0 {
-			hasActiveRevenueExpense = true
 			totalExpenseBalance += balance.NetBalance
 		}
 	}
 
-	// Calculate Net Income from ALL sources (Journal Entries) regardless of account current balance
-	// This ensures we capture net income even if temporary accounts are zeroed out or not loaded
-	netIncomeFromJournals := s.calculateNetIncome(asOf.Format("2006-01-02"))
+	// Check if closing entries exist for this period.
+	// If closing entries transferred net income to retained earnings,
+	// adding net income again would cause double-counting.
+	var closingEntryCount int64
+	s.db.Table("unified_journal_ledger").
+		Where("source_type = 'CLOSING' AND status = 'POSTED' AND deleted_at IS NULL AND DATE(entry_date) <= ?", asOf.Format("2006-01-02")).
+		Count(&closingEntryCount)
 
-	fmt.Printf("[DEBUG] Net Income calculated from journals: %.2f\n", netIncomeFromJournals)
-
-	// Determine if we should use the calculated net income
-	// If Retained Earnings already includes it (closed period), we might double count
-	// But since we don't have a reliable "IsPeriodClosed" flag here, we'll check if
-	// Revenue/Expense accounts have non-zero balances.
-	//
-	// However, for the purpose of "Current Year Earnings", we usually want to show it
-	// explicitly if it's not yet closed to Retained Earnings.
-
-	var netIncome float64 = netIncomeFromJournals
-
-	// Log for debugging
-	if hasActiveRevenueExpense {
-		fmt.Printf("[DEBUG] Active Revenue/Expense balances detected (Total Rev: %.2f, Total Exp: %.2f)\n",
-			totalRevenueBalance, totalExpenseBalance)
+	var netIncome float64
+	if closingEntryCount > 0 {
+		// Period has been closed.
+		// Retained earnings already includes net income from closing entries.
+		// Do NOT add net income again to avoid double-counting.
+		log.Printf("Period closed (closing entries: %d). Skipping net income addition to avoid double-counting.", closingEntryCount)
+		netIncome = 0
 	} else {
-		fmt.Printf("[DEBUG] No active Revenue/Expense balances found in accounts table.\n")
+		// Period NOT closed.
+		// Calculate and add net income as "Current Year Earnings".
+		netIncome = s.calculateNetIncome(asOf.Format("2006-01-02"))
+		log.Printf("Net income calculated from journals: %.2f (closing entries: %d)", netIncome, closingEntryCount)
 	}
 
 	// Process each account balance
@@ -507,13 +506,13 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 		if strings.ToUpper(balance.AccountType) == "LIABILITY" {
 			// Log liability accounts for debugging
 			if amount != 0 || strings.Contains(strings.ToUpper(balance.AccountName), "UTANG") {
-				fmt.Printf("[DEBUG] Liability Account Found: %s - %s (Type: %s, Balance: %.2f)\n",
+				log.Printf("Liability Account Found: %s - %s (Type: %s, Balance: %.2f)",
 					code, balance.AccountName, balance.AccountType, amount)
 			}
 
 			// Log specific liability account for debugging
 			if code == "2101" {
-				fmt.Printf("[DEBUG] Processing UTANG USAHA (2101): Amount=%.2f, Type=%s\n", amount, balance.AccountType)
+				log.Printf("Processing UTANG USAHA (2101): Amount=%.2f, Type=%s", amount, balance.AccountType)
 			}
 
 			// Removed negative liability inversion: negative liabilities represent valid overpaid debts (Debit > Credit)
@@ -532,7 +531,7 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 		isPPNMasukan := strings.Contains(strings.ToLower(item.AccountName), "ppn masukan") || strings.HasPrefix(code, "2102-002")
 		isPPNKeluaran := strings.Contains(strings.ToLower(item.AccountName), "ppn keluaran") || strings.HasPrefix(code, "2102-001")
 		if isPPNMasukan || isPPNKeluaran {
-			fmt.Printf("[DEBUG] Skipping PPN account from categorization: %s - %s (%.2f)\n", code, item.AccountName, amount)
+			log.Printf("Skipping PPN account from categorization: %s - %s (%.2f)", code, item.AccountName, amount)
 			continue // Don't categorize PPN accounts — handled below
 		}
 
@@ -577,7 +576,7 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 	// So: netPPN = rawPPNKeluaran + rawPPNMasukan (adding a negative)
 	netPPNValue := rawPPNKeluaran + rawPPNMasukan
 
-	fmt.Printf("[DEBUG] PPN Netting - Keluaran: %.2f, Masukan: %.2f, Net: %.2f\n",
+	log.Printf("PPN Netting - Keluaran: %.2f, Masukan: %.2f, Net: %.2f",
 		rawPPNKeluaran, rawPPNMasukan, netPPNValue)
 
 	if netPPNValue > 0 {
@@ -590,7 +589,7 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 		}
 		bsData.Liabilities.CurrentLiabilities.Items = append(bsData.Liabilities.CurrentLiabilities.Items, ppnItem)
 		bsData.Liabilities.CurrentLiabilities.TaxPayable += netPPNValue
-		fmt.Printf("[DEBUG] Added PPN_NET as LIABILITY (Kurang Bayar): %.2f\n", netPPNValue)
+		log.Printf("Added PPN_NET as LIABILITY (Kurang Bayar): %.2f", netPPNValue)
 	} else if netPPNValue < 0 {
 		// PPN Lebih Bayar (overpaid) → show as Asset (receivable)
 		ppnAmount := -netPPNValue // Make positive for display
@@ -602,14 +601,13 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 		}
 		bsData.Assets.CurrentAssets.Items = append(bsData.Assets.CurrentAssets.Items, ppnItem)
 		bsData.Assets.CurrentAssets.OtherCurrentAssets += ppnAmount
-		fmt.Printf("[DEBUG] Added PPN_NET as ASSET (Lebih Bayar): %.2f\n", ppnAmount)
+		log.Printf("Added PPN_NET as ASSET (Lebih Bayar): %.2f", ppnAmount)
 	}
 
 	// Add Net Income to Equity ONLY if period has NOT been closed
-	// hasActiveRevenueExpense was already determined earlier in this function
-	// Add Net Income to Equity if it exists or if there are active revenue/expense accounts
+	// Add Net Income to Equity if it exists
 	// Ideally we should track "IsPeriodClosed" status, but "Current Year Earnings" is standard
-	if netIncome != 0 || hasActiveRevenueExpense {
+	if netIncome != 0 {
 		// Show Net Income / Current Year Earnings as separate line in Equity
 		// Check if "Laba/Rugi Berjalan" or similar already exists in items to avoid dups
 		exists := false
@@ -628,7 +626,7 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 				Amount:      netIncome,
 			}
 			bsData.Equity.Items = append(bsData.Equity.Items, netIncomeItem)
-			fmt.Printf("[DEBUG] ✅ Added Net Income to Equity: %.2f\n", netIncome)
+			log.Printf("Added Net Income to Equity: %.2f", netIncome)
 		}
 	}
 
@@ -636,7 +634,7 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 	s.calculateBalanceSheetTotals(bsData)
 
 	// Log totals for debugging
-	fmt.Printf("[DEBUG] Balance Sheet Totals - Assets: %.2f, Liabilities: %.2f, Equity: %.2f\n",
+	log.Printf("Balance Sheet Totals - Assets: %.2f, Liabilities: %.2f, Equity: %.2f",
 		bsData.Assets.TotalAssets, bsData.Liabilities.TotalLiabilities, bsData.Equity.TotalEquity)
 
 	return bsData
@@ -662,7 +660,7 @@ func (s *SSOTBalanceSheetService) categorizeAssetAccount(bsData *SSOTBalanceShee
 
 	switch {
 	// Current Assets (11xx)
-	case strings.HasPrefix(code, "110"): // Cash accounts
+	case strings.HasPrefix(code, "1101"): // Cash accounts (use 4-char prefix to avoid matching 1102, 1103, etc.)
 		bsData.Assets.CurrentAssets.Cash += item.Amount
 		bsData.Assets.CurrentAssets.Items = append(bsData.Assets.CurrentAssets.Items, item)
 
@@ -674,7 +672,7 @@ func (s *SSOTBalanceSheetService) categorizeAssetAccount(bsData *SSOTBalanceShee
 		bsData.Assets.CurrentAssets.Inventory += item.Amount
 		bsData.Assets.CurrentAssets.Items = append(bsData.Assets.CurrentAssets.Items, item)
 
-	case strings.HasPrefix(code, "114"), strings.HasPrefix(code, "115"): // Prepaid expenses
+	case strings.HasPrefix(code, "1104"), strings.HasPrefix(code, "1105"), strings.HasPrefix(code, "114"), strings.HasPrefix(code, "115"): // Prepaid expenses
 		bsData.Assets.CurrentAssets.PrepaidExpenses += item.Amount
 		bsData.Assets.CurrentAssets.Items = append(bsData.Assets.CurrentAssets.Items, item)
 
@@ -722,7 +720,7 @@ func (s *SSOTBalanceSheetService) categorizeLiabilityAccount(bsData *SSOTBalance
 	}
 
 	// Log liability categorization for debugging
-	fmt.Printf("[DEBUG] Categorizing Liability: %s - %s (Amount: %.2f)\n",
+	log.Printf("Categorizing Liability: %s - %s (Amount: %.2f)",
 		item.AccountCode, item.AccountName, amount)
 
 	// Update the item amount (preserve original for PPN)
@@ -733,48 +731,48 @@ func (s *SSOTBalanceSheetService) categorizeLiabilityAccount(bsData *SSOTBalance
 	case strings.HasPrefix(code, "210"): // Accounts Payable
 		bsData.Liabilities.CurrentLiabilities.AccountsPayable += amount
 		bsData.Liabilities.CurrentLiabilities.Items = append(bsData.Liabilities.CurrentLiabilities.Items, item)
-		fmt.Printf("[DEBUG] Added to AccountsPayable: %.2f\n", amount)
+		log.Printf("Added to AccountsPayable: %.2f", amount)
 
 	case strings.HasPrefix(code, "211"): // Short-term debt
 		bsData.Liabilities.CurrentLiabilities.ShortTermDebt += amount
 		bsData.Liabilities.CurrentLiabilities.Items = append(bsData.Liabilities.CurrentLiabilities.Items, item)
-		fmt.Printf("[DEBUG] Added to ShortTermDebt: %.2f\n", amount)
+		log.Printf("Added to ShortTermDebt: %.2f", amount)
 
 	case strings.HasPrefix(code, "212"), strings.HasPrefix(code, "213"): // Accrued liabilities and taxes
 		if strings.Contains(strings.ToLower(item.AccountName), "tax") || strings.Contains(strings.ToLower(item.AccountName), "pajak") || strings.Contains(strings.ToLower(item.AccountName), "pph") {
 			bsData.Liabilities.CurrentLiabilities.TaxPayable += amount
-			fmt.Printf("[DEBUG] Added to TaxPayable: %.2f\n", amount)
+			log.Printf("Added to TaxPayable: %.2f", amount)
 		} else {
 			bsData.Liabilities.CurrentLiabilities.AccruedLiabilities += amount
-			fmt.Printf("[DEBUG] Added to AccruedLiabilities: %.2f\n", amount)
+			log.Printf("Added to AccruedLiabilities: %.2f", amount)
 		}
 		bsData.Liabilities.CurrentLiabilities.Items = append(bsData.Liabilities.CurrentLiabilities.Items, item)
 
 	case strings.HasPrefix(code, "21"): // Other current liabilities
 		bsData.Liabilities.CurrentLiabilities.OtherCurrentLiabilities += amount
 		bsData.Liabilities.CurrentLiabilities.Items = append(bsData.Liabilities.CurrentLiabilities.Items, item)
-		fmt.Printf("[DEBUG] Added to OtherCurrentLiabilities: %.2f\n", amount)
+		log.Printf("Added to OtherCurrentLiabilities: %.2f", amount)
 
 	// Non-Current Liabilities (22xx, 23xx)
 	case strings.HasPrefix(code, "22"): // Long-term debt
 		bsData.Liabilities.NonCurrentLiabilities.LongTermDebt += amount
 		bsData.Liabilities.NonCurrentLiabilities.Items = append(bsData.Liabilities.NonCurrentLiabilities.Items, item)
-		fmt.Printf("[DEBUG] Added to LongTermDebt: %.2f\n", amount)
+		log.Printf("Added to LongTermDebt: %.2f", amount)
 
 	case strings.HasPrefix(code, "23"): // Other non-current liabilities
 		if strings.Contains(strings.ToLower(item.AccountName), "tax") || strings.Contains(strings.ToLower(item.AccountName), "pajak") {
 			bsData.Liabilities.NonCurrentLiabilities.DeferredTax += amount
-			fmt.Printf("[DEBUG] Added to DeferredTax: %.2f\n", amount)
+			log.Printf("Added to DeferredTax: %.2f", amount)
 		} else {
 			bsData.Liabilities.NonCurrentLiabilities.OtherNonCurrentLiabilities += amount
-			fmt.Printf("[DEBUG] Added to OtherNonCurrentLiabilities: %.2f\n", amount)
+			log.Printf("Added to OtherNonCurrentLiabilities: %.2f", amount)
 		}
 		bsData.Liabilities.NonCurrentLiabilities.Items = append(bsData.Liabilities.NonCurrentLiabilities.Items, item)
 
 	default: // Other liabilities
 		bsData.Liabilities.NonCurrentLiabilities.OtherNonCurrentLiabilities += amount
 		bsData.Liabilities.NonCurrentLiabilities.Items = append(bsData.Liabilities.NonCurrentLiabilities.Items, item)
-		fmt.Printf("[DEBUG] Added to OtherNonCurrentLiabilities (default): %.2f\n", amount)
+		log.Printf("Added to OtherNonCurrentLiabilities (default): %.2f", amount)
 	}
 }
 
@@ -824,7 +822,7 @@ func (s *SSOTBalanceSheetService) calculateBalanceSheetTotals(bsData *SSOTBalanc
 			bsData.Assets.NonCurrentAssets.TotalNonCurrentAssets
 
 	// Log assets calculation
-	fmt.Printf("[DEBUG] Assets Calculation - Current: %.2f, Non-Current: %.2f, Total: %.2f\n",
+	log.Printf("Assets Calculation - Current: %.2f, Non-Current: %.2f, Total: %.2f",
 		bsData.Assets.CurrentAssets.TotalCurrentAssets,
 		bsData.Assets.NonCurrentAssets.TotalNonCurrentAssets,
 		bsData.Assets.TotalAssets)
@@ -838,7 +836,7 @@ func (s *SSOTBalanceSheetService) calculateBalanceSheetTotals(bsData *SSOTBalanc
 			bsData.Liabilities.CurrentLiabilities.OtherCurrentLiabilities
 
 	// Log liabilities calculation
-	fmt.Printf("[DEBUG] Liabilities Calculation - AccountsPayable: %.2f, Other: %.2f, Total: %.2f\n",
+	log.Printf("Liabilities Calculation - AccountsPayable: %.2f, Other: %.2f, Total: %.2f",
 		bsData.Liabilities.CurrentLiabilities.AccountsPayable,
 		bsData.Liabilities.CurrentLiabilities.ShortTermDebt+
 			bsData.Liabilities.CurrentLiabilities.AccruedLiabilities+
@@ -852,7 +850,7 @@ func (s *SSOTBalanceSheetService) calculateBalanceSheetTotals(bsData *SSOTBalanc
 			bsData.Liabilities.NonCurrentLiabilities.TotalNonCurrentLiabilities
 
 	// Log liabilities calculation
-	fmt.Printf("[DEBUG] Liabilities Calculation - Current: %.2f, Non-Current: %.2f, Total: %.2f\n",
+	log.Printf("Liabilities Calculation - Current: %.2f, Non-Current: %.2f, Total: %.2f",
 		bsData.Liabilities.CurrentLiabilities.TotalCurrentLiabilities,
 		bsData.Liabilities.NonCurrentLiabilities.TotalNonCurrentLiabilities,
 		bsData.Liabilities.TotalLiabilities)
@@ -863,8 +861,15 @@ func (s *SSOTBalanceSheetService) calculateBalanceSheetTotals(bsData *SSOTBalanc
 			bsData.Equity.RetainedEarnings +
 			bsData.Equity.OtherEquity
 
+	// Sync Total Equity with sum of Equity.Items
+	var actualTotalEquity float64
+	for _, item := range bsData.Equity.Items {
+		actualTotalEquity += item.Amount
+	}
+	bsData.Equity.TotalEquity = actualTotalEquity
+
 	// Log equity calculation
-	fmt.Printf("[DEBUG] Equity Calculation - ShareCapital: %.2f, RetainedEarnings: %.2f, OtherEquity: %.2f, Total: %.2f\n",
+	log.Printf("Equity Calculation - ShareCapital: %.2f, RetainedEarnings: %.2f, OtherEquity: %.2f, Total: %.2f",
 		bsData.Equity.ShareCapital,
 		bsData.Equity.RetainedEarnings,
 		bsData.Equity.OtherEquity,
@@ -879,7 +884,7 @@ func (s *SSOTBalanceSheetService) calculateBalanceSheetTotals(bsData *SSOTBalanc
 	bsData.IsBalanced = (bsData.BalanceDifference >= -tolerance && bsData.BalanceDifference <= tolerance)
 
 	// Log final balance check
-	fmt.Printf("[DEBUG] Balance Check - Assets: %.2f, Liabilities+Equity: %.2f, Difference: %.2f, Balanced: %t\n",
+	log.Printf("Balance Check - Assets: %.2f, Liabilities+Equity: %.2f, Difference: %.2f, Balanced: %t",
 		bsData.Assets.TotalAssets,
 		bsData.TotalLiabilitiesAndEquity,
 		bsData.BalanceDifference,
@@ -889,16 +894,16 @@ func (s *SSOTBalanceSheetService) calculateBalanceSheetTotals(bsData *SSOTBalanc
 // calculateAccountBalanceFromTransactions calculates an account's balance from its transaction data
 func (s *SSOTBalanceSheetService) calculateAccountBalanceFromTransactions(accountID uint, accountType string) (float64, error) {
 	query := `
-		SELECT 
-			CASE 
-				WHEN UPPER(?) IN ('ASSET', 'EXPENSE') THEN 
+		SELECT
+			CASE
+				WHEN UPPER(?) IN ('ASSET', 'EXPENSE') THEN
 					COALESCE(SUM(ujl.debit_amount), 0) - COALESCE(SUM(ujl.credit_amount), 0)
-				ELSE 
+				ELSE
 					COALESCE(SUM(ujl.credit_amount), 0) - COALESCE(SUM(ujl.debit_amount), 0)
 			END as net_balance
 		FROM accounts a
-		LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
-		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.status = 'POSTED' AND uje.deleted_at IS NULL
+		INNER JOIN unified_journal_lines ujl ON ujl.account_id = a.id
+		INNER JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.status = 'POSTED' AND uje.deleted_at IS NULL
 		WHERE a.id = ?
 		  AND COALESCE(a.is_header, false) = false
 		GROUP BY a.type

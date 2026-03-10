@@ -2,13 +2,16 @@ import api from './api';
 import { API_ENDPOINTS } from '@/config/api';
 
 export interface PurchaseItemRequest {
-  product_id: number;
+  product_id?: number;
   quantity: number;
   unit_price: number;
   discount?: number;
   tax?: number;
   expense_account_id?: number;
   description?: string;
+  item_type?: string;        // "INVENTORY" | "ASSET"
+  is_fixed_asset?: boolean;
+  asset_category_id?: number;
 }
 
 export interface PurchaseCreateRequest {

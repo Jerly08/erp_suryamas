@@ -372,8 +372,11 @@ func (s *PSAKCompliantReportService) GeneratePSAKBalanceSheet(asOfDate time.Time
 	totalLiabilities := decimal.Zero
 	totalEquity := decimal.Zero
 
+	// Track consumed account IDs to prevent double counting across classifications
+	consumed := make(map[uint64]bool)
+
 	// Process Current Assets (Aset Lancar) - sesuai PSAK 1 paragraf 66
-	currentAssets, currentAssetsTotal := s.classifyCurrentAssets(balances)
+	currentAssets, currentAssetsTotal := s.classifyCurrentAssets(balances, consumed)
 	balanceSheet.CurrentAssets = PSAKAssetSection{
 		Name:     "Aset Lancar",
 		Items:    currentAssets,
@@ -382,7 +385,7 @@ func (s *PSAKCompliantReportService) GeneratePSAKBalanceSheet(asOfDate time.Time
 	totalAssets = totalAssets.Add(currentAssetsTotal)
 
 	// Process Non-Current Assets (Aset Tidak Lancar) - sesuai PSAK 1 paragraf 66
-	nonCurrentAssets, nonCurrentAssetsTotal := s.classifyNonCurrentAssets(balances)
+	nonCurrentAssets, nonCurrentAssetsTotal := s.classifyNonCurrentAssets(balances, consumed)
 	balanceSheet.NonCurrentAssets = PSAKAssetSection{
 		Name:     "Aset Tidak Lancar",
 		Items:    nonCurrentAssets,
@@ -391,7 +394,7 @@ func (s *PSAKCompliantReportService) GeneratePSAKBalanceSheet(asOfDate time.Time
 	totalAssets = totalAssets.Add(nonCurrentAssetsTotal)
 
 	// Process Current Liabilities (Liabilitas Jangka Pendek) - sesuai PSAK 1 paragraf 69
-	currentLiabilities, currentLiabilitiesTotal := s.classifyCurrentLiabilities(balances)
+	currentLiabilities, currentLiabilitiesTotal := s.classifyCurrentLiabilities(balances, consumed)
 	balanceSheet.CurrentLiabilities = PSAKLiabilitySection{
 		Name:     "Liabilitas Jangka Pendek",
 		Items:    currentLiabilities,
@@ -400,7 +403,7 @@ func (s *PSAKCompliantReportService) GeneratePSAKBalanceSheet(asOfDate time.Time
 	totalLiabilities = totalLiabilities.Add(currentLiabilitiesTotal)
 
 	// Process Non-Current Liabilities (Liabilitas Jangka Panjang)
-	nonCurrentLiabilities, nonCurrentLiabilitiesTotal := s.classifyNonCurrentLiabilities(balances)
+	nonCurrentLiabilities, nonCurrentLiabilitiesTotal := s.classifyNonCurrentLiabilities(balances, consumed)
 	balanceSheet.NonCurrentLiabilities = PSAKLiabilitySection{
 		Name:     "Liabilitas Jangka Panjang",
 		Items:    nonCurrentLiabilities,
@@ -409,7 +412,7 @@ func (s *PSAKCompliantReportService) GeneratePSAKBalanceSheet(asOfDate time.Time
 	totalLiabilities = totalLiabilities.Add(nonCurrentLiabilitiesTotal)
 
 	// Process Equity (Ekuitas) - sesuai PSAK 1 paragraf 54(r)
-	equity, equityTotal := s.classifyEquity(balances)
+	equity, equityTotal := s.classifyEquity(balances, consumed)
 	balanceSheet.Equity = PSAKEquitySection{
 		Name:     "Ekuitas",
 		Items:    equity,
@@ -449,13 +452,16 @@ func (s *PSAKCompliantReportService) GeneratePSAKProfitLoss(startDate, endDate t
 		GeneratedAt: time.Now(),
 	}
 
+	// Track consumed account IDs to prevent double counting across classifications
+	consumed := make(map[uint64]bool)
+
 	// Process Revenue (Pendapatan) - sesuai PSAK 23
-	revenue, totalRevenue := s.classifyRevenue(activities)
+	revenue, totalRevenue := s.classifyRevenue(activities, consumed)
 	profitLoss.Revenue = revenue
 	profitLoss.TotalRevenue = totalRevenue
 
 	// Process Cost of Sales (Beban Pokok Penjualan) - sesuai PSAK 14
-	costOfSales, totalCostOfSales := s.classifyCostOfSales(activities)
+	costOfSales, totalCostOfSales := s.classifyCostOfSales(activities, consumed)
 	profitLoss.CostOfSales = costOfSales
 	profitLoss.TotalCostOfSales = totalCostOfSales
 
@@ -466,7 +472,7 @@ func (s *PSAKCompliantReportService) GeneratePSAKProfitLoss(startDate, endDate t
 	}
 
 	// Process Operating Expenses (Beban Usaha)
-	operatingExpenses, totalOpExpenses := s.classifyOperatingExpenses(activities)
+	operatingExpenses, totalOpExpenses := s.classifyOperatingExpenses(activities, consumed)
 	profitLoss.OperatingExpenses = operatingExpenses
 	profitLoss.TotalOpExpenses = totalOpExpenses
 
@@ -477,8 +483,8 @@ func (s *PSAKCompliantReportService) GeneratePSAKProfitLoss(startDate, endDate t
 	}
 
 	// Process Other Income and Expenses (Pendapatan dan Beban Lain-lain)
-	otherIncome, totalOtherIncome := s.classifyOtherIncome(activities)
-	otherExpenses, totalOtherExpenses := s.classifyOtherExpenses(activities)
+	otherIncome, totalOtherIncome := s.classifyOtherIncome(activities, consumed)
+	otherExpenses, totalOtherExpenses := s.classifyOtherExpenses(activities, consumed)
 	profitLoss.OtherIncome = otherIncome
 	profitLoss.OtherExpenses = otherExpenses
 	profitLoss.NetOtherIncome = totalOtherIncome.Sub(totalOtherExpenses)
@@ -487,7 +493,7 @@ func (s *PSAKCompliantReportService) GeneratePSAKProfitLoss(startDate, endDate t
 	profitLoss.ProfitBeforeTax = profitLoss.OperatingProfit.Add(profitLoss.NetOtherIncome)
 
 	// Process Tax Expense (Beban Pajak) - sesuai PSAK 46
-	taxExpense, totalTaxExpense := s.classifyTaxExpense(activities)
+	taxExpense, totalTaxExpense := s.classifyTaxExpense(activities, consumed)
 	profitLoss.TaxExpense = taxExpense
 	profitLoss.TotalTaxExpense = totalTaxExpense
 
@@ -498,7 +504,7 @@ func (s *PSAKCompliantReportService) GeneratePSAKProfitLoss(startDate, endDate t
 	}
 
 	// Process Other Comprehensive Income - sesuai PSAK 1 paragraf 82-85
-	oci, totalOCI := s.classifyOtherComprehensiveIncome(activities)
+	oci, totalOCI := s.classifyOtherComprehensiveIncome(activities, consumed)
 	profitLoss.OtherComprehensiveIncome = oci
 	profitLoss.TotalComprehensiveIncome = profitLoss.NetProfit.Add(totalOCI)
 
@@ -507,6 +513,9 @@ func (s *PSAKCompliantReportService) GeneratePSAKProfitLoss(startDate, endDate t
 	if profitLoss.WeightedAvgShares.GreaterThan(decimal.Zero) {
 		profitLoss.BasicEPS = profitLoss.NetProfit.Div(profitLoss.WeightedAvgShares)
 		profitLoss.DilutedEPS = s.calculateDilutedEPS(profitLoss.NetProfit, profitLoss.WeightedAvgShares)
+	} else {
+		profitLoss.BasicEPS = decimal.Zero
+		profitLoss.DilutedEPS = decimal.Zero
 	}
 
 	// Generate PSAK compliance report
@@ -613,115 +622,151 @@ func (s *PSAKCompliantReportService) getCurrency() string {
 // Account balance retrieval from SSOT
 func (s *PSAKCompliantReportService) getAccountBalancesFromSSOT(asOfDate time.Time) (map[uint64]decimal.Decimal, error) {
 	balances := make(map[uint64]decimal.Decimal)
-	
-	// Query SSOT account balances view
-	var accounts []models.SSOTAccountBalance
-	err := s.db.Where("is_active = ?", true).Find(&accounts).Error
+
+	// Calculate balances from journal entries up to asOfDate for historical accuracy
+	query := `
+		SELECT
+			jl.account_id,
+			COALESCE(SUM(jl.debit_amount - jl.credit_amount), 0) as balance
+		FROM unified_journal_lines jl
+		JOIN unified_journal_ledger je ON jl.journal_id = je.id
+		WHERE je.status = 'POSTED'
+		AND je.entry_date <= ?
+		AND je.deleted_at IS NULL
+		GROUP BY jl.account_id
+	`
+
+	rows, err := s.db.Raw(query, asOfDate).Rows()
 	if err != nil {
 		return nil, err
 	}
-	
-	for _, account := range accounts {
-		balances[account.AccountID] = account.CurrentBalance
+	defer rows.Close()
+
+	for rows.Next() {
+		var accountID uint64
+		var balance decimal.Decimal
+		if err := rows.Scan(&accountID, &balance); err != nil {
+			continue
+		}
+		balances[accountID] = balance
 	}
-	
+
 	return balances, nil
 }
 
 func (s *PSAKCompliantReportService) getAccountActivitiesFromSSOT(startDate, endDate time.Time) (map[uint64]decimal.Decimal, error) {
 	activities := make(map[uint64]decimal.Decimal)
-	
+
 	// Query SSOT journal lines for the period
+	// Use separate debit/credit sums and look up account type to determine sign convention.
+	// For credit-normal accounts (revenue, liabilities, equity): net = credit - debit (positive when credited)
+	// For debit-normal accounts (assets, expenses, COGS): net = debit - credit (positive when debited)
 	query := `
-		SELECT 
+		SELECT
 			jl.account_id,
-			COALESCE(SUM(jl.debit_amount - jl.credit_amount), 0) as net_activity
+			COALESCE(SUM(jl.debit_amount), 0) as total_debit,
+			COALESCE(SUM(jl.credit_amount), 0) as total_credit,
+			COALESCE(a.type, '') as account_type
 		FROM unified_journal_lines jl
 		JOIN unified_journal_ledger je ON jl.journal_id = je.id
-		WHERE je.status = 'POSTED' 
-		AND je.entry_date >= ? 
+		LEFT JOIN accounts a ON a.id = jl.account_id
+		WHERE je.status = 'POSTED'
+		AND je.entry_date >= ?
 		AND je.entry_date <= ?
-		GROUP BY jl.account_id
+		AND je.deleted_at IS NULL
+		GROUP BY jl.account_id, a.type
 	`
-	
+
 	rows, err := s.db.Raw(query, startDate, endDate).Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	for rows.Next() {
 		var accountID uint64
-		var netActivity decimal.Decimal
-		if err := rows.Scan(&accountID, &netActivity); err != nil {
+		var totalDebit, totalCredit decimal.Decimal
+		var accountType string
+		if err := rows.Scan(&accountID, &totalDebit, &totalCredit, &accountType); err != nil {
 			continue
 		}
-		activities[accountID] = netActivity
+		// Credit-normal accounts: revenue, liability, equity → positive = credit balance
+		// Debit-normal accounts: asset, expense, COGS → positive = debit balance
+		switch accountType {
+		case "REVENUE", "LIABILITY", "EQUITY", "revenue", "liability", "equity",
+			"PENDAPATAN", "LIABILITAS", "EKUITAS":
+			activities[accountID] = totalCredit.Sub(totalDebit)
+		default:
+			// Assets, expenses, COGS → debit-normal
+			activities[accountID] = totalDebit.Sub(totalCredit)
+		}
 	}
-	
+
 	return activities, nil
 }
 
-// Classification methods (these would need to be implemented based on account mapping)
-func (s *PSAKCompliantReportService) classifyCurrentAssets(balances map[uint64]decimal.Decimal) ([]PSAKBalanceItem, decimal.Decimal) {
+// Classification methods - consumed map tracks already-classified account IDs to prevent double counting
+func (s *PSAKCompliantReportService) classifyCurrentAssets(balances map[uint64]decimal.Decimal, consumed map[uint64]bool) ([]PSAKBalanceItem, decimal.Decimal) {
 	// TODO: Implement classification based on account type and maturity
 	// This would map specific account IDs to PSAK current asset categories
+	// Mark classified accounts: consumed[accountID] = true
 	return []PSAKBalanceItem{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyNonCurrentAssets(balances map[uint64]decimal.Decimal) ([]PSAKBalanceItem, decimal.Decimal) {
-	// TODO: Implement classification
+func (s *PSAKCompliantReportService) classifyNonCurrentAssets(balances map[uint64]decimal.Decimal, consumed map[uint64]bool) ([]PSAKBalanceItem, decimal.Decimal) {
+	// TODO: Implement classification - skip accounts where consumed[id] == true
 	return []PSAKBalanceItem{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyCurrentLiabilities(balances map[uint64]decimal.Decimal) ([]PSAKBalanceItem, decimal.Decimal) {
-	// TODO: Implement classification
+func (s *PSAKCompliantReportService) classifyCurrentLiabilities(balances map[uint64]decimal.Decimal, consumed map[uint64]bool) ([]PSAKBalanceItem, decimal.Decimal) {
+	// TODO: Implement classification - skip accounts where consumed[id] == true
 	return []PSAKBalanceItem{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyNonCurrentLiabilities(balances map[uint64]decimal.Decimal) ([]PSAKBalanceItem, decimal.Decimal) {
-	// TODO: Implement classification
+func (s *PSAKCompliantReportService) classifyNonCurrentLiabilities(balances map[uint64]decimal.Decimal, consumed map[uint64]bool) ([]PSAKBalanceItem, decimal.Decimal) {
+	// TODO: Implement classification - skip accounts where consumed[id] == true
 	return []PSAKBalanceItem{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyEquity(balances map[uint64]decimal.Decimal) ([]PSAKBalanceItem, decimal.Decimal) {
-	// TODO: Implement classification
+func (s *PSAKCompliantReportService) classifyEquity(balances map[uint64]decimal.Decimal, consumed map[uint64]bool) ([]PSAKBalanceItem, decimal.Decimal) {
+	// TODO: Implement classification - skip accounts where consumed[id] == true
 	return []PSAKBalanceItem{}, decimal.Zero
 }
 
 // Revenue and expense classification for P&L
-func (s *PSAKCompliantReportService) classifyRevenue(activities map[uint64]decimal.Decimal) (PSAKRevenueSection, decimal.Decimal) {
+func (s *PSAKCompliantReportService) classifyRevenue(activities map[uint64]decimal.Decimal, consumed map[uint64]bool) (PSAKRevenueSection, decimal.Decimal) {
 	// TODO: Implement revenue classification sesuai PSAK 23
+	// Mark classified accounts: consumed[accountID] = true
 	return PSAKRevenueSection{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyCostOfSales(activities map[uint64]decimal.Decimal) (PSAKExpenseSection, decimal.Decimal) {
-	// TODO: Implement COGS classification sesuai PSAK 14
+func (s *PSAKCompliantReportService) classifyCostOfSales(activities map[uint64]decimal.Decimal, consumed map[uint64]bool) (PSAKExpenseSection, decimal.Decimal) {
+	// TODO: Implement COGS classification sesuai PSAK 14 - skip accounts where consumed[id] == true
 	return PSAKExpenseSection{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyOperatingExpenses(activities map[uint64]decimal.Decimal) (PSAKExpenseSection, decimal.Decimal) {
-	// TODO: Implement operating expenses classification
+func (s *PSAKCompliantReportService) classifyOperatingExpenses(activities map[uint64]decimal.Decimal, consumed map[uint64]bool) (PSAKExpenseSection, decimal.Decimal) {
+	// TODO: Implement operating expenses classification - skip accounts where consumed[id] == true
 	return PSAKExpenseSection{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyOtherIncome(activities map[uint64]decimal.Decimal) (PSAKOtherSection, decimal.Decimal) {
-	// TODO: Implement other income classification
+func (s *PSAKCompliantReportService) classifyOtherIncome(activities map[uint64]decimal.Decimal, consumed map[uint64]bool) (PSAKOtherSection, decimal.Decimal) {
+	// TODO: Implement other income classification - skip accounts where consumed[id] == true
 	return PSAKOtherSection{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyOtherExpenses(activities map[uint64]decimal.Decimal) (PSAKOtherSection, decimal.Decimal) {
-	// TODO: Implement other expenses classification
+func (s *PSAKCompliantReportService) classifyOtherExpenses(activities map[uint64]decimal.Decimal, consumed map[uint64]bool) (PSAKOtherSection, decimal.Decimal) {
+	// TODO: Implement other expenses classification - skip accounts where consumed[id] == true
 	return PSAKOtherSection{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyTaxExpense(activities map[uint64]decimal.Decimal) (PSAKTaxSection, decimal.Decimal) {
-	// TODO: Implement tax expense classification sesuai PSAK 46
+func (s *PSAKCompliantReportService) classifyTaxExpense(activities map[uint64]decimal.Decimal, consumed map[uint64]bool) (PSAKTaxSection, decimal.Decimal) {
+	// TODO: Implement tax expense classification sesuai PSAK 46 - skip accounts where consumed[id] == true
 	return PSAKTaxSection{}, decimal.Zero
 }
 
-func (s *PSAKCompliantReportService) classifyOtherComprehensiveIncome(activities map[uint64]decimal.Decimal) (PSAKOCISection, decimal.Decimal) {
-	// TODO: Implement OCI classification sesuai PSAK 1
+func (s *PSAKCompliantReportService) classifyOtherComprehensiveIncome(activities map[uint64]decimal.Decimal, consumed map[uint64]bool) (PSAKOCISection, decimal.Decimal) {
+	// TODO: Implement OCI classification sesuai PSAK 1 - skip accounts where consumed[id] == true
 	return PSAKOCISection{}, decimal.Zero
 }
 

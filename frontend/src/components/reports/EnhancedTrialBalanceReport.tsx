@@ -35,6 +35,7 @@ import {
   Table,
   Thead,
   Tbody,
+  Tfoot,
   Tr,
   Th,
   Td,
@@ -529,6 +530,8 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                           </Tr>
                         ))}
 
+                      </Tbody>
+                      <Tfoot>
                         {/* Total Row */}
                         <Tr bg="gray.100" fontWeight="bold">
                           <Td colSpan={3}>{t('reports.modal.total').toUpperCase()}</Td>
@@ -539,7 +542,7 @@ export const EnhancedTrialBalanceReport: React.FC<EnhancedTrialBalanceReportProp
                             {formatCurrency(trialBalanceData.total_credits || 0)}
                           </Td>
                         </Tr>
-                      </Tbody>
+                      </Tfoot>
                     </Table>
                   </CardBody>
                 </Card>

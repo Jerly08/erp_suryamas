@@ -85,7 +85,11 @@ type Purchase struct {
 type PurchaseItem struct {
 	ID               uint           `json:"id" gorm:"primaryKey"`
 	PurchaseID       uint           `json:"purchase_id" gorm:"not null;index"`
-	ProductID        uint           `json:"product_id" gorm:"not null;index"`
+	ProductID        *uint          `json:"product_id" gorm:"index"`
+	ItemType         string         `json:"item_type" gorm:"size:20;default:'INVENTORY'"` // INVENTORY, ASSET
+	IsFixedAsset     bool           `json:"is_fixed_asset" gorm:"default:false"`
+	Description      string         `json:"description" gorm:"type:text"`
+	AssetCategoryID  *uint          `json:"asset_category_id,omitempty" gorm:"index"`
 	Quantity         int            `json:"quantity" gorm:"not null"`
 	UnitPrice        float64        `json:"unit_price" gorm:"type:decimal(15,2);default:0"`
 	TotalPrice       float64        `json:"total_price" gorm:"type:decimal(15,2);default:0"`
@@ -97,9 +101,10 @@ type PurchaseItem struct {
 	DeletedAt        gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Purchase       Purchase `json:"purchase" gorm:"foreignKey:PurchaseID"`
-	Product        Product  `json:"product" gorm:"foreignKey:ProductID"`
-	ExpenseAccount Account  `json:"expense_account" gorm:"foreignKey:ExpenseAccountID"`
+	Purchase       Purchase       `json:"purchase" gorm:"foreignKey:PurchaseID"`
+	Product        *Product       `json:"product,omitempty" gorm:"foreignKey:ProductID"`
+	ExpenseAccount Account        `json:"expense_account" gorm:"foreignKey:ExpenseAccountID"`
+	AssetCategory  *AssetCategory `json:"asset_category,omitempty" gorm:"foreignKey:AssetCategoryID"`
 }
 
 // PurchasePayment represents payments made for purchases (cross-reference with payments table)
@@ -238,13 +243,23 @@ type PurchaseUpdateRequest struct {
 }
 
 type PurchaseItemRequest struct {
-	ProductID        uint    `json:"product_id" binding:"required"`
-	Quantity         int     `json:"quantity" binding:"required,min=1"`
-	UnitPrice        float64 `json:"unit_price" binding:"required,min=0"`
-	Discount         float64 `json:"discount"`
-	Tax              float64 `json:"tax"`
-	ExpenseAccountID uint    `json:"expense_account_id"`
+	ItemType        string  `json:"item_type"`         // "INVENTORY" or "ASSET" (default: INVENTORY)
+	IsFixedAsset    bool    `json:"is_fixed_asset"`    // true if this item is a fixed asset purchase
+	Description     string  `json:"description"`       // Asset name/description (used when ItemType=ASSET)
+	AssetCategoryID *uint   `json:"asset_category_id"` // Asset category ID (used when ItemType=ASSET)
+	ProductID       *uint   `json:"product_id"`        // Optional: not required for ASSET items
+	Quantity        int     `json:"quantity" binding:"required,min=1"`
+	UnitPrice       float64 `json:"unit_price" binding:"required,min=0"`
+	Discount        float64 `json:"discount"`
+	Tax             float64 `json:"tax"`
+	ExpenseAccountID uint   `json:"expense_account_id"`
 }
+
+// Purchase Item Type Constants
+const (
+	PurchaseItemTypeInventory = "INVENTORY"
+	PurchaseItemTypeAsset     = "ASSET"
+)
 
 // Document Management
 type PurchaseDocument struct {

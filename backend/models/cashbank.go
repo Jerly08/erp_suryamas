@@ -23,6 +23,10 @@ type CashBank struct {
 	MonthlyLimit  float64        `json:"monthly_limit" gorm:"type:decimal(15,2);default:0"`
 	IsActive      bool           `json:"is_active" gorm:"default:true;not null"`
 	IsRestricted  bool           `json:"is_restricted" gorm:"default:false;not null"`
+	FrozenAmount  float64        `json:"frozen_amount" gorm:"type:decimal(15,2);default:0;not null"`
+	FrozenReason  string         `json:"frozen_reason" gorm:"size:255"`
+	FrozenAt      *time.Time     `json:"frozen_at"`
+	FrozenBy      uint           `json:"frozen_by"`
 	UserID        uint           `json:"user_id" gorm:"index"`
 	Description   string         `json:"description" gorm:"type:text"`
 	CreatedAt     time.Time      `json:"created_at"`
@@ -32,6 +36,15 @@ type CashBank struct {
 	// Relations
 	Account      Account                `json:"account" gorm:"foreignKey:AccountID"`
 	Transactions []CashBankTransaction  `json:"transactions" gorm:"foreignKey:CashBankID"`
+}
+
+// AvailableBalance returns the balance minus frozen amount
+func (cb *CashBank) AvailableBalance() float64 {
+	available := cb.Balance - cb.FrozenAmount
+	if available < 0 {
+		return 0
+	}
+	return available
 }
 
 type CashBankTransaction struct {
@@ -56,3 +69,25 @@ const (
 	CashBankTypeCash = "CASH"
 	CashBankTypeBank = "BANK"
 )
+
+// Frozen Action Types
+const (
+	FrozenActionFreeze   = "FREEZE"
+	FrozenActionUnfreeze = "UNFREEZE"
+)
+
+// CashBankFrozenHistory tracks freeze/unfreeze history for audit trail
+type CashBankFrozenHistory struct {
+	ID              uint      `json:"id" gorm:"primaryKey"`
+	CashBankID      uint      `json:"cash_bank_id" gorm:"not null;index"`
+	Action          string    `json:"action" gorm:"not null;size:20"` // FREEZE or UNFREEZE
+	Amount          float64   `json:"amount" gorm:"type:decimal(15,2);not null"`
+	PreviousFrozen  float64   `json:"previous_frozen" gorm:"type:decimal(15,2);not null"`
+	NewFrozen       float64   `json:"new_frozen" gorm:"type:decimal(15,2);not null"`
+	Reason          string    `json:"reason" gorm:"size:255"`
+	UserID          uint      `json:"user_id" gorm:"index"`
+	CreatedAt       time.Time `json:"created_at"`
+
+	// Relations
+	CashBank CashBank `json:"cash_bank" gorm:"foreignKey:CashBankID"`
+}

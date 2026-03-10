@@ -143,13 +143,9 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
 
     let displayAmount = Number(amount);
 
-    // Convert to positive for revenue and liability accounts for user-friendly display
-    if (accountType === 'REVENUE' || accountType === 'LIABILITY' ||
-      accountCode?.startsWith('4') || // Revenue accounts
-      accountCode?.startsWith('2102') || accountCode?.startsWith('2203')) { // PPN accounts (2102-001 Keluaran, 2102-002 Masukan)
-      displayAmount = Math.abs(displayAmount);
-      console.log(`[EnhancedBalanceSheetReport] Converted ${accountCode} (${accountType}) balance ${amount} to positive ${displayAmount}`);
-    }
+    // Revenue accounts (4xxx) should NOT appear on a Balance Sheet — they belong on P&L.
+    // If they somehow appear, display as-is without masking sign.
+    // PPN accounts are handled via PPN_NET netting in the backend, so no special conversion needed here.
 
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',

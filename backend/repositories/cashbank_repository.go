@@ -61,7 +61,7 @@ func (r *CashBankRepository) Update(account *models.CashBank) (*models.CashBank,
 	// Only update allowed columns explicitly
 	updateTx := r.db.Model(&models.CashBank{}).
 		Where("id = ?", account.ID).
-		Select("Code", "Name", "Type", "BankName", "AccountNo", "AccountHolderName", "Branch", "Currency", "Balance", "MinBalance", "MaxBalance", "DailyLimit", "MonthlyLimit", "IsActive", "IsRestricted", "Description")
+		Select("Code", "Name", "Type", "BankName", "AccountNo", "AccountHolderName", "Branch", "Currency", "Balance", "MinBalance", "MaxBalance", "DailyLimit", "MonthlyLimit", "IsActive", "IsRestricted", "FrozenAmount", "FrozenReason", "FrozenAt", "FrozenBy", "Description")
 
 	if err := updateTx.Updates(account).Error; err != nil {
 		return nil, err
@@ -251,6 +251,40 @@ func (r *CashBankRepository) UpdateBalance(id uint, amount float64) error {
 	return r.db.Model(&models.CashBank{}).
 		Where("id = ?", id).
 		Update("balance", gorm.Expr("balance + ?", amount)).Error
+}
+
+// UpdateFrozenAmount atomically updates the frozen amount for a cash/bank account
+func (r *CashBankRepository) UpdateFrozenAmount(id uint, frozenAmount float64, reason string, frozenBy uint) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"frozen_amount": frozenAmount,
+		"frozen_reason": reason,
+		"frozen_by":     frozenBy,
+		"frozen_at":     &now,
+	}
+	// If unfreezing completely, clear frozen metadata
+	if frozenAmount == 0 {
+		updates["frozen_reason"] = ""
+		updates["frozen_at"] = nil
+		updates["frozen_by"] = 0
+	}
+	return r.db.Model(&models.CashBank{}).
+		Where("id = ?", id).
+		Updates(updates).Error
+}
+
+// CreateFrozenHistory creates a frozen history record for audit trail
+func (r *CashBankRepository) CreateFrozenHistory(history *models.CashBankFrozenHistory) error {
+	return r.db.Create(history).Error
+}
+
+// GetFrozenHistory retrieves frozen history for a cash/bank account
+func (r *CashBankRepository) GetFrozenHistory(cashBankID uint) ([]models.CashBankFrozenHistory, error) {
+	var history []models.CashBankFrozenHistory
+	err := r.db.Where("cash_bank_id = ?", cashBankID).
+		Order("created_at DESC").
+		Find(&history).Error
+	return history, err
 }
 
 // GetMonthlyTransactionSummary gets monthly transaction summary

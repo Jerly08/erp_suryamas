@@ -131,6 +131,7 @@ type ProfitLossData struct {
 }
 
 // CashFlowData represents cash flow specific structure
+// NOTE: Use the section subtotals as the single source of truth for activity totals.
 type CashFlowData struct {
 	FinancialReportData
 	OperatingActivities  ReportSection `json:"operating_activities"`
@@ -139,9 +140,6 @@ type CashFlowData struct {
 	NetCashFlow          float64       `json:"net_cash_flow"`
 	BeginningCashBalance float64       `json:"beginning_cash_balance"`
 	EndingCashBalance    float64       `json:"ending_cash_balance"`
-	CashFlowFromOperations float64     `json:"cash_flow_from_operations"`
-	CashFlowFromInvesting  float64     `json:"cash_flow_from_investing"`
-	CashFlowFromFinancing  float64     `json:"cash_flow_from_financing"`
 }
 
 // TrialBalanceData represents trial balance specific structure

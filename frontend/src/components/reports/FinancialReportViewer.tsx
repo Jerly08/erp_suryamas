@@ -11,6 +11,7 @@ import {
   Table,
   Thead,
   Tbody,
+  Tfoot,
   Tr,
   Th,
   Td,
@@ -123,11 +124,11 @@ const ProfitLossView: React.FC<{ data: ProfitLossStatement }> = ({ data }) => {
               {data.comparative && (
                 <>
                   <Td isNumeric fontSize="sm">
-                    {financialReportService.formatCurrency(0)} {/* Previous period data */}
+                    {financialReportService.formatCurrency(item.previousBalance ?? 0)}
                   </Td>
                   <Td isNumeric fontSize="sm">
-                    <Text color={getVarianceColor(item.balance)}>
-                      {financialReportService.formatCurrency(item.balance)}
+                    <Text color={getVarianceColor((item.balance ?? 0) - (item.previousBalance ?? 0))}>
+                      {financialReportService.formatCurrency((item.balance ?? 0) - (item.previousBalance ?? 0))}
                     </Text>
                   </Td>
                 </>
@@ -168,8 +169,8 @@ const ProfitLossView: React.FC<{ data: ProfitLossStatement }> = ({ data }) => {
           </StatNumber>
           {data.comparative && (
             <StatHelpText>
-              <Icon as={FiTrendingUp} /> 
-              {financialReportService.formatPercentage(5.2)} vs previous
+              <Icon as={data.revenueGrowth >= 0 ? FiTrendingUp : FiTrendingDown} />
+              {financialReportService.formatPercentage(data.revenueGrowth || 0)} vs previous
             </StatHelpText>
           )}
         </Stat>
@@ -180,7 +181,7 @@ const ProfitLossView: React.FC<{ data: ProfitLossStatement }> = ({ data }) => {
             {financialReportService.formatCurrency(data.grossProfit)}
           </StatNumber>
           <StatHelpText>
-            {financialReportService.formatPercentage((data.grossProfit / data.totalRevenue) * 100, 1)} margin
+            {financialReportService.formatPercentage(data.totalRevenue ? (data.grossProfit / data.totalRevenue) * 100 : 0, 1)} margin
           </StatHelpText>
         </Stat>
 
@@ -197,7 +198,7 @@ const ProfitLossView: React.FC<{ data: ProfitLossStatement }> = ({ data }) => {
             {financialReportService.formatCurrency(data.netIncome)}
           </StatNumber>
           <StatHelpText>
-            {financialReportService.formatPercentage((data.netIncome / data.totalRevenue) * 100, 1)} margin
+            {financialReportService.formatPercentage(data.totalRevenue ? (data.netIncome / data.totalRevenue) * 100 : 0, 1)} margin
           </StatHelpText>
         </Stat>
       </SimpleGrid>
@@ -610,7 +611,7 @@ const TrialBalanceView: React.FC<{ data: TrialBalance }> = ({ data }) => {
                   </Tr>
                 ))}
               </Tbody>
-              <Thead>
+              <Tfoot>
                 <Tr bg="gray.100">
                   <Th colSpan={3} textAlign="right">TOTAL</Th>
                   <Th isNumeric fontWeight="bold" color="blue.600">
@@ -620,7 +621,7 @@ const TrialBalanceView: React.FC<{ data: TrialBalance }> = ({ data }) => {
                     {financialReportService.formatCurrency(data.totalCredits)}
                   </Th>
                 </Tr>
-              </Thead>
+              </Tfoot>
             </Table>
           </TableContainer>
         </CardBody>

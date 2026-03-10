@@ -35,7 +35,7 @@ import {
   Card,
   CardBody,
 } from '@chakra-ui/react';
-import { CashBank, TransferRequest } from '@/services/cashbankService';
+import { CashBank, TransferRequest, getAvailableBalance } from '@/services/cashbankService';
 import cashbankService from '@/services/cashbankService';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -131,8 +131,12 @@ const TransferForm: React.FC<TransferFormProps> = ({
         throw new Error('Amount must be greater than zero');
       }
 
-      if (formData.amount > sourceAccount.balance) {
-        throw new Error(`Insufficient balance. Available: ${sourceAccount.currency} ${sourceAccount.balance.toLocaleString('id-ID')}`);
+      if (formData.amount > getAvailableBalance(sourceAccount)) {
+        const frozen = sourceAccount.frozen_amount || 0;
+        if (frozen > 0) {
+          throw new Error(`Saldo tersedia tidak cukup. Tersedia: ${sourceAccount.currency} ${getAvailableBalance(sourceAccount).toLocaleString('id-ID')} (Total: ${sourceAccount.balance.toLocaleString('id-ID')}, Terblokir: ${frozen.toLocaleString('id-ID')})`);
+        }
+        throw new Error(`Insufficient balance. Available: ${sourceAccount.currency} ${getAvailableBalance(sourceAccount).toLocaleString('id-ID')}`);
       }
 
       if (sourceAccount.currency !== selectedDestAccount.currency && formData.exchange_rate <= 0) {
@@ -245,13 +249,17 @@ const TransferForm: React.FC<TransferFormProps> = ({
                     <Stat size="sm">
                       <StatLabel>{t('cashBank.availableBalance')}</StatLabel>
                       <StatNumber
-                        color={sourceAccount.balance < 0 ? 'red.500' : 'green.600'}
+                        color={getAvailableBalance(sourceAccount) <= 0 ? 'red.500' : 'green.600'}
                         fontFamily="mono"
                         fontSize="md"
                       >
-                        {sourceAccount.currency} {Math.abs(sourceAccount.balance).toLocaleString('id-ID')}
-                        {sourceAccount.balance < 0 && ' (Dr)'}
+                        {sourceAccount.currency} {getAvailableBalance(sourceAccount).toLocaleString('id-ID')}
                       </StatNumber>
+                      {(sourceAccount.frozen_amount || 0) > 0 && (
+                        <StatHelpText color="orange.500" fontSize="xs">
+                          Total: {sourceAccount.currency} {sourceAccount.balance.toLocaleString('id-ID')} | Terblokir: {sourceAccount.currency} {sourceAccount.frozen_amount.toLocaleString('id-ID')}
+                        </StatHelpText>
+                      )}
                     </Stat>
                   </CardBody>
                 </Card>
@@ -317,7 +325,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
                       onChange={(_, value) => handleInputChange('amount', value || 0)}
                       min={0}
                       precision={2}
-                      max={sourceAccount.balance}
+                      max={getAvailableBalance(sourceAccount)}
                     >
                       <NumberInputField />
                       <NumberInputStepper>
@@ -325,9 +333,9 @@ const TransferForm: React.FC<TransferFormProps> = ({
                         <NumberDecrementStepper />
                       </NumberInputStepper>
                     </NumberInput>
-                    {formData.amount > sourceAccount.balance && (
+                    {formData.amount > getAvailableBalance(sourceAccount) && (
                       <Text fontSize="xs" color="red.500" mt={1}>
-                        ⚠️ Amount exceeds available balance
+                        Jumlah melebihi saldo tersedia{(sourceAccount.frozen_amount || 0) > 0 ? ` (Dana terblokir: ${sourceAccount.currency} ${sourceAccount.frozen_amount.toLocaleString('id-ID')})` : ''}
                       </Text>
                     )}
                   </FormControl>
@@ -444,7 +452,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
             isDisabled={
               formData.amount <= 0 ||
               !selectedDestAccount ||
-              formData.amount > sourceAccount.balance ||
+              formData.amount > getAvailableBalance(sourceAccount) ||
               (requiresExchangeRate && formData.exchange_rate <= 0)
             }
           >

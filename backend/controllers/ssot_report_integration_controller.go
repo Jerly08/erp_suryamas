@@ -167,7 +167,7 @@ func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) 
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Unsupported format. Use json, pdf, or excel",
+			"message": "Unsupported format. Use json, pdf, or csv",
 		})
 	}
 }
@@ -186,7 +186,7 @@ func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) 
 // @Router /api/v1/ssot-reports/vendor-analysis [get]
 func (c *SSOTReportIntegrationController) GetSSOTVendorAnalysis(ctx *gin.Context) {
 	// Deprecated: Use GetSSOTPurchaseReport instead
-	ctx.JSON(http.StatusMovedPermanently, gin.H{
+	ctx.JSON(http.StatusGone, gin.H{
 		"status":       "deprecated",
 		"message":      "This endpoint has been replaced by /api/v1/ssot-reports/purchase-report",
 		"redirect_url": "/api/v1/ssot-reports/purchase-report",
@@ -218,21 +218,15 @@ func (c *SSOTReportIntegrationController) GetSSOTPurchaseReport(ctx *gin.Context
 		return
 	}
 
-	startDate, err := time.Parse("2006-01-02", startDateStr)
+	startDate, err := c.parseDateBySettings(startDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid start_date format. Use YYYY-MM-DD",
-		})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
-	endDate, err := time.Parse("2006-01-02", endDateStr)
+	endDate, err := c.parseDateBySettings(endDateStr)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid end_date format. Use YYYY-MM-DD",
-		})
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
@@ -260,37 +254,6 @@ func (c *SSOTReportIntegrationController) GetSSOTPurchaseReport(ctx *gin.Context
 		ctx.JSON(http.StatusNotImplemented, gin.H{
 			"status":  "error",
 			"message": "PDF export not yet implemented for SSOT purchase report",
-		})
-	default:
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Unsupported format. Use json or pdf",
-		})
-	}
-
-	// Generate vendor analysis from SSOT
-	vendorData, err := c.integrationService.GenerateVendorAnalysisFromSSot(startDate, endDate)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"message": "Failed to generate vendor analysis",
-			"error":   err.Error(),
-		})
-		return
-	}
-
-	// Handle different formats
-	switch format {
-	case "json":
-		ctx.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data":   vendorData,
-		})
-	case "pdf":
-		// TODO: Implement PDF export
-		ctx.JSON(http.StatusNotImplemented, gin.H{
-			"status":  "error",
-			"message": "PDF export not yet implemented for SSOT vendor analysis",
 		})
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
@@ -371,7 +334,7 @@ func (c *SSOTReportIntegrationController) GetSSOTTrialBalance(ctx *gin.Context) 
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Unsupported format. Use json, pdf, or excel",
+			"message": "Unsupported format. Use json, pdf, or csv",
 		})
 	}
 }
@@ -477,7 +440,7 @@ func (c *SSOTReportIntegrationController) GetSSOTGeneralLedger(ctx *gin.Context)
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Unsupported format. Use json, pdf, or excel",
+			"message": "Unsupported format. Use json, pdf, or csv",
 		})
 	}
 }

@@ -43,18 +43,15 @@ class ReportService {
   }
 
   private buildQueryString(params: ReportParameters): string {
-    console.log('buildQueryString called with params:', params);
     const searchParams = new URLSearchParams();
-    
+
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '' && value !== 'ALL') {
         searchParams.append(key, value.toString());
       }
     });
 
-    const queryString = searchParams.toString();
-    console.log('buildQueryString result:', queryString);
-    return queryString;
+    return searchParams.toString();
   }
 
   private formatErrorMessage(textResponse: string, status: number): string {
@@ -199,11 +196,9 @@ class ReportService {
 
   // Generate Balance Sheet
   async generateBalanceSheet(params: ReportParameters): Promise<ReportData | Blob> {
-    console.log('generateBalanceSheet called with params:', params);
     const queryString = this.buildQueryString(params);
     const url = `${API_V1_BASE}/reports/balance-sheet${queryString ? '?' + queryString : ''}`;
-    console.log('Making request to:', url);
-    
+
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });
@@ -246,10 +241,10 @@ class ReportService {
   // Generate P&L Period Comparison
   async generateProfitLossComparison(currentPeriod: {start: string, end: string}, previousPeriod: {start: string, end: string}): Promise<any> {
     const params = {
-      current_start: currentPeriod.start,
-      current_end: currentPeriod.end,
-      previous_start: previousPeriod.start,
-      previous_end: previousPeriod.end,
+      start_date: currentPeriod.start,
+      end_date: currentPeriod.end,
+      previous_start_date: previousPeriod.start,
+      previous_end_date: previousPeriod.end,
       format: 'json'
     };
 
@@ -459,9 +454,6 @@ class ReportService {
 
   // Generic report generator
   async generateReport(reportId: string, params: ReportParameters): Promise<ReportData | Blob> {
-    // Log the request for debugging
-    console.log('generateReport called with reportId:', reportId, 'params:', params);
-    
     // Handle journal entry analysis separately as it uses different endpoint
     if (reportId === 'journal-entry-analysis') {
       return this.generateJournalEntryAnalysis(params);
@@ -507,9 +499,7 @@ class ReportService {
     const url = endpoint.startsWith('/')
       ? `${API_V1_BASE}${endpoint}${queryString ? '?' + queryString : ''}`
       : `${API_V1_BASE}/reports/${endpoint}${queryString ? '?' + queryString : ''}`;
-    
-    console.log('Making request to:', url);
-    
+
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });
@@ -598,41 +588,6 @@ class ReportService {
     return result as ReportData;
   }
 
-  // Unified report generation method that handles all report types
-  // This is now handled by the main generateReport method
-
-  // Enhanced error handling wrapper
-  private async handleApiResponse(response: Response, operation: string): Promise<any> {
-    if (!response.ok) {
-      let errorMessage = `Failed to ${operation}`;
-      
-      try {
-        const errorData = await response.json();
-        if (errorData.message) {
-          errorMessage = errorData.message;
-        } else if (errorData.error) {
-          errorMessage = errorData.error;
-        } else if (errorData.errors && Array.isArray(errorData.errors)) {
-          errorMessage = errorData.errors.join(', ');
-        }
-      } catch {
-        // If JSON parsing fails, try to get text
-        try {
-          const errorText = await response.text();
-          if (errorText) {
-            errorMessage = errorText;
-          }
-        } catch {
-          // Use HTTP status text as fallback
-          errorMessage = `${errorMessage}: ${response.status} ${response.statusText}`;
-        }
-      }
-      
-      throw new Error(errorMessage);
-    }
-    
-    return response;
-  }
 }
 
 export const reportService = new ReportService();

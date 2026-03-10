@@ -213,6 +213,13 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 
 	// Debit inventory/expense per item
 	for _, item := range purchase.PurchaseItems {
+		itemName := "Unknown Item"
+		if item.Product != nil {
+			itemName = item.Product.Name
+		} else if item.Description != "" {
+			itemName = item.Description
+		}
+
 		accountID := accountIDs.InventoryAccountID
 		if item.ExpenseAccountID != 0 {
 			accountID = uint64(item.ExpenseAccountID)
@@ -220,7 +227,7 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 		amount := decimal.NewFromFloat(item.TotalPrice)
 		lines = append(lines, JournalLineRequest{
 			AccountID:    accountID,
-			Description:  fmt.Sprintf("Purchase - %s", item.Product.Name),
+			Description:  fmt.Sprintf("Purchase - %s", itemName),
 			DebitAmount:  amount,
 			CreditAmount: decimal.Zero,
 		})

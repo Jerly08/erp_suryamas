@@ -74,6 +74,9 @@ import {
   MenuList,
   MenuItem,
   Tooltip,
+  Radio,
+  RadioGroup,
+  Stack,
 } from '@chakra-ui/react';
 import {
   FiPlus,
@@ -150,6 +153,10 @@ interface PurchaseItemFormData {
   discount: string;
   tax: string;
   expense_account_id: string;
+  item_type: string;          // "INVENTORY" | "ASSET"
+  is_fixed_asset: boolean;
+  description: string;        // Asset name/description
+  asset_category_id: string;  // Asset category ID
 }
 
 interface Vendor {
@@ -479,6 +486,8 @@ const PurchasesPage: React.FC = () => {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<GLAccount[]>([]);
+  const [fixedAssetAccounts, setFixedAssetAccounts] = useState<GLAccount[]>([]);
+  const [loadingFixedAssetAccounts, setLoadingFixedAssetAccounts] = useState(false);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [creditAccounts, setCreditAccounts] = useState<GLAccount[]>([]);  // New state for liability accounts
   const [cashBanks, setCashBanks] = useState<any[]>([]);  // For payment form
@@ -519,6 +528,8 @@ const PurchasesPage: React.FC = () => {
   });
   const [loadingVendors, setLoadingVendors] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
+  const [assetCategories, setAssetCategories] = useState<any[]>([]);
+  const [loadingAssetCategories, setLoadingAssetCategories] = useState(false);
 
   // Add Vendor Modal states
   const { isOpen: isAddVendorOpen, onOpen: onAddVendorOpen, onClose: onAddVendorClose } = useDisclosure();
@@ -1653,6 +1664,20 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
+  // Fetch asset categories for fixed asset purchase items
+  const fetchAssetCategories = async () => {
+    try {
+      setLoadingAssetCategories(true);
+      const res = await assetService.getAssetCategories();
+      setAssetCategories(res?.data || []);
+    } catch (err: any) {
+      console.error('Error fetching asset categories:', err);
+      setAssetCategories([]);
+    } finally {
+      setLoadingAssetCategories(false);
+    }
+  };
+
   // Fetch bank accounts for payment method selection
   const fetchBankAccounts = async () => {
     if (!token) return;
@@ -2499,6 +2524,7 @@ const PurchasesPage: React.FC = () => {
     await fetchExpenseAccounts(); // Load expense accounts for dropdown
     await fetchBankAccounts(); // Load bank accounts for dropdown
     await fetchCreditAccounts(); // Load credit accounts (liability) for dropdown
+    await fetchAssetCategories(); // Load asset categories for fixed asset items
     onCreateOpen();
   };
 
@@ -2526,17 +2552,25 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
-    // Validate all items have product, quantity, and expense account
-    const invalidItems = formData.items.filter(item =>
-      !item.product_id || !item.quantity || !item.expense_account_id
-    );
+    // Validate all items based on item_type
+    const invalidItems = formData.items.filter(item => {
+      if (item.item_type === 'ASSET') {
+        // Asset items require: description, asset_category_id, quantity
+        return !item.description || !item.asset_category_id || !item.quantity;
+      }
+      // Inventory items require: product_id, quantity, expense_account_id
+      return !item.product_id || !item.quantity || !item.expense_account_id;
+    });
 
     if (invalidItems.length > 0) {
+      const assetInvalid = invalidItems.some(i => i.item_type === 'ASSET');
       toast({
         title: 'Error',
-        description: 'Please fill in all required fields for each item',
+        description: assetInvalid
+          ? 'Item Aset Tetap: Nama aset dan Kategori Aset harus diisi.'
+          : 'Please fill in all required fields for each item',
         status: 'error',
-        duration: 3000,
+        duration: 4000,
         isClosable: true,
       });
       return;
@@ -2564,12 +2598,16 @@ const PurchasesPage: React.FC = () => {
         credit_account_id: formData.credit_account_id ? parseInt(formData.credit_account_id) : undefined,
         payment_reference: formData.payment_reference,
         items: formData.items.map(item => ({
-          product_id: parseInt(item.product_id),
+          item_type: item.item_type || 'INVENTORY',
+          is_fixed_asset: item.item_type === 'ASSET',
+          description: item.description || '',
+          asset_category_id: item.asset_category_id ? parseInt(item.asset_category_id) : undefined,
+          product_id: item.product_id ? parseInt(item.product_id) : undefined,
           quantity: parseFloat(item.quantity),
           unit_price: parseFloat(item.unit_price),
           discount: parseFloat(item.discount) || 0,
           tax: parseFloat(item.tax) || 0,
-          expense_account_id: parseInt(item.expense_account_id),
+          expense_account_id: item.expense_account_id ? parseInt(item.expense_account_id) : undefined,
         })),
       };
 
@@ -3834,7 +3872,12 @@ const PurchasesPage: React.FC = () => {
                                 <Tbody>
                                   {selectedPurchase.purchase_items.map((item: any, index: number) => (
                                     <Tr key={index}>
-                                      <Td>{item.product?.name || 'N/A'}</Td>
+                                      <Td>
+                                        {item.item_type === 'ASSET' || item.is_fixed_asset
+                                          ? `${item.description || 'Unknown Asset'} (Aset Tetap)`
+                                          : item.product?.name || 'N/A'
+                                        }
+                                      </Td>
                                       <Td isNumeric>{item.quantity}</Td>
                                       <Td isNumeric>{formatCurrency(item.unit_price)}</Td>
                                       <Td isNumeric>{formatCurrency(item.quantity * item.unit_price)}</Td>
@@ -4387,7 +4430,7 @@ const PurchasesPage: React.FC = () => {
                                   ...formData,
                                   items: [
                                     ...formData.items,
-                                    { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: isServiceCompany && expenseAccounts.length > 0 ? expenseAccounts[0].id!.toString() : '' }
+                                    { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: isServiceCompany && expenseAccounts.length > 0 ? expenseAccounts[0].id!.toString() : '', item_type: 'INVENTORY', is_fixed_asset: false, description: '', asset_category_id: '' }
                                   ]
                                 });
                               }}
@@ -4401,7 +4444,8 @@ const PurchasesPage: React.FC = () => {
                             <Table size="sm" variant="simple">
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Product</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="130px">Tipe Item</Th>
+                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Produk / Deskripsi Aset</Th>
                                   <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
                                   <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
                                   <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Discount (IDR)</Th>
@@ -4413,7 +4457,7 @@ const PurchasesPage: React.FC = () => {
                               <Tbody>
                                 {formData.items.length === 0 ? (
                                   <Tr>
-                                    <Td colSpan={7} textAlign="center" py={8}>
+                                    <Td colSpan={8} textAlign="center" py={8}>
                                       <VStack spacing={2}>
                                         <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
                                         <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
@@ -4423,49 +4467,123 @@ const PurchasesPage: React.FC = () => {
                                 ) : (
                                   formData.items.map((item, index) => (
                                     <Tr key={index} _hover={{ bg: hoverBg }}>
-                                      <Td minW="200px">
-                                        {loadingProducts ? (
-                                          <Flex align="center" justify="center" h="32px">
-                                            <Spinner size="sm" />
-                                          </Flex>
-                                        ) : (
-                                          <HStack spacing={2}>
-                                            <Select
-                                              placeholder={isServiceCompany ? '🔍 Pilih Produk/Jasa' : 'Select product'}
-                                              value={item.product_id}
+                                      {/* Kolom Tipe Item - Radio Button */}
+                                      <Td verticalAlign="top" pt={4}>
+                                        <RadioGroup
+                                          value={item.item_type || 'INVENTORY'}
+                                          onChange={(val) => {
+                                            const items = [...formData.items];
+                                            items[index] = {
+                                              ...items[index],
+                                              item_type: val,
+                                              is_fixed_asset: val === 'ASSET',
+                                              // Reset fields saat ganti tipe
+                                              product_id: val === 'ASSET' ? '' : items[index].product_id,
+                                              description: val === 'INVENTORY' ? '' : items[index].description,
+                                              asset_category_id: val === 'INVENTORY' ? '' : items[index].asset_category_id,
+                                            };
+                                            setFormData({ ...formData, items });
+                                          }}
+                                          size="sm"
+                                        >
+                                          <Stack spacing={1}>
+                                            <Radio value="INVENTORY" colorScheme="blue" size="sm">
+                                              <Text fontSize="xs">Persediaan</Text>
+                                            </Radio>
+                                            <Radio value="ASSET" colorScheme="orange" size="sm">
+                                              <Text fontSize="xs">Aset Tetap</Text>
+                                            </Radio>
+                                          </Stack>
+                                        </RadioGroup>
+                                      </Td>
+
+                                      {/* Kolom Produk / Deskripsi Aset - Kondisional */}
+                                      <Td minW="220px" verticalAlign="top" pt={3}>
+                                        {item.item_type === 'ASSET' ? (
+                                          /* === ASSET MODE: Input Deskripsi + Kategori Aset === */
+                                          <VStack spacing={2} align="stretch">
+                                            <Input
+                                              placeholder="Nama aset (cth: Laptop Dell, AC Daikin)"
+                                              value={item.description}
                                               onChange={(e) => {
                                                 const items = [...formData.items];
-                                                items[index] = { ...items[index], product_id: e.target.value };
-                                                // Auto-fill unit price from product purchase_price if available
-                                                const selectedProduct = products.find(p => p.id?.toString() === e.target.value);
-                                                if (selectedProduct && selectedProduct.purchase_price) {
-                                                  items[index] = { ...items[index], unit_price: selectedProduct.purchase_price.toString() };
-                                                }
+                                                items[index] = { ...items[index], description: e.target.value };
                                                 setFormData({ ...formData, items });
                                               }}
                                               size="sm"
-                                              maxW="280px"
+                                              borderColor="orange.300"
+                                              _focus={{ borderColor: 'orange.500', boxShadow: '0 0 0 1px orange' }}
+                                            />
+                                            <Select
+                                              placeholder="Pilih Kategori Aset"
+                                              value={item.asset_category_id}
+                                              onChange={(e) => {
+                                                const items = [...formData.items];
+                                                items[index] = { ...items[index], asset_category_id: e.target.value };
+                                                setFormData({ ...formData, items });
+                                              }}
+                                              size="sm"
+                                              borderColor="orange.300"
+                                              _focus={{ borderColor: 'orange.500' }}
+                                              isDisabled={loadingAssetCategories}
                                             >
-                                              {products.map((p) => (
-                                                <option key={p.id} value={p.id?.toString()}>
-                                                  {isServiceCompany ? `${p?.code} - ${p?.name}` : `${p?.id} - ${p?.name || p?.code}`}
+                                              {assetCategories.map((cat) => (
+                                                <option key={cat.id} value={cat.id?.toString()}>
+                                                  {cat.code} - {cat.name}
                                                 </option>
                                               ))}
                                             </Select>
-                                            <IconButton
-                                              aria-label="Add new product"
-                                              icon={<FiPlus />}
-                                              size="sm"
-                                              colorScheme="blue"
-                                              variant="outline"
-                                              onClick={onAddProductOpen}
-                                              title="Add New Product"
-                                              _hover={{ bg: 'blue.50' }}
-                                            />
-                                          </HStack>
+                                            <Badge colorScheme="orange" fontSize="2xs" px={2} py={0.5} borderRadius="md" w="fit-content">
+                                              Aset akan otomatis terdaftar dengan status PENDING
+                                            </Badge>
+                                          </VStack>
+                                        ) : (
+                                          /* === INVENTORY MODE: Select Produk (seperti sebelumnya) === */
+                                          loadingProducts ? (
+                                            <Flex align="center" justify="center" h="32px">
+                                              <Spinner size="sm" />
+                                            </Flex>
+                                          ) : (
+                                            <HStack spacing={2}>
+                                              <Select
+                                                placeholder={isServiceCompany ? 'Pilih Produk/Jasa' : 'Select product'}
+                                                value={item.product_id}
+                                                onChange={(e) => {
+                                                  const items = [...formData.items];
+                                                  items[index] = { ...items[index], product_id: e.target.value };
+                                                  // Auto-fill unit price from product purchase_price if available
+                                                  const selectedProduct = products.find(p => p.id?.toString() === e.target.value);
+                                                  if (selectedProduct && selectedProduct.purchase_price) {
+                                                    items[index] = { ...items[index], unit_price: selectedProduct.purchase_price.toString() };
+                                                  }
+                                                  setFormData({ ...formData, items });
+                                                }}
+                                                size="sm"
+                                                maxW="280px"
+                                              >
+                                                {products.map((p) => (
+                                                  <option key={p.id} value={p.id?.toString()}>
+                                                    {isServiceCompany ? `${p?.code} - ${p?.name}` : `${p?.id} - ${p?.name || p?.code}`}
+                                                  </option>
+                                                ))}
+                                              </Select>
+                                              <IconButton
+                                                aria-label="Add new product"
+                                                icon={<FiPlus />}
+                                                size="sm"
+                                                colorScheme="blue"
+                                                variant="outline"
+                                                onClick={onAddProductOpen}
+                                                title="Add New Product"
+                                                _hover={{ bg: 'blue.50' }}
+                                              />
+                                            </HStack>
+                                          )
                                         )}
                                       </Td>
-                                      <Td isNumeric>
+
+                                      {/* Kolom Qty */}
+                                      <Td isNumeric verticalAlign="top" pt={3}>
                                         <FormControl>
                                           <NumberInput
                                             size="sm"
@@ -4486,7 +4604,9 @@ const PurchasesPage: React.FC = () => {
                                           </NumberInput>
                                         </FormControl>
                                       </Td>
-                                      <Td isNumeric>
+
+                                      {/* Kolom Unit Price */}
+                                      <Td isNumeric verticalAlign="top" pt={3}>
                                         <Box maxW="160px">
                                           <CurrencyInput
                                             value={parseFloat(item.unit_price) || 0}
@@ -4502,7 +4622,9 @@ const PurchasesPage: React.FC = () => {
                                           />
                                         </Box>
                                       </Td>
-                                      <Td isNumeric>
+
+                                      {/* Kolom Discount */}
+                                      <Td isNumeric verticalAlign="top" pt={3}>
                                         <Box maxW="140px">
                                           <CurrencyInput
                                             value={parseFloat(item.discount) || 0}
@@ -4518,8 +4640,41 @@ const PurchasesPage: React.FC = () => {
                                           />
                                         </Box>
                                       </Td>
-                                      <Td minW="240px">
-                                        {canListExpenseAccounts ? (
+
+                                      {/* Kolom Account - Hidden for ASSET type */}
+                                      <Td minW="240px" verticalAlign="top" pt={3}>
+                                        {item.item_type === 'ASSET' ? (
+                                          <Box maxW="240px">
+                                            <SearchableSelect
+                                              options={expenseAccounts.filter(acc => {
+                                                const code = acc.code || '';
+                                                const name = (acc.name || '').toLowerCase();
+                                                return (code.startsWith('15') && code.length >= 4) ||
+                                                  ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) ||
+                                                  name.includes('fixed asset') || name.includes('asset tetap') ||
+                                                  name.includes('peralatan') || name.includes('mesin') ||
+                                                  name.includes('printer') || name.includes('komputer') ||
+                                                  name.includes('equipment') || name.includes('furniture') ||
+                                                  name.includes('kendaraan') || name.includes('bangunan') ||
+                                                  name.includes('gedung');
+                                              }).map(acc => ({
+                                                id: acc.id!,
+                                                code: acc.code,
+                                                name: acc.name,
+                                                active: acc.is_active
+                                              }))}
+                                              value={item.expense_account_id}
+                                              onChange={(val) => {
+                                                const items = [...formData.items];
+                                                items[index] = { ...items[index], expense_account_id: val };
+                                                setFormData({ ...formData, items });
+                                              }}
+                                              placeholder="Pilih Akun Aset Tetap..."
+                                              isLoading={loadingExpenseAccounts}
+                                              disabled={item.item_type !== 'ASSET'}
+                                            />
+                                          </Box>
+                                        ) : canListExpenseAccounts ? (
                                           <Box maxW="240px">
                                             <SearchableSelect
                                               options={expenseAccounts.map(acc => ({
@@ -4557,7 +4712,9 @@ const PurchasesPage: React.FC = () => {
                                           </FormControl>
                                         )}
                                       </Td>
-                                      <Td isNumeric>
+
+                                      {/* Kolom Line Total */}
+                                      <Td isNumeric verticalAlign="top" pt={3}>
                                         <Text fontSize="sm" fontWeight="medium" color={statColors.green}>
                                           {(() => {
                                             const qty = parseFloat(item.quantity || '0');
@@ -4569,7 +4726,9 @@ const PurchasesPage: React.FC = () => {
                                           })()}
                                         </Text>
                                       </Td>
-                                      <Td>
+
+                                      {/* Kolom Action */}
+                                      <Td verticalAlign="top" pt={3}>
                                         <IconButton
                                           aria-label="Remove item"
                                           size="sm"
@@ -5605,9 +5764,14 @@ const PurchasesPage: React.FC = () => {
                               </Tr>
                             </Thead>
                             <Tbody>
-                              {financeTaxPurchase?.purchase_items?.map((item, idx) => (
+                              {financeTaxPurchase?.purchase_items?.map((item: any, idx) => (
                                 <Tr key={idx}>
-                                  <Td fontSize="sm">{item.product?.name || `Product #${item.product_id}`}</Td>
+                                  <Td fontSize="sm">
+                                    {item.is_fixed_asset || item.item_type === 'ASSET'
+                                      ? `${item.description || 'Aset Tanpa Deskripsi'} (Aset Tetap)`
+                                      : item.product?.name || `Product #${item.product_id}`
+                                    }
+                                  </Td>
                                   <Td fontSize="sm" isNumeric>{item.quantity}</Td>
                                   <Td fontSize="sm" isNumeric>{formatCurrency(item.unit_price)}</Td>
                                   <Td fontSize="sm" isNumeric fontWeight="medium">{formatCurrency(item.total_price)}</Td>

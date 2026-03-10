@@ -20,6 +20,10 @@ export interface CashBank {
   monthly_limit: number;
   is_active: boolean;
   is_restricted: boolean;
+  frozen_amount: number;
+  frozen_reason?: string;
+  frozen_at?: string;
+  frozen_by?: number;
   user_id: number;
   description?: string;
   created_at: string;
@@ -29,6 +33,12 @@ export interface CashBank {
     code: string;
     name: string;
   };
+}
+
+// Computed helper for available balance
+export function getAvailableBalance(account: CashBank): number {
+  const available = account.balance - (account.frozen_amount || 0);
+  return available > 0 ? available : 0;
 }
 
 export interface CashBankTransaction {
@@ -429,6 +439,45 @@ class CashBankService {
       throw error;
     }
   }
+
+  // Freeze funds in a cash/bank account
+  async freezeAmount(id: number, data: FreezeAmountRequest): Promise<CashBank> {
+    try {
+      const response = await api.post(API_ENDPOINTS.CASH_BANK.FREEZE(id), data);
+      return response.data?.data ?? response.data;
+    } catch (error) {
+      console.error('Error freezing funds:', error);
+      throw error;
+    }
+  }
+
+  // Unfreeze funds in a cash/bank account
+  async unfreezeAmount(id: number, data: UnfreezeAmountRequest): Promise<CashBank> {
+    try {
+      const response = await api.post(API_ENDPOINTS.CASH_BANK.UNFREEZE(id), data);
+      return response.data?.data ?? response.data;
+    } catch (error) {
+      console.error('Error unfreezing funds:', error);
+      throw error;
+    }
+  }
+
+  // Get frozen history for an account
+  async getFrozenHistory(id: number): Promise<FrozenHistory[]> {
+    try {
+      const response = await api.get(API_ENDPOINTS.CASH_BANK.FROZEN_HISTORY(id), {
+        params: { _t: Date.now() },
+      });
+      return response.data?.data ?? response.data ?? [];
+    } catch (error: any) {
+      // Silently return empty array if endpoint not available (e.g. backend not restarted yet)
+      if (error?.response?.status === 404) {
+        return [];
+      }
+      console.error('Error fetching frozen history:', error);
+      throw error;
+    }
+  }
 }
 
 // Type for available GL accounts
@@ -438,6 +487,29 @@ export interface AvailableGLAccount {
   name: string;
   balance: number;
   category: string;
+}
+
+// Frozen fund request/response types
+export interface FreezeAmountRequest {
+  amount: number;
+  reason: string;
+}
+
+export interface UnfreezeAmountRequest {
+  amount: number;
+  reason: string;
+}
+
+export interface FrozenHistory {
+  id: number;
+  cash_bank_id: number;
+  action: 'FREEZE' | 'UNFREEZE';
+  amount: number;
+  previous_frozen: number;
+  new_frozen: number;
+  reason: string;
+  user_id: number;
+  created_at: string;
 }
 
 export default new CashBankService();

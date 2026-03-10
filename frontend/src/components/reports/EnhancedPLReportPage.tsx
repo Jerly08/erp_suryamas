@@ -87,6 +87,31 @@ interface JournalDrilldownRequest {
   limit: number;
 }
 
+// Helper: Convert SSOT data to EnhancedPLData format
+const transformSSOTToEnhancedPL = (ssotData: any, startDate: string, endDate: string): EnhancedPLData => {
+  return {
+    title: '', // Will be translated in modal using t('reports.profitLoss.enhancedTitle')
+    period: ssotData.period || `${new Date(startDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} - ${new Date(endDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
+    company: ssotData.company || { name: 'Company Name Not Set' },
+    enhanced: ssotData.enhanced ?? true,
+    sections: ssotData.sections || [],
+    financialMetrics: ssotData.financialMetrics || {
+      grossProfit: 0,
+      grossProfitMargin: 0,
+      operatingIncome: 0,
+      operatingMargin: 0,
+      ebitda: 0,
+      ebitdaMargin: 0,
+      netIncome: 0,
+      netIncomeMargin: 0,
+    },
+    generatedAt: new Date().toLocaleString('id-ID', {
+      dateStyle: 'full',
+      timeStyle: 'medium'
+    })
+  };
+};
+
 const EnhancedPLReportPage: React.FC = () => {
   const { token } = useAuth();
   const { t } = useTranslation();
@@ -290,29 +315,7 @@ const EnhancedPLReportPage: React.FC = () => {
 
       console.log('SSOT P&L data received:', ssotData);
 
-      // Convert SSOT data to the format expected by EnhancedProfitLossModal
-      // Note: title will be translated in the modal component itself
-      const formattedData: EnhancedPLData = {
-        title: '', // Will be translated in modal using t('reports.profitLoss.enhancedTitle')
-        period: ssotData.period || `${new Date(reportParams.start_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} - ${new Date(reportParams.end_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
-        company: ssotData.company || { name: 'Company Name Not Set' },
-        enhanced: ssotData.enhanced || true,
-        sections: ssotData.sections || [],
-        financialMetrics: ssotData.financialMetrics || {
-          grossProfit: 0,
-          grossProfitMargin: 0,
-          operatingIncome: 0,
-          operatingMargin: 0,
-          ebitda: 0,
-          ebitdaMargin: 0,
-          netIncome: 0,
-          netIncomeMargin: 0,
-        },
-        generatedAt: new Date().toLocaleString('id-ID', {
-          dateStyle: 'full',
-          timeStyle: 'medium'
-        })
-      };
+      const formattedData = transformSSOTToEnhancedPL(ssotData, reportParams.start_date, reportParams.end_date);
 
       setPLData(formattedData);
       setShowCOGSWarning(false); // Clear warning
@@ -330,122 +333,6 @@ const EnhancedPLReportPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatPLSections = (data: any) => {
-    const sections = [];
-
-    // Revenue section
-    if (data.revenue) {
-      const revenueSection = {
-        name: 'REVENUE',
-        items: [],
-        total: data.revenue.total_revenue || 0,
-        subsections: []
-      };
-
-      // Add subsections for different revenue types
-      if (data.revenue.sales_revenue?.items?.length > 0) {
-        revenueSection.subsections.push({
-          name: 'Sales Revenue',
-          items: data.revenue.sales_revenue.items.map((item: any) => ({
-            name: `${item.code} - ${item.name}`,
-            amount: item.amount,
-            accountCode: item.code
-          })),
-          total: data.revenue.sales_revenue.subtotal
-        });
-      }
-
-      if (data.revenue.service_revenue?.items?.length > 0) {
-        revenueSection.subsections.push({
-          name: 'Service Revenue',
-          items: data.revenue.service_revenue.items.map((item: any) => ({
-            name: `${item.code} - ${item.name}`,
-            amount: item.amount,
-            accountCode: item.code
-          })),
-          total: data.revenue.service_revenue.subtotal
-        });
-      }
-
-      sections.push(revenueSection);
-    }
-
-    // Cost of Goods Sold section
-    if (data.cost_of_goods_sold) {
-      const cogsSection = {
-        name: 'COST OF GOODS SOLD',
-        items: [],
-        total: data.cost_of_goods_sold.total_cogs || 0,
-        subsections: []
-      };
-
-      if (data.cost_of_goods_sold.direct_materials?.items?.length > 0) {
-        cogsSection.subsections.push({
-          name: 'Direct Materials',
-          items: data.cost_of_goods_sold.direct_materials.items.map((item: any) => ({
-            name: `${item.code} - ${item.name}`,
-            amount: item.amount,
-            accountCode: item.code
-          })),
-          total: data.cost_of_goods_sold.direct_materials.subtotal
-        });
-      }
-
-      sections.push(cogsSection);
-    }
-
-    // Operating Expenses section
-    if (data.operating_expenses) {
-      const opexSection = {
-        name: 'OPERATING EXPENSES',
-        items: [],
-        total: data.operating_expenses.total_opex || 0,
-        subsections: []
-      };
-
-      if (data.operating_expenses.administrative?.items?.length > 0) {
-        opexSection.subsections.push({
-          name: 'Administrative Expenses',
-          items: data.operating_expenses.administrative.items.map((item: any) => ({
-            name: `${item.code} - ${item.name}`,
-            amount: item.amount,
-            accountCode: item.code
-          })),
-          total: data.operating_expenses.administrative.subtotal
-        });
-      }
-
-      sections.push(opexSection);
-    }
-
-    // Calculated sections
-    if (data.gross_profit !== undefined) {
-      sections.push({
-        name: 'GROSS PROFIT',
-        items: [
-          { name: 'Gross Profit', amount: data.gross_profit },
-          { name: 'Gross Profit Margin', amount: data.gross_profit_margin, isPercentage: true }
-        ],
-        total: data.gross_profit,
-        isCalculated: true
-      });
-    }
-
-    sections.push({
-      name: 'NET INCOME',
-      items: [
-        { name: 'Operating Income', amount: data.operating_income || 0 },
-        { name: 'EBITDA', amount: data.ebitda || 0 },
-        { name: 'Net Income', amount: data.net_income || 0 },
-        { name: 'Net Income Margin', amount: data.net_income_margin || 0, isPercentage: true }
-      ],
-      total: data.net_income || 0,
-      isCalculated: true
-    });
-
-    return sections;
   };
 
   // Handle journal drilldown from P&L modal
@@ -673,7 +560,7 @@ const EnhancedPLReportPage: React.FC = () => {
                     </StatNumber>
                     <StatHelpText>
                       <StatArrow type={plData.financialMetrics.grossProfitMargin >= 0 ? 'increase' : 'decrease'} />
-                      {plData.financialMetrics.grossProfitMargin.toFixed(1)}%
+                      {(plData.financialMetrics.grossProfitMargin ?? 0).toFixed(1)}%
                     </StatHelpText>
                   </Stat>
                 </CardBody>
@@ -689,7 +576,7 @@ const EnhancedPLReportPage: React.FC = () => {
                     </StatNumber>
                     <StatHelpText>
                       <StatArrow type={plData.financialMetrics.operatingMargin >= 0 ? 'increase' : 'decrease'} />
-                      {plData.financialMetrics.operatingMargin.toFixed(1)}%
+                      {(plData.financialMetrics.operatingMargin ?? 0).toFixed(1)}%
                     </StatHelpText>
                   </Stat>
                 </CardBody>
@@ -705,7 +592,7 @@ const EnhancedPLReportPage: React.FC = () => {
                     </StatNumber>
                     <StatHelpText>
                       <StatArrow type={plData.financialMetrics.ebitdaMargin >= 0 ? 'increase' : 'decrease'} />
-                      {plData.financialMetrics.ebitdaMargin.toFixed(1)}%
+                      {(plData.financialMetrics.ebitdaMargin ?? 0).toFixed(1)}%
                     </StatHelpText>
                   </Stat>
                 </CardBody>
@@ -721,7 +608,7 @@ const EnhancedPLReportPage: React.FC = () => {
                     </StatNumber>
                     <StatHelpText>
                       <StatArrow type={plData.financialMetrics.netIncomeMargin >= 0 ? 'increase' : 'decrease'} />
-                      {plData.financialMetrics.netIncomeMargin.toFixed(1)}%
+                      {(plData.financialMetrics.netIncomeMargin ?? 0).toFixed(1)}%
                     </StatHelpText>
                   </Stat>
                 </CardBody>
@@ -884,27 +771,7 @@ const EnhancedPLReportPage: React.FC = () => {
                             end_date: reportParams.end_date,
                             format: 'json'
                           }) as unknown as any;
-                          const formattedData: EnhancedPLData = {
-                            title: '', // Will be translated in modal using t('reports.profitLoss.enhancedTitle')
-                            period: ssotData.period || `${new Date(reportParams.start_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} - ${new Date(reportParams.end_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
-                            company: ssotData.company || { name: 'Company Name Not Set' },
-                            enhanced: ssotData.enhanced || true,
-                            sections: ssotData.sections || [],
-                            financialMetrics: ssotData.financialMetrics || {
-                              grossProfit: 0,
-                              grossProfitMargin: 0,
-                              operatingIncome: 0,
-                              operatingMargin: 0,
-                              ebitda: 0,
-                              ebitdaMargin: 0,
-                              netIncome: 0,
-                              netIncomeMargin: 0,
-                            },
-                            generatedAt: new Date().toLocaleString('id-ID', {
-                              dateStyle: 'full',
-                              timeStyle: 'medium'
-                            })
-                          };
+                          const formattedData = transformSSOTToEnhancedPL(ssotData, reportParams.start_date, reportParams.end_date);
                           setPLData(formattedData);
                           onPLModalOpen();
                         } catch (error) {

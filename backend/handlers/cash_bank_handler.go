@@ -344,18 +344,93 @@ func (h *CashBankHandler) ValidateIntegrity(c *gin.Context) {
 // and filtered by type (CASH shows accounts with "KAS" in name, BANK shows accounts with "BANK" in name)
 func (h *CashBankHandler) GetAvailableGLAccounts(c *gin.Context) {
 	accountType := c.Query("type")
-	
+
 	// Validate type parameter
 	if accountType != "CASH" && accountType != "BANK" {
 		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid account type. Must be CASH or BANK", nil))
 		return
 	}
-	
+
 	accounts, err := h.cashBankService.GetAvailableGLAccounts(accountType)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to retrieve available GL accounts", err))
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, utils.SuccessResponse("Available GL accounts retrieved successfully", accounts))
+}
+
+// FreezeAmount handles POST /api/cash-bank/accounts/:id/freeze
+func (h *CashBankHandler) FreezeAmount(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid account ID", err))
+		return
+	}
+
+	var request services.FreezeAmountRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid request data", err))
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, utils.CreateErrorResponse("User not authenticated", nil))
+		return
+	}
+
+	account, err := h.cashBankService.FreezeAmount(uint(id), request, userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Failed to freeze funds", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Dana berhasil diblokir", account))
+}
+
+// UnfreezeAmount handles POST /api/cash-bank/accounts/:id/unfreeze
+func (h *CashBankHandler) UnfreezeAmount(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid account ID", err))
+		return
+	}
+
+	var request services.UnfreezeAmountRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid request data", err))
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, utils.CreateErrorResponse("User not authenticated", nil))
+		return
+	}
+
+	account, err := h.cashBankService.UnfreezeAmount(uint(id), request, userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Failed to unfreeze funds", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Dana berhasil dibuka blokirnya", account))
+}
+
+// GetFrozenHistory handles GET /api/cash-bank/accounts/:id/frozen-history
+func (h *CashBankHandler) GetFrozenHistory(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid account ID", err))
+		return
+	}
+
+	history, err := h.cashBankService.GetFrozenHistory(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to get frozen history", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Frozen history retrieved successfully", history))
 }

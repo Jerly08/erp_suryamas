@@ -195,7 +195,7 @@ func (s *SSOTPurchaseReportService) getPurchaseSummary(ctx context.Context, star
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.approval_status = 'APPROVED')
+		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 	`
 
 	var summary purchaseBaseSummary
@@ -235,7 +235,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 		LEFT JOIN contacts c ON c.id = p.vendor_id
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.approval_status = 'APPROVED')
+		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 		GROUP BY p.vendor_id, c.name
 		ORDER BY total_amount DESC
 	`
@@ -333,7 +333,7 @@ func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context
 		  AND pur.deleted_at IS NULL
 		  AND pi.deleted_at IS NULL
 		  AND v.name = ?
-		  AND (pur.status = 'APPROVED' OR pur.status = 'COMPLETED' OR pur.approval_status = 'APPROVED')
+		  AND (pur.status = 'APPROVED' OR pur.status = 'COMPLETED' OR pur.status = 'POSTED' OR pur.status = 'PAID' OR pur.status = 'LUNAS' OR pur.approval_status = 'APPROVED')
 		ORDER BY pur.date DESC, pi.id
 	`
 
@@ -360,7 +360,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, sta
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.approval_status = 'APPROVED')
+		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 		GROUP BY EXTRACT(YEAR FROM p.date), EXTRACT(MONTH FROM p.date)
 		ORDER BY year, month
 	`
@@ -409,30 +409,35 @@ func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, sta
 
 // getPurchasesByCategory gets purchase summary grouped by account category - fallback to inventory
 func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, startDate, endDate time.Time) ([]CategoryPurchaseSummary, error) {
-	// Try to get from journal lines first, fallback to simple categorization
+	// Use a subquery to get one category per purchase (picking the first debit account),
+	// preventing row fan-out from multiple journal lines per purchase.
+	// Use p.total_amount consistently (matching the summary query).
 	query := `
-		SELECT 
-			COALESCE(a.code, '1301') as account_code,
-			COALESCE(a.name, 'Inventory') as account_name,
-			CASE 
-				WHEN a.code LIKE '13%' THEN 'Inventory'
-				WHEN a.code LIKE '15%' THEN 'Fixed Assets'
-				WHEN a.code LIKE '6%' THEN 'Expenses'
+		SELECT
+			COALESCE(cat.account_code, '1301') as account_code,
+			COALESCE(cat.account_name, 'Inventory') as account_name,
+			CASE
+				WHEN cat.account_code LIKE '13%' THEN 'Inventory'
+				WHEN cat.account_code LIKE '15%' THEN 'Fixed Assets'
+				WHEN cat.account_code LIKE '6%' THEN 'Expenses'
 				ELSE 'Inventory'
 			END as category_name,
-			COUNT(DISTINCT p.id) as total_purchases,
-			COALESCE(SUM(CASE 
-				WHEN sjl.debit_amount > 0 THEN sjl.debit_amount
-				ELSE p.net_before_tax  -- Fallback to purchase net_before_tax if no journal
-			END), 0) as total_amount
+			COUNT(p.id) as total_purchases,
+			COALESCE(SUM(p.total_amount), 0) as total_amount
 		FROM purchases p
-		LEFT JOIN unified_journal_ledger sje ON sje.source_id = p.id AND sje.source_type = 'PURCHASE' AND sje.deleted_at IS NULL
-		LEFT JOIN unified_journal_lines sjl ON sjl.journal_id = sje.id AND sjl.debit_amount > 0
-		LEFT JOIN accounts a ON a.id = sjl.account_id AND a.code NOT LIKE '21%'
+		LEFT JOIN LATERAL (
+			SELECT a.code as account_code, a.name as account_name
+			FROM unified_journal_ledger sje
+			JOIN unified_journal_lines sjl ON sjl.journal_id = sje.id AND sjl.debit_amount > 0
+			JOIN accounts a ON a.id = sjl.account_id AND a.code NOT LIKE '21%'
+			WHERE sje.source_id = p.id AND sje.source_type = 'PURCHASE' AND sje.deleted_at IS NULL
+			ORDER BY sjl.debit_amount DESC
+			LIMIT 1
+		) cat ON true
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.approval_status = 'APPROVED')
-		GROUP BY a.code, a.name
+		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
+		GROUP BY cat.account_code, cat.account_name
 		ORDER BY total_amount DESC
 	`
 
@@ -503,7 +508,7 @@ func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, star
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.approval_status = 'APPROVED')
+		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 	`
 
 	var analysis struct {
@@ -549,7 +554,7 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.approval_status = 'APPROVED')
+		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 	`
 
 	var taxSummary struct {
@@ -576,7 +581,7 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.approval_status = 'APPROVED')
+		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 		GROUP BY EXTRACT(YEAR FROM p.date), EXTRACT(MONTH FROM p.date)
 		ORDER BY year, month
 	`

@@ -604,9 +604,9 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                               // since we're receiving money, not paying out
                               return (
                                 <option key={account.id} value={account.id}>
-                                  {account.type === 'BANK' && account.bank_name 
-                                    ? `${account.code} - ${account.name} (${account.bank_name}) - ${salesService.formatCurrency(account.balance)}`
-                                    : `${account.code} - ${account.name} (${account.type}) - ${salesService.formatCurrency(account.balance)}`
+                                  {account.type === 'BANK' && account.bank_name
+                                    ? `${account.code} - ${account.name} (${account.bank_name}) - ${salesService.formatCurrency(account.balance)}${(account.frozen_amount || 0) > 0 ? ` [Terblokir: ${salesService.formatCurrency(account.frozen_amount)}]` : ''}`
+                                    : `${account.code} - ${account.name} (${account.type}) - ${salesService.formatCurrency(account.balance)}${(account.frozen_amount || 0) > 0 ? ` [Terblokir: ${salesService.formatCurrency(account.frozen_amount)}]` : ''}`
                                   }
                                 </option>
                               );

@@ -415,15 +415,19 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       rules={{ required: t('payments.form.paymentFromRequired') }}
                       render={({ field }) => (
                         <Select {...field} placeholder={t('payments.form.selectAccount')} borderColor={borderColor}>
-                          {filteredCashBanks.map(cb => (
+                          {filteredCashBanks.map(cb => {
+                            const frozen = cb.frozen_amount || 0;
+                            const available = cb.balance - frozen;
+                            return (
                             <option key={cb.id} value={cb.id}>
-                              {cb.name} ({cb.type}) - Balance: {new Intl.NumberFormat('id-ID', {
+                              {cb.name} ({cb.type}) - Tersedia: {new Intl.NumberFormat('id-ID', {
                                 style: 'currency',
                                 currency: 'IDR',
                                 minimumFractionDigits: 0,
-                              }).format(cb.balance || 0)}
+                              }).format(available > 0 ? available : 0)}{frozen > 0 ? ` [Terblokir: ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(frozen)}]` : ''}
                             </option>
-                          ))}
+                            );
+                          })}
                         </Select>
                       )}
                     />

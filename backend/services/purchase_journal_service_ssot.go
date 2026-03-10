@@ -107,8 +107,14 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 			if err := dbToUse.First(&configuredAcc, item.ExpenseAccountID).Error; err == nil {
 				if strings.ToUpper(configuredAcc.Category) == strings.ToUpper(models.CategoryFixedAsset) {
 					debitAccount = &configuredAcc
-					log.Printf("🏗️ [SSOT] Fixed asset purchase detected for product '%s' (item %d); debiting fixed asset account %s (%s)",
-						item.Product.Name, item.ID, configuredAcc.Code, configuredAcc.Name)
+					itemName := "Aset"
+					if item.Product != nil {
+						itemName = item.Product.Name
+					} else if item.Description != "" {
+						itemName = item.Description
+					}
+					log.Printf("🏗️ [SSOT] Fixed asset purchase detected for item '%s' (item %d); debiting fixed asset account %s (%s)",
+						itemName, item.ID, configuredAcc.Code, configuredAcc.Name)
 				}
 			} else {
 				log.Printf("⚠️ [SSOT] Failed to load configured expense account %d for item %d: %v",
@@ -205,11 +211,18 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 			}
 		}
 
+		itemName := "Item"
+		if item.Product != nil && item.Product.Name != "" {
+			itemName = item.Product.Name
+		} else if item.Description != "" {
+			itemName = item.Description
+		}
+
 		lines = append(lines, PurchaseJournalLineRequest{
 			AccountID:    uint64(debitAccount.ID),
 			DebitAmount:  decimal.NewFromFloat(item.TotalPrice),
 			CreditAmount: decimal.Zero,
-			Description:  fmt.Sprintf("Pembelian - %s", item.Product.Name),
+			Description:  fmt.Sprintf("Pembelian - %s", itemName),
 		})
 	}
 

@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -96,6 +97,10 @@ type SSOTCashFlowData struct {
 	GeneratedAt time.Time `json:"generated_at"`
 	Enhanced    bool      `json:"enhanced"`
 
+	// Reconciliation Warning
+	HasReconciliationWarning  bool    `json:"has_reconciliation_warning"`
+	ReconciliationDifference  float64 `json:"reconciliation_difference,omitempty"`
+
 	// Account Details for Drilldown
 	AccountDetails []SSOTAccountBalance `json:"account_details,omitempty"`
 }
@@ -168,7 +173,7 @@ func (s *SSOTCashFlowService) GenerateSSOTCashFlow(startDate, endDate string) (*
 		return nil, fmt.Errorf("failed to get cash balances: %v", err)
 	}
 
-	fmt.Printf("[CashFlow DEBUG] Net Income: %.2f, Beginning Cash: %.2f, Ending Cash: %.2f, Transactions: %d\n",
+	log.Printf("Net Income: %.2f, Beginning Cash: %.2f, Ending Cash: %.2f, Transactions: %d",
 		netIncome, beginningCash, endingCash, len(transactions))
 
 	// Generate Cash Flow data structure
@@ -205,7 +210,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.deleted_at IS NULL
 		WHERE uje.status = 'POSTED' 
 			AND uje.entry_date >= ? 
-			AND uje.entry_date < ?
+			AND DATE(uje.entry_date) <= ?
 			AND UPPER(COALESCE(uje.source_type, '')) != 'CLOSING'
 			AND a.code NOT LIKE '1101%'
 			AND a.code NOT LIKE '4%'
@@ -214,6 +219,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 			AND a.code NOT LIKE '7%'
 			AND a.code NOT LIKE '8%'
 			AND a.deleted_at IS NULL
+		AND COALESCE(a.is_header, false) = false
 		GROUP BY a.id, a.code, a.name, a.type, a.category
 		HAVING COALESCE(SUM(ujl.debit_amount), 0) > 0 OR COALESCE(SUM(ujl.credit_amount), 0) > 0
 		ORDER BY a.code
@@ -225,7 +231,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 
 	// Debug log
 	for _, t := range transactions {
-		fmt.Printf("[CashFlow DEBUG] Transaction: %s %s | Type: %s | Cat: %s | Debit: %.2f | Credit: %.2f | Net: %.2f\n",
+		log.Printf("Transaction: %s %s | Type: %s | Cat: %s | Debit: %.2f | Credit: %.2f | Net: %.2f",
 			t.AccountCode, t.AccountName, t.AccountType, t.AccountCategory,
 			t.DebitTotal, t.CreditTotal, t.NetBalance)
 	}
@@ -258,9 +264,10 @@ func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endDate string) (f
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.deleted_at IS NULL
 		WHERE uje.status = 'POSTED' 
 			AND uje.entry_date >= ? 
-			AND uje.entry_date < ?
+			AND DATE(uje.entry_date) <= ?
 			AND UPPER(COALESCE(uje.source_type, '')) != 'CLOSING'
 			AND a.deleted_at IS NULL
+			AND COALESCE(a.is_header, false) = false
 			AND (a.code LIKE '4%' OR a.code LIKE '5%' OR a.code LIKE '6%' OR a.code LIKE '7%' OR a.code LIKE '8%' OR a.code LIKE '9%')
 	`
 
@@ -268,7 +275,7 @@ func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endDate string) (f
 		return 0, fmt.Errorf("error calculating net income: %v", err)
 	}
 
-	fmt.Printf("[CashFlow DEBUG] Net Income calculated: %.2f\n", result.NetIncome)
+	log.Printf("Net Income calculated: %.2f", result.NetIncome)
 	return result.NetIncome, nil
 }
 
@@ -289,7 +296,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 		WHERE uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
 			AND a.deleted_at IS NULL
-			AND uje.entry_date < ?
+			AND DATE(uje.entry_date) <= ?
 			AND a.code LIKE '1101%'
 	`
 
@@ -306,7 +313,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 		WHERE uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
 			AND a.deleted_at IS NULL
-			AND uje.entry_date < ?
+			AND DATE(uje.entry_date) <= ?
 			AND a.code LIKE '1101%'
 	`
 
@@ -328,7 +335,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 	beginningCash = beginResult.CashBalance
 	endingCash = endResult.CashBalance
 
-	fmt.Printf("[CashFlow DEBUG] Beginning Cash (before %s): %.2f, Ending Cash (before %s): %.2f\n",
+	log.Printf("Beginning Cash (before %s): %.2f, Ending Cash (before %s): %.2f",
 		startDate, beginningCash, endDate, endingCash)
 
 	return beginningCash, endingCash, nil
@@ -608,10 +615,20 @@ func (s *SSOTCashFlowService) categorizeCashFlowTransaction(cfData *SSOTCashFlow
 		item.Type = "outflow"
 		cfData.FinancingActivities.Items = append(cfData.FinancingActivities.Items, item)
 
+	// Retained Earnings and Other Equity (32xx, 33xx) — Financing Activities
+	case strings.HasPrefix(code, "32"), strings.HasPrefix(code, "33"):
+		if amount > 0 {
+			item.Type = "inflow"
+		} else {
+			item.Type = "outflow"
+		}
+		cfData.FinancingActivities.OtherFinancingActivities += amount
+		cfData.FinancingActivities.Items = append(cfData.FinancingActivities.Items, item)
+
 	// ============ CATCH-ALL ============
 	default:
 		// Any uncategorized balance sheet movement goes to Other Working Capital
-		fmt.Printf("[CashFlow DEBUG] Uncategorized account: %s %s (amount: %.2f, category: %s)\n",
+		log.Printf("Uncategorized account: %s %s (amount: %.2f, category: %s)",
 			code, item.AccountName, amount, category)
 		cfData.OperatingActivities.WorkingCapitalChanges.OtherWorkingCapitalChange += amount
 		item.Type = "other"
@@ -682,17 +699,32 @@ func (s *SSOTCashFlowService) calculateCashFlowTotals(cfData *SSOTCashFlowData) 
 	expectedEndingCash := cfData.CashAtBeginning + cfData.NetCashFlow
 	diff := cfData.CashAtEnd - expectedEndingCash
 	if diff != 0 {
-		// Log the discrepancy for debugging
-		fmt.Printf("[CashFlow DEBUG] Reconciliation diff: %.2f (Expected: %.2f, Actual: %.2f)\n",
+		log.Printf("WARNING: Cash flow reconciliation discrepancy: %.2f (Expected ending: %.2f, Actual ending: %.2f). "+
+			"This may indicate missing transactions or data inconsistency.",
 			diff, expectedEndingCash, cfData.CashAtEnd)
-		// Adjust via OtherNonCashItems to balance
-		cfData.OperatingActivities.Adjustments.OtherNonCashItems += diff
-		cfData.OperatingActivities.Adjustments.TotalAdjustments += diff
-		cfData.OperatingActivities.TotalOperatingCashFlow += diff
-		cfData.NetCashFlow += diff
+
+		// Only auto-adjust for small rounding differences (<= 1.00)
+		if diff >= -1.0 && diff <= 1.0 {
+			// Small rounding difference — safe to silently adjust
+			cfData.OperatingActivities.Adjustments.OtherNonCashItems += diff
+			cfData.OperatingActivities.Adjustments.TotalAdjustments += diff
+			cfData.OperatingActivities.TotalOperatingCashFlow += diff
+			cfData.NetCashFlow += diff
+		} else {
+			// Large discrepancy — flag it visibly instead of hiding it
+			log.Printf("WARNING: Large reconciliation discrepancy of %.2f detected. Flagging in report.", diff)
+			cfData.HasReconciliationWarning = true
+			cfData.ReconciliationDifference = diff
+			// Still adjust to keep the report mathematically consistent,
+			// but the warning flag tells the user to investigate
+			cfData.OperatingActivities.Adjustments.OtherNonCashItems += diff
+			cfData.OperatingActivities.Adjustments.TotalAdjustments += diff
+			cfData.OperatingActivities.TotalOperatingCashFlow += diff
+			cfData.NetCashFlow += diff
+		}
 	}
 
-	fmt.Printf("[CashFlow DEBUG] TOTALS — Operating: %.2f, Investing: %.2f, Financing: %.2f, Net: %.2f\n",
+	log.Printf("Cash flow totals — Operating: %.2f, Investing: %.2f, Financing: %.2f, Net: %.2f",
 		cfData.OperatingActivities.TotalOperatingCashFlow,
 		cfData.InvestingActivities.TotalInvestingCashFlow,
 		cfData.FinancingActivities.TotalFinancingCashFlow,

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"sort"
@@ -124,12 +125,16 @@ func (ers *EnhancedReportService) calculateAccountBalance(accountID uint, asOfDa
 	var totalDebit, totalCredit float64
 
 	// Query from SSOT unified journal tables
-	ers.db.Table("unified_journal_lines").
+	row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Where("unified_journal_lines.account_id = ? AND unified_journal_ledger.entry_date <= ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL",
 			accountID, asOfDate, models.SSOTStatusPosted).
 		Select("COALESCE(SUM(unified_journal_lines.debit_amount), 0) as total_debit, COALESCE(SUM(unified_journal_lines.credit_amount), 0) as total_credit").
-		Row().Scan(&totalDebit, &totalCredit)
+		Row()
+	if err := row.Scan(&totalDebit, &totalCredit); err != nil {
+		log.Printf("WARNING: calculateAccountBalance scan failed for account %d: %v", accountID, err)
+		return 0
+	}
 
 	// Get account to determine normal balance type
 	ctx := context.Background()
@@ -153,12 +158,16 @@ func (ers *EnhancedReportService) calculateAccountBalanceForPeriod(accountID uin
 
 	// Query from SSOT unified journal tables, EXCLUDING CLOSING entries
 	// CLOSING entries zero out revenue/expense; P&L must show pre-closing activity
-	ers.db.Table("unified_journal_lines").
+	row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Where("unified_journal_lines.account_id = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			accountID, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.debit_amount), 0) as total_debit, COALESCE(SUM(unified_journal_lines.credit_amount), 0) as total_credit").
-		Row().Scan(&totalDebit, &totalCredit)
+		Row()
+	if err := row.Scan(&totalDebit, &totalCredit); err != nil {
+		log.Printf("WARNING: calculateAccountBalanceForPeriod scan failed for account %d: %v", accountID, err)
+		return 0
+	}
 
 	// Get account to determine normal balance direction
 	ctx := context.Background()
@@ -720,22 +729,30 @@ func (ers *EnhancedReportService) calculateNetIncome(startDate, endDate time.Tim
 	var totalRevenue, totalExpense float64
 
 	// Get revenue from SSOT, excluding CLOSING entries
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.type = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			models.AccountTypeRevenue, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
-		Row().Scan(&totalRevenue)
+		Row(); row != nil {
+		if err := row.Scan(&totalRevenue); err != nil {
+			log.Printf("WARNING: calculateNetIncome revenue scan failed: %v", err)
+		}
+	}
 
 	// Get expense from SSOT, excluding CLOSING entries
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.type = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			models.AccountTypeExpense, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
-		Row().Scan(&totalExpense)
+		Row(); row != nil {
+		if err := row.Scan(&totalExpense); err != nil {
+			log.Printf("WARNING: calculateNetIncome expense scan failed: %v", err)
+		}
+	}
 
 	return totalRevenue - totalExpense
 }
@@ -745,13 +762,17 @@ func (ers *EnhancedReportService) calculateNetIncome(startDate, endDate time.Tim
 func (ers *EnhancedReportService) calculateDepreciationExpense(startDate, endDate time.Time) float64 {
 	var depreciation float64
 
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL",
 			models.CategoryDepreciationExp, startDate, endDate, models.SSOTStatusPosted).
 		Select("COALESCE(SUM(unified_journal_lines.debit_amount), 0)").
-		Row().Scan(&depreciation)
+		Row(); row != nil {
+		if err := row.Scan(&depreciation); err != nil {
+			log.Printf("WARNING: calculateDepreciationExpense scan failed: %v", err)
+		}
+	}
 
 	return depreciation
 }
@@ -764,13 +785,17 @@ func (ers *EnhancedReportService) calculateAssetTransactions(startDate, endDate 
 	// Query: sum of debit to fixed asset accounts from POSTED journals in the period
 	// This captures both manual asset creation and PO-based asset purchases
 	var fixedAssetPurchases float64
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			models.CategoryFixedAsset, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
-		Row().Scan(&fixedAssetPurchases)
+		Row(); row != nil {
+		if err := row.Scan(&fixedAssetPurchases); err != nil {
+			log.Printf("WARNING: calculateAssetTransactions fixedAsset scan failed: %v", err)
+		}
+	}
 
 	if fixedAssetPurchases > 0 {
 		// Cash outflow for purchasing fixed assets (negative in cash flow)
@@ -790,13 +815,17 @@ func (ers *EnhancedReportService) calculateAssetTransactions(startDate, endDate 
 
 	// 2. Aset Tak Berwujud (Intangible Assets)
 	var intangiblePurchases float64
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			models.CategoryIntangibleAsset, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
-		Row().Scan(&intangiblePurchases)
+		Row(); row != nil {
+		if err := row.Scan(&intangiblePurchases); err != nil {
+			log.Printf("WARNING: calculateAssetTransactions intangible scan failed: %v", err)
+		}
+	}
 
 	if intangiblePurchases > 0 {
 		items = append(items, CashFlowItem{
@@ -814,13 +843,17 @@ func (ers *EnhancedReportService) calculateAssetTransactions(startDate, endDate 
 
 	// 3. Investasi (Investment Assets)
 	var investmentChanges float64
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			models.CategoryInvestmentAsset, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.debit_amount - unified_journal_lines.credit_amount), 0)").
-		Row().Scan(&investmentChanges)
+		Row(); row != nil {
+		if err := row.Scan(&investmentChanges); err != nil {
+			log.Printf("WARNING: calculateAssetTransactions investment scan failed: %v", err)
+		}
+	}
 
 	if investmentChanges > 0 {
 		items = append(items, CashFlowItem{
@@ -846,13 +879,17 @@ func (ers *EnhancedReportService) calculateFinancingTransactions(startDate, endD
 	// 1. Perubahan Hutang Jangka Panjang (Long-term Liabilities)
 	// Increase = cash inflow (pinjaman baru), Decrease = cash outflow (pembayaran pinjaman)
 	var longTermLiabilityChanges float64
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.category = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			models.CategoryLongTermLiability, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
-		Row().Scan(&longTermLiabilityChanges)
+		Row(); row != nil {
+		if err := row.Scan(&longTermLiabilityChanges); err != nil {
+			log.Printf("WARNING: calculateFinancingTransactions longTermLiability scan failed: %v", err)
+		}
+	}
 
 	if longTermLiabilityChanges > 0 {
 		items = append(items, CashFlowItem{
@@ -870,13 +907,17 @@ func (ers *EnhancedReportService) calculateFinancingTransactions(startDate, endD
 
 	// 2. Perubahan Modal / Ekuitas (Equity changes - excluding retained earnings & closing)
 	var equityChanges float64
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.category IN (?, ?) AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type NOT IN (?, ?)",
 			models.CategoryEquity, models.CategoryShareCapital, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing, models.SSOTSourceTypeReversal).
 		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
-		Row().Scan(&equityChanges)
+		Row(); row != nil {
+		if err := row.Scan(&equityChanges); err != nil {
+			log.Printf("WARNING: calculateFinancingTransactions equity scan failed: %v", err)
+		}
+	}
 
 	if equityChanges > 0 {
 		items = append(items, CashFlowItem{
@@ -900,13 +941,17 @@ func (ers *EnhancedReportService) calculateFinancingTransactions(startDate, endD
 func (ers *EnhancedReportService) calculateRevenueForPeriod(startDate, endDate time.Time) float64 {
 	var revenue float64
 
-	ers.db.Table("unified_journal_lines").
+	if row := ers.db.Table("unified_journal_lines").
 		Joins("JOIN unified_journal_ledger ON unified_journal_lines.journal_id = unified_journal_ledger.id").
 		Joins("JOIN accounts ON unified_journal_lines.account_id = accounts.id").
 		Where("accounts.type = ? AND unified_journal_ledger.entry_date BETWEEN ? AND ? AND unified_journal_ledger.status = ? AND unified_journal_ledger.deleted_at IS NULL AND unified_journal_ledger.source_type != ?",
 			models.AccountTypeRevenue, startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Select("COALESCE(SUM(unified_journal_lines.credit_amount - unified_journal_lines.debit_amount), 0)").
-		Row().Scan(&revenue)
+		Row(); row != nil {
+		if err := row.Scan(&revenue); err != nil {
+			log.Printf("WARNING: calculateRevenueForPeriod scan failed: %v", err)
+		}
+	}
 
 	return revenue
 }
@@ -1003,20 +1048,29 @@ func (ers *EnhancedReportService) countActiveVendors(vendorMap map[uint]*VendorP
 // calculatePurchasesForPeriod calculates total purchases for period
 func (ers *EnhancedReportService) calculatePurchasesForPeriod(startDate, endDate time.Time) float64 {
 	var total float64
-	ers.db.Model(&models.Purchase{}).
+	if row := ers.db.Model(&models.Purchase{}).
 		Where("date BETWEEN ? AND ?", startDate, endDate).
+		Where("status IN ? OR approval_status = ?", []string{"APPROVED", "COMPLETED"}, "APPROVED").
 		Select("COALESCE(SUM(total_amount), 0)").
-		Row().Scan(&total)
+		Row(); row != nil {
+		if err := row.Scan(&total); err != nil {
+			log.Printf("WARNING: calculatePurchasesForPeriod scan failed: %v", err)
+		}
+	}
 	return total
 }
 
 // calculatePaymentsForPeriod calculates total payments for period using purchase payments
 func (ers *EnhancedReportService) calculatePaymentsForPeriod(startDate, endDate time.Time) float64 {
 	var total float64
-	ers.db.Model(&models.PurchasePayment{}).
+	if row := ers.db.Model(&models.PurchasePayment{}).
 		Where("date BETWEEN ? AND ?", startDate, endDate).
 		Select("COALESCE(SUM(amount), 0)").
-		Row().Scan(&total)
+		Row(); row != nil {
+		if err := row.Scan(&total); err != nil {
+			log.Printf("WARNING: calculatePaymentsForPeriod scan failed: %v", err)
+		}
+	}
 	return total
 }
 

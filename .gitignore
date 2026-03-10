@@ -9,6 +9,7 @@ yarn-error.log*
 /frontend/out/
 /frontend/build/
 /frontend/dist/
+/.claude/
 
 # Environment variables
 .env

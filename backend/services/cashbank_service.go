@@ -388,10 +388,13 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 		}
 	}
 
-	// Check balance
-	if sourceAccount.Balance < request.Amount {
+	// Check available balance (balance minus frozen amount)
+	if sourceAccount.AvailableBalance() < request.Amount {
 		tx.Rollback()
-		return nil, fmt.Errorf("insufficient balance. Available: %.2f", sourceAccount.Balance)
+		if sourceAccount.FrozenAmount > 0 {
+			return nil, fmt.Errorf("saldo tersedia tidak cukup. Saldo tersedia: %.2f (Total: %.2f, Dana terblokir: %.2f)", sourceAccount.AvailableBalance(), sourceAccount.Balance, sourceAccount.FrozenAmount)
+		}
+		return nil, fmt.Errorf("insufficient balance. Available: %.2f", sourceAccount.AvailableBalance())
 	}
 
 	// Apply exchange rate if different currencies
@@ -672,12 +675,17 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 		}
 	}
 
-	// Check balance
-	log.Printf("💰 Step 2: Checking balance %.2f vs requested %.2f", account.Balance, request.Amount)
-	if account.Balance < request.Amount {
-		log.Printf("❌ Insufficient balance: %.2f < %.2f", account.Balance, request.Amount)
+	// Check available balance (balance minus frozen amount)
+	availableBalance := account.AvailableBalance()
+	log.Printf("💰 Step 2: Checking available balance %.2f (total: %.2f, frozen: %.2f) vs requested %.2f",
+		availableBalance, account.Balance, account.FrozenAmount, request.Amount)
+	if availableBalance < request.Amount {
+		log.Printf("❌ Insufficient available balance: %.2f < %.2f (frozen: %.2f)", availableBalance, request.Amount, account.FrozenAmount)
 		tx.Rollback()
-		return nil, fmt.Errorf("insufficient balance. Available: %.2f", account.Balance)
+		if account.FrozenAmount > 0 {
+			return nil, fmt.Errorf("saldo tersedia tidak cukup. Saldo tersedia: %.2f (Total: %.2f, Dana terblokir: %.2f)", availableBalance, account.Balance, account.FrozenAmount)
+		}
+		return nil, fmt.Errorf("insufficient balance. Available: %.2f", availableBalance)
 	}
 
 	// Update cash bank balance (essential since SSOT skips cash-bank accounts)
@@ -1458,4 +1466,117 @@ func (s *CashBankService) GetAvailableGLAccounts(accountType string) ([]Availabl
 
 	log.Printf("✅ [CASHBANK SERVICE] Found %d available GL accounts for type %s", len(accounts), accountType)
 	return accounts, nil
+}
+
+// ============================================================
+// Frozen Fund Management
+// ============================================================
+
+// FreezeAmountRequest represents a request to freeze funds
+type FreezeAmountRequest struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"`
+	Reason string  `json:"reason"`
+}
+
+// UnfreezeAmountRequest represents a request to unfreeze funds
+type UnfreezeAmountRequest struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"`
+	Reason string  `json:"reason"`
+}
+
+// FreezeAmount freezes (blocks) a portion of funds in a cash/bank account
+func (s *CashBankService) FreezeAmount(cashBankID uint, request FreezeAmountRequest, userID uint) (*models.CashBank, error) {
+	log.Printf("🔒 [CASHBANK SERVICE] Freezing funds: AccountID=%d, Amount=%.2f, Reason=%s, UserID=%d",
+		cashBankID, request.Amount, request.Reason, userID)
+
+	account, err := s.cashBankRepo.FindByID(cashBankID)
+	if err != nil {
+		return nil, fmt.Errorf("akun tidak ditemukan: %v", err)
+	}
+
+	// Validate: new frozen amount cannot exceed balance
+	newFrozenAmount := account.FrozenAmount + request.Amount
+	if newFrozenAmount > account.Balance {
+		return nil, fmt.Errorf("dana yang diblokir (%.2f) tidak boleh melebihi saldo total (%.2f). Saat ini sudah terblokir: %.2f",
+			newFrozenAmount, account.Balance, account.FrozenAmount)
+	}
+
+	previousFrozen := account.FrozenAmount
+
+	// Update frozen amount
+	if err := s.cashBankRepo.UpdateFrozenAmount(cashBankID, newFrozenAmount, request.Reason, userID); err != nil {
+		return nil, fmt.Errorf("gagal memblokir dana: %v", err)
+	}
+
+	// Create history record
+	history := &models.CashBankFrozenHistory{
+		CashBankID:     cashBankID,
+		Action:         models.FrozenActionFreeze,
+		Amount:         request.Amount,
+		PreviousFrozen: previousFrozen,
+		NewFrozen:      newFrozenAmount,
+		Reason:         request.Reason,
+		UserID:         userID,
+	}
+	if err := s.cashBankRepo.CreateFrozenHistory(history); err != nil {
+		log.Printf("⚠️ Failed to create frozen history: %v", err)
+	}
+
+	log.Printf("✅ [CASHBANK SERVICE] Funds frozen successfully: AccountID=%d, FrozenAmount=%.2f -> %.2f",
+		cashBankID, previousFrozen, newFrozenAmount)
+
+	return s.cashBankRepo.FindByID(cashBankID)
+}
+
+// UnfreezeAmount unfreezes (unblocks) a portion of frozen funds
+func (s *CashBankService) UnfreezeAmount(cashBankID uint, request UnfreezeAmountRequest, userID uint) (*models.CashBank, error) {
+	log.Printf("🔓 [CASHBANK SERVICE] Unfreezing funds: AccountID=%d, Amount=%.2f, Reason=%s, UserID=%d",
+		cashBankID, request.Amount, request.Reason, userID)
+
+	account, err := s.cashBankRepo.FindByID(cashBankID)
+	if err != nil {
+		return nil, fmt.Errorf("akun tidak ditemukan: %v", err)
+	}
+
+	// Validate: cannot unfreeze more than what's frozen
+	if request.Amount > account.FrozenAmount {
+		return nil, fmt.Errorf("jumlah yang dibuka (%.2f) melebihi dana yang terblokir (%.2f)",
+			request.Amount, account.FrozenAmount)
+	}
+
+	previousFrozen := account.FrozenAmount
+	newFrozenAmount := account.FrozenAmount - request.Amount
+
+	// Update frozen amount
+	if err := s.cashBankRepo.UpdateFrozenAmount(cashBankID, newFrozenAmount, request.Reason, userID); err != nil {
+		return nil, fmt.Errorf("gagal membuka blokir dana: %v", err)
+	}
+
+	// Create history record
+	history := &models.CashBankFrozenHistory{
+		CashBankID:     cashBankID,
+		Action:         models.FrozenActionUnfreeze,
+		Amount:         request.Amount,
+		PreviousFrozen: previousFrozen,
+		NewFrozen:      newFrozenAmount,
+		Reason:         request.Reason,
+		UserID:         userID,
+	}
+	if err := s.cashBankRepo.CreateFrozenHistory(history); err != nil {
+		log.Printf("⚠️ Failed to create frozen history: %v", err)
+	}
+
+	log.Printf("✅ [CASHBANK SERVICE] Funds unfrozen successfully: AccountID=%d, FrozenAmount=%.2f -> %.2f",
+		cashBankID, previousFrozen, newFrozenAmount)
+
+	return s.cashBankRepo.FindByID(cashBankID)
+}
+
+// GetFrozenHistory retrieves the freeze/unfreeze history for a cash/bank account
+func (s *CashBankService) GetFrozenHistory(cashBankID uint) ([]models.CashBankFrozenHistory, error) {
+	// Validate account exists
+	if _, err := s.cashBankRepo.FindByID(cashBankID); err != nil {
+		return nil, fmt.Errorf("akun tidak ditemukan: %v", err)
+	}
+	return s.cashBankRepo.GetFrozenHistory(cashBankID)
 }

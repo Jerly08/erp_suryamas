@@ -628,11 +628,15 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                           placeholder="Pilih akun kas/bank"
                           onChange={(e) => field.onChange(parseInt(e.target.value))}
                         >
-                          {cashBanks.map((cashBank) => (
+                          {cashBanks.map((cashBank) => {
+                            const frozen = cashBank.frozen_amount || 0;
+                            const available = cashBank.balance - frozen;
+                            return (
                             <option key={cashBank.id} value={cashBank.id}>
-                              {cashBank.name} - Saldo: {formatRupiah(cashBank.balance)}
+                              {cashBank.name} - Tersedia: {formatRupiah(available > 0 ? available : 0)}{frozen > 0 ? ` [Terblokir: ${formatRupiah(frozen)}]` : ''}
                             </option>
-                          ))}
+                            );
+                          })}
                         </Select>
                       )}
                     />
@@ -642,15 +646,19 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                   {/* Balance Validation */}
                   {selectedCashBankId > 0 && (() => {
                     const selectedCB = getSelectedCashBank();
-                    if (selectedCB && ppnBalanceInfo.ppn_terutang > selectedCB.balance) {
+                    if (selectedCB) {
+                      const frozen = selectedCB.frozen_amount || 0;
+                      const available = selectedCB.balance - frozen;
+                      if (ppnBalanceInfo.ppn_terutang > (available > 0 ? available : 0)) {
                       return (
                         <Alert status="warning" borderRadius="md">
                           <AlertIcon />
                           <Text fontSize="sm">
-                            Saldo kas/bank tidak mencukupi. Saldo: {formatRupiah(selectedCB.balance)}
+                            Saldo tersedia tidak mencukupi. Tersedia: {formatRupiah(available > 0 ? available : 0)}{frozen > 0 ? ` (Total: ${formatRupiah(selectedCB.balance)}, Terblokir: ${formatRupiah(frozen)})` : ''}
                           </Text>
                         </Alert>
                       );
+                      }
                     }
                     return null;
                   })()}

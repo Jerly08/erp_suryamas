@@ -82,18 +82,51 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 	purchase.PurchaseItems = []models.PurchaseItem{}
 
 	for i, itemReq := range items {
-		fmt.Printf("ℹ Processing item %d/%d: Product ID %d, Qty %d, Price %.2f\n", i+1, len(items), itemReq.ProductID, itemReq.Quantity, itemReq.UnitPrice)
-		// Validate product exists
-		product, err := s.productRepo.FindByID(itemReq.ProductID)
-		if err != nil {
-			fmt.Printf("❌ Failed to find product with ID %d: %v\n", itemReq.ProductID, err)
-			return fmt.Errorf("product %d not found: %v", itemReq.ProductID, err)
+		// Determine item type (default: INVENTORY for backward compatibility)
+		itemType := itemReq.ItemType
+		if itemType == "" {
+			itemType = models.PurchaseItemTypeInventory
 		}
-		fmt.Printf("✅ Product found: %s (ID: %d)\n", product.Name, product.ID)
+		isAssetItem := itemType == models.PurchaseItemTypeAsset || itemReq.IsFixedAsset
+
+		if isAssetItem {
+			fmt.Printf("ℹ Processing item %d/%d: ASSET item '%s', Qty %d, Price %.2f\n", i+1, len(items), itemReq.Description, itemReq.Quantity, itemReq.UnitPrice)
+		} else {
+			productID := uint(0)
+			if itemReq.ProductID != nil {
+				productID = *itemReq.ProductID
+			}
+			fmt.Printf("ℹ Processing item %d/%d: Product ID %d, Qty %d, Price %.2f\n", i+1, len(items), productID, itemReq.Quantity, itemReq.UnitPrice)
+		}
+
+		// Validate product exists only for INVENTORY items
+		if !isAssetItem {
+			if itemReq.ExpenseAccountID == 0 {
+				return fmt.Errorf("item %d: expense_account_id is required for inventory items", i+1)
+			}
+			if itemReq.ProductID == nil || *itemReq.ProductID == 0 {
+				return fmt.Errorf("item %d: product_id is required for inventory items", i+1)
+			}
+			product, err := s.productRepo.FindByID(*itemReq.ProductID)
+			if err != nil {
+				fmt.Printf("❌ Failed to find product with ID %d: %v\n", *itemReq.ProductID, err)
+				return fmt.Errorf("product %d not found: %v", *itemReq.ProductID, err)
+			}
+			fmt.Printf("✅ Product found: %s (ID: %d)\n", product.Name, product.ID)
+		} else {
+			// Asset items: validate description is provided
+			if itemReq.Description == "" {
+				return fmt.Errorf("item %d: description is required for asset items", i+1)
+			}
+		}
 
 		// Create purchase item
 		item := models.PurchaseItem{
 			ProductID:        itemReq.ProductID,
+			ItemType:         itemType,
+			IsFixedAsset:     isAssetItem,
+			Description:      itemReq.Description,
+			AssetCategoryID:  itemReq.AssetCategoryID,
 			Quantity:         itemReq.Quantity,
 			UnitPrice:        sanitizeFloat(clampNonNegative(itemReq.UnitPrice)),
 			Discount:         sanitizeFloat(clampNonNegative(itemReq.Discount)),
@@ -311,15 +344,34 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 	// Clear existing items
 	purchase.PurchaseItems = []models.PurchaseItem{}
 
-	for _, itemReq := range items {
-		// Validate product exists
-		_, err := s.productRepo.FindByID(itemReq.ProductID)
-		if err != nil {
-			return fmt.Errorf("product %d not found", itemReq.ProductID)
+	for i, itemReq := range items {
+		// Determine item type
+		itemType := itemReq.ItemType
+		if itemType == "" {
+			itemType = models.PurchaseItemTypeInventory
+		}
+		isAssetItem := itemType == models.PurchaseItemTypeAsset || itemReq.IsFixedAsset
+
+		if !isAssetItem {
+			if itemReq.ExpenseAccountID == 0 {
+				return fmt.Errorf("item %d: expense_account_id is required for inventory items", i+1)
+			}
+			// Validate product exists for inventory items
+			if itemReq.ProductID == nil || *itemReq.ProductID == 0 {
+				return fmt.Errorf("product_id is required for inventory items")
+			}
+			_, err := s.productRepo.FindByID(*itemReq.ProductID)
+			if err != nil {
+				return fmt.Errorf("product %d not found", *itemReq.ProductID)
+			}
 		}
 
 		item := models.PurchaseItem{
 			ProductID:        itemReq.ProductID,
+			ItemType:         itemType,
+			IsFixedAsset:     isAssetItem,
+			Description:      itemReq.Description,
+			AssetCategoryID:  itemReq.AssetCategoryID,
 			Quantity:         itemReq.Quantity,
 			UnitPrice:        itemReq.UnitPrice,
 			Discount:         itemReq.Discount,
@@ -597,32 +649,37 @@ func (s *PurchaseService) ProcessPurchaseReceipt(purchaseID uint, request models
 		// Handle damaged goods by adjusting stock accordingly
 		// FIXED: Now properly handles damaged goods during receipt processing
 		if receiptItem.Condition == models.ReceiptConditionDamaged || receiptItem.Condition == models.ReceiptConditionDefected {
-			// Reduce stock for damaged/defective items
-			product, err := s.productRepo.FindByID(purchaseItem.ProductID)
-			if err != nil {
-				fmt.Printf("Warning: Could not find product %d to adjust stock for damaged goods: %v\n", purchaseItem.ProductID, err)
-			} else {
-				damagedQty := itemReq.QuantityReceived
-				if receiptItem.Condition == models.ReceiptConditionDamaged {
-					// Damaged goods - reduce by full quantity
-					product.Stock -= damagedQty
-					fmt.Printf("📦 Reducing stock by %d for damaged goods (Product: %s)\n", damagedQty, product.Name)
-				} else if receiptItem.Condition == models.ReceiptConditionDefected {
-					// Defective goods - reduce by full quantity
-					product.Stock -= damagedQty
-					fmt.Printf("⚠️ Reducing stock by %d for defective goods (Product: %s)\n", damagedQty, product.Name)
-				}
-
-				// Ensure stock doesn't go negative
-				if product.Stock < 0 {
-					fmt.Printf("🛑 Warning: Stock for product %s went negative (%d), setting to 0\n", product.Name, product.Stock)
-					product.Stock = 0
-				}
-
-				// Update product stock
-				err = s.productRepo.Update(context.Background(), product)
+			// Skip stock adjustment for ASSET items
+			if purchaseItem.IsFixedAsset || purchaseItem.ItemType == models.PurchaseItemTypeAsset {
+				fmt.Printf("ℹ️ Skipping damaged goods stock adjustment for ASSET item (PurchaseItem:%d)\n", purchaseItem.ID)
+			} else if purchaseItem.ProductID != nil && *purchaseItem.ProductID > 0 {
+				// Reduce stock for damaged/defective items
+				product, err := s.productRepo.FindByID(*purchaseItem.ProductID)
 				if err != nil {
-					fmt.Printf("Error updating stock for damaged/defective goods: %v\n", err)
+					fmt.Printf("Warning: Could not find product %d to adjust stock for damaged goods: %v\n", *purchaseItem.ProductID, err)
+				} else {
+					damagedQty := itemReq.QuantityReceived
+					if receiptItem.Condition == models.ReceiptConditionDamaged {
+						// Damaged goods - reduce by full quantity
+						product.Stock -= damagedQty
+						fmt.Printf("📦 Reducing stock by %d for damaged goods (Product: %s)\n", damagedQty, product.Name)
+					} else if receiptItem.Condition == models.ReceiptConditionDefected {
+						// Defective goods - reduce by full quantity
+						product.Stock -= damagedQty
+						fmt.Printf("⚠️ Reducing stock by %d for defective goods (Product: %s)\n", damagedQty, product.Name)
+					}
+
+					// Ensure stock doesn't go negative
+					if product.Stock < 0 {
+						fmt.Printf("🛑 Warning: Stock for product %s went negative (%d), setting to 0\n", product.Name, product.Stock)
+						product.Stock = 0
+					}
+
+					// Update product stock
+					err = s.productRepo.Update(context.Background(), product)
+					if err != nil {
+						fmt.Printf("Error updating stock for damaged/defective goods: %v\n", err)
+					}
 				}
 			}
 		}
@@ -836,8 +893,8 @@ func (s *PurchaseService) CreatePurchaseReturn(purchaseID uint, reason string, i
 
 		// Reduce inventory
 		purchaseItem, _ := s.purchaseRepo.GetPurchaseItemByID(item.PurchaseItemID)
-		if purchaseItem != nil {
-			product, _ := s.productRepo.FindByID(purchaseItem.ProductID)
+		if purchaseItem != nil && purchaseItem.ProductID != nil && *purchaseItem.ProductID > 0 {
+			product, _ := s.productRepo.FindByID(*purchaseItem.ProductID)
 			if product != nil {
 				product.StockQuantity -= item.Quantity
 				s.productRepo.Update(product)

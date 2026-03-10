@@ -194,13 +194,17 @@ func (ufi *UnifiedFinancialIntegration) errorHandlingMiddleware() gin.HandlerFun
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
 		if err, ok := recovered.(string); ok {
 			log.Printf("Financial reporting error: %s", err)
-			c.JSON(500, gin.H{
+			c.AbortWithStatusJSON(500, gin.H{
 				"status":  "error",
 				"message": "Internal server error in financial reporting",
 				"details": err,
 			})
+			return
 		}
-		c.AbortWithStatus(500)
+		c.AbortWithStatusJSON(500, gin.H{
+			"status":  "error",
+			"message": "Internal server error in financial reporting",
+		})
 	})
 }
 

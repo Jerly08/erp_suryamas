@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -222,6 +223,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 	reports.DataSourceInfo = *dataSourceInfo
 
 	// Generate all reports concurrently
+	// Use a local mutex to protect the local reports variable,
+	// so concurrent calls to GenerateIntegratedReports don't interfere.
+	var mu sync.Mutex
 	var wg sync.WaitGroup
 	errChan := make(chan error, 8)
 
@@ -234,9 +238,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("profit loss generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.ProfitLoss = pl
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// Balance Sheet
@@ -248,9 +252,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("balance sheet generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.BalanceSheet = bs
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// Cash Flow Statement
@@ -262,9 +266,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("cash flow generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.CashFlow = cf
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// Sales Summary Report
@@ -276,9 +280,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("sales summary generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.SalesSummary = ss
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// Vendor Analysis Report
@@ -290,9 +294,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("vendor analysis generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.VendorAnalysis = va
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// Trial Balance
@@ -304,9 +308,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("trial balance generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.TrialBalance = tb
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// General Ledger
@@ -318,9 +322,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("general ledger generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.GeneralLedger = gl
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// Journal Analysis
@@ -332,9 +336,9 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 			errChan <- fmt.Errorf("journal analysis generation failed: %w", err)
 			return
 		}
-		s.mu.Lock()
+		mu.Lock()
 		reports.JournalAnalysis = ja
-		s.mu.Unlock()
+		mu.Unlock()
 	}()
 
 	// Wait for all reports to complete
@@ -348,7 +352,10 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 	}
 
 	if len(errors) > 0 {
-		return reports, fmt.Errorf("report generation completed with errors: %v", errors)
+		// Return partial results with warning instead of failing entirely
+		log.Printf("WARNING: Report generation completed with %d error(s): %v", len(errors), errors)
+		// Still return the reports that succeeded, along with the error for logging
+		return reports, fmt.Errorf("report generation completed with %d error(s): %v", len(errors), errors)
 	}
 
 	// Update last refresh time (WebSocket broadcasting removed)
@@ -478,7 +485,14 @@ func (s *SSOTReportIntegrationService) mapSourceTypeToFriendlyName(sourceType st
 	case models.SSOTSourceTypeReversal:
 		return "Reversal Entry"
 	default:
-		return strings.Title(strings.ToLower(strings.ReplaceAll(sourceType, "_", " ")))
+		// strings.Title is deprecated; manually capitalize first letter of each word
+		words := strings.Fields(strings.ToLower(strings.ReplaceAll(sourceType, "_", " ")))
+		for i, w := range words {
+			if len(w) > 0 {
+				words[i] = strings.ToUpper(w[:1]) + w[1:]
+			}
+		}
+		return strings.Join(words, " ")
 	}
 }
 
@@ -506,7 +520,9 @@ func (s *SSOTReportIntegrationService) generateAccountBreakdown(ctx context.Cont
 		LIMIT 20
 	`
 
-	s.db.WithContext(ctx).Raw(query, startDate, endDate, models.SSOTStatusPosted).Scan(&accountBreakdown)
+	if err := s.db.WithContext(ctx).Raw(query, startDate, endDate, models.SSOTStatusPosted).Scan(&accountBreakdown).Error; err != nil {
+		log.Printf("Error scanning account breakdown: %v", err)
+	}
 
 	return accountBreakdown
 }
@@ -555,7 +571,9 @@ func (s *SSOTReportIntegrationService) generatePeriodBreakdown(ctx context.Conte
 	}
 
 	var results []periodResult
-	s.db.WithContext(ctx).Raw(query, startDate, endDate, models.SSOTStatusPosted).Scan(&results)
+	if err := s.db.WithContext(ctx).Raw(query, startDate, endDate, models.SSOTStatusPosted).Scan(&results).Error; err != nil {
+		log.Printf("Error scanning period breakdown results: %v", err)
+	}
 
 	for _, result := range results {
 		periodBreakdown = append(periodBreakdown, PeriodBreakdown{
@@ -672,8 +690,18 @@ func (s *SSOTReportIntegrationService) generateDataQualityMetrics(ctx context.Co
 			"total_entries":            totalEntries,
 			"entries_with_description": entriesWithDescription,
 			"entries_with_reference":   entriesWithReference,
-			"description_completeness": float64(entriesWithDescription) / float64(totalEntries) * 100,
-			"reference_completeness":   float64(entriesWithReference) / float64(totalEntries) * 100,
+			"description_completeness": func() float64 {
+				if totalEntries > 0 {
+					return float64(entriesWithDescription) / float64(totalEntries) * 100
+				}
+				return 0
+			}(),
+			"reference_completeness": func() float64 {
+				if totalEntries > 0 {
+					return float64(entriesWithReference) / float64(totalEntries) * 100
+				}
+				return 0
+			}(),
 		},
 	}
 }
@@ -915,39 +943,64 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 		// Calculate net balance based on account type
 		netBalance := bal.TotalDebit.Sub(bal.TotalCredit)
 
+		// Create item without pre-assigning debit/credit balances here
+		item = TrialBalanceItem{
+			AccountID:   uint(bal.AccountID),
+			AccountCode: bal.AccountCode,
+			AccountName: bal.AccountName,
+			AccountType: bal.AccountType,
+		}
+
+		// Calculate initial debit/credit balances as raw values
+		var debitAmount, creditAmount float64
+
 		// For display purposes, show balance in normal side
 		switch bal.AccountType {
 		case "Asset", "Expense":
 			// Normal debit accounts
 			if netBalance.GreaterThanOrEqual(decimal.Zero) {
-				item.DebitBalance = netBalance.InexactFloat64()
-				item.CreditBalance = 0
+				debitAmount = netBalance.InexactFloat64()
+				creditAmount = 0
 			} else {
-				item.DebitBalance = 0
-				item.CreditBalance = netBalance.Abs().InexactFloat64()
+				debitAmount = 0
+				creditAmount = netBalance.Abs().InexactFloat64()
 			}
 		case "Liability", "Equity", "Revenue":
 			// Normal credit accounts
 			netBalance = netBalance.Neg() // Reverse for credit accounts
 			if netBalance.GreaterThanOrEqual(decimal.Zero) {
-				item.CreditBalance = netBalance.InexactFloat64()
-				item.DebitBalance = 0
+				creditAmount = netBalance.InexactFloat64()
+				debitAmount = 0
 			} else {
-				item.CreditBalance = 0
-				item.DebitBalance = netBalance.Abs().InexactFloat64()
+				creditAmount = 0
+				debitAmount = netBalance.Abs().InexactFloat64()
 			}
 		}
 
-		totalDebits = totalDebits.Add(bal.TotalDebit)
-		totalCredits = totalCredits.Add(bal.TotalCredit)
+		// Handle negative balances by swapping sides using math.Abs
+		if debitAmount < 0 {
+			creditAmount += math.Abs(debitAmount)
+			debitAmount = 0
+		}
+		if creditAmount < 0 {
+			debitAmount += math.Abs(creditAmount)
+			creditAmount = 0
+		}
+
+		// Assign final values to item
+		item.DebitBalance = debitAmount
+		item.CreditBalance = creditAmount
+
+		totalDebits = totalDebits.Add(decimal.NewFromFloat(debitAmount))
+		totalCredits = totalCredits.Add(decimal.NewFromFloat(creditAmount))
 		accounts = append(accounts, item)
 	}
 
 	result.Accounts = accounts
-	result.TotalDebits = totalDebits.InexactFloat64()
-	result.TotalCredits = totalCredits.InexactFloat64()
+	result.TotalDebits, _ = totalDebits.Float64()
+	result.TotalCredits, _ = totalCredits.Float64()
 	result.IsBalanced = totalDebits.Equal(totalCredits)
-	result.Difference = totalDebits.Sub(totalCredits).InexactFloat64()
+	result.Difference, _ = totalDebits.Sub(totalCredits).Float64()
 
 	return result, nil
 }
@@ -1065,14 +1118,31 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 	accountInfo := make(map[uint64]struct{ Code, Name string })
 
 	for _, row := range rows {
+		debitAmt := row.DebitAmount.InexactFloat64()
+		creditAmt := row.CreditAmount.InexactFloat64()
+
+		if debitAmt > 0 && creditAmt > 0 {
+			netDiff := debitAmt - creditAmt
+			if netDiff > 0 {
+				debitAmt = netDiff
+				creditAmt = 0
+			} else if netDiff < 0 {
+				creditAmt = -netDiff
+				debitAmt = 0
+			} else {
+				debitAmt = 0
+				creditAmt = 0
+			}
+		}
+
 		entry := GeneralLedgerEntry{
 			JournalID:    row.JournalID,
 			Date:         row.EntryDate,
 			JournalCode:  row.EntryNumber,
 			Description:  row.Description,
 			Reference:    row.Reference,
-			DebitAmount:  row.DebitAmount.InexactFloat64(),
-			CreditAmount: row.CreditAmount.InexactFloat64(),
+			DebitAmount:  debitAmt,
+			CreditAmount: creditAmt,
 			EntryType:    row.SourceType,
 		}
 
@@ -1096,7 +1166,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			FROM unified_journal_lines sjl
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			WHERE sje.status = ? 
-				AND sje.entry_date < ?
+				AND DATE(sje.entry_date) <= ?
 				AND sje.deleted_at IS NULL
 				AND sjl.account_id = ?
 		`
@@ -1109,7 +1179,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			FROM unified_journal_lines sjl
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			WHERE sje.status = ? 
-				AND sje.entry_date < ?
+				AND DATE(sje.entry_date) <= ?
 				AND sje.deleted_at IS NULL
 		`
 		openingArgs = []interface{}{models.SSOTStatusPosted, startDate}
@@ -1138,7 +1208,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 				FROM unified_journal_lines sjl
 				JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 				WHERE sje.status = ? 
-					AND sje.entry_date < ?
+					AND DATE(sje.entry_date) <= ?
 					AND sje.deleted_at IS NULL
 					AND sjl.account_id = ?
 			`

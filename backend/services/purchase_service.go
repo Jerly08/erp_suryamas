@@ -1267,8 +1267,8 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	return nil
 }
 
-// autoCreateAssetsFromPurchase creates Asset records for purchase items debited to Fixed Asset accounts.
-// This implements PSAK 16 accrual basis: assets are recognized at purchase time, not at payment.
+// autoCreateAssetsFromPurchase creates Asset records for purchase items flagged as Fixed Asset
+// or items debited to Fixed Asset accounts (PSAK 16 accrual basis).
 func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase) {
 	if len(purchase.PurchaseItems) == 0 {
 		return
@@ -1279,25 +1279,11 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 	assetJournalSvc := NewAssetJournalServiceSSOT(s.db)
 
 	for _, item := range purchase.PurchaseItems {
-		if item.ExpenseAccountID == 0 {
-			continue
-		}
-
-		// Check if the expense account is a Fixed Asset account (FIXED_ASSET category)
-		var account models.Account
-		if err := s.db.First(&account, item.ExpenseAccountID).Error; err != nil {
-			continue
-		}
-
-		if strings.ToUpper(account.Category) != models.CategoryFixedAsset {
-			continue // Not a fixed asset item, skip
-		}
-
-		// Load product name for asset name
-		var product models.Product
-		productName := fmt.Sprintf("Aset dari PO %s", purchase.Code)
-		if err := s.db.First(&product, item.ProductID).Error; err == nil {
-			productName = product.Name
+		// Determine if this item should create an asset
+		isAssetFromFlag := item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset
+		
+		if !isAssetFromFlag {
+			continue // Not an asset item, skip
 		}
 
 		// Check if asset already exists for this purchase item (prevent duplicates)
@@ -1311,23 +1297,41 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 			continue
 		}
 
-		// Determine asset category from the account code
+		// Determine asset name
+		assetName := item.Description
+		if assetName == "" {
+			// Fallback: use product name if available
+			if item.ProductID != nil && *item.ProductID > 0 {
+				var product models.Product
+				if err := s.db.First(&product, *item.ProductID).Error; err == nil {
+					assetName = product.Name
+				}
+			}
+			if assetName == "" {
+				assetName = fmt.Sprintf("Aset dari PO %s", purchase.Code)
+			}
+		}
+
+		// Determine category from AssetCategoryID (user-selected)
 		category := "Peralatan" // Default
-		switch {
-		case strings.HasPrefix(account.Code, "1201-001"):
-			category = "Tanah"
-		case strings.HasPrefix(account.Code, "1201-002"):
-			category = "Bangunan"
-		case strings.HasPrefix(account.Code, "1201-003"):
-			category = "Kendaraan"
-		case strings.HasPrefix(account.Code, "1201-004"):
-			category = "Peralatan"
-		case strings.HasPrefix(account.Code, "1201-005"):
-			category = "Inventaris Kantor"
+		var assetCategoryID *uint
+		var assetAccountID *uint
+
+		if item.AssetCategoryID != nil && *item.AssetCategoryID > 0 {
+			// User selected asset category from UI
+			assetCategoryID = item.AssetCategoryID
+			var assetCat models.AssetCategory
+			if err := s.db.First(&assetCat, *item.AssetCategoryID).Error; err == nil {
+				category = assetCat.Name
+			}
+		}
+
+		// Firmly use ExpenseAccountID as the debit Asset Account
+		if item.ExpenseAccountID != 0 {
+			assetAccountID = &item.ExpenseAccountID
 		}
 
 		// Resolve depreciation expense account (Beban Penyusutan)
-		// We look for category DEPRECIATION_EXPENSE or code 6103, but MUST ensure it's an EXPENSE type
 		var depExpAccount models.Account
 		var depExpID *uint
 		if err := s.db.Where("category = ? AND type = 'EXPENSE' AND deleted_at IS NULL", models.CategoryDepreciationExp).First(&depExpAccount).Error; err == nil {
@@ -1337,72 +1341,94 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 		}
 
 		// Resolve accumulated depreciation account (1202-xxx mirrors 1201-xxx)
-		accumDepCode := strings.Replace(account.Code, "1201", "1202", 1)
-		var accumDepAccount models.Account
 		var accumDepID *uint
-		if err := s.db.Where("code = ? AND deleted_at IS NULL", accumDepCode).First(&accumDepAccount).Error; err == nil {
-			accumDepID = &accumDepAccount.ID
+		if assetAccountID != nil {
+			var assetAcct models.Account
+			if err := s.db.First(&assetAcct, *assetAccountID).Error; err == nil {
+				accumDepCode := strings.Replace(assetAcct.Code, "1201", "1202", 1)
+				var accumDepAccount models.Account
+				if err := s.db.Where("code = ? AND deleted_at IS NULL", accumDepCode).First(&accumDepAccount).Error; err == nil {
+					accumDepID = &accumDepAccount.ID
+				}
+			}
 		}
 
 		// Set default useful life and depreciation method based on category
-		usefulLife := 5          // Default 5 years
+		usefulLife := 5 // Default 5 years
 		depMethod := models.DepreciationMethodStraightLine
 		salvageValue := 0.0
 
 		switch category {
 		case "Tanah":
-			usefulLife = 0        // Tanah tidak disusutkan
+			usefulLife = 0 // Tanah tidak disusutkan
 			depMethod = ""
 		case "Bangunan":
-			usefulLife = 20       // 20 tahun
-			salvageValue = item.TotalPrice * 0.10 // 10% salvage
+			usefulLife = 20 // 20 tahun
+			salvageValue = item.TotalPrice * 0.10
 		case "Kendaraan":
-			usefulLife = 5        // 5 tahun (standard PSAK)
-			salvageValue = item.TotalPrice * 0.10 // 10% salvage
+			usefulLife = 5 // 5 tahun
+			salvageValue = item.TotalPrice * 0.10
 		case "Peralatan":
-			usefulLife = 4        // 4 tahun
-			salvageValue = item.TotalPrice * 0.05 // 5% salvage
+			usefulLife = 4 // 4 tahun
+			salvageValue = item.TotalPrice * 0.05
 		case "Inventaris Kantor":
-			usefulLife = 4        // 4 tahun
-			salvageValue = item.TotalPrice * 0.05 // 5% salvage
+			usefulLife = 4 // 4 tahun
+			salvageValue = item.TotalPrice * 0.05
 		}
 
-		assetAccountID := &account.ID
-		asset := &models.Asset{
-			Name:                  productName,
-			Category:              category,
-			Status:                models.AssetStatusPendingSetup,
-			PurchaseDate:          purchase.Date,
-			PurchasePrice:         item.TotalPrice,
-			SalvageValue:          salvageValue,
-			UsefulLife:            usefulLife,
-			DepreciationMethod:    depMethod,
-			IsActive:              false, // Inactive until user completes setup
-			Notes:                 fmt.Sprintf("Auto-created from Purchase %s (PurchaseItem:%d). Silakan lengkapi masa manfaat, nilai sisa, dan metode penyusutan lalu aktifkan aset.", purchase.Code, item.ID),
-			AssetAccountID:        assetAccountID,
-			DepreciationAccountID: depExpID,
-			AccumulatedDepreciationAccountID: accumDepID,
+		// Ensure Quantity is at least 1 (Prevents zero-loop bug & division by zero panic)
+		qty := item.Quantity
+		if qty <= 0 {
+			qty = 1
+			fmt.Printf("⚠️ Warning: Auto-fixing item.Quantity=0 for Asset '%s', forcing to Qty=1\n", assetName)
 		}
 
-		// Find matching asset category by name
-		var assetCat models.AssetCategory
-		if err := s.db.Where("name = ? AND deleted_at IS NULL", category).First(&assetCat).Error; err == nil {
-			asset.CategoryID = &assetCat.ID
-		}
+		// Create asset for each unit quantity
+		for q := 0; q < qty; q++ {
+			unitAssetName := assetName
+			if qty > 1 {
+				unitAssetName = fmt.Sprintf("%s (#%d)", assetName, q+1)
+			}
 
-		// Create asset via service (generates code automatically)
-		if err := assetService.CreateAsset(asset); err != nil {
-			fmt.Printf("⚠️ [AUTO-ASSET] Failed to create asset for item %d (%s): %v\n", item.ID, productName, err)
-			continue
-		}
+			// Ensure per-unit price is calculated properly
+			perUnitPrice := item.UnitPrice
+			if perUnitPrice <= 0 && item.TotalPrice > 0 {
+				perUnitPrice = item.TotalPrice / float64(qty)
+			}
 
-		fmt.Printf("✅ [AUTO-ASSET] Created asset %s (%s) from purchase %s - Rp %.2f, useful life: %d years\n",
-			asset.Code, asset.Name, purchase.Code, asset.PurchasePrice, asset.UsefulLife)
+			asset := &models.Asset{
+				Name:               unitAssetName,
+				Category:           category,
+				CategoryID:         assetCategoryID,
+				Status:             models.AssetStatusPendingSetup,
+				PurchaseDate:       purchase.Date,
+				PurchasePrice:      perUnitPrice, // Per-unit price
+				SalvageValue:       salvageValue / float64(qty),
+				UsefulLife:         usefulLife,
+				DepreciationMethod: depMethod,
+				IsActive:           false, // Inactive until user completes setup
+				Notes: fmt.Sprintf(
+					"Auto-created from Purchase %s (PurchaseItem:%d). Silakan lengkapi masa manfaat, nilai sisa, dan metode penyusutan lalu aktifkan aset.",
+					purchase.Code, item.ID,
+				),
+				AssetAccountID:                   assetAccountID,
+				DepreciationAccountID:            depExpID,
+				AccumulatedDepreciationAccountID: accumDepID,
+			}
+
+			// Create asset via service (generates code automatically)
+			if err := assetService.CreateAsset(asset); err != nil {
+				// We don't continue out of the whole function, just print loud error to track!
+				fmt.Printf("🚨 🚨 🚨 [FATAL AUTO-ASSET] Failed to create Asset DB record '%s': %v\n", unitAssetName, err)
+				continue
+			}
+
+			fmt.Printf("✅ [AUTO-ASSET] Created asset %s (%s) from purchase %s - Rp %.2f, useful life: %d years\n",
+				asset.Code, asset.Name, purchase.Code, asset.PurchasePrice, asset.UsefulLife)
+		}
 
 		// NOTE: SSOT journal for this asset is NOT created here because the purchase
 		// journal (step 2) already handles: Dr 1201-xxx / Cr Hutang/Kas/Bank
-		// Creating another journal would cause double posting.
-		// However, we log the link for audit trail
 		_ = assetJournalSvc // Available if needed for future use
 	}
 }
@@ -1472,9 +1498,19 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 	// 3. Reverse product stock (subtract the quantities that were added on approval)
 	fmt.Printf("📦 Reversing product stock for rejected purchase %s\n", purchase.Code)
 	for _, item := range purchase.PurchaseItems {
-		product, err := s.productRepo.FindByID(item.ProductID)
+		// Skip ASSET items - they don't have inventory/stock
+		if item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset {
+			fmt.Printf("ℹ️ Skipping stock reversal for ASSET item '%s' (PurchaseItem:%d)\n", item.Description, item.ID)
+			continue
+		}
+		// Skip items without ProductID
+		if item.ProductID == nil || *item.ProductID == 0 {
+			continue
+		}
+
+		product, err := s.productRepo.FindByID(*item.ProductID)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Product %d not found for stock reversal: %v\n", item.ProductID, err)
+			fmt.Printf("⚠️ Warning: Product %d not found for stock reversal: %v\n", *item.ProductID, err)
 			continue
 		}
 
@@ -2045,10 +2081,22 @@ func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase
 	fmt.Printf("📦 Starting stock update for purchase %s with %d items\n", purchase.Code, len(purchase.PurchaseItems))
 
 	for _, item := range purchase.PurchaseItems {
+		// Skip ASSET items - they don't have inventory/stock
+		if item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset {
+			fmt.Printf("ℹ️ Skipping stock update for ASSET item '%s' (PurchaseItem:%d)\n", item.Description, item.ID)
+			continue
+		}
+
+		// Skip items without ProductID (safety check)
+		if item.ProductID == nil || *item.ProductID == 0 {
+			fmt.Printf("ℹ️ Skipping stock update for item without ProductID (PurchaseItem:%d)\n", item.ID)
+			continue
+		}
+
 		// Get current product data
-		product, err := s.productRepo.FindByID(item.ProductID)
+		product, err := s.productRepo.FindByID(*item.ProductID)
 		if err != nil {
-			fmt.Printf("❌ Error finding product %d: %v\n", item.ProductID, err)
+			fmt.Printf("❌ Error finding product %d: %v\n", *item.ProductID, err)
 			continue // Skip this item but continue with others
 		}
 

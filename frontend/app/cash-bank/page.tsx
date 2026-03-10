@@ -45,9 +45,25 @@ import {
   HStack,
   Tooltip,
   useColorModeValue,
+  FormControl,
+  FormLabel,
+  Input,
+  Textarea,
+  NumberInput,
+  NumberInputField,
+  NumberInputStepper,
+  NumberIncrementStepper,
+  NumberDecrementStepper,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+  Divider,
 } from '@chakra-ui/react';
-import { FiPlus, FiDollarSign, FiCreditCard, FiEdit2, FiEye, FiArrowRight, FiTrendingUp, FiTrendingDown, FiMoreVertical, FiTrash2, FiRefreshCw, FiSettings } from 'react-icons/fi';
-import cashbankService, { CashBank, BalanceSummary } from '@/services/cashbankService';
+import { FiPlus, FiDollarSign, FiCreditCard, FiEdit2, FiEye, FiArrowRight, FiTrendingUp, FiTrendingDown, FiMoreVertical, FiTrash2, FiRefreshCw, FiSettings, FiLock, FiUnlock } from 'react-icons/fi';
+import cashbankService, { CashBank, BalanceSummary, getAvailableBalance, FrozenHistory } from '@/services/cashbankService';
 import accountService from '@/services/accountService';
 import CashBankForm from '@/components/cashbank/CashBankForm';
 import DepositWithdrawalForm from '@/components/cashbank/DepositWithdrawalForm'; // Used for withdrawal only
@@ -65,6 +81,8 @@ const getAccountColumns = (
   onTransfer?: (account: CashBank) => void,
   onDelete?: (account: CashBank) => void,
   onReconcile?: (account: CashBank) => void,
+  onFreeze?: (account: CashBank) => void,
+  onUnfreeze?: (account: CashBank) => void,
   textColor?: string,
   mutedTextColor?: string
 ) => [
@@ -208,6 +226,8 @@ const getAccountColumns = (
       accessor: ((row: CashBank) => {
         const isNegative = row.balance < 0;
         const balanceColor = isNegative ? 'red.500' : (row.balance > 0 ? 'green.600' : 'gray.500');
+        const hasFrozen = (row.frozen_amount || 0) > 0;
+        const availableBalance = getAvailableBalance(row);
 
         return (
           <Box textAlign="right">
@@ -220,16 +240,35 @@ const getAccountColumns = (
               {row.currency} {Math.abs(row.balance).toLocaleString('id-ID')}
               {isNegative && ' (Dr)'}
             </Text>
-            <Text fontSize="xs" color={mutedTextColor} mb={1}>
-              {isNegative ? `⚠️ ${t('cashBank.overdraft')}` : (row.balance > 0 ? `✅ ${t('cashBank.creditBalance')}` : `➜ ${t('cashBank.zeroBalance')}`)}
-            </Text>
-            <Badge
-              size="xs"
-              colorScheme={isNegative ? 'red' : (row.balance > 0 ? 'green' : 'gray')}
-              variant="subtle"
-            >
-              {isNegative ? t('cashBank.overdraft').toUpperCase() : (row.balance > 0 ? t('cashBank.positive') : t('cashBank.zero'))}
-            </Badge>
+            {hasFrozen && (
+              <>
+                <Text fontSize="xs" color="orange.500" fontFamily="mono" mt={1}>
+                  Dana Terblokir: {row.currency} {row.frozen_amount.toLocaleString('id-ID')}
+                </Text>
+                <Text fontSize="xs" color="green.600" fontWeight="bold" fontFamily="mono">
+                  Tersedia: {row.currency} {availableBalance.toLocaleString('id-ID')}
+                </Text>
+              </>
+            )}
+            {!hasFrozen && (
+              <Text fontSize="xs" color={mutedTextColor} mb={1}>
+                {isNegative ? `${t('cashBank.overdraft')}` : (row.balance > 0 ? `${t('cashBank.creditBalance')}` : `${t('cashBank.zeroBalance')}`)}
+              </Text>
+            )}
+            <HStack spacing={1} justifyContent="flex-end" mt={1}>
+              <Badge
+                size="xs"
+                colorScheme={isNegative ? 'red' : (row.balance > 0 ? 'green' : 'gray')}
+                variant="subtle"
+              >
+                {isNegative ? t('cashBank.overdraft').toUpperCase() : (row.balance > 0 ? t('cashBank.positive') : t('cashBank.zero'))}
+              </Badge>
+              {hasFrozen && (
+                <Badge size="xs" colorScheme="orange" variant="solid">
+                  TERBLOKIR
+                </Badge>
+              )}
+            </HStack>
           </Box>
         );
       }) as (row: CashBank) => React.ReactNode
@@ -317,6 +356,26 @@ const getAccountColumns = (
               >
                 {t('cashBank.deleteAccount')}
               </MenuItem>
+              <MenuDivider />
+              <MenuItem
+                icon={<FiLock />}
+                onClick={() => onFreeze?.(row)}
+                color="orange.600"
+                fontSize="sm"
+                isDisabled={!row.is_active || row.balance <= 0}
+              >
+                Blokir Dana
+              </MenuItem>
+              {(row.frozen_amount || 0) > 0 && (
+                <MenuItem
+                  icon={<FiUnlock />}
+                  onClick={() => onUnfreeze?.(row)}
+                  color="green.600"
+                  fontSize="sm"
+                >
+                  Buka Blokir Dana
+                </MenuItem>
+              )}
             </MenuList>
           </Menu>
 
@@ -467,6 +526,19 @@ const CashBankPage: React.FC = () => {
   const [reconcileAccount, setReconcileAccount] = useState<CashBank | null>(null);
   const [reconciling, setReconciling] = useState(false);
 
+  // Frozen fund states
+  const {
+    isOpen: isFreezeModalOpen,
+    onOpen: onFreezeModalOpen,
+    onClose: onFreezeModalClose
+  } = useDisclosure();
+  const [freezeAccount, setFreezeAccount] = useState<CashBank | null>(null);
+  const [freezeMode, setFreezeMode] = useState<'freeze' | 'unfreeze'>('freeze');
+  const [freezeAmount, setFreezeAmount] = useState<number>(0);
+  const [freezeReason, setFreezeReason] = useState<string>('');
+  const [freezeLoading, setFreezeLoading] = useState(false);
+  const [frozenHistory, setFrozenHistory] = useState<FrozenHistory[]>([]);
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -568,6 +640,74 @@ const CashBankPage: React.FC = () => {
   const handleReconcile = (account: CashBank) => {
     setReconcileAccount(account);
     onReconcileModalOpen();
+  };
+
+  const handleFreeze = (account: CashBank) => {
+    setFreezeAccount(account);
+    setFreezeMode('freeze');
+    setFreezeAmount(0);
+    setFreezeReason('');
+    // Load frozen history
+    cashbankService.getFrozenHistory(account.id).then(setFrozenHistory).catch(() => setFrozenHistory([]));
+    onFreezeModalOpen();
+  };
+
+  const handleUnfreeze = (account: CashBank) => {
+    setFreezeAccount(account);
+    setFreezeMode('unfreeze');
+    setFreezeAmount(0);
+    setFreezeReason('');
+    cashbankService.getFrozenHistory(account.id).then(setFrozenHistory).catch(() => setFrozenHistory([]));
+    onFreezeModalOpen();
+  };
+
+  const handleFreezeSubmit = async () => {
+    if (!freezeAccount || freezeAmount <= 0 || !freezeReason.trim()) {
+      toast({
+        title: 'Data tidak lengkap',
+        description: 'Masukkan jumlah dan alasan pemblokiran/pembukaan blokir',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    try {
+      setFreezeLoading(true);
+      if (freezeMode === 'freeze') {
+        await cashbankService.freezeAmount(freezeAccount.id, { amount: freezeAmount, reason: freezeReason });
+        toast({
+          title: 'Dana berhasil diblokir',
+          description: `${freezeAccount.currency} ${freezeAmount.toLocaleString('id-ID')} telah diblokir pada ${freezeAccount.name}`,
+          status: 'success',
+          duration: 4000,
+          isClosable: true,
+        });
+      } else {
+        await cashbankService.unfreezeAmount(freezeAccount.id, { amount: freezeAmount, reason: freezeReason });
+        toast({
+          title: 'Blokir dana berhasil dibuka',
+          description: `${freezeAccount.currency} ${freezeAmount.toLocaleString('id-ID')} telah dibuka blokirnya pada ${freezeAccount.name}`,
+          status: 'success',
+          duration: 4000,
+          isClosable: true,
+        });
+      }
+      onFreezeModalClose();
+      fetchData();
+    } catch (error: any) {
+      const errMsg = error.response?.data?.details || error.response?.data?.message || error.message || 'Gagal memproses';
+      toast({
+        title: freezeMode === 'freeze' ? 'Gagal memblokir dana' : 'Gagal membuka blokir',
+        description: errMsg,
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setFreezeLoading(false);
+    }
   };
 
   const handleGlobalReconcile = () => {
@@ -729,6 +869,8 @@ const CashBankPage: React.FC = () => {
     handleTransfer,
     handleDelete,
     handleReconcile,
+    handleFreeze,
+    handleUnfreeze,
     textColor,
     mutedTextColor
   );
@@ -840,7 +982,7 @@ const CashBankPage: React.FC = () => {
               )}
 
               {/* Summary Cards */}
-              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6} mb={8}>
+              <SimpleGrid columns={{ base: 1, md: 3, lg: 5 }} spacing={6} mb={8}>
                 <Card>
                   <CardBody>
                     <Stat>
@@ -873,6 +1015,30 @@ const CashBankPage: React.FC = () => {
                         IDR {balanceSummary?.total_balance?.toLocaleString() || '0'}
                       </StatNumber>
                       <StatHelpText>{t('cashBank.combinedTotal')}</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+
+                <Card borderLeft="4px" borderLeftColor="orange.400">
+                  <CardBody>
+                    <Stat>
+                      <StatLabel color="orange.600">Dana Terblokir</StatLabel>
+                      <StatNumber color="orange.500">
+                        IDR {safeAccounts.reduce((sum, acc) => sum + (acc.frozen_amount || 0), 0).toLocaleString('id-ID')}
+                      </StatNumber>
+                      <StatHelpText>{safeAccounts.filter(a => (a.frozen_amount || 0) > 0).length} akun terblokir</StatHelpText>
+                    </Stat>
+                  </CardBody>
+                </Card>
+
+                <Card borderLeft="4px" borderLeftColor="green.400">
+                  <CardBody>
+                    <Stat>
+                      <StatLabel color="green.600">Saldo Tersedia</StatLabel>
+                      <StatNumber color="green.500">
+                        IDR {safeAccounts.reduce((sum, acc) => sum + getAvailableBalance(acc), 0).toLocaleString('id-ID')}
+                      </StatNumber>
+                      <StatHelpText>Total yang bisa digunakan</StatHelpText>
                     </Stat>
                   </CardBody>
                 </Card>
@@ -973,6 +1139,218 @@ const CashBankPage: React.FC = () => {
                 onSuccess={handleTransactionSuccess}
                 sourceAccount={transactionAccount}
               />
+
+              {/* Freeze/Unfreeze Modal */}
+              <Modal isOpen={isFreezeModalOpen} onClose={onFreezeModalClose} size="xl">
+                <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(5px)" />
+                <ModalContent bg={modalContentBg}>
+                  <ModalHeader
+                    bg={freezeMode === 'freeze' ? 'orange.500' : 'green.500'}
+                    color="white"
+                    borderTopRadius="md"
+                  >
+                    <Flex alignItems="center" gap={3}>
+                      {freezeMode === 'freeze' ? <FiLock size={20} /> : <FiUnlock size={20} />}
+                      <VStack align="start" spacing={0}>
+                        <Text fontSize="lg" fontWeight="bold">
+                          {freezeMode === 'freeze' ? 'Blokir Dana' : 'Buka Blokir Dana'}
+                        </Text>
+                        <Text fontSize="sm" opacity={0.9}>
+                          {freezeAccount?.name} ({freezeAccount?.code})
+                        </Text>
+                      </VStack>
+                    </Flex>
+                  </ModalHeader>
+                  <ModalCloseButton color="white" />
+
+                  <ModalBody py={6}>
+                    {freezeAccount && (
+                      <VStack spacing={5} align="stretch">
+                        {/* Account Info */}
+                        <Card bg={readOnlyBg}>
+                          <CardBody py={3}>
+                            <SimpleGrid columns={2} spacing={3}>
+                              <Box>
+                                <Text fontSize="xs" color={mutedTextColor}>Total Saldo</Text>
+                                <Text fontWeight="bold" fontFamily="mono">
+                                  {freezeAccount.currency} {freezeAccount.balance.toLocaleString('id-ID')}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="xs" color={mutedTextColor}>Dana Terblokir Saat Ini</Text>
+                                <Text fontWeight="bold" fontFamily="mono" color="orange.500">
+                                  {freezeAccount.currency} {(freezeAccount.frozen_amount || 0).toLocaleString('id-ID')}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="xs" color={mutedTextColor}>Saldo Tersedia</Text>
+                                <Text fontWeight="bold" fontFamily="mono" color="green.600">
+                                  {freezeAccount.currency} {getAvailableBalance(freezeAccount).toLocaleString('id-ID')}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  {freezeMode === 'freeze' ? 'Maks. Bisa Diblokir' : 'Maks. Bisa Dibuka'}
+                                </Text>
+                                <Text fontWeight="bold" fontFamily="mono" color="blue.500">
+                                  {freezeAccount.currency} {freezeMode === 'freeze'
+                                    ? getAvailableBalance(freezeAccount).toLocaleString('id-ID')
+                                    : (freezeAccount.frozen_amount || 0).toLocaleString('id-ID')
+                                  }
+                                </Text>
+                              </Box>
+                            </SimpleGrid>
+                          </CardBody>
+                        </Card>
+
+                        {/* Amount Input */}
+                        <FormControl isRequired>
+                          <FormLabel fontSize="sm">
+                            {freezeMode === 'freeze' ? 'Jumlah Dana yang Diblokir' : 'Jumlah Blokir yang Dibuka'}
+                          </FormLabel>
+                          <NumberInput
+                            value={freezeAmount || ''}
+                            onChange={(_, val) => setFreezeAmount(isNaN(val) ? 0 : val)}
+                            min={0}
+                            max={freezeMode === 'freeze' ? getAvailableBalance(freezeAccount) : (freezeAccount.frozen_amount || 0)}
+                          >
+                            <NumberInputField placeholder="Masukkan jumlah" />
+                            <NumberInputStepper>
+                              <NumberIncrementStepper />
+                              <NumberDecrementStepper />
+                            </NumberInputStepper>
+                          </NumberInput>
+                          {freezeAmount > 0 && (
+                            <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                              {freezeAccount.currency} {freezeAmount.toLocaleString('id-ID')}
+                            </Text>
+                          )}
+                          {freezeMode === 'freeze' && freezeAmount > getAvailableBalance(freezeAccount) && (
+                            <Text fontSize="xs" color="red.500" mt={1}>
+                              Jumlah melebihi saldo tersedia
+                            </Text>
+                          )}
+                          {freezeMode === 'unfreeze' && freezeAmount > (freezeAccount.frozen_amount || 0) && (
+                            <Text fontSize="xs" color="red.500" mt={1}>
+                              Jumlah melebihi dana terblokir
+                            </Text>
+                          )}
+                        </FormControl>
+
+                        {/* Quick Amount Buttons */}
+                        <HStack spacing={2} flexWrap="wrap">
+                          {[25, 50, 75, 100].map(pct => {
+                            const maxVal = freezeMode === 'freeze' ? getAvailableBalance(freezeAccount) : (freezeAccount.frozen_amount || 0);
+                            const val = Math.floor(maxVal * pct / 100);
+                            return (
+                              <Button
+                                key={pct}
+                                size="xs"
+                                variant="outline"
+                                colorScheme={freezeMode === 'freeze' ? 'orange' : 'green'}
+                                onClick={() => setFreezeAmount(val)}
+                              >
+                                {pct}%
+                              </Button>
+                            );
+                          })}
+                        </HStack>
+
+                        {/* Reason Input */}
+                        <FormControl>
+                          <FormLabel fontSize="sm">Alasan</FormLabel>
+                          <Textarea
+                            value={freezeReason}
+                            onChange={(e) => setFreezeReason(e.target.value)}
+                            placeholder={freezeMode === 'freeze' ? 'Contoh: Dana ditahan untuk jaminan bank garansi' : 'Contoh: Jaminan bank garansi telah selesai'}
+                            rows={2}
+                          />
+                        </FormControl>
+
+                        {/* Preview */}
+                        {freezeAmount > 0 && (
+                          <Alert status={freezeMode === 'freeze' ? 'warning' : 'success'} borderRadius="md">
+                            <AlertIcon />
+                            <Box>
+                              <AlertTitle fontSize="sm">
+                                {freezeMode === 'freeze' ? 'Setelah pemblokiran:' : 'Setelah pembukaan blokir:'}
+                              </AlertTitle>
+                              <AlertDescription fontSize="xs">
+                                Dana terblokir: {freezeAccount.currency} {(
+                                  freezeMode === 'freeze'
+                                    ? (freezeAccount.frozen_amount || 0) + freezeAmount
+                                    : (freezeAccount.frozen_amount || 0) - freezeAmount
+                                ).toLocaleString('id-ID')}
+                                {' | '}
+                                Saldo tersedia: {freezeAccount.currency} {(
+                                  freezeMode === 'freeze'
+                                    ? getAvailableBalance(freezeAccount) - freezeAmount
+                                    : getAvailableBalance(freezeAccount) + freezeAmount
+                                ).toLocaleString('id-ID')}
+                              </AlertDescription>
+                            </Box>
+                          </Alert>
+                        )}
+
+                        {/* Frozen History */}
+                        {frozenHistory.length > 0 && (
+                          <Box>
+                            <Divider my={2} />
+                            <Text fontSize="sm" fontWeight="bold" mb={2}>Riwayat Blokir/Buka Blokir</Text>
+                            <Box maxH="150px" overflowY="auto">
+                              <Table size="sm" variant="simple">
+                                <Thead>
+                                  <Tr>
+                                    <Th fontSize="xs">Tanggal</Th>
+                                    <Th fontSize="xs">Aksi</Th>
+                                    <Th fontSize="xs" isNumeric>Jumlah</Th>
+                                    <Th fontSize="xs">Alasan</Th>
+                                  </Tr>
+                                </Thead>
+                                <Tbody>
+                                  {frozenHistory.slice(0, 10).map((h) => (
+                                    <Tr key={h.id}>
+                                      <Td fontSize="xs">{new Date(h.created_at).toLocaleDateString('id-ID')}</Td>
+                                      <Td>
+                                        <Badge size="xs" colorScheme={h.action === 'FREEZE' ? 'orange' : 'green'}>
+                                          {h.action === 'FREEZE' ? 'BLOKIR' : 'BUKA'}
+                                        </Badge>
+                                      </Td>
+                                      <Td fontSize="xs" isNumeric fontFamily="mono">
+                                        {h.amount.toLocaleString('id-ID')}
+                                      </Td>
+                                      <Td fontSize="xs" maxW="150px" isTruncated>{h.reason}</Td>
+                                    </Tr>
+                                  ))}
+                                </Tbody>
+                              </Table>
+                            </Box>
+                          </Box>
+                        )}
+                      </VStack>
+                    )}
+                  </ModalBody>
+
+                  <ModalFooter bg={modalFooterBg} borderBottomRadius="md">
+                    <Button variant="ghost" mr={3} onClick={onFreezeModalClose}>
+                      Batal
+                    </Button>
+                    <Button
+                      colorScheme={freezeMode === 'freeze' ? 'orange' : 'green'}
+                      onClick={handleFreezeSubmit}
+                      isLoading={freezeLoading}
+                      isDisabled={
+                        freezeAmount <= 0 ||
+                        (freezeMode === 'freeze' && freezeAmount > getAvailableBalance(freezeAccount!)) ||
+                        (freezeMode === 'unfreeze' && freezeAmount > (freezeAccount?.frozen_amount || 0))
+                      }
+                      leftIcon={freezeMode === 'freeze' ? <FiLock /> : <FiUnlock />}
+                    >
+                      {freezeMode === 'freeze' ? 'Blokir Dana' : 'Buka Blokir'}
+                    </Button>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
 
               {/* Account Details Modal */}
               <Modal isOpen={isDetailModalOpen} onClose={onDetailModalClose} size="4xl" scrollBehavior="inside">

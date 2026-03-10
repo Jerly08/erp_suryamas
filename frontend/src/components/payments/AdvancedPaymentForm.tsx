@@ -914,8 +914,10 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                   })
                                   .map((account) => {
                                     const currentAmount = watchedAmount || 0;
-                                    const isInsufficientBalance = account.balance < currentAmount;
-                                    const isZeroBalance = account.balance <= 0;
+                                    const frozen = account.frozen_amount || 0;
+                                    const availableBalance = Math.max(0, account.balance - frozen);
+                                    const isInsufficientBalance = availableBalance < currentAmount;
+                                    const isZeroBalance = availableBalance <= 0;
                                     const balanceStatus = isZeroBalance ? ' ❌ NO BALANCE' :
                                       isInsufficientBalance ? ' ⚠️ INSUFFICIENT' :
                                         ' ✅';
@@ -932,9 +934,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                         }}
                                       >
                                         {account.type === 'BANK' && account.bank_name
-                                          ? `${account.code} - ${account.name} (${account.bank_name}) - ${paymentService.formatCurrency(account.balance)}`
-                                          : `${account.code} - ${account.name} (${account.type}) - ${paymentService.formatCurrency(account.balance)}`
-                                        }{balanceStatus}
+                                          ? `${account.code} - ${account.name} (${account.bank_name}) - Tersedia: ${paymentService.formatCurrency(availableBalance)}`
+                                          : `${account.code} - ${account.name} (${account.type}) - Tersedia: ${paymentService.formatCurrency(availableBalance)}`
+                                        }{frozen > 0 ? ` [Terblokir: ${paymentService.formatCurrency(frozen)}]` : ''}{balanceStatus}
                                       </option>
                                     );
                                   })}
@@ -960,15 +962,17 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                 const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
                                 if (!selectedAccount) return null;
 
-                                const isZeroBalance = selectedAccount.balance <= 0;
-                                const isInsufficientBalance = watchedAmount > selectedAccount.balance;
-                                const remainingBalance = selectedAccount.balance - (watchedAmount || 0);
+                                const frozen = selectedAccount.frozen_amount || 0;
+                                const availableBalance = Math.max(0, selectedAccount.balance - frozen);
+                                const isZeroBalance = availableBalance <= 0;
+                                const isInsufficientBalance = watchedAmount > availableBalance;
+                                const remainingBalance = availableBalance - (watchedAmount || 0);
 
                                 if (isZeroBalance) {
                                   return (
                                     <Text fontSize="sm" color="red.500" mt={2} fontWeight="medium">
-                                      ❌ <strong>No Balance Available</strong><br />
-                                      Account "{selectedAccount.name}" has zero balance. Cannot process any payments.
+                                      <strong>No Balance Available</strong><br />
+                                      Account "{selectedAccount.name}" has no available balance.{frozen > 0 ? ` (Total: ${paymentService.formatCurrency(selectedAccount.balance)}, Terblokir: ${paymentService.formatCurrency(frozen)})` : ' Cannot process any payments.'}
                                     </Text>
                                   );
                                 }
@@ -976,9 +980,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                 if (isInsufficientBalance && watchedAmount > 0) {
                                   return (
                                     <Text fontSize="sm" color="orange.500" mt={2} fontWeight="medium">
-                                      ⚠️ <strong>Insufficient Balance</strong><br />
-                                      Available: {paymentService.formatCurrency(selectedAccount.balance)} | Required: {paymentService.formatCurrency(watchedAmount)} |
-                                      Short by: {paymentService.formatCurrency(watchedAmount - selectedAccount.balance)}
+                                      <strong>Insufficient Balance</strong><br />
+                                      Tersedia: {paymentService.formatCurrency(availableBalance)} | Dibutuhkan: {paymentService.formatCurrency(watchedAmount)} |
+                                      Kurang: {paymentService.formatCurrency(watchedAmount - availableBalance)}{frozen > 0 ? ` | Terblokir: ${paymentService.formatCurrency(frozen)}` : ''}
                                     </Text>
                                   );
                                 }
@@ -994,7 +998,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 
                                 return (
                                   <Text fontSize="sm" color="blue.600" mt={2}>
-                                    💰 <strong>Account Balance:</strong> {paymentService.formatCurrency(selectedAccount.balance)}
+                                    <strong>Saldo Tersedia:</strong> {paymentService.formatCurrency(availableBalance)}{frozen > 0 ? ` (Total: ${paymentService.formatCurrency(selectedAccount.balance)}, Terblokir: ${paymentService.formatCurrency(frozen)})` : ''}
                                   </Text>
                                 );
                               })()}

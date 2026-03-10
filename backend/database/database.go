@@ -679,6 +679,7 @@ func AutoMigrate(db *gorm.DB) {
 		// Cash & Bank
 		&models.CashBank{},
 		&models.CashBankTransaction{},
+		&models.CashBankFrozenHistory{},
 		&models.Payment{},
 		&models.PaymentAllocation{},
 

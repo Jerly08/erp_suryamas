@@ -1,0 +1,1 @@
+sed -i 's/if !isAssetItem {/if !isAssetItem {\n\t\t\tif itemReq.ExpenseAccountID == 0 {\n\t\t\t\treturn fmt.Errorf("item %d: expense_account_id is required for inventory items", i+1)\n\t\t\t}/g' D:/Project/erp_akuntansi/backend/services/purchase_accounting_service.go

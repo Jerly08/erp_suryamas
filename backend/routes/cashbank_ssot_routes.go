@@ -42,9 +42,14 @@ func SetupCashBankSSOTRoutes(v1 *gin.RouterGroup, db *gorm.DB, jwtManager *middl
 			
 			// Transaction History
 			accounts.GET("/:id/transactions", permMiddleware.CanView("cash_bank"), cashBankHandler.GetTransactions)
-			
+
 			// Bank Reconciliation
 			accounts.POST("/:id/reconcile", permMiddleware.CanEdit("cash_bank"), cashBankHandler.ReconcileAccount)
+
+			// Frozen Fund Management
+			accounts.POST("/:id/freeze", permMiddleware.CanEdit("cash_bank"), cashBankHandler.FreezeAmount)
+			accounts.POST("/:id/unfreeze", permMiddleware.CanEdit("cash_bank"), cashBankHandler.UnfreezeAmount)
+			accounts.GET("/:id/frozen-history", permMiddleware.CanView("cash_bank"), cashBankHandler.GetFrozenHistory)
 		}
 		
 		// Transaction Processing (all with SSOT journal integration)
