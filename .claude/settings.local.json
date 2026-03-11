@@ -7,7 +7,12 @@
       "Bash(curl:*)",
       "Bash(git diff:*)",
       "Bash(awk:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(cd D:/Project/erp_akuntansi && PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sistem_erp -c \"\\\\dt *permission*\" 2>&1)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sistem_erp -c \"\\\\d module_permissions\" 2>&1)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sistem_erp -c \"CREATE UNIQUE INDEX IF NOT EXISTS idx_user_module ON module_permissions \\(user_id, module\\) WHERE deleted_at IS NULL;\" 2>&1)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sistem_erp -c \"SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'module_permissions';\" 2>&1)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d sistem_erp -c \"CREATE UNIQUE INDEX idx_user_module ON module_permissions \\(user_id, module\\);\" 2>&1)"
     ]
   }
 }

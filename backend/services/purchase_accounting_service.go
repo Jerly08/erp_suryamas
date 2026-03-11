@@ -88,9 +88,11 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 			itemType = models.PurchaseItemTypeInventory
 		}
 		isAssetItem := itemType == models.PurchaseItemTypeAsset || itemReq.IsFixedAsset
+		isPrepaidItem := itemType == models.PurchaseItemTypePrepaid
 
-		if isAssetItem {
-			fmt.Printf("ℹ Processing item %d/%d: ASSET item '%s', Qty %d, Price %.2f\n", i+1, len(items), itemReq.Description, itemReq.Quantity, itemReq.UnitPrice)
+		if isAssetItem || isPrepaidItem {
+			itemTypeName := string(itemType)
+			fmt.Printf("ℹ Processing item %d/%d: %s item '%s', Qty %d, Price %.2f\n", i+1, len(items), itemTypeName, itemReq.Description, itemReq.Quantity, itemReq.UnitPrice)
 		} else {
 			productID := uint(0)
 			if itemReq.ProductID != nil {
@@ -100,7 +102,7 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 		}
 
 		// Validate product exists only for INVENTORY items
-		if !isAssetItem {
+		if !isAssetItem && !isPrepaidItem {
 			if itemReq.ExpenseAccountID == 0 {
 				return fmt.Errorf("item %d: expense_account_id is required for inventory items", i+1)
 			}
@@ -113,10 +115,14 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 				return fmt.Errorf("product %d not found: %v", *itemReq.ProductID, err)
 			}
 			fmt.Printf("✅ Product found: %s (ID: %d)\n", product.Name, product.ID)
-		} else {
-			// Asset items: validate description is provided
+		} else if isAssetItem || isPrepaidItem {
+			// Asset and Prepaid items: validate description is provided
 			if itemReq.Description == "" {
-				return fmt.Errorf("item %d: description is required for asset items", i+1)
+				return fmt.Errorf("item %d: description is required for non-inventory items", i+1)
+			}
+			// For Prepaid items, expense account is also required
+			if isPrepaidItem && itemReq.ExpenseAccountID == 0 {
+				return fmt.Errorf("item %d: expense_account_id is required for prepaid items", i+1)
 			}
 		}
 
@@ -351,8 +357,9 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 			itemType = models.PurchaseItemTypeInventory
 		}
 		isAssetItem := itemType == models.PurchaseItemTypeAsset || itemReq.IsFixedAsset
+		isPrepaidItem := itemType == models.PurchaseItemTypePrepaid
 
-		if !isAssetItem {
+		if !isAssetItem && !isPrepaidItem {
 			if itemReq.ExpenseAccountID == 0 {
 				return fmt.Errorf("item %d: expense_account_id is required for inventory items", i+1)
 			}
@@ -363,6 +370,10 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 			_, err := s.productRepo.FindByID(*itemReq.ProductID)
 			if err != nil {
 				return fmt.Errorf("product %d not found", *itemReq.ProductID)
+			}
+		} else if isPrepaidItem {
+			if itemReq.ExpenseAccountID == 0 {
+				return fmt.Errorf("item %d: expense_account_id is required for prepaid items", i+1)
 			}
 		}
 

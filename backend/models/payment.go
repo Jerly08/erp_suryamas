@@ -49,6 +49,7 @@ type PaymentAllocation struct {
 
 // Payment Status Constants
 const (
+	PaymentStatusDraft     = "DRAFT"     // Submitted by employee, waiting finance approval
 	PaymentStatusPending   = "PENDING"
 	PaymentStatusCompleted = "COMPLETED"
 	PaymentStatusFailed    = "FAILED"

@@ -89,6 +89,7 @@ func RunMigrations(db *gorm.DB) {
 		&models.RateLimitRecord{},
 		&models.Permission{},
 		&models.RolePermission{},
+		&models.ModulePermissionRecord{},
 
 		// Approval models
 		&models.ApprovalWorkflow{},

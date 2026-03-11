@@ -86,10 +86,11 @@ type PurchaseItem struct {
 	ID               uint           `json:"id" gorm:"primaryKey"`
 	PurchaseID       uint           `json:"purchase_id" gorm:"not null;index"`
 	ProductID        *uint          `json:"product_id" gorm:"index"`
-	ItemType         string         `json:"item_type" gorm:"size:20;default:'INVENTORY'"` // INVENTORY, ASSET
+	ItemType         string         `json:"item_type" gorm:"size:20;default:'INVENTORY'"` // INVENTORY, ASSET, PREPAID
 	IsFixedAsset     bool           `json:"is_fixed_asset" gorm:"default:false"`
 	Description      string         `json:"description" gorm:"type:text"`
 	AssetCategoryID  *uint          `json:"asset_category_id,omitempty" gorm:"index"`
+	AmortizationMonth int           `json:"amortization_month" gorm:"not null;default:0"` // Untuk tipe PREPAID
 	Quantity         int            `json:"quantity" gorm:"not null"`
 	UnitPrice        float64        `json:"unit_price" gorm:"type:decimal(15,2);default:0"`
 	TotalPrice       float64        `json:"total_price" gorm:"type:decimal(15,2);default:0"`
@@ -243,22 +244,24 @@ type PurchaseUpdateRequest struct {
 }
 
 type PurchaseItemRequest struct {
-	ItemType        string  `json:"item_type"`         // "INVENTORY" or "ASSET" (default: INVENTORY)
-	IsFixedAsset    bool    `json:"is_fixed_asset"`    // true if this item is a fixed asset purchase
-	Description     string  `json:"description"`       // Asset name/description (used when ItemType=ASSET)
-	AssetCategoryID *uint   `json:"asset_category_id"` // Asset category ID (used when ItemType=ASSET)
-	ProductID       *uint   `json:"product_id"`        // Optional: not required for ASSET items
-	Quantity        int     `json:"quantity" binding:"required,min=1"`
-	UnitPrice       float64 `json:"unit_price" binding:"required,min=0"`
-	Discount        float64 `json:"discount"`
-	Tax             float64 `json:"tax"`
-	ExpenseAccountID uint   `json:"expense_account_id"`
+	ItemType          string  `json:"item_type"` // "INVENTORY", "ASSET", or "PREPAID"
+	IsFixedAsset      bool    `json:"is_fixed_asset"`
+	Description       string  `json:"description"`
+	AssetCategoryID   *uint   `json:"asset_category_id"`
+	AmortizationMonth int     `json:"amortization_month"` // Durasi bulan untuk PREPAID
+	ProductID         *uint   `json:"product_id"`
+	Quantity          int     `json:"quantity" binding:"required,min=1"`
+	UnitPrice         float64 `json:"unit_price" binding:"required,min=0"`
+	Discount          float64 `json:"discount"`
+	Tax               float64 `json:"tax"`
+	ExpenseAccountID  uint    `json:"expense_account_id"`
 }
 
 // Purchase Item Type Constants
 const (
 	PurchaseItemTypeInventory = "INVENTORY"
 	PurchaseItemTypeAsset     = "ASSET"
+	PurchaseItemTypePrepaid   = "PREPAID"
 )
 
 // Document Management

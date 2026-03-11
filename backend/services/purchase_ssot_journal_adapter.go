@@ -211,7 +211,7 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 ) []JournalLineRequest {
 	var lines []JournalLineRequest
 
-	// Debit inventory/expense per item
+	// Debit inventory/expense/prepaid per item
 	for _, item := range purchase.PurchaseItems {
 		itemName := "Unknown Item"
 		if item.Product != nil {
@@ -221,13 +221,20 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 		}
 
 		accountID := accountIDs.InventoryAccountID
-		if item.ExpenseAccountID != 0 {
+		if item.ItemType == models.PurchaseItemTypePrepaid {
+			// Jika PREPAID: Debit harus masuk ke Aset Lancar Biaya Dibayar Dimuka.
+			// Memprioritaskan ExpenseAccountID dari user
+			if item.ExpenseAccountID != 0 {
+				accountID = uint64(item.ExpenseAccountID)
+			}
+		} else if item.ExpenseAccountID != 0 {
 			accountID = uint64(item.ExpenseAccountID)
 		}
+
 		amount := decimal.NewFromFloat(item.TotalPrice)
 		lines = append(lines, JournalLineRequest{
 			AccountID:    accountID,
-			Description:  fmt.Sprintf("Purchase - %s", itemName),
+			Description:  fmt.Sprintf("Purchase %s - %s", item.ItemType, itemName),
 			DebitAmount:  amount,
 			CreditAmount: decimal.Zero,
 		})

@@ -41,6 +41,10 @@ type ExpensePaymentRequest struct {
 	AutoCreateJournal bool      `json:"auto_create_journal"`
 	UserID            uint      `json:"user_id"`
 
+	// SaveAsDraft = true means save payment with status DRAFT without creating journal.
+	// Used when submitted by employee role; finance must approve later.
+	SaveAsDraft bool `json:"save_as_draft"`
+
 	// PPh withholding tax fields (optional)
 	PPHType   string  `json:"pph_type"`   // PPH_21, PPH_23, PPH_4_2, PPH_22, or empty
 	PPHRate   float64 `json:"pph_rate"`   // Tax rate percentage (e.g. 2 for 2%)
@@ -90,6 +94,7 @@ type PaymentWithJournalRequest struct {
 	// Journal integration options
 	AutoCreateJournal bool `json:"auto_create_journal" default:"true"`
 	PreviewJournal    bool `json:"preview_journal" default:"false"`
+	SaveAsDraft       bool `json:"save_as_draft"` // DRAFT mode for employee submissions
 
 	// Allocation options (single target - legacy)
 	TargetInvoiceID *uint `json:"target_invoice_id,omitempty"`
@@ -140,6 +145,8 @@ type PaymentProcessingSummary struct {
 //	Credit: cash/bank GL account linked to selected CashBank.
 //
 // It also updates CashBank balance & history via applyCashBankMovement.
+// If req.SaveAsDraft is true, the payment is saved with status DRAFT and no journal is created.
+// Finance role must call ApproveExpensePayment to post the journal and set status COMPLETED.
 func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpensePaymentRequest) (*models.Payment, error) {
 	// Basic validation
 	if req.Amount <= 0 {
@@ -163,6 +170,11 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 	}
 	if req.Description == "" {
 		req.Description = "Expense Payment"
+	}
+
+	// DRAFT MODE: save payment without creating journal — for employee role submissions
+	if req.SaveAsDraft {
+		return eps.createExpensePaymentDraft(req)
 	}
 
 	var payment *models.Payment
@@ -324,6 +336,373 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 	return payment, nil
 }
 
+// createExpensePaymentDraft saves an expense payment with status DRAFT without creating a journal.
+// Called when employee submits; finance must approve via ApproveExpensePayment.
+func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *ExpensePaymentRequest) (*models.Payment, error) {
+	var payment *models.Payment
+
+	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		// Validate cash/bank exists
+		cashBank, err := eps.cashBankRepo.FindByID(req.CashBankID)
+		if err != nil {
+			return fmt.Errorf("cash/bank account not found: %w", err)
+		}
+
+		// Validate expense account exists
+		var expenseAccount models.Account
+		if err := tx.First(&expenseAccount, req.ExpenseAccountID).Error; err != nil {
+			return fmt.Errorf("expense account not found: %w", err)
+		}
+
+		// Load contact name if provided
+		contactName := "Umum"
+		if req.ContactID > 0 {
+			contact, err := eps.contactRepo.GetByID(req.ContactID)
+			if err != nil {
+				return fmt.Errorf("contact not found: %w", err)
+			}
+			contactName = contact.Name
+		}
+
+		payment = &models.Payment{
+			ContactID:   req.ContactID,
+			UserID:      req.UserID,
+			Date:        req.Date,
+			Amount:      req.Amount,
+			Method:      req.Method,
+			Reference:   fmt.Sprintf("__EXP_ACC:%d,CB:%d__%s", req.ExpenseAccountID, req.CashBankID, req.Reference),
+			Status:      models.PaymentStatusDraft,
+			PaymentType: models.PaymentTypeExpense,
+			Notes:       fmt.Sprintf("%s [Contact: %s] [Beban: %s] [CashBank: %s]", req.Notes, contactName, expenseAccount.Name, cashBank.Name),
+			PPHType:     req.PPHType,
+			PPHRate:     req.PPHRate,
+			PPHAmount:   req.PPHAmount,
+		}
+
+		code, err := eps.generatePaymentCode(tx, req.Method, "VENDOR")
+		if err != nil {
+			return fmt.Errorf("failed to generate payment code: %w", err)
+		}
+		payment.Code = code
+
+		if err := tx.Create(payment).Error; err != nil {
+			return fmt.Errorf("failed to create draft expense payment: %w", err)
+		}
+
+		log.Printf("📝 Expense payment saved as DRAFT: ID=%d, Code=%s, Amount=%.2f, ExpenseAcc=%s",
+			payment.ID, payment.Code, req.Amount, expenseAccount.Name)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return payment, nil
+}
+
+// ApproveExpensePayment approves a DRAFT expense payment: creates the SSOT journal and updates status to COMPLETED.
+// Only finance/admin role should call this.
+func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID uint, approverUserID uint) (*models.Payment, error) {
+	var payment models.Payment
+	if err := eps.db.First(&payment, paymentID).Error; err != nil {
+		return nil, fmt.Errorf("payment not found: %w", err)
+	}
+
+	if payment.Status != models.PaymentStatusDraft {
+		return nil, fmt.Errorf("payment is not in DRAFT status (current: %s)", payment.Status)
+	}
+	if payment.PaymentType != models.PaymentTypeExpense {
+		return nil, fmt.Errorf("only expense payments can be approved via this endpoint")
+	}
+
+	// Parse expense account and cash bank IDs from Notes is not reliable.
+	// Instead we need to store them. For now we query by looking at the journal
+	// request fields stored in Notes — but the cleanest solution is to add columns.
+	// Since we don't want schema changes right now, we look up via SSOT journal preview:
+	// we re-build the request from persisted data using a helper.
+	//
+	// APPROACH: We store expense_account_id and cash_bank_id in a dedicated approach.
+	// The payment.Notes field encodes "[Beban: <name>] [CashBank: <name>]" which isn't
+	// query-friendly. Instead we save expense_account_id/cash_bank_id in payment.Reference
+	// as "EXP_ACC:<id>,CB:<id>" when creating draft. Let's parse it.
+	var expenseAccountID, cashBankID uint
+	refStr := payment.Reference
+	// Try to parse embedded IDs (set by createExpensePaymentDraft below)
+	n, _ := fmt.Sscanf(refStr, "__EXP_ACC:%d,CB:%d__", &expenseAccountID, &cashBankID)
+	if n != 2 || expenseAccountID == 0 || cashBankID == 0 {
+		return nil, fmt.Errorf("cannot find expense account or cash bank info in draft payment (ref: %s); please delete and re-submit", payment.Reference)
+	}
+
+	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		cashBank, err := eps.cashBankRepo.FindByID(cashBankID)
+		if err != nil {
+			return fmt.Errorf("cash/bank account not found: %w", err)
+		}
+		if cashBank.AccountID == 0 {
+			return fmt.Errorf("cash/bank account %s has no linked GL account", cashBank.Name)
+		}
+
+		var expenseAccount models.Account
+		if err := tx.First(&expenseAccount, expenseAccountID).Error; err != nil {
+			return fmt.Errorf("expense account not found: %w", err)
+		}
+
+		grossAmount := decimal.NewFromFloat(payment.Amount)
+		var journalLines []JournalLineRequest
+
+		if payment.PPHAmount > 0 && payment.PPHType != "" {
+			pphAmount := decimal.NewFromFloat(payment.PPHAmount)
+			netAmount := grossAmount.Sub(pphAmount)
+
+			pphAccountID, err := eps.resolvePPHAccountID(tx, payment.PPHType)
+			if err != nil {
+				return fmt.Errorf("failed to resolve PPh account: %w", err)
+			}
+
+			journalLines = []JournalLineRequest{
+				{
+					AccountID:    uint64(expenseAccount.ID),
+					DebitAmount:  grossAmount,
+					CreditAmount: decimal.Zero,
+					Description:  fmt.Sprintf("Beban %s - %s (bruto)", expenseAccount.Name, payment.Code),
+				},
+				{
+					AccountID:    uint64(cashBank.AccountID),
+					DebitAmount:  decimal.Zero,
+					CreditAmount: netAmount,
+					Description:  fmt.Sprintf("Pembayaran neto via %s - %s", cashBank.Name, payment.Code),
+				},
+				{
+					AccountID:    pphAccountID,
+					DebitAmount:  decimal.Zero,
+					CreditAmount: pphAmount,
+					Description:  fmt.Sprintf("Hutang %s dipotong - %s (%.1f%%)", payment.PPHType, payment.Code, payment.PPHRate),
+				},
+			}
+
+			// CashBank moves net amount
+			payment.Amount = netAmount.InexactFloat64()
+		} else {
+			journalLines = []JournalLineRequest{
+				{
+					AccountID:    uint64(expenseAccount.ID),
+					DebitAmount:  grossAmount,
+					CreditAmount: decimal.Zero,
+					Description:  fmt.Sprintf("Expense Payment %s - %s", payment.Code, expenseAccount.Name),
+				},
+				{
+					AccountID:    uint64(cashBank.AccountID),
+					DebitAmount:  decimal.Zero,
+					CreditAmount: grossAmount,
+					Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
+				},
+			}
+		}
+
+		journalRequest := &JournalEntryRequest{
+			SourceType:  models.SSOTSourceTypePayment,
+			SourceID:    uint64(payment.ID),
+			Reference:   payment.Code,
+			EntryDate:   payment.Date,
+			Description: fmt.Sprintf("Expense Payment approved - %s", payment.Code),
+			Lines:       journalLines,
+			AutoPost:    true,
+			CreatedBy:   uint64(approverUserID),
+		}
+
+		journalService := NewUnifiedJournalService(tx)
+		journalResponse, err := journalService.CreateJournalEntryWithTx(tx, journalRequest)
+		if err != nil {
+			return fmt.Errorf("failed to create expense journal entry: %w", err)
+		}
+
+		journalEntryID := uint(journalResponse.ID)
+		payment.JournalEntryID = &journalEntryID
+		payment.Status = models.PaymentStatusCompleted
+
+		if err := tx.Save(&payment).Error; err != nil {
+			return fmt.Errorf("failed to update payment after approval: %w", err)
+		}
+
+		if err := eps.applyCashBankMovement(tx, cashBank, "VENDOR", payment.Amount, &payment, payment.Date); err != nil {
+			return fmt.Errorf("failed to update cash/bank balances: %w", err)
+		}
+
+		log.Printf("✅ Expense payment APPROVED: ID=%d, Code=%s, JournalID=%d, ApprovedBy=%d",
+			payment.ID, payment.Code, journalEntryID, approverUserID)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &payment, nil
+}
+
+// ApproveStandardPayment approves a DRAFT receivable/payable payment: creates the SSOT journal and updates status to COMPLETED.
+// Only finance/admin role should call this.
+func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID uint, approverUserID uint) (*PaymentWithJournalResponse, error) {
+	var payment models.Payment
+	if err := eps.db.Preload("Contact").Preload("User").First(&payment, paymentID).Error; err != nil {
+		return nil, fmt.Errorf("payment not found: %w", err)
+	}
+
+	if payment.Status != models.PaymentStatusDraft {
+		return nil, fmt.Errorf("payment is not in DRAFT status (current: %s)", payment.Status)
+	}
+	if payment.PaymentType == models.PaymentTypeExpense || strings.HasPrefix(payment.PaymentType, "TAX_PPN") {
+		return nil, fmt.Errorf("only receivable/payable payments can be approved via this endpoint")
+	}
+
+	var cashBankID uint
+	refStr := payment.Reference
+	n, _ := fmt.Sscanf(refStr, "__CB:%d__", &cashBankID)
+	if n != 1 || cashBankID == 0 {
+		return nil, fmt.Errorf("cannot find cash bank info in draft payment (ref: %s); please delete and re-submit", payment.Reference)
+	}
+
+	var journalResult *PaymentJournalResult
+	response := &PaymentWithJournalResponse{
+		Success: false,
+	}
+
+	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		cashBank, err := eps.cashBankRepo.FindByID(cashBankID)
+		if err != nil {
+			return fmt.Errorf("cash/bank account not found: %w", err)
+		}
+		if cashBank.AccountID == 0 {
+			return fmt.Errorf("cash/bank account %s has no linked GL account", cashBank.Name)
+		}
+
+		var journalLines []JournalLineRequest
+		var journalDescription string
+
+		if payment.Contact.Type == "CUSTOMER" {
+			// Receivable Payment Journal: Debit Cash/Bank, Credit Piutang Usaha
+			arAccountID, arErr := eps.resolveReceivableAccountID(tx)
+			if arErr != nil {
+				return fmt.Errorf("failed to resolve accounts receivable: %w", arErr)
+			}
+			journalLines = []JournalLineRequest{
+				{
+					AccountID:    uint64(cashBank.AccountID),
+					DebitAmount:  decimal.NewFromFloat(payment.Amount),
+					CreditAmount: decimal.Zero,
+					Description:  fmt.Sprintf("Payment received from %s - %s", payment.Contact.Name, payment.Code),
+				},
+				{
+					AccountID:    arAccountID,
+					DebitAmount:  decimal.Zero,
+					CreditAmount: decimal.NewFromFloat(payment.Amount),
+					Description:  fmt.Sprintf("AR reduction - %s", payment.Code),
+				},
+			}
+			journalDescription = fmt.Sprintf("Customer Payment approved %s - %s", payment.Code, payment.Contact.Name)
+
+		} else if payment.Contact.Type == "VENDOR" {
+			// Payable Payment Journal: Debit Utang Usaha, Credit Cash/Bank
+			apAccountID, apErr := eps.resolvePayableAccountID(tx)
+			if apErr != nil {
+				return fmt.Errorf("failed to resolve accounts payable: %w", apErr)
+			}
+			journalLines = []JournalLineRequest{
+				{
+					AccountID:    apAccountID,
+					DebitAmount:  decimal.NewFromFloat(payment.Amount),
+					CreditAmount: decimal.Zero,
+					Description:  fmt.Sprintf("AP reduction - %s", payment.Code),
+				},
+				{
+					AccountID:    uint64(cashBank.AccountID),
+					DebitAmount:  decimal.Zero,
+					CreditAmount: decimal.NewFromFloat(payment.Amount),
+					Description:  fmt.Sprintf("Payment made to %s - %s", payment.Contact.Name, payment.Code),
+				},
+			}
+			journalDescription = fmt.Sprintf("Vendor Payment approved %s - %s", payment.Code, payment.Contact.Name)
+
+		} else {
+			return fmt.Errorf("unsupported contact type for journal creation: %s", payment.Contact.Type)
+		}
+
+		journalRequest := &JournalEntryRequest{
+			SourceType:  models.SSOTSourceTypePayment,
+			SourceID:    uint64(payment.ID),
+			Reference:   payment.Code,
+			EntryDate:   payment.Date,
+			Description: journalDescription,
+			Lines:       journalLines,
+			AutoPost:    true,
+			CreatedBy:   uint64(approverUserID),
+		}
+
+		journalService := NewUnifiedJournalService(tx)
+		journalEntry, err := journalService.CreateJournalEntryWithTx(tx, journalRequest)
+		if err != nil {
+			return fmt.Errorf("failed to create payment journal entry: %w", err)
+		}
+
+		journalEntryID := uint(journalEntry.ID)
+		payment.JournalEntryID = &journalEntryID
+		payment.Status = models.PaymentStatusCompleted
+
+		if err := tx.Save(&payment).Error; err != nil {
+			return fmt.Errorf("failed to finalize payment approval: %w", err)
+		}
+
+		// Reflect movement in Cash & Bank module
+		if err := eps.applyCashBankMovement(tx, cashBank, payment.Contact.Type, payment.Amount, &payment, payment.Date); err != nil {
+			return fmt.Errorf("failed to update Cash & Bank balances: %w", err)
+		}
+
+		journalResult = &PaymentJournalResult{
+			Success:      true,
+			JournalEntry: journalEntry,
+			Message:      fmt.Sprintf("Journal entry %s created and posted", journalEntry.EntryNumber),
+		}
+
+		response.Payment = &payment
+		response.JournalResult = journalResult
+		response.Contact = &payment.Contact
+		response.CashBank = cashBank
+		response.Success = true
+		response.Message = fmt.Sprintf("Payment %s approved successfully", payment.Code)
+
+		log.Printf("✅ Payment APPROVED: ID=%d, Code=%s, JournalID=%d", payment.ID, payment.Code, journalEntryID)
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+// UpdateDraftPayment allows modifying fields of a payment that is in DRAFT status without creating journals
+func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint, req func(*models.Payment) error) (*models.Payment, error) {
+	var payment models.Payment
+	if err := eps.db.First(&payment, paymentID).Error; err != nil {
+		return nil, fmt.Errorf("payment not found: %w", err)
+	}
+
+	if payment.Status != models.PaymentStatusDraft {
+		return nil, fmt.Errorf("only payments in DRAFT status can be updated (current status: %s)", payment.Status)
+	}
+
+	// Apply updates from request
+	if err := req(&payment); err != nil {
+		return nil, fmt.Errorf("failed to apply updates: %w", err)
+	}
+
+	if err := eps.db.Save(&payment).Error; err != nil {
+		return nil, fmt.Errorf("failed to save updated draft payment: %w", err)
+	}
+
+	return &payment, nil
+}
+
 // CreatePaymentWithJournal creates a payment with automatic journal entry creation
 func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *PaymentWithJournalRequest) (*PaymentWithJournalResponse, error) {
 	startTime := time.Now()
@@ -380,15 +759,22 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		}
 
 		// Step 4: Create payment record
+		status := models.PaymentStatusCompleted
+		ref := req.Reference
+		if req.SaveAsDraft {
+			status = models.PaymentStatusDraft
+			ref = fmt.Sprintf("__CB:%d__%s", req.CashBankID, req.Reference)
+		}
+
 		payment = &models.Payment{
 			ContactID: req.ContactID,
 			UserID:    req.UserID,
 			Date:      req.Date,
 			Amount:    req.Amount,
 			Method:    req.Method,
-			Reference: req.Reference,
+			Reference: ref,
 			Notes:     req.Notes,
-			Status:    models.PaymentStatusPending,
+			Status:    status,
 		}
 
 		// Generate payment code
@@ -406,7 +792,8 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		log.Printf("✅ Payment created: ID=%d, Code=%s", payment.ID, payment.Code)
 
 		// Step 5: Create SSOT journal entry directly (bypass disabled PaymentJournalFactory)
-		if req.AutoCreateJournal {
+		// Only create journal if AutoCreateJournal is true AND SaveAsDraft is false
+		if req.AutoCreateJournal && !req.SaveAsDraft {
 			var journalLines []JournalLineRequest
 			var journalDescription string
 
@@ -498,18 +885,23 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 			return fmt.Errorf("failed to create allocations: %w", err)
 		}
 
-		// Step 7: Update payment status to completed
-		payment.Status = models.PaymentStatusCompleted
-		if err := tx.Save(payment).Error; err != nil {
-			return fmt.Errorf("failed to finalize payment: %w", err)
+		// Step 7: Update payment status
+		// Already handled during creation if SaveAsDraft is true
+		if !req.SaveAsDraft {
+			payment.Status = models.PaymentStatusCompleted
+			if err := tx.Save(payment).Error; err != nil {
+				return fmt.Errorf("failed to finalize payment: %w", err)
+			}
 		}
 
 		// Step 8: Reflect movement in Cash & Bank module (keeps UI Kas/Bank in sync)
-		// IMPORTANT: We only update cash_banks and insert a transaction record.
+		// IMPORTANT: We only update cash_banks and insert a transaction record if NOT DRAFT.
 		// We DO NOT create another journal here to avoid double-posting because the SSOT journal above
 		// already debits/credits the GL bank account.
-		if err := eps.applyCashBankMovement(tx, cashBank, contact.Type, req.Amount, payment, req.Date); err != nil {
-			return fmt.Errorf("failed to update Cash & Bank balances: %w", err)
+		if !req.SaveAsDraft {
+			if err := eps.applyCashBankMovement(tx, cashBank, contact.Type, req.Amount, payment, req.Date); err != nil {
+				return fmt.Errorf("failed to update Cash & Bank balances: %w", err)
+			}
 		}
 
 		// Build response

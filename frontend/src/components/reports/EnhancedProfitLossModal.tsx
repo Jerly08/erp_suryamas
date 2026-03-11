@@ -239,24 +239,25 @@ const EnhancedProfitLossModal: React.FC<EnhancedProfitLossModalProps> = ({
   };
 
   // Helper function to translate section names
-  const normalizedName = sectionName.toUpperCase();
-  const sectionKeys: Record<string, string> = {
-    'REVENUE': 'reports.profitLoss.revenue',
-    'COST OF GOODS SOLD': 'reports.profitLoss.costOfGoodsSold',
-    'GROSS PROFIT': 'reports.profitLoss.grossProfit',
-    'OPERATING INCOME': 'reports.profitLoss.operatingIncome',
-    'NET INCOME': 'reports.profitLoss.netIncome',
-    'OPERATING EXPENSES': 'reports.profitLoss.operatingExpenses',
-    'OTHER INCOME': 'reports.profitLoss.otherIncome',
-    'OTHER EXPENSES': 'reports.profitLoss.otherExpenses',
-    'NET PROFIT': 'reports.profitLoss.netProfit',
-    'NET LOSS': 'reports.profitLoss.netLoss'
-  };
+  const getTranslatedSectionName = (sectionName: string): string => {
+    const normalizedName = sectionName.toUpperCase();
+    const sectionKeys: Record<string, string> = {
+      'REVENUE': 'reports.profitLoss.revenue',
+      'COST OF GOODS SOLD': 'reports.profitLoss.costOfGoodsSold',
+      'GROSS PROFIT': 'reports.profitLoss.grossProfit',
+      'OPERATING INCOME': 'reports.profitLoss.operatingIncome',
+      'NET INCOME': 'reports.profitLoss.netIncome',
+      'OPERATING EXPENSES': 'reports.profitLoss.operatingExpenses',
+      'OTHER INCOME': 'reports.profitLoss.otherIncome',
+      'OTHER EXPENSES': 'reports.profitLoss.otherExpenses',
+      'NET PROFIT': 'reports.profitLoss.netProfit',
+      'NET LOSS': 'reports.profitLoss.netLoss'
+    };
 
-  const key = sectionKeys[normalizedName];
-  // If no exact match, try uppercase keys directly just in case provided name matches key structure
-  return key ? t(key) : (sectionKeys[sectionName] ? t(sectionKeys[sectionName]) : t(sectionName, sectionName));
-};
+    const key = sectionKeys[normalizedName];
+    // If no exact match, try uppercase keys directly just in case provided name matches key structure
+    return key ? t(key) : (sectionKeys[sectionName] ? t(sectionKeys[sectionName]) : t(sectionName, sectionName));
+  };
 
 // Helper function to translate item names
 const getTranslatedItemName = (itemName: string): string => {

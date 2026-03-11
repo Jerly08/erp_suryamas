@@ -1,10 +1,13 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/services"
 
@@ -42,6 +45,16 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 	userID := getSSOTUserIDFromContext(c)
 	req.UserID = userID
 
+	// Role check: if not finance or admin, save as DRAFT
+	role := ""
+	if r, exists := c.Get("role"); exists {
+		if rs, ok := r.(string); ok {
+			role = strings.ToLower(rs)
+		}
+	}
+	isFinanceOrAdmin := role == "finance" || role == "admin"
+	req.SaveAsDraft = !isFinanceOrAdmin
+
 	// Process payment using SSOT enhanced service
 	response, err := ctrl.enhancedPaymentService.CreatePaymentWithJournal(&req)
 	if err != nil {
@@ -76,6 +89,16 @@ func (ctrl *SSOTPaymentController) CreatePayablePayment(c *gin.Context) {
 	// Get user ID from JWT context
 	userID := getSSOTUserIDFromContext(c)
 	req.UserID = userID
+
+	// Role check: if not finance or admin, save as DRAFT
+	role := ""
+	if r, exists := c.Get("role"); exists {
+		if rs, ok := r.(string); ok {
+			role = strings.ToLower(rs)
+		}
+	}
+	isFinanceOrAdmin := role == "finance" || role == "admin"
+	req.SaveAsDraft = !isFinanceOrAdmin
 
 	// Process payment using SSOT enhanced service
 	response, err := ctrl.enhancedPaymentService.CreatePaymentWithJournal(&req)
@@ -112,6 +135,16 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	}
 	req.UserID = userID
 
+	// Role check: if not finance or admin, save as DRAFT
+	role := ""
+	if r, exists := c.Get("role"); exists {
+		if rs, ok := r.(string); ok {
+			role = strings.ToLower(rs)
+		}
+	}
+	isFinanceOrAdmin := role == "finance" || role == "admin"
+	req.SaveAsDraft = !isFinanceOrAdmin
+
 	payment, err := ctrl.enhancedPaymentService.CreateExpensePayment(&req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -121,8 +154,192 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Expense payment created successfully",
+	statusCode := http.StatusCreated
+	message := "Expense payment created successfully"
+	if payment.Status == "DRAFT" {
+		message = "Expense payment submitted as DRAFT — waiting for finance approval"
+	}
+
+	c.JSON(statusCode, gin.H{
+		"message": message,
+		"data":    payment,
+	})
+}
+
+// ApproveExpensePayment approves a DRAFT expense payment (finance/admin only)
+func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
+	paymentIDStr := c.Param("id")
+	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment ID"})
+		return
+	}
+
+	approverUserID := getSSOTUserIDFromContext(c)
+	if approverUserID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	payment, err := ctrl.enhancedPaymentService.ApproveExpensePayment(uint(paymentID), approverUserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to approve expense payment",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Expense payment approved and journal posted successfully",
+		"data":    payment,
+	})
+}
+
+// ApproveStandardPayment approves a DRAFT receivable/payable payment (finance/admin only)
+func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
+	paymentIDStr := c.Param("id")
+	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment ID"})
+		return
+	}
+
+	approverUserID := getSSOTUserIDFromContext(c)
+	if approverUserID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	payment, err := ctrl.enhancedPaymentService.ApproveStandardPayment(uint(paymentID), approverUserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to approve standard payment",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Payment approved and journal posted successfully",
+		"data":    payment,
+	})
+}
+
+// UpdateDraftPayment updates a payment in DRAFT status
+func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
+	paymentIDStr := c.Param("id")
+	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment ID"})
+		return
+	}
+
+	var reqData struct {
+		ContactID          uint    `json:"contact_id"`
+		ExpenseAccountID   *uint   `json:"expense_account_id"`
+		CashBankID         uint    `json:"cash_bank_id"`
+		Date               string  `json:"date"`
+		Amount             float64 `json:"amount"`
+		Method             string  `json:"method"`
+		Reference          string  `json:"reference"`
+		Notes              string  `json:"notes"`
+		Description        string  `json:"description"`
+		TargetBillID       *uint   `json:"target_bill_id"`
+		TargetInvoiceID    *uint   `json:"target_invoice_id"`
+	}
+
+	if err := c.ShouldBindJSON(&reqData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request data",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	payment, err := ctrl.enhancedPaymentService.UpdateDraftPayment(uint(paymentID), func(p *models.Payment) error {
+		// Update fields if provided
+		if reqData.ContactID != 0 {
+			p.ContactID = reqData.ContactID
+		}
+		if reqData.Date != "" {
+			if parsedDate, err := time.Parse(time.RFC3339, reqData.Date); err == nil {
+				p.Date = parsedDate
+			} else if parsedDate, err := time.Parse("2006-01-02", reqData.Date); err == nil {
+				p.Date = parsedDate
+			}
+		}
+		if reqData.Amount > 0 {
+			p.Amount = reqData.Amount
+		}
+		if reqData.Method != "" {
+			p.Method = reqData.Method
+		}
+		// Combine notes and description
+		if reqData.Notes != "" {
+			p.Notes = reqData.Notes
+		}
+		if reqData.Description != "" {
+			if p.Notes != "" {
+				p.Notes += " - " + reqData.Description
+			} else {
+				p.Notes = reqData.Description
+			}
+		}
+		
+		// Parse and reconstruct reference for DRAFT approval mappings
+		var existingExpID, existingCBID uint
+		n, _ := fmt.Sscanf(p.Reference, "__EXP_ACC:%d,CB:%d__", &existingExpID, &existingCBID)
+		if n != 2 {
+			existingExpID = 0
+			n, _ = fmt.Sscanf(p.Reference, "__CB:%d__", &existingCBID)
+			if n != 1 {
+				existingCBID = 0
+			}
+		}
+		
+		cleanRef := p.Reference
+		if existingExpID != 0 && existingCBID != 0 {
+			cleanRef = strings.Replace(cleanRef, fmt.Sprintf("__EXP_ACC:%d,CB:%d__", existingExpID, existingCBID), "", 1)
+		} else if existingCBID != 0 {
+			cleanRef = strings.Replace(cleanRef, fmt.Sprintf("__CB:%d__", existingCBID), "", 1)
+		}
+
+		newCBID := existingCBID
+		if reqData.CashBankID != 0 {
+			newCBID = reqData.CashBankID
+		}
+		newExpID := existingExpID
+		if reqData.ExpenseAccountID != nil {
+			newExpID = *reqData.ExpenseAccountID
+		}
+		
+		userRef := cleanRef
+		if reqData.Reference != "" {
+			userRef = reqData.Reference
+		}
+
+		if newExpID != 0 {
+			p.Reference = fmt.Sprintf("__EXP_ACC:%d,CB:%d__%s", newExpID, newCBID, userRef)
+		} else if newCBID != 0 {
+			p.Reference = fmt.Sprintf("__CB:%d__%s", newCBID, userRef)
+		} else {
+			p.Reference = userRef
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to update draft payment",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Draft payment updated successfully",
 		"data":    payment,
 	})
 }

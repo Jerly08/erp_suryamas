@@ -58,6 +58,7 @@ interface ExpensePaymentFormProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  initialData?: any; // Payment object when editing
 }
 
 interface ExpensePaymentFormData {
@@ -93,10 +94,14 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  initialData,
 }) => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const toast = useToast();
   const { t } = useTranslation();
+
+  // Check if user is finance or admin (will submit directly as COMPLETED)
+  const isFinanceOrAdmin = user?.role === 'finance' || user?.role === 'admin';
 
   // Color mode values
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -159,12 +164,84 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   // Show all cash/bank accounts (no filtering by payment method)
   const filteredCashBanks = cashBanks;
 
+  const parseDraftReference = (reference?: string) => {
+    if (!reference) {
+      return {
+        userReference: '',
+        expenseAccountId: undefined as number | undefined,
+        cashBankId: undefined as number | undefined,
+      };
+    }
+
+    const expenseMatch = reference.match(/^__EXP_ACC:(\d+),CB:(\d+)__(.*)$/);
+    if (expenseMatch) {
+      return {
+        userReference: expenseMatch[3] || '',
+        expenseAccountId: Number(expenseMatch[1]),
+        cashBankId: Number(expenseMatch[2]),
+      };
+    }
+
+    const cashBankMatch = reference.match(/^__CB:(\d+)__(.*)$/);
+    if (cashBankMatch) {
+      return {
+        userReference: cashBankMatch[2] || '',
+        expenseAccountId: undefined as number | undefined,
+        cashBankId: Number(cashBankMatch[1]),
+      };
+    }
+
+    return {
+      userReference: reference,
+      expenseAccountId: undefined as number | undefined,
+      cashBankId: undefined as number | undefined,
+    };
+  };
+
   // Load accounts and cash banks
   useEffect(() => {
     if (isOpen && token) {
       loadData();
     }
   }, [isOpen, token]);
+
+  // Populate form when editing an existing payment
+  useEffect(() => {
+    if (isOpen && initialData) {
+      const parsedReference = parseDraftReference(initialData.reference);
+
+      // Set form values from the payment record
+      if (initialData.contact_id) setValue('contact_id', initialData.contact_id);
+      if (initialData.expense_account_id || parsedReference.expenseAccountId) {
+        setValue('expense_account_id', Number(initialData.expense_account_id || parsedReference.expenseAccountId));
+      }
+      if (initialData.cash_bank_id || parsedReference.cashBankId) {
+        setValue('cash_bank_id', Number(initialData.cash_bank_id || parsedReference.cashBankId));
+      }
+      if (initialData.date) setValue('date', initialData.date?.split('T')[0] || initialData.date);
+      if (initialData.amount) setValue('amount', initialData.amount);
+      if (initialData.method) setValue('method', initialData.method);
+      setValue('reference', parsedReference.userReference);
+      if (initialData.notes) setValue('notes', initialData.notes);
+      if (initialData.description) setValue('description', initialData.description);
+      if (initialData.pph_type) setValue('pph_type', initialData.pph_type);
+      if (typeof initialData.pph_rate === 'number') setValue('pph_rate', initialData.pph_rate);
+      setValue('enable_pph', Boolean(initialData.pph_type || initialData.pph_amount));
+    } else if (isOpen && !initialData) {
+      // New payment: reset form
+      reset({
+        date: new Date().toISOString().split('T')[0],
+        amount: 0,
+        method: 'CASH',
+        reference: '',
+        notes: '',
+        description: '',
+        enable_pph: false,
+        pph_type: '',
+        pph_rate: 0,
+      });
+    }
+  }, [isOpen, initialData, setValue, reset]);
 
   // Validate payment date against closed accounting periods
   useEffect(() => {
@@ -234,8 +311,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const onSubmit = async (data: ExpensePaymentFormData) => {
     setLoading(true);
     try {
-      // Create expense payment via unified PaymentService so it appears in Payment Management
-      await paymentService.createExpensePayment({
+      const payload: any = {
         contact_id: data.contact_id ? Number(data.contact_id) : 0,
         expense_account_id: Number(data.expense_account_id),
         cash_bank_id: Number(data.cash_bank_id),
@@ -249,20 +325,34 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
           `Payment for ${selectedAccount?.code || ''} ${selectedAccount?.name || 'Expense'}`.trim(),
         description: data.description || selectedAccount?.name || 'Expense Payment',
         auto_create_journal: true,
-        // PPh fields
-        ...(data.enable_pph && pphAmount > 0 && {
-          pph_type: data.pph_type,
-          pph_rate: data.pph_rate,
-          pph_amount: pphAmount,
-        }),
-      });
+      };
 
-      toast({
-        title: 'Success',
-        description: 'Expense payment has been created successfully',
-        status: 'success',
-        duration: 3000,
-      });
+      // Add PPh fields if enabled
+      if (data.enable_pph && pphAmount > 0) {
+        payload.pph_type = data.pph_type;
+        payload.pph_rate = data.pph_rate;
+        payload.pph_amount = pphAmount;
+      }
+
+      if (initialData?.id) {
+        // Update existing draft
+        await paymentService.updateDraftPayment(initialData.id, payload);
+        toast({
+          title: 'Success',
+          description: 'Expense payment draft has been updated successfully',
+          status: 'success',
+          duration: 3000,
+        });
+      } else {
+        // Create new expense payment via unified PaymentService
+        await paymentService.createExpensePayment(payload);
+        toast({
+          title: 'Success',
+          description: 'Expense payment has been created successfully',
+          status: 'success',
+          duration: 3000,
+        });
+      }
 
       handleClose();
       if (onSuccess) onSuccess();
@@ -306,6 +396,16 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                   {t('payments.form.expensePaymentDescription')}
                 </AlertDescription>
               </Alert>
+
+              {/* Draft warning for non-finance roles */}
+              {!isFinanceOrAdmin && (
+                <Alert status="warning" borderRadius="md">
+                  <AlertIcon />
+                  <AlertDescription fontSize="sm">
+                    Pembayaran ini akan disimpan sebagai <strong>DRAFT</strong> dan perlu disetujui oleh Finance sebelum jurnal dibuat.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {loadingAccounts ? (
                 <Box py={8} textAlign="center" width="full">
@@ -724,12 +824,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
             </Button>
             <Button
               type="submit"
-              colorScheme="blue"
+              colorScheme={isFinanceOrAdmin ? 'blue' : 'orange'}
               isLoading={loading}
               isDisabled={loadingAccounts || isDateClosed || checkingClosedPeriod}
               leftIcon={<FiDollarSign />}
             >
-              {t('payments.form.createExpensePayment')}
+              {isFinanceOrAdmin ? t('payments.form.createExpensePayment') : 'Submit sebagai Draft'}
             </Button>
           </ModalFooter>
         </form>

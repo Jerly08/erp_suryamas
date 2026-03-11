@@ -100,7 +100,7 @@ func (pc *PermissionController) UpdateUserPermissions(c *gin.Context) {
 	// This avoids any soft-delete / unique-index conflicts entirely.
 	for module, perm := range request.Permissions {
 		err := pc.db.Exec(`
-			INSERT INTO module_permission_records
+			INSERT INTO module_permissions
 				(user_id, module, can_view, can_create, can_edit, can_delete, can_approve, can_export, can_menu, created_at, updated_at, deleted_at)
 			VALUES
 				(?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NULL)

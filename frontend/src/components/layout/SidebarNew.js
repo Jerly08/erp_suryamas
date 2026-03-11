@@ -22,7 +22,7 @@ import {
 import {
   FiTrendingUp,
   FiCompass,
-  FiStar,
+  FiStar, FiClock,
   FiBell,
   FiSettings,
   FiMenu,
@@ -70,7 +70,8 @@ const getMenuGroups = (t, companyType) => {
         { name: ctLabel('products', 'Items & Benchmarks'), icon: FiLayers, href: '/products', module: 'products', permission: 'view', roles: ['ADMIN', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
         { name: 'Master BOMs', icon: FiBox, href: '/boms', module: 'boms', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
         { name: t('navigation.contacts'), icon: FiUsers, href: '/contacts', module: 'contacts', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-        { name: t('navigation.assets'), icon: FiStar, href: '/assets', module: 'assets', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+        { name: t('navigation.assets'), icon: FiStar, FiClock, href: '/assets', module: 'assets', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
+        { name: 'Prepaid Expenses', icon: FiClock, href: '/prepaid-expenses', module: 'prepaid_expenses', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
         { name: 'Projects', icon: FiBriefcase, href: '/projects', module: 'projects', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
       ]
     },

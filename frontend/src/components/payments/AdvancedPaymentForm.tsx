@@ -75,6 +75,7 @@ interface AdvancedPaymentFormProps {
   type: 'receivable' | 'payable';
   onSuccess?: () => void;
   preSelectedContact?: any;
+  initialData?: any; // Payment object when editing
 }
 
 interface PaymentFormData {
@@ -323,7 +324,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   onClose,
   type,
   onSuccess,
-  preSelectedContact
+  preSelectedContact,
+  initialData,
 }) => {
   const [contacts, setContacts] = useState<any[]>([]);
   const [cashBankAccounts, setCashBankAccounts] = useState<CashBank[]>([]);
@@ -352,25 +354,25 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 
   const toast = useToast();
 
-  // Check if user has permission to create payments
+  // Check if user has permission to create payments directly vs draft
   const userRole = normalizeRole(user?.role);
-  const canCreatePayments = userRole === 'admin' || userRole === 'finance' || userRole === 'director';
+  const isFinanceOrAdmin = userRole === 'admin' || userRole === 'finance' || userRole === 'director';
 
-  // If modal is opened but user doesn't have permission, close it and show error
+  // If modal is opened but user doesn't have at least 'employee' role, close it
   useEffect(() => {
-    if (isOpen && user && !canCreatePayments) {
+    if (isOpen && user && !userRole) {
       toast({
         title: 'Access Denied',
-        description: 'You do not have permission to create payments. Contact your administrator for access.',
+        description: 'You do not have permission to access this module.',
         status: 'error',
         duration: 5000,
       });
       onClose();
     }
-  }, [isOpen, user, canCreatePayments, toast, onClose]);
+  }, [isOpen, user, userRole, toast, onClose]);
 
-  // Don't render the form if user doesn't have permission
-  if (!canCreatePayments && user) {
+  // Don't render the form if user role is not determined
+  if (!userRole && user) {
     return null;
   }
 
@@ -409,11 +411,26 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       setOutstandingItems([]);
       setAllocations([]);
 
-      if (preSelectedContact) {
+      if (initialData) {
+        // Editing an existing payment: populate form fields
+        console.log('AdvancedPaymentForm - Populating form with initialData:', initialData.id);
+        reset({
+          contact_id: initialData.contact_id || 0,
+          cash_bank_id: initialData.cash_bank_id || 0,
+          date: initialData.date?.split('T')[0] || new Date().toISOString().split('T')[0],
+          amount: initialData.amount || 0,
+          method: initialData.method || 'BANK_TRANSFER',
+          reference: initialData.reference || '',
+          notes: initialData.notes || '',
+          auto_allocate: false,
+        });
+        // Load outstanding items for this contact
+        if (initialData.contact_id) {
+          setTimeout(() => loadOutstandingItems(initialData.contact_id), 0);
+        }
+      } else if (preSelectedContact) {
         console.log('AdvancedPaymentForm - Setting preselected contact:', preSelectedContact.id, preSelectedContact.name);
         setValue('contact_id', preSelectedContact.id);
-        // Force refresh outstanding items immediately with preselected contact
-        // Use setTimeout to ensure setValue has completed
         setTimeout(() => {
           console.log('AdvancedPaymentForm - Loading outstanding items for preselected contact:', preSelectedContact.id);
           loadOutstandingItems(preSelectedContact.id);
@@ -426,7 +443,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       setAllocations([]);
       reset(); // Reset form values
     }
-  }, [isOpen, preSelectedContact?.id, setValue, reset]);
+  }, [isOpen, preSelectedContact?.id, initialData?.id, setValue, reset]);
 
   // Load outstanding items when contact changes (user selection)
   useEffect(() => {
@@ -632,12 +649,18 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         return;
       }
 
-      // Create payment
+      // Create or update payment
       let result;
-      if (type === 'receivable') {
-        result = await paymentService.createReceivablePayment(paymentData);
+      if (initialData?.id) {
+        // Edit mode - update existing draft
+        result = await paymentService.updateDraftPayment(initialData.id, paymentData);
       } else {
-        result = await paymentService.createPayablePayment(paymentData);
+        // Create mode
+        if (type === 'receivable') {
+          result = await paymentService.createReceivablePayment(paymentData);
+        } else {
+          result = await paymentService.createPayablePayment(paymentData);
+        }
       }
 
       toast({
@@ -796,6 +819,16 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                   {/* Payment Details Tab */}
                   <TabPanel px={0}>
                     <VStack spacing={6} align="stretch">
+                      {/* Draft warning for non-finance roles */}
+                      {!isFinanceOrAdmin && (
+                        <Alert status="warning" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription fontSize="sm">
+                            Pembayaran ini akan disimpan sebagai <strong>DRAFT</strong> dan perlu disetujui oleh Finance sebelum jurnal dibuat.
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
                       {/* Contact Selection */}
                       <Card>
                         <CardBody>

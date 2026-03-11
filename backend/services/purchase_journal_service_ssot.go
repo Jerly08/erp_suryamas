@@ -132,7 +132,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 			}
 
 			// Treat physical goods (non-service products) as inventory purchases
-			isInventoryItem := item.Product.ID != 0 && !item.Product.IsService
+			isInventoryItem := item.Product != nil && item.Product.ID != 0 && !item.Product.IsService
 
 			if isServiceCompany {
 				// ✅ SERVICE COMPANY LOGIC:

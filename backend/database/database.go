@@ -660,6 +660,8 @@ func AutoMigrate(db *gorm.DB) {
 		// Purchases
 		&models.Purchase{},
 		&models.PurchaseItem{},
+	&models.PrepaidExpense{},
+		&models.PrepaidSchedule{},
 		&models.PurchaseDocument{},
 		&models.PurchaseReceipt{},
 		&models.PurchaseReceiptItem{},

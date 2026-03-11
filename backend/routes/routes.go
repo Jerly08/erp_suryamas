@@ -981,6 +981,19 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				assets.POST("/:id/activate", permMiddleware.CanEdit("assets"), periodValidationMiddleware.ValidateTransactionPeriod(), assetController.ActivateAsset)
 			}
 
+			// ⏳ Prepaid Expenses / Amortization routes
+			prepaidSvc := services.NewPrepaidService(db, unifiedJournalService)
+			prepaidController := controllers.NewPrepaidController(prepaidSvc)
+
+			prepaid := protected.Group("/prepaid")
+			{
+				prepaid.GET("", permMiddleware.CanView("assets"), prepaidController.GetAllPrepaid)
+				prepaid.GET("/:id", permMiddleware.CanView("assets"), prepaidController.GetPrepaidByID)
+				prepaid.PUT("/:id/account", permMiddleware.CanEdit("assets"), prepaidController.SetExpenseAccount)
+				prepaid.POST("/:id/amortize/:schedule_id", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), prepaidController.AmortizeSchedule)
+				prepaid.POST("/:id/terminate", middleware.RoleRequired("admin", "finance", "director"), periodValidationMiddleware.ValidateTransactionPeriod(), prepaidController.TerminatePrepaid)
+			}
+
 			// Note: CashBank routes are already set up via SetupPaymentRoutes
 
 			// 📦 Inventory routes with enhanced permission checks
@@ -1033,14 +1046,19 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// 📅 Period Closing routes (Unified Period Closing System)
 			periodClosing := protected.Group("/period-closing")
-			periodClosing.Use(middleware.RoleRequired("admin", "director", "finance"))
+			
+			// /check-date should be accessible to all authenticated users for form validation
+			periodClosing.GET("/check-date", periodClosingController.CheckDateInClosedPeriod)
+			
+			// The rest of the operations require admin/finance roles
+			periodClosingAdmin := periodClosing.Group("")
+			periodClosingAdmin.Use(middleware.RoleRequired("admin", "director", "finance"))
 			{
-				periodClosing.GET("/last-info", periodClosingController.GetLastClosingInfo)             // Get last closing info
-				periodClosing.GET("/preview", periodClosingController.PreviewClosing)                   // Preview period closing
-				periodClosing.POST("/execute", periodClosingController.ExecuteClosing)                  // Execute period closing
-				periodClosing.POST("/reopen", periodClosingController.ReopenPeriod)                     // Reopen closed period
-				periodClosing.GET("/history", unifiedClosingHistoryController.GetUnifiedClosingHistory) // Use unified history
-				periodClosing.GET("/check-date", periodClosingController.CheckDateInClosedPeriod)       // Check if date is closed
+				periodClosingAdmin.GET("/last-info", periodClosingController.GetLastClosingInfo)             // Get last closing info
+				periodClosingAdmin.GET("/preview", periodClosingController.PreviewClosing)                   // Preview period closing
+				periodClosingAdmin.POST("/execute", periodClosingController.ExecuteClosing)                  // Execute period closing
+				periodClosingAdmin.POST("/reopen", periodClosingController.ReopenPeriod)                     // Reopen closed period
+				periodClosingAdmin.GET("/history", unifiedClosingHistoryController.GetUnifiedClosingHistory) // Use unified history
 			}
 
 			// ✅ CONSOLIDATED ROUTES: Use only Enhanced Report Routes - UNDER V1

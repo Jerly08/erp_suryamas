@@ -624,6 +624,7 @@ export const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
       case 'PURCHASE': return 'orange';
       case 'PAYMENT': return 'purple';
       case 'CASH_BANK': return 'teal';
+      case 'PREPAID_AMORTIZATION': return 'purple';
       case 'MANUAL': return 'gray';
       default: return 'gray';
     }

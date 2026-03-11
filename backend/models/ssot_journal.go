@@ -183,8 +183,10 @@ const (
 	SSOTSourceTypeClosing      = "CLOSING"
 	SSOTSourceTypeAdjustment   = "ADJUSTMENT"
 	SSOTSourceTypeTransfer     = "TRANSFER"
-	SSOTSourceTypeDepreciation = "DEPRECIATION"
-	SSOTSourceTypeReversal     = "REVERSAL"
+	SSOTSourceTypeDepreciation          = "DEPRECIATION"
+	SSOTSourceTypeReversal              = "REVERSAL"
+	SSOTSourceTypePrepaidAmortization   = "PREPAID_AMORTIZATION"
+	SSOTSourceTypePrepaidTermination    = "PREPAID_TERMINATION"
 )
 
 // SSOT Constants for event types

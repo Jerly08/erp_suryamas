@@ -183,9 +183,63 @@ const PaymentsPage: React.FC = () => {
   const [showPPNPayment, setShowPPNPayment] = useState(false);
   const [ppnPaymentType, setPPNPaymentType] = useState<'INPUT' | 'OUTPUT'>('OUTPUT');
   const [showExpensePayment, setShowExpensePayment] = useState(false);
+  const [approvingPaymentId, setApprovingPaymentId] = useState<number | null>(null);
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('payments');
+
+  // Check if current user is finance or admin
+  const isFinanceOrAdmin = user?.role === 'finance' || user?.role === 'admin';
+
+  // Approve DRAFT expense payment (finance only)
+  const handleApproveExpensePayment = async (payment: Payment) => {
+    if (!isFinanceOrAdmin) return;
+    setApprovingPaymentId(payment.id);
+    try {
+      await paymentService.approveExpensePayment(payment.id);
+      toast({
+        title: 'Pembayaran Disetujui',
+        description: `Pembayaran ${payment.code} telah disetujui dan jurnal telah dibuat.`,
+        status: 'success',
+        duration: 4000,
+      });
+      loadPayments();
+    } catch (err: any) {
+      toast({
+        title: 'Gagal Menyetujui',
+        description: err.message || 'Terjadi kesalahan saat menyetujui pembayaran',
+        status: 'error',
+        duration: 5000,
+      });
+    } finally {
+      setApprovingPaymentId(null);
+    }
+  };
+
+  // Approve DRAFT standard payment (finance only)
+  const handleApproveStandardPayment = async (payment: Payment) => {
+    if (!isFinanceOrAdmin) return;
+    setApprovingPaymentId(payment.id);
+    try {
+      await paymentService.approveStandardPayment(payment.id);
+      toast({
+        title: 'Pembayaran Disetujui',
+        description: `Pembayaran ${payment.code} telah disetujui dan jurnal telah diposting.`,
+        status: 'success',
+        duration: 4000,
+      });
+      loadPayments();
+    } catch (err: any) {
+      toast({
+        title: 'Gagal Menyetujui',
+        description: err.message || 'Terjadi kesalahan saat menyetujui pembayaran',
+        status: 'error',
+        duration: 5000,
+      });
+    } finally {
+      setApprovingPaymentId(null);
+    }
+  };
 
   // New Payment handler
   const handleNewPayment = (type: 'receivable' | 'payable' = 'receivable') => {
@@ -210,6 +264,12 @@ const PaymentsPage: React.FC = () => {
         status: 'warning',
         duration: 5000,
       });
+      return;
+    }
+
+    if (payment.payment_type === 'EXPENSE') {
+      setSelectedPayment(payment);
+      setShowExpensePayment(true);
       return;
     }
 
@@ -285,9 +345,10 @@ const PaymentsPage: React.FC = () => {
       accessor: (row: Payment) => {
         const statusKey = row.status.toLowerCase();
         const translationKey = `payments.statuses.${statusKey}`;
+        const statusLabel = row.status === 'DRAFT' ? 'DRAFT' : t(translationKey);
         return (
           <Badge colorScheme={paymentService.getStatusColorScheme(row.status)} variant="subtle">
-            {t(translationKey)}
+            {statusLabel}
           </Badge>
         );
       }
@@ -307,7 +368,29 @@ const PaymentsPage: React.FC = () => {
             <MenuItem icon={<FiEye />} onClick={() => handleViewPayment(row)}>
               {t('payments.viewDetails')}
             </MenuItem>
-            {canEdit && (
+            {/* Approve button: only for DRAFT payments and finance/admin */}
+            {isFinanceOrAdmin && row.status === 'DRAFT' && (
+              <>
+                <MenuDivider />
+                <MenuItem
+                  icon={<FiArrowRight />}
+                  color="green.500"
+                  isDisabled={approvingPaymentId === row.id}
+                  onClick={() => {
+                    // Route approval based on payment type
+                    if (row.payment_type === 'EXPENSE') {
+                      handleApproveExpensePayment(row);
+                    } else {
+                      handleApproveStandardPayment(row);
+                    }
+                  }}
+                >
+                  {approvingPaymentId === row.id ? 'Menyetujui...' : 'Setujui & Posting Jurnal'}
+                </MenuItem>
+                <MenuDivider />
+              </>
+            )}
+            {canEdit && row.status !== 'COMPLETED' && row.status !== 'SELESAI' && !(row.payment_type?.startsWith('TAX_PPN') || row.code?.startsWith('SETOR-PPN')) && (
               <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
                 {t('payments.edit')}
               </MenuItem>
@@ -876,7 +959,10 @@ const PaymentsPage: React.FC = () => {
                         </MenuItem>
                         <MenuItem
                           icon={<FiBriefcase />}
-                          onClick={() => setShowExpensePayment(true)}
+                          onClick={() => {
+                            setSelectedPayment(null);
+                            setShowExpensePayment(true);
+                          }}
                         >
                           {t('payments.expensePayment')}
                         </MenuItem>
@@ -1003,6 +1089,7 @@ const PaymentsPage: React.FC = () => {
               onClose={handleFormCancel}
               type={paymentType}
               onSuccess={handleFormSave}
+              initialData={selectedPayment}
               preSelectedContact={selectedPayment ? {
                 id: selectedPayment.contact_id,
                 name: selectedPayment.contact?.name || 'Unknown'
@@ -1073,9 +1160,14 @@ const PaymentsPage: React.FC = () => {
             {/* Expense Payment Modal */}
             <ExpensePaymentForm
               isOpen={showExpensePayment}
-              onClose={() => setShowExpensePayment(false)}
+              onClose={() => {
+                setShowExpensePayment(false);
+                setSelectedPayment(null);
+              }}
+              initialData={selectedPayment}
               onSuccess={() => {
                 setShowExpensePayment(false);
+                setSelectedPayment(null);
                 loadPayments();
                 toast({
                   title: t('common.messages.toast.success'),

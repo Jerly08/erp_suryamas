@@ -8,9 +8,9 @@ import (
 
 // ModulePermissionRecord represents a specific permission for modules
 type ModulePermissionRecord struct {
-	ID         uint           `json:"id" gorm:"primaryKey;table:module_permissions"`
-	UserID     uint           `json:"user_id" gorm:"not null;index"`
-	Module     string         `json:"module" gorm:"not null;size:50;index"` // accounts, products, contacts, assets, sales, purchases, payments, cash_bank, settings
+	ID         uint           `json:"id" gorm:"primaryKey"`
+	UserID     uint           `json:"user_id" gorm:"not null;uniqueIndex:idx_module_permissions_user_module"`
+	Module     string         `json:"module" gorm:"not null;size:50;uniqueIndex:idx_module_permissions_user_module"` // accounts, products, contacts, assets, sales, purchases, payments, cash_bank, settings
 	CanView    bool           `json:"can_view" gorm:"default:false"`
 	CanCreate  bool           `json:"can_create" gorm:"default:false"`
 	CanEdit    bool           `json:"can_edit" gorm:"default:false"`
@@ -24,6 +24,10 @@ type ModulePermissionRecord struct {
 
 	// Relations
 	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+}
+
+func (ModulePermissionRecord) TableName() string {
+	return "module_permissions"
 }
 
 // UserPermission is a simplified structure for API responses

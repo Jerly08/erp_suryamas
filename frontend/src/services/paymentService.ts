@@ -16,7 +16,7 @@ export interface Payment {
   amount: number;
   method: string;
   reference: string;
-  status: 'PENDING' | 'COMPLETED' | 'FAILED';
+  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REVERSED';
   payment_type?: string; // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
   notes: string;
   created_at: string;
@@ -92,6 +92,10 @@ export interface PaymentAnalytics {
 
 class PaymentService {
   // Use API_ENDPOINTS instead of hardcoded baseUrl
+
+  private getSSOTPaymentBase(): string {
+    return API_ENDPOINTS.PAYMENTS.SSOT.LIST;
+  }
 
   // Get all payments with filters
   async getPayments(filters: PaymentFilters = {}): Promise<PaymentResult> {
@@ -275,6 +279,29 @@ class PaymentService {
         throw new Error(error.message);
       }
 
+      throw error;
+    }
+  }
+
+  // Update Draft Payment
+  async updateDraftPayment(id: number, data: any): Promise<Payment> {
+    try {
+      const ssotData = {
+        contact_id: data.contact_id,
+        expense_account_id: data.expense_account_id,
+        cash_bank_id: data.cash_bank_id,
+        date: this.formatDateForAPI(data.date),
+        amount: data.amount,
+        method: data.method,
+        reference: data.reference || '',
+        notes: data.notes || '',
+        description: data.description || '',
+      };
+
+      const response = await api.put(`${this.getSSOTPaymentBase()}/${id}/draft`, ssotData);
+      return response.data.data;
+    } catch (error) {
+      console.error('PaymentService - Error updating draft payment:', error);
       throw error;
     }
   }
@@ -552,6 +579,8 @@ class PaymentService {
         return 'green';
       case 'PENDING':
         return 'yellow';
+      case 'DRAFT':
+        return 'orange';
       case 'FAILED':
         return 'red';
       default:
@@ -652,7 +681,7 @@ class PaymentService {
         auto_create_journal: data.auto_create_journal ?? true
       };
 
-      const response = await api.post(API_ENDPOINTS.PAYMENTS.ENHANCED_WITH_JOURNAL, formattedData, {
+      const response = await api.post(API_ENDPOINTS.PAYMENTS_ENHANCED, formattedData, {
         timeout: 60000 // 60 seconds timeout for journal-heavy payment operations
       });
       return response.data.data;
@@ -682,7 +711,7 @@ class PaymentService {
         date: this.formatDateForAPI(data.date)
       };
 
-      const response = await api.post(API_ENDPOINTS.PAYMENTS.PREVIEW_JOURNAL, formattedData);
+      const response = await api.post(API_ENDPOINTS.PAYMENTS_PREVIEW_JOURNAL, formattedData);
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error previewing payment journal:', error);
@@ -693,7 +722,7 @@ class PaymentService {
   // Get payment with journal entry details
   async getPaymentWithJournal(paymentId: number): Promise<PaymentWithJournalResponse> {
     try {
-      const response = await api.get(API_ENDPOINTS.PAYMENTS.WITH_JOURNAL(paymentId));
+      const response = await api.get(API_ENDPOINTS.PAYMENTS_WITH_JOURNAL(paymentId));
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error getting payment with journal:', error);
@@ -704,7 +733,7 @@ class PaymentService {
   // Reverse payment and its journal entry
   async reversePayment(paymentId: number, reason: string): Promise<PaymentWithJournalResponse> {
     try {
-      const response = await api.post(API_ENDPOINTS.PAYMENTS.REVERSE(paymentId), { reason });
+      const response = await api.post(API_ENDPOINTS.PAYMENTS_REVERSE(paymentId), { reason });
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error reversing payment:', error);
@@ -715,7 +744,7 @@ class PaymentService {
   // Get account balance updates from payment
   async getAccountBalanceUpdates(paymentId: number): Promise<AccountBalanceUpdate[]> {
     try {
-      const response = await api.get(API_ENDPOINTS.PAYMENTS.ACCOUNT_UPDATES(paymentId));
+      const response = await api.get(API_ENDPOINTS.PAYMENTS_ACCOUNT_UPDATES(paymentId));
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error getting account updates:', error);
@@ -726,7 +755,7 @@ class PaymentService {
   // Get real-time account balances from SSOT
   async getRealTimeAccountBalances(): Promise<SSOTAccountBalance[]> {
     try {
-      const response = await api.get(API_ENDPOINTS.PAYMENTS.ACCOUNT_BALANCES_REAL_TIME);
+      const response = await api.get(API_ENDPOINTS.PAYMENTS_ACCOUNT_BALANCES);
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error getting real-time balances:', error);
@@ -737,7 +766,7 @@ class PaymentService {
   // Refresh account balances materialized view
   async refreshAccountBalances(): Promise<void> {
     try {
-      await api.post(API_ENDPOINTS.PAYMENTS.REFRESH_ACCOUNT_BALANCES);
+      await api.post(API_ENDPOINTS.PAYMENTS_REFRESH_BALANCES);
     } catch (error: any) {
       console.error('PaymentService - Error refreshing account balances:', error);
       throw new Error(error.response?.data?.error || 'Failed to refresh account balances');
@@ -747,7 +776,7 @@ class PaymentService {
   // Get journal entries for a payment
   async getPaymentJournalEntries(paymentId: number): Promise<JournalEntry[]> {
     try {
-      const response = await api.get(API_ENDPOINTS.PAYMENTS.JOURNAL_ENTRIES + `?payment_id=${paymentId}`);
+      const response = await api.get(API_ENDPOINTS.PAYMENTS_JOURNAL_ENTRIES + `?payment_id=${paymentId}`);
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error getting payment journal entries:', error);
@@ -758,7 +787,7 @@ class PaymentService {
   // Get payment-journal integration metrics
   async getIntegrationMetrics(): Promise<PaymentIntegrationMetrics> {
     try {
-      const response = await api.get(API_ENDPOINTS.PAYMENTS.INTEGRATION_METRICS);
+      const response = await api.get(API_ENDPOINTS.PAYMENTS_INTEGRATION_METRICS);
       return response.data.data;
     } catch (error: any) {
       console.error('PaymentService - Error getting integration metrics:', error);
@@ -830,6 +859,26 @@ class PaymentService {
       }
 
       throw new Error('An unexpected error occurred while creating expense payment');
+    }
+  }
+
+  // Approve a DRAFT expense payment (finance/admin only)
+  async approveExpensePayment(paymentId: number): Promise<Payment> {
+    try {
+      const response = await api.post(`${this.getSSOTPaymentBase()}/${paymentId}/approve-expense`, {});
+      return response.data?.data || response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.details || error.response?.data?.error || 'Failed to approve expense payment');
+    }
+  }
+
+  // Approve a DRAFT standard payment (receivable/payable) (finance/admin only)
+  async approveStandardPayment(paymentId: number): Promise<Payment> {
+    try {
+      const response = await api.post(`${this.getSSOTPaymentBase()}/${paymentId}/approve-standard`, {});
+      return response.data?.data || response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.details || error.response?.data?.error || 'Failed to approve payment');
     }
   }
 

@@ -1263,7 +1263,80 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	// so that depreciation starts immediately from purchase date, not after payment/receipt
 	s.autoCreateAssetsFromPurchase(purchase)
 
+	// 7. Auto-create Prepaid Expenses
+	fmt.Printf("⏳ Mengecek keberadaan item PREPAID untuk purchase %s\n", purchase.Code)
+	err = s.processPrepaidExpensesInPurchase(purchase)
+	if err != nil {
+		fmt.Printf("⚠️ Warning: Gagal memproses data Prepaid Expense: %v\n", err)
+		// Tidak mereturn error agar approval parent tetap jalan
+	}
+
 	fmt.Printf("✅ Post-approval processing completed for purchase %s\n", purchase.Code)
+	return nil
+}
+
+// processPrepaidExpensesInPurchase extracts and schedules PREPAID items into prepaid_expenses and schedules
+func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purchase) error {
+	now := time.Now()
+
+	for _, item := range purchase.PurchaseItems {
+		if item.ItemType == models.PurchaseItemTypePrepaid {
+			// Ambil durasi bulan, default = 12 jika tidak diset
+			months := item.AmortizationMonth
+			if months <= 0 {
+				months = 12
+			}
+
+			// Hitung Biaya Per Bulan flat
+			monthlyAmt := item.TotalPrice / float64(months)
+
+			endDate := now.AddDate(0, months, 0)
+
+			// Penamaan Prepaid Expense
+			prepaidName := item.Description
+			if prepaidName == "" {
+				prepaidName = fmt.Sprintf("Prepaid dari PO %s", purchase.Code)
+			}
+
+			// Buat Header Prepaid Expense
+			prepaid := models.PrepaidExpense{
+				PurchaseID:        &purchase.ID,
+				PurchaseItemID:    &item.ID,
+				Name:              prepaidName,
+				Description:       fmt.Sprintf("Prepaid Expense auto-generated dari PO %s", purchase.Code),
+				TotalAmount:       item.TotalPrice,
+				AmortizationMonth: months,
+				MonthlyAmount:     monthlyAmt,
+				StartDate:         now,
+				EndDate:           endDate,
+				Status:            "ACTIVE",
+				PrepaidAccountID:  item.ExpenseAccountID, // Akun sumber Aset Lancar
+				ExpenseAccountID:  0,                     // Nanti diupdate di UI modul Amortisasi
+			}
+
+			// Save Prepaid Expense
+			if err := s.db.Create(&prepaid).Error; err != nil {
+				return fmt.Errorf("gagal membuat record prepaid: %v", err)
+			}
+
+			// Buat Jadwal Cicilannya sejumlah bulan
+			for i := 1; i <= months; i++ {
+				scheduleDate := now.AddDate(0, i, 0) // Jatuh tempo bulan ke-i
+
+				schedule := models.PrepaidSchedule{
+					PrepaidID:     prepaid.ID,
+					MonthNumber:   i,
+					ScheduledDate: scheduleDate,
+					Amount:        monthlyAmt,
+					Status:        "PENDING",
+				}
+				if err := s.db.Create(&schedule).Error; err != nil {
+					fmt.Printf("⚠️ Gagal membuat schedule ke-%d untuk prepaid ID %d\n", i, prepaid.ID)
+				}
+			}
+			fmt.Printf("✅ Sukses membuat Prepaid Expense '%s' (%d Bulan) sebesar Rp %.2f\n", prepaidName, months, item.TotalPrice)
+		}
+	}
 	return nil
 }
 

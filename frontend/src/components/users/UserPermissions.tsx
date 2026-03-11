@@ -73,6 +73,7 @@ const modules = [
   { key: 'projects', label: 'Projects', description: 'Project Management & Budgets', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
   { key: 'contacts', label: 'Contacts', description: 'Customer, Vendor & Employee', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
   { key: 'assets', label: 'Assets', description: 'Fixed Assets Management', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'prepaid_expenses', label: 'Prepaid Expenses', description: 'Amortization & Prepaid Tracking', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
   { key: 'purchase_requests', label: 'Purchase Requests', description: 'Purchase Requests & Approvals', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
   { key: 'sales', label: 'Sales', description: 'Sales & Invoicing', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
   { key: 'purchases', label: 'Purchases', description: 'Purchase Orders & Receipts', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },

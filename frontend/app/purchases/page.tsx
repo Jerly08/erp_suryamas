@@ -153,10 +153,11 @@ interface PurchaseItemFormData {
   discount: string;
   tax: string;
   expense_account_id: string;
-  item_type: string;          // "INVENTORY" | "ASSET"
+  item_type: string;          // "INVENTORY" | "ASSET" | "PREPAID"
   is_fixed_asset: boolean;
-  description: string;        // Asset name/description
+  description: string;        // Asset name/description / Prepaid name
   asset_category_id: string;  // Asset category ID
+  amortization_month: string; // Durasi bulan amortisasi untuk PREPAID
 }
 
 interface Vendor {
@@ -1836,7 +1837,15 @@ const PurchasesPage: React.FC = () => {
                 name.includes('bangunan') ||
                 name.includes('gedung');
 
-              return isInventory || isFixedAsset;
+              // Prepaid / Current Asset accounts (Beban Dibayar Dimuka)
+              const isPrepaidAsset =
+                code.startsWith('1104') || code.startsWith('1105') || code.startsWith('1106') ||
+                code.startsWith('1107') || code.startsWith('1108') || code.startsWith('1109') ||
+                name.includes('prepaid') || name.includes('dibayar dimuka') ||
+                name.includes('uang muka') || name.includes('bayar dimuka') ||
+                name.includes('sewa dibayar') || name.includes('asuransi dibayar');
+
+              return isInventory || isFixedAsset || isPrepaidAsset;
             }).map(item => ({
               id: item.id,
               code: item.code,
@@ -1906,7 +1915,15 @@ const PurchasesPage: React.FC = () => {
                 name.includes('bangunan') ||
                 name.includes('gedung');
 
-              return isInventory || isFixedAsset;
+              // Prepaid / Current Asset accounts (Beban Dibayar Dimuka)
+              const isPrepaidAsset =
+                code.startsWith('1104') || code.startsWith('1105') || code.startsWith('1106') ||
+                code.startsWith('1107') || code.startsWith('1108') || code.startsWith('1109') ||
+                name.includes('prepaid') || name.includes('dibayar dimuka') ||
+                name.includes('uang muka') || name.includes('bayar dimuka') ||
+                name.includes('sewa dibayar') || name.includes('asuransi dibayar');
+
+              return isInventory || isFixedAsset || isPrepaidAsset;
             });
             allAccountsList = [...assetAccounts, ...expenseList];
           } catch (assetError) {
@@ -2558,17 +2575,25 @@ const PurchasesPage: React.FC = () => {
         // Asset items require: description, asset_category_id, quantity
         return !item.description || !item.asset_category_id || !item.quantity;
       }
+      if (item.item_type === 'PREPAID') {
+        // Prepaid items require: description, expense_account_id, quantity
+        return !item.description || !item.expense_account_id || !item.quantity;
+      }
       // Inventory items require: product_id, quantity, expense_account_id
       return !item.product_id || !item.quantity || !item.expense_account_id;
     });
 
     if (invalidItems.length > 0) {
       const assetInvalid = invalidItems.some(i => i.item_type === 'ASSET');
+      const prepaidInvalid = invalidItems.some(i => i.item_type === 'PREPAID');
+      
+      let errorMsg = 'Please fill in all required fields for each item';
+      if (assetInvalid) errorMsg = 'Item Aset Tetap: Nama aset dan Kategori Aset harus diisi.';
+      else if (prepaidInvalid) errorMsg = 'Item Prepaid: Deskripsi dan Akun harus diisi.';
+
       toast({
         title: 'Error',
-        description: assetInvalid
-          ? 'Item Aset Tetap: Nama aset dan Kategori Aset harus diisi.'
-          : 'Please fill in all required fields for each item',
+        description: errorMsg,
         status: 'error',
         duration: 4000,
         isClosable: true,
@@ -2603,6 +2628,7 @@ const PurchasesPage: React.FC = () => {
           description: item.description || '',
           asset_category_id: item.asset_category_id ? parseInt(item.asset_category_id) : undefined,
           product_id: item.product_id ? parseInt(item.product_id) : undefined,
+          amortization_month: item.item_type === 'PREPAID' ? parseInt(item.amortization_month) || 0 : 0,
           quantity: parseFloat(item.quantity),
           unit_price: parseFloat(item.unit_price),
           discount: parseFloat(item.discount) || 0,
@@ -4467,37 +4493,48 @@ const PurchasesPage: React.FC = () => {
                                 ) : (
                                   formData.items.map((item, index) => (
                                     <Tr key={index} _hover={{ bg: hoverBg }}>
-                                      {/* Kolom Tipe Item - Radio Button */}
+                                      {/* Kolom Tipe Item - Dropdown (Select) diganti dari Radio */}
                                       <Td verticalAlign="top" pt={4}>
-                                        <RadioGroup
+                                        <Select
                                           value={item.item_type || 'INVENTORY'}
-                                          onChange={(val) => {
+                                          onChange={(e) => {
+                                            const val = e.target.value;
                                             const items = [...formData.items];
                                             items[index] = {
                                               ...items[index],
                                               item_type: val,
                                               is_fixed_asset: val === 'ASSET',
                                               // Reset fields saat ganti tipe
-                                              product_id: val === 'ASSET' ? '' : items[index].product_id,
+                                              product_id: val === 'ASSET' || val === 'PREPAID' ? '' : items[index].product_id,
                                               description: val === 'INVENTORY' ? '' : items[index].description,
-                                              asset_category_id: val === 'INVENTORY' ? '' : items[index].asset_category_id,
+                                              asset_category_id: val === 'INVENTORY' || val === 'PREPAID' ? '' : items[index].asset_category_id,
+                                              amortization_month: val === 'PREPAID' ? '12' : '',
                                             };
                                             setFormData({ ...formData, items });
                                           }}
                                           size="sm"
+                                          w="130px"
+                                          fontSize="xs"
+                                          fontWeight="medium"
+                                          cursor="pointer"
+                                          bg={item.item_type === 'PREPAID' ? 'purple.50' : item.item_type === 'ASSET' ? 'orange.50' : 'blue.50'}
+                                          borderColor={item.item_type === 'PREPAID' ? 'purple.300' : item.item_type === 'ASSET' ? 'orange.300' : 'blue.300'}
+                                          color={item.item_type === 'PREPAID' ? 'purple.700' : item.item_type === 'ASSET' ? 'orange.700' : 'blue.700'}
+                                          _hover={{
+                                            bg: item.item_type === 'PREPAID' ? 'purple.100' : item.item_type === 'ASSET' ? 'orange.100' : 'blue.100',
+                                          }}
+                                          _focus={{
+                                            boxShadow: 'none',
+                                            borderColor: item.item_type === 'PREPAID' ? 'purple.500' : item.item_type === 'ASSET' ? 'orange.500' : 'blue.500',
+                                          }}
                                         >
-                                          <Stack spacing={1}>
-                                            <Radio value="INVENTORY" colorScheme="blue" size="sm">
-                                              <Text fontSize="xs">Persediaan</Text>
-                                            </Radio>
-                                            <Radio value="ASSET" colorScheme="orange" size="sm">
-                                              <Text fontSize="xs">Aset Tetap</Text>
-                                            </Radio>
-                                          </Stack>
-                                        </RadioGroup>
+                                          <option value="INVENTORY" style={{ color: 'black' }}>📦 Persediaan</option>
+                                          <option value="ASSET" style={{ color: 'black' }}>🏢 Aset Tetap</option>
+                                          <option value="PREPAID" style={{ color: 'black' }}>⏳ Prepaid Expense</option>
+                                        </Select>
                                       </Td>
 
-                                      {/* Kolom Produk / Deskripsi Aset - Kondisional */}
+                                      {/* Kolom Produk / Deskripsi Aset / Prepaid - Kondisional */}
                                       <Td minW="220px" verticalAlign="top" pt={3}>
                                         {item.item_type === 'ASSET' ? (
                                           /* === ASSET MODE: Input Deskripsi + Kategori Aset === */
@@ -4535,6 +4572,58 @@ const PurchasesPage: React.FC = () => {
                                             </Select>
                                             <Badge colorScheme="orange" fontSize="2xs" px={2} py={0.5} borderRadius="md" w="fit-content">
                                               Aset akan otomatis terdaftar dengan status PENDING
+                                            </Badge>
+                                          </VStack>
+                                        ) : item.item_type === 'PREPAID' ? (
+                                          /* === PREPAID MODE: Input Deskripsi + Durasi Amortisasi === */
+                                          <VStack spacing={2} align="stretch">
+                                            <Input
+                                              placeholder="Nama Kontrak/Sewa (cth: Sewa Ruko 1 Tahun)"
+                                              value={item.description}
+                                              onChange={(e) => {
+                                                const items = [...formData.items];
+                                                items[index] = { ...items[index], description: e.target.value };
+                                                setFormData({ ...formData, items });
+                                              }}
+                                              size="sm"
+                                              borderColor="purple.300"
+                                              _focus={{ borderColor: 'purple.500', boxShadow: '0 0 0 1px purple' }}
+                                            />
+                                            <InputGroup size="sm">
+                                              <NumberInput
+                                                min={1}
+                                                max={120}
+                                                value={item.amortization_month || '12'}
+                                                onChange={(val) => {
+                                                  const items = [...formData.items];
+                                                  items[index] = { ...items[index], amortization_month: val };
+                                                  setFormData({ ...formData, items });
+                                                }}
+                                                w="full"
+                                                borderColor="purple.300"
+                                              >
+                                                <NumberInputField pl="1.5rem" pr="3.5rem" />
+                                                <NumberInputStepper>
+                                                  <NumberIncrementStepper />
+                                                  <NumberDecrementStepper />
+                                                </NumberInputStepper>
+                                              </NumberInput>
+                                              <InputLeftElement width="1.5rem" justifyContent="center">
+                                                <Text fontSize="xs" color="gray.500">⏱️</Text>
+                                              </InputLeftElement>
+                                              <Box
+                                                position="absolute"
+                                                right="2rem"
+                                                top="50%"
+                                                transform="translateY(-50%)"
+                                                zIndex={1}
+                                                pointerEvents="none"
+                                              >
+                                                <Text fontSize="xs" color="gray.500" fontWeight="medium">Bln</Text>
+                                              </Box>
+                                            </InputGroup>
+                                            <Badge colorScheme="purple" fontSize="2xs" px={2} py={0.5} borderRadius="md" w="fit-content" alignSelf="flex-start">
+                                              Amortisasi berjalan otomatis setelah bayar
                                             </Badge>
                                           </VStack>
                                         ) : (
@@ -4672,6 +4761,44 @@ const PurchasesPage: React.FC = () => {
                                               placeholder="Pilih Akun Aset Tetap..."
                                               isLoading={loadingExpenseAccounts}
                                               disabled={item.item_type !== 'ASSET'}
+                                              displayFormat={(option) => `${option.code} - ${option.name}`}
+                                            />
+                                          </Box>
+                                        ) : item.item_type === 'PREPAID' ? (
+                                          /* === PREPAID MODE: Show Current Asset / Prepaid accounts only === */
+                                          <Box maxW="240px">
+                                            <SearchableSelect
+                                              options={expenseAccounts.filter(acc => {
+                                                const code = acc.code || '';
+                                                const name = (acc.name || '').toLowerCase();
+                                                // Current Asset / Prepaid accounts (Beban Dibayar Dimuka)
+                                                // Typically codes 1104, 1105, 1106, or other current asset codes
+                                                const isPrepaidAsset =
+                                                  code.startsWith('1104') || code.startsWith('1105') || code.startsWith('1106') ||
+                                                  code.startsWith('1107') || code.startsWith('1108') || code.startsWith('1109') ||
+                                                  name.includes('prepaid') || name.includes('dibayar dimuka') ||
+                                                  name.includes('uang muka') || name.includes('bayar dimuka') ||
+                                                  name.includes('sewa dibayar') || name.includes('asuransi dibayar');
+                                                // Also include generic current asset accounts (11xx) that are not inventory (1103) or cash (1101/1102)
+                                                const isOtherCurrentAsset =
+                                                  (code.startsWith('11') && code.length >= 4 &&
+                                                   !code.startsWith('1101') && !code.startsWith('1102') && !code.startsWith('1103'));
+                                                return isPrepaidAsset || isOtherCurrentAsset;
+                                              }).map(acc => ({
+                                                id: acc.id!,
+                                                code: acc.code,
+                                                name: acc.name,
+                                                active: acc.is_active
+                                              }))}
+                                              value={item.expense_account_id}
+                                              onChange={(val) => {
+                                                const items = [...formData.items];
+                                                items[index] = { ...items[index], expense_account_id: val };
+                                                setFormData({ ...formData, items });
+                                              }}
+                                              placeholder="Pilih Akun Aset Lancar (Prepaid)..."
+                                              isLoading={loadingExpenseAccounts}
+                                              displayFormat={(option) => `${option.code} - ${option.name}`}
                                             />
                                           </Box>
                                         ) : canListExpenseAccounts ? (

@@ -14,39 +14,28 @@ func MigratePermissions(db *gorm.DB) error {
 		return err
 	}
 
-	// Ensure proper UNIQUE CONSTRAINT on (user_id, module) for UPSERT support.
+	// Ensure proper UNIQUE INDEX on (user_id, module) for UPSERT support.
 	// 1) Clean up soft-deleted records that would conflict
-	db.Exec("DELETE FROM module_permission_records WHERE deleted_at IS NOT NULL")
+	db.Unscoped().Where("deleted_at IS NOT NULL").Delete(&models.ModulePermissionRecord{})
 
 	// 2) Drop partial indexes that can't be used by ON CONFLICT
 	db.Exec("DROP INDEX IF EXISTS idx_module_permission_user_module_active")
 
-	// 3) Create unique constraint if it doesn't exist
-	var constraintExists bool
+	// 3) Create unique index if it doesn't exist
+	var indexExists bool
 	db.Raw(`
 		SELECT EXISTS (
-			SELECT 1 FROM information_schema.table_constraints
-			WHERE table_name = 'module_permission_records'
-			AND constraint_type = 'UNIQUE'
-			AND constraint_name = 'uq_module_permission_user_module'
+			SELECT 1 FROM pg_indexes
+			WHERE tablename = 'module_permissions'
+			AND indexname = 'idx_module_permissions_user_module'
 		)
-	`).Scan(&constraintExists)
+	`).Scan(&indexExists)
 
-	if !constraintExists {
-		if err := db.Exec("ALTER TABLE module_permission_records ADD CONSTRAINT uq_module_permission_user_module UNIQUE (user_id, module)").Error; err != nil {
-			log.Printf("Warning: Failed to add unique constraint on module_permission_records: %v", err)
-			// Try to handle duplicate records first, then retry
-			db.Exec(`
-				DELETE FROM module_permission_records a USING module_permission_records b
-				WHERE a.id < b.id AND a.user_id = b.user_id AND a.module = b.module
-			`)
-			if err2 := db.Exec("ALTER TABLE module_permission_records ADD CONSTRAINT uq_module_permission_user_module UNIQUE (user_id, module)").Error; err2 != nil {
-				log.Printf("Error: Still failed to add unique constraint: %v", err2)
-			} else {
-				log.Println("✅ Created unique constraint uq_module_permission_user_module (after dedup)")
-			}
+	if !indexExists {
+		if err := db.Exec("CREATE UNIQUE INDEX idx_module_permissions_user_module ON module_permissions (user_id, module)").Error; err != nil {
+			log.Printf("Warning: Failed to create unique index on module_permissions: %v", err)
 		} else {
-			log.Println("✅ Created unique constraint uq_module_permission_user_module")
+			log.Println("✅ Created unique index idx_module_permissions_user_module")
 		}
 	}
 
