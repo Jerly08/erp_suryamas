@@ -15,14 +15,20 @@ type CashBankRepository struct {
 	db *gorm.DB
 }
 
+const cashBankBookBalanceExpr = "CASE WHEN UPPER(COALESCE(currency, 'IDR')) = 'IDR' THEN balance ELSE book_balance_idr END"
+
 func NewCashBankRepository(db *gorm.DB) *CashBankRepository {
 	return &CashBankRepository{db: db}
 }
 
 // FindAll retrieves all cash and bank accounts
-func (r *CashBankRepository) FindAll() ([]models.CashBank, error) {
+func (r *CashBankRepository) FindAll(includeHolding bool) ([]models.CashBank, error) {
 	var accounts []models.CashBank
-	err := r.db.Preload("Account").Where("is_active = ?", true).Find(&accounts).Error
+	query := r.db.Preload("Account").Where("is_active = ? AND deleted_at IS NULL", true)
+	if !includeHolding {
+		query = query.Where("allow_direct_transactions = ?", true)
+	}
+	err := query.Find(&accounts).Error
 	return accounts, err
 }
 
@@ -61,7 +67,7 @@ func (r *CashBankRepository) Update(account *models.CashBank) (*models.CashBank,
 	// Only update allowed columns explicitly
 	updateTx := r.db.Model(&models.CashBank{}).
 		Where("id = ?", account.ID).
-		Select("Code", "Name", "Type", "BankName", "AccountNo", "AccountHolderName", "Branch", "Currency", "Balance", "MinBalance", "MaxBalance", "DailyLimit", "MonthlyLimit", "IsActive", "IsRestricted", "FrozenAmount", "FrozenReason", "FrozenAt", "FrozenBy", "Description")
+		Select("Code", "Name", "Type", "BankName", "AccountNo", "AccountHolderName", "Branch", "Currency", "Balance", "BookBalanceIDR", "LastExchangeRate", "MinBalance", "MaxBalance", "DailyLimit", "MonthlyLimit", "IsActive", "IsRestricted", "IsHoldingAccount", "AllowDirectTransactions", "FrozenAmount", "FrozenReason", "FrozenAt", "FrozenBy", "Description")
 
 	if err := updateTx.Updates(account).Error; err != nil {
 		return nil, err
@@ -139,19 +145,16 @@ func (r *CashBankRepository) CreateTransaction(tx *models.CashBankTransaction) e
 func (r *CashBankRepository) GetBalanceSummary() (*BalanceSummary, error) {
 	var cashTotal, bankTotal float64
 
-	// Get balance directly from cash_banks table for CASH accounts (exclude soft deleted)
 	r.db.Table("cash_banks").
 		Where("type = ? AND is_active = ? AND deleted_at IS NULL", models.CashBankTypeCash, true).
-		Select("COALESCE(SUM(balance), 0)").
+		Select("COALESCE(SUM(" + cashBankBookBalanceExpr + "), 0)").
 		Scan(&cashTotal)
 
-	// Get balance directly from cash_banks table for BANK accounts (exclude soft deleted)
 	r.db.Table("cash_banks").
 		Where("type = ? AND is_active = ? AND deleted_at IS NULL", models.CashBankTypeBank, true).
-		Select("COALESCE(SUM(balance), 0)").
+		Select("COALESCE(SUM(" + cashBankBookBalanceExpr + "), 0)").
 		Scan(&bankTotal)
 
-	// Get by currency from cash_banks table (exclude soft deleted)
 	var currencySums []struct {
 		Currency string
 		Total    float64

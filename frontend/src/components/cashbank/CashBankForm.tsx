@@ -51,7 +51,6 @@ import cashbankService from '@/services/cashbankService';
 import accountService from '@/services/accountService';
 import { useAuth } from '@/contexts/AuthContext';
 import { Account } from '@/types/account';
-import { formatIDR, parseIDR } from '@/utils/currency';
 
 interface CashBankFormProps {
   isOpen: boolean;
@@ -77,12 +76,89 @@ interface CashBankFormData {
   branch?: string;
   currency: string;
   opening_balance?: number;
+  opening_exchange_rate?: number;
   opening_date?: string;
-  description?: string;
   description?: string;
   account_id?: number;
   source_account_id?: number;
+  is_holding_account?: boolean;
+  allow_direct_transactions?: boolean;
 }
+
+const normalizeCurrencyCode = (value?: string): 'IDR' | 'USD' => {
+  return (value || 'IDR').toUpperCase() === 'USD' ? 'USD' : 'IDR';
+};
+
+const parseOpeningBalanceInput = (value: string, currency: 'IDR' | 'USD'): number | undefined => {
+  if (!value.trim()) {
+    return undefined;
+  }
+
+  if (currency === 'IDR') {
+    const digitsOnly = value.replace(/\D/g, '');
+    return digitsOnly ? parseInt(digitsOnly, 10) : undefined;
+  }
+
+  const sanitized = value.replace(/[^0-9.,]/g, '');
+  if (!sanitized) {
+    return undefined;
+  }
+
+  const lastComma = sanitized.lastIndexOf(',');
+  const lastDot = sanitized.lastIndexOf('.');
+  const decimalIndex = Math.max(lastComma, lastDot);
+
+  if (decimalIndex < 0) {
+    const integerOnly = sanitized.replace(/[.,]/g, '');
+    return integerOnly ? parseFloat(integerOnly) : undefined;
+  }
+
+  const integerPart = sanitized.slice(0, decimalIndex).replace(/[.,]/g, '');
+  const decimalPart = sanitized.slice(decimalIndex + 1).replace(/[^\d]/g, '').slice(0, 2);
+  const normalized = decimalPart ? `${integerPart || '0'}.${decimalPart}` : (integerPart || '0');
+  const parsed = parseFloat(normalized);
+
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const formatOpeningBalanceDisplay = (value: number | undefined, currency: 'IDR' | 'USD'): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return '';
+  }
+
+  return new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'id-ID', {
+    minimumFractionDigits: currency === 'USD' ? 2 : 0,
+    maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  }).format(value);
+};
+
+const getOpeningBalancePlaceholder = (currency: 'IDR' | 'USD'): string => {
+  return currency === 'USD' ? 'Contoh: 1,250.00' : 'Contoh: 1.000.000';
+};
+
+const getOpeningBalanceHelpText = (currency: 'IDR' | 'USD'): string => {
+  return currency === 'USD'
+    ? 'Masukkan saldo awal dalam USD. Jika ada sen, gunakan format seperti 1,250.50.'
+    : 'Masukkan saldo awal dalam IDR. Tidak perlu menulis simbol Rp.';
+};
+
+const getOpeningBalanceAlertConfig = (currency: 'IDR' | 'USD') => {
+  if (currency === 'USD') {
+    return {
+      status: 'success' as const,
+      title: 'Input saldo awal dalam USD',
+      description: 'Nominal yang diketik di field ini adalah nilai asli rekening USD. Nilai buku IDR akan dihitung dari kurs saldo awal di bawah.',
+      badgeColorScheme: 'green' as const,
+    };
+  }
+
+  return {
+    status: 'info' as const,
+    title: 'Input saldo awal dalam IDR',
+    description: 'Nominal yang diketik di field ini langsung dalam Rupiah. Untuk rekening IDR, kurs tidak perlu diisi.',
+    badgeColorScheme: 'blue' as const,
+  };
+};
 
 const CashBankForm: React.FC<CashBankFormProps> = ({
   isOpen,
@@ -109,6 +185,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
   const textColor = useColorModeValue('gray.700', 'gray.300');
   const mutedTextColor = useColorModeValue('gray.500', 'gray.400');
   const readOnlyBg = useColorModeValue('gray.50', 'gray.700');
+  const inputAddonBg = useColorModeValue('gray.50', 'gray.700');
   const cardInfoBg = useColorModeValue('blue.50', 'blue.900');
   const cardInfoTextColor = useColorModeValue('blue.700', 'blue.200');
   const cardInfoBorderColor = useColorModeValue('blue.200', 'blue.700');
@@ -138,16 +215,22 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       branch: '',
       currency: 'IDR',
       opening_balance: 0,
+      opening_exchange_rate: 1,
       opening_date: new Date().toISOString().split('T')[0],
       description: '',
       account_id: undefined,
-      source_account_id: undefined
+      source_account_id: undefined,
+      is_holding_account: false,
+      allow_direct_transactions: true
     }
   });
 
   const watchedOpeningBalance = watch('opening_balance');
-
   const watchedType = watch('type');
+  const watchedCurrency = watch('currency');
+  const watchedHoldingAccount = watch('is_holding_account');
+  const normalizedWatchedCurrency = normalizeCurrencyCode(watchedCurrency);
+  const openingBalanceAlert = getOpeningBalanceAlertConfig(normalizedWatchedCurrency);
 
   // Load available GL accounts based on selected type (CASH or BANK)
   // This endpoint returns only GL accounts that:
@@ -213,39 +296,50 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
 
   // Initialize form data when editing or opening modal
   useEffect(() => {
-    if (isOpen) {
-      if (mode === 'edit' && account) {
-        reset({
-          name: account.name,
-          type: account.type,
-          bank_name: account.bank_name || '',
-          account_no: account.account_no || '',
-          account_holder_name: account.account_holder_name || '',
-          branch: account.branch || '',
-          currency: account.currency,
-          description: account.description || '',
-          account_id: account.account_id
-        });
-        setOpeningBalanceDisplay(''); // Clear display for edit mode
-      } else if (mode === 'create') {
-        reset({
-          name: '',
-          type: 'CASH',
-          bank_name: '',
-          account_no: '',
-          account_holder_name: '',
-          branch: '',
-          currency: 'IDR',
-          opening_balance: 0,
-          opening_date: new Date().toISOString().split('T')[0],
-          description: '',
-          account_id: undefined,
-          source_account_id: undefined
-        });
-        setOpeningBalanceDisplay(''); // Clear display for create mode
-      }
-
+    if (!isOpen) {
+      return;
     }
+
+    if (mode === 'edit' && account) {
+      reset({
+        name: account.name || '',
+        type: account.type || 'CASH',
+        bank_name: account.bank_name || '',
+        account_no: account.account_no || '',
+        account_holder_name: account.account_holder_name || '',
+        branch: account.branch || '',
+        currency: (account.currency || 'IDR').toUpperCase(),
+        opening_balance: 0,
+        opening_exchange_rate: account.last_exchange_rate && account.last_exchange_rate > 0 ? account.last_exchange_rate : 1,
+        opening_date: new Date().toISOString().split('T')[0],
+        description: account.description || '',
+        account_id: account.account_id,
+        source_account_id: undefined,
+        is_holding_account: Boolean(account.is_holding_account),
+        allow_direct_transactions: account.allow_direct_transactions ?? !account.is_holding_account
+      });
+      setOpeningBalanceDisplay('');
+      return;
+    }
+
+    reset({
+      name: '',
+      type: 'CASH',
+      bank_name: '',
+      account_no: '',
+      account_holder_name: '',
+      branch: '',
+      currency: 'IDR',
+      opening_balance: 0,
+      opening_exchange_rate: 1,
+      opening_date: new Date().toISOString().split('T')[0],
+      description: '',
+      account_id: undefined,
+      source_account_id: undefined,
+      is_holding_account: false,
+      allow_direct_transactions: true
+    });
+    setOpeningBalanceDisplay('');
   }, [isOpen, mode, account, reset]);
 
   const onSubmit = async (data: CashBankFormData) => {
@@ -272,10 +366,21 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       }
 
       // Prepare data for submission
-      const submitData = { ...data };
+      const normalizedCurrency = (data.currency || 'IDR').toUpperCase();
+      if (normalizedCurrency !== 'IDR' && (data.opening_balance || 0) > 0 && !(data.opening_exchange_rate && data.opening_exchange_rate > 0)) {
+        throw new Error('Kurs saldo awal wajib diisi untuk rekening mata uang asing');
+      }
+
+      const submitData: CashBankCreateRequest = {
+        ...data,
+        currency: normalizedCurrency,
+        opening_exchange_rate: normalizedCurrency === 'IDR' ? 1 : data.opening_exchange_rate,
+        is_holding_account: Boolean(data.is_holding_account),
+        allow_direct_transactions: data.is_holding_account ? Boolean(data.allow_direct_transactions) : true,
+      };
 
       if (mode === 'create') {
-        await cashbankService.createCashBankAccount(submitData as CashBankCreateRequest);
+        await cashbankService.createCashBankAccount(submitData);
         toast({
           title: t('common.create'),
           description: `${data.type === 'CASH' ? t('cashBank.form.cashAccount') : t('cashBank.form.bankAccount')} ${t('cashBank.form.successCreate')}`,
@@ -290,11 +395,13 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
           account_no: data.account_no,
           account_holder_name: data.account_holder_name,
           branch: data.branch,
-          description: data.description
+          description: data.description,
+          is_holding_account: Boolean(data.is_holding_account),
+          allow_direct_transactions: data.is_holding_account ? Boolean(data.allow_direct_transactions) : true,
         };
         await cashbankService.updateCashBankAccount(account.id, updateData);
         toast({
-          title: t('common.create'),
+          title: t('common.update'),
           description: t('cashBank.form.successUpdate'),
           status: 'success',
           duration: 3000,
@@ -304,17 +411,18 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
 
       onSuccess();
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: unknown; status?: number }; message?: string };
       // Enhanced error logging for debugging
-      console.error('Error saving account:', err);
-      console.error('Error response:', err?.response);
-      console.error('Error status:', err?.response?.status);
-      if (err?.response?.data) {
-        console.error('Backend error payload:', err.response.data);
+      console.error('Error saving account:', error);
+      console.error('Error response:', error?.response);
+      console.error('Error status:', error?.response?.status);
+      if (error?.response?.data) {
+        console.error('Backend error payload:', error.response.data);
       }
 
-      const resp = err?.response?.data;
-      const statusCode = err?.response?.status;
+      const resp = error?.response?.data;
+      const statusCode = error?.response?.status;
 
       // Extract error message with fallback handling
       let message: string;
@@ -328,9 +436,9 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
         if (!message && resp) {
           message = JSON.stringify(resp);
         }
-      } else if (err?.message) {
+      } else if (error?.message) {
         // Use error message from the exception
-        message = err.message;
+        message = error.message;
       } else {
         // Fallback for empty error payload
         message = '';
@@ -489,24 +597,44 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                       <FormErrorMessage>{errors.name?.message}</FormErrorMessage>
                     </FormControl>
 
-                    <FormControl>
-                      <FormLabel>
-                        <HStack>
-                          <FiDollarSign />
-                          <Text>{t('cashBank.form.currency')}</Text>
-                        </HStack>
-                      </FormLabel>
-                      <Input
-                        value={t('cashBank.form.indonesianRupiahIDR')}
-                        isReadOnly
-                        bg={readOnlyBg}
-                        color={textColor}
-                        fontWeight="medium"
-                      />
-                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                        {t('cashBank.form.currencyAutoSet')}
-                      </Text>
-                    </FormControl>
+                      <FormControl>
+                        <FormLabel>
+                          <HStack>
+                            <FiDollarSign />
+                            <Text>{t('cashBank.form.currency')}</Text>
+                          </HStack>
+                        </FormLabel>
+                        <Controller
+                          name="currency"
+                          control={control}
+                          render={({ field }) => (
+                            <Select
+                              value={normalizeCurrencyCode(field.value)}
+                              onChange={(e) => {
+                                const nextCurrency = normalizeCurrencyCode(e.target.value);
+                                field.onChange(nextCurrency);
+
+                                if ((watchedOpeningBalance || 0) > 0) {
+                                  setOpeningBalanceDisplay(
+                                    formatOpeningBalanceDisplay(
+                                      typeof watchedOpeningBalance === 'number' ? watchedOpeningBalance : undefined,
+                                      nextCurrency,
+                                    ),
+                                  );
+                                }
+                              }}
+                              isDisabled={mode === 'edit'}
+                              bg={mode === 'edit' ? readOnlyBg : undefined}
+                            >
+                              <option value="IDR">IDR - Indonesian Rupiah</option>
+                              <option value="USD">USD - US Dollar</option>
+                            </Select>
+                          )}
+                        />
+                       <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                         {mode === 'edit' ? 'Mata uang rekening tidak dapat diubah setelah dibuat.' : 'Pilih mata uang utama rekening kas/bank ini.'}
+                       </Text>
+                     </FormControl>
                   </SimpleGrid>
 
                   <FormControl mt={4}>
@@ -518,6 +646,42 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                       resize="vertical"
                     />
                   </FormControl>
+
+                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} mt={4}>
+                    <FormControl>
+                      <Controller
+                        name="is_holding_account"
+                        control={control}
+                        render={({ field }) => (
+                          <Checkbox
+                            isChecked={Boolean(field.value)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              field.onChange(checked);
+                              setValue('allow_direct_transactions', checked ? false : true);
+                            }}
+                            colorScheme="orange"
+                          >
+                            Rekening simpanan / holding
+                          </Checkbox>
+                        )}
+                      />
+                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                        Simpan rekening valas seperti USD di Cash & Bank, tetapi jangan dipakai otomatis untuk transaksi operasional harian.
+                      </Text>
+                    </FormControl>
+
+                    <FormControl>
+                      <Checkbox {...register('allow_direct_transactions')} isDisabled={!watchedHoldingAccount} colorScheme="blue">
+                        Izinkan transaksi langsung di modul lain
+                      </Checkbox>
+                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                        {watchedHoldingAccount
+                          ? 'Biarkan nonaktif jika rekening ini hanya dipakai sebagai holding account dan transfer ke bank operasional.'
+                          : 'Untuk rekening non-holding, opsi ini selalu aktif.'}
+                      </Text>
+                    </FormControl>
+                  </SimpleGrid>
                 </CardBody>
               </Card>
 
@@ -528,6 +692,23 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                     <Text fontWeight="bold" mb={4} color={textColor}>
                       🏦 {t('cashBank.form.bankDetails')}
                     </Text>
+
+                    <Alert status={openingBalanceAlert.status} borderRadius="md" mb={4} variant="left-accent">
+                      <AlertIcon />
+                      <Box flex="1">
+                        <HStack spacing={2} mb={1} flexWrap="wrap">
+                          <AlertTitle fontSize="sm" fontWeight="bold" mb={0}>
+                            {openingBalanceAlert.title}
+                          </AlertTitle>
+                          <Badge colorScheme={openingBalanceAlert.badgeColorScheme} variant="subtle">
+                            Mata uang aktif: {normalizedWatchedCurrency}
+                          </Badge>
+                        </HStack>
+                        <AlertDescription fontSize="xs">
+                          {openingBalanceAlert.description}
+                        </AlertDescription>
+                      </Box>
+                    </Alert>
 
                     <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                       <FormControl isRequired isInvalid={!!errors.bank_name}>
@@ -597,6 +778,9 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                           <HStack>
                             <FiDollarSign />
                             <Text>{t('cashBank.form.openingBalance')}</Text>
+                            <Badge colorScheme={openingBalanceAlert.badgeColorScheme} variant="outline">
+                              {normalizedWatchedCurrency}
+                            </Badge>
                           </HStack>
                         </FormLabel>
                         <Controller
@@ -604,46 +788,38 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                           control={control}
                           render={({ field }) => (
                             <InputGroup>
-                              <InputLeftAddon
-                                children="Rp"
-                                bg={useColorModeValue('gray.50', 'gray.700')}
-                                color={textColor}
-                                fontWeight="medium"
-                              />
+                              <InputLeftAddon bg={inputAddonBg} color={textColor} fontWeight="medium">
+                                {normalizedWatchedCurrency}
+                              </InputLeftAddon>
                               <Input
-                                placeholder={t('cashBank.form.openingBalancePlaceholder')}
+                                placeholder={getOpeningBalancePlaceholder(normalizedWatchedCurrency)}
                                 value={openingBalanceDisplay}
+                                inputMode={normalizedWatchedCurrency === 'USD' ? 'decimal' : 'numeric'}
                                 onChange={(e) => {
                                   const input = e.target.value;
-                                  // Remove non-digits
-                                  const digitsOnly = input.replace(/\D/g, '');
+                                  setOpeningBalanceDisplay(input);
 
-                                  if (digitsOnly === '') {
-                                    setOpeningBalanceDisplay('');
-                                    field.onChange(0);
-                                    return;
-                                  }
-
-                                  // Parse to number
-                                  const numValue = parseInt(digitsOnly, 10);
-
-                                  // Format with thousand separator
-                                  const formatted = numValue.toLocaleString('id-ID');
-                                  setOpeningBalanceDisplay(formatted);
-
-                                  // Update form value as pure number
-                                  field.onChange(numValue);
+                                  const parsedValue = parseOpeningBalanceInput(input, normalizedWatchedCurrency);
+                                  field.onChange(parsedValue ?? 0);
                                 }}
                                 onFocus={(e) => {
                                   // Select all for easy replacement
                                   e.target.select();
+                                }}
+                                onBlur={() => {
+                                  setOpeningBalanceDisplay(
+                                    formatOpeningBalanceDisplay(
+                                      typeof field.value === 'number' ? field.value : undefined,
+                                      normalizedWatchedCurrency,
+                                    ),
+                                  );
                                 }}
                               />
                             </InputGroup>
                           )}
                         />
                         <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                          {t('cashBank.form.openingBalanceHelp')}
+                          {getOpeningBalanceHelpText(normalizedWatchedCurrency)}
                         </Text>
                       </FormControl>
 
@@ -660,6 +836,9 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                             required: t('cashBank.form.openingDateRequired'),
                             validate: {
                               notFuture: (value) => {
+                                if (!value) {
+                                  return t('cashBank.form.openingDateRequired');
+                                }
                                 const today = new Date();
                                 const inputDate = new Date(value);
                                 return inputDate <= today || t('cashBank.form.openingDateNotFuture');
@@ -670,6 +849,41 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                         <FormErrorMessage>{errors.opening_date?.message}</FormErrorMessage>
                       </FormControl>
                     </SimpleGrid>
+
+                    {watchedCurrency && watchedCurrency.toUpperCase() !== 'IDR' && (
+                      <FormControl mt={4} isRequired={(watchedOpeningBalance || 0) > 0} isInvalid={!!errors.opening_exchange_rate}>
+                        <FormLabel>
+                          <HStack>
+                            <FiDollarSign />
+                            <Text>Kurs Saldo Awal ke IDR</Text>
+                          </HStack>
+                        </FormLabel>
+                        <Controller
+                          name="opening_exchange_rate"
+                          control={control}
+                          rules={{
+                            validate: (value) => {
+                              if ((watchedOpeningBalance || 0) <= 0) return true;
+                              return (value || 0) > 0 || 'Kurs wajib diisi untuk saldo awal valas';
+                            },
+                          }}
+                          render={({ field }) => (
+                            <NumberInput
+                              min={0}
+                              precision={4}
+                              value={typeof field.value === 'number' ? field.value : undefined}
+                              onChange={(_, valueAsNumber) => field.onChange(Number.isFinite(valueAsNumber) ? valueAsNumber : undefined)}
+                            >
+                              <NumberInputField placeholder="Contoh: 16250" />
+                            </NumberInput>
+                          )}
+                        />
+                        <FormErrorMessage>{errors.opening_exchange_rate?.message}</FormErrorMessage>
+                        <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                          Isi kurs 1 USD ke IDR. Kurs ini dipakai untuk menghitung nilai buku Rupiah yang masuk ke neraca saat saldo awal dibuat.
+                        </Text>
+                      </FormControl>
+                    )}
 
                     {/* Source of Funds (Equity) Selection - Double Entry */}
                     {/* Always show in Create Mode for transparency, but only required > 0 */}
@@ -850,3 +1064,6 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
 };
 
 export default CashBankForm;
+
+
+

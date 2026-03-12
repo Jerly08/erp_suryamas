@@ -23,7 +23,8 @@ func NewCashBankHandler(cashBankService *services.CashBankService, accountServic
 
 // GetCashBankAccounts handles GET /api/cash-bank/accounts
 func (h *CashBankHandler) GetCashBankAccounts(c *gin.Context) {
-	accounts, err := h.cashBankService.GetCashBankAccounts()
+	includeHolding, _ := strconv.ParseBool(c.DefaultQuery("include_holding", "false"))
+	accounts, err := h.cashBankService.GetCashBankAccounts(includeHolding)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to get cash-bank accounts", err))
 		return
@@ -256,7 +257,7 @@ func (h *CashBankHandler) GetPaymentAccounts(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to retrieve payment accounts", err))
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, utils.SuccessResponse("Payment accounts retrieved successfully", accounts))
 }
 
@@ -317,22 +318,22 @@ func (h *CashBankHandler) ReconcileAccount(c *gin.Context) {
 func (h *CashBankHandler) GetSSOTJournalEntries(c *gin.Context) {
 	// This endpoint provides visibility into SSOT journal entries for cash-bank transactions
 	// This could be useful for auditing and verification purposes
-	
+
 	// For now, we'll return a placeholder response
 	// In a full implementation, this would query the SSOT journal entries
 	// filtered by source_type = 'CASH_BANK'
-	
+
 	c.JSON(http.StatusOK, utils.SuccessResponse("SSOT journal entries endpoint", gin.H{
 		"message": "This endpoint will show SSOT journal entries for cash-bank transactions",
 		"note":    "Implementation would query unified_journal_ledger where source_type = 'CASH_BANK'",
 	}))
 }
 
-// ValidateIntegrity handles POST /api/cash-bank/validate-integrity  
+// ValidateIntegrity handles POST /api/cash-bank/validate-integrity
 func (h *CashBankHandler) ValidateIntegrity(c *gin.Context) {
 	// This endpoint validates the integrity of cash-bank SSOT integration
 	// It checks that all cash-bank transactions have corresponding SSOT journal entries
-	
+
 	c.JSON(http.StatusOK, utils.SuccessResponse("SSOT integration validation", gin.H{
 		"message": "This endpoint validates cash-bank SSOT integration integrity",
 		"note":    "Implementation would use CashBankSSOTJournalAdapter.ValidateJournalIntegrity()",

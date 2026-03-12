@@ -308,7 +308,7 @@ func (s *CashBankIntegratedService) GetIntegratedAccountDetails(accountID uint) 
 // GetIntegratedSummary gets summary of all cash/bank accounts with SSOT integration
 func (s *CashBankIntegratedService) GetIntegratedSummary() (*IntegratedSummaryResponse, error) {
 	// 1. Get all cash/bank accounts
-	accounts, err := s.cashBankService.GetCashBankAccounts()
+	accounts, err := s.cashBankService.GetCashBankAccounts(true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cash bank accounts: %w", err)
 	}

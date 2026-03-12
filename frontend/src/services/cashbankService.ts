@@ -14,12 +14,16 @@ export interface CashBank {
   branch?: string;
   currency: string;
   balance: number;
+  book_balance_idr?: number;
+  last_exchange_rate?: number;
   min_balance: number;
   max_balance: number;
   daily_limit: number;
   monthly_limit: number;
   is_active: boolean;
   is_restricted: boolean;
+  is_holding_account?: boolean;
+  allow_direct_transactions?: boolean;
   frozen_amount: number;
   frozen_reason?: string;
   frozen_at?: string;
@@ -41,12 +45,32 @@ export function getAvailableBalance(account: CashBank): number {
   return available > 0 ? available : 0;
 }
 
+export function getBookBalanceInIDR(account: CashBank): number {
+  if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+    return account.balance || 0;
+  }
+
+  if (typeof account.book_balance_idr === 'number') {
+    return account.book_balance_idr;
+  }
+
+  const rate = account.last_exchange_rate && account.last_exchange_rate > 0 ? account.last_exchange_rate : 1;
+  return (account.balance || 0) * rate;
+}
+
+export function formatCashBankAmount(account: CashBank, amount: number): string {
+  return `${(account.currency || 'IDR').toUpperCase()} ${Math.abs(amount || 0).toLocaleString('id-ID')}`;
+}
+
 export interface CashBankTransaction {
   id: number;
   cash_bank_id: number;
   reference_type: string;
   reference_id: number;
   amount: number;
+  currency?: string;
+  exchange_rate?: number;
+  book_amount_idr?: number;
   balance_after: number;
   transaction_date: string;
   notes?: string;
@@ -73,17 +97,19 @@ export interface AccountBalance {
 export interface CashBankCreateRequest {
   name: string;
   type: 'CASH' | 'BANK';
-  account_id?: number;    // GL Account ID from Chart of Accounts
+  account_id?: number;
   bank_name?: string;
   account_no?: string;
   account_holder_name?: string;
   branch?: string;
   currency?: string;
   opening_balance?: number;
-  opening_date?: string;
+  opening_exchange_rate?: number;
   opening_date?: string;
   description?: string;
-  source_account_id?: number; // Equity account for opening balance
+  is_holding_account?: boolean;
+  allow_direct_transactions?: boolean;
+  source_account_id?: number;
 }
 
 export interface CashBankUpdateRequest {
@@ -94,6 +120,8 @@ export interface CashBankUpdateRequest {
   branch?: string;
   description?: string;
   is_active?: boolean;
+  is_holding_account?: boolean;
+  allow_direct_transactions?: boolean;
 }
 
 export interface TransferRequest {
@@ -118,10 +146,11 @@ export interface DepositRequest {
   account_id: number;
   date: string;
   amount: number;
+  exchange_rate?: number;
   reference?: string;
   notes?: string;
-  source_account_id?: number; // Revenue account for automatic mode
-  journal_entries?: ManualJournalEntry[]; // Deprecated - kept for backward compatibility
+  source_account_id?: number;
+  journal_entries?: ManualJournalEntry[];
 }
 
 export interface WithdrawalRequest {
@@ -184,6 +213,10 @@ export interface CashBankTransfer {
   amount: number;
   exchange_rate: number;
   converted_amount: number;
+  source_book_amount_idr?: number;
+  destination_book_amount_idr?: number;
+  forex_gain_loss_amount?: number;
+  forex_gain_loss_type?: string;
   reference?: string;
   notes?: string;
   status: string;
@@ -196,13 +229,14 @@ class CashBankService {
   // Use API_ENDPOINTS instead of hardcoded baseUrl
 
   // Get all cash and bank accounts
-  async getCashBankAccounts(): Promise<CashBank[]> {
+  async getCashBankAccounts(options?: { includeHolding?: boolean }): Promise<CashBank[]> {
     try {
       const response = await api.get(API_ENDPOINTS.CASH_BANK.ACCOUNTS, {
-        params: { _t: Date.now() },
+        params: {
+          _t: Date.now(),
+          ...(options?.includeHolding ? { include_holding: true } : {}),
+        },
       });
-      // Backend responses are wrapped with { status, message, data }
-      // Prefer inner data if present for compatibility
       return response.data?.data ?? response.data;
     } catch (error) {
       console.error('Error fetching cash bank accounts:', error);

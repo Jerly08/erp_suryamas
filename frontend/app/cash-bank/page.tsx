@@ -63,13 +63,44 @@ import {
   Divider,
 } from '@chakra-ui/react';
 import { FiPlus, FiDollarSign, FiCreditCard, FiEdit2, FiEye, FiArrowRight, FiTrendingUp, FiTrendingDown, FiMoreVertical, FiTrash2, FiRefreshCw, FiSettings, FiLock, FiUnlock } from 'react-icons/fi';
-import cashbankService, { CashBank, BalanceSummary, getAvailableBalance, FrozenHistory } from '@/services/cashbankService';
+import cashbankService, { CashBank, BalanceSummary, getAvailableBalance, getBookBalanceInIDR, FrozenHistory } from '@/services/cashbankService';
 import accountService from '@/services/accountService';
 import CashBankForm from '@/components/cashbank/CashBankForm';
 import DepositWithdrawalForm from '@/components/cashbank/DepositWithdrawalForm'; // Used for withdrawal only
 import DepositFormImproved from '@/components/cashbank/DepositFormImproved'; // New improved form for deposits
 import TransferForm from '@/components/cashbank/TransferForm';
 import TransactionHistoryModal from '@/components/cashbank/TransactionHistoryModal';
+
+const getEffectiveBookRate = (account: CashBank): number => {
+  if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+    return 1;
+  }
+
+  const nativeBalance = account.balance || 0;
+  const bookBalance = getBookBalanceInIDR(account);
+  const derivedRate = nativeBalance !== 0 ? bookBalance / nativeBalance : 0;
+  if (Number.isFinite(derivedRate) && derivedRate > 0) {
+    return derivedRate;
+  }
+
+  return account.last_exchange_rate && account.last_exchange_rate > 0 ? account.last_exchange_rate : 1;
+};
+
+const getFrozenBalanceInIDR = (account: CashBank): number => {
+  const frozenAmount = account.frozen_amount || 0;
+  return (account.currency || 'IDR').toUpperCase() === 'IDR'
+    ? frozenAmount
+    : frozenAmount * getEffectiveBookRate(account);
+};
+
+const getAvailableBalanceInIDR = (account: CashBank): number => {
+  const availableBalance = getAvailableBalance(account);
+  return (account.currency || 'IDR').toUpperCase() === 'IDR'
+    ? availableBalance
+    : availableBalance * getEffectiveBookRate(account);
+};
+
+const formatIDRAmount = (amount: number): string => 'IDR ' + (amount || 0).toLocaleString('id-ID');
 
 // Table columns for cash and bank accounts with COA standards
 const getAccountColumns = (
@@ -224,10 +255,15 @@ const getAccountColumns = (
     {
       header: t('cashBank.currentBalance'),
       accessor: ((row: CashBank) => {
-        const isNegative = row.balance < 0;
-        const balanceColor = isNegative ? 'red.500' : (row.balance > 0 ? 'green.600' : 'gray.500');
+        const nativeBalance = row.balance || 0;
+        const bookBalanceIDR = getBookBalanceInIDR(row);
+        const isNegative = nativeBalance < 0;
+        const balanceColor = isNegative ? 'red.500' : (nativeBalance > 0 ? 'green.600' : 'gray.500');
         const hasFrozen = (row.frozen_amount || 0) > 0;
         const availableBalance = getAvailableBalance(row);
+        const availableBalanceIDR = getAvailableBalanceInIDR(row);
+        const frozenBalanceIDR = getFrozenBalanceInIDR(row);
+        const isForeignCurrency = (row.currency || 'IDR').toUpperCase() !== 'IDR';
 
         return (
           <Box textAlign="right">
@@ -237,32 +273,51 @@ const getAccountColumns = (
               fontSize="sm"
               fontFamily="mono"
             >
-              {row.currency} {Math.abs(row.balance).toLocaleString('id-ID')}
+              {row.currency} {Math.abs(nativeBalance).toLocaleString('id-ID')}
               {isNegative && ' (Dr)'}
             </Text>
-            {hasFrozen && (
+            {isForeignCurrency && (
+              <Text fontSize="xs" color={mutedTextColor} mb={1}>
+                Ekv. Neraca: {formatIDRAmount(bookBalanceIDR)}
+              </Text>
+            )}
+            {hasFrozen ? (
               <>
                 <Text fontSize="xs" color="orange.500" fontFamily="mono" mt={1}>
-                  Dana Terblokir: {row.currency} {row.frozen_amount.toLocaleString('id-ID')}
+                  Dana Terblokir: {row.currency} {(row.frozen_amount || 0).toLocaleString('id-ID')}
                 </Text>
+                {isForeignCurrency && (
+                  <Text fontSize="xs" color="orange.500">
+                    Ekv. IDR Terblokir: {formatIDRAmount(frozenBalanceIDR)}
+                  </Text>
+                )}
                 <Text fontSize="xs" color="green.600" fontWeight="bold" fontFamily="mono">
                   Tersedia: {row.currency} {availableBalance.toLocaleString('id-ID')}
                 </Text>
+                {isForeignCurrency && (
+                  <Text fontSize="xs" color="green.600">
+                    Ekv. IDR Tersedia: {formatIDRAmount(availableBalanceIDR)}
+                  </Text>
+                )}
               </>
-            )}
-            {!hasFrozen && (
+            ) : (
               <Text fontSize="xs" color={mutedTextColor} mb={1}>
-                {isNegative ? `${t('cashBank.overdraft')}` : (row.balance > 0 ? `${t('cashBank.creditBalance')}` : `${t('cashBank.zeroBalance')}`)}
+                {isNegative ? t('cashBank.overdraft') : (nativeBalance > 0 ? t('cashBank.creditBalance') : t('cashBank.zeroBalance'))}
               </Text>
             )}
             <HStack spacing={1} justifyContent="flex-end" mt={1}>
               <Badge
                 size="xs"
-                colorScheme={isNegative ? 'red' : (row.balance > 0 ? 'green' : 'gray')}
+                colorScheme={isNegative ? 'red' : (nativeBalance > 0 ? 'green' : 'gray')}
                 variant="subtle"
               >
-                {isNegative ? t('cashBank.overdraft').toUpperCase() : (row.balance > 0 ? t('cashBank.positive') : t('cashBank.zero'))}
+                {isNegative ? t('cashBank.overdraft').toUpperCase() : (nativeBalance > 0 ? t('cashBank.positive') : t('cashBank.zero'))}
               </Badge>
+              {isForeignCurrency && (
+                <Badge size="xs" colorScheme="blue" variant="outline">
+                  {row.currency}
+                </Badge>
+              )}
               {hasFrozen && (
                 <Badge size="xs" colorScheme="orange" variant="solid">
                   TERBLOKIR
@@ -275,20 +330,38 @@ const getAccountColumns = (
     },
     {
       header: t('cashBank.status'),
-      accessor: ((row: CashBank) => (
-        <Box textAlign="center">
-          <Badge
-            colorScheme={row.is_active ? 'green' : 'red'}
-            mb={2}
-            variant="solid"
-          >
-            {row.is_active ? t('cashBank.active') : t('cashBank.inactive')}
-          </Badge>
-          <Text fontSize="xs" color={row.is_active ? 'green.600' : 'red.500'}>
-            {row.is_active ? `🟢 ${t('cashBank.operational')}` : `🔴 ${t('cashBank.suspended')}`}
-          </Text>
-        </Box>
-      )) as (row: CashBank) => React.ReactNode
+      accessor: ((row: CashBank) => {
+        const isHolding = Boolean(row.is_holding_account);
+        const allowDirectTransactions = row.allow_direct_transactions !== false;
+
+        return (
+          <Box textAlign="center">
+            <VStack spacing={1}>
+              <Badge
+                colorScheme={row.is_active ? 'green' : 'red'}
+                variant="solid"
+              >
+                {row.is_active ? t('cashBank.active') : t('cashBank.inactive')}
+              </Badge>
+              {isHolding && (
+                <Badge colorScheme="orange" variant="subtle">
+                  HOLDING
+                </Badge>
+              )}
+              {!allowDirectTransactions && (
+                <Badge colorScheme="purple" variant="outline">
+                  NON OPERASIONAL
+                </Badge>
+              )}
+            </VStack>
+            <Text fontSize="xs" color={row.is_active ? 'green.600' : 'red.500'} mt={2}>
+              {row.is_active
+                ? (isHolding ? 'Holding account / transfer only' : t('cashBank.operational'))
+                : t('cashBank.suspended')}
+            </Text>
+          </Box>
+        );
+      }) as (row: CashBank) => React.ReactNode
     },
     {
       header: t('cashBank.actions'),
@@ -545,7 +618,7 @@ const CashBankPage: React.FC = () => {
       setError(null);
 
       const [accountsData, summaryData, postedBalances] = await Promise.all([
-        cashbankService.getCashBankAccounts(),
+        cashbankService.getCashBankAccounts({ includeHolding: true }),
         cashbankService.getBalanceSummary(),
         accountService.getPostedCOABalances(token!)
       ]);
@@ -563,12 +636,13 @@ const CashBankPage: React.FC = () => {
         if (glId && ssotMap.has(glId)) {
           const ssotVal = ssotMap.get(glId)!;
           if (typeof ssotVal === 'number' && Math.abs(ssotVal) > 0.0000001) {
-            const current = acc.balance || 0;
+            const current = getBookBalanceInIDR(acc);
             const diff = Math.abs(ssotVal - current);
             const rel = current !== 0 ? diff / Math.abs(current) : 0;
-            // Only override when SSOT value is reasonably close (<= 1 IDR or <= 1% difference)
             if (diff <= 1 || rel <= 0.01) {
-              return { ...acc, balance: ssotVal };
+              return (acc.currency || 'IDR').toUpperCase() === 'IDR'
+                ? { ...acc, balance: ssotVal }
+                : { ...acc, book_balance_idr: ssotVal };
             }
           }
         }
@@ -578,8 +652,8 @@ const CashBankPage: React.FC = () => {
       setAccounts(merged);
 
       // Recompute summary from merged to keep cards consistent
-      const total_cash = merged.filter(a => a.type === 'CASH').reduce((s, a) => s + (a.balance || 0), 0);
-      const total_bank = merged.filter(a => a.type === 'BANK').reduce((s, a) => s + (a.balance || 0), 0);
+      const total_cash = merged.filter(a => a.type === 'CASH').reduce((sum, a) => sum + getBookBalanceInIDR(a), 0);
+      const total_bank = merged.filter(a => a.type === 'BANK').reduce((sum, a) => sum + getBookBalanceInIDR(a), 0);
       const total_balance = total_cash + total_bank;
       setBalanceSummary({ ...(summaryData || {}), total_cash, total_bank, total_balance, by_account: [], by_currency: {} } as any);
     } catch (err: any) {
@@ -1024,7 +1098,7 @@ const CashBankPage: React.FC = () => {
                     <Stat>
                       <StatLabel color="orange.600">Dana Terblokir</StatLabel>
                       <StatNumber color="orange.500">
-                        IDR {safeAccounts.reduce((sum, acc) => sum + (acc.frozen_amount || 0), 0).toLocaleString('id-ID')}
+                        IDR {safeAccounts.reduce((sum, acc) => sum + getFrozenBalanceInIDR(acc), 0).toLocaleString('id-ID')}
                       </StatNumber>
                       <StatHelpText>{safeAccounts.filter(a => (a.frozen_amount || 0) > 0).length} akun terblokir</StatHelpText>
                     </Stat>
@@ -1036,7 +1110,7 @@ const CashBankPage: React.FC = () => {
                     <Stat>
                       <StatLabel color="green.600">Saldo Tersedia</StatLabel>
                       <StatNumber color="green.500">
-                        IDR {safeAccounts.reduce((sum, acc) => sum + getAvailableBalance(acc), 0).toLocaleString('id-ID')}
+                        IDR {safeAccounts.reduce((sum, acc) => sum + getAvailableBalanceInIDR(acc), 0).toLocaleString('id-ID')}
                       </StatNumber>
                       <StatHelpText>Total yang bisa digunakan</StatHelpText>
                     </Stat>
@@ -1855,3 +1929,4 @@ const CashBankPage: React.FC = () => {
 };
 
 export default CashBankPage;
+

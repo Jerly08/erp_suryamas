@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   ModalOverlay,
@@ -35,7 +35,13 @@ import {
   Card,
   CardBody,
 } from '@chakra-ui/react';
-import { CashBank, TransferRequest, getAvailableBalance } from '@/services/cashbankService';
+import {
+  CashBank,
+  TransferRequest,
+  formatCashBankAmount,
+  getAvailableBalance,
+  getBookBalanceInIDR,
+} from '@/services/cashbankService';
 import cashbankService from '@/services/cashbankService';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -46,11 +52,35 @@ interface TransferFormProps {
   sourceAccount: CashBank | null;
 }
 
+const getCurrencyCode = (account?: CashBank | null): string => (account?.currency || 'IDR').toUpperCase();
+
+const getEffectiveBookRate = (account: CashBank): number => {
+  if (getCurrencyCode(account) === 'IDR') {
+    return 1;
+  }
+
+  const nativeBalance = account.balance || 0;
+  const bookBalance = getBookBalanceInIDR(account);
+  const derivedRate = nativeBalance !== 0 ? bookBalance / nativeBalance : 0;
+  if (Number.isFinite(derivedRate) && derivedRate > 0) {
+    return derivedRate;
+  }
+
+  return account.last_exchange_rate && account.last_exchange_rate > 0 ? account.last_exchange_rate : 1;
+};
+
+const formatIDRAmount = (amount: number): string => `IDR ${(amount || 0).toLocaleString('id-ID')}`;
+
+const formatRate = (rate: number): string => rate.toLocaleString('id-ID', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+});
+
 const TransferForm: React.FC<TransferFormProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  sourceAccount
+  sourceAccount,
 }) => {
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -58,54 +88,82 @@ const TransferForm: React.FC<TransferFormProps> = ({
     to_account_id: 0,
     exchange_rate: 1,
     reference: '',
-    notes: ''
+    notes: '',
   });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<CashBank[]>([]);
-
   const [selectedDestAccount, setSelectedDestAccount] = useState<CashBank | null>(null);
+
   const toast = useToast();
   const { t } = useTranslation();
 
-  // Load available accounts for transfer destination
+  useEffect(() => {
+    if (!isOpen || !sourceAccount) {
+      return;
+    }
+
+    const suggestedRate = sourceAccount.last_exchange_rate && sourceAccount.last_exchange_rate > 0
+      ? sourceAccount.last_exchange_rate
+      : getEffectiveBookRate(sourceAccount);
+
+    setFormData(prev => ({
+      ...prev,
+      exchange_rate: getCurrencyCode(sourceAccount) === 'IDR' ? 1 : suggestedRate,
+    }));
+  }, [isOpen, sourceAccount]);
+
   useEffect(() => {
     const loadAccounts = async () => {
-      if (isOpen && sourceAccount) {
-        try {
-          const allAccounts = await cashbankService.getCashBankAccounts();
-          // Filter out the source account and inactive accounts
-          const availableAccounts = allAccounts.filter(acc =>
-            acc.id !== sourceAccount.id && acc.is_active
-          );
-          setAccounts(availableAccounts);
-        } catch (error) {
-          console.error('Error loading accounts:', error);
-        }
+      if (!isOpen || !sourceAccount) {
+        return;
+      }
+
+      try {
+        const allAccounts = await cashbankService.getCashBankAccounts({ includeHolding: true });
+        const sourceCurrency = getCurrencyCode(sourceAccount);
+        const availableAccounts = allAccounts.filter(acc => {
+          if (acc.id === sourceAccount.id || !acc.is_active) {
+            return false;
+          }
+
+          const destCurrency = getCurrencyCode(acc);
+          return destCurrency === sourceCurrency || (sourceCurrency !== 'IDR' && destCurrency === 'IDR');
+        });
+
+        setAccounts(availableAccounts);
+      } catch (loadError) {
+        console.error('Error loading accounts:', loadError);
       }
     };
 
     loadAccounts();
   }, [isOpen, sourceAccount]);
 
-  const handleInputChange = (field: string, value: any) => {
+  const handleInputChange = (field: string, value: string | number) => {
     setFormData(prev => ({
       ...prev,
-      [field]: value
+      [field]: value,
     }));
     setError(null);
 
-    // Update selected destination account when to_account_id changes
     if (field === 'to_account_id') {
       const destAccount = accounts.find(acc => acc.id === value);
       setSelectedDestAccount(destAccount || null);
 
-      // Auto-set exchange rate if currencies are different
       if (destAccount && sourceAccount) {
-        if (sourceAccount.currency !== destAccount.currency) {
-          // In a real app, you'd fetch real exchange rates
-          setFormData(prev => ({ ...prev, exchange_rate: 1 }));
+        const sourceCurrency = getCurrencyCode(sourceAccount);
+        const destCurrency = getCurrencyCode(destAccount);
+
+        if (sourceCurrency !== destCurrency) {
+          const suggestedRate = sourceAccount.last_exchange_rate && sourceAccount.last_exchange_rate > 0
+            ? sourceAccount.last_exchange_rate
+            : getEffectiveBookRate(sourceAccount);
+          setFormData(prev => ({
+            ...prev,
+            exchange_rate: suggestedRate,
+          }));
         } else {
           setFormData(prev => ({ ...prev, exchange_rate: 1 }));
         }
@@ -118,7 +176,6 @@ const TransferForm: React.FC<TransferFormProps> = ({
       setLoading(true);
       setError(null);
 
-      // Basic validation
       if (!sourceAccount) {
         throw new Error('No source account selected');
       }
@@ -134,16 +191,15 @@ const TransferForm: React.FC<TransferFormProps> = ({
       if (formData.amount > getAvailableBalance(sourceAccount)) {
         const frozen = sourceAccount.frozen_amount || 0;
         if (frozen > 0) {
-          throw new Error(`Saldo tersedia tidak cukup. Tersedia: ${sourceAccount.currency} ${getAvailableBalance(sourceAccount).toLocaleString('id-ID')} (Total: ${sourceAccount.balance.toLocaleString('id-ID')}, Terblokir: ${frozen.toLocaleString('id-ID')})`);
+          throw new Error(`Saldo tersedia tidak cukup. Tersedia: ${getAvailableBalance(sourceAccount).toLocaleString('id-ID')} ${sourceAccount.currency} (Total: ${sourceAccount.balance.toLocaleString('id-ID')}, Terblokir: ${frozen.toLocaleString('id-ID')})`);
         }
         throw new Error(`Insufficient balance. Available: ${sourceAccount.currency} ${getAvailableBalance(sourceAccount).toLocaleString('id-ID')}`);
       }
 
-      if (sourceAccount.currency !== selectedDestAccount.currency && formData.exchange_rate <= 0) {
+      if (getCurrencyCode(sourceAccount) !== getCurrencyCode(selectedDestAccount) && formData.exchange_rate <= 0) {
         throw new Error('Exchange rate is required for different currencies');
       }
 
-      // Prepare request data
       const requestData: TransferRequest = {
         from_account_id: sourceAccount.id,
         to_account_id: formData.to_account_id,
@@ -151,14 +207,20 @@ const TransferForm: React.FC<TransferFormProps> = ({
         amount: formData.amount,
         exchange_rate: formData.exchange_rate,
         reference: formData.reference,
-        notes: formData.notes
+        notes: formData.notes,
       };
 
       await cashbankService.processTransfer(requestData);
 
+      const destinationAmount = getCurrencyCode(sourceAccount) === getCurrencyCode(selectedDestAccount)
+        ? formData.amount
+        : formData.amount * formData.exchange_rate;
+
       toast({
-        title: 'Transfer Successful',
-        description: `${sourceAccount.currency} ${formData.amount.toLocaleString('id-ID')} transferred from ${sourceAccount.name} to ${selectedDestAccount.name}`,
+        title: 'Transfer berhasil',
+        description: getCurrencyCode(sourceAccount) === getCurrencyCode(selectedDestAccount)
+          ? `${formatCashBankAmount(sourceAccount, formData.amount)} dipindahkan dari ${sourceAccount.name} ke ${selectedDestAccount.name}`
+          : `${formatCashBankAmount(sourceAccount, formData.amount)} dipindahkan dari ${sourceAccount.name} dan diterima ${formatCashBankAmount(selectedDestAccount, destinationAmount)} di ${selectedDestAccount.name}`,
         status: 'success',
         duration: 5000,
         isClosable: true,
@@ -168,10 +230,11 @@ const TransferForm: React.FC<TransferFormProps> = ({
       onClose();
     } catch (err: any) {
       console.error('Error processing transfer:', err);
-      setError(err.response?.data?.details || err.message || 'Failed to process transfer');
+      const message = err.response?.data?.details || err.message || 'Failed to process transfer';
+      setError(message);
       toast({
-        title: 'Transfer Failed',
-        description: err.response?.data?.details || err.message || 'Failed to process transfer',
+        title: 'Transfer gagal',
+        description: message,
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -189,31 +252,58 @@ const TransferForm: React.FC<TransferFormProps> = ({
       to_account_id: 0,
       exchange_rate: 1,
       reference: '',
-      notes: ''
+      notes: '',
     });
     setSelectedDestAccount(null);
     onClose();
   };
 
-  if (!sourceAccount) return null;
+  if (!sourceAccount) {
+    return null;
+  }
 
-  const convertedAmount = formData.amount * formData.exchange_rate;
-  const requiresExchangeRate = selectedDestAccount &&
-    sourceAccount.currency !== selectedDestAccount.currency;
+  const sourceCurrency = getCurrencyCode(sourceAccount);
+  const destinationCurrency = getCurrencyCode(selectedDestAccount);
+  const requiresExchangeRate = Boolean(selectedDestAccount && sourceCurrency !== destinationCurrency);
+  const effectiveExchangeRate = requiresExchangeRate ? formData.exchange_rate || 0 : 1;
+  const convertedAmount = formData.amount * effectiveExchangeRate;
+  const sourceBookRate = getEffectiveBookRate(sourceAccount);
+  const sourceBookAmountIDR = sourceCurrency === 'IDR'
+    ? formData.amount
+    : formData.amount * sourceBookRate;
+  const destinationBookAmountIDR = selectedDestAccount
+    ? (requiresExchangeRate ? convertedAmount : sourceBookAmountIDR)
+    : 0;
+  const forexDifference = requiresExchangeRate
+    ? destinationBookAmountIDR - sourceBookAmountIDR
+    : 0;
+  const sourceEndingNativeBalance = sourceAccount.balance - formData.amount;
+  const sourceEndingBookBalanceIDR = getBookBalanceInIDR(sourceAccount) - sourceBookAmountIDR;
+  const destinationEndingNativeBalance = selectedDestAccount
+    ? selectedDestAccount.balance + convertedAmount
+    : 0;
+  const destinationEndingBookBalanceIDR = selectedDestAccount
+    ? getBookBalanceInIDR(selectedDestAccount) + destinationBookAmountIDR
+    : 0;
+
+  const forexDirection = forexDifference > 0.005
+    ? 'gain'
+    : forexDifference < -0.005
+      ? 'loss'
+      : 'neutral';
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="xl">
+    <Modal isOpen={isOpen} onClose={handleClose} size="2xl">
       <ModalOverlay />
       <ModalContent>
         <ModalHeader>
           <Flex alignItems="center" gap={3}>
-            <Text fontSize="lg">🔄</Text>
             <Box>
               <Text fontSize="lg" fontWeight="bold">
                 {t('cashBank.transferFunds')}
               </Text>
               <Text fontSize="sm" color="gray.500">
-                {t('cashBank.moveMoneyDesc')}
+                Transfer antar rekening dengan preview nilai buku dan estimasi selisih kurs.
               </Text>
             </Box>
           </Flex>
@@ -228,21 +318,25 @@ const TransferForm: React.FC<TransferFormProps> = ({
           )}
 
           <VStack spacing={6} align="stretch">
-            {/* Source and Destination Account Information */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
-                🏦 {t('cashBank.accountSelection')}
+                Pilihan rekening
               </Text>
 
-              <SimpleGrid columns={2} spacing={4}>
-                {/* Source Account */}
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 <Card>
                   <CardBody>
                     <Text fontSize="sm" color="gray.600" mb={2}>{t('cashBank.fromSource')}</Text>
-                    <Flex alignItems="center" gap={2} mb={2}>
+                    <Flex alignItems="center" gap={2} mb={2} wrap="wrap">
                       <Badge colorScheme={sourceAccount.type === 'CASH' ? 'green' : 'blue'} size="sm">
                         {sourceAccount.type}
                       </Badge>
+                      {sourceAccount.is_holding_account && (
+                        <Badge colorScheme="orange" variant="subtle">HOLDING</Badge>
+                      )}
+                      {sourceAccount.allow_direct_transactions === false && (
+                        <Badge colorScheme="purple" variant="outline">NON OPERASIONAL</Badge>
+                      )}
                       <Text fontWeight="medium" fontSize="sm">{sourceAccount.name}</Text>
                     </Flex>
 
@@ -253,46 +347,62 @@ const TransferForm: React.FC<TransferFormProps> = ({
                         fontFamily="mono"
                         fontSize="md"
                       >
-                        {sourceAccount.currency} {getAvailableBalance(sourceAccount).toLocaleString('id-ID')}
+                        {formatCashBankAmount(sourceAccount, getAvailableBalance(sourceAccount))}
                       </StatNumber>
+                      <StatHelpText fontSize="xs">
+                        Nilai buku saat ini: {formatIDRAmount(getBookBalanceInIDR(sourceAccount))}
+                      </StatHelpText>
+                      {sourceCurrency !== 'IDR' && (
+                        <StatHelpText fontSize="xs" color="gray.500">
+                          Carry rate buku: 1 {sourceCurrency} = {formatRate(sourceBookRate)} IDR
+                        </StatHelpText>
+                      )}
                       {(sourceAccount.frozen_amount || 0) > 0 && (
                         <StatHelpText color="orange.500" fontSize="xs">
-                          Total: {sourceAccount.currency} {sourceAccount.balance.toLocaleString('id-ID')} | Terblokir: {sourceAccount.currency} {sourceAccount.frozen_amount.toLocaleString('id-ID')}
+                          Total: {formatCashBankAmount(sourceAccount, sourceAccount.balance)} | Terblokir: {formatCashBankAmount(sourceAccount, sourceAccount.frozen_amount || 0)}
                         </StatHelpText>
                       )}
                     </Stat>
                   </CardBody>
                 </Card>
 
-                {/* Destination Account */}
                 <Card>
                   <CardBody>
                     <Text fontSize="sm" color="gray.600" mb={2}>{t('cashBank.toDestination')}</Text>
                     <FormControl isRequired>
                       <Select
                         value={formData.to_account_id}
-                        onChange={(e) => handleInputChange('to_account_id', parseInt(e.target.value))}
+                        onChange={(e) => handleInputChange('to_account_id', parseInt(e.target.value, 10))}
                         placeholder={t('cashBank.selectGLAccountPlaceholder')}
                         size="sm"
                       >
                         {accounts.map((acc) => (
                           <option key={acc.id} value={acc.id}>
-                            [{acc.type}] {acc.name} - {acc.currency} {acc.balance.toLocaleString('id-ID')}
+                            [{acc.type}] {acc.name} - {getCurrencyCode(acc)} {acc.balance.toLocaleString('id-ID')}
                           </option>
                         ))}
                       </Select>
                     </FormControl>
 
                     {selectedDestAccount && (
-                      <Box mt={2}>
-                        <Flex alignItems="center" gap={2} mb={1}>
+                      <Box mt={3}>
+                        <Flex alignItems="center" gap={2} mb={1} wrap="wrap">
                           <Badge colorScheme={selectedDestAccount.type === 'CASH' ? 'green' : 'blue'} size="sm">
                             {selectedDestAccount.type}
                           </Badge>
+                          {selectedDestAccount.is_holding_account && (
+                            <Badge colorScheme="orange" variant="subtle">HOLDING</Badge>
+                          )}
+                          {selectedDestAccount.allow_direct_transactions === false && (
+                            <Badge colorScheme="purple" variant="outline">NON OPERASIONAL</Badge>
+                          )}
                           <Text fontSize="xs" color="gray.600">{selectedDestAccount.name}</Text>
                         </Flex>
                         <Text fontSize="xs" color="gray.500" fontFamily="mono">
-                          Balance: {selectedDestAccount.currency} {selectedDestAccount.balance.toLocaleString('id-ID')}
+                          Saldo saat ini: {formatCashBankAmount(selectedDestAccount, selectedDestAccount.balance)}
+                        </Text>
+                        <Text fontSize="xs" color="gray.500">
+                          Nilai buku saat ini: {formatIDRAmount(getBookBalanceInIDR(selectedDestAccount))}
                         </Text>
                       </Box>
                     )}
@@ -301,14 +411,13 @@ const TransferForm: React.FC<TransferFormProps> = ({
               </SimpleGrid>
             </Box>
 
-            {/* Transfer Details */}
             <Box>
               <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
-                📝 {t('cashBank.transferDetails')}
+                Detail transfer
               </Text>
 
               <VStack spacing={4} align="stretch">
-                <SimpleGrid columns={2} spacing={4}>
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                   <FormControl isRequired>
                     <FormLabel>{t('cashBank.transferDate')}</FormLabel>
                     <Input
@@ -319,7 +428,7 @@ const TransferForm: React.FC<TransferFormProps> = ({
                   </FormControl>
 
                   <FormControl isRequired>
-                    <FormLabel>{t('payments.form.amount')} ({sourceAccount.currency})</FormLabel>
+                    <FormLabel>Nominal keluar ({sourceCurrency})</FormLabel>
                     <NumberInput
                       value={formData.amount}
                       onChange={(_, value) => handleInputChange('amount', value || 0)}
@@ -335,22 +444,21 @@ const TransferForm: React.FC<TransferFormProps> = ({
                     </NumberInput>
                     {formData.amount > getAvailableBalance(sourceAccount) && (
                       <Text fontSize="xs" color="red.500" mt={1}>
-                        Jumlah melebihi saldo tersedia{(sourceAccount.frozen_amount || 0) > 0 ? ` (Dana terblokir: ${sourceAccount.currency} ${sourceAccount.frozen_amount.toLocaleString('id-ID')})` : ''}
+                        Jumlah melebihi saldo tersedia{(sourceAccount.frozen_amount || 0) > 0 ? ` (Dana terblokir: ${formatCashBankAmount(sourceAccount, sourceAccount.frozen_amount || 0)})` : ''}
                       </Text>
                     )}
                   </FormControl>
                 </SimpleGrid>
 
-                {/* Exchange Rate (only if different currencies) */}
-                {requiresExchangeRate && (
+                {requiresExchangeRate && selectedDestAccount && (
                   <Alert status="info" borderRadius="md">
                     <AlertIcon />
-                    <Box>
-                      <Text fontSize="sm" fontWeight="medium" mb={2}>
-                        Currency Conversion Required
+                    <Box w="full">
+                      <Text fontSize="sm" fontWeight="medium" mb={1}>
+                        Kurs transfer {sourceCurrency} ke {destinationCurrency}
                       </Text>
-                      <Text fontSize="xs" color="gray.600" mb={2}>
-                        {sourceAccount.currency} → {selectedDestAccount?.currency}
+                      <Text fontSize="xs" color="gray.600" mb={3}>
+                        Kurs ini menentukan nominal yang diterima rekening tujuan dan perhitungan realized selisih kurs saat jurnal diposting.
                       </Text>
                       <FormControl>
                         <FormLabel fontSize="sm">{t('cashBank.exchangeRate')}</FormLabel>
@@ -361,15 +469,20 @@ const TransferForm: React.FC<TransferFormProps> = ({
                           precision={6}
                           step={0.01}
                         >
-                          <NumberInputField />
+                          <NumberInputField placeholder="Contoh: 16250" />
                           <NumberInputStepper>
                             <NumberIncrementStepper />
                             <NumberDecrementStepper />
                           </NumberInputStepper>
                         </NumberInput>
                         <Text fontSize="xs" color="gray.500" mt={1}>
-                          1 {sourceAccount.currency} = {formData.exchange_rate} {selectedDestAccount?.currency}
+                          1 {sourceCurrency} = {formatRate(formData.exchange_rate || 0)} {destinationCurrency}
                         </Text>
+                        {sourceCurrency !== 'IDR' && (
+                          <Text fontSize="xs" color="gray.500" mt={1}>
+                            Nilai buku sumber saat ini: 1 {sourceCurrency} = {formatRate(sourceBookRate)} IDR
+                          </Text>
+                        )}
                       </FormControl>
                     </Box>
                   </Alert>
@@ -396,43 +509,98 @@ const TransferForm: React.FC<TransferFormProps> = ({
               </VStack>
             </Box>
 
-            {/* Transfer Preview */}
             {formData.amount > 0 && selectedDestAccount && (
               <Box>
                 <Text fontSize="md" fontWeight="semibold" color="gray.700" mb={3}>
-                  💡 Transfer Preview
+                  Preview transfer dan jurnal
                 </Text>
-                <Alert status="info" borderRadius="md">
-                  <AlertIcon />
-                  <VStack align="start" spacing={2}>
-                    <Text fontSize="sm" fontWeight="medium">
-                      Transfer Summary:
-                    </Text>
-                    <SimpleGrid columns={2} spacing={4} w="full">
+                <Alert status={requiresExchangeRate ? 'warning' : 'info'} borderRadius="md" alignItems="flex-start">
+                  <AlertIcon mt={1} />
+                  <VStack align="stretch" spacing={4} w="full">
+                    <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                       <Box>
-                        <Text fontSize="xs" color="gray.600">From: {sourceAccount.name}</Text>
-                        <Text fontSize="sm" fontWeight="bold" fontFamily="mono" color="red.600">
-                          -{sourceAccount.currency} {formData.amount.toLocaleString('id-ID')}
+                        <Text fontSize="xs" color="gray.600">Rekening sumber</Text>
+                        <Text fontSize="sm" fontWeight="bold" color="red.600" fontFamily="mono">
+                          -{formatCashBankAmount(sourceAccount, formData.amount)}
                         </Text>
                         <Text fontSize="xs" color="gray.500">
-                          New balance: {sourceAccount.currency} {(sourceAccount.balance - formData.amount).toLocaleString('id-ID')}
+                          Saldo akhir native: {formatCashBankAmount(sourceAccount, sourceEndingNativeBalance)}
+                        </Text>
+                        <Text fontSize="xs" color="gray.500">
+                          Nilai buku akhir: {formatIDRAmount(sourceEndingBookBalanceIDR)}
                         </Text>
                       </Box>
                       <Box>
-                        <Text fontSize="xs" color="gray.600">To: {selectedDestAccount.name}</Text>
-                        <Text fontSize="sm" fontWeight="bold" fontFamily="mono" color="green.600">
-                          +{selectedDestAccount.currency} {convertedAmount.toLocaleString('id-ID')}
+                        <Text fontSize="xs" color="gray.600">Rekening tujuan</Text>
+                        <Text fontSize="sm" fontWeight="bold" color="green.600" fontFamily="mono">
+                          +{formatCashBankAmount(selectedDestAccount, convertedAmount)}
                         </Text>
                         <Text fontSize="xs" color="gray.500">
-                          New balance: {selectedDestAccount.currency} {(selectedDestAccount.balance + convertedAmount).toLocaleString('id-ID')}
+                          Saldo akhir native: {formatCashBankAmount(selectedDestAccount, destinationEndingNativeBalance)}
+                        </Text>
+                        <Text fontSize="xs" color="gray.500">
+                          Nilai buku akhir: {formatIDRAmount(destinationEndingBookBalanceIDR)}
                         </Text>
                       </Box>
                     </SimpleGrid>
-                    {requiresExchangeRate && (
-                      <Text fontSize="xs" color="orange.600">
-                        💱 Exchange rate applied: {formData.exchange_rate}
+
+                    <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                      <Card variant="outline">
+                        <CardBody py={3}>
+                          <Text fontSize="xs" color="gray.600">Nilai buku yang dilepas dari sumber</Text>
+                          <Text fontWeight="bold" fontFamily="mono" color="red.600">
+                            {formatIDRAmount(sourceBookAmountIDR)}
+                          </Text>
+                          <Text fontSize="xs" color="gray.500" mt={1}>
+                            Mengikuti carrying value rekening sumber pada saat transfer diposting.
+                          </Text>
+                        </CardBody>
+                      </Card>
+
+                      <Card variant="outline">
+                        <CardBody py={3}>
+                          <Text fontSize="xs" color="gray.600">Nilai buku yang masuk ke tujuan</Text>
+                          <Text fontWeight="bold" fontFamily="mono" color="green.600">
+                            {formatIDRAmount(destinationBookAmountIDR)}
+                          </Text>
+                          <Text fontSize="xs" color="gray.500" mt={1}>
+                            Untuk transfer beda mata uang, angka ini mengikuti nominal tujuan yang dihitung dari kurs transfer.
+                          </Text>
+                        </CardBody>
+                      </Card>
+                    </SimpleGrid>
+
+                    {requiresExchangeRate ? (
+                      <Box>
+                        <Flex alignItems="center" gap={2} mb={1} wrap="wrap">
+                          <Text fontSize="xs" color="gray.600">Estimasi selisih kurs terealisasi</Text>
+                          {forexDirection === 'gain' && <Badge colorScheme="green">LABA KURS</Badge>}
+                          {forexDirection === 'loss' && <Badge colorScheme="red">RUGI KURS</Badge>}
+                          {forexDirection === 'neutral' && <Badge colorScheme="gray">NETRAL</Badge>}
+                        </Flex>
+                        <Text
+                          fontSize="sm"
+                          fontWeight="bold"
+                          fontFamily="mono"
+                          color={forexDirection === 'gain' ? 'green.600' : forexDirection === 'loss' ? 'red.500' : 'gray.600'}
+                        >
+                          {formatIDRAmount(forexDifference)}
+                        </Text>
+                        <Text fontSize="xs" color="gray.500" mt={1}>
+                          Estimasi jurnal: Dr {selectedDestAccount.name} {formatIDRAmount(destinationBookAmountIDR)}, Cr {sourceAccount.name} {formatIDRAmount(sourceBookAmountIDR)}
+                          {forexDirection === 'gain' ? `, Cr Laba Selisih Kurs ${formatIDRAmount(forexDifference)}` : ''}
+                          {forexDirection === 'loss' ? `, Dr Rugi Selisih Kurs ${formatIDRAmount(Math.abs(forexDifference))}` : ''}
+                        </Text>
+                      </Box>
+                    ) : (
+                      <Text fontSize="xs" color="gray.500">
+                        Tidak ada selisih kurs karena rekening sumber dan tujuan memakai mata uang yang sama.
                       </Text>
                     )}
+
+                    <Text fontSize="xs" color="gray.500">
+                      Preview ini mengikuti logika posting backend saat ini. Nilai final akan memakai kurs dan nominal yang Anda simpan saat submit.
+                    </Text>
                   </VStack>
                 </Alert>
               </Box>

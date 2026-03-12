@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,9 +29,9 @@ func determineStatusCode(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
-	
+
 	errMsg := strings.ToLower(err.Error())
-	
+
 	// Validation errors (400 Bad Request)
 	if strings.Contains(errMsg, "required") ||
 		strings.Contains(errMsg, "invalid") ||
@@ -41,14 +41,14 @@ func determineStatusCode(err error) int {
 		strings.Contains(errMsg, "validation failed") {
 		return http.StatusBadRequest
 	}
-	
+
 	// Not found errors (404 Not Found)
 	if strings.Contains(errMsg, "not found") ||
 		strings.Contains(errMsg, "does not exist") ||
 		strings.Contains(errMsg, "no record") {
 		return http.StatusNotFound
 	}
-	
+
 	// Conflict errors (409 Conflict)
 	if strings.Contains(errMsg, "already exists") ||
 		strings.Contains(errMsg, "duplicate") ||
@@ -57,21 +57,21 @@ func determineStatusCode(err error) int {
 		strings.Contains(errMsg, "conflict") {
 		return http.StatusConflict
 	}
-	
+
 	// Unauthorized errors (401 Unauthorized)
 	if strings.Contains(errMsg, "unauthorized") ||
 		strings.Contains(errMsg, "not authenticated") ||
 		strings.Contains(errMsg, "authentication failed") {
 		return http.StatusUnauthorized
 	}
-	
+
 	// Forbidden errors (403 Forbidden)
 	if strings.Contains(errMsg, "forbidden") ||
 		strings.Contains(errMsg, "permission denied") ||
 		strings.Contains(errMsg, "access denied") {
 		return http.StatusForbidden
 	}
-	
+
 	// Default to internal server error (500)
 	return http.StatusInternalServerError
 }
@@ -86,15 +86,16 @@ func determineStatusCode(err error) int {
 // @Success 200 {array} models.CashBank
 // @Router /api/cashbank/accounts [get]
 func (c *CashBankController) GetAccounts(ctx *gin.Context) {
-	accounts, err := c.cashBankService.GetCashBankAccounts()
+	includeHolding, _ := strconv.ParseBool(ctx.DefaultQuery("include_holding", "false"))
+	accounts, err := c.cashBankService.GetCashBankAccounts(includeHolding)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve accounts",
+			"error":   "Failed to retrieve accounts",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, accounts)
 }
 
@@ -116,7 +117,7 @@ func (c *CashBankController) GetAccountByID(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	account, err := c.cashBankService.GetCashBankByID(uint(id))
 	if err != nil {
 		ctx.JSON(http.StatusNotFound, gin.H{
@@ -124,7 +125,7 @@ func (c *CashBankController) GetAccountByID(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, account)
 }
 
@@ -142,7 +143,7 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 	// Log incoming request
 	userID := ctx.GetUint("user_id")
 	log.Printf("🔄 [CASHBANK CREATE] Starting account creation - UserID: %d", userID)
-	
+
 	var request services.CashBankCreateRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		log.Printf("❌ [CASHBANK CREATE] Invalid request data: %v", err)
@@ -154,11 +155,11 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Log request parameters
 	log.Printf("📋 [CASHBANK CREATE] Request: Name=%s, Type=%s, AccountID=%d, OpeningBalance=%.2f, UserID=%d",
 		request.Name, request.Type, request.AccountID, request.OpeningBalance, userID)
-	
+
 	if userID == 0 {
 		log.Printf("❌ [CASHBANK CREATE] User not authenticated")
 		ctx.JSON(http.StatusUnauthorized, gin.H{
@@ -168,7 +169,7 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Additional validation
 	if strings.TrimSpace(request.Name) == "" {
 		log.Printf("❌ [CASHBANK CREATE] Account name is empty")
@@ -180,7 +181,7 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	if request.Type != "CASH" && request.Type != "BANK" {
 		log.Printf("❌ [CASHBANK CREATE] Invalid account type: %s", request.Type)
 		ctx.JSON(http.StatusBadRequest, gin.H{
@@ -191,7 +192,7 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	if request.Type == "BANK" && strings.TrimSpace(request.BankName) == "" {
 		log.Printf("❌ [CASHBANK CREATE] Bank name is required for BANK type")
 		ctx.JSON(http.StatusBadRequest, gin.H{
@@ -202,9 +203,9 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	if request.OpeningBalance < 0 {
-		log.Printf("❌ [CASHBANK CREATE] Negative opening balance: %.2f", request.OpeningBalance)
+		log.Printf("??? [CASHBANK CREATE] Negative opening balance: %.2f", request.OpeningBalance)
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error":     "Validation failed",
 			"details":   "Opening balance cannot be negative",
@@ -213,14 +214,28 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
+	if strings.TrimSpace(request.Currency) == "" {
+		request.Currency = "IDR"
+	}
+
+	if strings.ToUpper(strings.TrimSpace(request.Currency)) != "IDR" && request.OpeningBalance > 0 && request.OpeningExchangeRate <= 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":     "Validation failed",
+			"details":   "Opening exchange rate is required for foreign-currency opening balance",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"user_id":   userID,
+		})
+		return
+	}
+
 	account, err := c.cashBankService.CreateCashBankAccount(request, userID)
 	if err != nil {
 		// Determine appropriate status code based on error type
 		statusCode := determineStatusCode(err)
-		
+
 		log.Printf("❌ [CASHBANK CREATE] Failed to create account: %v (Status: %d)", err, statusCode)
-		
+
 		ctx.JSON(statusCode, gin.H{
 			"error":     "Failed to create account",
 			"details":   err.Error(),
@@ -229,10 +244,10 @@ func (c *CashBankController) CreateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
-	log.Printf("✅ [CASHBANK CREATE] Account created successfully: ID=%d, Code=%s, Name=%s", 
+
+	log.Printf("✅ [CASHBANK CREATE] Account created successfully: ID=%d, Code=%s, Name=%s",
 		account.ID, account.Code, account.Name)
-	
+
 	ctx.JSON(http.StatusCreated, account)
 }
 
@@ -255,32 +270,31 @@ func (c *CashBankController) UpdateAccount(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	var request services.CashBankUpdateRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Debug log
-	log.Printf("[CASHBANK UPDATE] ID: %d, Request: Name=%s, BankName=%s, AccountNo=%s, AccountHolderName=%s, Branch=%s", 
+	log.Printf("[CASHBANK UPDATE] ID: %d, Request: Name=%s, BankName=%s, AccountNo=%s, AccountHolderName=%s, Branch=%s",
 		id, request.Name, request.BankName, request.AccountNo, request.AccountHolderName, request.Branch)
-	
+
 	account, err := c.cashBankService.UpdateCashBankAccount(uint(id), request)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to update account",
+			"error":   "Failed to update account",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, account)
 }
-
 
 // ProcessTransfer godoc
 // @Summary Process transfer between accounts
@@ -296,12 +310,12 @@ func (c *CashBankController) ProcessTransfer(ctx *gin.Context) {
 	var request services.TransferRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	userID := ctx.GetUint("user_id")
 	if userID == 0 {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
@@ -309,16 +323,16 @@ func (c *CashBankController) ProcessTransfer(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	transfer, err := c.cashBankService.ProcessTransfer(request, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to process transfer",
+			"error":   "Failed to process transfer",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusCreated, transfer)
 }
 
@@ -336,23 +350,23 @@ func (c *CashBankController) ProcessDeposit(ctx *gin.Context) {
 	var request services.DepositRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	userID := ctx.GetUint("user_id")
-	
+
 	transaction, err := c.cashBankService.ProcessDeposit(request, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to process deposit",
+			"error":   "Failed to process deposit",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusCreated, transaction)
 }
 
@@ -370,23 +384,23 @@ func (c *CashBankController) ProcessWithdrawal(ctx *gin.Context) {
 	var request services.WithdrawalRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	userID := ctx.GetUint("user_id")
-	
+
 	transaction, err := c.cashBankService.ProcessWithdrawal(request, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to process withdrawal",
+			"error":   "Failed to process withdrawal",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusCreated, transaction)
 }
 
@@ -412,15 +426,15 @@ func (c *CashBankController) GetTransactions(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "20"))
-	
+
 	filter := services.TransactionFilter{
 		Page:  page,
 		Limit: limit,
 	}
-	
+
 	// Parse dates if provided
 	if startDate := ctx.Query("start_date"); startDate != "" {
 		if parsedStartDate, err := time.Parse("2006-01-02", startDate); err == nil {
@@ -433,16 +447,16 @@ func (c *CashBankController) GetTransactions(ctx *gin.Context) {
 			filter.EndDate = parsedEndDate.Add(24*time.Hour - time.Nanosecond)
 		}
 	}
-	
+
 	result, err := c.cashBankService.GetTransactions(uint(accountID), filter)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve transactions",
+			"error":   "Failed to retrieve transactions",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, result)
 }
 
@@ -459,12 +473,12 @@ func (c *CashBankController) GetBalanceSummary(ctx *gin.Context) {
 	summary, err := c.cashBankService.GetBalanceSummary()
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve balance summary",
+			"error":   "Failed to retrieve balance summary",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, summary)
 }
 
@@ -481,12 +495,12 @@ func (c *CashBankController) GetRevenueAccounts(ctx *gin.Context) {
 	accounts, err := c.accountService.GetRevenueAccounts(ctx.Request.Context())
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve revenue accounts",
+			"error":   "Failed to retrieve revenue accounts",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, accounts)
 }
 
@@ -501,25 +515,25 @@ func (c *CashBankController) GetRevenueAccounts(ctx *gin.Context) {
 // @Router /api/cashbank/deposit-source-accounts [get]
 func (c *CashBankController) GetDepositSourceAccounts(ctx *gin.Context) {
 	// Get revenue accounts
-revenueAccounts, err := c.accountService.GetRevenueAccounts(ctx.Request.Context())
+	revenueAccounts, err := c.accountService.GetRevenueAccounts(ctx.Request.Context())
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve revenue accounts",
+			"error":   "Failed to retrieve revenue accounts",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Get equity accounts
-equityAccounts, err := c.accountService.GetEquityAccounts(ctx.Request.Context())
+	equityAccounts, err := c.accountService.GetEquityAccounts(ctx.Request.Context())
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve equity accounts",
+			"error":   "Failed to retrieve equity accounts",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Return both revenue and equity accounts in the expected format
 	response := gin.H{
 		"data": gin.H{
@@ -527,7 +541,7 @@ equityAccounts, err := c.accountService.GetEquityAccounts(ctx.Request.Context())
 			"equity":  equityAccounts,
 		},
 	}
-	
+
 	ctx.JSON(http.StatusOK, response)
 }
 
@@ -544,18 +558,17 @@ func (c *CashBankController) GetPaymentAccounts(ctx *gin.Context) {
 	accounts, err := c.cashBankService.GetPaymentAccounts()
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve payment accounts",
+			"error":   "Failed to retrieve payment accounts",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    accounts,
 	})
 }
-
 
 // GetAvailableGLAccounts godoc
 // @Summary Get available GL accounts for cash/bank creation
@@ -569,7 +582,7 @@ func (c *CashBankController) GetPaymentAccounts(ctx *gin.Context) {
 // @Router /api/cashbank/available-gl-accounts [get]
 func (c *CashBankController) GetAvailableGLAccounts(ctx *gin.Context) {
 	accountType := strings.ToUpper(ctx.Query("type"))
-	
+
 	// Validate type parameter
 	if accountType != "CASH" && accountType != "BANK" {
 		ctx.JSON(http.StatusBadRequest, gin.H{
@@ -578,7 +591,7 @@ func (c *CashBankController) GetAvailableGLAccounts(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	accounts, err := c.cashBankService.GetAvailableGLAccounts(accountType)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -587,7 +600,7 @@ func (c *CashBankController) GetAvailableGLAccounts(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    accounts,
