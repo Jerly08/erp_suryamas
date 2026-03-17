@@ -4,12 +4,39 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"app-sistem-akuntansi/models"
 	"gorm.io/gorm"
 )
+
+var suspiciousPathPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)<\s*/?\s*script\b`),
+	regexp.MustCompile(`(?i)javascript:`),
+	regexp.MustCompile(`(?i)vbscript:`),
+	regexp.MustCompile(`(?i)\.\./|\.\.\\`),
+	regexp.MustCompile(`(?i)/etc/passwd|\\windows\\`),
+	regexp.MustCompile(`(?i)(?:^|[^a-z0-9_])union(?:\s|%20)+select(?:[^a-z0-9_]|$)`),
+	regexp.MustCompile(`(?i)(?:^|[^a-z0-9_])select(?:\s|%20)+.+(?:\s|%20)+from(?:[^a-z0-9_]|$)`),
+	regexp.MustCompile(`(?i)(?:^|[^a-z0-9_])(?:or|and)(?:\s|%20)+['"]?\d+['"]?\s*=\s*['"]?\d+['"]?(?:[^a-z0-9_]|$)`),
+	regexp.MustCompile(`(?i)\bexec(?:ute)?\s*\(`),
+}
+
+var suspiciousHeaderValuePattern = regexp.MustCompile(
+	`(?i)(<\s*/?\s*script\b|javascript:|vbscript:|\.\./|\.\.\\|/etc/passwd|\\windows\\|(?:^|[^a-z0-9_])union(?:\s|%20)+select(?:[^a-z0-9_]|$)|(?:^|[^a-z0-9_])select(?:\s|%20)+.+(?:\s|%20)+from(?:[^a-z0-9_]|$)|(?:^|[^a-z0-9_])(?:or|and)(?:\s|%20)+['"]?\d+['"]?\s*=\s*['"]?\d+['"]?(?:[^a-z0-9_]|$)|\bexec(?:ute)?\s*\()`,
+)
+
+var securityInspectableHeaders = map[string]struct{}{
+	"origin":          {},
+	"referer":         {},
+	"user-agent":      {},
+	"x-forwarded-for": {},
+	"x-real-ip":       {},
+	"x-original-url":  {},
+	"x-rewrite-url":   {},
+}
 
 // SecurityService handles security incident tracking and monitoring
 type SecurityService struct {
@@ -107,7 +134,7 @@ func (s *SecurityService) LogSuspiciousRequest(
 
 // LogRequest logs a normal request for monitoring
 func (s *SecurityService) LogRequest(
-	method, path, clientIP, userAgent string, statusCode int, 
+	method, path, clientIP, userAgent string, statusCode int,
 	responseTime, requestSize, responseSize int64, userID *uint, sessionID string,
 ) error {
 	// Only log in development or if detailed logging is enabled
@@ -138,7 +165,7 @@ func (s *SecurityService) CreateAlert(alertType, level, title, message string) e
 	// Check if similar alert exists in last hour
 	var existingAlert models.SystemAlert
 	oneHourAgo := time.Now().Add(-time.Hour)
-	
+
 	result := s.db.Where(
 		"alert_type = ? AND level = ? AND title = ? AND created_at > ? AND acknowledged = false",
 		alertType, level, title, oneHourAgo,
@@ -196,7 +223,7 @@ func (s *SecurityService) IsIPWhitelisted(clientIP string) bool {
 // GetSecurityMetrics gets daily security metrics
 func (s *SecurityService) GetSecurityMetrics(date time.Time) (*models.SecurityMetrics, error) {
 	var metrics models.SecurityMetrics
-	
+
 	// Try to get existing metrics for the date
 	result := s.db.Where("date = ?", date.Format("2006-01-02")).First(&metrics)
 	if result.Error == nil {
@@ -279,7 +306,7 @@ func (s *SecurityService) CleanupOldLogs() error {
 func (s *SecurityService) isHighlySuspicious(reason string) bool {
 	highRiskReasons := []string{
 		"SQL_INJECTION",
-		"XSS_ATTEMPT", 
+		"XSS_ATTEMPT",
 		"DIRECTORY_TRAVERSAL",
 		"MULTIPLE_AUTH_FAILURES",
 		"UNAUTHORIZED_ADMIN_ACCESS",
@@ -306,7 +333,7 @@ func (s *SecurityService) logToFile(message string) {
 	}
 
 	filename := fmt.Sprintf("%s/security_%s.log", logDir, time.Now().Format("2006-01-02"))
-	
+
 	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("Failed to open security log file: %v", err)
@@ -316,7 +343,7 @@ func (s *SecurityService) logToFile(message string) {
 
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	logMessage := fmt.Sprintf("[%s] %s\n", timestamp, message)
-	
+
 	if _, err := file.WriteString(logMessage); err != nil {
 		log.Printf("Failed to write to security log file: %v", err)
 	}
@@ -350,12 +377,12 @@ func (s *SecurityService) SetSecurityConfig(key, value, dataType, environment, d
 	if result.Error == gorm.ErrRecordNotFound {
 		// Create new config
 		config = models.SecurityConfig{
-			Key:               key,
-			Value:             value,
-			DataType:          dataType,
-			Environment:       environment,
-			Description:       description,
-			LastModifiedBy:    userID,
+			Key:            key,
+			Value:          value,
+			DataType:       dataType,
+			Environment:    environment,
+			Description:    description,
+			LastModifiedBy: userID,
 		}
 		return s.db.Create(&config).Error
 	}
@@ -365,35 +392,35 @@ func (s *SecurityService) SetSecurityConfig(key, value, dataType, environment, d
 	config.DataType = dataType
 	config.Description = description
 	config.LastModifiedBy = userID
-	
+
 	return s.db.Save(&config).Error
 }
 
 // DetectSuspiciousPattern detects suspicious patterns in requests
 func (s *SecurityService) DetectSuspiciousPattern(method, path, userAgent, clientIP string, headers map[string]string) (bool, string) {
-	// SQL Injection patterns
-	sqlPatterns := []string{
-		"union", "select", "insert", "update", "delete", "drop", "exec",
-		"script", "javascript:", "vbscript:", "<script", "</script>",
-		"../", ".\\", "/etc/passwd", "\\windows\\",
-	}
-
 	pathLower := strings.ToLower(path)
 	userAgentLower := strings.ToLower(userAgent)
 
-	for _, pattern := range sqlPatterns {
-		if strings.Contains(pathLower, pattern) || strings.Contains(userAgentLower, pattern) {
-			return true, fmt.Sprintf("SQL_INJECTION_PATTERN_DETECTED: %s", pattern)
+	for _, pattern := range suspiciousPathPatterns {
+		if pattern.MatchString(pathLower) {
+			return true, fmt.Sprintf("SUSPICIOUS_PATH_PATTERN: %s", pattern.String())
 		}
 	}
 
-	// Check headers for suspicious content
+	// Check headers for suspicious content on user-controlled headers only.
 	for key, value := range headers {
+		if _, ok := securityInspectableHeaders[strings.ToLower(key)]; !ok {
+			continue
+		}
+
 		valueLower := strings.ToLower(value)
-		for _, pattern := range sqlPatterns {
-			if strings.Contains(valueLower, pattern) {
-				return true, fmt.Sprintf("SUSPICIOUS_HEADER_%s: %s", strings.ToUpper(key), pattern)
-			}
+		if suspiciousHeaderValuePattern.MatchString(valueLower) {
+			return true, fmt.Sprintf("SUSPICIOUS_HEADER_%s", strings.ToUpper(key))
+		}
+
+		// User-Agent keeps a dedicated check below with explicit tool names.
+		if strings.EqualFold(key, "User-Agent") {
+			continue
 		}
 	}
 
