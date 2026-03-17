@@ -66,7 +66,7 @@ class PeriodClosingService {
    */
   async getClosedPeriodsForFilter(): Promise<PeriodFilterOption[]> {
     try {
-      const response = await fetch(API_ENDPOINTS.FISCAL_CLOSING.HISTORY, {
+      const response = await fetch(API_ENDPOINTS.PERIOD_CLOSING.HISTORY, {
         headers: this.getAuthHeaders(),
       });
 

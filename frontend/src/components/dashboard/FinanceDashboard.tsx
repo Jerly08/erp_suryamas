@@ -14,7 +14,8 @@ import {
   Icon,
   Spinner,
   Alert,
-  AlertIcon
+  AlertIcon,
+  useColorModeValue
 } from '@chakra-ui/react';
 import {
   FiDollarSign,
@@ -43,6 +44,12 @@ export const FinanceDashboard = () => {
   const [data, setData] = useState<FinanceDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const cardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const statCardBg = useColorModeValue('white', 'whiteAlpha.100');
+  const statCardShadow = useColorModeValue('sm', 'dark-lg');
 
   useEffect(() => {
     fetchFinanceDashboardData();
@@ -82,7 +89,7 @@ export const FinanceDashboard = () => {
   if (loading) {
     return (
       <Box>
-        <Heading as="h2" size="xl" mb={6} color="gray.800">
+        <Heading as="h2" size="xl" mb={6} color={headingColor}>
           {t('navigation.dashboard')} - {t('users.finance')}
         </Heading>
         <Flex justify="center" align="center" h="200px">
@@ -95,7 +102,7 @@ export const FinanceDashboard = () => {
   if (error) {
     return (
       <Box>
-        <Heading as="h2" size="xl" mb={6} color="gray.800">
+        <Heading as="h2" size="xl" mb={6} color={headingColor}>
           {t('navigation.dashboard')} - {t('users.finance')}
         </Heading>
         <Alert status="error">
@@ -109,7 +116,7 @@ export const FinanceDashboard = () => {
   if (!data) {
     return (
       <Box>
-        <Heading as="h2" size="xl" mb={6} color="gray.800">
+        <Heading as="h2" size="xl" mb={6} color={headingColor}>
           {t('navigation.dashboard')} - {t('users.finance')}
         </Heading>
         <Alert status="info">
@@ -122,31 +129,31 @@ export const FinanceDashboard = () => {
 
   return (
     <Box>
-      <Heading as="h2" size="xl" mb={6} color="gray.800">
+      <Heading as="h2" size="xl" mb={6} color={headingColor}>
         {t('navigation.dashboard')} - {t('users.finance')}
       </Heading>
 
       <Flex gap={4} flexWrap="wrap" mt={4}>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="220px">
+        <Box bg={statCardBg} border="1px" borderColor={cardBorderColor} p={4} borderRadius="lg" boxShadow={statCardShadow} flex="1" minW="220px">
           <Heading as="h3" size="sm" mb={2} color="orange.600">{t('dashboard.stats.accountsReceivable')}</Heading>
           <Text fontSize="2xl" fontWeight="bold" color="orange.600">{data.invoices_pending_payment}</Text>
-          <Text fontSize="sm" color="gray.500" mt={1}>
+          <Text fontSize="sm" color={mutedTextColor} mt={1}>
             {t('common.labels.total')}: {formatCurrency(data.outstanding_receivables)}
           </Text>
         </Box>
 
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="220px">
+        <Box bg={statCardBg} border="1px" borderColor={cardBorderColor} p={4} borderRadius="lg" boxShadow={statCardShadow} flex="1" minW="220px">
           <Heading as="h3" size="sm" mb={2} color="red.600">{t('dashboard.stats.accountsPayable')}</Heading>
           <Text fontSize="2xl" fontWeight="bold" color="red.600">{data.invoices_not_paid}</Text>
-          <Text fontSize="sm" color="gray.500" mt={1}>
+          <Text fontSize="sm" color={mutedTextColor} mt={1}>
             {t('common.labels.total')}: {formatCurrency(data.outstanding_payables)}
           </Text>
         </Box>
 
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="220px">
+        <Box bg={statCardBg} border="1px" borderColor={cardBorderColor} p={4} borderRadius="lg" boxShadow={statCardShadow} flex="1" minW="220px">
           <Heading as="h3" size="sm" mb={2} color="blue.600">{t('dashboard.pendingApprovals')}</Heading>
           <Text fontSize="2xl" fontWeight="bold" color="blue.600">{data.purchases_pending_approval + data.sales_pending_approval}</Text>
-          <Text fontSize="sm" color="gray.500" mt={1}>
+          <Text fontSize="sm" color={mutedTextColor} mt={1}>
             {data.purchases_pending_approval > 0 && `${data.purchases_pending_approval} ${t('purchases.title')}`}
             {data.purchases_pending_approval > 0 && data.sales_pending_approval > 0 && ', '}
             {data.sales_pending_approval > 0 && `${data.sales_pending_approval} ${t('sales.title')}`}
@@ -155,7 +162,7 @@ export const FinanceDashboard = () => {
         </Box>
       </Flex>
 
-      <Card mt={6}>
+      <Card mt={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
         <CardHeader>
           <Heading size="md" display="flex" alignItems="center">
             <Icon as={FiPlus} mr={2} color="blue.500" />

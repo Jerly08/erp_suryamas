@@ -40,6 +40,31 @@ let refreshAttempts = 0;
 const MAX_REFRESH_ATTEMPTS = 3;
 const failedQueue: Array<{ resolve: (token: string) => void, reject: (error: any) => void }> = [];
 let authExpiredModalShown = false;
+const AUTH_SESSION_EXPIRED_CODE = 'AUTH_SESSION_EXPIRED';
+
+function createAuthExpiredError(originalError?: any) {
+  const authError = new Error('Session expired. Please login again.');
+  (authError as any).isAuthError = true;
+  (authError as any).code = AUTH_SESSION_EXPIRED_CODE;
+  (authError as any).suppressToast = true;
+  (authError as any).skipToast = true;
+  if (originalError) {
+    (authError as any).originalError = originalError;
+  }
+  return authError;
+}
+
+function clearVisibleToasts() {
+  if (typeof document === 'undefined') return;
+
+  const toastManagers = document.querySelectorAll('[id^="chakra-toast-manager"]');
+  toastManagers.forEach((node) => {
+    if (node instanceof HTMLElement) {
+      node.innerHTML = '';
+      node.style.display = 'none';
+    }
+  });
+}
 
 function processQueue(error: any, token: string | null = null) {
   failedQueue.forEach(({ resolve, reject }) => {
@@ -71,14 +96,14 @@ api.interceptors.response.use(
         error.response?.data?.code === 'SESSION_DEACTIVATED' ||
         error.response?.data?.code === 'INVALID_SESSION') {
         console.log('Session-related error detected:', error.response?.data?.code);
-        // Clear auth data and redirect to login immediately
+        // Clear auth data and show modal only once
         if (typeof window !== 'undefined') {
           window.localStorage.removeItem('token');
           window.localStorage.removeItem('refreshToken');
           window.localStorage.removeItem('user');
-          window.location.href = '/login';
         }
-        return Promise.reject(error);
+        await showAuthExpiredModal();
+        return Promise.reject(createAuthExpiredError(error));
       }
     } else if (status === 403) {
       console.log('API Interceptor - 403 Forbidden on:', originalRequest.url);
@@ -108,12 +133,8 @@ api.interceptors.response.use(
         refreshAttempts = 0;
 
         // Show auth expired modal
-        showAuthExpiredModal();
-
-        const authError = new Error('Session expired. Please login again.');
-        (authError as any).isAuthError = true;
-        (authError as any).code = 'AUTH_SESSION_EXPIRED';
-        return Promise.reject(authError);
+        await showAuthExpiredModal();
+        return Promise.reject(createAuthExpiredError(error));
       }
 
       refreshAttempts++;
@@ -131,13 +152,8 @@ api.interceptors.response.use(
           window.localStorage.removeItem('user');
 
           // Show auth expired modal
-          showAuthExpiredModal();
-
-          // Return a more specific error for the frontend
-          const authError = new Error('Session expired. Please login again.');
-          (authError as any).isAuthError = true;
-          (authError as any).code = 'AUTH_SESSION_EXPIRED';
-          return Promise.reject(authError);
+          await showAuthExpiredModal();
+          return Promise.reject(createAuthExpiredError(error));
         }
 
         if (!isRefreshing) {
@@ -201,7 +217,7 @@ api.interceptors.response.use(
               window.localStorage.removeItem('user');
 
               // Show auth expired modal
-              showAuthExpiredModal();
+              await showAuthExpiredModal();
 
               processQueue(refreshError, null);
               throw refreshError;
@@ -240,14 +256,8 @@ api.interceptors.response.use(
         window.localStorage.removeItem('user');
 
         // Show auth expired modal
-        showAuthExpiredModal();
-
-        // Return a more specific error for the frontend
-        const authError = new Error('Session expired. Please login again.');
-        (authError as any).isAuthError = true;
-        (authError as any).code = 'AUTH_SESSION_EXPIRED';
-        (authError as any).originalError = refreshError;
-        return Promise.reject(authError);
+        await showAuthExpiredModal();
+        return Promise.reject(createAuthExpiredError(refreshError));
       }
     }
 
@@ -259,10 +269,12 @@ api.interceptors.response.use(
 // Function to show auth expired modal
 async function showAuthExpiredModal() {
   if (authExpiredModalShown) {
+    clearVisibleToasts();
     return; // Prevent showing multiple modals
   }
 
   authExpiredModalShown = true;
+  clearVisibleToasts();
 
   try {
     // Dynamically import React and ReactDOM only when needed
@@ -278,6 +290,7 @@ async function showAuthExpiredModal() {
     const modalRoot = document.createElement('div');
     modalRoot.id = 'auth-expired-modal-root';
     document.body.appendChild(modalRoot);
+    const toastCleanupInterval = window.setInterval(clearVisibleToasts, 200);
 
     // Render the modal
     const root = ReactDOM.createRoot(modalRoot);
@@ -290,6 +303,7 @@ async function showAuthExpiredModal() {
           isOpen: true,
           onLoginRedirect: () => {
             authExpiredModalShown = false;
+            window.clearInterval(toastCleanupInterval);
             // Clean up modal
             root.unmount();
             document.body.removeChild(modalRoot);
@@ -308,6 +322,8 @@ async function showAuthExpiredModal() {
 }
 
 // Export function for manual use if needed
-export { showAuthExpiredModal };
+const isAuthExpiredModalActive = () => authExpiredModalShown;
+
+export { showAuthExpiredModal, isAuthExpiredModalActive };
 
 export default api;

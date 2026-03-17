@@ -78,8 +78,22 @@ export default function PurchaseRequestsPage() {
     // Theme colors
     const bgCard = useColorModeValue('white', 'gray.800');
     const textColor = useColorModeValue('gray.700', 'white');
+    const mutedTextColor = useColorModeValue('gray.500', 'gray.400');
     const borderColor = useColorModeValue('gray.200', 'gray.700');
     const tableHeaderBg = useColorModeValue('gray.50', 'gray.700');
+    const inputBg = useColorModeValue('white', 'gray.700');
+    const inputBorderColor = useColorModeValue('gray.300', 'gray.600');
+    const modalBg = useColorModeValue('white', 'gray.800');
+    const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const modalFooterBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+    const infoPanelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const notePanelBg = useColorModeValue('blue.50', 'blue.900');
+    const notePanelColor = useColorModeValue('blue.800', 'blue.100');
+    const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const fieldFocusStyles = {
+        borderColor: 'blue.400',
+        boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
+    };
 
     useEffect(() => {
         fetchData();
@@ -234,7 +248,7 @@ export default function PurchaseRequestsPage() {
                     <Flex justify="space-between" align="center" mb={6}>
                         <Box>
                             <Heading size="lg" color={textColor}>Purchase Requests</Heading>
-                            <Text color="gray.500" mt={1}>Kelola Pengajuan Pembelian Barang/Jasa</Text>
+                            <Text color={mutedTextColor} mt={1}>Kelola Pengajuan Pembelian Barang/Jasa</Text>
                         </Box>
                         {canCreate('purchase_requests') && (
                             <Button leftIcon={<FiPlus />} colorScheme="blue" onClick={handleOpenCreate}>
@@ -246,8 +260,8 @@ export default function PurchaseRequestsPage() {
                     <Box bg={bgCard} rounded="lg" shadow="sm" borderWidth="1px" borderColor={borderColor}>
                         <Flex p={4} borderBottomWidth="1px" borderColor={borderColor}>
                             <InputGroup maxW="300px">
-                                <InputLeftElement pointerEvents="none"><Icon as={FiSearch} color="gray.400" /></InputLeftElement>
-                                <Input placeholder="Cari by Nomor PR atau Proyek..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                                <InputLeftElement pointerEvents="none"><Icon as={FiSearch} color={mutedTextColor} /></InputLeftElement>
+                                <Input placeholder="Cari by Nomor PR atau Proyek..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} _placeholder={{ color: mutedTextColor }} />
                             </InputGroup>
                         </Flex>
 
@@ -271,13 +285,13 @@ export default function PurchaseRequestsPage() {
                                         <Tr><Td colSpan={7} textAlign="center" py={4}>Tidak ada pengajuan ditemukan</Td></Tr>
                                     ) : (
                                         filteredRequests.map((pr) => (
-                                            <Tr key={pr.id}>
+                                            <Tr key={pr.id} _hover={{ bg: rowHoverBg }}>
                                                 <Td fontWeight="bold" color="blue.500" cursor="pointer" onClick={() => handleView(pr)}>
                                                     {pr.pr_number}
                                                 </Td>
                                                 <Td>{pr.requester?.first_name} {pr.requester?.last_name}</Td>
                                                 <Td>
-                                                    {pr.department && <Text fontSize="xs">{pr.department}</Text>}
+                                                    {pr.department && <Text fontSize="xs" color={mutedTextColor}>{pr.department}</Text>}
                                                     {pr.project && <Badge colorScheme="purple" fontSize="xs" mt={1}>{pr.project.code} - {pr.project.name}</Badge>}
                                                 </Td>
                                                 <Td>{new Date(pr.created_at).toLocaleDateString()}</Td>
@@ -313,18 +327,18 @@ export default function PurchaseRequestsPage() {
                 {/* MODAL CREATE PR */}
                 <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="4xl">
                     <ModalOverlay />
-                    <ModalContent>
-                        <ModalHeader>Buat Purchase Request Baru</ModalHeader>
-                        <ModalCloseButton />
+                    <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+                        <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>Buat Purchase Request Baru</ModalHeader>
+                        <ModalCloseButton color={textColor} />
                         <ModalBody>
                             <Grid templateColumns={{ base: '1fr', md: 'repeat(2, 1fr)' }} gap={4} mb={6}>
                                 <FormControl>
-                                    <FormLabel>Departemen</FormLabel>
-                                    <Input value={department} onChange={e => setDepartment(e.target.value)} placeholder="Opsional" />
+                                    <FormLabel color={textColor}>Departemen</FormLabel>
+                                    <Input value={department} onChange={e => setDepartment(e.target.value)} placeholder="Opsional" bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} _placeholder={{ color: mutedTextColor }} />
                                 </FormControl>
                                 <FormControl>
-                                    <FormLabel>Tautkan Ke Proyek</FormLabel>
-                                    <Select placeholder="-- Pilih Proyek (Opsional) --" value={projectId} onChange={e => setProjectId(e.target.value)}>
+                                    <FormLabel color={textColor}>Tautkan Ke Proyek</FormLabel>
+                                    <Select placeholder="-- Pilih Proyek (Opsional) --" value={projectId} onChange={e => setProjectId(e.target.value)} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles}>
                                         {projects.map(p => (
                                             <option key={p.id} value={p.id}>{p.code} - {p.name}</option>
                                         ))}
@@ -332,15 +346,15 @@ export default function PurchaseRequestsPage() {
                                 </FormControl>
                             </Grid>
 
-                            <Box border="1px" borderColor={borderColor} rounded="md" p={4} mb={4}>
-                                <Text fontWeight="bold" mb={4}>Rincian Kebutuhan (Items)</Text>
+                            <Box border="1px" borderColor={borderColor} rounded="md" p={4} mb={4} bg={infoPanelBg}>
+                                <Text fontWeight="bold" mb={4} color={textColor}>Rincian Kebutuhan (Items)</Text>
                                 <Table size="sm" variant="unstyled">
                                     <Thead borderBottom="1px" borderColor={borderColor}>
                                         <Tr>
-                                            <Th color="gray.500">Item / Benchmark</Th>
-                                            <Th color="gray.500" w="100px">Qty</Th>
-                                            <Th color="gray.500" w="180px">Estimasi Harga Satuan</Th>
-                                            <Th color="gray.500">Catatan</Th>
+                                            <Th color={mutedTextColor}>Item / Benchmark</Th>
+                                            <Th color={mutedTextColor} w="100px">Qty</Th>
+                                            <Th color={mutedTextColor} w="180px">Estimasi Harga Satuan</Th>
+                                            <Th color={mutedTextColor}>Catatan</Th>
                                             <Th w="50px"></Th>
                                         </Tr>
                                     </Thead>
@@ -348,7 +362,7 @@ export default function PurchaseRequestsPage() {
                                         {items.map((item, index) => (
                                             <Tr key={index}>
                                                 <Td p={1}>
-                                                    <Select placeholder="Pilih Item/Barang" value={item.product_id} onChange={e => handleItemChange(index, 'product_id', e.target.value)}>
+                                                    <Select placeholder="Pilih Item/Barang" value={item.product_id} onChange={e => handleItemChange(index, 'product_id', e.target.value)} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles}>
                                                         {products.map(p => (
                                                             <option key={p.id} value={p.id}>{p.code} - {p.name}</option>
                                                         ))}
@@ -370,6 +384,11 @@ export default function PurchaseRequestsPage() {
                                                             const cleanVal = e.target.value.replace(/[^0-9]/g, '');
                                                             handleItemChange(index, 'quantity', cleanVal);
                                                         }}
+                                                        bg={inputBg}
+                                                        borderColor={inputBorderColor}
+                                                        color={textColor}
+                                                        _hover={{ borderColor: inputBorderColor }}
+                                                        _focusVisible={fieldFocusStyles}
                                                     />
                                                 </Td>
                                                 <Td p={1}>
@@ -378,7 +397,7 @@ export default function PurchaseRequestsPage() {
                                                         onChange={val => handleItemChange(index, 'estimated_price', val.toString())}
                                                     />
                                                 </Td>
-                                                <Td p={1}><Input placeholder="Cth: Mendesak" value={item.notes} onChange={e => handleItemChange(index, 'notes', e.target.value)} /></Td>
+                                                <Td p={1}><Input placeholder="Cth: Mendesak" value={item.notes} onChange={e => handleItemChange(index, 'notes', e.target.value)} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} _placeholder={{ color: mutedTextColor }} /></Td>
                                                 <Td p={1} textAlign="right">
                                                     <IconButton aria-label="Remove" icon={<FiTrash2 />} size="sm" colorScheme="red" variant="ghost" onClick={() => handleRemoveItem(index)} />
                                                 </Td>
@@ -390,11 +409,11 @@ export default function PurchaseRequestsPage() {
                             </Box>
 
                             <FormControl>
-                                <FormLabel>Catatan Umum</FormLabel>
-                                <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} />
+                                <FormLabel color={textColor}>Catatan Umum</FormLabel>
+                                <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                             </FormControl>
                         </ModalBody>
-                        <ModalFooter bg="gray.50" borderTop="1px" borderColor="gray.200" borderBottomRadius="md">
+                        <ModalFooter bg={modalFooterBg} borderTop="1px" borderColor={borderColor} borderBottomRadius="md">
                             <Button variant="ghost" mr={3} onClick={onCreateClose}>Batal</Button>
                             <Button colorScheme="blue" isLoading={isSubmitting} onClick={handleCreateSubmit}>Kirim Pengajuan</Button>
                         </ModalFooter>
@@ -404,36 +423,36 @@ export default function PurchaseRequestsPage() {
                 {/* MODAL VIEW / DETAILS */}
                 <Modal isOpen={isViewOpen} onClose={onViewClose} size="3xl">
                     <ModalOverlay />
-                    <ModalContent>
-                        <ModalHeader display="flex" justifyContent="space-between" alignItems="center">
+                    <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+                        <ModalHeader display="flex" justifyContent="space-between" alignItems="center" bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>
                             <Text>Detail Purchase Request: {selectedRequest?.pr_number}</Text>
                             <Box mr={6}>{selectedRequest && getStatusBadge(selectedRequest.status)}</Box>
                         </ModalHeader>
-                        <ModalCloseButton />
+                        <ModalCloseButton color={textColor} />
                         <ModalBody pb={6}>
                             {selectedRequest && (
-                                <Grid templateColumns="repeat(2, 1fr)" gap={4} mb={6} bg="gray.50" p={4} rounded="md">
+                                <Grid templateColumns="repeat(2, 1fr)" gap={4} mb={6} bg={infoPanelBg} p={4} rounded="md">
                                     <Box>
-                                        <Text fontSize="sm" color="gray.500">Pemohon</Text>
+                                        <Text fontSize="sm" color={mutedTextColor}>Pemohon</Text>
                                         <Text fontWeight="medium">{selectedRequest.requester?.first_name} {selectedRequest.requester?.last_name}</Text>
                                     </Box>
                                     <Box>
-                                        <Text fontSize="sm" color="gray.500">Departemen</Text>
+                                        <Text fontSize="sm" color={mutedTextColor}>Departemen</Text>
                                         <Text fontWeight="medium">{selectedRequest.department || '-'}</Text>
                                     </Box>
                                     <Box>
-                                        <Text fontSize="sm" color="gray.500">Tanggal Pengajuan</Text>
+                                        <Text fontSize="sm" color={mutedTextColor}>Tanggal Pengajuan</Text>
                                         <Text fontWeight="medium">{new Date(selectedRequest.created_at).toLocaleString()}</Text>
                                     </Box>
                                     {selectedRequest.project && (
                                         <Box>
-                                            <Text fontSize="sm" color="gray.500">Dialokasikan ke Proyek</Text>
+                                            <Text fontSize="sm" color={mutedTextColor}>Dialokasikan ke Proyek</Text>
                                             <Text fontWeight="medium" color="purple.600">{selectedRequest.project.code} - {selectedRequest.project.name}</Text>
                                         </Box>
                                     )}
                                     {selectedRequest.status === 'APPROVED' && selectedRequest.approver && (
                                         <Box>
-                                            <Text fontSize="sm" color="gray.500">Disetujui Oleh</Text>
+                                            <Text fontSize="sm" color={mutedTextColor}>Disetujui Oleh</Text>
                                             <Text fontWeight="medium" color="green.600">
                                                 {selectedRequest.approver.first_name} {selectedRequest.approver.last_name}
                                                 {selectedRequest.approved_at && ` pada ${new Date(selectedRequest.approved_at).toLocaleString()}`}
@@ -458,7 +477,7 @@ export default function PurchaseRequestsPage() {
                                         <Tr key={it.id}>
                                             <Td>
                                                 <Text fontWeight="medium">{it.product?.name}</Text>
-                                                {it.notes && <Text fontSize="xs" color="gray.500">{it.notes}</Text>}
+                                                {it.notes && <Text fontSize="xs" color={mutedTextColor}>{it.notes}</Text>}
                                             </Td>
                                             <Td isNumeric>{it.quantity}</Td>
                                             <Td isNumeric>{formatCurrency(it.estimated_price)}</Td>
@@ -475,11 +494,11 @@ export default function PurchaseRequestsPage() {
                             {selectedRequest?.notes && (
                                 <Box mt={4}>
                                     <Text fontSize="sm" fontWeight="bold">Catatan:</Text>
-                                    <Text mt={1} p={3} bg="blue.50" color="blue.800" rounded="md" fontSize="sm">{selectedRequest.notes}</Text>
+                                    <Text mt={1} p={3} bg={notePanelBg} color={notePanelColor} rounded="md" fontSize="sm">{selectedRequest.notes}</Text>
                                 </Box>
                             )}
                         </ModalBody>
-                        <ModalFooter>
+                        <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
                             {canApprove('purchase_requests') && selectedRequest?.status === 'PENDING_APPROVAL' && (
                                 <Flex gap={2}>
                                     <Button colorScheme="red" variant="outline" onClick={() => handleRejectInit(selectedRequest)}>Tolak Request</Button>
@@ -493,14 +512,14 @@ export default function PurchaseRequestsPage() {
                 {/* MODAL REJECT */}
                 <Modal isOpen={isRejectOpen} onClose={onRejectClose}>
                     <ModalOverlay />
-                    <ModalContent>
-                        <ModalHeader>Alasan Penolakan</ModalHeader>
-                        <ModalCloseButton />
+                    <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+                        <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>Alasan Penolakan</ModalHeader>
+                        <ModalCloseButton color={textColor} />
                         <ModalBody>
-                            <Text mb={4}>Mengapa Anda menolak Purchase Request {selectedRequest?.pr_number}?</Text>
-                            <Textarea placeholder="Alasan penolakan (misal: Over-budget, item tidak diperlukan)" value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={4} />
+                            <Text mb={4} color={textColor}>Mengapa Anda menolak Purchase Request {selectedRequest?.pr_number}?</Text>
+                            <Textarea placeholder="Alasan penolakan (misal: Over-budget, item tidak diperlukan)" value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={4} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} _placeholder={{ color: mutedTextColor }} />
                         </ModalBody>
-                        <ModalFooter>
+                        <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
                             <Button variant="ghost" mr={3} onClick={onRejectClose}>Batal</Button>
                             <Button colorScheme="red" onClick={handleRejectSubmit} isLoading={isSubmitting}>Kirim Penolakan</Button>
                         </ModalFooter>

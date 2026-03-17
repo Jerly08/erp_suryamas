@@ -46,7 +46,8 @@ import {
   MenuButton,
   MenuList,
   MenuItem,
-  Icon
+  Icon,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiSearch, FiEdit, FiTrash2, FiUpload, FiEye, FiPlus, FiGrid, FiPackage, FiMapPin, FiSettings, FiChevronDown } from 'react-icons/fi';
 import ProductService, { Product, Category, WarehouseLocation } from '@/services/productService';
@@ -91,6 +92,30 @@ const ProductCatalog: React.FC = () => {
   const [tabIndex, setTabIndex] = useState(0);
   const [defaultIsAssembly, setDefaultIsAssembly] = useState(false);
   const toast = useToast();
+  const pageTitleColor = useColorModeValue('gray.800', 'var(--text-primary)');
+  const cardBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const subtleBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const tableHeadBg = useColorModeValue('gray.50', 'var(--bg-tertiary)');
+  const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
+  const textColor = useColorModeValue('gray.700', 'var(--text-primary)');
+  const mutedTextColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+  const placeholderColor = useColorModeValue('gray.400', 'var(--text-secondary)');
+  const searchIconColor = useColorModeValue('gray.400', 'gray.500');
+  const inputBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const hoverBorderColor = useColorModeValue('gray.300', 'gray.500');
+  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const stockTextColor = useColorModeValue('gray.800', 'gray.100');
+  const noImageTextColor = useColorModeValue('gray.400', 'gray.500');
+  const noteBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const imageCardBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const labelColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+  const sectionTitleColor = useColorModeValue('blue.600', 'blue.200');
+  const infoPanelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const infoPanelTitleColor = useColorModeValue('gray.700', 'gray.100');
+  const successColor = useColorModeValue('green.600', 'green.300');
+  const warningColor = useColorModeValue('orange.600', 'orange.300');
+  const salePriceColor = useColorModeValue('blue.600', 'blue.300');
+  const modalBg = useColorModeValue('white', 'var(--bg-secondary)');
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -352,7 +377,9 @@ const ProductCatalog: React.FC = () => {
       <Box>
         <Flex justify="space-between" align="center" mb={6}>
           <Box>
-            <Heading as="h1" size="xl" mb={2}>{getLabel('products')} - Katalog Items & Price Benchmarks</Heading>
+            <Heading as="h1" size="xl" mb={2} color={pageTitleColor}>
+              {getLabel('products')} - Katalog Items & Price Benchmarks
+            </Heading>
           </Box>
 
           {/* Management Buttons */}
@@ -393,7 +420,7 @@ const ProductCatalog: React.FC = () => {
 
         {/* Tabs for Component vs Assembly Separation */}
         <Tabs variant="enclosed" colorScheme="blue" index={tabIndex} onChange={(index) => setTabIndex(index)} mb={6}>
-          <TabList>
+          <TabList borderColor={borderColor}>
             <Tab fontWeight="bold">🧱 Komponen & Bahan Baku</Tab>
             <Tab fontWeight="bold">🎯 Master Produk Rakitan</Tab>
           </TabList>
@@ -405,12 +432,18 @@ const ProductCatalog: React.FC = () => {
             {/* Search */}
             <InputGroup maxW="400px">
               <InputLeftElement pointerEvents="none">
-                <FiSearch color="gray.300" />
+                <FiSearch color={searchIconColor} />
               </InputLeftElement>
               <Input
                 placeholder={t('products.searchProducts')}
                 value={searchTerm}
                 onChange={handleSearchChange}
+                bg={inputBg}
+                color={textColor}
+                borderColor={borderColor}
+                _hover={{ borderColor: hoverBorderColor }}
+                _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }}
+                _placeholder={{ color: placeholderColor }}
               />
             </InputGroup>
 
@@ -420,6 +453,11 @@ const ProductCatalog: React.FC = () => {
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
               maxW="200px"
+              bg={inputBg}
+              color={textColor}
+              borderColor={borderColor}
+              _hover={{ borderColor: hoverBorderColor }}
+              _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }}
             >
               {categories.map(category => (
                 <option key={category.id} value={category.id}>
@@ -435,6 +473,11 @@ const ProductCatalog: React.FC = () => {
                 value={warehouseLocationFilter}
                 onChange={(e) => setWarehouseLocationFilter(e.target.value)}
                 maxW="200px"
+                bg={inputBg}
+                color={textColor}
+                borderColor={borderColor}
+                _hover={{ borderColor: hoverBorderColor }}
+                _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }}
               >
                 {warehouseLocations.map(location => (
                   <option key={location.id} value={location.id}>
@@ -450,6 +493,11 @@ const ProductCatalog: React.FC = () => {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               maxW="150px"
+              bg={inputBg}
+              color={textColor}
+              borderColor={borderColor}
+              _hover={{ borderColor: hoverBorderColor }}
+              _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }}
             >
               <option value="active">{t('products.active')}</option>
               <option value="inactive">{t('products.inactive')}</option>
@@ -464,6 +512,11 @@ const ProductCatalog: React.FC = () => {
                 setSortOrder(order as 'asc' | 'desc');
               }}
               maxW="180px"
+              bg={inputBg}
+              color={textColor}
+              borderColor={borderColor}
+              _hover={{ borderColor: hoverBorderColor }}
+              _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }}
             >
               <option value="name-asc">{t('products.sort.nameAZ')}</option>
               <option value="name-desc">{t('products.sort.nameZA')}</option>
@@ -494,113 +547,115 @@ const ProductCatalog: React.FC = () => {
           </Flex>
 
           {/* Results Summary */}
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color={mutedTextColor}>
             {t('products.showing')} {filteredAndSortedProducts.length} dari {totalItems} {t('products.product')}
             {(searchTerm || categoryFilter || warehouseLocationFilter || statusFilter) ? ` ${t('products.filtered')}` : ''}
           </Text>
         </Box>
 
-        <Table variant="simple">
-          <Thead>
-            <Tr>
-              <Th>{t('products.table.productId')}</Th>
-              <Th>{t('products.table.name')}</Th>
-              <Th>{t('products.table.category')}</Th>
-              {hasInventory && <Th>{t('products.table.warehouseLocation')}</Th>}
-              {hasInventory && <Th>Stok</Th>}
-              {hasInventory && (
-                <Th>{tabIndex === 1 ? 'Harga Pokok / HPP' : 'Acuan Harga Beli'}</Th>
-              )}
-              <Th>Acuan Harga Jual</Th>
-              <Th>{t('products.table.actions')}</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {filteredAndSortedProducts.map((product) => (
-              <Tr key={product.id}>
-                <Td>{product.code}</Td>
-                <Td>{product.name}</Td>
-                <Td>{product.category?.name}</Td>
-                {hasInventory && <Td>{product.warehouse_location?.name || t('products.table.noLocation')}</Td>}
+        <Box bg={cardBg} border="1px solid" borderColor={borderColor} borderRadius="lg" overflowX="auto">
+          <Table variant="simple">
+            <Thead bg={tableHeadBg}>
+              <Tr>
+                <Th color={mutedTextColor} borderColor={borderColor}>{t('products.table.productId')}</Th>
+                <Th color={mutedTextColor} borderColor={borderColor}>{t('products.table.name')}</Th>
+                <Th color={mutedTextColor} borderColor={borderColor}>{t('products.table.category')}</Th>
+                {hasInventory && <Th color={mutedTextColor} borderColor={borderColor}>{t('products.table.warehouseLocation')}</Th>}
+                {hasInventory && <Th color={mutedTextColor} borderColor={borderColor}>Stok</Th>}
                 {hasInventory && (
-                  <Td>
-                    {product.is_assembly ? (
-                      <Text color="gray.500" fontStyle="italic">
-                        Tidak Perlu Stok (Auto-Kit)
-                      </Text>
-                    ) : (
-                      <Text fontWeight="bold" color={product.stock <= (product.min_stock || 0) ? "red.500" : "gray.800"}>
-                        {product.stock} {product.unit}
-                      </Text>
+                  <Th color={mutedTextColor} borderColor={borderColor}>{tabIndex === 1 ? 'Harga Pokok / HPP' : 'Acuan Harga Beli'}</Th>
+                )}
+                <Th color={mutedTextColor} borderColor={borderColor}>Acuan Harga Jual</Th>
+                <Th color={mutedTextColor} borderColor={borderColor}>{t('products.table.actions')}</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {filteredAndSortedProducts.map((product) => (
+                <Tr key={product.id} _hover={{ bg: rowHoverBg }}>
+                  <Td color={textColor} borderColor={borderColor}>{product.code}</Td>
+                  <Td color={textColor} borderColor={borderColor}>{product.name}</Td>
+                  <Td color={textColor} borderColor={borderColor}>{product.category?.name}</Td>
+                  {hasInventory && <Td color={textColor} borderColor={borderColor}>{product.warehouse_location?.name || t('products.table.noLocation')}</Td>}
+                  {hasInventory && (
+                    <Td borderColor={borderColor}>
+                      {product.is_assembly ? (
+                        <Text color={mutedTextColor} fontStyle="italic">
+                          Tidak Perlu Stok (Auto-Kit)
+                        </Text>
+                      ) : (
+                        <Text fontWeight="bold" color={product.stock <= (product.min_stock || 0) ? "red.500" : stockTextColor}>
+                          {product.stock} {product.unit}
+                        </Text>
+                      )}
+                    </Td>
+                  )}
+                  {hasInventory && (
+                    <Td color={tabIndex === 1 ? warningColor : successColor} fontWeight="semibold" borderColor={borderColor}>
+                      {formatCurrencyDetailed(tabIndex === 1 ? (product.cost_price || 0) : (product.purchase_price || 0))}
+                    </Td>
+                  )}
+                  <Td color={salePriceColor} fontWeight="semibold" borderColor={borderColor}>{formatCurrencyDetailed(product.sale_price || 0)}</Td>
+                  <Td borderColor={borderColor}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      leftIcon={<FiEye />}
+                      mr={2}
+                      onClick={() => handleViewDetails(product)}
+                    >
+                      {t('common.view')}
+                    </Button>
+                    {canEdit && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          leftIcon={<FiEdit />}
+                          mr={2}
+                          onClick={() => handleEditProduct(product)}
+                        >
+                          {t('common.edit')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          colorScheme="red"
+                          leftIcon={<FiTrash2 />}
+                          mr={2}
+                          onClick={() => handleDeleteProduct(product)}
+                        >
+                          {t('common.delete')}
+                        </Button>
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => handleFileChange(e, product.id!)}
+                          style={{ display: 'none' }}
+                          id={`file-upload-${product.id}`}
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          leftIcon={<FiUpload />}
+                          as="label"
+                          htmlFor={`file-upload-${product.id}`}
+                          cursor="pointer"
+                        >
+                          {product.image_path ? t('products.imageUpload.updateImage') : t('products.imageUpload.uploadImage')}
+                        </Button>
+                      </>
                     )}
                   </Td>
-                )}
-                {hasInventory && (
-                  <Td color={tabIndex === 1 ? "orange.600" : "green.600"} fontWeight="semibold">
-                    {formatCurrencyDetailed(tabIndex === 1 ? (product.cost_price || 0) : (product.purchase_price || 0))}
-                  </Td>
-                )}
-                <Td color="blue.600" fontWeight="semibold">{formatCurrencyDetailed(product.sale_price || 0)}</Td>
-                <Td>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    leftIcon={<FiEye />}
-                    mr={2}
-                    onClick={() => handleViewDetails(product)}
-                  >
-                    {t('common.view')}
-                  </Button>
-                  {canEdit && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        leftIcon={<FiEdit />}
-                        mr={2}
-                        onClick={() => handleEditProduct(product)}
-                      >
-                        {t('common.edit')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        colorScheme="red"
-                        leftIcon={<FiTrash2 />}
-                        mr={2}
-                        onClick={() => handleDeleteProduct(product)}
-                      >
-                        {t('common.delete')}
-                      </Button>
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleFileChange(e, product.id!)}
-                        style={{ display: 'none' }}
-                        id={`file-upload-${product.id}`}
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        leftIcon={<FiUpload />}
-                        as="label"
-                        htmlFor={`file-upload-${product.id}`}
-                        cursor="pointer"
-                      >
-                        {product.image_path ? t('products.imageUpload.updateImage') : t('products.imageUpload.uploadImage')}
-                      </Button>
-                    </>
-                  )}
-                </Td>
-              </Tr>
-            ))}
-          </Tbody>
-        </Table>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+        </Box>
 
         {/* Pagination Controls */}
         {totalPages > 1 && (
-          <Flex justify="space-between" align="center" mt={4} bg="gray.50" p={3} borderRadius="md" border="1px" borderColor="gray.200">
-            <Text fontSize="sm" color="gray.600">
+          <Flex justify="space-between" align="center" mt={4} bg={subtleBg} p={3} borderRadius="md" border="1px" borderColor={borderColor}>
+            <Text fontSize="sm" color={mutedTextColor}>
               Menampilkan Halaman {currentPage} dari {totalPages} ({totalItems} total data)
             </Text>
             <HStack>
@@ -626,8 +681,8 @@ const ProductCatalog: React.FC = () => {
         {canEdit && (
           <Modal isOpen={isModalOpen || !!selectedProduct} onClose={handleCloseModal} size="6xl">
             <ModalOverlay />
-            <ModalContent>
-              <ModalHeader>
+            <ModalContent bg={modalBg} border="1px solid" borderColor={borderColor}>
+              <ModalHeader color={textColor} borderBottom="1px solid" borderColor={borderColor}>
                 {selectedProduct ? t('products.editProduct') : t('products.addProduct')}
               </ModalHeader>
               <ModalCloseButton />
@@ -646,8 +701,8 @@ const ProductCatalog: React.FC = () => {
         {/* Product Details Modal */}
         <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="4xl">
           <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>
+          <ModalContent bg={modalBg} border="1px solid" borderColor={borderColor}>
+            <ModalHeader color={textColor} borderBottom="1px solid" borderColor={borderColor}>
               {t('products.details.title')} - {detailProduct?.name}
             </ModalHeader>
             <ModalCloseButton />
@@ -665,9 +720,9 @@ const ProductCatalog: React.FC = () => {
                         objectFit="contain"
                         borderRadius="lg"
                         border="2px"
-                        borderColor="gray.300"
+                        borderColor={borderColor}
                         boxShadow="md"
-                        bg="white"
+                        bg={imageCardBg}
                         p={2}
                         fallbackSrc="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23f0f0f0'/%3E%3Ctext x='50' y='50' text-anchor='middle' dy='.3em' font-family='Arial, sans-serif' font-size='14' fill='%23999'%3ENo Image%3C/text%3E%3C/svg%3E"
                         onError={(e) => {
@@ -680,93 +735,93 @@ const ProductCatalog: React.FC = () => {
                       <Box
                         w="350px"
                         h="250px"
-                        bg="gray.50"
+                        bg={subtleBg}
                         borderRadius="lg"
                         border="2px"
-                        borderColor="gray.200"
+                        borderColor={borderColor}
                         display="flex"
                         alignItems="center"
                         justifyContent="center"
                         boxShadow="sm"
                       >
-                        <Text color="gray.400" fontSize="lg">{t('products.details.noProductImage')}</Text>
+                        <Text color={noImageTextColor} fontSize="lg">{t('products.details.noProductImage')}</Text>
                       </Box>
                     )}
                   </Flex>
 
                   {/* Basic Information */}
                   <Box mb={4}>
-                    <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.basicInfo')}</Text>
+                    <Text fontSize="lg" fontWeight="bold" mb={2} color={sectionTitleColor}>{t('products.details.basicInfo')}</Text>
                     <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.productCode')}</Text>
-                        <Text fontSize="md">{detailProduct.code}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.productCode')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.code}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.productName')}</Text>
-                        <Text fontSize="md">{detailProduct.name}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.productName')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.name}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.category')}</Text>
-                        <Text fontSize="md">{detailProduct.category?.name || t('products.details.noCategory')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.category')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.category?.name || t('products.details.noCategory')}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.unit')}</Text>
-                        <Text fontSize="md">{detailProduct.unit}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.unit')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.unit}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.warehouseLocation')}</Text>
-                        <Text fontSize="md">{detailProduct.warehouse_location?.name || t('products.details.noLocationAssigned')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.warehouseLocation')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.warehouse_location?.name || t('products.details.noLocationAssigned')}</Text>
                       </Box>
                     </Grid>
                     {detailProduct.description && (
                       <Box mt={3}>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.table.description')}</Text>
-                        <Text fontSize="md">{detailProduct.description}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.table.description')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.description}</Text>
                       </Box>
                     )}
                   </Box>
 
                   {/* Product Details */}
                   <Box mb={4}>
-                    <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.productDetails')}</Text>
+                    <Text fontSize="lg" fontWeight="bold" mb={2} color={sectionTitleColor}>{t('products.details.productDetails')}</Text>
                     <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.brand')}</Text>
-                        <Text fontSize="md">{detailProduct.brand || t('products.details.notSpecified')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.brand')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.brand || t('products.details.notSpecified')}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.model')}</Text>
-                        <Text fontSize="md">{detailProduct.model || t('products.details.notSpecified')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.model')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.model || t('products.details.notSpecified')}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.sku')}</Text>
-                        <Text fontSize="md">{detailProduct.sku || t('products.details.notSpecified')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.sku')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.sku || t('products.details.notSpecified')}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.barcode')}</Text>
-                        <Text fontSize="md">{detailProduct.barcode || t('products.details.notSpecified')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.barcode')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.barcode || t('products.details.notSpecified')}</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.weight')}</Text>
-                        <Text fontSize="md">{detailProduct.weight} kg</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.weight')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.weight} kg</Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.dimensions')}</Text>
-                        <Text fontSize="md">{detailProduct.dimensions || t('products.details.notSpecified')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.dimensions')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.dimensions || t('products.details.notSpecified')}</Text>
                       </Box>
                     </Grid>
                   </Box>
 
                   {/* Pricing & Margin Analysis */}
                   <Box mb={4}>
-                    <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.pricing')}</Text>
+                    <Text fontSize="lg" fontWeight="bold" mb={2} color={sectionTitleColor}>{t('products.details.pricing')}</Text>
                     <Grid templateColumns={hasInventory ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)'} gap={4}>
                       {/* Purchase Price - hidden for SERVICE companies */}
                       {hasInventory && (
                         <Box>
-                          <Text fontWeight="semibold" color="gray.600">{t('products.details.purchasePrice')}</Text>
-                          <Text fontSize="md" color="green.600" fontWeight="bold">
+                          <Text fontWeight="semibold" color={labelColor}>{t('products.details.purchasePrice')}</Text>
+                          <Text fontSize="md" color={successColor} fontWeight="bold">
                             {formatCurrencyDetailed(detailProduct.purchase_price || 0)}
                           </Text>
                         </Box>
@@ -774,31 +829,31 @@ const ProductCatalog: React.FC = () => {
                       {/* Cost Price / HPP */}
                       {hasInventory && (
                         <Box>
-                          <Text fontWeight="semibold" color="gray.600">Harga Pokok (HPP/COGS)</Text>
-                          <Text fontSize="md" color="orange.600" fontWeight="bold">
+                          <Text fontWeight="semibold" color={labelColor}>Harga Pokok (HPP/COGS)</Text>
+                          <Text fontSize="md" color={warningColor} fontWeight="bold">
                             {formatCurrencyDetailed(detailProduct.cost_price || 0)}
                           </Text>
                         </Box>
                       )}
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.salePrice')}</Text>
-                        <Text fontSize="md" color="blue.600" fontWeight="bold">
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.salePrice')}</Text>
+                        <Text fontSize="md" color={salePriceColor} fontWeight="bold">
                           {formatCurrencyDetailed(detailProduct.sale_price || 0)}
                         </Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.pricingTier')}</Text>
-                        <Text fontSize="md">{detailProduct.pricing_tier || t('products.details.standard')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.pricingTier')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.pricing_tier || t('products.details.standard')}</Text>
                       </Box>
                     </Grid>
 
                     {/* Margin Analysis - only for inventory companies with valid prices */}
                     {hasInventory && (detailProduct.cost_price || 0) > 0 && (detailProduct.sale_price || 0) > 0 && (
-                      <Box mt={4} p={3} bg="gray.50" borderRadius="md" border="1px" borderColor="gray.200">
-                        <Text fontWeight="bold" color="gray.700" mb={2}>📊 Analisis Margin</Text>
+                      <Box mt={4} p={3} bg={infoPanelBg} borderRadius="md" border="1px" borderColor={borderColor}>
+                        <Text fontWeight="bold" color={infoPanelTitleColor} mb={2}>📊 Analisis Margin</Text>
                         <Grid templateColumns="repeat(3, 1fr)" gap={4}>
                           <Box>
-                            <Text fontSize="sm" color="gray.500">Laba Kotor per Unit</Text>
+                            <Text fontSize="sm" color={mutedTextColor}>Laba Kotor per Unit</Text>
                             <Text fontSize="md" fontWeight="bold" color={
                               (detailProduct.sale_price || 0) - (detailProduct.cost_price || 0) > 0 ? 'green.600' : 'red.600'
                             }>
@@ -806,7 +861,7 @@ const ProductCatalog: React.FC = () => {
                             </Text>
                           </Box>
                           <Box>
-                            <Text fontSize="sm" color="gray.500">Gross Margin</Text>
+                            <Text fontSize="sm" color={mutedTextColor}>Gross Margin</Text>
                             <Text fontSize="md" fontWeight="bold" color={
                               ((detailProduct.sale_price || 0) - (detailProduct.cost_price || 0)) / (detailProduct.sale_price || 1) * 100 > 0
                                 ? 'green.600' : 'red.600'
@@ -815,7 +870,7 @@ const ProductCatalog: React.FC = () => {
                             </Text>
                           </Box>
                           <Box>
-                            <Text fontSize="sm" color="gray.500">Markup</Text>
+                            <Text fontSize="sm" color={mutedTextColor}>Markup</Text>
                             <Text fontSize="md" fontWeight="bold" color={
                               ((detailProduct.sale_price || 0) - (detailProduct.cost_price || 0)) / (detailProduct.cost_price || 1) * 100 > 0
                                 ? 'green.600' : 'red.600'
@@ -831,23 +886,23 @@ const ProductCatalog: React.FC = () => {
                   {/* Inventory - hidden for SERVICE companies */}
                   {hasInventory && (
                     <Box mb={4}>
-                      <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.inventory')}</Text>
+                      <Text fontSize="lg" fontWeight="bold" mb={2} color={sectionTitleColor}>{t('products.details.inventory')}</Text>
                       <Grid templateColumns="repeat(4, 1fr)" gap={4}>
                         <Box>
-                          <Text fontWeight="semibold" color="gray.600">{t('products.details.currentStock')}</Text>
-                          <Text fontSize="md" fontWeight="bold">{detailProduct.stock}</Text>
+                          <Text fontWeight="semibold" color={labelColor}>{t('products.details.currentStock')}</Text>
+                          <Text fontSize="md" fontWeight="bold" color={textColor}>{detailProduct.stock}</Text>
                         </Box>
                         <Box>
-                          <Text fontWeight="semibold" color="gray.600">{t('products.details.minStock')}</Text>
-                          <Text fontSize="md">{detailProduct.min_stock}</Text>
+                          <Text fontWeight="semibold" color={labelColor}>{t('products.details.minStock')}</Text>
+                          <Text fontSize="md" color={textColor}>{detailProduct.min_stock}</Text>
                         </Box>
                         <Box>
-                          <Text fontWeight="semibold" color="gray.600">{t('products.details.maxStock')}</Text>
-                          <Text fontSize="md">{detailProduct.max_stock}</Text>
+                          <Text fontWeight="semibold" color={labelColor}>{t('products.details.maxStock')}</Text>
+                          <Text fontSize="md" color={textColor}>{detailProduct.max_stock}</Text>
                         </Box>
                         <Box>
-                          <Text fontWeight="semibold" color="gray.600">{t('products.details.reorderLevel')}</Text>
-                          <Text fontSize="md">{detailProduct.reorder_level}</Text>
+                          <Text fontWeight="semibold" color={labelColor}>{t('products.details.reorderLevel')}</Text>
+                          <Text fontSize="md" color={textColor}>{detailProduct.reorder_level}</Text>
                         </Box>
                       </Grid>
                     </Box>
@@ -855,21 +910,17 @@ const ProductCatalog: React.FC = () => {
 
                   {/* Settings */}
                   <Box mb={4}>
-                    <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.settings')}</Text>
-                    <Grid templateColumns="repeat(3, 1fr)" gap={4}>
+                    <Text fontSize="lg" fontWeight="bold" mb={2} color={sectionTitleColor}>{t('products.details.settings')}</Text>
+                    <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.statusLabel')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.statusLabel')}</Text>
                         <Text fontSize="md" color={detailProduct.is_active ? 'green.600' : 'red.600'}>
                           {detailProduct.is_active ? t('products.active') : t('products.inactive')}
                         </Text>
                       </Box>
                       <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.serviceProduct')}</Text>
-                        <Text fontSize="md">{detailProduct.is_service ? t('products.details.yes') : t('products.details.no')}</Text>
-                      </Box>
-                      <Box>
-                        <Text fontWeight="semibold" color="gray.600">{t('products.details.taxable')}</Text>
-                        <Text fontSize="md">{detailProduct.taxable ? t('products.details.yes') : t('products.details.no')}</Text>
+                        <Text fontWeight="semibold" color={labelColor}>{t('products.details.serviceProduct')}</Text>
+                        <Text fontSize="md" color={textColor}>{detailProduct.is_service ? t('products.details.yes') : t('products.details.no')}</Text>
                       </Box>
                     </Grid>
                   </Box>
@@ -877,8 +928,8 @@ const ProductCatalog: React.FC = () => {
                   {/* Notes */}
                   {detailProduct.notes && (
                     <Box>
-                      <Text fontSize="lg" fontWeight="bold" mb={2} color="blue.600">{t('products.details.notes')}</Text>
-                      <Text fontSize="md" p={3} bg="gray.50" borderRadius="md">
+                      <Text fontSize="lg" fontWeight="bold" mb={2} color={sectionTitleColor}>{t('products.details.notes')}</Text>
+                      <Text fontSize="md" p={3} bg={noteBg} borderRadius="md" color={textColor}>
                         {detailProduct.notes}
                       </Text>
                     </Box>
@@ -893,8 +944,8 @@ const ProductCatalog: React.FC = () => {
         {canCreate && (
           <Modal isOpen={isManagementModalOpen} onClose={onManagementModalClose} size="6xl">
             <ModalOverlay />
-            <ModalContent maxH="90vh">
-              <ModalHeader>
+            <ModalContent maxH="90vh" bg={modalBg} border="1px solid" borderColor={borderColor}>
+              <ModalHeader color={textColor} borderBottom="1px solid" borderColor={borderColor}>
                 {t('products.management.title')}
               </ModalHeader>
               <ModalCloseButton />
@@ -939,8 +990,8 @@ const ProductCatalog: React.FC = () => {
           onClose={onAlertClose}
         >
           <AlertDialogOverlay>
-            <AlertDialogContent>
-              <AlertDialogHeader fontSize="lg" fontWeight="bold">
+            <AlertDialogContent bg={modalBg} border="1px solid" borderColor={borderColor}>
+              <AlertDialogHeader fontSize="lg" fontWeight="bold" color={textColor}>
                 {t('products.imageUpload.updateProductImage')}
               </AlertDialogHeader>
 

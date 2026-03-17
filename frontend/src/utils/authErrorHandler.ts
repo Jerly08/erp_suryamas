@@ -2,11 +2,13 @@
  * Utility functions for handling authentication errors consistently across the app
  */
 
-import { showAuthExpiredModal } from '@/services/api';
+import { isAuthExpiredModalActive, showAuthExpiredModal } from '@/services/api';
 
 export interface AuthError extends Error {
   isAuthError?: boolean;
   code?: string;
+  suppressToast?: boolean;
+  skipToast?: boolean;
   response?: {
     status: number;
     data?: any;
@@ -54,6 +56,16 @@ export const isPermissionError = (error: any): boolean => {
   return error?.response?.status === 403;
 };
 
+export const shouldSuppressAuthErrorToast = (error: any): boolean => {
+  return Boolean(
+    isAuthExpiredModalActive() ||
+    error?.suppressToast ||
+    error?.skipToast ||
+    error?.code === 'AUTH_SESSION_EXPIRED' ||
+    error?.isAuthError
+  );
+};
+
 /**
  * Handles authentication errors with appropriate user feedback
  */
@@ -90,13 +102,15 @@ export const handleApiError = (error: any, context: string = 'API call'): {
   isHandled: boolean;
   message: string;
   shouldRetry: boolean;
+  suppressToast: boolean;
 } => {
   if (isAuthError(error)) {
     handleAuthError(error, context);
     return {
       isHandled: true,
       message: 'Session expired. Please login again.',
-      shouldRetry: false
+      shouldRetry: false,
+      suppressToast: true
     };
   }
   
@@ -105,7 +119,8 @@ export const handleApiError = (error: any, context: string = 'API call'): {
     return {
       isHandled: true,
       message,
-      shouldRetry: false
+      shouldRetry: false,
+      suppressToast: false
     };
   }
   
@@ -115,7 +130,8 @@ export const handleApiError = (error: any, context: string = 'API call'): {
   return {
     isHandled: false,
     message,
-    shouldRetry: error?.code === 'NETWORK_ERROR' || error?.response?.status >= 500
+    shouldRetry: error?.code === 'NETWORK_ERROR' || error?.response?.status >= 500,
+    suppressToast: shouldSuppressAuthErrorToast(error)
   };
 };
 

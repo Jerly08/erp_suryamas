@@ -1,10 +1,11 @@
-﻿package database
+package database
 
 import (
 	"app-sistem-akuntansi/config"
 	"app-sistem-akuntansi/models"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,6 +14,24 @@ import (
 )
 
 var DB *gorm.DB
+
+func maskDatabaseURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid-database-url>"
+	}
+
+	if parsed.User != nil {
+		username := parsed.User.Username()
+		if username != "" {
+			parsed.User = url.UserPassword(username, "*****")
+		} else {
+			parsed.User = url.User("*****")
+		}
+	}
+
+	return parsed.String()
+}
 
 // cleanupConstraints removes problematic constraints that may cause migration issues
 func cleanupConstraints(db *gorm.DB) {
@@ -570,7 +589,7 @@ func ConnectDB() *gorm.DB {
 		PrepareStmt: true,
 	}
 
-	log.Printf("Connecting to PostgreSQL database with URL: %s", cfg.DatabaseURL)
+	log.Printf("Connecting to PostgreSQL database with URL: %s", maskDatabaseURL(cfg.DatabaseURL))
 	db, err := gorm.Open(postgres.Open(cfg.DatabaseURL), gormConfig)
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
@@ -660,7 +679,7 @@ func AutoMigrate(db *gorm.DB) {
 		// Purchases
 		&models.Purchase{},
 		&models.PurchaseItem{},
-	&models.PrepaidExpense{},
+		&models.PrepaidExpense{},
 		&models.PrepaidSchedule{},
 		&models.PurchaseDocument{},
 		&models.PurchaseReceipt{},
@@ -1759,6 +1778,26 @@ func EnhanceNewSalesFields(db *gorm.DB) {
 		}
 	}
 
+	var productNameColumnExists bool
+	db.Raw(`SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'sale_items' AND column_name = 'product_name'
+	)`).Scan(&productNameColumnExists)
+
+	if !productNameColumnExists {
+		log.Println("Adding product_name field to sale_items table...")
+		err := db.Exec(`
+			ALTER TABLE sale_items
+			ADD COLUMN IF NOT EXISTS product_name VARCHAR(255) DEFAULT '';
+		`).Error
+
+		if err != nil {
+			log.Printf("Warning: Failed to add product_name field to sale_items table: %v", err)
+		} else {
+			log.Println("Added product_name field to sale_items table successfully")
+		}
+	}
+
 	// Check if taxable column exists in sale_items table
 	var taxableColumnExists bool
 	db.Raw(`SELECT EXISTS (
@@ -1908,9 +1947,21 @@ func EnhanceNewSalesFields(db *gorm.DB) {
 	// Add indexes for new fields
 	log.Println("Adding indexes for new sales fields...")
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sale_items_description ON sale_items(description)`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sale_items_product_name ON sale_items(product_name)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sale_items_taxable ON sale_items(taxable)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sale_items_discount_percent ON sale_items(discount_percent)`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_sale_items_tax_account ON sale_items(tax_account_id)`)
+
+	log.Println("Backfilling empty sale_items.product_name from products...")
+	if err := db.Exec(`
+		UPDATE sale_items si
+		SET product_name = p.name
+		FROM products p
+		WHERE si.product_id = p.id
+		  AND COALESCE(si.product_name, '') = ''
+	`).Error; err != nil {
+		log.Printf("Warning: Failed to backfill sale_items.product_name: %v", err)
+	}
 
 	log.Println("Enhanced new sales fields migration completed successfully")
 }

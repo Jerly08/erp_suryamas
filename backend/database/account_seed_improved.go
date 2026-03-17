@@ -3,12 +3,23 @@ package database
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"app-sistem-akuntansi/models"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+)
+
+type AccountSeedOptions struct {
+	UpdateExistingTemplateAccounts  bool
+	CleanupObsoleteTemplateAccounts bool
+}
+
+const (
+	destructiveCOATemplateSyncEnv      = "ALLOW_DESTRUCTIVE_COA_TEMPLATE_SYNC"
+	destructiveCOATemplateSyncApproval = "YES_I_UNDERSTAND"
 )
 
 // SeedAccountsImproved creates initial chart of accounts with improved duplicate handling
@@ -18,7 +29,43 @@ import (
 // - Duplicate detection and reporting
 // - Transaction support for atomic operations
 func SeedAccountsImproved(db *gorm.DB) error {
+	return seedAccountsWithOptions(db, AccountSeedOptions{})
+}
+
+// SeedAccountsTemplateSync force-syncs the live COA to the current template.
+// WARNING: This mode may deactivate or soft-delete accounts outside the template,
+// so it must never run automatically at startup.
+func SeedAccountsTemplateSync(db *gorm.DB) error {
+	if err := requireExplicitTemplateSyncApproval(); err != nil {
+		return err
+	}
+
+	return seedAccountsWithOptions(db, AccountSeedOptions{
+		UpdateExistingTemplateAccounts:  true,
+		CleanupObsoleteTemplateAccounts: true,
+	})
+}
+
+func requireExplicitTemplateSyncApproval() error {
+	if os.Getenv(destructiveCOATemplateSyncEnv) == destructiveCOATemplateSyncApproval {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"destructive COA template sync blocked: set %s=%s to run this operation explicitly",
+		destructiveCOATemplateSyncEnv,
+		destructiveCOATemplateSyncApproval,
+	)
+}
+
+func seedAccountsWithOptions(db *gorm.DB, opts AccountSeedOptions) error {
 	log.Println("🔒 PRODUCTION MODE: Seeding accounts with improved duplicate handling...")
+	if !opts.UpdateExistingTemplateAccounts {
+		log.Println("🛡️ Safe seed mode enabled: existing COA records will be preserved")
+	}
+	if !opts.CleanupObsoleteTemplateAccounts {
+		log.Println("🛡️ Obsolete-template cleanup disabled: custom/user COA will not be deleted on startup")
+	}
 
 	// Start a transaction for atomic operations
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -52,7 +99,7 @@ func SeedAccountsImproved(db *gorm.DB) error {
 
 		// Create accounts with improved duplicate handling
 		for _, account := range accounts {
-			accountID, created, err := upsertAccount(tx, account)
+			accountID, created, err := upsertAccount(tx, account, opts)
 			if err != nil {
 				return fmt.Errorf("failed to upsert account %s: %v", account.Code, err)
 			}
@@ -72,9 +119,13 @@ func SeedAccountsImproved(db *gorm.DB) error {
 		}
 
 		// Cleanup accounts from old company type that are NOT in the new template
-		if err := cleanupOldTemplateAccounts(tx, accounts); err != nil {
-			log.Printf("⚠️  Warning: cleanup old template accounts: %v", err)
-			// Non-fatal — don't block seeding
+		if opts.CleanupObsoleteTemplateAccounts {
+			if err := cleanupOldTemplateAccounts(tx, accounts); err != nil {
+				log.Printf("⚠️  Warning: cleanup old template accounts: %v", err)
+				// Non-fatal — don't block seeding
+			}
+		} else {
+			log.Println("⏭️ Skipping obsolete-template cleanup to preserve user-created COA")
 		}
 
 		log.Println("✅ Account seeding completed successfully")
@@ -150,8 +201,9 @@ func verifyNoDuplicatesInSeed(accounts []models.Account) error {
 	return nil
 }
 
-// upsertAccount creates or updates an account atomically
-func upsertAccount(tx *gorm.DB, account models.Account) (uint, bool, error) {
+// upsertAccount creates or updates an account atomically.
+// In safe seed mode, existing accounts are preserved exactly as-is.
+func upsertAccount(tx *gorm.DB, account models.Account, opts AccountSeedOptions) (uint, bool, error) {
 	var existingAccount models.Account
 
 	// Always normalize name to UPPERCASE
@@ -188,7 +240,23 @@ func upsertAccount(tx *gorm.DB, account models.Account) (uint, bool, error) {
 		return 0, false, err
 	}
 
-	// Account exists - check if it's system critical before updating protected fields
+	updates, shouldUpdate := buildExistingAccountUpdates(existingAccount, account, normalizedName, opts)
+	if !shouldUpdate {
+		return existingAccount.ID, false, nil
+	}
+
+	if err := tx.Model(&existingAccount).Updates(updates).Error; err != nil {
+		return 0, false, err
+	}
+
+	return existingAccount.ID, false, nil
+}
+
+func buildExistingAccountUpdates(existingAccount models.Account, account models.Account, normalizedName string, opts AccountSeedOptions) (map[string]interface{}, bool) {
+	if !opts.UpdateExistingTemplateAccounts {
+		return nil, false
+	}
+
 	updates := map[string]interface{}{
 		"name":        normalizedName,
 		"level":       account.Level,
@@ -204,11 +272,7 @@ func upsertAccount(tx *gorm.DB, account models.Account) (uint, bool, error) {
 		updates["is_active"] = account.IsActive
 	}
 
-	if err := tx.Model(&existingAccount).Updates(updates).Error; err != nil {
-		return 0, false, err
-	}
-
-	return existingAccount.ID, false, nil
+	return updates, true
 }
 
 // setParentRelationships sets parent-child relationships for accounts

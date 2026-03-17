@@ -107,17 +107,13 @@ func (s *AssetService) CreateAsset(asset *models.Asset) error {
 		return errors.New("purchase price must be greater than 0")
 	}
 
+	if err := validateAssetDepreciationInputs(asset); err != nil {
+		return err
+	}
+
 	// Validate useful life for depreciable assets
 	if asset.UsefulLife <= 0 && asset.DepreciationMethod != "" {
 		return errors.New("useful life must be greater than 0 for depreciable assets")
-	}
-
-	// Calculate initial depreciation if needed
-	if asset.AccumulatedDepreciation == 0 && asset.DepreciationMethod != "" {
-		depreciation, err := s.CalculateDepreciation(asset, time.Now())
-		if err == nil {
-			asset.AccumulatedDepreciation = depreciation
-		}
 	}
 
 	// Retry logic for handling unique constraint violations
@@ -179,17 +175,13 @@ func (s *AssetService) CreateAssetWithJournal(asset *models.Asset, userId uint, 
 		return errors.New("purchase price must be greater than 0")
 	}
 
+	if err := validateAssetDepreciationInputs(asset); err != nil {
+		return err
+	}
+
 	// Validate useful life for depreciable assets
 	if asset.UsefulLife <= 0 && asset.DepreciationMethod != "" {
 		return errors.New("useful life must be greater than 0 for depreciable assets")
-	}
-
-	// Calculate initial depreciation if needed
-	if asset.AccumulatedDepreciation == 0 && asset.DepreciationMethod != "" {
-		depreciation, err := s.CalculateDepreciation(asset, time.Now())
-		if err == nil {
-			asset.AccumulatedDepreciation = depreciation
-		}
 	}
 
 	// Retry logic with fresh transaction for each attempt
@@ -202,8 +194,15 @@ func (s *AssetService) CreateAssetWithJournal(asset *models.Asset, userId uint, 
 		}
 
 		// Try to create the asset
-		createErr := tx.Create(asset).Error
+		intendedIsActive := asset.IsActive
+		createErr := tx.Select("*").Create(asset).Error
 		if createErr == nil {
+			if err := tx.Exec("UPDATE assets SET is_active = ? WHERE id = ?", intendedIsActive, asset.ID).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
+			asset.IsActive = intendedIsActive
+
 			// Success! Generate and create journal entry
 			journalEntry := models.GenerateAssetJournalEntry(*asset, userId, paymentMethod, paymentAccountID, creditAccountID)
 			if err := tx.Create(journalEntry).Error; err != nil {
@@ -261,6 +260,10 @@ func (s *AssetService) UpdateAsset(asset *models.Asset) error {
 		return errors.New("purchase price must be greater than 0")
 	}
 
+	if err := validateAssetDepreciationInputs(asset); err != nil {
+		return err
+	}
+
 	// Sync is_active with status to ensure consistency
 	// Only ACTIVE status should have is_active = true
 	switch asset.Status {
@@ -268,14 +271,6 @@ func (s *AssetService) UpdateAsset(asset *models.Asset) error {
 		asset.IsActive = true
 	case models.AssetStatusInactive, models.AssetStatusSold, models.AssetStatusPendingSetup:
 		asset.IsActive = false
-	}
-
-	// Recalculate depreciation if depreciation-related fields changed
-	if asset.DepreciationMethod != "" && asset.UsefulLife > 0 {
-		depreciation, err := s.CalculateDepreciation(asset, time.Now())
-		if err == nil {
-			asset.AccumulatedDepreciation = depreciation
-		}
 	}
 
 	return s.assetRepo.Update(asset)
@@ -334,25 +329,33 @@ func (s *AssetService) GenerateAssetCode(category string) (string, error) {
 
 // CalculateDepreciation calculates accumulated depreciation up to a specific date
 func (s *AssetService) CalculateDepreciation(asset *models.Asset, asOfDate time.Time) (float64, error) {
+	if err := validateAssetDepreciationInputs(asset); err != nil {
+		return 0, err
+	}
+
+	baseAccumulated := asset.OpeningAccumulatedDepreciation
 	if asset.UsefulLife <= 0 || asset.PurchasePrice <= 0 {
-		return 0, nil
+		return baseAccumulated, nil
 	}
 
 	// Calculate months since purchase
 	monthsSincePurchase := monthsDifference(asset.PurchaseDate, asOfDate)
 	if monthsSincePurchase <= 0 {
-		return 0, nil
+		return baseAccumulated, nil
 	}
 
 	depreciableAmount := asset.PurchasePrice - asset.SalvageValue
+	if depreciableAmount <= 0 {
+		return baseAccumulated, nil
+	}
 
 	switch asset.DepreciationMethod {
 	case models.DepreciationMethodStraightLine:
-		return s.calculateStraightLineDepreciation(depreciableAmount, asset.UsefulLife, monthsSincePurchase), nil
+		return s.calculateStraightLineDepreciation(depreciableAmount, asset.UsefulLife, monthsSincePurchase, baseAccumulated), nil
 	case models.DepreciationMethodDecliningBalance:
-		return s.calculateDecliningBalanceDepreciation(asset.PurchasePrice, asset.SalvageValue, asset.UsefulLife, monthsSincePurchase), nil
+		return s.calculateDecliningBalanceDepreciation(asset.PurchasePrice, asset.SalvageValue, asset.UsefulLife, monthsSincePurchase, baseAccumulated), nil
 	default:
-		return s.calculateStraightLineDepreciation(depreciableAmount, asset.UsefulLife, monthsSincePurchase), nil
+		return s.calculateStraightLineDepreciation(depreciableAmount, asset.UsefulLife, monthsSincePurchase, baseAccumulated), nil
 	}
 }
 
@@ -371,7 +374,7 @@ func (s *AssetService) GetDepreciationSchedule(asset *models.Asset) ([]Depreciat
 
 		var annualDepreciation float64
 		if year == 1 {
-			annualDepreciation = depreciation
+			annualDepreciation = math.Max(0, depreciation-asset.OpeningAccumulatedDepreciation)
 		} else {
 			prevDepreciation, _ := s.CalculateDepreciation(asset, date.AddDate(0, 0, -1))
 			annualDepreciation = depreciation - prevDepreciation
@@ -558,17 +561,24 @@ func monthsDifference(startDate, endDate time.Time) int {
 	return months
 }
 
-func (s *AssetService) calculateStraightLineDepreciation(depreciableAmount float64, usefulLifeYears int, monthsSincePurchase int) float64 {
+func (s *AssetService) calculateStraightLineDepreciation(depreciableAmount float64, usefulLifeYears int, monthsSincePurchase int, openingAccumulated float64) float64 {
 	monthlyDepreciation := depreciableAmount / float64(usefulLifeYears*12)
-	return monthlyDepreciation * float64(monthsSincePurchase)
+	total := openingAccumulated + (monthlyDepreciation * float64(monthsSincePurchase))
+	if total > depreciableAmount {
+		return depreciableAmount
+	}
+	return total
 }
 
-func (s *AssetService) calculateDecliningBalanceDepreciation(purchasePrice, salvageValue float64, usefulLifeYears int, monthsSincePurchase int) float64 {
+func (s *AssetService) calculateDecliningBalanceDepreciation(purchasePrice, salvageValue float64, usefulLifeYears int, monthsSincePurchase int, openingAccumulated float64) float64 {
 	rate := 2.0 / float64(usefulLifeYears) // Double declining balance
 	monthlyRate := rate / 12
 
-	accumulated := 0.0
-	bookValue := purchasePrice
+	accumulated := openingAccumulated
+	bookValue := purchasePrice - openingAccumulated
+	if bookValue < salvageValue {
+		return math.Max(0, purchasePrice-salvageValue)
+	}
 
 	for month := 0; month < monthsSincePurchase; month++ {
 		monthlyDepreciation := bookValue * monthlyRate
@@ -588,6 +598,33 @@ func (s *AssetService) calculateDecliningBalanceDepreciation(purchasePrice, salv
 	}
 
 	return accumulated
+}
+
+func validateAssetDepreciationInputs(asset *models.Asset) error {
+	categoryLower := strings.ToLower(strings.TrimSpace(asset.Category))
+	if asset.SalvageValue < 0 {
+		return errors.New("salvage value cannot be negative")
+	}
+	if asset.SalvageValue >= asset.PurchasePrice && asset.PurchasePrice > 0 {
+		return errors.New("salvage value must be less than purchase price")
+	}
+	if asset.OpeningAccumulatedDepreciation < 0 {
+		return errors.New("opening accumulated depreciation cannot be negative")
+	}
+	maxAccumulated := asset.PurchasePrice - asset.SalvageValue
+	if maxAccumulated < 0 {
+		maxAccumulated = 0
+	}
+	if asset.OpeningAccumulatedDepreciation > maxAccumulated {
+		return errors.New("opening accumulated depreciation cannot exceed depreciable amount")
+	}
+	if (categoryLower == "tanah" || categoryLower == "land") && asset.OpeningAccumulatedDepreciation > 0 {
+		return errors.New("land assets cannot have accumulated depreciation")
+	}
+	if asset.AccumulatedDepreciation < asset.OpeningAccumulatedDepreciation {
+		asset.AccumulatedDepreciation = asset.OpeningAccumulatedDepreciation
+	}
+	return nil
 }
 
 // CreateDepreciationJournalEntry creates journal entry for asset depreciation

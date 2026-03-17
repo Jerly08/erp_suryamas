@@ -199,6 +199,39 @@ const ReportsPage: React.FC = () => {
   const summaryBg = useColorModeValue('gray.50', 'gray.700');
   const loadingTextColor = useColorModeValue('gray.700', 'gray.300');
   const previewPeriodTextColor = useColorModeValue('gray.500', 'gray.400');
+  const reportCardHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const reportCardShadow = useColorModeValue('lg', 'dark-lg');
+  const financialIconColor = useColorModeValue('green.500', 'green.300');
+  const operationalIconColor = useColorModeValue('blue.500', 'blue.300');
+  const inputBg = useColorModeValue('white', 'whiteAlpha.100');
+  const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const inputHoverBorderColor = useColorModeValue('blue.400', 'blue.300');
+  const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.200');
+  const infoIconColor = useColorModeValue('gray.500', 'gray.400');
+  const errorBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.32)');
+  const errorBorderColor = useColorModeValue('red.200', 'rgba(252, 129, 129, 0.32)');
+  const bluePanelBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
+  const bluePanelBorder = useColorModeValue('blue.200', 'rgba(144, 205, 244, 0.24)');
+  const orangePanelBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.14)');
+  const orangePanelBorder = useColorModeValue('orange.200', 'rgba(251, 211, 141, 0.24)');
+  const greenPanelBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.14)');
+  const greenPanelBorder = useColorModeValue('green.200', 'rgba(154, 230, 180, 0.24)');
+  const purplePanelBg = useColorModeValue('purple.50', 'rgba(159, 122, 234, 0.14)');
+  const purplePanelBorder = useColorModeValue('purple.200', 'rgba(215, 197, 246, 0.24)');
+  const tableHeaderBlueBg = useColorModeValue('blue.600', 'rgba(49, 130, 206, 0.42)');
+  const tableHeaderOrangeBg = useColorModeValue('orange.600', 'rgba(221, 107, 32, 0.42)');
+  const tableHoverBlueBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const tableHoverOrangeBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.12)');
+  const subtleTextColor = useColorModeValue('gray.500', 'gray.400');
+  const fieldStyles = {
+    bg: inputBg,
+    borderColor: inputBorderColor,
+    _hover: { borderColor: inputHoverBorderColor },
+    _focus: {
+      borderColor: inputFocusBorderColor,
+      boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+    },
+  };
 
   const availableReports = getAvailableReports(t);
 
@@ -2197,7 +2230,7 @@ const ReportsPage: React.FC = () => {
                 borderColor={borderColor}
                 borderRadius="md"
                 overflow="visible"
-                _hover={{ shadow: 'md' }}
+                _hover={{ shadow: reportCardShadow, transform: 'translateY(-2px)', bg: reportCardHoverBg }}
                 transition="all 0.2s"
                 position="relative"
               >
@@ -2205,7 +2238,7 @@ const ReportsPage: React.FC = () => {
                   <VStack spacing={0} align="stretch">
                     {/* Icon and Badge Header */}
                     <Flex p={4} align="center" justify="space-between">
-                      <Icon as={report.icon} size="24px" color="blue.500" />
+                      <Icon as={report.icon} size="24px" color={report.type === 'FINANCIAL' ? financialIconColor : operationalIconColor} />
                       <Badge
                         colorScheme={report.type === 'FINANCIAL' ? 'green' : 'blue'}
                         variant="solid"
@@ -4366,7 +4399,8 @@ const ReportsPage: React.FC = () => {
                       placeholder={t('reports.customerHistoryReport.chooseCustomer')}
                       value={customerHistoryCustomerId}
                       onChange={(e) => setCustomerHistoryCustomerId(e.target.value)}
-                      borderColor={!customerHistoryCustomerId ? 'red.300' : 'gray.200'}
+                      {...fieldStyles}
+                      borderColor={!customerHistoryCustomerId ? 'red.300' : inputBorderColor}
                     >
                       {customers.map((customer) => (
                         <option key={customer.id} value={customer.id}>
@@ -4374,7 +4408,7 @@ const ReportsPage: React.FC = () => {
                         </option>
                       ))}
                     </Select>
-                    <Text fontSize="xs" color="gray.500" mt={1}>
+                    <Text fontSize="xs" color={subtleTextColor} mt={1}>
                       {t('reports.customerHistoryReport.available', { count: customers.length })}
                     </Text>
                   </FormControl>
@@ -4384,7 +4418,8 @@ const ReportsPage: React.FC = () => {
                       type="date"
                       value={customerHistoryStartDate}
                       onChange={(e) => setCustomerHistoryStartDate(e.target.value)}
-                      borderColor={!customerHistoryStartDate ? 'red.300' : 'gray.200'}
+                      {...fieldStyles}
+                      borderColor={!customerHistoryStartDate ? 'red.300' : inputBorderColor}
                     />
                   </FormControl>
                   <FormControl flex="1" minW="180px" isRequired>
@@ -4393,7 +4428,8 @@ const ReportsPage: React.FC = () => {
                       type="date"
                       value={customerHistoryEndDate}
                       onChange={(e) => setCustomerHistoryEndDate(e.target.value)}
-                      borderColor={!customerHistoryEndDate ? 'red.300' : 'gray.200'}
+                      {...fieldStyles}
+                      borderColor={!customerHistoryEndDate ? 'red.300' : inputBorderColor}
                     />
                   </FormControl>
                   <Button
@@ -4432,8 +4468,8 @@ const ReportsPage: React.FC = () => {
             )}
 
             {customerHistoryError && (
-              <Box bg="red.50" p={4} borderRadius="md" mb={4}>
-                <Text color="red.600" fontWeight="medium">Error: {customerHistoryError}</Text>
+              <Box bg={errorBg} p={4} borderRadius="md" mb={4} border="1px" borderColor={errorBorderColor}>
+                <Text color="red.300" fontWeight="medium">Error: {customerHistoryError}</Text>
                 <Button
                   mt={2}
                   size="sm"
@@ -4450,19 +4486,19 @@ const ReportsPage: React.FC = () => {
               <VStack spacing={6} align="stretch">
                 {/* Customer Info */}
                 {customerHistoryData.customer && (
-                  <Box bg="blue.50" p={4} borderRadius="md" borderWidth="1px" borderColor="blue.200">
+                  <Box bg={bluePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={bluePanelBorder}>
                     <VStack align="start" spacing={2}>
                       <HStack>
-                        <Text fontSize="lg" fontWeight="bold" color="blue.800">
+                        <Text fontSize="lg" fontWeight="bold" color={headingColor}>
                           {customerHistoryData.customer.name}
                         </Text>
                         <Badge colorScheme="blue">{customerHistoryData.customer.code}</Badge>
                       </HStack>
-                      <Text fontSize="sm" color="blue.600">
+                      <Text fontSize="sm" color={descriptionColor}>
                         {customerHistoryData.customer.email} | {customerHistoryData.customer.phone}
                       </Text>
                       {customerHistoryData.customer.address && (
-                        <Text fontSize="sm" color="blue.600">
+                        <Text fontSize="sm" color={descriptionColor}>
                           {customerHistoryData.customer.address}
                         </Text>
                       )}
@@ -4473,26 +4509,26 @@ const ReportsPage: React.FC = () => {
                 {/* Summary */}
                 {customerHistoryData.summary && (
                   <SimpleGrid columns={[1, 2, 4]} spacing={4}>
-                    <Box bg="green.50" p={4} borderRadius="md" borderWidth="1px" borderColor="green.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.totalTransactions')}</Text>
+                    <Box bg={greenPanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={greenPanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>{t('reports.customerHistoryReport.totalTransactions')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="green.600">
                         {customerHistoryData.summary.total_transactions || 0}
                       </Text>
                     </Box>
-                    <Box bg="blue.50" p={4} borderRadius="md" borderWidth="1px" borderColor="blue.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.totalAmount')}</Text>
+                    <Box bg={bluePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={bluePanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>{t('reports.customerHistoryReport.totalAmount')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="blue.600">
                         {formatCurrency(customerHistoryData.summary.total_amount || 0)}
                       </Text>
                     </Box>
-                    <Box bg="purple.50" p={4} borderRadius="md" borderWidth="1px" borderColor="purple.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.totalPaid')}</Text>
+                    <Box bg={purplePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={purplePanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>{t('reports.customerHistoryReport.totalPaid')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="purple.600">
                         {formatCurrency(customerHistoryData.summary.total_paid || 0)}
                       </Text>
                     </Box>
-                    <Box bg="orange.50" p={4} borderRadius="md" borderWidth="1px" borderColor="orange.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>{t('reports.customerHistoryReport.outstanding')}</Text>
+                    <Box bg={orangePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={orangePanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>{t('reports.customerHistoryReport.outstanding')}</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="orange.600">
                         {formatCurrency(customerHistoryData.summary.total_outstanding || 0)}
                       </Text>
@@ -4507,7 +4543,7 @@ const ReportsPage: React.FC = () => {
                   </Text>
                   <Box overflowX="auto" maxH="500px" overflowY="auto">
                     <Table size="sm" variant="striped" colorScheme="gray">
-                      <Thead bg="blue.600" position="sticky" top={0} zIndex={1}>
+                      <Thead bg={tableHeaderBlueBg} position="sticky" top={0} zIndex={1}>
                         <Tr>
                           <Th color="white">{t('reports.customerHistoryReport.date')}</Th>
                           <Th color="white">{t('reports.customerHistoryReport.type')}</Th>
@@ -4522,7 +4558,7 @@ const ReportsPage: React.FC = () => {
                       <Tbody>
                         {customerHistoryData.transactions && customerHistoryData.transactions.length > 0 ? (
                           customerHistoryData.transactions.map((tx: any, index: number) => (
-                            <Tr key={index} _hover={{ bg: 'blue.50' }}>
+                            <Tr key={index} _hover={{ bg: tableHoverBlueBg }}>
                               <Td fontSize="sm">
                                 {tx.date ? new Date(tx.date).toLocaleDateString('id-ID') : 'N/A'}
                               </Td>
@@ -4560,7 +4596,7 @@ const ReportsPage: React.FC = () => {
                         ) : (
                           <Tr>
                             <Td colSpan={8} textAlign="center" py={8}>
-                              <Text color="gray.500">{t('reports.customerHistoryReport.noTransactions')}</Text>
+                              <Text color={subtleTextColor}>{t('reports.customerHistoryReport.noTransactions')}</Text>
                             </Td>
                           </Tr>
                         )}
@@ -4633,7 +4669,8 @@ const ReportsPage: React.FC = () => {
                       placeholder={t('reports.vendorHistoryReport.chooseVendor')}
                       value={vendorHistoryVendorId}
                       onChange={(e) => setVendorHistoryVendorId(e.target.value)}
-                      borderColor={!vendorHistoryVendorId ? 'red.300' : 'gray.200'}
+                      {...fieldStyles}
+                      borderColor={!vendorHistoryVendorId ? 'red.300' : inputBorderColor}
                     >
                       {vendors.map((vendor) => (
                         <option key={vendor.id} value={vendor.id}>
@@ -4648,7 +4685,8 @@ const ReportsPage: React.FC = () => {
                       type="date"
                       value={vendorHistoryStartDate}
                       onChange={(e) => setVendorHistoryStartDate(e.target.value)}
-                      borderColor={!vendorHistoryStartDate ? 'red.300' : 'gray.200'}
+                      {...fieldStyles}
+                      borderColor={!vendorHistoryStartDate ? 'red.300' : inputBorderColor}
                     />
                   </FormControl>
                   <FormControl flex="1" minW="180px" isRequired>
@@ -4657,7 +4695,8 @@ const ReportsPage: React.FC = () => {
                       type="date"
                       value={vendorHistoryEndDate}
                       onChange={(e) => setVendorHistoryEndDate(e.target.value)}
-                      borderColor={!vendorHistoryEndDate ? 'red.300' : 'gray.200'}
+                      {...fieldStyles}
+                      borderColor={!vendorHistoryEndDate ? 'red.300' : inputBorderColor}
                     />
                   </FormControl>
                   <Button
@@ -4695,8 +4734,8 @@ const ReportsPage: React.FC = () => {
             )}
 
             {vendorHistoryError && (
-              <Box bg="red.50" p={4} borderRadius="md" mb={4}>
-                <Text color="red.600" fontWeight="medium">Error: {vendorHistoryError}</Text>
+              <Box bg={errorBg} p={4} borderRadius="md" mb={4} border="1px" borderColor={errorBorderColor}>
+                <Text color="red.300" fontWeight="medium">Error: {vendorHistoryError}</Text>
                 <Button
                   mt={2}
                   size="sm"
@@ -4713,19 +4752,19 @@ const ReportsPage: React.FC = () => {
               <VStack spacing={6} align="stretch">
                 {/* Vendor Info */}
                 {vendorHistoryData.vendor && (
-                  <Box bg="orange.50" p={4} borderRadius="md" borderWidth="1px" borderColor="orange.200">
+                  <Box bg={orangePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={orangePanelBorder}>
                     <VStack align="start" spacing={2}>
                       <HStack>
-                        <Text fontSize="lg" fontWeight="bold" color="orange.800">
+                        <Text fontSize="lg" fontWeight="bold" color={headingColor}>
                           {vendorHistoryData.vendor.name}
                         </Text>
                         <Badge colorScheme="orange">{vendorHistoryData.vendor.code}</Badge>
                       </HStack>
-                      <Text fontSize="sm" color="orange.600">
+                      <Text fontSize="sm" color={descriptionColor}>
                         {vendorHistoryData.vendor.email} | {vendorHistoryData.vendor.phone}
                       </Text>
                       {vendorHistoryData.vendor.address && (
-                        <Text fontSize="sm" color="orange.600">
+                        <Text fontSize="sm" color={descriptionColor}>
                           {vendorHistoryData.vendor.address}
                         </Text>
                       )}
@@ -4736,26 +4775,26 @@ const ReportsPage: React.FC = () => {
                 {/* Summary */}
                 {vendorHistoryData.summary && (
                   <SimpleGrid columns={[1, 2, 4]} spacing={4}>
-                    <Box bg="green.50" p={4} borderRadius="md" borderWidth="1px" borderColor="green.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Total Transactions</Text>
+                    <Box bg={greenPanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={greenPanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>Total Transactions</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="green.600">
                         {vendorHistoryData.summary.total_transactions || 0}
                       </Text>
                     </Box>
-                    <Box bg="blue.50" p={4} borderRadius="md" borderWidth="1px" borderColor="blue.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Total Amount</Text>
+                    <Box bg={bluePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={bluePanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>Total Amount</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="blue.600">
                         {formatCurrency(vendorHistoryData.summary.total_amount || 0)}
                       </Text>
                     </Box>
-                    <Box bg="purple.50" p={4} borderRadius="md" borderWidth="1px" borderColor="purple.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Total Paid</Text>
+                    <Box bg={purplePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={purplePanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>Total Paid</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="purple.600">
                         {formatCurrency(vendorHistoryData.summary.total_paid || 0)}
                       </Text>
                     </Box>
-                    <Box bg="orange.50" p={4} borderRadius="md" borderWidth="1px" borderColor="orange.200">
-                      <Text fontSize="sm" color="gray.600" mb={1}>Outstanding</Text>
+                    <Box bg={orangePanelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={orangePanelBorder}>
+                      <Text fontSize="sm" color={descriptionColor} mb={1}>Outstanding</Text>
                       <Text fontSize="2xl" fontWeight="bold" color="orange.600">
                         {formatCurrency(vendorHistoryData.summary.total_outstanding || 0)}
                       </Text>
@@ -4770,7 +4809,7 @@ const ReportsPage: React.FC = () => {
                   </Text>
                   <Box overflowX="auto" maxH="500px" overflowY="auto">
                     <Table size="sm" variant="striped" colorScheme="gray">
-                      <Thead bg="orange.600" position="sticky" top={0} zIndex={1}>
+                      <Thead bg={tableHeaderOrangeBg} position="sticky" top={0} zIndex={1}>
                         <Tr>
                           <Th color="white">{t('reports.customerHistoryReport.date')}</Th>
                           <Th color="white">{t('reports.customerHistoryReport.type')}</Th>
@@ -4785,7 +4824,7 @@ const ReportsPage: React.FC = () => {
                       <Tbody>
                         {vendorHistoryData.transactions && vendorHistoryData.transactions.length > 0 ? (
                           vendorHistoryData.transactions.map((tx: any, index: number) => (
-                            <Tr key={index} _hover={{ bg: 'orange.50' }}>
+                            <Tr key={index} _hover={{ bg: tableHoverOrangeBg }}>
                               <Td fontSize="sm">
                                 {tx.date ? new Date(tx.date).toLocaleDateString('id-ID') : 'N/A'}
                               </Td>
@@ -4823,7 +4862,7 @@ const ReportsPage: React.FC = () => {
                         ) : (
                           <Tr>
                             <Td colSpan={8} textAlign="center" py={8}>
-                              <Text color="gray.500">No transactions found for this period</Text>
+                              <Text color={subtleTextColor}>No transactions found for this period</Text>
                             </Td>
                           </Tr>
                         )}

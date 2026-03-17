@@ -96,7 +96,7 @@ const SalesPageContent: React.FC = () => {
   // Tooltip descriptions for sales page
   const tooltips = {
     search: 'Cari penjualan berdasarkan nomor invoice, nama customer, atau referensi',
-    status: 'Filter penjualan berdasarkan status: Draft (belum final), Pending (menunggu pembayaran), Paid (sudah lunas), Cancelled (dibatalkan)',
+    status: 'Filter penjualan berdasarkan status workflow aktif: Draft, Invoiced, Paid, atau Cancelled.',
     dateRange: 'Filter penjualan berdasarkan tanggal transaksi untuk periode tertentu',
     export: 'Unduh data penjualan dalam format PDF atau Excel',
     refresh: 'Muat ulang data penjualan terbaru dari server',
@@ -508,7 +508,6 @@ const SalesPageContent: React.FC = () => {
                   <option value="DRAFT">{t('sales.draft')}</option>
                   <option value="INVOICED">{t('sales.invoiced')}</option>
                   <option value="PAID">{t('sales.paid')}</option>
-                  <option value="OVERDUE">{t('sales.overdue')}</option>
                   <option value="CANCELLED">{t('sales.cancelled')}</option>
                 </Select>
               </Box>

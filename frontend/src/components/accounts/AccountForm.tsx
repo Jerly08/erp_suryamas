@@ -21,6 +21,8 @@ import {
   AlertDialogHeader,
   AlertDialogContent,
   AlertDialogOverlay,
+  Checkbox,
+  useColorModeValue,
   useDisclosure,
   useToast
 } from '@chakra-ui/react';
@@ -169,6 +171,16 @@ const AccountForm: React.FC<AccountFormProps> = ({
   const { companyType, isService, isTrading } = useCompanyType();
   const isAdmin = user?.role?.toLowerCase() === 'admin';
   const toast = useToast();
+  const panelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const panelBorderColor = useColorModeValue('gray.200', 'var(--border-color)');
+  const labelColor = useColorModeValue('gray.700', 'var(--text-primary)');
+  const mutedTextColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+  const subtleIconColor = useColorModeValue('gray.500', 'gray.400');
+  const infoTextColor = useColorModeValue('blue.600', 'blue.200');
+  const warningTextColor = useColorModeValue('orange.600', 'orange.200');
+  const infoAlertBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const infoAlertBorderColor = useColorModeValue('blue.200', 'blue.300');
+  const checkboxBorderColor = useColorModeValue('gray.300', 'var(--border-color)');
 
   // Admin can override opening balance restrictions
   const canEditOpeningBalance = !account?.id || isAdmin;
@@ -395,9 +407,9 @@ const AccountForm: React.FC<AccountFormProps> = ({
           </Alert>
         )}
         {/* Company Type Badge — always visible */}
-        <HStack mb={4} p={2} bg="gray.50" borderRadius="md" borderWidth="1px" borderColor="gray.200">
+        <HStack mb={4} p={2} bg={panelBg} borderRadius="md" borderWidth="1px" borderColor={panelBorderColor}>
           <Icon as={FiInfo} color="purple.500" boxSize={4} />
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color={mutedTextColor}>
             {t('accounts.form.currentCompanyType')}:
           </Text>
           <Badge colorScheme="purple" fontSize="sm" px={2} py={0.5} borderRadius="md">
@@ -478,13 +490,13 @@ const AccountForm: React.FC<AccountFormProps> = ({
 
           <Box>
             <HStack mb={2}>
-              <Text fontSize="sm" fontWeight="medium">{t('accounts.form.openingBalance')}</Text>
+              <Text fontSize="sm" fontWeight="medium" color={labelColor}>{t('accounts.form.openingBalance')}</Text>
               <Tooltip
                 label={t('accounts.form.openingBalanceTooltip')}
                 hasArrow
               >
                 <span>
-                  <Icon as={FiInfo} color="gray.500" boxSize={3} />
+                  <Icon as={FiInfo} color={subtleIconColor} boxSize={3} />
                 </span>
               </Tooltip>
               {account && (
@@ -513,10 +525,10 @@ const AccountForm: React.FC<AccountFormProps> = ({
               <Alert status="warning" size="sm" mt={2}>
                 <AlertIcon boxSize={3} />
                 <Box fontSize="xs">
-                  <Text fontWeight="medium" color="orange.600">
+                  <Text fontWeight="medium" color={warningTextColor}>
                     {t('accounts.form.balanceChanged') || 'Saldo telah diubah!'}
                   </Text>
-                  <Text color="gray.600">
+                  <Text color={mutedTextColor}>
                     {t('accounts.form.originalBalance') || 'Saldo sebelumnya'}: Rp {originalBalance.toLocaleString('id-ID')}
                   </Text>
                 </Box>
@@ -527,7 +539,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
                 <AlertIcon boxSize={3} />
                 <Box fontSize="xs">
                   <Text fontWeight="medium">{t('accounts.form.openingBalanceLocked')}</Text>
-                  <Text color="gray.600">
+                  <Text color={mutedTextColor}>
                     {t('accounts.form.openingBalanceLockedDesc')}
                   </Text>
                 </Box>
@@ -537,8 +549,8 @@ const AccountForm: React.FC<AccountFormProps> = ({
               <Alert status="info" size="sm" mt={2}>
                 <AlertIcon boxSize={3} />
                 <Box fontSize="xs">
-                  <Text fontWeight="medium" color="blue.600">{t('accounts.form.adminOverrideActive')}</Text>
-                  <Text color="blue.600">
+                  <Text fontWeight="medium" color={infoTextColor}>{t('accounts.form.adminOverrideActive')}</Text>
+                  <Text color={infoTextColor}>
                     {t('accounts.form.adminOverrideDesc')}
                   </Text>
                 </Box>
@@ -548,8 +560,8 @@ const AccountForm: React.FC<AccountFormProps> = ({
               <Alert status="warning" size="sm" mt={2}>
                 <AlertIcon boxSize={3} />
                 <Box fontSize="xs">
-                  <Text fontWeight="medium" color="orange.600">{t('accounts.form.headerRestriction')}</Text>
-                  <Text color="orange.600">
+                  <Text fontWeight="medium" color={warningTextColor}>{t('accounts.form.headerRestriction')}</Text>
+                  <Text color={warningTextColor}>
                     {t('accounts.form.headerRestrictionDesc')}
                   </Text>
                 </Box>
@@ -571,34 +583,36 @@ const AccountForm: React.FC<AccountFormProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex items-center">
-              <input
+              <Checkbox
                 id="is_active"
-                type="checkbox"
-                checked={formData.is_active}
+                isChecked={formData.is_active}
                 onChange={handleChange}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 name="is_active"
-              />
-              <label htmlFor="is_active" className="ml-2 block text-sm text-gray-700">
-                {t('accounts.isActive')}
-              </label>
+                colorScheme="blue"
+                borderColor={checkboxBorderColor}
+              >
+                <Text fontSize="sm" color={labelColor}>
+                  {t('accounts.isActive')}
+                </Text>
+              </Checkbox>
             </div>
 
-            <div className="flex items-center">
-              <input
+            <div className="flex items-center gap-2">
+              <Checkbox
                 id="is_header"
-                type="checkbox"
-                checked={formData.is_header}
+                isChecked={formData.is_header}
                 onChange={handleChange}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 name="is_header"
-                disabled={isHeaderMode && !account} // Disable in header mode for new accounts
-              />
-              <label htmlFor="is_header" className="ml-2 block text-sm text-gray-700">
-                {t('accounts.form.headerAccount')}
-              </label>
+                isDisabled={isHeaderMode && !account}
+                colorScheme="blue"
+                borderColor={checkboxBorderColor}
+              >
+                <Text fontSize="sm" color={labelColor}>
+                  {t('accounts.form.headerAccount')}
+                </Text>
+              </Checkbox>
               {isHeaderMode && !account && (
-                <Badge colorScheme="blue" size="sm" ml={2}>
+                <Badge colorScheme="blue" size="sm">
                   {t('accounts.form.forcedOn')}
                 </Badge>
               )}
@@ -606,8 +620,8 @@ const AccountForm: React.FC<AccountFormProps> = ({
                 label={t('accounts.form.headerAccountTooltip')}
                 hasArrow
               >
-                <span className="ml-2">
-                  <Icon as={FiInfo} color="gray.500" boxSize={3} />
+                <span>
+                  <Icon as={FiInfo} color={subtleIconColor} boxSize={3} />
                 </span>
               </Tooltip>
             </div>
@@ -642,7 +656,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
                 <AlertDescription fontSize="xs">
                   <Text>Tipe perusahaan saat ini: <Badge colorScheme="purple">{companyType}</Badge></Text>
                   {warnings.map((w, i) => (
-                    <Text key={i} mt={1} color="orange.600">⚠️ {w}</Text>
+                    <Text key={i} mt={1} color={warningTextColor}>⚠️ {w}</Text>
                   ))}
                 </AlertDescription>
               </Box>
@@ -652,7 +666,15 @@ const AccountForm: React.FC<AccountFormProps> = ({
 
         {/* Smart Category Indicator with Tooltip */}
         {formData.type && (
-          <Alert status="info" variant="left-accent" mt={4}>
+          <Alert
+            status="info"
+            variant="left-accent"
+            mt={4}
+            bg={infoAlertBg}
+            border="1px solid"
+            borderColor={infoAlertBorderColor}
+            borderRadius="md"
+          >
             <AlertIcon />
             <Box>
               <AlertTitle fontSize="sm">{t('accounts.form.smartCategory')}</AlertTitle>
@@ -669,8 +691,8 @@ const AccountForm: React.FC<AccountFormProps> = ({
                   placement="top"
                 >
                   <HStack spacing={1} mt={2} cursor="help">
-                    <Icon as={FiInfo} color="blue.600" boxSize={3} />
-                    <Text color="blue.600">{t('accounts.form.whatIsCategory')}</Text>
+                    <Icon as={FiInfo} color={infoTextColor} boxSize={3} />
+                    <Text color={infoTextColor}>{t('accounts.form.whatIsCategory')}</Text>
                   </HStack>
                 </Tooltip>
               </AlertDescription>
@@ -706,7 +728,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
       >
         <AlertDialogOverlay>
           <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold" color="orange.600">
+            <AlertDialogHeader fontSize="lg" fontWeight="bold" color={warningTextColor}>
               ⚠️ {t('accounts.form.confirmBalanceChange') || 'Konfirmasi Perubahan Saldo'}
             </AlertDialogHeader>
 
@@ -725,7 +747,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
                   </Text>
                 </Box>
               </Alert>
-              <Text fontSize="sm" color="gray.600">
+              <Text fontSize="sm" color={mutedTextColor}>
                 {t('accounts.form.balanceChangeAdvice') || 'Disarankan untuk menggunakan jurnal penyesuaian jika ingin mengubah saldo akun.'}
               </Text>
             </AlertDialogBody>

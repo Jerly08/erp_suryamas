@@ -5,7 +5,7 @@ export interface AssetFormData {
   code?: string;
   name: string;
   category: string;
-  status?: 'ACTIVE' | 'INACTIVE' | 'SOLD';
+  status?: 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'SOLD';
   purchaseDate: string;
   purchasePrice: number;
   salvageValue?: number;
@@ -19,6 +19,7 @@ export interface AssetFormData {
   assetAccountId?: number;
   depreciationAccountId?: number;
   accumulatedDepreciationAccountId?: number;
+  openingAccumulatedDepreciation?: number;
   coordinates?: string;
   entryType?: 'purchase' | 'opening';
   paymentMethod?: string;
@@ -91,7 +92,7 @@ export const validateAssetForm = (
   }
 
   // Useful life validation
-  if (!data.usefulLife || data.usefulLife <= 0) {
+  if ((data.category || '').toLowerCase().trim() !== 'tanah' && (data.category || '').toLowerCase().trim() !== 'land' && (!data.usefulLife || data.usefulLife <= 0)) {
     errors.push({ field: 'usefulLife', message: 'Useful life must be greater than 0' });
   } else if (data.usefulLife > 100) {
     errors.push({ field: 'usefulLife', message: 'Useful life cannot exceed 100 years' });
@@ -101,6 +102,17 @@ export const validateAssetForm = (
   // (skip for land/tanah which doesn't depreciate)
   const categoryLower = (data.category || '').toLowerCase().trim();
   const isLand = categoryLower === 'tanah' || categoryLower === 'land';
+  if (data.entryType === 'opening') {
+    const openingAccumulated = data.openingAccumulatedDepreciation || 0;
+    if (openingAccumulated < 0) {
+      errors.push({ field: 'openingAccumulatedDepreciation', message: 'Opening accumulated depreciation cannot be negative' });
+    } else if (openingAccumulated >= data.purchasePrice) {
+      errors.push({ field: 'openingAccumulatedDepreciation', message: 'Opening accumulated depreciation must be less than purchase price' });
+    }
+    if (isLand && openingAccumulated > 0) {
+      errors.push({ field: 'openingAccumulatedDepreciation', message: 'Land assets should not have accumulated depreciation' });
+    }
+  }
   if (data.status === 'ACTIVE' && !isLand) {
     if (!data.depreciationAccountId) {
       errors.push({ field: 'depreciationAccountId', message: 'Depreciation expense account is required for active assets' });

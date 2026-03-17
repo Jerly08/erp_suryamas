@@ -33,6 +33,8 @@ import {
     Divider,
     Badge,
     SimpleGrid,
+    Checkbox,
+    useColorModeValue,
 } from '@chakra-ui/react';
 import { FiPlus, FiTrash2, FiClipboard } from 'react-icons/fi';
 import { useForm, Controller, useFieldArray } from 'react-hook-form';
@@ -43,7 +45,6 @@ import { bomService, componentTemplateService } from '@/services/bomService';
 import ProductService, { Product } from '@/services/productService';
 import { BOM } from '@/types/bom';
 import SearchableSelect from '@/components/common/SearchableSelect';
-import CurrencyInput from '@/components/common/CurrencyInput';
 import UseComponentTemplateModal from './UseComponentTemplateModal';
 
 const bomItemSchema = z.object({
@@ -79,34 +80,45 @@ interface BOMFormModalProps {
 const BOMViewContent: React.FC<{ bom: BOM }> = ({ bom }) => {
     const formatCurrency = (val: number) =>
         new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(val);
+    const panelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const tableHeadBg = useColorModeValue('gray.100', 'var(--bg-tertiary)');
+    const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
+    const headingColor = useColorModeValue('gray.700', 'var(--text-primary)');
+    const labelColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+    const textColor = useColorModeValue('gray.700', 'var(--text-primary)');
+    const noteColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+    const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+    const footerBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+    const footerBorderColor = useColorModeValue('blue.200', 'blue.400');
+    const costColor = useColorModeValue('blue.600', 'blue.300');
 
     return (
         <VStack spacing={5} align="stretch">
             {/* Header Box */}
-            <Box p={4} borderWidth="1px" borderRadius="md" bg="gray.50">
-                <Heading size="sm" mb={4} color="gray.700">Header Information</Heading>
+            <Box p={4} borderWidth="1px" borderRadius="md" bg={panelBg} borderColor={borderColor}>
+                <Heading size="sm" mb={4} color={headingColor}>Header Information</Heading>
                 <SimpleGrid columns={2} spacing={4} mb={4}>
                     <Box>
-                        <Text fontSize="xs" color="gray.500" fontWeight="semibold" mb={1}>BOM CODE</Text>
-                        <Text fontWeight="bold" fontSize="md">{bom.code}</Text>
+                        <Text fontSize="xs" color={labelColor} fontWeight="semibold" mb={1}>BOM CODE</Text>
+                        <Text fontWeight="bold" fontSize="md" color={textColor}>{bom.code}</Text>
                     </Box>
                     <Box>
-                        <Text fontSize="xs" color="gray.500" fontWeight="semibold" mb={1}>BOM NAME</Text>
-                        <Text fontWeight="bold" fontSize="md">{bom.name}</Text>
+                        <Text fontSize="xs" color={labelColor} fontWeight="semibold" mb={1}>BOM NAME</Text>
+                        <Text fontWeight="bold" fontSize="md" color={textColor}>{bom.name}</Text>
                     </Box>
                     <Box>
-                        <Text fontSize="xs" color="gray.500" fontWeight="semibold" mb={1}>TARGET ASSEMBLY PRODUCT</Text>
-                        <Text fontSize="md">{bom.target_product?.name || `Product ID: ${bom.target_product_id}`}</Text>
+                        <Text fontSize="xs" color={labelColor} fontWeight="semibold" mb={1}>TARGET ASSEMBLY PRODUCT</Text>
+                        <Text fontSize="md" color={textColor}>{bom.target_product?.name || `Product ID: ${bom.target_product_id}`}</Text>
                     </Box>
                     <Box>
-                        <Text fontSize="xs" color="gray.500" fontWeight="semibold" mb={1}>TARGET QUANTITY</Text>
-                        <Text fontSize="md">{bom.target_quantity}</Text>
+                        <Text fontSize="xs" color={labelColor} fontWeight="semibold" mb={1}>TARGET QUANTITY</Text>
+                        <Text fontSize="md" color={textColor}>{bom.target_quantity}</Text>
                     </Box>
                 </SimpleGrid>
                 {bom.description && (
                     <Box>
-                        <Text fontSize="xs" color="gray.500" fontWeight="semibold" mb={1}>DESCRIPTION / NOTES</Text>
-                        <Text fontSize="sm" color="gray.700" whiteSpace="pre-wrap">{bom.description}</Text>
+                        <Text fontSize="xs" color={labelColor} fontWeight="semibold" mb={1}>DESCRIPTION / NOTES</Text>
+                        <Text fontSize="sm" color={textColor} whiteSpace="pre-wrap">{bom.description}</Text>
                     </Box>
                 )}
             </Box>
@@ -116,15 +128,15 @@ const BOMViewContent: React.FC<{ bom: BOM }> = ({ bom }) => {
             {/* Components Table */}
             <Box>
                 <Flex justify="space-between" align="center" mb={3}>
-                    <Heading size="sm" color="gray.700">Components (Base Cost Calculator)</Heading>
+                    <Heading size="sm" color={headingColor}>Components (Base Cost Calculator)</Heading>
                     <Badge colorScheme="purple" variant="subtle" fontSize="sm" px={3} py={1} borderRadius="full">
                         {bom.items?.length || 0} Components
                     </Badge>
                 </Flex>
 
-                <Box overflowX="auto" borderWidth="1px" borderRadius="md">
+                <Box overflowX="auto" borderWidth="1px" borderRadius="md" borderColor={borderColor}>
                     <Table size="sm" variant="simple">
-                        <Thead bg="gray.100">
+                        <Thead bg={tableHeadBg}>
                             <Tr>
                                 <Th minW="160px">Material</Th>
                                 <Th minW="110px">Category</Th>
@@ -140,7 +152,7 @@ const BOMViewContent: React.FC<{ bom: BOM }> = ({ bom }) => {
                                 bom.items.map((item, idx) => {
                                     const lineTotal = (item.requirement_quantity || 0) * (item.unit_price || 0);
                                     return (
-                                        <Tr key={item.id ?? idx} _hover={{ bg: 'gray.50' }}>
+                                        <Tr key={item.id ?? idx} _hover={{ bg: rowHoverBg }}>
                                             <Td>
                                                 <Text fontWeight="medium" fontSize="sm">
                                                     {item.component_product?.name || item.component_product?.code
@@ -154,16 +166,16 @@ const BOMViewContent: React.FC<{ bom: BOM }> = ({ bom }) => {
                                                 </Badge>
                                             </Td>
                                             <Td>
-                                                <Text fontSize="sm" color="gray.700">
+                                                <Text fontSize="sm" color={textColor}>
                                                     {item.component_product?.stock ?? item.base_quantity} {item.base_unit || ''}
                                                 </Text>
                                             </Td>
                                             <Td>
-                                                <Text fontSize="xs" color="gray.600">{item.notes || '—'}</Text>
+                                                <Text fontSize="xs" color={noteColor}>{item.notes || '—'}</Text>
                                             </Td>
                                             <Td isNumeric>{item.requirement_quantity}</Td>
                                             <Td isNumeric>{formatCurrency(item.unit_price || 0)}</Td>
-                                            <Td isNumeric fontWeight="bold" color="blue.600">
+                                            <Td isNumeric fontWeight="bold" color={costColor}>
                                                 {formatCurrency(lineTotal)}
                                             </Td>
                                         </Tr>
@@ -171,18 +183,18 @@ const BOMViewContent: React.FC<{ bom: BOM }> = ({ bom }) => {
                                 })
                             ) : (
                                 <Tr>
-                                    <Td colSpan={8} textAlign="center" py={4} color="gray.400">
+                                    <Td colSpan={8} textAlign="center" py={4} color={labelColor}>
                                         No components found.
                                     </Td>
                                 </Tr>
                             )}
                         </Tbody>
                         <Tfoot>
-                            <Tr bg="blue.50">
-                                <Td colSpan={6} textAlign="right" fontWeight="bold" fontSize="sm" color="gray.700" borderTop="1px" borderColor="blue.200">
+                            <Tr bg={footerBg}>
+                                <Td colSpan={6} textAlign="right" fontWeight="bold" fontSize="sm" color={headingColor} borderTop="1px" borderColor={footerBorderColor}>
                                     Total Unit Cost:
                                 </Td>
-                                <Td isNumeric fontWeight="bold" fontSize="md" color="blue.700" borderTop="1px" borderColor="blue.200">
+                                <Td isNumeric fontWeight="bold" fontSize="md" color={costColor} borderTop="1px" borderColor={footerBorderColor}>
                                     {formatCurrency(bom.total_cost || 0)}
                                 </Td>
                             </Tr>
@@ -204,12 +216,34 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
 }) => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [products, setProducts] = useState<Product[]>([]);
-    const [productOptions, setProductOptions] = useState<{ id: string | number; name: string }[]>([]);
     const [saveAsTemplate, setSaveAsTemplate] = useState(false);
     const [templateName, setTemplateName] = useState('');
     const [useTemplateOpen, setUseTemplateOpen] = useState(false);
     const [existingBOMProductIds, setExistingBOMProductIds] = useState<number[]>([]);
     const toast = useToast();
+    const modalBg = useColorModeValue('white', 'var(--bg-secondary)');
+    const panelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const sectionBg = useColorModeValue('green.50', 'whiteAlpha.100');
+    const sectionBorderColor = useColorModeValue('gray.200', 'var(--border-color)');
+    const textColor = useColorModeValue('gray.700', 'var(--text-primary)');
+    const labelColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+    const inputBg = useColorModeValue('white', 'var(--bg-secondary)');
+    const inputBorderColor = useColorModeValue('gray.300', 'var(--border-color)');
+    const hoverBorderColor = useColorModeValue('gray.400', 'gray.500');
+    const tableHeadBg = useColorModeValue('gray.100', 'var(--bg-tertiary)');
+    const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+    const footerBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const costBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const costBorderColor = useColorModeValue('gray.200', 'var(--border-color)');
+    const costTextColor = useColorModeValue('gray.700', 'gray.100');
+    const totalFooterBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+    const totalFooterBorderColor = useColorModeValue('blue.200', 'blue.400');
+    const totalTextColor = useColorModeValue('blue.700', 'blue.300');
+    const batchFooterBg = useColorModeValue('orange.50', 'whiteAlpha.100');
+    const batchFooterBorderColor = useColorModeValue('orange.200', 'orange.400');
+    const batchTextColor = useColorModeValue('orange.700', 'orange.300');
+    const checkboxLabelColor = useColorModeValue('gray.700', 'var(--text-primary)');
+    const errorRowBg = useColorModeValue('red.50', 'rgba(245, 101, 101, 0.12)');
 
     const {
         control,
@@ -237,6 +271,24 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
     });
 
     const watchedItems = watch('items');
+    const watchedBomName = watch('name');
+    const watchedBomCode = watch('code');
+    const getDefaultTemplateName = (code?: string, name?: string) => {
+        const safeCode = code?.trim() || '';
+        const safeName = name?.trim() || '';
+
+        if (safeCode && safeName) {
+            return `${safeCode} - ${safeName}`;
+        }
+
+        return safeName || safeCode;
+    };
+    const componentProductOptions = products
+        .filter((product) => product.is_assembly !== true)
+        .map((product) => ({
+            id: product.id || 0,
+            name: `${product.code} - ${product.name}`,
+        }));
 
     useEffect(() => {
         if (!isViewOnly) {
@@ -245,6 +297,11 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
     }, [isViewOnly]);
 
     useEffect(() => {
+        if (isOpen && !isViewOnly) {
+            setSaveAsTemplate(false);
+            setTemplateName('');
+        }
+
         if (existingBOM && isOpen && !isViewOnly) {
             reset({
                 code: existingBOM.code,
@@ -274,6 +331,21 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
         }
     }, [existingBOM, isOpen, isViewOnly, reset]);
 
+    useEffect(() => {
+        if (!saveAsTemplate) {
+            return;
+        }
+
+        if (templateName.trim()) {
+            return;
+        }
+
+        const fallbackName = getDefaultTemplateName(watchedBomCode, watchedBomName);
+        if (fallbackName) {
+            setTemplateName(fallbackName);
+        }
+    }, [saveAsTemplate, templateName, watchedBomName, watchedBomCode]);
+
     const fetchProducts = async () => {
         try {
             const [productResponse, bomResponse] = await Promise.all([
@@ -282,9 +354,6 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
             ]);
             if (productResponse.data) {
                 setProducts(productResponse.data);
-                setProductOptions(
-                    productResponse.data.map((p: Product) => ({ id: p.id, name: `${p.code} - ${p.name}` }))
-                );
             }
             if (bomResponse.data) {
                 setExistingBOMProductIds(bomResponse.data.map((b: any) => b.target_product_id));
@@ -342,20 +411,37 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
             }
 
             // Save as template if checkbox is checked
-            if (saveAsTemplate && templateName.trim() && data.items.length > 0) {
+            if (saveAsTemplate && data.items.length > 0) {
+                const resolvedTemplateName = templateName.trim() || getDefaultTemplateName(data.code, data.name);
+                const templatePayload = {
+                    name: resolvedTemplateName,
+                    description: data.description || '',
+                    items: data.items.map(item => ({
+                        component_product_id: item.component_product_id,
+                        category_str: item.category_str,
+                        requirement_quantity: item.requirement_quantity,
+                        base_unit: item.base_unit,
+                        notes: item.notes || '',
+                    })),
+                };
                 try {
-                    await componentTemplateService.createTemplate({
-                        name: templateName.trim(),
-                        description: '',
-                        items: data.items.map(item => ({
-                            component_product_id: item.component_product_id,
-                            category_str: item.category_str,
-                            requirement_quantity: item.requirement_quantity,
-                            base_unit: item.base_unit,
-                            notes: item.notes || '',
-                        })),
+                    const existingTemplates = await componentTemplateService.getTemplates();
+                    const matchedTemplate = existingTemplates.data?.find((template) =>
+                        template.name.trim().toLowerCase() === resolvedTemplateName.trim().toLowerCase()
+                    );
+
+                    if (matchedTemplate?.id) {
+                        await componentTemplateService.updateTemplate(matchedTemplate.id, templatePayload);
+                    } else {
+                        await componentTemplateService.createTemplate(templatePayload);
+                    }
+
+                    toast({
+                        title: 'Component template tersimpan',
+                        description: resolvedTemplateName,
+                        status: 'success',
+                        isClosable: true
                     });
-                    toast({ title: 'Component template tersimpan', status: 'success', isClosable: true });
                 } catch (tplError: any) {
                     toast({ title: 'Template gagal disimpan', description: tplError.message, status: 'warning', isClosable: true });
                 }
@@ -387,11 +473,11 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
     return (
         <Modal isOpen={isOpen} onClose={onClose} size="6xl" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent my={4} maxH="90vh">
+            <ModalContent my={4} maxH="90vh" bg={modalBg} border="1px solid" borderColor={sectionBorderColor}>
                 {/* ===== VIEW ONLY MODE ===== */}
                 {isViewOnly && existingBOM ? (
                     <>
-                        <ModalHeader borderBottomWidth="1px">
+                        <ModalHeader borderBottomWidth="1px" borderColor={sectionBorderColor} color={textColor}>
                             <HStack spacing={3}>
                                 <Text>View BOM Template</Text>
                                 <Badge colorScheme="gray" variant="outline">{existingBOM.code}</Badge>
@@ -401,7 +487,7 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                         <ModalBody pb={6}>
                             <BOMViewContent bom={existingBOM} />
                         </ModalBody>
-                        <ModalFooter borderTopWidth="1px" bg="gray.50">
+                        <ModalFooter borderTopWidth="1px" borderColor={sectionBorderColor} bg={footerBg}>
                             <Button colorScheme="blue" variant="ghost" onClick={onClose}>
                                 Close
                             </Button>
@@ -413,44 +499,48 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                         onSubmit={handleSubmit(onSubmit)}
                         style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}
                     >
-                        <ModalHeader>
+                        <ModalHeader color={textColor}>
                             {existingBOM ? 'Edit BOM Template' : 'Create New BOM Template'}
                         </ModalHeader>
                         <ModalCloseButton />
 
                         <ModalBody pb={4} overflowY="auto" flex="1" minH="0">
                             <VStack spacing={6} align="stretch">
-                                <Box p={4} borderWidth="1px" borderRadius="md" bg="gray.50">
-                                    <Heading size="sm" mb={4}>Header Information</Heading>
+                                <Box p={4} borderWidth="1px" borderRadius="md" bg={panelBg} borderColor={sectionBorderColor}>
+                                    <Heading size="sm" mb={4} color={textColor}>Header Information</Heading>
                                     <HStack spacing={4} align="flex-start" mb={4}>
                                         <FormControl isInvalid={!!errors.code} isRequired>
-                                            <FormLabel>BOM Code</FormLabel>
-                                            <Input {...register('code')} placeholder="e.g. BOM-001" bg="white" />
+                                            <FormLabel color={labelColor}>BOM Code</FormLabel>
+                                            <Input {...register('code')} placeholder="e.g. BOM-001" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                             <FormErrorMessage>{errors.code?.message}</FormErrorMessage>
                                         </FormControl>
 
                                         <FormControl isInvalid={!!errors.name} isRequired>
-                                            <FormLabel>BOM Name</FormLabel>
-                                            <Input {...register('name')} placeholder="e.g. Lapangan Padel Standard" bg="white" />
+                                            <FormLabel color={labelColor}>BOM Name</FormLabel>
+                                            <Input {...register('name')} placeholder="e.g. Lapangan Padel Standard" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                             <FormErrorMessage>{errors.name?.message}</FormErrorMessage>
                                         </FormControl>
                                     </HStack>
 
                                     <HStack spacing={4} align="flex-start" mb={4}>
                                         <FormControl isInvalid={!!errors.target_product_id} isRequired flex={2}>
-                                            <FormLabel>Target Assembly Product</FormLabel>
+                                            <FormLabel color={labelColor}>Target Assembly Product</FormLabel>
                                             <Controller
                                                 control={control}
                                                 name="target_product_id"
                                                 render={({ field }) => {
-                                                    // Filter out products that already have a BOM (except current when editing)
-                                                    const filteredTargetOptions = productOptions.filter(
-                                                        (opt) => {
-                                                            const optId = typeof opt.id === 'string' ? parseInt(opt.id) : opt.id;
-                                                            if (existingBOM && optId === existingBOM.target_product_id) return true;
-                                                            return !existingBOMProductIds.includes(optId);
-                                                        }
-                                                    );
+                                                    // Only assembly products can become BOM targets,
+                                                    // and each target product should only have one BOM.
+                                                    const filteredTargetOptions = products
+                                                        .filter((product) => {
+                                                            const productId = product.id || 0;
+                                                            if (existingBOM && productId === existingBOM.target_product_id) return true;
+                                                            return product.is_assembly === true && !existingBOMProductIds.includes(productId);
+                                                        })
+                                                        .map((product) => ({
+                                                            id: product.id || 0,
+                                                            name: `${product.code} - ${product.name}`,
+                                                        }));
                                                     return (
                                                         <SearchableSelect
                                                             options={filteredTargetOptions}
@@ -465,7 +555,7 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                         </FormControl>
 
                                         <FormControl isInvalid={!!errors.target_quantity} isRequired flex={1}>
-                                            <FormLabel>Target Qty</FormLabel>
+                                            <FormLabel color={labelColor}>Target Qty</FormLabel>
                                             <Controller
                                                 control={control}
                                                 name="target_quantity"
@@ -474,7 +564,7 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                                         min={1}
                                                         value={Number.isNaN(field.value) ? '' : field.value}
                                                         onChange={(_, val) => field.onChange(val)}
-                                                        bg="white"
+                                                        bg={inputBg}
                                                     >
                                                         <NumberInputField />
                                                     </NumberInput>
@@ -485,8 +575,8 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                     </HStack>
 
                                     <FormControl isInvalid={!!errors.description}>
-                                        <FormLabel>Description / Notes</FormLabel>
-                                        <Textarea {...register('description')} rows={2} bg="white" />
+                                        <FormLabel color={labelColor}>Description / Notes</FormLabel>
+                                        <Textarea {...register('description')} rows={2} bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                     </FormControl>
                                 </Box>
 
@@ -494,7 +584,7 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
 
                                 <Box>
                                     <Flex justify="space-between" align="center" mb={4}>
-                                        <Heading size="sm">Components (Base Cost Calculator)</Heading>
+                                        <Heading size="sm" color={textColor}>Components (Base Cost Calculator)</Heading>
                                         <HStack spacing={2}>
                                             <Button
                                                 leftIcon={<FiClipboard />}
@@ -525,9 +615,9 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                         </HStack>
                                     </Flex>
 
-                                    <Box overflowX="auto" overflowY="auto" maxH="350px" borderWidth="1px" borderRadius="md">
+                                    <Box overflowX="auto" overflowY="auto" maxH="350px" borderWidth="1px" borderRadius="md" borderColor={sectionBorderColor}>
                                         <Table size="sm" variant="simple">
-                                            <Thead bg="gray.100" position="sticky" top={0} zIndex={1}>
+                                            <Thead bg={tableHeadBg} position="sticky" top={0} zIndex={1}>
                                                 <Tr>
                                                     <Th minW="160px">Material</Th>
                                                     <Th minW="110px">Category</Th>
@@ -546,14 +636,14 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                                     const lineTotal = currentUnitPrice * currentReqQty;
 
                                                     return (
-                                                        <Tr key={field.id}>
+                                                        <Tr key={field.id} _hover={{ bg: rowHoverBg }}>
                                                             <Td>
                                                                 <Controller
                                                                     control={control}
                                                                     name={`items.${index}.component_product_id`}
                                                                     render={({ field: selectField }) => (
                                                                         <SearchableSelect
-                                                                            options={productOptions}
+                                                                            options={componentProductOptions}
                                                                             value={selectField.value ? selectField.value.toString() : ''}
                                                                             onChange={(val) => {
                                                                                 selectField.onChange(typeof val === 'string' ? parseInt(val) : val);
@@ -566,7 +656,7 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                                                 />
                                                             </Td>
                                                             <Td>
-                                                                <Input size="sm" {...register(`items.${index}.category_str`)} placeholder="e.g. A. Kelengkapan" />
+                                                                <Input size="sm" {...register(`items.${index}.category_str`)} placeholder="e.g. A. Kelengkapan" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                                             </Td>
                                                             <Td>
                                                                 {/* Stok / Unit: read-only, auto-filled from product stock */}
@@ -582,11 +672,11 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                                                     >
                                                                         {watchedItems[index]?.base_quantity ?? 0}
                                                                     </Badge>
-                                                                    <Input size="sm" w="55px" {...register(`items.${index}.base_unit`)} placeholder="pcs" px={1} />
+                                                                    <Input size="sm" w="55px" {...register(`items.${index}.base_unit`)} placeholder="pcs" px={1} bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                                                 </HStack>
                                                             </Td>
                                                             <Td>
-                                                                <Input size="sm" {...register(`items.${index}.notes`)} placeholder="Keterangan..." />
+                                                                <Input size="sm" {...register(`items.${index}.notes`)} placeholder="Keterangan..." bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                                             </Td>
                                                             <Td isNumeric>
                                                                 <Controller
@@ -608,19 +698,19 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                                                 <Text
                                                                     fontSize="sm"
                                                                     fontWeight="medium"
-                                                                    color="gray.700"
+                                                                    color={costTextColor}
                                                                     textAlign="right"
                                                                     px={2}
                                                                     py={1}
-                                                                    bg="gray.50"
+                                                                    bg={costBg}
                                                                     borderRadius="md"
                                                                     border="1px solid"
-                                                                    borderColor="gray.200"
+                                                                    borderColor={costBorderColor}
                                                                 >
                                                                     Rp {(watchedItems[index]?.unit_price || 0).toLocaleString('id-ID')}
                                                                 </Text>
                                                             </Td>
-                                                            <Td isNumeric fontWeight="bold" color="blue.600">
+                                                            <Td isNumeric fontWeight="bold" color={totalTextColor}>
                                                                 {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(lineTotal)}
                                                             </Td>
                                                             <Td>
@@ -638,38 +728,38 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                                 })}
                                                 {fields.length === 0 && (
                                                     <Tr>
-                                                        <Td colSpan={8} textAlign="center" py={4} color="gray.500">
-                                                            No components added. Click "Add Component" to start building the BOM.
+                                                        <Td colSpan={8} textAlign="center" py={4} color={labelColor}>
+                                                            No components added. Click &quot;Add Component&quot; to start building the BOM.
                                                         </Td>
                                                     </Tr>
                                                 )}
                                                 {!!errors.items && (
                                                     <Tr>
-                                                        <Td colSpan={8} textAlign="center" color="red.500" py={2} bg="red.50">
+                                                        <Td colSpan={8} textAlign="center" color="red.500" py={2} bg={errorRowBg}>
                                                             {errors.items.message as string}
                                                         </Td>
                                                     </Tr>
                                                 )}
                                             </Tbody>
                                             <Tfoot position="sticky" bottom={0} zIndex={1}>
-                                                <Tr bg="blue.50">
-                                                    <Td colSpan={6} textAlign="right" fontWeight="bold" fontSize="sm" color="gray.700" borderTop="2px" borderColor="blue.200">
+                                                <Tr bg={totalFooterBg}>
+                                                    <Td colSpan={6} textAlign="right" fontWeight="bold" fontSize="sm" color={textColor} borderTop="2px" borderColor={totalFooterBorderColor}>
                                                         Total Unit Cost (per 1 unit):
                                                     </Td>
-                                                    <Td isNumeric fontWeight="bold" fontSize="md" color="blue.700" borderTop="2px" borderColor="blue.200">
+                                                    <Td isNumeric fontWeight="bold" fontSize="md" color={totalTextColor} borderTop="2px" borderColor={totalFooterBorderColor}>
                                                         {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(calculateTotal())}
                                                     </Td>
-                                                    <Td borderTop="2px" borderColor="blue.200" />
+                                                    <Td borderTop="2px" borderColor={totalFooterBorderColor} />
                                                 </Tr>
                                                 {watchedTargetQty > 1 && (
-                                                    <Tr bg="orange.50">
-                                                        <Td colSpan={6} textAlign="right" fontWeight="bold" fontSize="sm" color="orange.700" borderTop="1px" borderColor="orange.200">
+                                                    <Tr bg={batchFooterBg}>
+                                                        <Td colSpan={6} textAlign="right" fontWeight="bold" fontSize="sm" color={batchTextColor} borderTop="1px" borderColor={batchFooterBorderColor}>
                                                             Total Batch Cost (× {watchedTargetQty} units):
                                                         </Td>
-                                                        <Td isNumeric fontWeight="bold" fontSize="md" color="orange.700" borderTop="1px" borderColor="orange.200">
+                                                        <Td isNumeric fontWeight="bold" fontSize="md" color={batchTextColor} borderTop="1px" borderColor={batchFooterBorderColor}>
                                                             {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(calculateBatchTotal())}
                                                         </Td>
-                                                        <Td borderTop="1px" borderColor="orange.200" />
+                                                        <Td borderTop="1px" borderColor={batchFooterBorderColor} />
                                                     </Tr>
                                                 )}
                                             </Tfoot>
@@ -677,18 +767,26 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                     </Box>
 
                                     {/* Save as Template checkbox */}
-                                    <Box mt={4} p={3} borderWidth="1px" borderRadius="md" bg="green.50" borderColor="green.200">
+                                    <Box mt={4} p={3} borderWidth="1px" borderRadius="md" bg={sectionBg} borderColor={sectionBorderColor}>
                                         <Flex align="center" gap={3}>
-                                            <input
-                                                type="checkbox"
+                                            <Checkbox
                                                 id="saveAsTemplate"
-                                                checked={saveAsTemplate}
-                                                onChange={(e) => setSaveAsTemplate(e.target.checked)}
-                                                style={{ width: '16px', height: '16px', accentColor: '#38A169' }}
-                                            />
-                                            <label htmlFor="saveAsTemplate" style={{ fontSize: '14px', fontWeight: 500, color: '#2D3748', cursor: 'pointer' }}>
-                                                Save components as template
-                                            </label>
+                                                isChecked={saveAsTemplate}
+                                                colorScheme="green"
+                                                onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    setSaveAsTemplate(checked);
+                                                    if (!checked) {
+                                                        setTemplateName('');
+                                                    } else if (!templateName.trim()) {
+                                                        setTemplateName(getDefaultTemplateName(watchedBomCode, watchedBomName));
+                                                    }
+                                                }}
+                                            >
+                                                <Text fontSize="sm" fontWeight="medium" color={checkboxLabelColor}>
+                                                    Save components as template
+                                                </Text>
+                                            </Checkbox>
                                         </Flex>
                                         {saveAsTemplate && (
                                             <Box mt={2}>
@@ -697,7 +795,11 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                                                     placeholder="Nama template, e.g. Paket Lapangan Padel Standard"
                                                     value={templateName}
                                                     onChange={(e) => setTemplateName(e.target.value)}
-                                                    bg="white"
+                                                    bg={inputBg}
+                                                    color={textColor}
+                                                    borderColor={inputBorderColor}
+                                                    _hover={{ borderColor: hoverBorderColor }}
+                                                    _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }}
                                                 />
                                             </Box>
                                         )}
@@ -713,7 +815,7 @@ const BOMFormModal: React.FC<BOMFormModalProps> = ({
                             />
                         </ModalBody>
 
-                        <ModalFooter borderTopWidth="1px" bg="gray.50">
+                        <ModalFooter borderTopWidth="1px" borderColor={sectionBorderColor} bg={footerBg}>
                             <Button variant="ghost" mr={3} onClick={onClose} isDisabled={isSubmitting}>
                                 Cancel
                             </Button>

@@ -33,10 +33,10 @@ import {
     AccordionPanel,
     AccordionIcon,
     HStack,
-    VStack,
     Input,
     FormControl,
     FormLabel,
+    useColorModeValue,
 } from '@chakra-ui/react';
 import { FiTrash2, FiPlus, FiSave, FiX, FiEdit } from 'react-icons/fi';
 import { componentTemplateService } from '@/services/bomService';
@@ -73,6 +73,18 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
     const [products, setProducts] = useState<Product[]>([]);
     const [productOptions, setProductOptions] = useState<{ id: string | number; name: string }[]>([]);
     const [saving, setSaving] = useState(false);
+    const modalBg = useColorModeValue('white', 'var(--bg-secondary)');
+    const panelBg = useColorModeValue('white', 'var(--bg-secondary)');
+    const sectionBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+    const editSectionBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.12)');
+    const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
+    const textColor = useColorModeValue('gray.700', 'var(--text-primary)');
+    const mutedTextColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+    const inputBg = useColorModeValue('white', 'var(--bg-secondary)');
+    const inputBorderColor = useColorModeValue('gray.300', 'var(--border-color)');
+    const hoverBorderColor = useColorModeValue('gray.400', 'gray.500');
+    const tableHeadBg = useColorModeValue('gray.50', 'var(--bg-tertiary)');
+    const footerBg = useColorModeValue('gray.50', 'whiteAlpha.100');
 
     const fetchTemplates = async () => {
         setLoading(true);
@@ -223,7 +235,7 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
 
     // === Shared form component ===
     const renderForm = () => (
-        <Box mb={5} p={4} borderWidth="2px" borderRadius="md" borderColor={formMode === 'edit' ? 'orange.300' : 'blue.300'} bg={formMode === 'edit' ? 'orange.50' : 'blue.50'}>
+        <Box mb={5} p={4} borderWidth="2px" borderRadius="md" borderColor={formMode === 'edit' ? 'orange.300' : 'blue.300'} bg={formMode === 'edit' ? editSectionBg : sectionBg}>
             <Text fontWeight="bold" fontSize="md" mb={3} color={formMode === 'edit' ? 'orange.700' : 'blue.700'}>
                 {formMode === 'edit' ? `Edit Template: ${formName}` : 'Buat Template Baru'}
             </Text>
@@ -231,27 +243,27 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
             <HStack spacing={4} mb={3}>
                 <FormControl isRequired flex={2}>
                     <FormLabel fontSize="sm">Nama Template</FormLabel>
-                    <Input size="sm" bg="white" placeholder="e.g. Paket Lapangan Padel Standard" value={formName} onChange={(e) => setFormName(e.target.value)} />
+                    <Input size="sm" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} placeholder="e.g. Paket Lapangan Padel Standard" value={formName} onChange={(e) => setFormName(e.target.value)} />
                 </FormControl>
                 <FormControl flex={3}>
                     <FormLabel fontSize="sm">Deskripsi</FormLabel>
-                    <Input size="sm" bg="white" placeholder="Opsional" value={formDescription} onChange={(e) => setFormDescription(e.target.value)} />
+                    <Input size="sm" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} placeholder="Opsional" value={formDescription} onChange={(e) => setFormDescription(e.target.value)} />
                 </FormControl>
             </HStack>
 
             <Flex justify="space-between" align="center" mb={2}>
-                <Text fontSize="sm" fontWeight="semibold" color="gray.700">Komponen:</Text>
+                <Text fontSize="sm" fontWeight="semibold" color={textColor}>Komponen:</Text>
                 <Button leftIcon={<FiPlus />} size="xs" colorScheme="blue" variant="outline" onClick={handleAddItem}>Add Component</Button>
             </Flex>
 
             {formItems.length === 0 ? (
-                <Box textAlign="center" py={3} bg="white" borderRadius="md" borderWidth="1px">
-                    <Text fontSize="sm" color="gray.400">Belum ada komponen. Klik &quot;Add Component&quot; untuk menambah.</Text>
+                <Box textAlign="center" py={3} bg={panelBg} borderRadius="md" borderWidth="1px" borderColor={borderColor}>
+                    <Text fontSize="sm" color={mutedTextColor}>Belum ada komponen. Klik &quot;Add Component&quot; untuk menambah.</Text>
                 </Box>
             ) : (
-                <Box overflowX="auto" borderWidth="1px" borderRadius="md" bg="white">
+                <Box overflowX="auto" borderWidth="1px" borderRadius="md" bg={panelBg} borderColor={borderColor}>
                     <Table size="sm" variant="simple">
-                        <Thead bg="gray.50">
+                        <Thead bg={tableHeadBg}>
                             <Tr>
                                 <Th w="35%">Material</Th>
                                 <Th w="15%">Category</Th>
@@ -273,16 +285,16 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
                                         />
                                     </Td>
                                     <Td>
-                                        <Input size="sm" value={item.category_str} onChange={(e) => handleItemChange(idx, 'category_str', e.target.value)} placeholder="Category" />
+                                        <Input size="sm" value={item.category_str} onChange={(e) => handleItemChange(idx, 'category_str', e.target.value)} placeholder="Category" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                     </Td>
                                     <Td>
-                                        <Input size="sm" type="number" min={1} value={item.requirement_quantity} onChange={(e) => handleItemChange(idx, 'requirement_quantity', parseFloat(e.target.value) || 0)} textAlign="right" />
+                                        <Input size="sm" type="number" min={1} value={item.requirement_quantity} onChange={(e) => handleItemChange(idx, 'requirement_quantity', parseFloat(e.target.value) || 0)} textAlign="right" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                     </Td>
                                     <Td>
-                                        <Input size="sm" value={item.base_unit} onChange={(e) => handleItemChange(idx, 'base_unit', e.target.value)} placeholder="pcs" />
+                                        <Input size="sm" value={item.base_unit} onChange={(e) => handleItemChange(idx, 'base_unit', e.target.value)} placeholder="pcs" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                     </Td>
                                     <Td>
-                                        <Input size="sm" value={item.notes} onChange={(e) => handleItemChange(idx, 'notes', e.target.value)} placeholder="Notes" />
+                                        <Input size="sm" value={item.notes} onChange={(e) => handleItemChange(idx, 'notes', e.target.value)} placeholder="Notes" bg={inputBg} color={textColor} borderColor={inputBorderColor} _hover={{ borderColor: hoverBorderColor }} _focusVisible={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }} />
                                     </Td>
                                     <Td>
                                         <IconButton aria-label="Remove" icon={<FiTrash2 />} size="xs" colorScheme="red" variant="ghost" onClick={() => handleRemoveItem(idx)} />
@@ -314,8 +326,8 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
         <>
             <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
                 <ModalOverlay />
-                <ModalContent maxH="90vh">
-                    <ModalHeader borderBottomWidth="1px">
+                <ModalContent maxH="90vh" bg={modalBg} border="1px solid" borderColor={borderColor}>
+                    <ModalHeader borderBottomWidth="1px" borderColor={borderColor} color={textColor}>
                         <Flex justify="space-between" align="center" pr={8}>
                             <Text>Kelola Component Templates</Text>
                             {formMode === 'none' && (
@@ -335,20 +347,20 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
                             <Flex justify="center" py={10}><Spinner size="lg" color="blue.500" /></Flex>
                         ) : templates.length === 0 && formMode === 'none' ? (
                             <Box textAlign="center" py={10}>
-                                <Text color="gray.500" fontSize="md" mb={3}>Belum ada template tersimpan.</Text>
+                                <Text color={mutedTextColor} fontSize="md" mb={3}>Belum ada template tersimpan.</Text>
                                 <Button leftIcon={<FiPlus />} colorScheme="blue" size="sm" onClick={handleStartCreate}>Buat Template Pertama</Button>
                             </Box>
                         ) : (
                             <Accordion allowMultiple>
                                 {templates.map((tpl) => (
-                                    <AccordionItem key={tpl.id} border="1px solid" borderColor={editingId === tpl.id ? 'orange.300' : 'gray.200'} borderRadius="md" mb={2}>
+                                    <AccordionItem key={tpl.id} border="1px solid" borderColor={editingId === tpl.id ? 'orange.300' : borderColor} borderRadius="md" mb={2}>
                                         <h2>
                                             <Flex align="center">
-                                                <AccordionButton flex="1" _expanded={{ bg: 'blue.50' }}>
+                                                <AccordionButton flex="1" _expanded={{ bg: sectionBg }}>
                                                     <Flex flex="1" align="center" gap={3}>
-                                                        <Text fontWeight="semibold">{tpl.name}</Text>
+                                                        <Text fontWeight="semibold" color={textColor}>{tpl.name}</Text>
                                                         <Badge colorScheme="purple" fontSize="xs">{tpl.items?.length || 0} items</Badge>
-                                                        <Text fontSize="xs" color="gray.500">{formatDate(tpl.created_at)}</Text>
+                                                        <Text fontSize="xs" color={mutedTextColor}>{formatDate(tpl.created_at)}</Text>
                                                     </Flex>
                                                     <AccordionIcon />
                                                 </AccordionButton>
@@ -374,11 +386,11 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
                                         </h2>
                                         <AccordionPanel pb={4}>
                                             {tpl.description && (
-                                                <Text fontSize="sm" color="gray.600" mb={3}>{tpl.description}</Text>
+                                                <Text fontSize="sm" color={mutedTextColor} mb={3}>{tpl.description}</Text>
                                             )}
-                                            <Box overflowX="auto" borderWidth="1px" borderRadius="md">
+                                            <Box overflowX="auto" borderWidth="1px" borderRadius="md" borderColor={borderColor}>
                                                 <Table size="sm" variant="simple">
-                                                    <Thead bg="gray.50">
+                                                    <Thead bg={tableHeadBg}>
                                                         <Tr>
                                                             <Th>Material</Th>
                                                             <Th>Category</Th>
@@ -391,7 +403,7 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
                                                         {tpl.items?.map((item, idx) => (
                                                             <Tr key={item.id ?? idx}>
                                                                 <Td>
-                                                                    <Text fontSize="sm" fontWeight="medium">
+                                                                    <Text fontSize="sm" fontWeight="medium" color={textColor}>
                                                                         {item.component_product
                                                                             ? `${item.component_product.code ? item.component_product.code + ' - ' : ''}${item.component_product.name}`
                                                                             : `Product ID: ${item.component_product_id}`}
@@ -414,7 +426,7 @@ const ComponentTemplateManagerModal: React.FC<ComponentTemplateManagerModalProps
                             </Accordion>
                         )}
                     </ModalBody>
-                    <ModalFooter borderTopWidth="1px" bg="gray.50">
+                    <ModalFooter borderTopWidth="1px" borderColor={borderColor} bg={footerBg}>
                         <Button onClick={onClose}>Tutup</Button>
                     </ModalFooter>
                 </ModalContent>

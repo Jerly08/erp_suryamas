@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"app-sistem-akuntansi/config"
 	"app-sistem-akuntansi/database"
+	"app-sistem-akuntansi/middleware"
 	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/routes"
 	"app-sistem-akuntansi/services"
@@ -39,6 +45,9 @@ import (
 func main() {
 	// Load configuration
 	cfg := config.LoadConfig()
+
+	// Initialize global rate limiters before routes are registered.
+	middleware.InitializeRateLimiters(cfg)
 
 	// Set Gin mode to release to hide debug logs
 	gin.SetMode(gin.ReleaseMode)
@@ -133,8 +142,21 @@ func main() {
 		r.Use(gin.Logger())
 	}
 
-	// Configure trusted proxies for security
-	r.SetTrustedProxies([]string{"127.0.0.1", "::1"})
+	// Configure trusted proxies for security and accurate client IP detection
+	trustedProxies := cfg.TrustedProxies
+	if len(trustedProxies) == 0 {
+		trustedProxies = []string{"127.0.0.1", "::1"}
+		if cfg.Environment == "production" {
+			trustedProxies = append(trustedProxies,
+				"10.0.0.0/8",
+				"172.16.0.0/12",
+				"192.168.0.0/16",
+			)
+		}
+	}
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		log.Printf("Warning: failed to set trusted proxies: %v", err)
+	}
 
 	// CORS middleware with dynamic origins
 	allowedOrigins := config.GetAllowedOrigins(cfg)
@@ -154,15 +176,6 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	// Update Swagger docs with dynamic configuration
-	if cfg.Environment == "development" || os.Getenv("ENABLE_SWAGGER") == "true" {
-		config.UpdateSwaggerDocs()
-		config.PrintSwaggerInfo()
-
-		// Setup enhanced dynamic Swagger routes with authentication support
-		config.SetupEnhancedSwaggerRoutes(r)
-	}
-
 	// Setup routes
 	routes.SetupRoutes(r, db, startupService)
 
@@ -172,6 +185,42 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("Server starting on port %s", port)
-	log.Fatal(r.Run(":" + port))
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+
+	serverErrors := make(chan error, 1)
+	go func() {
+		log.Printf("Server starting on port %s", port)
+		serverErrors <- srv.ListenAndServe()
+	}()
+
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErrors:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	case sig := <-signalCh:
+		log.Printf("Shutdown signal received: %s", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Graceful shutdown failed: %v", err)
+			if closeErr := srv.Close(); closeErr != nil {
+				log.Printf("Forced shutdown failed: %v", closeErr)
+			}
+		}
+	}
+
+	log.Println("Server stopped cleanly")
 }

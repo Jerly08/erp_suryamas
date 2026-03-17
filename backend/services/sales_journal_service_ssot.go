@@ -62,6 +62,26 @@ func (s *SalesJournalServiceSSOT) syncCashBankBalance(tx *gorm.DB, accountID uin
 		return err
 	}
 
+	if cashBank.IsForeignCurrency() {
+		if math.Abs(cashBank.BookBalanceIDR-account.Balance) <= 0.01 {
+			return nil
+		}
+
+		oldBookBalance := cashBank.BookBalanceIDR
+		cashBank.BookBalanceIDR = account.Balance
+		if cashBank.Balance > 0 && cashBank.BookBalanceIDR > 0 {
+			cashBank.LastExchangeRate = cashBank.BookBalanceIDR / cashBank.Balance
+		}
+
+		if err := tx.Save(&cashBank).Error; err != nil {
+			return err
+		}
+
+		log.Printf("🔄 [SYNC] Foreign CashBank #%d '%s' book balance synced: %.2f → %.2f (native balance stays %.2f, COA account #%d)",
+			cashBank.ID, cashBank.Name, oldBookBalance, cashBank.BookBalanceIDR, cashBank.Balance, accountID)
+		return nil
+	}
+
 	// Check if sync needed
 	if cashBank.Balance == account.Balance {
 		// Already in sync, no update needed

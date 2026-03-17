@@ -6,6 +6,8 @@ export interface Payment {
   id: number;
   code: string;
   contact_id: number;
+  expense_account_id?: number;
+  cash_bank_id?: number;
   contact?: {
     id: number;
     name: string;
@@ -14,14 +16,34 @@ export interface Payment {
   user_id: number;
   date: string;
   amount: number;
+  native_amount?: number;
+  currency?: string;
+  exchange_rate?: number;
+  book_amount_idr?: number;
+  forex_gain_loss_amount?: number;
+  forex_gain_loss_type?: string;
   method: string;
   reference: string;
   status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REVERSED';
   payment_type?: string; // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
+  pph_type?: string;
+  pph_rate?: number;
+  pph_amount?: number;
   notes: string;
   created_at: string;
   updated_at: string;
 }
+
+export const stripInternalPaymentReference = (reference?: string): string => {
+  if (!reference) {
+    return '';
+  }
+
+  return reference
+    .replace(/^__EXP_ACC:\d+,CB:\d+__/, '')
+    .replace(/^__CB:\d+__/, '')
+    .trim();
+};
 
 export interface PaymentFilters {
   page?: number;
@@ -46,6 +68,7 @@ export interface PaymentCreateRequest {
   cash_bank_id?: number;
   date: string;
   amount: number;
+  exchange_rate?: number;
   method: string;
   reference?: string;
   notes?: string;
@@ -158,6 +181,7 @@ class PaymentService {
         cash_bank_id: data.cash_bank_id,
         date: this.formatDateForAPI(data.date),
         amount: data.amount,
+        exchange_rate: data.exchange_rate,
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
@@ -226,6 +250,7 @@ class PaymentService {
         cash_bank_id: data.cash_bank_id,
         date: this.formatDateForAPI(data.date),
         amount: data.amount,
+        exchange_rate: data.exchange_rate,
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
@@ -292,10 +317,14 @@ class PaymentService {
         cash_bank_id: data.cash_bank_id,
         date: this.formatDateForAPI(data.date),
         amount: data.amount,
+        exchange_rate: data.exchange_rate,
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
         description: data.description || '',
+        pph_type: data.pph_type || '',
+        pph_rate: data.pph_rate || 0,
+        pph_amount: data.pph_amount || 0,
       };
 
       const response = await api.put(`${this.getSSOTPaymentBase()}/${id}/draft`, ssotData);
@@ -805,18 +834,16 @@ class PaymentService {
         cash_bank_id: data.cash_bank_id,
         date: this.formatDateForAPI(data.date),
         amount: data.amount,
+        exchange_rate: data.exchange_rate,
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
         description: data.description || 'Expense Payment',
         payment_type: 'EXPENSE',
         auto_create_journal: data.auto_create_journal ?? true,
-        // PPh withholding tax fields (only send if provided)
-        ...(data.pph_type && data.pph_amount && data.pph_amount > 0 && {
-          pph_type: data.pph_type,
-          pph_rate: data.pph_rate || 0,
-          pph_amount: data.pph_amount,
-        }),
+        pph_type: data.pph_type || '',
+        pph_rate: data.pph_rate || 0,
+        pph_amount: data.pph_amount || 0,
       };
 
       // Check if SSOT expense payment endpoint exists, otherwise use regular endpoint
@@ -891,6 +918,7 @@ export interface PaymentWithJournalRequest {
   cash_bank_id: number;
   date: string;
   amount: number;
+  exchange_rate?: number;
   method: string;
   reference?: string;
   notes?: string;
@@ -1055,6 +1083,7 @@ export interface ExpensePaymentRequest {
   cash_bank_id: number;
   date: string;
   amount: number;
+  exchange_rate?: number;
   method: string;
   reference?: string;
   notes?: string;

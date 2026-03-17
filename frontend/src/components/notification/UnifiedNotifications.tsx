@@ -13,7 +13,6 @@ import {
   HStack,
   VStack,
   Badge,
-  Spinner,
   Alert,
   AlertIcon,
   Button,
@@ -22,20 +21,7 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  ModalCloseButton,
-  useDisclosure,
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogContent,
-  AlertDialogOverlay,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   FiBell,
@@ -46,15 +32,14 @@ import {
   FiPackage,
   FiAlertTriangle,
   FiAlertCircle,
-  FiLogOut
 } from 'react-icons/fi';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter } from 'next/navigation';
 import approvalService from '../../services/approvalService';
 import axios from 'axios';
 import { API_BASE_URL, API_ENDPOINTS } from '@/config/api';
 import { formatIDR } from '@/utils/currency';
+import AuthExpiredModal from '@/components/auth/AuthExpiredModal';
 
 interface NotificationItem {
   id: number;
@@ -87,15 +72,27 @@ const UnifiedNotifications: React.FC = () => {
   const [stockAlerts, setStockAlerts] = useState<StockAlert[]>([]);
   const [approvalUnreadCount, setApprovalUnreadCount] = useState(0);
   const [stockUnreadCount, setStockUnreadCount] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [authError, setAuthError] = useState(false);
+  const [isAuthExpiredOpen, setIsAuthExpiredOpen] = useState(false);
   const { user, logout } = useAuth();
-  const router = useRouter();
-  const { isOpen: isAuthErrorOpen, onOpen: onAuthErrorOpen, onClose: onAuthErrorClose } = useDisclosure();
-  const cancelRef = React.useRef<HTMLButtonElement>(null);
 
   // Determine if user can see stock notifications
   const canViewStockNotifications = user?.role === 'admin' || user?.role === 'inventory_manager';
+  const menuBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const menuBorderColor = useColorModeValue('gray.200', 'var(--border-color)');
+  const textColor = useColorModeValue('gray.800', 'var(--text-primary)');
+  const secondaryTextColor = useColorModeValue('gray.600', 'whiteAlpha.700');
+  const mutedTextColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+  const itemHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const unreadItemBg = useColorModeValue('blue.50', 'rgba(77, 171, 247, 0.12)');
+  const unreadStockItemBg = useColorModeValue('orange.50', 'rgba(221, 107, 32, 0.14)');
+  const tabListBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const tabSelectedBg = useColorModeValue('white', 'var(--bg-primary)');
+  const tabSelectedColor = useColorModeValue('blue.600', 'blue.200');
+  const stockAlertBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const warningAlertBg = useColorModeValue('orange.50', 'rgba(221, 107, 32, 0.14)');
+  const warningAlertBorderColor = useColorModeValue('orange.200', 'orange.400');
+  const unreadApprovalDot = useColorModeValue('blue.500', 'blue.300');
+  const unreadStockDot = useColorModeValue('orange.500', 'orange.300');
 
   useEffect(() => {
     fetchAllNotifications();
@@ -125,9 +122,7 @@ const UnifiedNotifications: React.FC = () => {
       setApprovalUnreadCount(unreadCount);
     } catch (error: any) {
       if (error.response?.status === 401) {
-        // Token expired or invalid - show user-friendly modal
-        setAuthError(true);
-        onAuthErrorOpen();
+        setIsAuthExpiredOpen(true);
       } else if (error.response?.status !== 403) {
         console.error('Failed to fetch approval notifications:', error);
       }
@@ -172,9 +167,7 @@ const UnifiedNotifications: React.FC = () => {
 
     } catch (error: any) {
       if (error.response?.status === 401) {
-        // Token expired or invalid - show user-friendly modal
-        setAuthError(true);
-        onAuthErrorOpen();
+        setIsAuthExpiredOpen(true);
       } else {
         console.error('Failed to fetch stock notifications:', error);
       }
@@ -199,9 +192,7 @@ const UnifiedNotifications: React.FC = () => {
     } catch (error: any) {
       // Handle specific error cases
       if (error.response?.status === 401) {
-        // Token expired or invalid - show user-friendly modal
-        setAuthError(true);
-        onAuthErrorOpen();
+        setIsAuthExpiredOpen(true);
       } else if (error.response?.status === 500) {
         console.warn('Stock alerts service temporarily unavailable');
       } else if (error.response?.status === 403) {
@@ -282,15 +273,9 @@ const UnifiedNotifications: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    onAuthErrorClose();
+  const handleAuthExpiredLoginRedirect = () => {
+    setIsAuthExpiredOpen(false);
     logout();
-    router.push('/login');
-  };
-
-  const handleCloseAuthError = () => {
-    setAuthError(false);
-    onAuthErrorClose();
   };
 
   const formatDate = (dateString: string) => {
@@ -321,7 +306,7 @@ const UnifiedNotifications: React.FC = () => {
     if (typeof totalAmount === 'number') {
       const amountLabel = t('common.labels.amount');
       // Replace patterns like (Amount: ...)
-      result = result.replace(/\(\s*Amount\s*:\s*[^\)]*\)/i, (m) => `(${amountLabel}: ${formatIDR(totalAmount)})`);
+      result = result.replace(/\(\s*Amount\s*:\s*[^\)]*\)/i, () => `(${amountLabel}: ${formatIDR(totalAmount)})`);
     }
 
     // Generic replacement: find "Amount: <number>" or "amount: <number>"
@@ -336,6 +321,17 @@ const UnifiedNotifications: React.FC = () => {
     return result;
   };
 
+  const parseNotificationData = (data?: NotificationItem['data']) => {
+    if (!data) return null;
+    if (typeof data !== 'string') return data;
+
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  };
+
   const getUrgencyColor = (urgency: string) => {
     switch (urgency) {
       case 'critical': return 'red';
@@ -348,42 +344,48 @@ const UnifiedNotifications: React.FC = () => {
   const totalUnreadCount = approvalUnreadCount + stockUnreadCount + stockAlerts.length;
 
   return (
-    <Menu placement="bottom-end" autoSelect={false} onOpen={fetchAllNotifications}>
-      <MenuButton as={IconButton} aria-label="Notifications" variant="ghost">
-        <Box position="relative">
-          <FiBell />
-          {totalUnreadCount > 0 && (
-            <Badge
-              colorScheme="red"
-              borderRadius="full"
-              position="absolute"
-              top={-2}
-              right={-2}
-              fontSize="0.6em"
-              px={2}
-            >
-              {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
-            </Badge>
-          )}
-        </Box>
-      </MenuButton>
+    <>
+      <AuthExpiredModal
+        isOpen={isAuthExpiredOpen}
+        onLoginRedirect={handleAuthExpiredLoginRedirect}
+      />
 
-      <MenuList minW="420px" maxW="90vw" maxH="80vh" overflowY="auto">
+      <Menu placement="bottom-end" autoSelect={false} onOpen={fetchAllNotifications}>
+        <MenuButton as={IconButton} aria-label="Notifications" variant="ghost" color={textColor}>
+          <Box position="relative">
+            <FiBell />
+            {totalUnreadCount > 0 && (
+              <Badge
+                colorScheme="red"
+                borderRadius="full"
+                position="absolute"
+                top={-2}
+                right={-2}
+                fontSize="0.6em"
+                px={2}
+              >
+                {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+              </Badge>
+            )}
+          </Box>
+        </MenuButton>
+
+        <MenuList minW="420px" maxW="90vw" maxH="80vh" overflowY="auto" bg={menuBg} borderColor={menuBorderColor} color={textColor} boxShadow="xl">
         <Box px={3} pt={2} pb={1}>
-          <Text fontSize="md" fontWeight="bold">{t('notifications.title')}</Text>
+          <Text fontSize="md" fontWeight="bold" color={textColor}>{t('notifications.title')}</Text>
           {totalUnreadCount > 0 && (
-            <Text fontSize="xs" color="gray.500">
+            <Text fontSize="xs" color={mutedTextColor}>
               {t(totalUnreadCount > 1 ? 'notifications.unread_plural' : 'notifications.unread', { count: totalUnreadCount })}
             </Text>
           )}
         </Box>
 
-        <Divider />
+        <Divider borderColor={menuBorderColor} />
 
         {canViewStockNotifications ? (
           <Tabs variant="enclosed" size="sm">
-            <TabList>
-              <Tab>
+            <TabList bg={tabListBg} borderBottomColor={menuBorderColor}>
+              <Tab color={mutedTextColor} _selected={{ bg: tabSelectedBg, color: tabSelectedColor, borderColor: menuBorderColor }}>
                 {t('notifications.tabs.approval')}
                 {approvalUnreadCount > 0 && (
                   <Badge ml={2} colorScheme="blue" borderRadius="full" fontSize="0.6em">
@@ -391,7 +393,7 @@ const UnifiedNotifications: React.FC = () => {
                   </Badge>
                 )}
               </Tab>
-              <Tab>
+              <Tab color={mutedTextColor} _selected={{ bg: tabSelectedBg, color: tabSelectedColor, borderColor: menuBorderColor }}>
                 {t('notifications.tabs.stock')}
                 {(stockUnreadCount + stockAlerts.length) > 0 && (
                   <Badge ml={2} colorScheme="red" borderRadius="full" fontSize="0.6em">
@@ -406,13 +408,15 @@ const UnifiedNotifications: React.FC = () => {
               <TabPanel p={0}>
                 <Box maxH="300px" overflowY="auto">
                   {approvalNotifications.length === 0 ? (
-                    <MenuItem isDisabled>
-                      <Text fontSize="sm" color="gray.500">{t('notifications.empty.approval')}</Text>
+                    <MenuItem isDisabled bg={menuBg}>
+                      <Text fontSize="sm" color={mutedTextColor}>{t('notifications.empty.approval')}</Text>
                     </MenuItem>
                   ) : (
                     approvalNotifications.map((n) => (
                       <MenuItem
                         key={n.id}
+                        bg={n.is_read ? menuBg : unreadItemBg}
+                        _hover={{ bg: itemHoverBg }}
                         onClick={() => {
                           if (!n.is_read) handleMarkApprovalAsRead(n.id);
                         }}
@@ -421,14 +425,14 @@ const UnifiedNotifications: React.FC = () => {
                           <Box pt={1}>{getApprovalIcon(n.type)}</Box>
                           <VStack align="start" spacing={0} flex={1}>
                             <HStack justify="space-between" w="full">
-                              <Text fontSize="sm" fontWeight={n.is_read ? 'normal' : 'semibold'}>
+                              <Text fontSize="sm" fontWeight={n.is_read ? 'normal' : 'semibold'} color={textColor}>
                                 {n.title}
                               </Text>
-                              {!n.is_read && <Box w={2} h={2} bg="blue.500" borderRadius="full" />}
+                              {!n.is_read && <Box w={2} h={2} bg={unreadApprovalDot} borderRadius="full" />}
                             </HStack>
-                            <Text fontSize="sm" color="gray.600" noOfLines={2}>{formatMessageCurrency(n.message, n.data)}</Text>
+                            <Text fontSize="sm" color={secondaryTextColor} noOfLines={2}>{formatMessageCurrency(n.message, n.data)}</Text>
                             <HStack spacing={2} pt={1}>
-                              <Text fontSize="xs" color="gray.500">{formatDate(n.created_at)}</Text>
+                              <Text fontSize="xs" color={mutedTextColor}>{formatDate(n.created_at)}</Text>
                               <Badge colorScheme="gray" fontSize="0.6em">{n.priority}</Badge>
                             </HStack>
                           </VStack>
@@ -443,19 +447,19 @@ const UnifiedNotifications: React.FC = () => {
               <TabPanel p={0}>
                 <Box maxH="300px" overflowY="auto">
                   {stockAlerts.length === 0 && stockNotifications.length === 0 ? (
-                    <MenuItem isDisabled>
-                      <Text fontSize="sm" color="gray.500">{t('notifications.empty.stock')}</Text>
+                    <MenuItem isDisabled bg={menuBg}>
+                      <Text fontSize="sm" color={mutedTextColor}>{t('notifications.empty.stock')}</Text>
                     </MenuItem>
                   ) : (
                     <>
                       {/* Active Stock Alerts */}
                       {stockAlerts.map((alert) => (
-                        <Box key={`alert-${alert.id}`} p={3} borderBottom="1px" borderColor="gray.200">
+                        <Box key={`alert-${alert.id}`} p={3} borderBottom="1px" borderColor={menuBorderColor} bg={stockAlertBg}>
                           <HStack align="start" spacing={3}>
                             <Box pt={1}>{getStockIcon(alert.urgency)}</Box>
                             <VStack align="start" spacing={1} flex={1}>
                               <HStack justify="space-between" w="full">
-                                <Text fontSize="sm" fontWeight="bold">
+                                <Text fontSize="sm" fontWeight="bold" color={textColor}>
                                   {alert.product_name}
                                 </Text>
                                 <Badge colorScheme={getUrgencyColor(alert.urgency)} fontSize="0.6em">
@@ -463,20 +467,23 @@ const UnifiedNotifications: React.FC = () => {
                                 </Badge>
                               </HStack>
 
-                              <Text fontSize="xs" color="gray.600">
+                              <Text fontSize="xs" color={secondaryTextColor}>
                                 {t('notifications.stock.code')}: {alert.product_code} {alert.category_name && `• ${alert.category_name}`}
                               </Text>
 
-                              <Alert status="warning" size="sm" borderRadius="md">
+                              <Alert status="warning" size="sm" borderRadius="md" bg={warningAlertBg} border="1px solid" borderColor={warningAlertBorderColor}>
                                 <AlertIcon />
-                                <Text fontSize="xs">
+                                <Text fontSize="xs" color={textColor}>
                                   {t('notifications.stock.current')}: {alert.current_stock} / {t('notifications.stock.min')}: {alert.threshold_stock}
                                 </Text>
                               </Alert>
 
                               <Button
                                 size="xs"
-                                colorScheme="gray"
+                                variant="outline"
+                                borderColor={menuBorderColor}
+                                color={textColor}
+                                _hover={{ bg: itemHoverBg }}
                                 onClick={() => dismissStockAlert(alert.id)}
                               >
                                 {t('notifications.stock.dismiss')}
@@ -488,10 +495,12 @@ const UnifiedNotifications: React.FC = () => {
 
                       {/* Stock Notifications */}
                       {stockNotifications.map((notif) => {
-                        const data = typeof notif.data === 'string' ? JSON.parse(notif.data) : notif.data;
+                        const data = parseNotificationData(notif.data);
                         return (
                           <MenuItem
                             key={`notif-${notif.id}`}
+                            bg={notif.is_read ? menuBg : unreadStockItemBg}
+                            _hover={{ bg: itemHoverBg }}
                             onClick={() => {
                               if (!notif.is_read) handleMarkStockAsRead(notif.id);
                             }}
@@ -502,23 +511,23 @@ const UnifiedNotifications: React.FC = () => {
                               </Box>
                               <VStack align="start" spacing={0} flex={1}>
                                 <HStack justify="space-between" w="full">
-                                  <Text fontSize="sm" fontWeight={notif.is_read ? 'normal' : 'semibold'}>
+                                  <Text fontSize="sm" fontWeight={notif.is_read ? 'normal' : 'semibold'} color={textColor}>
                                     {notif.title}
                                   </Text>
-                                  {!notif.is_read && <Box w={2} h={2} bg="orange.500" borderRadius="full" />}
+                                  {!notif.is_read && <Box w={2} h={2} bg={unreadStockDot} borderRadius="full" />}
                                 </HStack>
 
-                                <Text fontSize="xs" color="gray.600" noOfLines={2}>
+                                <Text fontSize="xs" color={secondaryTextColor} noOfLines={2}>
                                   {formatMessageCurrency(notif.message, notif.data)}
                                 </Text>
 
                                 {data && (
-                                  <Text fontSize="xs" color="gray.500">
+                                  <Text fontSize="xs" color={mutedTextColor}>
                                     {t('notifications.stock.current')}: {data.current_stock} / {t('notifications.stock.min')}: {data.minimum_stock}
                                   </Text>
                                 )}
 
-                                <Text fontSize="xs" color="gray.500">
+                                <Text fontSize="xs" color={mutedTextColor}>
                                   {formatDate(notif.created_at)}
                                 </Text>
                               </VStack>
@@ -536,13 +545,15 @@ const UnifiedNotifications: React.FC = () => {
           // Show only approval notifications for non-admin users
           <Box maxH="350px" overflowY="auto">
             {approvalNotifications.length === 0 ? (
-              <MenuItem isDisabled>
-                <Text fontSize="sm" color="gray.500">{t('notifications.empty.general')}</Text>
+              <MenuItem isDisabled bg={menuBg}>
+                <Text fontSize="sm" color={mutedTextColor}>{t('notifications.empty.general')}</Text>
               </MenuItem>
             ) : (
               approvalNotifications.map((n) => (
                 <MenuItem
                   key={n.id}
+                  bg={n.is_read ? menuBg : unreadItemBg}
+                  _hover={{ bg: itemHoverBg }}
                   onClick={() => {
                     if (!n.is_read) handleMarkApprovalAsRead(n.id);
                   }}
@@ -551,14 +562,14 @@ const UnifiedNotifications: React.FC = () => {
                     <Box pt={1}>{getApprovalIcon(n.type)}</Box>
                     <VStack align="start" spacing={0} flex={1}>
                       <HStack justify="space-between" w="full">
-                        <Text fontSize="sm" fontWeight={n.is_read ? 'normal' : 'semibold'}>
+                        <Text fontSize="sm" fontWeight={n.is_read ? 'normal' : 'semibold'} color={textColor}>
                           {n.title}
                         </Text>
-                        {!n.is_read && <Box w={2} h={2} bg="blue.500" borderRadius="full" />}
+                        {!n.is_read && <Box w={2} h={2} bg={unreadApprovalDot} borderRadius="full" />}
                       </HStack>
-                      <Text fontSize="sm" color="gray.600" noOfLines={2}>{formatMessageCurrency(n.message, n.data)}</Text>
+                      <Text fontSize="sm" color={secondaryTextColor} noOfLines={2}>{formatMessageCurrency(n.message, n.data)}</Text>
                       <HStack spacing={2} pt={1}>
-                        <Text fontSize="xs" color="gray.500">{formatDate(n.created_at)}</Text>
+                        <Text fontSize="xs" color={mutedTextColor}>{formatDate(n.created_at)}</Text>
                         <Badge colorScheme="gray" fontSize="0.6em">{n.priority}</Badge>
                       </HStack>
                     </VStack>
@@ -570,60 +581,8 @@ const UnifiedNotifications: React.FC = () => {
         )}
       </MenuList>
 
-      {/* Authentication Error Alert Dialog */}
-      <AlertDialog
-        isOpen={isAuthErrorOpen}
-        leastDestructiveRef={cancelRef}
-        onClose={handleCloseAuthError}
-        isCentered
-      >
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              🔐 {t('auth.session.expiredTitle')}
-            </AlertDialogHeader>
-
-            <AlertDialogBody>
-              <VStack align="start" spacing={3}>
-                <Text>
-                  {t('auth.session.expiredMessage')}
-                </Text>
-                <Alert status="warning" borderRadius="md">
-                  <AlertIcon />
-                  <Box flex="1">
-                    <Text fontSize="sm">
-                      {t('auth.session.securityNote')}
-                    </Text>
-                  </Box>
-                </Alert>
-                <Text fontSize="sm" color="gray.600">
-                  {t('auth.session.possibleCauses')}
-                </Text>
-                <VStack align="start" spacing={1} pl={4} fontSize="sm" color="gray.600">
-                  <Text>{t('auth.session.tokenExpired')}</Text>
-                  <Text>{t('auth.session.otherDevice')}</Text>
-                  <Text>{t('auth.session.timeout')}</Text>
-                </VStack>
-              </VStack>
-            </AlertDialogBody>
-
-            <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={handleCloseAuthError} variant="ghost">
-                {t('auth.session.close')}
-              </Button>
-              <Button
-                colorScheme="blue"
-                onClick={handleLogout}
-                ml={3}
-                leftIcon={<FiLogOut />}
-              >
-                {t('auth.session.relogin')}
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
-    </Menu>
+      </Menu>
+    </>
   );
 };
 

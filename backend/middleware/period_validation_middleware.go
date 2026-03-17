@@ -87,6 +87,10 @@ func (pvm *PeriodValidationMiddleware) ValidateTransactionPeriod() gin.HandlerFu
 			"sale_date",        // Sales
 			"purchase_date",    // Purchases
 			"payment_date",     // Payments
+			"posting_date",     // Explicit posting date
+			"effective_date",   // Effective accounting date
+			"scheduled_date",   // Scheduled accrual/amortization date
+			"termination_date", // Termination effective date
 			"date",             // Generic date field
 			"transaction_date", // Alternative naming
 		}

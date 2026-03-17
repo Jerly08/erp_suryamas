@@ -23,7 +23,8 @@ import {
   Image,
   AspectRatio,
   IconButton,
-  SimpleGrid
+  SimpleGrid,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiSave, FiX, FiUpload, FiTrash2 } from 'react-icons/fi';
 import ProductService, { Product, Category, ProductUnit, WarehouseLocation } from '@/services/productService';
@@ -64,7 +65,6 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
     is_active: true,
     is_service: false,
     is_assembly: false,
-    taxable: true,
     image_path: '',
     notes: '',
   });
@@ -76,6 +76,34 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const toast = useToast();
+  const textColor = useColorModeValue('gray.800', 'var(--text-primary)');
+  const labelColor = useColorModeValue('gray.700', 'var(--text-primary)');
+  const mutedTextColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+  const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
+  const inputBorderColor = useColorModeValue('gray.300', 'var(--border-color)');
+  const hoverBorderColor = useColorModeValue('gray.400', 'gray.500');
+  const inputBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const sectionBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const sectionDividerColor = useColorModeValue('blue.100', 'blue.700');
+  const imageEmptyBg = useColorModeValue('gray.100', 'whiteAlpha.100');
+  const imageHintColor = useColorModeValue('gray.500', 'gray.400');
+
+  const fieldProps = {
+    bg: inputBg,
+    color: textColor,
+    borderColor: inputBorderColor,
+    _hover: { borderColor: hoverBorderColor },
+    _focusVisible: {
+      borderColor: 'blue.400',
+      boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
+    },
+    _placeholder: { color: mutedTextColor },
+  };
+
+  const numberFieldProps = {
+    ...fieldProps,
+    textAlign: 'right' as const,
+  };
 
   useEffect(() => {
     fetchCategories();
@@ -251,15 +279,15 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
       <VStack spacing={6} align="stretch">
         {/* Basic Information */}
         <Box>
-          <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.basicInfo')}</Text>
+          <Text fontSize="lg" fontWeight="bold" mb={4} color={textColor}>{t('products.form.basicInfo')}</Text>
 
           {/* Product Status & Type - Consolidated at top */}
-          <Box mb={6} bg="blue.50" p={4} borderRadius="md">
+          <Box mb={6} bg={sectionBg} p={4} borderRadius="md" border="1px solid" borderColor={borderColor}>
             <VStack align="stretch" spacing={4}>
               <FormControl display="flex" alignItems="center">
-                <FormLabel htmlFor="is_service" mb="0" fontWeight="bold" flex="1">
+                <FormLabel htmlFor="is_service" mb="0" fontWeight="bold" flex="1" color={labelColor}>
                   {t('products.form.isService')}
-                  <Text fontSize="sm" fontWeight="normal" color="gray.600">
+                  <Text fontSize="sm" fontWeight="normal" color={mutedTextColor}>
                     {formData.is_service ? "Produk jasa tidak memerlukan stok dan pengiriman" : "Produk fisik dengan stok dan inventaris"}
                   </Text>
                 </FormLabel>
@@ -276,12 +304,12 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                 />
               </FormControl>
 
-              <Divider borderColor="blue.100" />
+              <Divider borderColor={sectionDividerColor} />
 
               <FormControl display="flex" alignItems="center">
-                <FormLabel htmlFor="is_assembly" mb="0" fontWeight="bold" flex="1">
+                <FormLabel htmlFor="is_assembly" mb="0" fontWeight="bold" flex="1" color={labelColor}>
                   Produk Hasil Rakitan (Target Assembly)
-                  <Text fontSize="sm" fontWeight="normal" color="gray.600">
+                  <Text fontSize="sm" fontWeight="normal" color={mutedTextColor}>
                     Aktifkan jika produk dibuat dari berbagai komponen (BOM). Biaya pokok akan dihitung otomatis.
                   </Text>
                 </FormLabel>
@@ -294,72 +322,63 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                 />
               </FormControl>
 
-              <Divider borderColor="blue.200" />
+              <Divider borderColor={sectionDividerColor} />
 
-              <HStack spacing={8}>
-                <FormControl display="flex" alignItems="center" w="auto">
-                  <FormLabel htmlFor="is_active" mb="0" mr={3}>
-                    {t('products.form.isActive')}
-                  </FormLabel>
-                  <Switch
-                    id="is_active"
-                    isChecked={formData.is_active}
-                    onChange={(e) => handleInputChange('is_active', e.target.checked)}
-                  />
-                </FormControl>
-
-                <FormControl display="flex" alignItems="center" w="auto">
-                  <FormLabel htmlFor="taxable" mb="0" mr={3}>
-                    {t('products.form.taxable')}
-                  </FormLabel>
-                  <Switch
-                    id="taxable"
-                    isChecked={formData.taxable}
-                    onChange={(e) => handleInputChange('taxable', e.target.checked)}
-                  />
-                </FormControl>
-              </HStack>
+              <FormControl display="flex" alignItems="center" w="auto">
+                <FormLabel htmlFor="is_active" mb="0" mr={3} color={labelColor}>
+                  {t('products.form.isActive')}
+                </FormLabel>
+                <Switch
+                  id="is_active"
+                  isChecked={formData.is_active}
+                  onChange={(e) => handleInputChange('is_active', e.target.checked)}
+                />
+              </FormControl>
             </VStack>
           </Box>
 
           <Grid templateColumns="repeat(4, 1fr)" gap={4}>
             <GridItem colSpan={2}>
               <FormControl isRequired>
-                <FormLabel>{t('products.productCode')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.productCode')}</FormLabel>
                 <Input
                   value={formData.code}
                   onChange={(e) => handleInputChange('code', e.target.value)}
                   placeholder={t('products.form.enterProductCode')}
+                  {...fieldProps}
                 />
               </FormControl>
             </GridItem>
             <GridItem colSpan={2}>
               <FormControl isRequired>
-                <FormLabel>{t('products.productName')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.productName')}</FormLabel>
                 <Input
                   value={formData.name}
                   onChange={(e) => handleInputChange('name', e.target.value)}
                   placeholder={t('products.form.enterProductName')}
+                  {...fieldProps}
                 />
               </FormControl>
             </GridItem>
             <GridItem colSpan={4}>
               <FormControl>
-                <FormLabel>{t('products.description')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.description')}</FormLabel>
                 <Textarea
                   value={formData.description}
                   onChange={(e) => handleInputChange('description', e.target.value)}
                   placeholder={t('products.form.enterDescription')}
+                  {...fieldProps}
                 />
               </FormControl>
             </GridItem>
             <GridItem>
               <FormControl>
-                <FormLabel>{t('products.categoryLabel')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.categoryLabel')}</FormLabel>
                 <Select
                   value={formData.category_id || ''}
                   onChange={(e) => handleInputChange('category_id', e.target.value ? Number(e.target.value) : undefined)}
                   placeholder={t('products.form.selectCategory')}
+                  {...fieldProps}
                 >
                   {categories.map(category => (
                     <option key={category.id} value={category.id}>
@@ -374,11 +393,12 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
             {!formData.is_service && (
               <GridItem>
                 <FormControl>
-                  <FormLabel>{t('products.form.warehouseLocation')}</FormLabel>
+                  <FormLabel color={labelColor}>{t('products.form.warehouseLocation')}</FormLabel>
                   <Select
                     value={formData.warehouse_location_id || ''}
                     onChange={(e) => handleInputChange('warehouse_location_id', e.target.value ? Number(e.target.value) : undefined)}
                     placeholder={t('products.form.selectWarehouse')}
+                    {...fieldProps}
                   >
                     {warehouseLocations.map(location => (
                       <option key={location.id} value={location.id}>
@@ -392,11 +412,12 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
 
             <GridItem colSpan={formData.is_service ? 3 : 2}>
               <FormControl isRequired>
-                <FormLabel>{t('products.unit')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.unit')}</FormLabel>
                 <Select
                   value={formData.unit}
                   onChange={(e) => handleInputChange('unit', e.target.value)}
                   placeholder={t('products.form.selectUnit')}
+                  {...fieldProps}
                 >
                   {units.map(unit => (
                     <option key={unit.code} value={unit.code}>
@@ -415,58 +436,62 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
         {!formData.is_service && (
           <>
             <Box>
-              <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.productDetails')}</Text>
+              <Text fontSize="lg" fontWeight="bold" mb={4} color={textColor}>{t('products.form.productDetails')}</Text>
               <Grid templateColumns="repeat(4, 1fr)" gap={4}>
                 <GridItem colSpan={2}>
                   <FormControl>
-                    <FormLabel>{t('products.form.brand')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.form.brand')}</FormLabel>
                     <Input
                       value={formData.brand}
                       onChange={(e) => handleInputChange('brand', e.target.value)}
                       placeholder={t('products.form.enterBrand')}
+                      {...fieldProps}
                     />
                   </FormControl>
                 </GridItem>
                 <GridItem colSpan={2}>
                   <FormControl>
-                    <FormLabel>{t('products.form.model')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.form.model')}</FormLabel>
                     <Input
                       value={formData.model}
                       onChange={(e) => handleInputChange('model', e.target.value)}
                       placeholder={t('products.form.enterModel')}
+                      {...fieldProps}
                     />
                   </FormControl>
                 </GridItem>
                 <GridItem colSpan={2}>
                   <FormControl>
-                    <FormLabel>{t('products.form.barcode')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.form.barcode')}</FormLabel>
                     <Input
                       value={formData.barcode}
                       onChange={(e) => handleInputChange('barcode', e.target.value)}
                       placeholder={t('products.form.enterBarcode')}
+                      {...fieldProps}
                     />
                   </FormControl>
                 </GridItem>
                 <GridItem colSpan={2}>
                   <FormControl>
-                    <FormLabel>{t('products.form.sku')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.form.sku')}</FormLabel>
                     <Input
                       value={formData.sku}
                       onChange={(e) => handleInputChange('sku', e.target.value)}
                       placeholder={t('products.form.enterSKU')}
+                      {...fieldProps}
                     />
                   </FormControl>
                 </GridItem>
                 <GridItem>
                   <FormControl>
-                    <FormLabel>{t('products.form.weight')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.form.weight')}</FormLabel>
                     <NumberInput
                       value={formData.weight || 0}
                       onChange={(_, value) => handleInputChange('weight', isNaN(value) ? 0 : value)}
                       min={0}
                       precision={3}
                     >
-                      <NumberInputField />
+                      <NumberInputField {...numberFieldProps} />
                       <NumberInputStepper>
                         <NumberIncrementStepper />
                         <NumberDecrementStepper />
@@ -476,11 +501,12 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                 </GridItem>
                 <GridItem>
                   <FormControl>
-                    <FormLabel>{t('products.form.dimensions')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.form.dimensions')}</FormLabel>
                     <Input
                       value={formData.dimensions}
                       onChange={(e) => handleInputChange('dimensions', e.target.value)}
                       placeholder="P x L x T (cm)"
+                      {...fieldProps}
                     />
                   </FormControl>
                 </GridItem>
@@ -493,7 +519,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
 
         {/* Pricing */}
         <Box>
-          <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.pricing')}</Text>
+          <Text fontSize="lg" fontWeight="bold" mb={4} color={textColor}>{t('products.form.pricing')}</Text>
           <Grid templateColumns={formData.is_service ? "repeat(1, 1fr)" : "repeat(3, 1fr)"} gap={4}>
             {/* Harga Beli - Only for Non-Service */}
             {!formData.is_service && (
@@ -539,11 +565,12 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
             </GridItem>
             <GridItem colSpan={formData.is_service ? 1 : 3}>
               <FormControl>
-                <FormLabel>{t('products.pricingTier')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.pricingTier')}</FormLabel>
                 <Select
                   value={formData.pricing_tier}
                   onChange={(e) => handleInputChange('pricing_tier', e.target.value)}
                   placeholder={t('products.form.selectPricingTier')}
+                  {...fieldProps}
                 >
                   {pricingTiers.map(tier => (
                     <option key={tier} value={tier}>{tier}</option>
@@ -560,17 +587,17 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
         {!formData.is_service && (
           <>
             <Box>
-              <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.inventory')}</Text>
+              <Text fontSize="lg" fontWeight="bold" mb={4} color={textColor}>{t('products.form.inventory')}</Text>
               <Grid templateColumns="repeat(4, 1fr)" gap={4}>
                 <GridItem>
                   <FormControl>
-                    <FormLabel>{t('products.currentStock')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.currentStock')}</FormLabel>
                     <NumberInput
                       value={formData.stock || 0}
                       onChange={(_, value) => handleInputChange('stock', isNaN(value) ? 0 : value)}
                       min={0}
                     >
-                      <NumberInputField />
+                      <NumberInputField {...numberFieldProps} />
                       <NumberInputStepper>
                         <NumberIncrementStepper />
                         <NumberDecrementStepper />
@@ -580,13 +607,13 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                 </GridItem>
                 <GridItem>
                   <FormControl>
-                    <FormLabel>{t('products.minStock')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.minStock')}</FormLabel>
                     <NumberInput
                       value={formData.min_stock || 0}
                       onChange={(_, value) => handleInputChange('min_stock', isNaN(value) ? 0 : value)}
                       min={0}
                     >
-                      <NumberInputField />
+                      <NumberInputField {...numberFieldProps} />
                       <NumberInputStepper>
                         <NumberIncrementStepper />
                         <NumberDecrementStepper />
@@ -596,13 +623,13 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                 </GridItem>
                 <GridItem>
                   <FormControl>
-                    <FormLabel>{t('products.maxStock')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.maxStock')}</FormLabel>
                     <NumberInput
                       value={formData.max_stock || 0}
                       onChange={(_, value) => handleInputChange('max_stock', isNaN(value) ? 0 : value)}
                       min={0}
                     >
-                      <NumberInputField />
+                      <NumberInputField {...numberFieldProps} />
                       <NumberInputStepper>
                         <NumberIncrementStepper />
                         <NumberDecrementStepper />
@@ -612,13 +639,13 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                 </GridItem>
                 <GridItem>
                   <FormControl>
-                    <FormLabel>{t('products.reorderLevel')}</FormLabel>
+                    <FormLabel color={labelColor}>{t('products.reorderLevel')}</FormLabel>
                     <NumberInput
                       value={formData.reorder_level || 0}
                       onChange={(_, value) => handleInputChange('reorder_level', isNaN(value) ? 0 : value)}
                       min={0}
                     >
-                      <NumberInputField />
+                      <NumberInputField {...numberFieldProps} />
                       <NumberInputStepper>
                         <NumberIncrementStepper />
                         <NumberDecrementStepper />
@@ -635,12 +662,12 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
 
         {/* Product Image */}
         <Box>
-          <Text fontSize="lg" fontWeight="bold" mb={4}>{t('products.form.productImage')}</Text>
+          <Text fontSize="lg" fontWeight="bold" mb={4} color={textColor}>{t('products.form.productImage')}</Text>
           <Grid templateColumns="repeat(3, 1fr)" gap={4}>
             {/* Current Image */}
             <GridItem>
               <FormControl>
-                <FormLabel>{t('products.form.currentImage')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.form.currentImage')}</FormLabel>
                 {formData.image_path ? (
                   <Image
                     src={getProductImageUrl(formData.image_path) || ''}
@@ -650,7 +677,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                     objectFit="contain"
                     borderRadius="md"
                     border="1px"
-                    borderColor="gray.200"
+                    borderColor={borderColor}
                     fallbackSrc="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='150' viewBox='0 0 200 150'%3E%3Crect width='200' height='150' fill='%23f0f0f0'/%3E%3Ctext x='100' y='75' text-anchor='middle' dy='.3em' font-family='Arial, sans-serif' font-size='12' fill='%23999'%3EImage not found%3C/text%3E%3C/svg%3E"
                     onError={(e) => {
                       console.error('Image failed to load:', formData.image_path);
@@ -662,13 +689,15 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                   <Box
                     w="200px"
                     h="150px"
-                    bg="gray.100"
+                    bg={imageEmptyBg}
                     borderRadius="md"
+                    border="1px solid"
+                    borderColor={borderColor}
                     display="flex"
                     alignItems="center"
                     justifyContent="center"
                   >
-                    <Text color="gray.500">{t('products.form.noImage')}</Text>
+                    <Text color={imageHintColor}>{t('products.form.noImage')}</Text>
                   </Box>
                 )}
               </FormControl>
@@ -677,12 +706,13 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
             {/* Image Upload */}
             <GridItem>
               <FormControl>
-                <FormLabel>{t('products.form.uploadNewImage')}</FormLabel>
+                <FormLabel color={labelColor}>{t('products.form.uploadNewImage')}</FormLabel>
                 <Input
                   type="file"
                   accept="image/*"
                   onChange={handleImageChange}
                   mb={2}
+                  {...fieldProps}
                 />
                 {imagePreview && (
                   <Image
@@ -693,7 +723,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                     objectFit="contain"
                     borderRadius="md"
                     border="1px"
-                    borderColor="gray.200"
+                    borderColor={borderColor}
                   />
                 )}
               </FormControl>
@@ -702,7 +732,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
             {/* Upload Button */}
             <GridItem>
               <FormControl>
-                <FormLabel>{t('common.actions')}</FormLabel>
+                <FormLabel color={labelColor}>{t('common.actions')}</FormLabel>
                 <Button
                   onClick={handleImageUpload}
                   colorScheme="blue"
@@ -712,7 +742,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                   {t('products.form.uploadImage')}
                 </Button>
                 {!formData.id && (
-                  <Text fontSize="xs" color="gray.500" mt={2}>
+                  <Text fontSize="xs" color={mutedTextColor} mt={2}>
                     {t('products.form.saveProductFirst')}
                   </Text>
                 )}
@@ -728,11 +758,12 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
           <VStack spacing={4} align="stretch">
             {/* Status switches moved to top */}
             <FormControl>
-              <FormLabel>{t('common.notes')}</FormLabel>
+              <FormLabel color={labelColor}>{t('common.notes')}</FormLabel>
               <Textarea
                 value={formData.notes}
                 onChange={(e) => handleInputChange('notes', e.target.value)}
                 placeholder={t('products.form.additionalNotes')}
+                {...fieldProps}
               />
             </FormControl>
           </VStack>

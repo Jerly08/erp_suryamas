@@ -111,6 +111,11 @@ function isoToMonthDayString(iso: string): string {
   return `${MONTHS[m - 1]} ${d}`;
 }
 
+function normalizeApiDate(value?: string | null): string {
+  if (!value) return '';
+  return value.split('T')[0];
+}
+
 // Format an ISO date string to a selected display format
 function formatDateISO(iso: string, format: string): string {
   if (!iso) return '';
@@ -254,7 +259,49 @@ const SettingsPage: React.FC = () => {
   // Move useColorModeValue to top level to fix hooks order
   const blueColor = useColorModeValue('blue.500', 'blue.300');
   const greenColor = useColorModeValue('green.500', 'green.300');
+  const redColor = useColorModeValue('red.500', 'red.300');
   const orangeColor = useColorModeValue('orange.500', 'orange.300');
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const textColor = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.600', 'whiteAlpha.700');
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const cardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const modalBg = useColorModeValue('white', 'gray.800');
+  const modalHeaderBg = useColorModeValue('red.500', 'red.400');
+  const modalFooterBg = useColorModeValue('gray.50', 'gray.750');
+  const panelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const itemBg = useColorModeValue('white', 'whiteAlpha.50');
+  const inputBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const inputHoverBg = useColorModeValue('white', 'whiteAlpha.160');
+  const inputFocusBg = useColorModeValue('white', 'gray.700');
+  const inputBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const inputHoverBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const inputFocusBorderColor = useColorModeValue('blue.400', 'blue.300');
+  const inputPlaceholderColor = useColorModeValue('gray.500', 'whiteAlpha.500');
+  const readOnlyInputBg = useColorModeValue('gray.100', 'whiteAlpha.120');
+  const lockedFieldBg = useColorModeValue('blue.50', 'blue.900');
+  const lockedFieldBorderColor = useColorModeValue('blue.200', 'blue.700');
+  const lockedHelperColor = useColorModeValue('blue.600', 'blue.200');
+  const successPanelBg = useColorModeValue('green.50', 'green.900');
+  const successPanelBorderColor = useColorModeValue('green.200', 'green.700');
+  const warningPanelBg = useColorModeValue('orange.50', 'orange.900');
+  const warningPanelBorderColor = useColorModeValue('orange.200', 'orange.700');
+  const subtleHoverBg = useColorModeValue('orange.50', 'orange.900');
+  const dividerColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const fieldStyles = {
+    bg: inputBg,
+    borderColor: inputBorderColor,
+    color: textColor,
+    _placeholder: { color: inputPlaceholderColor },
+    _hover: {
+      bg: inputHoverBg,
+      borderColor: inputHoverBorderColor,
+    },
+    _focus: {
+      bg: inputFocusBg,
+      borderColor: inputFocusBorderColor,
+    },
+  };
 
   const fetchTaxAccountSettings = async () => {
     setLoadingTaxAccounts(true);
@@ -377,6 +424,7 @@ const SettingsPage: React.FC = () => {
 
         // Refresh last closing info
         await fetchLastClosingInfo();
+        await fetchClosingHistory();
 
         console.log('✅ Settings and closing info refreshed');
       }
@@ -578,7 +626,7 @@ const SettingsPage: React.FC = () => {
         <Box>
           <VStack spacing={6} alignItems="start">
             <HStack justify="space-between" width="full">
-              <Heading as="h1" size="xl">{t('settings.title')}</Heading>
+              <Heading as="h1" size="xl" color={headingColor}>{t('settings.title')}</Heading>
               {hasChanges && (
                 <ButtonGroup>
                   <Button
@@ -614,7 +662,7 @@ const SettingsPage: React.FC = () => {
 
             <SimpleGrid columns={[1, 1, 2, 2]} spacing={6} width="full">
               {/* Company Information Card */}
-              <Card border="1px" borderColor="gray.200" boxShadow="md">
+              <Card bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
                 <CardHeader>
                   <HStack spacing={3}>
                     <Icon as={FiHome} boxSize={6} color={blueColor} />
@@ -625,7 +673,7 @@ const SettingsPage: React.FC = () => {
                   <VStack spacing={4} alignItems="start">
                     {/* Company Logo */}
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.companyLogo') || "Company Logo"}
                       </FormLabel>
                       <Stack direction={{ base: 'column', md: 'row' }} spacing={4} align="center">
@@ -640,6 +688,8 @@ const SettingsPage: React.FC = () => {
                         <Input
                           type="file"
                           accept="image/*"
+                          variant="filled"
+                          {...fieldStyles}
                           onChange={(e) => {
                             const f = e.target.files?.[0];
                             if (f) handleLogoUpload(f);
@@ -649,11 +699,11 @@ const SettingsPage: React.FC = () => {
                         {uploadingLogo && <Spinner size="sm" />}
                       </Stack>
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     {/* Company Type (Read Only) */}
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.companyType') || "Company Type"}
                       </FormLabel>
                       <HStack>
@@ -661,30 +711,31 @@ const SettingsPage: React.FC = () => {
                           value={formData?.company_type ? t(`settings.companyTypes.${formData.company_type.toLowerCase()}`) : t('settings.notSet')}
                           isReadOnly
                           variant="filled"
-                          bg="gray.50"
-                          color="gray.600"
+                          bg={readOnlyInputBg}
+                          borderColor={inputBorderColor}
+                          color={mutedTextColor}
                           cursor="not-allowed"
-                          _hover={{ bg: 'gray.50' }}
-                          _focus={{ bg: 'gray.50', borderColor: 'gray.200' }}
+                          _hover={{ bg: readOnlyInputBg, borderColor: inputBorderColor }}
+                          _focus={{ bg: readOnlyInputBg, borderColor: inputBorderColor }}
                         />
                         {formData?.company_type && (
                           <Tooltip label={t('settings.companyTypeLocked')}>
-                            <Box color="gray.400" cursor="help">
+                            <Box color={mutedTextColor} cursor="help">
                               <Icon as={FiInfo} />
                             </Box>
                           </Tooltip>
                         )}
                       </HStack>
                       {!formData?.company_type && (
-                        <FormHelperText fontSize="xs" color="orange.500">
+                        <FormHelperText fontSize="xs" color={orangeColor}>
                           {t('settings.companyTypeHelperText')}
                         </FormHelperText>
                       )}
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.companyName')}
                       </FormLabel>
                       <Input
@@ -692,14 +743,13 @@ const SettingsPage: React.FC = () => {
                         onChange={(e) => handleFormChange('company_name', e.target.value)}
                         placeholder={t('settings.companyNamePlaceholder') || "Enter company name"}
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       />
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.address')}
                       </FormLabel>
                       <Textarea
@@ -708,14 +758,13 @@ const SettingsPage: React.FC = () => {
                         placeholder={t('settings.addressPlaceholder') || "Enter company address"}
                         rows={3}
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       />
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.phone')}
                       </FormLabel>
                       <Input
@@ -724,14 +773,13 @@ const SettingsPage: React.FC = () => {
                         placeholder={t('settings.phonePlaceholder') || "Enter phone number"}
                         type="tel"
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       />
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.email')}
                       </FormLabel>
                       <Input
@@ -740,14 +788,13 @@ const SettingsPage: React.FC = () => {
                         placeholder={t('settings.emailPlaceholder') || "Enter email address"}
                         type="email"
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       />
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.taxNumber')}
                       </FormLabel>
                       <Input
@@ -755,8 +802,7 @@ const SettingsPage: React.FC = () => {
                         onChange={(e) => handleFormChange('tax_number', e.target.value)}
                         placeholder={t('settings.taxNumberPlaceholder') || "Enter tax number (optional)"}
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       />
                     </FormControl>
                   </VStack>
@@ -764,7 +810,7 @@ const SettingsPage: React.FC = () => {
               </Card>
 
               {/* System Configuration Card */}
-              <Card border="1px" borderColor="gray.200" boxShadow="md">
+              <Card bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
                 <CardHeader>
                   <HStack spacing={3}>
                     <Icon as={FiDollarSign} boxSize={6} color={greenColor} />
@@ -774,15 +820,14 @@ const SettingsPage: React.FC = () => {
                 <CardBody>
                   <VStack spacing={4} alignItems="start">
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+                      <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
                         {t('settings.dateFormat')}
                       </FormLabel>
                       <Select
                         value={formData?.date_format || settings?.date_format || 'YYYY-MM-DD'}
                         onChange={(e) => handleFormChange('date_format', e.target.value)}
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       >
                         <option value="YYYY-MM-DD">YYYY-MM-DD</option>
                         <option value="DD/MM/YYYY">DD/MM/YYYY</option>
@@ -790,36 +835,51 @@ const SettingsPage: React.FC = () => {
                         <option value="DD-MM-YYYY">DD-MM-YYYY</option>
                       </Select>
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     <FormControl>
-                      <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
-                        {t('settings.defaultTaxRate')}
-                      </FormLabel>
+                      <HStack mb={2} justify="space-between" width="full" align="center">
+                        <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm" mb={0}>
+                          {t('settings.defaultTaxRate')} (%)
+                        </FormLabel>
+                        <Badge colorScheme="orange" borderRadius="md" px={2} py={1}>
+                          {(formData?.default_tax_rate ?? settings?.default_tax_rate ?? 0).toFixed(2)}%
+                        </Badge>
+                      </HStack>
                       <NumberInput
                         value={formData?.default_tax_rate ?? settings?.default_tax_rate ?? 0}
-                        onChange={(valueString) => handleFormChange('default_tax_rate', parseFloat(valueString) || 0)}
+                        onChange={(_, valueNumber) => handleFormChange(
+                          'default_tax_rate',
+                          Number.isFinite(valueNumber) ? Math.min(Math.max(valueNumber, 0), 100) : 0
+                        )}
                         min={0}
                         max={100}
                         precision={2}
+                        step={0.5}
                       >
                         <NumberInputField
+                          placeholder="11.00"
                           variant="filled"
-                          _hover={{ bg: 'gray.100' }}
-                          _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                          {...fieldStyles}
                         />
                         <NumberInputStepper>
                           <NumberIncrementStepper />
                           <NumberDecrementStepper />
                         </NumberInputStepper>
                       </NumberInput>
+                      <FormHelperText fontSize="xs" color={mutedTextColor}>
+                        Dipakai sebagai PPN default untuk transaksi penjualan dan pembelian baru. Nilai ini hanya menjadi nilai awal dan masih bisa diubah per transaksi.
+                      </FormHelperText>
+                      <FormHelperText fontSize="xs" color={mutedTextColor}>
+                        Contoh umum: 11 untuk PPN 11%.
+                      </FormHelperText>
                     </FormControl>
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
 
                     <FormControl>
                       <HStack mb={2}>
-                        <Icon as={FiGlobe} boxSize={4} color="gray.600" />
-                        <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm" mb={0}>
+                        <Icon as={FiGlobe} boxSize={4} color={mutedTextColor} />
+                        <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm" mb={0}>
                           {t('settings.language')}
                         </FormLabel>
                       </HStack>
@@ -829,8 +889,7 @@ const SettingsPage: React.FC = () => {
                           handleFormChange('language', e.target.value);
                         }}
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       >
                         <option value="id">{t('settings.indonesian')}</option>
                         <option value="en">{t('settings.english')}</option>
@@ -841,11 +900,11 @@ const SettingsPage: React.FC = () => {
               </Card>
 
               {/* Flexible Period Closing Card */}
-              <Card border="1px" borderColor="gray.200" boxShadow="md">
+              <Card bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
                 <CardHeader>
                   <HStack spacing={3} justify="space-between" width="full">
                     <HStack spacing={3}>
-                      <Icon as={FiCheckCircle} boxSize={6} color="red.500" />
+                      <Icon as={FiCheckCircle} boxSize={6} color={redColor} />
                       <Heading size="md">{t('settings.periodClosing') || 'Period Closing'}</Heading>
                     </HStack>
                     <Tooltip
@@ -872,7 +931,7 @@ const SettingsPage: React.FC = () => {
                       bg="red.600"
                     >
                       <Box cursor="help">
-                        <Icon as={FiInfo} boxSize={4} color="gray.500" _hover={{ color: 'red.500' }} />
+                        <Icon as={FiInfo} boxSize={4} color={mutedTextColor} _hover={{ color: redColor }} />
                       </Box>
                     </Tooltip>
                   </HStack>
@@ -904,8 +963,8 @@ const SettingsPage: React.FC = () => {
                           variant="solid"
                           leftIcon={<FiUnlock />}
                           onClick={() => {
-                            setReopenStartDate(lastClosingInfo.last_period_start_date || lastClosingInfo.last_closing_date);
-                            setReopenEndDate(lastClosingInfo.last_period_end_date || lastClosingInfo.last_closing_date);
+                            setReopenStartDate(normalizeApiDate(lastClosingInfo.last_period_start_date || lastClosingInfo.last_closing_date));
+                            setReopenEndDate(normalizeApiDate(lastClosingInfo.last_period_end_date || lastClosingInfo.last_closing_date));
                             setShowReopenDialog(true);
                           }}
                           ml={2}
@@ -937,7 +996,7 @@ const SettingsPage: React.FC = () => {
                       </Box>
                     </Alert>
 
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color={mutedTextColor}>
                       {t('settings.periodClosingLabels.description')}
                     </Text>
 
@@ -950,14 +1009,22 @@ const SettingsPage: React.FC = () => {
                         value={periodStartDate}
                         onChange={(e) => setPeriodStartDate(e.target.value)}
                         variant="filled"
-                        bg={lastClosingInfo?.has_previous_closing ? 'blue.50' : undefined}
-                        _hover={{ bg: lastClosingInfo?.has_previous_closing ? 'blue.50' : 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
+                        bg={lastClosingInfo?.has_previous_closing ? lockedFieldBg : inputBg}
+                        borderColor={lastClosingInfo?.has_previous_closing ? lockedFieldBorderColor : inputBorderColor}
+                        _hover={{
+                          bg: lastClosingInfo?.has_previous_closing ? lockedFieldBg : inputHoverBg,
+                          borderColor: lastClosingInfo?.has_previous_closing ? lockedFieldBorderColor : inputHoverBorderColor,
+                        }}
+                        _focus={{
+                          bg: lastClosingInfo?.has_previous_closing ? lockedFieldBg : inputFocusBg,
+                          borderColor: lastClosingInfo?.has_previous_closing ? lockedFieldBorderColor : inputFocusBorderColor,
+                        }}
                         isReadOnly={lastClosingInfo?.has_previous_closing === true}
                         cursor={lastClosingInfo?.has_previous_closing ? 'not-allowed' : 'text'}
                         placeholder="Select start date"
                       />
-                      <FormHelperText fontSize="xs" color={lastClosingInfo?.has_previous_closing ? 'blue.600' : 'gray.600'}>
+                      <FormHelperText fontSize="xs" color={lastClosingInfo?.has_previous_closing ? lockedHelperColor : mutedTextColor}>
                         {lastClosingInfo?.has_previous_closing
                           ? `🔒 ${t('settings.periodClosingHelper.autoStart')} (${lastClosingInfo.last_closing_date ? new Date(lastClosingInfo.last_closing_date).toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US') : 'N/A'})`
                           : `📅 ${t('settings.periodClosingHelper.manualStart')}`}
@@ -973,10 +1040,9 @@ const SettingsPage: React.FC = () => {
                         value={periodEndDate}
                         onChange={(e) => setPeriodEndDate(e.target.value)}
                         variant="filled"
-                        _hover={{ bg: 'gray.100' }}
-                        _focus={{ bg: 'white', borderColor: 'blue.500' }}
+                        {...fieldStyles}
                       />
-                      <FormHelperText fontSize="xs">
+                      <FormHelperText fontSize="xs" color={mutedTextColor}>
                         {t('settings.periodClosingLabels.endDateHelper')}
                       </FormHelperText>
                     </FormControl>
@@ -994,10 +1060,10 @@ const SettingsPage: React.FC = () => {
                     </Button>
 
                     {/* Closing History Section */}
-                    <Divider />
+                    <Divider borderColor={dividerColor} />
                     <HStack justify="space-between" width="full">
                       <HStack spacing={2}>
-                        <Icon as={FiClock} color="gray.600" />
+                        <Icon as={FiClock} color={mutedTextColor} />
                         <Text fontWeight="semibold" fontSize="sm">Riwayat Tutup Buku</Text>
                       </HStack>
                       <Button
@@ -1013,10 +1079,10 @@ const SettingsPage: React.FC = () => {
                     {loadingHistory ? (
                       <HStack justify="center" py={3}>
                         <Spinner size="sm" />
-                        <Text fontSize="xs">Loading...</Text>
+                        <Text fontSize="xs" color={mutedTextColor}>Loading...</Text>
                       </HStack>
                     ) : closingHistory.length === 0 ? (
-                      <Text fontSize="xs" color="gray.500" textAlign="center" py={2}>
+                      <Text fontSize="xs" color={mutedTextColor} textAlign="center" py={2}>
                         Belum ada riwayat tutup buku
                       </Text>
                     ) : (
@@ -1027,8 +1093,8 @@ const SettingsPage: React.FC = () => {
                             p={3}
                             borderRadius="md"
                             border="1px"
-                            borderColor={item.is_closed ? 'green.200' : 'orange.200'}
-                            bg={item.is_closed ? 'green.50' : 'orange.50'}
+                            borderColor={item.is_closed ? successPanelBorderColor : warningPanelBorderColor}
+                            bg={item.is_closed ? successPanelBg : warningPanelBg}
                           >
                             <HStack justify="space-between" mb={1}>
                               <HStack spacing={2}>
@@ -1055,8 +1121,8 @@ const SettingsPage: React.FC = () => {
                                   colorScheme="orange"
                                   leftIcon={<FiUnlock />}
                                   onClick={() => {
-                                    setReopenStartDate(item.start_date);
-                                    setReopenEndDate(item.end_date);
+                                    setReopenStartDate(normalizeApiDate(item.start_date));
+                                    setReopenEndDate(normalizeApiDate(item.end_date));
                                     setShowReopenDialog(true);
                                   }}
                                 >
@@ -1064,7 +1130,7 @@ const SettingsPage: React.FC = () => {
                                 </Button>
                               )}
                             </HStack>
-                            <HStack spacing={4} fontSize="xs" color="gray.600">
+                            <HStack spacing={4} fontSize="xs" color={mutedTextColor}>
                               <Text>Revenue: Rp {(item.total_revenue || 0).toLocaleString('id-ID')}</Text>
                               <Text>Expense: Rp {(item.total_expense || 0).toLocaleString('id-ID')}</Text>
                               <Text fontWeight="semibold" color={item.net_income >= 0 ? 'green.600' : 'red.600'}>
@@ -1073,7 +1139,7 @@ const SettingsPage: React.FC = () => {
                             </HStack>
                             {
                               item.notes && (
-                                <Text fontSize="xs" color="gray.500" mt={1} fontStyle="italic">
+                                <Text fontSize="xs" color={mutedTextColor} mt={1} fontStyle="italic">
                                   {item.notes}
                                 </Text>
                               )
@@ -1087,7 +1153,7 @@ const SettingsPage: React.FC = () => {
               </Card>
 
               {/* Tax Account Configuration Card */}
-              <Card border="1px" borderColor="gray.200" boxShadow="md">
+              <Card bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
                 <CardHeader>
                   <HStack spacing={3} justify="space-between">
                     <HStack spacing={3}>
@@ -1114,16 +1180,16 @@ const SettingsPage: React.FC = () => {
                 </CardHeader>
                 <CardBody>
                   <VStack spacing={4} alignItems="start">
-                    <Text fontSize="sm" color="gray.600" mb={2}>
+                    <Text fontSize="sm" color={mutedTextColor} mb={2}>
                       {t('settings.taxAccountConfigDesc')}
                     </Text>
 
                     {/* PPN Rate Display */}
-                    <Box width="full" p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    <Box width="full" p={3} bg={warningPanelBg} borderRadius="md" border="1px" borderColor={warningPanelBorderColor}>
                       <HStack justify="space-between">
                         <HStack spacing={2}>
-                          <Icon as={FiDollarSign} color="orange.600" boxSize={4} />
-                          <Text fontSize="sm" fontWeight="semibold" color="orange.800">{t('settings.taxRecommendations.ppnLabel')}</Text>
+                          <Icon as={FiDollarSign} color={orangeColor} boxSize={4} />
+                          <Text fontSize="sm" fontWeight="semibold" color={textColor}>{t('settings.taxRecommendations.ppnLabel')}</Text>
                         </HStack>
                         <Badge colorScheme="orange" fontSize="sm" px={2} py={1} borderRadius="md">
                           {settings?.default_tax_rate ?? 11}%
@@ -1168,7 +1234,7 @@ const SettingsPage: React.FC = () => {
                     {loadingTaxAccounts ? (
                       <HStack width="full" justify="center" py={4}>
                         <Spinner size="sm" color="blue.500" />
-                        <Text fontSize="xs" color="gray.500">{t('settings.taxAccountConfigLoading')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor}>{t('settings.taxAccountConfigLoading')}</Text>
                       </HStack>
                     ) : taxAccountSettings ? (
                       <VStack spacing={3} width="full" alignItems="start">
@@ -1176,7 +1242,7 @@ const SettingsPage: React.FC = () => {
                         <HStack justify="space-between" width="full">
                           <VStack alignItems="start" spacing={1}>
                             <HStack spacing={2}>
-                              <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+                              <Text fontSize="sm" fontWeight="semibold" color={textColor}>
                                 {t('settings.taxAccountSections.withholding')}
                               </Text>
                               {settings?.company_type === 'SERVICE' && (
@@ -1193,8 +1259,8 @@ const SettingsPage: React.FC = () => {
                                 </HStack>
                               ) : (
                                 <HStack spacing={1}>
-                                  <Icon as={settings?.company_type === 'SERVICE' ? FiAlertTriangle : FiInfo} color={settings?.company_type === 'SERVICE' ? 'orange.400' : 'gray.400'} boxSize={3} />
-                                  <Text fontSize="xs" color={settings?.company_type === 'SERVICE' ? 'orange.500' : 'gray.400'}>PPh 21: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                                  <Icon as={settings?.company_type === 'SERVICE' ? FiAlertTriangle : FiInfo} color={settings?.company_type === 'SERVICE' ? 'orange.400' : mutedTextColor} boxSize={3} />
+                                  <Text fontSize="xs" color={settings?.company_type === 'SERVICE' ? orangeColor : mutedTextColor}>PPh 21: {t('settings.taxAccountStatus.notConfigured')}</Text>
                                 </HStack>
                               )}
                               {taxAccountSettings.withholding_tax23_account ? (
@@ -1206,8 +1272,8 @@ const SettingsPage: React.FC = () => {
                                 </HStack>
                               ) : (
                                 <HStack spacing={1}>
-                                  <Icon as={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? FiAlertTriangle : FiInfo} color={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? 'orange.400' : 'gray.400'} boxSize={3} />
-                                  <Text fontSize="xs" color={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? 'orange.500' : 'gray.400'}>PPh 23: {t('settings.taxAccountStatus.notConfigured')}</Text>
+                                  <Icon as={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? FiAlertTriangle : FiInfo} color={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? 'orange.400' : mutedTextColor} boxSize={3} />
+                                  <Text fontSize="xs" color={(settings?.company_type === 'SERVICE' || settings?.company_type === 'MANUFACTURING') ? orangeColor : mutedTextColor}>PPh 23: {t('settings.taxAccountStatus.notConfigured')}</Text>
                                 </HStack>
                               )}
                               {taxAccountSettings.withholding_tax25_account ? (
@@ -1218,21 +1284,21 @@ const SettingsPage: React.FC = () => {
                                   </Text>
                                 </HStack>
                               ) : (
-                                <Text fontSize="xs" color="gray.400">PPh 25: {t('settings.taxAccountStatus.notConfigured')} ({t('settings.taxRecommendations.optional')})</Text>
+                                <Text fontSize="xs" color={mutedTextColor}>PPh 25: {t('settings.taxAccountStatus.notConfigured')} ({t('settings.taxRecommendations.optional')})</Text>
                               )}
                             </VStack>
                           </VStack>
-                          <Icon as={FiDollarSign} color="orange.500" boxSize={4} />
+                          <Icon as={FiDollarSign} color={orangeColor} boxSize={4} />
                         </HStack>
 
                         {/* Inventory & COGS Section - conditional based on company type */}
                         {settings?.company_type !== 'SERVICE' && (
                           <>
-                            <Divider />
+                            <Divider borderColor={dividerColor} />
                             <HStack justify="space-between" width="full">
                               <VStack alignItems="start" spacing={1}>
                                 <HStack spacing={2}>
-                                  <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+                                  <Text fontSize="sm" fontWeight="semibold" color={textColor}>
                                     {t('settings.taxAccountSections.inventoryCogs')}
                                   </Text>
                                   {(settings?.company_type === 'TRADING' || settings?.company_type === 'MANUFACTURING') && (
@@ -1250,7 +1316,7 @@ const SettingsPage: React.FC = () => {
                                   ) : (
                                     <HStack spacing={1}>
                                       <Icon as={FiAlertTriangle} color="red.400" boxSize={3} />
-                                      <Text fontSize="xs" color="red.500" fontWeight="medium">Inventory: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
+                                      <Text fontSize="xs" color={redColor} fontWeight="medium">Inventory: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
                                     </HStack>
                                   )}
                                   {taxAccountSettings.cogs_account ? (
@@ -1263,19 +1329,19 @@ const SettingsPage: React.FC = () => {
                                   ) : (
                                     <HStack spacing={1}>
                                       <Icon as={FiAlertTriangle} color="red.400" boxSize={3} />
-                                      <Text fontSize="xs" color="red.500" fontWeight="medium">COGS: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
+                                      <Text fontSize="xs" color={redColor} fontWeight="medium">COGS: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
                                     </HStack>
                                   )}
                                 </VStack>
                               </VStack>
-                              <Icon as={FiPackage} color="blue.500" boxSize={4} />
+                              <Icon as={FiPackage} color={blueColor} boxSize={4} />
                             </HStack>
                           </>
                         )}
                       </VStack>
                     ) : (
                       <VStack spacing={3} width="full" alignItems="start">
-                        <Text fontSize="xs" color="gray.500">
+                        <Text fontSize="xs" color={mutedTextColor}>
                           {t('settings.taxAccountStatus.noConfigFound')}
                         </Text>
                       </VStack>
@@ -1288,7 +1354,7 @@ const SettingsPage: React.FC = () => {
                         size="sm"
                         leftIcon={<FiSettings />}
                         width="full"
-                        _hover={{ bg: 'orange.50' }}
+                        _hover={{ bg: subtleHoverBg }}
                       >
                         {t('settings.taxAccounts.title') || "Configure Tax Accounts"}
                       </Button>
@@ -1307,8 +1373,8 @@ const SettingsPage: React.FC = () => {
           size="xl"
         >
           <ModalOverlay />
-          <ModalContent maxW="800px">
-            <ModalHeader bg="red.500" color="white">
+          <ModalContent maxW="800px" bg={modalBg} borderWidth="1px" borderColor={cardBorderColor}>
+            <ModalHeader bg={modalHeaderBg} color="white">
               📅 {t('settings.periodClosing') || "Period Closing Preview"}
             </ModalHeader>
             <ModalCloseButton color="white" />
@@ -1316,36 +1382,36 @@ const SettingsPage: React.FC = () => {
               {periodClosingPreview && (
                 <VStack spacing={4} alignItems="start">
                   {/* Period Info */}
-                  <Box width="full" p={3} bg="blue.50" borderRadius="md">
+                  <Box width="full" p={3} bg={panelBg} borderRadius="md" borderWidth="1px" borderColor={cardBorderColor}>
                     <Text fontSize="sm" fontWeight="bold" mb={1}>
                       {t('settings.periodClosingLabels.period')}: {new Date(periodClosingPreview.start_date).toLocaleDateString()} - {new Date(periodClosingPreview.end_date).toLocaleDateString()}
                     </Text>
-                    <Text fontSize="xs" color="gray.600">
+                    <Text fontSize="xs" color={mutedTextColor}>
                       {periodClosingPreview.period_days} {t('settings.periodClosingLabels.days')} | {periodClosingPreview.transaction_count} {t('settings.periodClosingLabels.transactions')}
                     </Text>
                   </Box>
 
                   {/* Summary */}
-                  <Box width="full" p={4} bg="gray.50" borderRadius="md">
+                  <Box width="full" p={4} bg={panelBg} borderRadius="md" borderWidth="1px" borderColor={cardBorderColor}>
                     <Text fontSize="lg" fontWeight="bold" mb={2}>
                       {t('settings.periodClosingLabels.financialSummary')}
                     </Text>
                     <SimpleGrid columns={3} spacing={4}>
                       <Box>
-                        <Text fontSize="xs" color="gray.600">{t('settings.periodClosingLabels.totalRevenue')}</Text>
-                        <Text fontSize="lg" fontWeight="bold" color="green.600">
+                        <Text fontSize="xs" color={mutedTextColor}>{t('settings.periodClosingLabels.totalRevenue')}</Text>
+                        <Text fontSize="lg" fontWeight="bold" color={greenColor}>
                           Rp {periodClosingPreview.total_revenue.toLocaleString('id-ID')}
                         </Text>
                       </Box>
                       <Box>
-                        <Text fontSize="xs" color="gray.600">{t('settings.periodClosingLabels.totalExpense')}</Text>
-                        <Text fontSize="lg" fontWeight="bold" color="red.600">
+                        <Text fontSize="xs" color={mutedTextColor}>{t('settings.periodClosingLabels.totalExpense')}</Text>
+                        <Text fontSize="lg" fontWeight="bold" color={redColor}>
                           Rp {periodClosingPreview.total_expense.toLocaleString('id-ID')}
                         </Text>
                       </Box>
                       <Box>
-                        <Text fontSize="xs" color="gray.600">{t('settings.periodClosingLabels.netIncome')}</Text>
-                        <Text fontSize="lg" fontWeight="bold" color="blue.600">
+                        <Text fontSize="xs" color={mutedTextColor}>{t('settings.periodClosingLabels.netIncome')}</Text>
+                        <Text fontSize="lg" fontWeight="bold" color={blueColor}>
                           Rp {periodClosingPreview.net_income.toLocaleString('id-ID')}
                         </Text>
                       </Box>
@@ -1400,9 +1466,9 @@ const SettingsPage: React.FC = () => {
                             key={i}
                             width="full"
                             p={3}
-                            bg="white"
+                            bg={itemBg}
                             border="1px"
-                            borderColor="gray.200"
+                            borderColor={cardBorderColor}
                             borderRadius="md"
                           >
                             <Text fontSize="xs" fontWeight="semibold" mb={1}>
@@ -1424,7 +1490,7 @@ const SettingsPage: React.FC = () => {
                 </VStack>
               )}
             </ModalBody>
-            <ModalFooter>
+            <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={cardBorderColor}>
               <Button
                 variant="ghost"
                 mr={3}

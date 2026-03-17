@@ -275,7 +275,7 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ss, err := s.enhancedReportService.GenerateSalesSummary(startDate, endDate, "month")
+		ss, err := s.enhancedReportService.GenerateSalesSummary(startDate, endDate, "month", nil)
 		if err != nil {
 			errChan <- fmt.Errorf("sales summary generation failed: %w", err)
 			return
@@ -370,8 +370,8 @@ func (s *SSOTReportIntegrationService) GenerateIntegratedReports(ctx context.Con
 }
 
 // GenerateSalesSummaryFromSSot generates sales summary using SSOT journal data
-func (s *SSOTReportIntegrationService) GenerateSalesSummaryFromSSot(startDate, endDate time.Time) (*SalesSummaryData, error) {
-	return s.enhancedReportService.GenerateSalesSummary(startDate, endDate, "month")
+func (s *SSOTReportIntegrationService) GenerateSalesSummaryFromSSot(startDate, endDate time.Time, projectID *uint) (*SalesSummaryData, error) {
+	return s.enhancedReportService.GenerateSalesSummary(startDate, endDate, "month", projectID)
 }
 
 // GenerateVendorAnalysisFromSSot generates vendor analysis using SSOT journal data

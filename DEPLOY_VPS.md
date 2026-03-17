@@ -1,108 +1,176 @@
-# Panduan Deployment Sistem Akuntansi ke VPS (Menggunakan Docker)
+# Panduan Deployment ERP Akuntansi ke VPS Production
 
-Panduan ini berisi langkah-langkah untuk melakukan deployment aplikasi ERP Akuntansi (Frontend + Backend + PostgreSQL) ke VPS Anda menggunakan server Linux (Ubuntu/Debian) via GitHub.
+Dokumen ini menggantikan alur deploy lama. Rekomendasi terbaru memakai `docker-compose.prod.yml` + Caddy reverse proxy agar:
 
-## Prasyarat Server (VPS)
-Sebelum mulai, pastikan VPS Anda:
-1. Menjalankan OS Ubuntu 20.04/22.04 LTS (atau varian Linux lainnya).
-2. Memiliki **Git** yang terinstall.
-3. Memiliki **Docker** dan **Docker Compose** terinstall.
+- HTTPS aktif otomatis dengan sertifikat Let's Encrypt
+- hanya port `80/443` yang terbuka ke internet
+- backend dan database tidak terekspos publik
+- ada healthcheck, restart policy, log rotation, dan volume persistence
 
-## Langkah 1: Install Git dan Docker di VPS
-Jika VPS belum terinstall Docker, jalankan script ini di terminal VPS Anda:
+## Arsitektur Production
+
+Request user masuk ke:
+
+1. `Caddy` pada port `80/443`
+2. `frontend` Next.js pada jaringan Docker internal
+3. `backend` Go API pada jaringan Docker internal
+4. `db` PostgreSQL pada jaringan Docker internal
+
+## Rekomendasi Spesifikasi VPS
+
+Minimum yang realistis untuk aplikasi ini:
+
+- `2 vCPU`
+- `4 GB RAM`
+- `60 GB SSD`
+
+Untuk user aktif lebih banyak atau report berat:
+
+- `4 vCPU`
+- `8 GB RAM`
+- `100+ GB SSD`
+
+## Prasyarat
+
+- Ubuntu 22.04 LTS atau Debian 12
+- Domain sudah mengarah ke IP VPS
+- Port `80` dan `443` dibuka di firewall/security group
+- Docker Engine dan Docker Compose plugin terpasang
+
+## 1. Setup server
 
 ```bash
-# Update repository
 sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl ufw
 
-# Install Git
-sudo apt install git -y
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+newgrp docker
 
-# Install Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-
-# Install Docker Compose Plugin
-sudo apt-get install docker-compose-plugin -y
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
 ```
 
-## Langkah 2: Clone Repository Anda dari GitHub
-Di terminal VPS Anda, clone repository menggunakan Git:
+## 2. Clone repository
 
 ```bash
-# Pindah ke direktori home (optional)
-cd ~
-
-# Clone repo (Ganti link-nya jika berubah)
-git clone https://github.com/Jerly08/erp_akuntansi.git
-
-# Masuk ke folder project
-cd erp_akuntansi
+cd /opt
+sudo git clone https://github.com/Jerly08/erp_akuntansi.git
+sudo chown -R $USER:$USER /opt/erp_akuntansi
+cd /opt/erp_akuntansi
 ```
 
-## Langkah 3: Konfigurasi Environment Variables (.env)
-Dalam metode deployment ini, seluruh _environment variables_ (termasuk kredensial Database, Secret JWT, dan URL Front End) diatur pada satu file terpusat.
+## 3. Siapkan environment production
 
-Buat file `.env` di root project Anda:
+Salin template env:
+
 ```bash
-nano .env
+cp .env.production.example .env.production
+nano .env.production
 ```
 
-Isi dengan template berikut:
+Isi minimal:
+
 ```env
-# Database Credentials
+DOMAIN=erp.example.com
+ACME_EMAIL=admin@example.com
+
 DB_USER=postgres
-DB_PASSWORD=GantiDenganPasswordSuperKuatUntukDatabase!
-DB_NAME=sistem_akuntansi
+DB_PASSWORD=ganti-dengan-password-kuat
+DB_NAME=erp_akuntansi
 
-# JWT Secrets (HARUS KUAT MINIMAL 32 KARAKTER)
-JWT_SECRET=GenerateStringAcakSuperKuatPanajgnRahasia!
-JWT_ACCESS_SECRET=GenerateStringAcakSuperKuatPanjangRahasia!
-JWT_REFRESH_SECRET=GenerateStringAcakSuperKuatPanjangRahasiaRefresh!
-SESSION_SECRET=GenerateStringAcakSuperKuatPanjangRahasiaSession!
-
-# Pengaturan Lingkungan
-ENVIRONMENT=production
-SERVER_PORT=8080
-
-# Pengaturan Domain & CORS
-DOMAIN=vps-domain-anda.com
-APP_URL=http://vps-domain-anda.com:3003
-
-# URLs (Frontend Proxy)
-# FRONTEND_URL adalah URL/IP public VPS (beserta / tanpa port 3003) yang bisa diakses user, cth: http://ip-api-vps-anda:3003 atau IP Domain public anda
-FRONTEND_URL=http://localhost:3003
+JWT_SECRET=ganti-dengan-secret-acak-panjang
+JWT_ACCESS_SECRET=ganti-dengan-secret-acak-panjang
+JWT_REFRESH_SECRET=ganti-dengan-secret-acak-panjang
+SESSION_SECRET=ganti-dengan-secret-acak-panjang
 ```
-Tekan `CTRL + X`, lalu tekan `Y`, lalu `Enter` untuk menyimpan.
 
-> **Note:** Pada `docker-compose.yml` yang dikonfigurasi, url API dari frontend `NEXT_PUBLIC_API_URL` tidak perlu diubah, API proxy NextJS (`/api/...`) sudah otomatis mengarah ke container backend!
+Catatan penting:
 
-## Langkah 4: Build dan Run Docker Compose
-Sekarang Anda bisa menjalankan seluruh aplikasi mulai dari frontend, backend, hingga databasenya menggunakan perintah:
+- `DOMAIN` harus sudah resolve ke IP VPS sebelum deploy pertama, supaya HTTPS otomatis berhasil.
+- Jangan buka port PostgreSQL ke publik.
+- Jangan pakai password dan secret pendek.
+
+## 4. Deploy production
+
+Cara paling cepat:
 
 ```bash
-# Menjalankan dalam mode Detached (Berjalan otomatis di background)
-sudo docker compose up --build -d
+chmod +x scripts/vps/deploy.sh
+./scripts/vps/deploy.sh
 ```
 
-Docker akan mengunduh dependencies image, meng-compile build aplikasi backend Anda, dan membangun image production (Standalone) untuk frontend. Proses ini mungkin memakan waktu 2-10 menit.
+Atau manual:
 
-## Langkah 5: Pengecekan Running Container
-Untuk memastikan aplikasi berjalan dengan baik:
 ```bash
-sudo docker compose ps
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
 ```
-Anda akan melihat tiga container: `erp_db`, `erp_backend`, dan `erp_frontend` dalam status `Up`.
 
-Anda juga dapat melihat logs-nya:
+## 5. Verifikasi
+
+Cek status container:
+
 ```bash
-sudo docker compose logs -f
+docker compose --env-file .env.production -f docker-compose.prod.yml ps
 ```
 
-## Akses Aplikasi Anda
-Secara default, aplikasi akan _exposed_ pada VPS melalui port:
-* **Frontend**: `http://<IP_VPS_ANDA>:3003`
-* **Backend**: `http://<IP_VPS_ANDA>:8084` (Akan diproteksi, namun frontend terhubung ke backend ini)
-* **PostgreSQL (Optional Access)**: Port `5434` 
+Cek log saat pertama kali boot:
 
-*Selesai!* Aplikasi Sistem Akuntansi Anda telah live menggunakan Docker Compose.
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml logs -f
+```
+
+Cek health backend dari dalam VPS:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml exec backend wget -qO- http://127.0.0.1:8080/api/v1/health
+```
+
+Jika semua normal, aplikasi dapat diakses di:
+
+```text
+https://DOMAIN_ANDA
+```
+
+## 6. Cara update aplikasi
+
+```bash
+cd /opt/erp_akuntansi
+git pull
+./scripts/vps/deploy.sh
+```
+
+## 7. Backup database
+
+Script backup sudah disiapkan:
+
+```bash
+chmod +x scripts/vps/backup-db.sh
+./scripts/vps/backup-db.sh
+```
+
+Hasil backup akan masuk ke folder `backups/`.
+
+Disarankan jadwalkan via `cron`, misalnya backup harian jam 02:00.
+
+## 8. Catatan production penting
+
+- Compose production baru tidak mengekspos `db` dan `backend` ke internet.
+- TLS/HTTPS ditangani Caddy otomatis.
+- Upload file tetap persisten di volume `erp_uploads`.
+- Database tetap persisten di volume `postgres_data`.
+- Logging container memakai rotasi ukuran supaya disk VPS tidak cepat penuh.
+- Backend sekarang aman dipasang di belakang reverse proxy dan melakukan graceful shutdown saat restart/deploy.
+
+## 9. Jika deploy pertama gagal
+
+Periksa 4 hal ini dulu:
+
+1. Domain belum mengarah ke IP VPS.
+2. Port `80/443` masih tertutup firewall provider.
+3. Secret/env belum lengkap di `.env.production`.
+4. VPS kehabisan RAM saat build frontend Next.js.
+
+Jika build frontend berat di VPS kecil, tambahkan swap minimal `2 GB`.

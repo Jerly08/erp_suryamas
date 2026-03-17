@@ -105,6 +105,8 @@ const AccountsPage = () => {
   const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
   const tabBorderColor = useColorModeValue('gray.200', 'var(--border-color)');
   const emptyStateColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+  const modalBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const modalHeaderTextColor = useColorModeValue('gray.800', 'var(--text-primary)');
   // Move dynamic shadow hook call here to avoid calling hooks inside conditional render branches
   const cardShadow = useColorModeValue('sm', 'var(--shadow)');
 
@@ -785,8 +787,8 @@ const AccountsPage = () => {
 
           <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} size="lg">
             <ModalOverlay />
-            <ModalContent>
-              <ModalHeader>
+            <ModalContent bg={modalBg} border="1px solid" borderColor={borderColor}>
+              <ModalHeader color={modalHeaderTextColor} borderBottom="1px solid" borderColor={borderColor}>
                 {selectedAccount ? t('accounts.editAccount') : (isHeaderMode ? t('accounts.createHeaderAccount') : t('accounts.createAccount'))}
               </ModalHeader>
               <ModalCloseButton />

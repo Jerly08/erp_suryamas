@@ -9,9 +9,10 @@ export interface PurchaseItemRequest {
   tax?: number;
   expense_account_id?: number;
   description?: string;
-  item_type?: string;        // "INVENTORY" | "ASSET"
+  item_type?: string;        // "INVENTORY" | "ASSET" | "PREPAID"
   is_fixed_asset?: boolean;
   asset_category_id?: number;
+  amortization_month?: number;
 }
 
 export interface PurchaseCreateRequest {
@@ -42,12 +43,18 @@ export interface PurchaseFilterParams {
 
 export interface PurchaseItem {
   id: number;
-  product_id: number;
+  product_id?: number | null;
   quantity: number;
   unit_price: number;
   discount: number;
   tax: number;
   total_price: number;
+  expense_account_id?: number;
+  item_type?: string;
+  is_fixed_asset?: boolean;
+  description?: string;
+  asset_category_id?: number | null;
+  amortization_month?: number;
   product?: {
     id: number;
     name: string;
@@ -75,6 +82,17 @@ export interface Purchase {
   discount: number; // order-level percent
   order_discount_amount: number;
   net_before_tax: number;
+  ppn_rate?: number;
+  ppn_amount?: number;
+  other_tax_additions?: number;
+  total_tax_additions?: number;
+  pph21_rate?: number;
+  pph21_amount?: number;
+  pph23_rate?: number;
+  pph23_amount?: number;
+  other_tax_deductions?: number;
+  total_tax_deductions?: number;
+  tax?: number;
   tax_amount: number;
   total_amount: number; // grand total
   // Payment tracking fields
@@ -94,6 +112,8 @@ export interface Purchase {
   approval_request_id?: number;
   approved_at?: string;
   approved_by?: number;
+  purchase_request_id?: number;
+  project_id?: number;
   vendor?: Vendor;
   purchase_items?: PurchaseItem[];
   approval_request?: {
@@ -138,6 +158,7 @@ export interface PurchaseSummary {
 // Purchase Payment Integration Interfaces
 export interface PurchasePaymentRequest {
   amount: number;
+  exchange_rate?: number;
   payment_date: string; // ISO string
   payment_method: string;
   cash_bank_id?: number;
@@ -282,6 +303,7 @@ class PurchaseService {
 
     const backendData = {
       amount: data.amount,
+      exchange_rate: data.exchange_rate,
       date: formattedDate,  // Send as properly formatted date string
       method: data.payment_method,
       cash_bank_id: data.cash_bank_id,

@@ -470,6 +470,15 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 	// POST-APPROVAL PROCESSING: Trigger business logic for approved purchases
 	if purchaseToProcess != nil && s.postApprovalCallback != nil {
 		go func(purchaseID uint) {
+			var purchase models.Purchase
+			if err := s.db.First(&purchase, purchaseID).Error; err != nil {
+				fmt.Printf("âš ï¸ Failed to load purchase %d before post-approval processing: %v\n", purchaseID, err)
+				return
+			}
+			if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+				fmt.Printf("âš ï¸ Blocked post-approval processing for purchase %d in closed period: %v\n", purchaseID, err)
+				return
+			}
 			if err := s.postApprovalCallback.OnPurchaseApproved(purchaseID); err != nil {
 				fmt.Printf("⚠️ Post-approval processing failed for purchase %d: %v\n", purchaseID, err)
 			} else {

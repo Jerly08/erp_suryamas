@@ -89,6 +89,7 @@ func (c *SSOTReportIntegrationController) GetIntegratedFinancialReports(ctx *gin
 // @Produce json
 // @Param start_date query string true "Start date (YYYY-MM-DD)"
 // @Param end_date query string true "End date (YYYY-MM-DD)"
+// @Param project_id query int false "Filter by project ID"
 // @Param format query string false "Output format (json, pdf, csv)" default(json)
 // @Success 200 {object} services.SalesSummaryData
 // @Failure 400 {object} map[string]string
@@ -97,6 +98,7 @@ func (c *SSOTReportIntegrationController) GetIntegratedFinancialReports(ctx *gin
 func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) {
 	startDateStr := ctx.Query("start_date")
 	endDateStr := ctx.Query("end_date")
+	projectIDStr := ctx.Query("project_id")
 	format := ctx.DefaultQuery("format", "json")
 
 	if startDateStr == "" || endDateStr == "" {
@@ -119,8 +121,23 @@ func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) 
 		return
 	}
 
+	var projectID *uint
+	if projectIDStr != "" {
+		parsedProjectID, err := strconv.ParseUint(projectIDStr, 10, 64)
+		if err != nil || parsedProjectID == 0 {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "project_id must be a valid positive integer",
+			})
+			return
+		}
+
+		projectIDValue := uint(parsedProjectID)
+		projectID = &projectIDValue
+	}
+
 	// Generate sales summary from SSOT
-	salesSummary, err := c.integrationService.GenerateSalesSummaryFromSSot(startDate, endDate)
+	salesSummary, err := c.integrationService.GenerateSalesSummaryFromSSot(startDate, endDate, projectID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -232,7 +249,7 @@ func (c *SSOTReportIntegrationController) GetSSOTPurchaseReport(ctx *gin.Context
 
 	// Generate purchase report from SSOT
 	purchaseService := services.NewSSOTPurchaseReportService(c.integrationService.GetDB())
-	purchaseReport, err := purchaseService.GeneratePurchaseReport(ctx, startDate, endDate)
+	purchaseReport, err := purchaseService.GeneratePurchaseReport(ctx, startDate, endDate, nil)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",

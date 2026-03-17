@@ -2,8 +2,10 @@ package services
 
 import (
 	"app-sistem-akuntansi/models"
+	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -30,6 +32,9 @@ func (s *UnifiedJournalService) CreateJournalEntry(entry interface{}) (*models.S
 	req, ok := entry.(*JournalEntryRequest)
 	if !ok || req == nil {
 		return nil, fmt.Errorf("invalid journal entry request")
+	}
+	if err := CheckClosedPeriod(s.db, req.EntryDate); err != nil {
+		return nil, err
 	}
 
 	if len(req.Lines) < 2 {
@@ -650,6 +655,9 @@ func (s *UnifiedJournalService) CreateJournalEntryWithTx(tx *gorm.DB, request *J
 	if request == nil {
 		return nil, fmt.Errorf("invalid journal entry request")
 	}
+	if err := CheckClosedPeriod(tx, request.EntryDate); err != nil {
+		return nil, err
+	}
 
 	if len(request.Lines) < 2 {
 		return nil, fmt.Errorf("at least two journal lines are required")
@@ -717,14 +725,31 @@ func (s *UnifiedJournalService) CreateJournalEntryWithTx(tx *gorm.DB, request *J
 	return entryModel, nil
 }
 
-func (s *UnifiedJournalService) GetAccountBalances() ([]models.Account, error) {
-	// Try to load from SSOT materialized view if available; otherwise, return empty slice safely
-	var balances []models.Account
-	if err := s.db.Limit(0).Find(&balances).Error; err != nil {
-		// Return empty without failing callers
-		return []models.Account{}, nil
+func (s *UnifiedJournalService) GetAccountBalances() ([]JournalAccountBalance, error) {
+	var balances []models.SSOTAccountBalance
+	if err := s.db.Model(&models.SSOTAccountBalance{}).
+		Order("account_code ASC").
+		Find(&balances).Error; err != nil {
+		return nil, fmt.Errorf("failed to load SSOT account balances: %w", err)
 	}
-	return balances, nil
+
+	result := make([]JournalAccountBalance, 0, len(balances))
+	for _, balance := range balances {
+		totalDebits := balance.TotalDebits.InexactFloat64()
+		totalCredits := balance.TotalCredits.InexactFloat64()
+		currentBalance := balance.CurrentBalance.InexactFloat64()
+		result = append(result, JournalAccountBalance{
+			AccountID:     balance.AccountID,
+			AccountCode:   balance.AccountCode,
+			AccountName:   balance.AccountName,
+			DebitBalance:  totalDebits,
+			CreditBalance: totalCredits,
+			Balance:       currentBalance,
+			LastUpdated:   balance.LastUpdated,
+		})
+	}
+
+	return result, nil
 }
 
 // GetJournalEntries returns paginated journal entries based on simple filters
@@ -734,18 +759,37 @@ func (s *UnifiedJournalService) GetJournalEntries(filters interface{}) (*Journal
 		return nil, fmt.Errorf("invalid filters type")
 	}
 
-	query := s.db.Model(&models.SSOTJournalEntry{}).Where("status = ?", models.SSOTStatusPosted).Where("deleted_at IS NULL")
+	query := s.db.Model(&models.SSOTJournalEntry{}).Where("deleted_at IS NULL")
+	if strings.TrimSpace(f.Status) != "" && strings.ToUpper(strings.TrimSpace(f.Status)) != "ALL" {
+		query = query.Where("status = ?", strings.ToUpper(strings.TrimSpace(f.Status)))
+	}
 	if f.SourceType != "" {
 		query = query.Where("source_type = ?", f.SourceType)
 	}
 	if f.SourceID != nil {
 		query = query.Where("source_id = ?", *f.SourceID)
 	}
+	if f.AccountID != 0 {
+		query = query.Joins("JOIN unified_journal_lines ujl_filter ON ujl_filter.journal_id = unified_journal_ledger.id").
+			Where("ujl_filter.account_id = ?", f.AccountID).
+			Distinct("unified_journal_ledger.id")
+	}
 	if f.DateFrom != nil {
 		query = query.Where("entry_date >= ?", *f.DateFrom)
 	}
 	if f.DateTo != nil {
 		query = query.Where("entry_date < ?", *f.DateTo)
+	}
+	if ref := strings.TrimSpace(f.Reference); ref != "" {
+		query = query.Where("reference ILIKE ?", "%"+ref+"%")
+	}
+	if desc := strings.TrimSpace(f.Description); desc != "" {
+		query = query.Where("description ILIKE ?", "%"+desc+"%")
+	}
+	if search := strings.TrimSpace(f.Search); search != "" {
+		like := "%" + search + "%"
+		query = query.Where("(entry_number ILIKE ? OR description ILIKE ? OR reference ILIKE ? OR source_code ILIKE ?)",
+			like, like, like, like)
 	}
 
 	var total int64
@@ -936,8 +980,77 @@ func (s *UnifiedJournalService) PostJournalEntry(id uint64, userID uint64) (*mod
 }
 
 func (s *UnifiedJournalService) RefreshAccountBalances() error {
-	// No-op in this minimal implementation
+	if err := s.db.Exec("REFRESH MATERIALIZED VIEW CONCURRENTLY account_balances").Error; err == nil {
+		return nil
+	}
+	if err := s.db.Exec("REFRESH MATERIALIZED VIEW account_balances").Error; err == nil {
+		return nil
+	}
+	// Some environments may expose account_balances as a regular view/table.
+	// In that case there is nothing to refresh explicitly.
 	return nil
+}
+
+func (s *UnifiedJournalService) GetJournalSummary(filters JournalFilters) (*JournalSummaryResult, error) {
+	query := s.db.Model(&models.SSOTJournalEntry{}).Where("deleted_at IS NULL")
+
+	if strings.TrimSpace(filters.Status) != "" && strings.ToUpper(strings.TrimSpace(filters.Status)) != "ALL" {
+		query = query.Where("status = ?", strings.ToUpper(strings.TrimSpace(filters.Status)))
+	}
+	if filters.DateFrom != nil {
+		query = query.Where("entry_date >= ?", *filters.DateFrom)
+	}
+	if filters.DateTo != nil {
+		query = query.Where("entry_date < ?", *filters.DateTo)
+	}
+
+	type summaryRow struct {
+		TotalEntries    int64
+		PostedEntries   int64
+		DraftEntries    int64
+		ReversedEntries int64
+		TotalDebit      decimal.Decimal
+		TotalCredit     decimal.Decimal
+	}
+
+	var row summaryRow
+	if err := query.Select(`
+		COUNT(*) as total_entries,
+		COALESCE(SUM(CASE WHEN status = 'POSTED' THEN 1 ELSE 0 END), 0) as posted_entries,
+		COALESCE(SUM(CASE WHEN status = 'DRAFT' THEN 1 ELSE 0 END), 0) as draft_entries,
+		COALESCE(SUM(CASE WHEN status = 'REVERSED' THEN 1 ELSE 0 END), 0) as reversed_entries,
+		COALESCE(SUM(total_debit), 0) as total_debit,
+		COALESCE(SUM(total_credit), 0) as total_credit
+	`).Scan(&row).Error; err != nil {
+		return nil, fmt.Errorf("failed to summarize SSOT journals: %w", err)
+	}
+
+	totalDebit := row.TotalDebit.InexactFloat64()
+	totalCredit := row.TotalCredit.InexactFloat64()
+
+	return &JournalSummaryResult{
+		TotalEntries:    row.TotalEntries,
+		TotalDebit:      totalDebit,
+		TotalCredit:     totalCredit,
+		PostedEntries:   row.PostedEntries,
+		DraftEntries:    row.DraftEntries,
+		ReversedEntries: row.ReversedEntries,
+	}, nil
+}
+
+func (s *UnifiedJournalService) ReverseJournalEntry(ctx context.Context, journalID, userID uint64, description string) (*models.SSOTJournalEntry, error) {
+	reversalService := NewJournalReversalService(s.db)
+	response, err := reversalService.ReverseJournalEntry(ctx, ReversalRequest{
+		JournalID:    journalID,
+		Reason:       description,
+		ReversalDate: time.Now(),
+		UserID:       userID,
+		Notes:        description,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return response.ReversalEntry, nil
 }
 
 // UltraFastPostingService STUB
@@ -1107,15 +1220,38 @@ type UltraFastPaymentRequest struct {
 
 // Missing types for controllers
 type JournalFilters struct {
-	StartDate  time.Time  `json:"start_date"`
-	EndDate    time.Time  `json:"end_date"`
-	DateFrom   *time.Time `json:"date_from"`
-	DateTo     *time.Time `json:"date_to"`
-	AccountID  uint       `form:"account_id" json:"account_id"`
-	SourceType string     `form:"source_type" json:"source_type"`
-	SourceID   *uint64    `form:"source_id" json:"source_id"`
-	Page       int        `form:"page" json:"page"`
-	Limit      int        `form:"limit" json:"limit"`
+	StartDate   time.Time  `json:"start_date"`
+	EndDate     time.Time  `json:"end_date"`
+	DateFrom    *time.Time `json:"date_from"`
+	DateTo      *time.Time `json:"date_to"`
+	AccountID   uint       `form:"account_id" json:"account_id"`
+	Status      string     `form:"status" json:"status"`
+	Reference   string     `form:"reference" json:"reference"`
+	Description string     `form:"description" json:"description"`
+	Search      string     `form:"search" json:"search"`
+	SourceType  string     `form:"source_type" json:"source_type"`
+	SourceID    *uint64    `form:"source_id" json:"source_id"`
+	Page        int        `form:"page" json:"page"`
+	Limit       int        `form:"limit" json:"limit"`
+}
+
+type JournalAccountBalance struct {
+	AccountID     uint64    `json:"account_id"`
+	AccountCode   string    `json:"account_code"`
+	AccountName   string    `json:"account_name"`
+	DebitBalance  float64   `json:"debit_balance"`
+	CreditBalance float64   `json:"credit_balance"`
+	Balance       float64   `json:"balance"`
+	LastUpdated   time.Time `json:"last_updated"`
+}
+
+type JournalSummaryResult struct {
+	TotalEntries    int64   `json:"total_entries"`
+	TotalDebit      float64 `json:"total_debit"`
+	TotalCredit     float64 `json:"total_credit"`
+	PostedEntries   int64   `json:"posted_entries"`
+	DraftEntries    int64   `json:"draft_entries"`
+	ReversedEntries int64   `json:"reversed_entries"`
 }
 
 type JournalResponse struct {

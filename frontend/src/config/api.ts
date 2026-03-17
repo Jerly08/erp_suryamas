@@ -171,6 +171,7 @@ export const API_ENDPOINTS = {
     PAYMENT_ACCOUNTS: '/api/v1/cash-bank/reports/payment-accounts',
     REVENUE_ACCOUNTS: '/api/v1/cash-bank/revenue-accounts',
     DEPOSIT_SOURCE_ACCOUNTS: '/api/v1/cash-bank/deposit-source-accounts',
+    REFERENCE_RATE: '/api/v1/cash-bank/reference-rate',
 
     // Summaries & reports
     BALANCE_SUMMARY: '/api/v1/cash-bank/reports/balance-summary',
@@ -188,9 +189,8 @@ export const API_ENDPOINTS = {
     UNFREEZE: (id: number) => `/api/v1/cash-bank/accounts/${id}/unfreeze`,
     FROZEN_HISTORY: (id: number) => `/api/v1/cash-bank/accounts/${id}/frozen-history`,
 
-    // Admin maintenance (kept for compatibility if wired)
+    // Admin diagnostics
     CHECK_GL_LINKS: '/api/v1/admin/check-cashbank-gl-links',
-    FIX_GL_LINKS: '/api/v1/admin/fix-cashbank-gl-links',
   },
 
   // Cash Bank SSOT Routes (with /api/v1 prefix)
@@ -208,14 +208,11 @@ export const API_ENDPOINTS = {
 
   // Admin (with /api/v1 prefix)
   ADMIN_CHECK_CASHBANK_GL: '/api/v1/admin/check-cashbank-gl-links',
-  ADMIN_FIX_CASHBANK_GL: '/api/v1/admin/fix-cashbank-gl-links',
-
   // Balance Monitoring (with /api/v1 prefix)
   // These are duplicates - commenting out since they're already defined above
   // MONITORING_BALANCE_HEALTH: '/api/v1/monitoring/balance-health',
   // MONITORING_BALANCE_SYNC: '/api/v1/monitoring/balance-sync',
   // MONITORING_DISCREPANCIES: '/api/v1/monitoring/discrepancies',
-  // MONITORING_FIX_DISCREPANCIES: '/api/v1/monitoring/fix-discrepancies',
   // MONITORING_SYNC_STATUS: '/api/v1/monitoring/sync-status',
 
   // API Usage Monitoring (with /api/v1 prefix)
@@ -441,7 +438,6 @@ export const API_ENDPOINTS = {
   MONITORING_STARTUP_STATUS: '/api/v1/monitoring/startup-status',
   MONITORING_FIX_ACCOUNT_HEADERS: '/api/v1/monitoring/fix-account-headers',
   MONITORING_BALANCE_SYNC: '/api/v1/monitoring/balance-sync',
-  MONITORING_FIX_DISCREPANCIES: '/api/v1/monitoring/fix-discrepancies',
   MONITORING_BALANCE_HEALTH: '/api/v1/monitoring/balance-health',
   MONITORING_DISCREPANCIES: '/api/v1/monitoring/discrepancies',
   MONITORING_SYNC_STATUS: '/api/v1/monitoring/sync-status',

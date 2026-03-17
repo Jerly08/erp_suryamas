@@ -39,7 +39,7 @@ import {
 import { useForm, Controller } from 'react-hook-form';
 import { FiInfo, FiDollarSign } from 'react-icons/fi';
 import { useAuth } from '@/contexts/AuthContext';
-import cashbankService, { CashBank } from '@/services/cashbankService';
+import cashbankService, { CashBank, getBookBalanceInIDR } from '@/services/cashbankService';
 
 interface PPNPaymentModalProps {
   isOpen: boolean;
@@ -80,6 +80,44 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
+  };
+
+  const formatCashBankBalance = (amount: number, currency?: string) => {
+    const normalizedCurrency = (currency || 'IDR').toUpperCase();
+
+    if (normalizedCurrency === 'USD') {
+      return `USD ${(amount || 0).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    }
+
+    return formatRupiah(amount || 0);
+  };
+
+  const getAvailableBookBalance = (account: CashBank) => {
+    const nativeAvailable = Math.max(0, (account.balance || 0) - (account.frozen_amount || 0));
+
+    if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+      return nativeAvailable;
+    }
+
+    if ((account.balance || 0) <= 0) {
+      return 0;
+    }
+
+    return getBookBalanceInIDR(account) * (nativeAvailable / account.balance);
+  };
+
+  const formatCashBankAvailability = (account: CashBank) => {
+    const nativeAvailable = Math.max(0, (account.balance || 0) - (account.frozen_amount || 0));
+    const nativeLabel = formatCashBankBalance(nativeAvailable, account.currency);
+
+    if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+      return nativeLabel;
+    }
+
+    return `${nativeLabel} | Nilai buku: ${formatRupiah(getAvailableBookBalance(account))}`;
   };
 
   const [loading, setLoading] = useState(false);
@@ -630,10 +668,9 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                         >
                           {cashBanks.map((cashBank) => {
                             const frozen = cashBank.frozen_amount || 0;
-                            const available = cashBank.balance - frozen;
                             return (
                             <option key={cashBank.id} value={cashBank.id}>
-                              {cashBank.name} - Tersedia: {formatRupiah(available > 0 ? available : 0)}{frozen > 0 ? ` [Terblokir: ${formatRupiah(frozen)}]` : ''}
+                              {cashBank.name} - Tersedia: {formatCashBankAvailability(cashBank)}{frozen > 0 ? ` [Terblokir: ${formatCashBankBalance(frozen, cashBank.currency)}]` : ''}
                             </option>
                             );
                           })}
@@ -648,13 +685,13 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
                     const selectedCB = getSelectedCashBank();
                     if (selectedCB) {
                       const frozen = selectedCB.frozen_amount || 0;
-                      const available = selectedCB.balance - frozen;
-                      if (ppnBalanceInfo.ppn_terutang > (available > 0 ? available : 0)) {
+                      const availableBookBalance = getAvailableBookBalance(selectedCB);
+                      if (ppnBalanceInfo.ppn_terutang > availableBookBalance) {
                       return (
                         <Alert status="warning" borderRadius="md">
                           <AlertIcon />
                           <Text fontSize="sm">
-                            Saldo tersedia tidak mencukupi. Tersedia: {formatRupiah(available > 0 ? available : 0)}{frozen > 0 ? ` (Total: ${formatRupiah(selectedCB.balance)}, Terblokir: ${formatRupiah(frozen)})` : ''}
+                            Saldo tersedia tidak mencukupi. Tersedia: {formatCashBankAvailability(selectedCB)}{frozen > 0 ? ` (Total: ${formatCashBankBalance(selectedCB.balance, selectedCB.currency)}, Terblokir: ${formatCashBankBalance(frozen, selectedCB.currency)})` : ''}
                           </Text>
                         </Alert>
                       );

@@ -141,8 +141,6 @@ func (c *UnifiedJournalController) GetJournalEntries(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, response)
 }
 
-
-
 // GetAccountBalances retrieves account balances
 // @Summary Get account balances
 // @Description Get account balances from materialized view
@@ -179,7 +177,10 @@ func (c *UnifiedJournalController) RefreshAccountBalances(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "Account balances refreshed successfully"})
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":    "Account balances refreshed successfully",
+		"updated_at": time.Now(),
+	})
 }
 
 // GetJournalSummary provides summary statistics
@@ -191,7 +192,25 @@ func (c *UnifiedJournalController) RefreshAccountBalances(ctx *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /api/v1/journals/summary [get]
 func (c *UnifiedJournalController) GetJournalSummary(ctx *gin.Context) {
-	summary, err := c.getJournalSummary()
+	var filters services.JournalFilters
+	if err := ctx.ShouldBindQuery(&filters); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid query parameters: " + err.Error()})
+		return
+	}
+
+	if dateFromStr := ctx.Query("start_date"); dateFromStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", dateFromStr); err == nil {
+			filters.DateFrom = &parsedDate
+		}
+	}
+	if dateToStr := ctx.Query("end_date"); dateToStr != "" {
+		if parsedDate, err := time.Parse("2006-01-02", dateToStr); err == nil {
+			dateTo := parsedDate.AddDate(0, 0, 1)
+			filters.DateTo = &dateTo
+		}
+	}
+
+	summary, err := c.journalService.GetJournalSummary(filters)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -200,12 +219,8 @@ func (c *UnifiedJournalController) GetJournalSummary(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, summary)
 }
 
-// Helper function to get user ID from context (implement based on your auth system)
-// Helper function to get user ID from context
 func getJournalUserIDFromContext(ctx *gin.Context) uint64 {
-	// Get user_id from context (set by JWT middleware)
 	if userID, exists := ctx.Get("user_id"); exists {
-		// handle both uint (from jwt middleware) and float64 (from some json parsers)
 		switch v := userID.(type) {
 		case uint:
 			return uint64(v)
@@ -217,35 +232,13 @@ func getJournalUserIDFromContext(ctx *gin.Context) uint64 {
 			return uint64(v)
 		}
 	}
-	// Default to 1 (Admin) if not found, but log warning in real app
 	return 1
-}
-
-// Helper function to get journal summary statistics
-func (c *UnifiedJournalController) getJournalSummary() (*JournalSummary, error) {
-	// This could be implemented as a service method
-	// For now, it's a simple implementation
-	summary := &JournalSummary{
-		Message: "Journal summary endpoint - implement based on your needs",
-	}
-	return summary, nil
 }
 
 // Request/Response types for specific endpoints
 type ReverseJournalRequest struct {
 	Description string `json:"description" binding:"required"`
 }
-
-type JournalSummary struct {
-	Message string `json:"message"`
-	// Add more fields as needed:
-	// TotalEntries    int64           `json:"total_entries"`
-	// TotalPosted     int64           `json:"total_posted"`
-	// TotalDraft      int64           `json:"total_draft"`
-	// TotalAmount     decimal.Decimal `json:"total_amount"`
-	// LastEntryDate   time.Time       `json:"last_entry_date"`
-}
-
 
 // UpdateJournalEntry updates an existing journal entry
 // @Summary Update journal entry
@@ -344,6 +337,41 @@ func (c *UnifiedJournalController) PostJournalEntry(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, response)
 }
 
+// ReverseJournalEntry reverses a posted journal entry.
+// @Summary Reverse journal entry
+// @Description Create a reversal entry for a posted SSOT journal
+// @Tags Journal
+// @Accept json
+// @Produce json
+// @Param id path int true "Journal Entry ID"
+// @Param request body ReverseJournalRequest true "Reverse Journal Request"
+// @Success 200 {object} models.SSOTJournalEntry
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /api/v1/journals/{id}/reverse [post]
+func (c *UnifiedJournalController) ReverseJournalEntry(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid journal entry ID"})
+		return
+	}
+
+	var req ReverseJournalRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format: " + err.Error()})
+		return
+	}
+
+	response, err := c.journalService.ReverseJournalEntry(ctx.Request.Context(), id, getJournalUserIDFromContext(ctx), req.Description)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": response})
+}
+
 // RegisterRoutes registers all journal routes
 func (c *UnifiedJournalController) RegisterRoutes(router *gin.Engine) {
 	v1 := router.Group("/api/v1")
@@ -356,6 +384,7 @@ func (c *UnifiedJournalController) RegisterRoutes(router *gin.Engine) {
 			journals.PUT("/:id", c.UpdateJournalEntry)
 			journals.DELETE("/:id", c.DeleteJournalEntry)
 			journals.PUT("/:id/post", c.PostJournalEntry)
+			journals.POST("/:id/reverse", c.ReverseJournalEntry)
 			journals.GET("/account-balances", c.GetAccountBalances)
 			journals.POST("/account-balances/refresh", c.RefreshAccountBalances)
 			journals.GET("/summary", c.GetJournalSummary)

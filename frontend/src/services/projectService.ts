@@ -12,6 +12,7 @@ export interface Project {
     total_budget: number;
     total_actual_cost: number;
     total_sales_revenue: number;
+    sales_pipeline_amount?: number;
     manager_id: number | null;
     created_at: string;
     updated_at: string;

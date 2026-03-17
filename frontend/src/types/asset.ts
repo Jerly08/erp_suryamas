@@ -10,6 +10,7 @@ export interface Asset {
   useful_life: number;
   depreciation_method: 'STRAIGHT_LINE' | 'DECLINING_BALANCE';
   accumulated_depreciation: number;
+  opening_accumulated_depreciation?: number;
   is_active: boolean;
   notes: string;
   location?: string;
@@ -40,7 +41,7 @@ export interface AssetFormData {
   code?: string;
   name: string;
   category: string;
-  status?: 'ACTIVE' | 'INACTIVE' | 'SOLD';
+  status?: 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'SOLD';
   purchaseDate: string;
   purchasePrice: number;
   salvageValue?: number;

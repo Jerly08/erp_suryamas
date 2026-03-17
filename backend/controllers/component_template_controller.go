@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"app-sistem-akuntansi/models"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -81,11 +82,64 @@ func (ct *ComponentTemplateController) CreateTemplate(c *gin.Context) {
 	template := models.ComponentTemplate{
 		Name:        payload.Name,
 		Description: payload.Description,
-		Items:       items,
 	}
 
-	if err := ct.DB.Create(&template).Error; err != nil {
+	var existingTemplate models.ComponentTemplate
+	lookupErr := ct.DB.Unscoped().Where("name = ?", payload.Name).First(&existingTemplate).Error
+	if lookupErr != nil && !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate template name: " + lookupErr.Error()})
+		return
+	}
+
+	hasExistingTemplate := lookupErr == nil
+	if hasExistingTemplate && !existingTemplate.DeletedAt.Valid {
+		c.JSON(http.StatusConflict, gin.H{"error": "Template name already exists"})
+		return
+	}
+
+	if err := ct.DB.Transaction(func(tx *gorm.DB) error {
+		if hasExistingTemplate {
+			template.ID = existingTemplate.ID
+			if err := tx.Unscoped().
+				Model(&template).
+				Updates(map[string]interface{}{
+					"name":        payload.Name,
+					"description": payload.Description,
+					"deleted_at":  nil,
+				}).Error; err != nil {
+				return err
+			}
+
+			if err := tx.Unscoped().Where("template_id = ?", template.ID).Delete(&models.ComponentTemplateItem{}).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Create(&template).Error; err != nil {
+				return err
+			}
+		}
+
+		if len(items) > 0 {
+			for i := range items {
+				items[i].TemplateID = template.ID
+			}
+
+			if err := tx.Create(&items).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create template: " + err.Error()})
+		return
+	}
+
+	if err := ct.DB.Preload("Items.ComponentProduct").First(&template, template.ID).Error; err != nil {
+		c.JSON(http.StatusCreated, gin.H{
+			"message": "Template created successfully, but failed to reload items",
+			"data":    template,
+		})
 		return
 	}
 

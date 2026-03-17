@@ -1,9 +1,9 @@
 package controllers
 
 import (
-	"net/http"
 	"fmt"
-	
+	"net/http"
+
 	"app-sistem-akuntansi/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -24,49 +24,68 @@ func NewUnifiedClosingHistoryController(db *gorm.DB) *UnifiedClosingHistoryContr
 // GetUnifiedClosingHistory returns combined history from all closing sources
 func (c *UnifiedClosingHistoryController) GetUnifiedClosingHistory(ctx *gin.Context) {
 	var history []map[string]interface{}
-	
-	// 1. First, check accounting_periods table (UnifiedPeriodClosing creates records here)
+
+	// 1. Prefer accounting_periods because it is the canonical history for period closing.
 	var accountingPeriods []models.AccountingPeriod
-	err := c.db.Where("is_closed = ? OR is_locked = ?", true, true).
+	err := c.db.Where("deleted_at IS NULL AND (is_closed = ? OR reopen_count > 0 OR reopened_at IS NOT NULL)", true).
 		Order("end_date DESC").
 		Limit(20).
 		Find(&accountingPeriods).Error
-	
+
 	if err == nil && len(accountingPeriods) > 0 {
 		fmt.Printf("[UnifiedClosingHistory] Found %d closed periods in accounting_periods\n", len(accountingPeriods))
 		for _, period := range accountingPeriods {
 			// Generate a code for display
 			periodCode := fmt.Sprintf("PC-%s", period.EndDate.Format("2006-01-02"))
-			
+
 			history = append(history, map[string]interface{}{
-				"id":          period.ID,
-				"code":        periodCode,
-				"description": period.Description,
-				"entry_date":  period.EndDate,
-				"start_date":  period.StartDate,
-				"created_at":  period.CreatedAt,
-				"total_debit": period.NetIncome,
-				"net_income":  period.NetIncome,
-				"source":      "accounting_periods",
+				"id":                   period.ID,
+				"code":                 periodCode,
+				"description":          period.Description,
+				"entry_date":           period.EndDate,
+				"start_date":           period.StartDate,
+				"created_at":           period.CreatedAt,
+				"total_debit":          period.NetIncome,
+				"net_income":           period.NetIncome,
+				"source":               "accounting_periods",
+				"is_closed":            period.IsClosed,
+				"status":               map[bool]string{true: "CLOSED", false: "REOPENED"}[period.IsClosed],
+				"reopen_count":         period.ReopenCount,
+				"reopen_reason":        period.ReopenReason,
+				"reopening_journal_id": period.ReopeningJournalID,
 			})
+			if period.ClosedAt != nil {
+				history[len(history)-1]["closed_at"] = period.ClosedAt
+			}
+			if period.ReopenedAt != nil {
+				history[len(history)-1]["reopened_at"] = period.ReopenedAt
+			}
 		}
+		fmt.Printf("[UnifiedClosingHistory] Total history entries: %d\n", len(history))
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data":    history,
+			"count":   len(history),
+		})
+		return
 	}
-	
-	// 2. Also check SSOT journal entries for closing entries
+
+	// 2. Fallback to SSOT journal entries for legacy data that has no accounting_period record yet.
 	var sootJournalEntries []models.SSOTJournalEntry
-	err = c.db.Where("source_type IN (?) OR description LIKE ?", 
+	err = c.db.Where("source_type IN ? AND status = ? AND deleted_at IS NULL",
 		[]string{"CLOSING", "PERIOD_CLOSING", "FISCAL_CLOSING"},
-		"%closing%").
+		models.SSOTStatusPosted).
 		Order("entry_date DESC").
-		Limit(10).
+		Limit(20).
 		Find(&sootJournalEntries).Error
-		
+
 	if err == nil && len(sootJournalEntries) > 0 {
 		fmt.Printf("[UnifiedClosingHistory] Found %d SSOT closing entries\n", len(sootJournalEntries))
 		for _, entry := range sootJournalEntries {
 			// Generate a code
 			entryCode := fmt.Sprintf("CLO-%d", entry.ID)
-			
+
 			history = append(history, map[string]interface{}{
 				"id":          entry.ID,
 				"code":        entryCode,
@@ -78,11 +97,9 @@ func (c *UnifiedClosingHistoryController) GetUnifiedClosingHistory(ctx *gin.Cont
 			})
 		}
 	}
-	
-	// Legacy journal_entries removed - only using SSOT system
-	
+
 	fmt.Printf("[UnifiedClosingHistory] Total history entries: %d\n", len(history))
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    history,

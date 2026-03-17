@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var ErrPrepaidHasLinkedJournal = errors.New("prepaid expense cannot be deleted because amortization or termination journals already exist")
+
 type PrepaidService struct {
 	db         *gorm.DB
 	journalSvc *UnifiedJournalService
@@ -49,6 +51,33 @@ func (s *PrepaidService) GetPrepaidByID(id uint) (*models.PrepaidExpense, error)
 	return &prepaid, nil
 }
 
+// DeletePrepaid removes a prepaid expense and its schedules if it has never produced journals.
+func (s *PrepaidService) DeletePrepaid(id uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var prepaid models.PrepaidExpense
+		if err := tx.First(&prepaid, id).Error; err != nil {
+			return err
+		}
+
+		var linkedJournalCount int64
+		if err := tx.Model(&models.PrepaidSchedule{}).
+			Where("prepaid_id = ? AND journal_entry_id IS NOT NULL", id).
+			Count(&linkedJournalCount).Error; err != nil {
+			return err
+		}
+
+		if linkedJournalCount > 0 {
+			return ErrPrepaidHasLinkedJournal
+		}
+
+		if err := tx.Where("prepaid_id = ?", id).Delete(&models.PrepaidSchedule{}).Error; err != nil {
+			return err
+		}
+
+		return tx.Delete(&models.PrepaidExpense{}, id).Error
+	})
+}
+
 // SetExpenseAccount updates the target expense account for amortization
 func (s *PrepaidService) SetExpenseAccount(id uint, expenseAccountID uint) error {
 	return s.db.Model(&models.PrepaidExpense{}).Where("id = ?", id).
@@ -70,6 +99,9 @@ func (s *PrepaidService) AmortizeSchedule(prepaidID uint, scheduleID uint, userI
 
 		if schedule.Status == "POSTED" {
 			return errors.New("this schedule is already amortized (POSTED)")
+		}
+		if err := CheckClosedPeriod(tx, schedule.ScheduledDate); err != nil {
+			return err
 		}
 
 		var prepaid models.PrepaidExpense
@@ -100,7 +132,7 @@ func (s *PrepaidService) AmortizeSchedule(prepaidID uint, scheduleID uint, userI
 		}
 
 		journalReq := &JournalEntryRequest{
-			EntryDate:   time.Now(),
+			EntryDate:   schedule.ScheduledDate,
 			Description: desc,
 			SourceType:  "PREPAID_AMORTIZATION",
 			SourceID:    uint64(schedule.ID),
@@ -122,7 +154,7 @@ func (s *PrepaidService) AmortizeSchedule(prepaidID uint, scheduleID uint, userI
 			},
 		}
 
-		journalEntry, err := s.journalSvc.CreateJournalEntry(journalReq)
+		journalEntry, err := s.journalSvc.CreateJournalEntryWithTx(tx, journalReq)
 		if err != nil {
 			return fmt.Errorf("failed to create amortization journal: %v", err)
 		}
@@ -148,7 +180,7 @@ func (s *PrepaidService) AmortizeSchedule(prepaidID uint, scheduleID uint, userI
 }
 
 // TerminatePrepaid handles early termination (cancels all pending schedules and writes-off/refunds remaining balance)
-func (s *PrepaidService) TerminatePrepaid(prepaidID uint, terminateType string, destinationAccountID uint, userID uint) error {
+func (s *PrepaidService) TerminatePrepaid(prepaidID uint, terminateType string, destinationAccountID uint, effectiveDate time.Time, userID uint) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var prepaid models.PrepaidExpense
 		if err := tx.Preload("Purchase.Vendor").First(&prepaid, prepaidID).Error; err != nil {
@@ -157,6 +189,12 @@ func (s *PrepaidService) TerminatePrepaid(prepaidID uint, terminateType string, 
 
 		if prepaid.Status != "ACTIVE" {
 			return fmt.Errorf("hanya prepaid berstatus ACTIVE yang bisa di-terminate (current status: %s)", prepaid.Status)
+		}
+		if effectiveDate.IsZero() {
+			effectiveDate = time.Now()
+		}
+		if err := CheckClosedPeriod(tx, effectiveDate); err != nil {
+			return err
 		}
 
 		// 1. Hitung Sisa Saldo yang PENDING
@@ -181,7 +219,7 @@ func (s *PrepaidService) TerminatePrepaid(prepaidID uint, terminateType string, 
 		desc := fmt.Sprintf("Early Termination: %s (Sisa %d bln)", prepaid.Name, len(pendingSchedules))
 
 		journalReq := &JournalEntryRequest{
-			EntryDate:   time.Now(),
+			EntryDate:   effectiveDate,
 			Description: desc,
 			SourceType:  "PREPAID_TERMINATION",
 			SourceID:    uint64(prepaid.ID),
@@ -213,7 +251,7 @@ func (s *PrepaidService) TerminatePrepaid(prepaidID uint, terminateType string, 
 			CreditAmount: decimal.NewFromFloat(0),
 		})
 
-		journalEntry, err := s.journalSvc.CreateJournalEntry(journalReq)
+		journalEntry, err := s.journalSvc.CreateJournalEntryWithTx(tx, journalReq)
 		if err != nil {
 			return fmt.Errorf("failed to create termination journal: %v", err)
 		}
@@ -222,7 +260,7 @@ func (s *PrepaidService) TerminatePrepaid(prepaidID uint, terminateType string, 
 		if err := tx.Model(&models.PrepaidSchedule{}).
 			Where("prepaid_id = ? AND status = 'PENDING'", prepaidID).
 			Updates(map[string]interface{}{
-				"status": "CANCELLED",
+				"status":           "CANCELLED",
 				"journal_entry_id": uint(journalEntry.ID),
 			}).Error; err != nil {
 			return err

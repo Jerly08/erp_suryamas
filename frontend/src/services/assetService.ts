@@ -13,6 +13,7 @@ export interface Asset {
   useful_life: number;
   depreciation_method: string;
   accumulated_depreciation: number;
+  opening_accumulated_depreciation?: number;
   is_active: boolean;
   notes: string;
   location?: string;
@@ -50,6 +51,7 @@ export interface AssetCreateRequest {
   asset_account_id?: number;
   depreciation_account_id?: number;
   accumulated_depreciation_account_id?: number;
+  opening_accumulated_depreciation?: number;
   // Backend AssetCreateRequest requires these additional fields (user_id required)
   user_id?: number;
   payment_method?: string;

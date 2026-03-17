@@ -23,12 +23,10 @@ import {
     useDisclosure,
     FormControl,
     FormLabel,
-    Input,
     VStack,
     HStack,
     Alert,
     AlertIcon,
-    AlertTitle,
     AlertDescription,
     Divider,
     NumberInput,
@@ -36,8 +34,9 @@ import {
     NumberInputStepper,
     NumberIncrementStepper,
     NumberDecrementStepper,
+    useColorModeValue,
 } from '@chakra-ui/react';
-import { FiPlus, FiTrash2, FiShoppingCart, FiEye } from 'react-icons/fi';
+import { FiPlus, FiTrash2, FiShoppingCart } from 'react-icons/fi';
 import { projectBOMService, bomService } from '@/services/bomService';
 import { ProjectBOM, BOM } from '@/types/bom';
 import { formatCurrencyDetailed } from '@/utils/currency';
@@ -62,6 +61,27 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
 
     const [selectedBomId, setSelectedBomId] = useState<number>(0);
     const [unitQuantity, setUnitQuantity] = useState<number>(1);
+    const textColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+    const mutedTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
+    const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const panelBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+    const tableHeadBg = useColorModeValue('gray.100', 'whiteAlpha.100');
+    const infoAlertBg = useColorModeValue('blue.50', 'blue.900');
+    const infoAlertBorder = useColorModeValue('blue.200', 'blue.700');
+    const subtotalBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+    const subtotalBorder = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const modalBg = useColorModeValue('white', 'gray.800');
+    const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const modalFooterBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const previewBg = useColorModeValue('blue.50', 'blue.900');
+    const previewBorderColor = useColorModeValue('blue.200', 'blue.700');
+    const previewTextColor = useColorModeValue('blue.700', 'blue.100');
+    const fieldFocusStyles = {
+        borderColor: 'blue.400',
+        boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
+    };
 
     // Derived: find selected BOM info for display
     const selectedBom = availableBOMs.find(b => b.id === selectedBomId);
@@ -177,7 +197,7 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
     return (
         <Box>
             <Flex justify="space-between" align="center" mb={4}>
-                <Heading size="sm">BOM Requirements</Heading>
+                <Heading size="sm" color={textColor}>BOM Requirements</Heading>
                 <HStack spacing={2}>
                     {canEdit && (
                         <Button
@@ -209,18 +229,18 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                 </HStack>
             </Flex>
 
-            <Alert status="info" size="sm" mb={4} borderRadius="md" variant="left-accent">
+            <Alert status="info" size="sm" mb={4} borderRadius="md" variant="left-accent" bg={infoAlertBg} border="1px solid" borderColor={infoAlertBorder}>
                 <AlertIcon />
                 <Box>
-                    <AlertDescription fontSize="sm">
+                    <AlertDescription fontSize="sm" color={textColor}>
                         Adding BOMs automatically aggregates the material costs into the Project's True Budget limit. The <strong>Generate PR</strong> action will match aggregated requests against current Warehouse stock.
                     </AlertDescription>
                 </Box>
             </Alert>
 
-            <Box overflowX="auto" borderWidth="1px" borderRadius="md" mb={4}>
+            <Box overflowX="auto" borderWidth="1px" borderRadius="md" mb={4} borderColor={borderColor} bg={panelBg}>
                 <Table variant="simple" size="sm">
-                    <Thead bg="gray.100">
+                    <Thead bg={tableHeadBg}>
                         <Tr>
                             <Th>Template Name</Th>
                             <Th isNumeric>Qty (Unit)</Th>
@@ -231,9 +251,9 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                     </Thead>
                     <Tbody>
                         {loading ? (
-                            <Tr><Td colSpan={5} textAlign="center">Loading BOMs...</Td></Tr>
+                            <Tr><Td colSpan={5} textAlign="center" color={mutedTextColor}>Loading BOMs...</Td></Tr>
                         ) : projectBOMs.length === 0 ? (
-                            <Tr><Td colSpan={5} textAlign="center" color="gray.500">No BOMs attached to this project.</Td></Tr>
+                            <Tr><Td colSpan={5} textAlign="center" color={mutedTextColor}>No BOMs attached to this project.</Td></Tr>
                         ) : (
                             projectBOMs.map((pb) => (
                                 <Tr key={pb.id}>
@@ -262,21 +282,21 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                 </Table>
             </Box>
 
-            <Flex justify="flex-end" bg="gray.50" p={3} borderRadius="md" borderWidth="1px">
-                <Text fontSize="md" fontWeight="bold">
+            <Flex justify="flex-end" bg={subtotalBg} p={3} borderRadius="md" borderWidth="1px" borderColor={subtotalBorder}>
+                <Text fontSize="md" fontWeight="bold" color={textColor}>
                     Calculated BOM Subtotal: <Text as="span" color="blue.600">{formatCurrencyDetailed(totalAddedBudget)}</Text>
                 </Text>
             </Flex>
 
             <Modal isOpen={isOpen} onClose={onClose}>
                 <ModalOverlay />
-                <ModalContent>
-                    <ModalHeader>Assign BOM Template</ModalHeader>
-                    <ModalCloseButton />
+                <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+                    <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor} color={textColor}>Assign BOM Template</ModalHeader>
+                    <ModalCloseButton color={textColor} />
                     <ModalBody>
                         <VStack spacing={4}>
                             <FormControl isRequired>
-                                <FormLabel>Master BOM Template</FormLabel>
+                                <FormLabel color={textColor}>Master BOM Template</FormLabel>
                                 <SearchableSelect
                                     options={bomOptions}
                                     value={selectedBomId ? selectedBomId.toString() : ''}
@@ -291,14 +311,14 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                             {selectedBom && (
                                 <>
                                     <FormControl isRequired>
-                                        <FormLabel>Jumlah Unit</FormLabel>
+                                        <FormLabel color={textColor}>Jumlah Unit</FormLabel>
                                         <NumberInput
                                             min={1}
                                             max={9999}
                                             value={unitQuantity}
                                             onChange={(_, val) => setUnitQuantity(val || 1)}
                                         >
-                                            <NumberInputField />
+                                            <NumberInputField bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                             <NumberInputStepper>
                                                 <NumberIncrementStepper />
                                                 <NumberDecrementStepper />
@@ -306,18 +326,18 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                                         </NumberInput>
                                     </FormControl>
 
-                                    <Box w="100%" p={3} bg="blue.50" borderRadius="md" borderWidth="1px" borderColor="blue.200">
+                                    <Box w="100%" p={3} bg={previewBg} borderRadius="md" borderWidth="1px" borderColor={previewBorderColor}>
                                         <VStack spacing={1} align="stretch">
                                             <HStack justify="space-between">
-                                                <Text fontSize="sm" color="blue.700">Cost / Unit:</Text>
-                                                <Text fontSize="sm" color="blue.700">
+                                                <Text fontSize="sm" color={previewTextColor}>Cost / Unit:</Text>
+                                                <Text fontSize="sm" color={previewTextColor}>
                                                     {formatIDR(costPerUnit)}
                                                 </Text>
                                             </HStack>
-                                            <Divider borderColor="blue.200" />
+                                            <Divider borderColor={previewBorderColor} />
                                             <HStack justify="space-between">
-                                                <Text fontSize="sm" fontWeight="bold" color="blue.800">Total ({unitQuantity} unit):</Text>
-                                                <Text fontSize="md" fontWeight="bold" color="blue.800">
+                                                <Text fontSize="sm" fontWeight="bold" color={previewTextColor}>Total ({unitQuantity} unit):</Text>
+                                                <Text fontSize="md" fontWeight="bold" color={previewTextColor}>
                                                     {formatIDR(totalCostPreview)}
                                                 </Text>
                                             </HStack>
@@ -327,7 +347,7 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                             )}
                         </VStack>
                     </ModalBody>
-                    <ModalFooter>
+                    <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
                         <Button variant="ghost" mr={3} onClick={onClose} isDisabled={isSubmitting}>Cancel</Button>
                         <Button
                             colorScheme="blue"

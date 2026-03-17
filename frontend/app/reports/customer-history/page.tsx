@@ -78,6 +78,50 @@ const CustomerHistoryPage: React.FC = () => {
     const textColor = useColorModeValue('gray.800', 'white');
     const descriptionColor = useColorModeValue('gray.600', 'gray.300');
     const summaryBg = useColorModeValue('gray.50', 'gray.700');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.100');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const inputHoverBorderColor = useColorModeValue('blue.400', 'blue.300');
+    const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.200');
+    const infoIconColor = useColorModeValue('gray.500', 'gray.400');
+    const errorBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.32)');
+    const errorBorderColor = useColorModeValue('red.200', 'rgba(252, 129, 129, 0.32)');
+    const companyHeaderBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.18)');
+    const companyHeaderTextColor = useColorModeValue('blue.800', 'blue.100');
+    const companyHeaderSubtextColor = useColorModeValue('blue.600', 'blue.200');
+    const positiveStatBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.16)');
+    const positiveStatTextColor = useColorModeValue('green.800', 'green.100');
+    const primaryStatBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.16)');
+    const primaryStatTextColor = useColorModeValue('blue.800', 'blue.100');
+    const accentStatBg = useColorModeValue('purple.50', 'rgba(159, 122, 234, 0.18)');
+    const accentStatTextColor = useColorModeValue('purple.800', 'purple.100');
+    const warningStatBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.2)');
+    const warningStatTextColor = useColorModeValue('orange.800', 'orange.100');
+    const tableHeaderBg = useColorModeValue('blue.600', 'rgba(49, 130, 206, 0.42)');
+    const tableHeaderTextColor = useColorModeValue('white', 'blue.50');
+    const tableHoverBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+    const summaryPanelBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
+    const summaryPanelBorder = useColorModeValue('blue.200', 'rgba(144, 205, 244, 0.24)');
+    const summaryPanelTextColor = useColorModeValue('blue.700', 'blue.100');
+    const modalBg = useColorModeValue('white', 'gray.800');
+    const modalHeaderBg = useColorModeValue('blue.600', 'rgba(49, 130, 206, 0.78)');
+    const modalBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const detailCardBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.12)');
+    const detailCardBorderColor = useColorModeValue('blue.200', 'rgba(144, 205, 244, 0.24)');
+    const journalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const journalFooterBg = useColorModeValue('gray.100', 'whiteAlpha.100');
+    const emptyPanelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const emptyPanelBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const subtleTextColor = useColorModeValue('gray.500', 'gray.400');
+    const mutedTextColor = useColorModeValue('gray.600', 'gray.300');
+    const fieldStyles = {
+        bg: inputBg,
+        borderColor: inputBorderColor,
+        _hover: { borderColor: inputHoverBorderColor },
+        _focus: {
+            borderColor: inputFocusBorderColor,
+            boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+        },
+    };
 
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -316,13 +360,14 @@ const CustomerHistoryPage: React.FC = () => {
                                             <Icon as={FiCalendar} />
                                             <Text>{t('reports.closedPeriod') || 'Periode Tutup'}</Text>
                                             <Tooltip label="Pilih periode tutup untuk memuat riwayat berdasarkan periode fiskal" placement="top">
-                                                <Box><Icon as={FiInfo} color="gray.500" /></Box>
+                                                <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                             </Tooltip>
                                         </HStack>
                                     </FormLabel>
                                     <Select
                                         placeholder={t('reports.selectClosedPeriod') || 'Pilih periode tutup'}
                                         size="md"
+                                        {...fieldStyles}
                                         onChange={(e) => {
                                             if (e.target.value) {
                                                 const selected = closedPeriods.find(p => p.date === e.target.value);
@@ -354,17 +399,17 @@ const CustomerHistoryPage: React.FC = () => {
                             <HStack spacing={4} flexWrap="wrap">
                                 <FormControl flex="1.5" minW="250px" isRequired>
                                     <FormLabel>{t('reports.customerHistoryReport.selectCustomer') || 'Pilih Pelanggan'}</FormLabel>
-                                    <Select placeholder={t('reports.customerHistoryReport.chooseCustomer') || 'Pilih pelanggan...'} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                                    <Select placeholder={t('reports.customerHistoryReport.chooseCustomer') || 'Pilih pelanggan...'} value={customerId} onChange={(e) => setCustomerId(e.target.value)} {...fieldStyles}>
                                         {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
                                     </Select>
                                 </FormControl>
                                 <FormControl flex="1" minW="180px">
                                     <FormLabel>{t('reports.modal.startDate') || 'Tanggal Mulai'}</FormLabel>
-                                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} {...fieldStyles} />
                                 </FormControl>
                                 <FormControl flex="1" minW="180px">
                                     <FormLabel>{t('reports.modal.endDate') || 'Tanggal Akhir'}</FormLabel>
-                                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} {...fieldStyles} />
                                 </FormControl>
                                 <Button colorScheme="blue" onClick={fetchReport} isLoading={loading} leftIcon={<FiUsers />} size="md" mt={8}>
                                     {t('reports.modal.generateReport') || 'Buat Laporan'}
@@ -387,8 +432,8 @@ const CustomerHistoryPage: React.FC = () => {
 
                 {/* Error */}
                 {error && (
-                    <Box bg="red.50" p={4} borderRadius="md">
-                        <Text color="red.600" fontWeight="medium">Error: {error}</Text>
+                    <Box bg={errorBg} p={4} borderRadius="md" border="1px" borderColor={errorBorderColor}>
+                        <Text color="red.300" fontWeight="medium">Error: {error}</Text>
                         <Button mt={2} size="sm" colorScheme="red" variant="outline" onClick={fetchReport}>Coba Lagi</Button>
                     </Box>
                 )}
@@ -397,17 +442,17 @@ const CustomerHistoryPage: React.FC = () => {
                 {data && !loading && (
                     <VStack spacing={6} align="stretch">
                         {/* Company Header */}
-                        <Box bg="blue.50" p={4} borderRadius="md">
+                        <Box bg={companyHeaderBg} p={4} borderRadius="md" border="1px" borderColor={summaryPanelBorder}>
                             <HStack justify="space-between" align="start">
                                 <VStack align="start" spacing={1}>
-                                    <Text fontSize="lg" fontWeight="bold" color="blue.800">
+                                    <Text fontSize="lg" fontWeight="bold" color={companyHeaderTextColor}>
                                         {companyInfo?.name || data.company?.name || 'Perusahaan'}
                                     </Text>
-                                    <Text fontSize="sm" color="blue.600">
+                                    <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                         {companyInfo?.address || data.company?.address || ''}{companyInfo?.city ? `, ${companyInfo.city}` : data.company?.city ? `, ${data.company.city}` : ''}
                                     </Text>
                                 </VStack>
-                                <Text fontSize="sm" color="blue.600">
+                                <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                     Mata Uang: {data.currency || 'IDR'}
                                 </Text>
                             </HStack>
@@ -486,21 +531,21 @@ const CustomerHistoryPage: React.FC = () => {
                         {/* Summary Statistics */}
                         {data.summary && (
                             <SimpleGrid columns={[1, 2, 4]} spacing={4}>
-                                <Box bg="green.50" p={4} borderRadius="md" textAlign="center">
+                                <Box bg={positiveStatBg} p={4} borderRadius="md" textAlign="center">
                                     <Text fontSize="2xl" fontWeight="bold" color="green.600">{data.summary.total_transactions || 0}</Text>
-                                    <Text fontSize="sm" color="green.800">Total Transaksi</Text>
+                                    <Text fontSize="sm" color={positiveStatTextColor}>Total Transaksi</Text>
                                 </Box>
-                                <Box bg="blue.50" p={4} borderRadius="md" textAlign="center">
+                                <Box bg={primaryStatBg} p={4} borderRadius="md" textAlign="center">
                                     <Text fontSize="2xl" fontWeight="bold" color="blue.600">{formatCurrency(data.summary.total_amount)}</Text>
-                                    <Text fontSize="sm" color="blue.800">Total Penjualan</Text>
+                                    <Text fontSize="sm" color={primaryStatTextColor}>Total Penjualan</Text>
                                 </Box>
-                                <Box bg="purple.50" p={4} borderRadius="md" textAlign="center">
+                                <Box bg={accentStatBg} p={4} borderRadius="md" textAlign="center">
                                     <Text fontSize="2xl" fontWeight="bold" color="purple.600">{formatCurrency(data.summary.total_paid)}</Text>
-                                    <Text fontSize="sm" color="purple.800">Total Dibayar</Text>
+                                    <Text fontSize="sm" color={accentStatTextColor}>Total Dibayar</Text>
                                 </Box>
-                                <Box bg={(data.summary.total_outstanding || 0) > 0 ? "orange.50" : "green.50"} p={4} borderRadius="md" textAlign="center">
+                                <Box bg={(data.summary.total_outstanding || 0) > 0 ? warningStatBg : positiveStatBg} p={4} borderRadius="md" textAlign="center">
                                     <Text fontSize="2xl" fontWeight="bold" color={(data.summary.total_outstanding || 0) > 0 ? "orange.600" : "green.600"}>{formatCurrency(data.summary.total_outstanding)}</Text>
-                                    <Text fontSize="sm" color={(data.summary.total_outstanding || 0) > 0 ? "orange.800" : "green.800"}>Piutang</Text>
+                                    <Text fontSize="sm" color={(data.summary.total_outstanding || 0) > 0 ? warningStatTextColor : positiveStatTextColor}>Piutang</Text>
                                 </Box>
                             </SimpleGrid>
                         )}
@@ -535,17 +580,17 @@ const CustomerHistoryPage: React.FC = () => {
                                     </HStack>
                                 </HStack>
                                 <SimpleGrid columns={[1, 3]} spacing={3}>
-                                    <Box bg="green.50" p={3} borderRadius="md" textAlign="center">
+                                    <Box bg={positiveStatBg} p={3} borderRadius="md" textAlign="center">
                                         <Text fontSize="xl" fontWeight="bold" color="green.600">{analytics.salesCount}</Text>
-                                        <Text fontSize="xs" color="green.700">Penjualan</Text>
+                                        <Text fontSize="xs" color={positiveStatTextColor}>Penjualan</Text>
                                     </Box>
-                                    <Box bg="purple.50" p={3} borderRadius="md" textAlign="center">
+                                    <Box bg={accentStatBg} p={3} borderRadius="md" textAlign="center">
                                         <Text fontSize="xl" fontWeight="bold" color="purple.600">{analytics.paymentCount}</Text>
-                                        <Text fontSize="xs" color="purple.700">Pembayaran</Text>
+                                        <Text fontSize="xs" color={accentStatTextColor}>Pembayaran</Text>
                                     </Box>
-                                    <Box bg="blue.50" p={3} borderRadius="md" textAlign="center">
+                                    <Box bg={primaryStatBg} p={3} borderRadius="md" textAlign="center">
                                         <Text fontSize="xl" fontWeight="bold" color="blue.600">{analytics.invoiceCount}</Text>
-                                        <Text fontSize="xs" color="blue.700">Faktur</Text>
+                                        <Text fontSize="xs" color={primaryStatTextColor}>Faktur</Text>
                                     </Box>
                                 </SimpleGrid>
                             </Box>
@@ -587,22 +632,22 @@ const CustomerHistoryPage: React.FC = () => {
                                 </HStack>
                                 <TableContainer maxH="500px" overflowY="auto">
                                     <Table size="sm" variant="simple">
-                                        <Thead bg="blue.600" position="sticky" top={0} zIndex={1}>
+                                        <Thead bg={tableHeaderBg} position="sticky" top={0} zIndex={1}>
                                             <Tr>
-                                                <Th color="white">{t('reports.customerHistoryReport.date') || 'Tanggal'}</Th>
-                                                <Th color="white">{t('reports.customerHistoryReport.type') || 'Tipe'}</Th>
-                                                <Th color="white">{t('reports.customerHistoryReport.code') || 'Kode'}</Th>
-                                                <Th color="white">Deskripsi</Th>
-                                                <Th color="white" isNumeric>{t('reports.customerHistoryReport.amount') || 'Jumlah'}</Th>
-                                                <Th color="white" isNumeric>{t('reports.customerHistoryReport.paid') || 'Dibayar'}</Th>
-                                                <Th color="white" isNumeric>{t('reports.customerHistoryReport.outstanding') || 'Sisa'}</Th>
-                                                <Th color="white">{t('reports.customerHistoryReport.status') || 'Status'}</Th>
-                                                <Th color="white" textAlign="center">Aksi</Th>
+                                                <Th color={tableHeaderTextColor}>{t('reports.customerHistoryReport.date') || 'Tanggal'}</Th>
+                                                <Th color={tableHeaderTextColor}>{t('reports.customerHistoryReport.type') || 'Tipe'}</Th>
+                                                <Th color={tableHeaderTextColor}>{t('reports.customerHistoryReport.code') || 'Kode'}</Th>
+                                                <Th color={tableHeaderTextColor}>Deskripsi</Th>
+                                                <Th color={tableHeaderTextColor} isNumeric>{t('reports.customerHistoryReport.amount') || 'Jumlah'}</Th>
+                                                <Th color={tableHeaderTextColor} isNumeric>{t('reports.customerHistoryReport.paid') || 'Dibayar'}</Th>
+                                                <Th color={tableHeaderTextColor} isNumeric>{t('reports.customerHistoryReport.outstanding') || 'Sisa'}</Th>
+                                                <Th color={tableHeaderTextColor}>{t('reports.customerHistoryReport.status') || 'Status'}</Th>
+                                                <Th color={tableHeaderTextColor} textAlign="center">Aksi</Th>
                                             </Tr>
                                         </Thead>
                                         <Tbody>
                                             {data.transactions.map((tx: any, idx: number) => (
-                                                <Tr key={idx} _hover={{ bg: 'blue.50', cursor: 'pointer' }} onClick={() => fetchJournalDetail(tx)} title="Klik untuk melihat detail jurnal & kode akun">
+                                                <Tr key={idx} _hover={{ bg: tableHoverBg, cursor: 'pointer' }} onClick={() => fetchJournalDetail(tx)} title="Klik untuk melihat detail jurnal & kode akun">
                                                     <Td fontSize="sm">{tx.date ? new Date(tx.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</Td>
                                                     <Td><Badge colorScheme={getTypeColor(tx.transaction_type)} fontSize="xs">{getTypeLabel(tx.transaction_type)}</Badge></Td>
                                                     <Td fontFamily="mono" fontSize="sm">{tx.transaction_code}</Td>
@@ -626,7 +671,7 @@ const CustomerHistoryPage: React.FC = () => {
                                                 </Tr>
                                             ))}
                                         </Tbody>
-                                        <Tfoot bg="blue.700" position="sticky" bottom={0}>
+                                        <Tfoot bg={tableHeaderBg} position="sticky" bottom={0}>
                                             <Tr>
                                                 <Th color="white" colSpan={4} fontSize="sm">TOTAL</Th>
                                                 <Th color="white" isNumeric fontSize="sm">{formatCurrency(data.summary?.total_amount)}</Th>
@@ -641,36 +686,36 @@ const CustomerHistoryPage: React.FC = () => {
                         )}
 
                         {/* Summary Box */}
-                        <Box bg="blue.50" p={4} borderRadius="md" border="1px" borderColor="blue.200">
-                            <Text fontSize="md" fontWeight="bold" color="blue.800" mb={3}>
+                        <Box bg={summaryPanelBg} p={4} borderRadius="md" border="1px" borderColor={summaryPanelBorder}>
+                            <Text fontSize="md" fontWeight="bold" color={companyHeaderTextColor} mb={3}>
                                 Ringkasan Riwayat Pelanggan
                             </Text>
                             <SimpleGrid columns={[1, 2]} spacing={3}>
                                 <VStack spacing={2}>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="blue.700">Nama Pelanggan:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Nama Pelanggan:</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{data.customer?.name || '-'}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="blue.700">Total Transaksi:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Transaksi:</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{data.summary?.total_transactions || 0} transaksi</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="blue.700">Total Penjualan:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Penjualan:</Text>
                                         <Text fontSize="sm" fontWeight="semibold" color="blue.600">{formatCurrency(data.summary?.total_amount)}</Text>
                                     </HStack>
                                 </VStack>
                                 <VStack spacing={2}>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="blue.700">Total Dibayar:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Dibayar:</Text>
                                         <Text fontSize="sm" fontWeight="semibold" color="green.600">{formatCurrency(data.summary?.total_paid)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="blue.700">Piutang:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Piutang:</Text>
                                         <Text fontSize="sm" fontWeight="semibold" color={(data.summary?.total_outstanding || 0) > 0 ? "orange.600" : "green.600"}>{formatCurrency(data.summary?.total_outstanding)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="blue.700">Efisiensi Pembayaran:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Efisiensi Pembayaran:</Text>
                                         <Badge colorScheme={paymentProgress >= 100 ? "green" : "orange"}>{paymentProgress.toFixed(1)}%</Badge>
                                     </HStack>
                                 </VStack>
@@ -680,9 +725,9 @@ const CustomerHistoryPage: React.FC = () => {
                             )}
                             {data.summary?.first_transaction && (
                                 <HStack justify="space-between">
-                                    <Text fontSize="xs" color="blue.600">Transaksi Pertama: {new Date(data.summary.first_transaction).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</Text>
+                                    <Text fontSize="xs" color={companyHeaderSubtextColor}>Transaksi Pertama: {new Date(data.summary.first_transaction).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</Text>
                                     {data.summary?.last_transaction && (
-                                        <Text fontSize="xs" color="blue.600">Transaksi Terakhir: {new Date(data.summary.last_transaction).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</Text>
+                                        <Text fontSize="xs" color={companyHeaderSubtextColor}>Transaksi Terakhir: {new Date(data.summary.last_transaction).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</Text>
                                     )}
                                 </HStack>
                             )}
@@ -703,8 +748,8 @@ const CustomerHistoryPage: React.FC = () => {
                 {/* Transaction Journal Detail Modal */}
                 <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="5xl" scrollBehavior="inside">
                     <ModalOverlay bg="blackAlpha.400" backdropFilter="blur(4px)" />
-                    <ModalContent borderRadius="xl" overflow="hidden">
-                        <ModalHeader bg="blue.600" color="white" py={4}>
+                    <ModalContent borderRadius="xl" overflow="hidden" bg={modalBg} borderWidth="1px" borderColor={modalBorderColor}>
+                        <ModalHeader bg={modalHeaderBg} color="white" py={4}>
                             <VStack align="start" spacing={1}>
                                 <HStack>
                                     <Text fontSize="lg" fontWeight="bold">Detail Jurnal Transaksi</Text>
@@ -726,18 +771,18 @@ const CustomerHistoryPage: React.FC = () => {
                             {loadingDetail && (
                                 <Box textAlign="center" py={10}>
                                     <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
-                                    <Text mt={3} color="gray.500">Memuat detail jurnal...</Text>
+                                    <Text mt={3} color={subtleTextColor}>Memuat detail jurnal...</Text>
                                 </Box>
                             )}
 
                             {!loadingDetail && selectedTx && (
                                 <VStack spacing={5} align="stretch">
                                     {/* Transaction Summary Card */}
-                                    <Box bg="blue.50" p={4} borderRadius="lg" border="1px" borderColor="blue.200">
+                                    <Box bg={detailCardBg} p={4} borderRadius="lg" border="1px" borderColor={detailCardBorderColor}>
                                         <SimpleGrid columns={[1, 2, 4]} spacing={3}>
                                             <VStack align="start" spacing={0}>
-                                                <Text fontSize="xs" color="blue.600" fontWeight="medium">Jumlah</Text>
-                                                <Text fontSize="md" fontWeight="bold" color="blue.800">{formatCurrency(selectedTx.amount)}</Text>
+                                                <Text fontSize="xs" color={companyHeaderSubtextColor} fontWeight="medium">Jumlah</Text>
+                                                <Text fontSize="md" fontWeight="bold" color={companyHeaderTextColor}>{formatCurrency(selectedTx.amount)}</Text>
                                             </VStack>
                                             <VStack align="start" spacing={0}>
                                                 <Text fontSize="xs" color="green.600" fontWeight="medium">Dibayar</Text>
@@ -750,7 +795,7 @@ const CustomerHistoryPage: React.FC = () => {
                                                 </Text>
                                             </VStack>
                                             <VStack align="start" spacing={0}>
-                                                <Text fontSize="xs" color="gray.600" fontWeight="medium">Status</Text>
+                                                <Text fontSize="xs" color={mutedTextColor} fontWeight="medium">Status</Text>
                                                 <Badge colorScheme={getStatusColor(selectedTx.status)} mt={1}>{selectedTx.status}</Badge>
                                             </VStack>
                                         </SimpleGrid>
@@ -762,9 +807,9 @@ const CustomerHistoryPage: React.FC = () => {
                                     {/* Journal Entries */}
                                     {journalDetail?.journals?.length > 0 ? (
                                         journalDetail.journals.map((journal: any, jIdx: number) => (
-                                            <Box key={jIdx} borderWidth="1px" borderRadius="lg" overflow="hidden" borderColor="gray.200">
+                                            <Box key={jIdx} borderWidth="1px" borderRadius="lg" overflow="hidden" borderColor={modalBorderColor}>
                                                 {/* Journal Header */}
-                                                <Box bg="gray.50" px={4} py={3} borderBottomWidth="1px" borderColor="gray.200">
+                                                <Box bg={journalHeaderBg} px={4} py={3} borderBottomWidth="1px" borderColor={modalBorderColor}>
                                                     <HStack justify="space-between" flexWrap="wrap">
                                                         <HStack spacing={3}>
                                                             <Badge colorScheme="purple" variant="subtle" px={2} py={1}>
@@ -774,52 +819,52 @@ const CustomerHistoryPage: React.FC = () => {
                                                                 {journal.status}
                                                             </Badge>
                                                         </HStack>
-                                                        <Text fontSize="xs" color="gray.500">
+                                                        <Text fontSize="xs" color={subtleTextColor}>
                                                             Tanggal: {new Date(journal.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}
                                                         </Text>
                                                     </HStack>
                                                     {journal.description && (
-                                                        <Text fontSize="sm" color="gray.600" mt={1}>{journal.description}</Text>
+                                                        <Text fontSize="sm" color={mutedTextColor} mt={1}>{journal.description}</Text>
                                                     )}
                                                 </Box>
 
                                                 {/* Account Lines Table */}
                                                 <TableContainer>
                                                     <Table size="sm" variant="simple">
-                                                        <Thead bg="blue.50">
+                                                        <Thead bg={summaryPanelBg}>
                                                             <Tr>
-                                                                <Th color="blue.700" w="120px">Kode Akun</Th>
-                                                                <Th color="blue.700">Nama Akun</Th>
-                                                                <Th color="blue.700">Keterangan</Th>
-                                                                <Th color="blue.700" isNumeric>Debit</Th>
-                                                                <Th color="blue.700" isNumeric>Kredit</Th>
+                                                                <Th color={summaryPanelTextColor} w="120px">Kode Akun</Th>
+                                                                <Th color={summaryPanelTextColor}>Nama Akun</Th>
+                                                                <Th color={summaryPanelTextColor}>Keterangan</Th>
+                                                                <Th color={summaryPanelTextColor} isNumeric>Debit</Th>
+                                                                <Th color={summaryPanelTextColor} isNumeric>Kredit</Th>
                                                             </Tr>
                                                         </Thead>
                                                         <Tbody>
                                                             {journal.lines?.map((line: any, lIdx: number) => (
-                                                                <Tr key={lIdx} _hover={{ bg: 'gray.50' }}>
+                                                                <Tr key={lIdx} _hover={{ bg: tableHoverBg }}>
                                                                     <Td fontFamily="mono" fontSize="sm" fontWeight="semibold" color="purple.700">
                                                                         {line.account_code || '-'}
                                                                     </Td>
                                                                     <Td fontSize="sm" fontWeight="medium">{line.account_name || '-'}</Td>
-                                                                    <Td fontSize="sm" color="gray.600">{line.description || '-'}</Td>
-                                                                    <Td isNumeric fontSize="sm" fontWeight={line.debit > 0 ? 'bold' : 'normal'} color={line.debit > 0 ? 'blue.700' : 'gray.400'}>
+                                                                    <Td fontSize="sm" color={mutedTextColor}>{line.description || '-'}</Td>
+                                                                    <Td isNumeric fontSize="sm" fontWeight={line.debit > 0 ? 'bold' : 'normal'} color={line.debit > 0 ? 'blue.700' : subtleTextColor}>
                                                                         {line.debit > 0 ? formatCurrency(line.debit) : '-'}
                                                                     </Td>
-                                                                    <Td isNumeric fontSize="sm" fontWeight={line.credit > 0 ? 'bold' : 'normal'} color={line.credit > 0 ? 'green.700' : 'gray.400'}>
+                                                                    <Td isNumeric fontSize="sm" fontWeight={line.credit > 0 ? 'bold' : 'normal'} color={line.credit > 0 ? 'green.700' : subtleTextColor}>
                                                                         {line.credit > 0 ? formatCurrency(line.credit) : '-'}
                                                                     </Td>
                                                                 </Tr>
                                                             ))}
                                                         </Tbody>
-                                                        <Tfoot bg="gray.100">
+                                                        <Tfoot bg={journalFooterBg}>
                                                             <Tr fontWeight="bold">
                                                                 <Td colSpan={3} textAlign="right" fontSize="sm">TOTAL</Td>
                                                                 <Td isNumeric fontSize="sm" color="blue.800">{formatCurrency(journal.total_debit)}</Td>
                                                                 <Td isNumeric fontSize="sm" color="green.800">{formatCurrency(journal.total_credit)}</Td>
                                                             </Tr>
                                                             <Tr>
-                                                                <Td colSpan={3} textAlign="right" fontSize="xs" color="gray.500">Selisih (Balance Check)</Td>
+                                                                <Td colSpan={3} textAlign="right" fontSize="xs" color={subtleTextColor}>Selisih (Balance Check)</Td>
                                                                 <Td colSpan={2} textAlign="center" fontSize="xs" color={journal.is_balanced !== false ? 'green.600' : 'red.600'} fontWeight="bold">
                                                                     {journal.is_balanced !== false ? '✅ Seimbang' : `❌ ${formatCurrency(Math.abs(journal.total_debit - journal.total_credit))}`}
                                                                 </Td>
@@ -830,10 +875,10 @@ const CustomerHistoryPage: React.FC = () => {
                                             </Box>
                                         ))
                                     ) : (
-                                        <Box textAlign="center" py={8} bg="gray.50" borderRadius="lg">
+                                        <Box textAlign="center" py={8} bg={emptyPanelBg} borderRadius="lg" border="1px" borderColor={emptyPanelBorderColor}>
                                             <Text fontSize="lg" color="gray.400">📭</Text>
-                                            <Text fontSize="sm" color="gray.500" mt={2}>Tidak ada jurnal yang terkait dengan transaksi ini</Text>
-                                            <Text fontSize="xs" color="gray.400" mt={1}>Transaksi mungkin belum diposting atau jurnal belum dibuat</Text>
+                                            <Text fontSize="sm" color={subtleTextColor} mt={2}>Tidak ada jurnal yang terkait dengan transaksi ini</Text>
+                                            <Text fontSize="xs" color={subtleTextColor} mt={1}>Transaksi mungkin belum diposting atau jurnal belum dibuat</Text>
                                         </Box>
                                     )}
                                 </VStack>

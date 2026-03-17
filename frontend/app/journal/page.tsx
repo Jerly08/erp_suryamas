@@ -24,6 +24,12 @@ import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
 export default function JournalPage() {
     const { t } = useTranslation();
     const bg = useColorModeValue('white', 'gray.800');
+    const headingColor = useColorModeValue('gray.800', 'gray.100');
+    const tabListBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const tabColor = useColorModeValue('gray.600', 'gray.300');
+    const tabHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const activeTabBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.16)');
+    const activeTabColor = useColorModeValue('blue.700', 'blue.200');
 
     // Permission-based access control
     const { canView, canCreate, canEdit, canDelete, canExport } = useModulePermissions('journal');
@@ -33,12 +39,18 @@ export default function JournalPage() {
             <CompanyTypeGuard>
                 <SimpleLayout>
                     <Box bg={bg} borderRadius="lg" p={4} shadow="sm">
-                        <Heading size="lg" mb={6}>{t('navigation.journal') || 'Jurnal'}</Heading>
+                        <Heading size="lg" mb={6} color={headingColor}>{t('navigation.journal') || 'Jurnal'}</Heading>
                         <Tabs variant="enclosed" colorScheme="blue" isLazy>
-                            <TabList>
-                                <Tab>{t('journal.generalJournal') || 'Jurnal Umum'}</Tab>
-                                <Tab>{t('journal.generalLedger') || 'Buku Besar'}</Tab>
-                                <Tab>{t('journal.balanceSheet') || 'Neraca'}</Tab>
+                            <TabList borderColor={tabListBorderColor}>
+                                <Tab color={tabColor} _hover={{ bg: tabHoverBg }} _selected={{ bg: activeTabBg, color: activeTabColor, borderColor: tabListBorderColor }}>
+                                    {t('journal.generalJournal') || 'Jurnal Umum'}
+                                </Tab>
+                                <Tab color={tabColor} _hover={{ bg: tabHoverBg }} _selected={{ bg: activeTabBg, color: activeTabColor, borderColor: tabListBorderColor }}>
+                                    {t('journal.generalLedger') || 'Buku Besar'}
+                                </Tab>
+                                <Tab color={tabColor} _hover={{ bg: tabHoverBg }} _selected={{ bg: activeTabBg, color: activeTabColor, borderColor: tabListBorderColor }}>
+                                    {t('journal.balanceSheet') || 'Neraca'}
+                                </Tab>
                             </TabList>
 
                             <TabPanels>

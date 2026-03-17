@@ -204,6 +204,24 @@ export interface BankReconciliation {
   updated_at: string;
 }
 
+export interface ReferenceExchangeRate {
+  base_currency: string;
+  target_currency: string;
+  exchange_rate: number;
+  source: string;
+  provider: string;
+  fetched_at: string;
+  cached_until: string;
+  message?: string;
+}
+
+interface ApiServiceErrorShape {
+  response?: {
+    status?: number;
+  };
+  code?: string;
+}
+
 export interface CashBankTransfer {
   id: number;
   transfer_number: string;
@@ -415,17 +433,6 @@ class CashBankService {
     }
   }
 
-  // Fix GL account links
-  async fixGLAccountLinks(): Promise<any> {
-    try {
-      const response = await api.post(API_ENDPOINTS.CASH_BANK.FIX_GL_LINKS);
-      return response.data;
-    } catch (error) {
-      console.error('Error fixing GL account links:', error);
-      throw error;
-    }
-  }
-
   // Get revenue accounts for deposit form
   async getRevenueAccounts(): Promise<any[]> {
     try {
@@ -451,6 +458,27 @@ class CashBankService {
       return { revenue: [], equity: equityAccounts };
     } catch (error) {
       console.error('Error fetching deposit source accounts (equity only):', error);
+      throw error;
+    }
+  }
+
+  async getReferenceExchangeRate(base = 'USD', target = 'IDR'): Promise<ReferenceExchangeRate | null> {
+    try {
+      const response = await api.get(API_ENDPOINTS.CASH_BANK.REFERENCE_RATE, {
+        params: {
+          base,
+          target,
+          _t: Date.now(),
+        },
+      });
+      return response.data?.data ?? response.data;
+    } catch (error) {
+      const normalizedError = error as ApiServiceErrorShape;
+      const status = normalizedError.response?.status || 0;
+      const isTransientFailure = status >= 500 || normalizedError.code === 'ERR_NETWORK' || normalizedError.code === 'ECONNABORTED';
+      if (isTransientFailure) {
+        return null;
+      }
       throw error;
     }
   }

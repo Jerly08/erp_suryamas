@@ -102,6 +102,40 @@ const getAvailableBalanceInIDR = (account: CashBank): number => {
 
 const formatIDRAmount = (amount: number): string => 'IDR ' + (amount || 0).toLocaleString('id-ID');
 
+const getDeleteCashBankErrorMessage = (error: any, accountName: string): string => {
+  const status = error?.response?.status;
+  const errorData = error?.response?.data;
+  const backendMessage =
+    errorData?.details ||
+    errorData?.error ||
+    errorData?.message ||
+    error?.message;
+
+  if (status === 403) {
+    const requiredPermission = errorData?.required_permission;
+    const moduleName = errorData?.module || 'cash_bank';
+    const roleName = errorData?.user_role;
+
+    if (requiredPermission && moduleName) {
+      return roleName
+        ? `Anda tidak memiliki izin "${requiredPermission}" untuk modul "${moduleName}" (role: ${roleName}). Hubungi admin agar akses hapus akun diberikan.`
+        : `Anda tidak memiliki izin "${requiredPermission}" untuk modul "${moduleName}". Hubungi admin agar akses hapus akun diberikan.`;
+    }
+
+    return backendMessage || `Anda tidak memiliki izin untuk menghapus akun "${accountName}". Hubungi admin jika akses ini memang diperlukan.`;
+  }
+
+  if (status === 404) {
+    return `Akun "${accountName}" sudah tidak ditemukan atau sudah dihapus. Silakan refresh data lalu coba lagi.`;
+  }
+
+  if (typeof backendMessage === 'string' && backendMessage.trim()) {
+    return backendMessage;
+  }
+
+  return `Gagal menghapus akun "${accountName}". Silakan coba lagi atau hubungi admin jika masalah berlanjut.`;
+};
+
 // Table columns for cash and bank accounts with COA standards
 const getAccountColumns = (
   t: any,
@@ -524,6 +558,24 @@ const CashBankPage: React.FC = () => {
   const modalFooterBg = useColorModeValue('gray.50', 'gray.700');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
   const readOnlyBg = useColorModeValue('gray.50', 'gray.700');
+  const detailHeaderBg = useColorModeValue(
+    'linear-gradient(135deg, #3182ce 0%, #4299e1 100%)',
+    'linear-gradient(135deg, #1a365d 0%, #2b6cb0 100%)'
+  );
+  const detailHeroBg = useColorModeValue(
+    'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+    'linear-gradient(135deg, #1f4b99 0%, #0f7c8a 100%)'
+  );
+  const detailSoftBadgeBg = useColorModeValue('whiteAlpha.300', 'whiteAlpha.200');
+  const detailSectionTitleColor = useColorModeValue('gray.800', 'gray.100');
+  const detailSectionBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const detailSuccessPanelBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.12)');
+  const detailSuccessPanelBorderColor = useColorModeValue('green.200', 'green.700');
+  const detailSuccessTextColor = useColorModeValue('green.700', 'green.200');
+  const detailWarningTextColor = useColorModeValue('orange.600', 'orange.300');
+  const detailPositiveColor = useColorModeValue('green.600', 'green.300');
+  const detailNegativeColor = useColorModeValue('red.600', 'red.300');
+  const detailNeutralColor = useColorModeValue('gray.600', 'gray.300');
 
   // Tooltip descriptions for cash bank page
   const tooltips = {
@@ -887,7 +939,7 @@ const CashBankPage: React.FC = () => {
       } catch (error: any) {
         toast({
           title: t('cashBank.deleteFailed'),
-          description: error.response?.data?.details || error.message || t('cashBank.deleteFailed'),
+          description: getDeleteCashBankErrorMessage(error, account.name),
           status: 'error',
           duration: 5000,
           isClosable: true,
@@ -1434,12 +1486,14 @@ const CashBankPage: React.FC = () => {
                   maxW={{ base: '95vw', md: '90vw', lg: '70vw' }}
                   mx={4}
                   bg={modalContentBg}
+                  border="1px solid"
+                  borderColor={borderColor}
                   display="flex"
                   flexDirection="column"
                 >
                   {/* Payment Modal Style Header */}
                   <ModalHeader
-                    bg="blue.500"
+                    bg={detailHeaderBg}
                     color="white"
                     borderTopRadius="md"
                     py={4}
@@ -1448,7 +1502,7 @@ const CashBankPage: React.FC = () => {
                     <Flex alignItems="center" gap={4}>
                       <Box
                         p={3}
-                        bg="whiteAlpha.200"
+                        bg={detailSoftBadgeBg}
                         borderRadius="full"
                         fontSize="2xl"
                       >
@@ -1460,7 +1514,7 @@ const CashBankPage: React.FC = () => {
                         </Text>
                         <HStack spacing={3}>
                           <Badge
-                            bg="whiteAlpha.200"
+                            bg={detailSoftBadgeBg}
                             color="white"
                             px={2}
                             py={1}
@@ -1494,10 +1548,12 @@ const CashBankPage: React.FC = () => {
                       <VStack spacing={6} align="stretch">
                         {/* Balance Hero Section */}
                         <Card
-                          bg="linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"
+                          bg={detailHeroBg}
                           color="white"
                           shadow="lg"
                           borderRadius="xl"
+                          border="1px solid"
+                          borderColor={detailSectionBorderColor}
                         >
                           <CardBody p={6} textAlign="center">
                             <VStack spacing={4}>
@@ -1533,20 +1589,20 @@ const CashBankPage: React.FC = () => {
                             <Box>
                               <HStack spacing={3} mb={3}>
                                 <Text fontSize="xl">📋</Text>
-                                <Text fontWeight="bold" fontSize="lg">{t('cashBank.accountInformation')}</Text>
+                                <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.accountInformation')}</Text>
                               </HStack>
 
                               <VStack spacing={3} align="stretch">
                                 <Box>
                                   <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountCode')}</Text>
-                                  <Text fontWeight="bold" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
+                                  <Text fontWeight="bold" fontFamily="mono" bg={readOnlyBg} color={textColor} px={3} py={2} borderRadius="md">
                                     {selectedAccount.code}
                                   </Text>
                                 </Box>
                                 <Box>
                                   <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.currency')}</Text>
                                   <HStack spacing={2}>
-                                    <Text fontWeight="bold">{selectedAccount.currency}</Text>
+                                    <Text fontWeight="bold" color={textColor}>{selectedAccount.currency}</Text>
                                     <Badge colorScheme="blue" variant="subtle" fontSize="xs">
                                       {t('cashBank.indonesianRupiah')}
                                     </Badge>
@@ -1560,31 +1616,31 @@ const CashBankPage: React.FC = () => {
                               <Box>
                                 <HStack spacing={3} mb={3}>
                                   <Text fontSize="xl">🏦</Text>
-                                  <Text fontWeight="bold" fontSize="lg">{t('cashBank.bankDetails')}</Text>
+                                  <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.bankDetails')}</Text>
                                 </HStack>
 
                                 <VStack spacing={3} align="stretch">
                                   <Box>
                                     <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.bankName')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.bank_name ? textColor : 'orange.600'}>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.bank_name ? textColor : detailWarningTextColor}>
                                       {selectedAccount.bank_name || t('cashBank.bankNameNotSpecified')}
                                     </Text>
                                   </Box>
                                   <Box>
                                     <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountNumber')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" fontFamily="mono" color={selectedAccount.account_no ? textColor : 'orange.600'}>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" fontFamily="mono" color={selectedAccount.account_no ? textColor : detailWarningTextColor}>
                                       {selectedAccount.account_no || t('cashBank.accountNumberNotSpecified')}
                                     </Text>
                                   </Box>
                                   <Box>
                                     <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.atasNama')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.account_holder_name ? textColor : 'orange.600'}>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.account_holder_name ? textColor : detailWarningTextColor}>
                                       {selectedAccount.account_holder_name || t('cashBank.accountHolderNotSpecified')}
                                     </Text>
                                   </Box>
                                   <Box>
                                     <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.cabang')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.branch ? textColor : 'orange.600'}>
+                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.branch ? textColor : detailWarningTextColor}>
                                       {selectedAccount.branch || t('cashBank.branchNotSpecified')}
                                     </Text>
                                   </Box>
@@ -1599,11 +1655,17 @@ const CashBankPage: React.FC = () => {
                             <Box>
                               <HStack spacing={3} mb={3}>
                                 <Text fontSize="xl">📊</Text>
-                                <Text fontWeight="bold" fontSize="lg">{t('cashBank.chartOfAccounts')}</Text>
+                                <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.chartOfAccounts')}</Text>
                               </HStack>
 
                               {selectedAccount.account ? (
-                                <Box bg="green.50" p={4} borderRadius="lg" borderLeft="4px" borderLeftColor="green.400">
+                                <Box
+                                  bg={detailSuccessPanelBg}
+                                  p={4}
+                                  borderRadius="lg"
+                                  border="1px solid"
+                                  borderColor={detailSuccessPanelBorderColor}
+                                >
                                   <HStack justify="space-between" align="center" mb={2}>
                                     <Badge colorScheme="blue" variant="solid" fontSize="sm" px={3} py={1}>
                                       {selectedAccount.account.code}
@@ -1612,10 +1674,10 @@ const CashBankPage: React.FC = () => {
                                       {t('cashBank.asset')}
                                     </Badge>
                                   </HStack>
-                                  <Text fontWeight="bold" mb={1}>
+                                  <Text fontWeight="bold" mb={1} color={textColor}>
                                     {selectedAccount.account.name}
                                   </Text>
-                                  <Text fontSize="sm" color="green.700">
+                                  <Text fontSize="sm" color={detailSuccessTextColor}>
                                     ✅ {t('cashBank.successfullyIntegrated')}
                                   </Text>
                                 </Box>
@@ -1636,13 +1698,13 @@ const CashBankPage: React.FC = () => {
                             <Box>
                               <HStack spacing={3} mb={3}>
                                 <Text fontSize="xl">📅</Text>
-                                <Text fontWeight="bold" fontSize="lg">{t('cashBank.auditInformation')}</Text>
+                                <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.auditInformation')}</Text>
                               </HStack>
 
                               <VStack spacing={3} align="stretch">
                                 <Box>
                                   <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.created')}</Text>
-                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
+                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} color={textColor} px={3} py={2} borderRadius="md">
                                     {new Date(selectedAccount.created_at).toLocaleDateString('id-ID', {
                                       weekday: 'long',
                                       year: 'numeric',
@@ -1655,7 +1717,7 @@ const CashBankPage: React.FC = () => {
                                 </Box>
                                 <Box>
                                   <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.lastUpdated')}</Text>
-                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} px={3} py={2} borderRadius="md">
+                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} color={textColor} px={3} py={2} borderRadius="md">
                                     {new Date(selectedAccount.updated_at).toLocaleDateString('id-ID', {
                                       weekday: 'long',
                                       year: 'numeric',
@@ -1675,7 +1737,7 @@ const CashBankPage: React.FC = () => {
                         <Box>
                           <HStack spacing={3} mb={4}>
                             <Text fontSize="xl">⚡</Text>
-                            <Text fontWeight="bold" fontSize="lg">{t('cashBank.quickActions')}</Text>
+                            <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.quickActions')}</Text>
                           </HStack>
 
                           <SimpleGrid columns={{ base: 2, md: 4 }} spacing={3}>
@@ -1756,12 +1818,12 @@ const CashBankPage: React.FC = () => {
                         <Box flex="1" display={{ base: 'none', md: 'block' }}>
                           <HStack spacing={4}>
                             <Text fontSize="sm" color={mutedTextColor}>
-                              {t('cashBank.balance')}: <Text as="span" fontWeight="bold" color={selectedAccount.balance < 0 ? "red.600" : selectedAccount.balance > 0 ? "green.600" : "gray.600"}>
+                              {t('cashBank.balance')}: <Text as="span" fontWeight="bold" color={selectedAccount.balance < 0 ? detailNegativeColor : selectedAccount.balance > 0 ? detailPositiveColor : detailNeutralColor}>
                                 {selectedAccount.currency} {Math.abs(selectedAccount.balance).toLocaleString('id-ID')}
                               </Text>
                             </Text>
                             <Text fontSize="sm" color={mutedTextColor}>
-                              {t('cashBank.statusLabel')}: <Text as="span" fontWeight="bold" color={selectedAccount.is_active ? "green.600" : "red.600"}>
+                              {t('cashBank.statusLabel')}: <Text as="span" fontWeight="bold" color={selectedAccount.is_active ? detailPositiveColor : detailNegativeColor}>
                                 {selectedAccount.is_active ? t('cashBank.active') : t('cashBank.inactive')}
                               </Text>
                             </Text>

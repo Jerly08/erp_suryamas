@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useModulePermissions } from '@/hooks/usePermissions';
@@ -88,7 +88,7 @@ import { exportPaymentsToPDF, exportPaymentDetailToPDF, PDFExportOptions } from 
 import ExportButton from '@/components/common/ExportButton';
 
 // Status type for filtering
-type PaymentStatusType = 'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED';
+type PaymentStatusType = 'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT';
 
 // Payment method type for filtering
 type PaymentMethodType = 'ALL' | 'CASH' | 'BANK_TRANSFER' | 'CHECK' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'OTHER';
@@ -184,6 +184,7 @@ const PaymentsPage: React.FC = () => {
   const [ppnPaymentType, setPPNPaymentType] = useState<'INPUT' | 'OUTPUT'>('OUTPUT');
   const [showExpensePayment, setShowExpensePayment] = useState(false);
   const [approvingPaymentId, setApprovingPaymentId] = useState<number | null>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('payments');
@@ -345,7 +346,7 @@ const PaymentsPage: React.FC = () => {
       accessor: (row: Payment) => {
         const statusKey = row.status.toLowerCase();
         const translationKey = `payments.statuses.${statusKey}`;
-        const statusLabel = row.status === 'DRAFT' ? 'DRAFT' : t(translationKey);
+        const statusLabel = t(translationKey);
         return (
           <Badge colorScheme={paymentService.getStatusColorScheme(row.status)} variant="subtle">
             {statusLabel}
@@ -390,7 +391,7 @@ const PaymentsPage: React.FC = () => {
                 <MenuDivider />
               </>
             )}
-            {canEdit && row.status !== 'COMPLETED' && row.status !== 'SELESAI' && !(row.payment_type?.startsWith('TAX_PPN') || row.code?.startsWith('SETOR-PPN')) && (
+            {canEdit && row.status !== 'COMPLETED' && !(row.payment_type?.startsWith('TAX_PPN') || row.code?.startsWith('SETOR-PPN')) && (
               <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
                 {t('payments.edit')}
               </MenuItem>
@@ -501,7 +502,7 @@ const PaymentsPage: React.FC = () => {
       const pendingAmount = pendingPayments.reduce((sum, payment) => sum + payment.amount, 0);
 
       setSummary({
-        total_payments: pagination.totalItems || dataSource.length,
+        total_payments: dataSource.length,
         total_amount: totalAmount,
         completed_amount: completedAmount,
         pending_amount: pendingAmount,
@@ -821,7 +822,7 @@ const PaymentsPage: React.FC = () => {
                       <Stat>
                         <StatLabel>{t('payments.summary.totalPayments')}</StatLabel>
                         <StatNumber>{summary.total_payments}</StatNumber>
-                        <StatHelpText>{t('payments.summary.thisPeriod')}</StatHelpText>
+                        <StatHelpText>{t('payments.summary.currentPage')}</StatHelpText>
                       </Stat>
                     </CardBody>
                   </Card>
@@ -830,7 +831,7 @@ const PaymentsPage: React.FC = () => {
                       <Stat>
                         <StatLabel>{t('payments.summary.totalAmount')}</StatLabel>
                         <StatNumber>{formatCurrency(summary.total_amount)}</StatNumber>
-                        <StatHelpText>{t('payments.summary.grossAmount')}</StatHelpText>
+                        <StatHelpText>{t('payments.summary.loadedRowsOnly')}</StatHelpText>
                       </Stat>
                     </CardBody>
                   </Card>
@@ -841,7 +842,7 @@ const PaymentsPage: React.FC = () => {
                         <StatNumber color={statColors.green}>
                           {formatCurrency(summary.completed_amount)}
                         </StatNumber>
-                        <StatHelpText>{summary.completed_count} {t('payments.summary.payments')}</StatHelpText>
+                        <StatHelpText>{summary.completed_count} {t('payments.summary.payments')} {t('payments.summary.onCurrentPage')}</StatHelpText>
                       </Stat>
                     </CardBody>
                   </Card>
@@ -850,7 +851,7 @@ const PaymentsPage: React.FC = () => {
                       <Stat>
                         <StatLabel>{t('payments.summary.avgPaymentValue')}</StatLabel>
                         <StatNumber>{formatCurrency(summary.avg_payment_value)}</StatNumber>
-                        <StatHelpText>{t('payments.summary.perTransaction')}</StatHelpText>
+                        <StatHelpText>{t('payments.summary.perLoadedTransaction')}</StatHelpText>
                       </Stat>
                     </CardBody>
                   </Card>
@@ -999,6 +1000,7 @@ const PaymentsPage: React.FC = () => {
                     >
                       <option value="PENDING">{t('payments.filters.pending')}</option>
                       <option value="COMPLETED">{t('payments.filters.completed')}</option>
+                      <option value="DRAFT">{t('payments.filters.draft')}</option>
                       <option value="FAILED">{t('payments.filters.failed')}</option>
                     </Select>
 
@@ -1099,7 +1101,7 @@ const PaymentsPage: React.FC = () => {
             {/* Delete Confirmation Dialog */}
             <AlertDialog
               isOpen={showConfirmDelete}
-              leastDestructiveRef={undefined}
+              leastDestructiveRef={cancelDeleteRef}
               onClose={() => setShowConfirmDelete(false)}
             >
               <AlertDialogOverlay>
@@ -1120,7 +1122,7 @@ const PaymentsPage: React.FC = () => {
                   </AlertDialogBody>
 
                   <AlertDialogFooter>
-                    <Button onClick={() => setShowConfirmDelete(false)}>
+                    <Button ref={cancelDeleteRef} onClick={() => setShowConfirmDelete(false)}>
                       {t('payments.cancel')}
                     </Button>
                     <Button colorScheme="red" onClick={confirmDeletePayment} ml={3}>

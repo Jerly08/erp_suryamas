@@ -82,8 +82,22 @@ export default function ProjectsPage() {
     // Theme colors
     const bgCard = useColorModeValue('white', 'gray.800');
     const textColor = useColorModeValue('gray.700', 'white');
+    const mutedTextColor = useColorModeValue('gray.500', 'gray.400');
     const borderColor = useColorModeValue('gray.200', 'gray.700');
     const tableHeaderBg = useColorModeValue('gray.50', 'gray.700');
+    const inputBg = useColorModeValue('white', 'gray.700');
+    const inputBorderColor = useColorModeValue('gray.300', 'gray.600');
+    const tableRowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const modalBg = useColorModeValue('white', 'gray.800');
+    const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const modalFooterBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+    const readOnlyBg = useColorModeValue('gray.100', 'whiteAlpha.100');
+    const tabSelectedBg = useColorModeValue('blue.50', 'blue.900');
+    const tabSelectedColor = useColorModeValue('blue.600', 'blue.200');
+    const fieldFocusStyles = {
+        borderColor: 'blue.400',
+        boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
+    };
 
     const fetchProjects = async () => {
         try {
@@ -227,7 +241,7 @@ export default function ProjectsPage() {
                     <Flex justify="space-between" align="center" mb={6}>
                         <Box>
                             <Heading size="lg" color={textColor}>Manajemen Proyek</Heading>
-                            <Text color="gray.500" mt={1}>Kelola daftar proyek dan anggarannya</Text>
+                            <Text color={mutedTextColor} mt={1}>Kelola daftar proyek, biaya aktual, pendapatan diakui, dan pipeline penjualannya</Text>
                         </Box>
                         {canCreate('projects') && (
                             <Button
@@ -244,12 +258,18 @@ export default function ProjectsPage() {
                         <Flex p={4} borderBottomWidth="1px" borderColor={borderColor}>
                             <InputGroup maxW="300px">
                                 <InputLeftElement pointerEvents="none">
-                                    <Icon as={FiSearch} color="gray.400" />
+                                    <Icon as={FiSearch} color={mutedTextColor} />
                                 </InputLeftElement>
                                 <Input
                                     placeholder="Cari nama atau kode proyek..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
+                                    bg={inputBg}
+                                    borderColor={inputBorderColor}
+                                    color={textColor}
+                                    _hover={{ borderColor: inputBorderColor }}
+                                    _focusVisible={fieldFocusStyles}
+                                    _placeholder={{ color: mutedTextColor }}
                                 />
                             </InputGroup>
                         </Flex>
@@ -263,7 +283,8 @@ export default function ProjectsPage() {
                                         <Th>Status</Th>
                                         <Th isNumeric>Total Anggaran</Th>
                                         <Th isNumeric>Biaya Aktual</Th>
-                                        <Th isNumeric>Pendapatan Penjualan</Th>
+                                        <Th isNumeric>Pendapatan Diakui</Th>
+                                        <Th isNumeric>Pipeline Penjualan</Th>
                                         <Th>Tanggal Mulai</Th>
                                         <Th>Aksi</Th>
                                     </Tr>
@@ -271,20 +292,20 @@ export default function ProjectsPage() {
                                 <Tbody>
                                     {loading ? (
                                         <Tr>
-                                            <Td colSpan={8} textAlign="center" py={4}>Memuat data...</Td>
+                                            <Td colSpan={9} textAlign="center" py={4}>Memuat data...</Td>
                                         </Tr>
                                     ) : filteredProjects.length === 0 ? (
                                         <Tr>
-                                            <Td colSpan={8} textAlign="center" py={4}>Tidak ada data proyek</Td>
+                                            <Td colSpan={9} textAlign="center" py={4}>Tidak ada data proyek</Td>
                                         </Tr>
                                     ) : (
                                         filteredProjects.map((project) => (
-                                            <Tr key={project.id}>
+                                            <Tr key={project.id} _hover={{ bg: tableRowHoverBg }}>
                                                 <Td fontWeight="bold">{project.code}</Td>
                                                 <Td>
                                                     <Text fontWeight="medium">{project.name}</Text>
                                                     {project.description && (
-                                                        <Text fontSize="xs" color="gray.500" noOfLines={1}>{project.description}</Text>
+                                                        <Text fontSize="xs" color={mutedTextColor} noOfLines={1}>{project.description}</Text>
                                                     )}
                                                 </Td>
                                                 <Td>{getStatusBadge(project.status)}</Td>
@@ -294,6 +315,9 @@ export default function ProjectsPage() {
                                                 </Td>
                                                 <Td isNumeric color="green.500" fontWeight="semibold">
                                                     {formatCurrency(project.total_sales_revenue || 0)}
+                                                </Td>
+                                                <Td isNumeric color={(project.sales_pipeline_amount || 0) > 0 ? 'orange.500' : 'gray.500'} fontWeight="medium">
+                                                    {formatCurrency(project.sales_pipeline_amount || 0)}
                                                 </Td>
                                                 <Td>{project.start_date ? new Date(project.start_date).toLocaleDateString('id-ID') : '-'}</Td>
                                                 <Td>
@@ -336,36 +360,36 @@ export default function ProjectsPage() {
                 {/* Modal Create Project */}
                 <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="xl">
                     <ModalOverlay />
-                    <ModalContent>
-                        <ModalHeader>Buat Proyek Baru</ModalHeader>
-                        <ModalCloseButton />
+                    <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+                        <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>Buat Proyek Baru</ModalHeader>
+                        <ModalCloseButton color={textColor} />
                         <ModalBody>
                             <Flex direction="column" gap={4}>
                                 <FormControl isRequired>
-                                    <FormLabel>Kode Proyek</FormLabel>
-                                    <Input name="code" value={formData.code} onChange={handleInputChange} placeholder="PROJ-001" />
+                                    <FormLabel color={textColor}>Kode Proyek</FormLabel>
+                                    <Input name="code" value={formData.code} onChange={handleInputChange} placeholder="PROJ-001" bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} _placeholder={{ color: mutedTextColor }} />
                                 </FormControl>
                                 <FormControl isRequired>
-                                    <FormLabel>Nama Proyek</FormLabel>
-                                    <Input name="name" value={formData.name} onChange={handleInputChange} placeholder="Pembangunan Gudang A" />
+                                    <FormLabel color={textColor}>Nama Proyek</FormLabel>
+                                    <Input name="name" value={formData.name} onChange={handleInputChange} placeholder="Pembangunan Gudang A" bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} _placeholder={{ color: mutedTextColor }} />
                                 </FormControl>
                                 <FormControl>
-                                    <FormLabel>Deskripsi</FormLabel>
-                                    <Textarea name="description" value={formData.description} onChange={handleInputChange} />
+                                    <FormLabel color={textColor}>Deskripsi</FormLabel>
+                                    <Textarea name="description" value={formData.description} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                 </FormControl>
                                 <Flex gap={4}>
                                     <FormControl>
-                                        <FormLabel>Tanggal Mulai</FormLabel>
-                                        <Input type="date" name="start_date" value={formData.start_date} onChange={handleInputChange} />
+                                        <FormLabel color={textColor}>Tanggal Mulai</FormLabel>
+                                        <Input type="date" name="start_date" value={formData.start_date} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                     </FormControl>
                                     <FormControl>
-                                        <FormLabel>Tanggal Selesai</FormLabel>
-                                        <Input type="date" name="end_date" value={formData.end_date} onChange={handleInputChange} />
+                                        <FormLabel color={textColor}>Tanggal Selesai</FormLabel>
+                                        <Input type="date" name="end_date" value={formData.end_date} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                     </FormControl>
                                 </Flex>
                                 <FormControl>
-                                    <FormLabel>Total Anggaran (Estimasi)</FormLabel>
-                                    <Text fontSize="sm" color="gray.500" mb={2}>Anggaran akan dihitung secara otomatis setelah proyek dibuat dan BOM ditambahkan.</Text>
+                                    <FormLabel color={textColor}>Total Anggaran (Estimasi)</FormLabel>
+                                    <Text fontSize="sm" color={mutedTextColor} mb={2}>Anggaran akan dihitung secara otomatis setelah proyek dibuat dan BOM ditambahkan.</Text>
                                     <CurrencyInput
                                         value={0}
                                         onChange={() => { }}
@@ -374,7 +398,7 @@ export default function ProjectsPage() {
                                 </FormControl>
                             </Flex>
                         </ModalBody>
-                        <ModalFooter>
+                        <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
                             <Button variant="ghost" mr={3} onClick={onCreateClose}>Batal</Button>
                             <Button colorScheme="blue" onClick={handleCreate} isLoading={isSubmitting}>Simpan</Button>
                         </ModalFooter>
@@ -384,14 +408,14 @@ export default function ProjectsPage() {
                 {/* Modal Edit Project */}
                 <Modal isOpen={isEditOpen} onClose={onEditClose} size="4xl">
                     <ModalOverlay />
-                    <ModalContent>
-                        <ModalHeader>Detail & Edit Proyek: {selectedProject?.name}</ModalHeader>
-                        <ModalCloseButton />
+                    <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+                        <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>Detail & Edit Proyek: {selectedProject?.name}</ModalHeader>
+                        <ModalCloseButton color={textColor} />
 
                         <Tabs colorScheme="blue" mx={6} mt={2}>
-                            <TabList>
-                                <Tab fontWeight="semibold">Informasi Umum</Tab>
-                                <Tab fontWeight="semibold">Bill of Materials (BOM)</Tab>
+                            <TabList borderColor={borderColor}>
+                                <Tab fontWeight="semibold" _selected={{ color: tabSelectedColor, bg: tabSelectedBg, borderColor: borderColor }}>Informasi Umum</Tab>
+                                <Tab fontWeight="semibold" _selected={{ color: tabSelectedColor, bg: tabSelectedBg, borderColor: borderColor }}>Bill of Materials (BOM)</Tab>
                             </TabList>
 
                             <TabPanels>
@@ -399,16 +423,16 @@ export default function ProjectsPage() {
                                     <ModalBody>
                                         <Flex direction="column" gap={4}>
                                             <FormControl isRequired>
-                                                <FormLabel>Kode Proyek</FormLabel>
-                                                <Input name="code" value={formData.code} isReadOnly bg="gray.100" />
+                                                <FormLabel color={textColor}>Kode Proyek</FormLabel>
+                                                <Input name="code" value={formData.code} isReadOnly bg={readOnlyBg} borderColor={inputBorderColor} color={textColor} />
                                             </FormControl>
                                             <FormControl isRequired>
-                                                <FormLabel>Nama Proyek</FormLabel>
-                                                <Input name="name" value={formData.name} onChange={handleInputChange} />
+                                                <FormLabel color={textColor}>Nama Proyek</FormLabel>
+                                                <Input name="name" value={formData.name} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                             </FormControl>
                                             <FormControl>
-                                                <FormLabel>Status</FormLabel>
-                                                <Select name="status" value={formData.status} onChange={handleInputChange}>
+                                                <FormLabel color={textColor}>Status</FormLabel>
+                                                <Select name="status" value={formData.status} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles}>
                                                     <option value="ACTIVE">Aktif</option>
                                                     <option value="COMPLETED">Selesai</option>
                                                     <option value="ON_HOLD">Ditunda</option>
@@ -416,22 +440,22 @@ export default function ProjectsPage() {
                                                 </Select>
                                             </FormControl>
                                             <FormControl>
-                                                <FormLabel>Deskripsi</FormLabel>
-                                                <Textarea name="description" value={formData.description} onChange={handleInputChange} />
+                                                <FormLabel color={textColor}>Deskripsi</FormLabel>
+                                                <Textarea name="description" value={formData.description} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                             </FormControl>
                                             <Flex gap={4}>
                                                 <FormControl>
-                                                    <FormLabel>Tanggal Mulai</FormLabel>
-                                                    <Input type="date" name="start_date" value={formData.start_date} onChange={handleInputChange} />
+                                                    <FormLabel color={textColor}>Tanggal Mulai</FormLabel>
+                                                    <Input type="date" name="start_date" value={formData.start_date} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                                 </FormControl>
                                                 <FormControl>
-                                                    <FormLabel>Tanggal Selesai</FormLabel>
-                                                    <Input type="date" name="end_date" value={formData.end_date} onChange={handleInputChange} />
+                                                    <FormLabel color={textColor}>Tanggal Selesai</FormLabel>
+                                                    <Input type="date" name="end_date" value={formData.end_date} onChange={handleInputChange} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles} />
                                                 </FormControl>
                                             </Flex>
                                             <FormControl>
-                                                <FormLabel>Total Anggaran As-Built</FormLabel>
-                                                <Text fontSize="sm" color="gray.500" mb={1}>Dihitung otomatis dari total BOM yang dilampirkan.</Text>
+                                                <FormLabel color={textColor}>Total Anggaran As-Built</FormLabel>
+                                                <Text fontSize="sm" color={mutedTextColor} mb={1}>Dihitung otomatis dari total BOM yang dilampirkan.</Text>
                                                 <CurrencyInput
                                                     value={parseFloat(formData.total_budget) || 0}
                                                     onChange={() => { }}
@@ -440,7 +464,7 @@ export default function ProjectsPage() {
                                             </FormControl>
                                         </Flex>
                                     </ModalBody>
-                                    <ModalFooter>
+                                    <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
                                         <Button variant="ghost" mr={3} onClick={onEditClose}>Batal</Button>
                                         <Button colorScheme="blue" onClick={handleEdit} isLoading={isSubmitting}>Simpan Perubahan</Button>
                                     </ModalFooter>
@@ -465,13 +489,13 @@ export default function ProjectsPage() {
                 {/* Modal Delete */}
                 <Modal isOpen={isDeleteOpen} onClose={onDeleteClose}>
                     <ModalOverlay />
-                    <ModalContent>
-                        <ModalHeader>Hapus Proyek</ModalHeader>
-                        <ModalCloseButton />
+                    <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+                        <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>Hapus Proyek</ModalHeader>
+                        <ModalCloseButton color={textColor} />
                         <ModalBody>
-                            <Text>Apakah Anda yakin ingin menghapus proyek <strong>{selectedProject?.name}</strong>? Tindakan ini tidak dapat dibatalkan.</Text>
+                            <Text color={textColor}>Apakah Anda yakin ingin menghapus proyek <strong>{selectedProject?.name}</strong>? Tindakan ini tidak dapat dibatalkan.</Text>
                         </ModalBody>
-                        <ModalFooter>
+                        <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
                             <Button variant="ghost" mr={3} onClick={onDeleteClose}>Batal</Button>
                             <Button colorScheme="red" onClick={handleDelete} isLoading={isSubmitting}>Ya, Hapus</Button>
                         </ModalFooter>

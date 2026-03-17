@@ -46,14 +46,62 @@ import {
   FiBriefcase,
   FiPercent
 } from 'react-icons/fi';
-import paymentService from '@/services/paymentService';
+import paymentService, { stripInternalPaymentReference } from '@/services/paymentService';
 import accountService from '@/services/accountService';
-import cashbankService, { CashBank, WithdrawalRequest } from '@/services/cashbankService';
+import cashbankService, {
+  CashBank,
+  ReferenceExchangeRate,
+  getBookBalanceInIDR,
+} from '@/services/cashbankService';
 import searchableSelectService, { Contact as SelectContact } from '@/services/searchableSelectService';
 import closingHistoryService from '@/services/closingHistoryService';
 import { AccountCatalogItem } from '@/types/account';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import { useAuth } from '@/contexts/AuthContext';
+
+const formatCashBankBalance = (amount: number, currency?: string) => {
+  const normalizedCurrency = (currency || 'IDR').toUpperCase();
+
+  if (normalizedCurrency === 'USD') {
+    return `USD ${(amount || 0).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount || 0);
+};
+
+const formatIDR = (amount: number) =>
+  new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount || 0);
+
+const formatUsd = (amount: number) =>
+  `USD ${(amount || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const formatExchangeRate = (amount?: number) => {
+  if (!amount || amount <= 0) {
+    return '-';
+  }
+
+  return `Rp ${amount.toLocaleString('id-ID', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  })}`;
+};
+
 interface ExpensePaymentFormProps {
   isOpen: boolean;
   onClose: () => void;
@@ -67,6 +115,7 @@ interface ExpensePaymentFormData {
   cash_bank_id: number;
   date: string;
   amount: number;
+  exchange_rate?: number;
   method: string;
   reference: string;
   notes: string;
@@ -122,6 +171,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [checkingClosedPeriod, setCheckingClosedPeriod] = useState(false);
   const [isDateClosed, setIsDateClosed] = useState(false);
+  const [referenceRate, setReferenceRate] = useState<ReferenceExchangeRate | null>(null);
+  const [loadingReferenceRate, setLoadingReferenceRate] = useState(false);
+  const [manualRateOverride, setManualRateOverride] = useState(false);
   const {
     control,
     register,
@@ -134,6 +186,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     defaultValues: {
       date: new Date().toISOString().split('T')[0],
       amount: 0,
+      exchange_rate: 1,
       method: 'CASH',
       reference: '',
       notes: '',
@@ -151,6 +204,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const pphType = watch('pph_type');
   const pphRate = watch('pph_rate');
   const amount = watch('amount');
+  const selectedCashBankId = watch('cash_bank_id');
+  const exchangeRate = watch('exchange_rate');
 
   // Calculate PPh amounts
   const pphAmount = enablePPH && pphRate > 0 && amount > 0
@@ -161,6 +216,40 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const selectedAccount = [...expenseAccounts, ...liabilityAccounts].find(
     acc => acc.id === Number(selectedAccountId)
   );
+  const selectedCashBank = cashBanks.find(
+    cashBank => cashBank.id === Number(selectedCashBankId)
+  );
+  const selectedCashBankCurrency = (selectedCashBank?.currency || 'IDR').toUpperCase();
+  const isUsdCashBank = selectedCashBankCurrency === 'USD';
+  const requiresExchangeRate = isUsdCashBank;
+  const availableNativeBalance = selectedCashBank
+    ? Math.max(0, (selectedCashBank.balance || 0) - (selectedCashBank.frozen_amount || 0))
+    : 0;
+  const currentBookBalanceIDR = selectedCashBank ? getBookBalanceInIDR(selectedCashBank) : 0;
+  const availableBookBalance = selectedCashBank
+    ? isUsdCashBank && (selectedCashBank.balance || 0) > 0
+      ? currentBookBalanceIDR * (availableNativeBalance / selectedCashBank.balance)
+      : availableNativeBalance
+    : 0;
+  const appliedExchangeRate = requiresExchangeRate ? exchangeRate || 0 : 1;
+  const requiredNativeOut = requiresExchangeRate && appliedExchangeRate > 0
+    ? netPayment / appliedExchangeRate
+    : netPayment;
+  const currentCarryRate = isUsdCashBank && availableNativeBalance > 0
+    ? availableBookBalance / availableNativeBalance
+    : 1;
+  const bankBookOutAmount = isUsdCashBank && availableNativeBalance > 0
+    ? availableBookBalance * (requiredNativeOut / availableNativeBalance)
+    : netPayment;
+  const estimatedForexDiff = bankBookOutAmount - netPayment;
+  const estimatedForexAmount = Math.abs(estimatedForexDiff);
+  const estimatedForexType = estimatedForexDiff > 0.005
+    ? 'RUGI KURS'
+    : estimatedForexDiff < -0.005
+      ? 'LABA KURS'
+      : 'NETRAL';
+  const endingNativeBalance = Math.max(0, availableNativeBalance - requiredNativeOut);
+  const endingBookBalanceIDR = Math.max(0, availableBookBalance - bankBookOutAmount);
   // Show all cash/bank accounts (no filtering by payment method)
   const filteredCashBanks = cashBanks;
 
@@ -192,7 +281,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     }
 
     return {
-      userReference: reference,
+      userReference: stripInternalPaymentReference(reference),
       expenseAccountId: undefined as number | undefined,
       cashBankId: undefined as number | undefined,
     };
@@ -220,18 +309,21 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       }
       if (initialData.date) setValue('date', initialData.date?.split('T')[0] || initialData.date);
       if (initialData.amount) setValue('amount', initialData.amount);
+      if (initialData.exchange_rate) setValue('exchange_rate', initialData.exchange_rate);
       if (initialData.method) setValue('method', initialData.method);
-      setValue('reference', parsedReference.userReference);
+      setValue('reference', stripInternalPaymentReference(parsedReference.userReference));
       if (initialData.notes) setValue('notes', initialData.notes);
       if (initialData.description) setValue('description', initialData.description);
       if (initialData.pph_type) setValue('pph_type', initialData.pph_type);
       if (typeof initialData.pph_rate === 'number') setValue('pph_rate', initialData.pph_rate);
       setValue('enable_pph', Boolean(initialData.pph_type || initialData.pph_amount));
+      setManualRateOverride(Boolean(initialData.exchange_rate && initialData.exchange_rate > 0));
     } else if (isOpen && !initialData) {
       // New payment: reset form
       reset({
         date: new Date().toISOString().split('T')[0],
         amount: 0,
+        exchange_rate: 1,
         method: 'CASH',
         reference: '',
         notes: '',
@@ -240,8 +332,81 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         pph_type: '',
         pph_rate: 0,
       });
+      setManualRateOverride(false);
     }
   }, [isOpen, initialData, setValue, reset]);
+
+  useEffect(() => {
+    if (!isOpen || !requiresExchangeRate) {
+      setReferenceRate(null);
+      setLoadingReferenceRate(false);
+      setManualRateOverride(false);
+      setValue('exchange_rate', 1);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadReferenceRate = async () => {
+      setLoadingReferenceRate(true);
+      try {
+        const response = await cashbankService.getReferenceExchangeRate('USD', 'IDR');
+        if (cancelled) {
+          return;
+        }
+
+        setReferenceRate(response);
+
+        if (!manualRateOverride) {
+          const suggestedRate =
+            response?.exchange_rate ||
+            (selectedCashBank?.last_exchange_rate && selectedCashBank.last_exchange_rate > 0
+              ? selectedCashBank.last_exchange_rate
+              : 0);
+
+          if (suggestedRate > 0) {
+            setValue('exchange_rate', Number(suggestedRate.toFixed(6)));
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingReferenceRate(false);
+        }
+      }
+    };
+
+    const fallbackRate =
+      selectedCashBank?.last_exchange_rate && selectedCashBank.last_exchange_rate > 0
+        ? selectedCashBank.last_exchange_rate
+        : 0;
+    if (!manualRateOverride && fallbackRate > 0 && !(exchangeRate && exchangeRate > 0)) {
+      setValue('exchange_rate', Number(fallbackRate.toFixed(6)));
+    }
+
+    loadReferenceRate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, requiresExchangeRate, manualRateOverride, selectedCashBank, exchangeRate, setValue]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (
+      initialData?.id &&
+      Number(initialData.cash_bank_id) === Number(selectedCashBankId) &&
+      initialData.exchange_rate &&
+      initialData.exchange_rate > 0
+    ) {
+      setManualRateOverride(true);
+      return;
+    }
+
+    setManualRateOverride(false);
+  }, [isOpen, selectedCashBankId, initialData]);
 
   // Validate payment date against closed accounting periods
   useEffect(() => {
@@ -278,6 +443,10 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     };
   }, [paymentDate]);
   const loadData = async () => {
+    if (!token) {
+      return;
+    }
+
     setLoadingAccounts(true);
     try {
       // Load expense accounts
@@ -311,12 +480,21 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const onSubmit = async (data: ExpensePaymentFormData) => {
     setLoading(true);
     try {
+      if (requiresExchangeRate && (!data.exchange_rate || data.exchange_rate <= 0)) {
+        throw new Error('Kurs transaksi USD ke IDR wajib diisi sebelum menyimpan pembayaran beban.');
+      }
+
+      if (requiresExchangeRate && requiredNativeOut > availableNativeBalance + 0.000001) {
+        throw new Error(`Saldo ${selectedCashBank?.name || 'rekening USD'} tidak cukup. Tersedia ${formatUsd(availableNativeBalance)}, dibutuhkan ${formatUsd(requiredNativeOut)}.`);
+      }
+
       const payload: any = {
         contact_id: data.contact_id ? Number(data.contact_id) : 0,
         expense_account_id: Number(data.expense_account_id),
         cash_bank_id: Number(data.cash_bank_id),
         date: data.date,
         amount: data.amount,
+        exchange_rate: requiresExchangeRate ? data.exchange_rate : 1,
         method: data.method,
         reference: data.reference || '',
         notes:
@@ -325,14 +503,10 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
           `Payment for ${selectedAccount?.code || ''} ${selectedAccount?.name || 'Expense'}`.trim(),
         description: data.description || selectedAccount?.name || 'Expense Payment',
         auto_create_journal: true,
+        pph_type: data.enable_pph ? data.pph_type : '',
+        pph_rate: data.enable_pph ? data.pph_rate : 0,
+        pph_amount: data.enable_pph ? pphAmount : 0,
       };
-
-      // Add PPh fields if enabled
-      if (data.enable_pph && pphAmount > 0) {
-        payload.pph_type = data.pph_type;
-        payload.pph_rate = data.pph_rate;
-        payload.pph_amount = pphAmount;
-      }
 
       if (initialData?.id) {
         // Update existing draft
@@ -452,7 +626,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiBookOpen} />
-                        <Text>{t('payments.form.expenseAccount')}</Text>
+                        <Text>Expense / Liability Account</Text>
                         <Tooltip label={t('payments.form.expenseAccountTooltip')}>
                           <Icon as={FiInfo} boxSize={3} color={textColor} />
                         </Tooltip>
@@ -496,6 +670,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       )}
                     />
                     <FormErrorMessage>{errors.expense_account_id?.message}</FormErrorMessage>
+                    <FormHelperText color={textColor}>
+                      Gunakan akun beban untuk pembayaran langsung, atau akun kewajiban bila pelunasan perlu mengurangi liability tertentu.
+                    </FormHelperText>
                   </FormControl>
 
                   {/* Cash/Bank Account */}
@@ -520,11 +697,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                             const available = cb.balance - frozen;
                             return (
                             <option key={cb.id} value={cb.id}>
-                              {cb.name} ({cb.type}) - Tersedia: {new Intl.NumberFormat('id-ID', {
-                                style: 'currency',
-                                currency: 'IDR',
-                                minimumFractionDigits: 0,
-                              }).format(available > 0 ? available : 0)}{frozen > 0 ? ` [Terblokir: ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(frozen)}]` : ''}
+                              {cb.name} ({cb.type}) - Tersedia: {formatCashBankBalance(available > 0 ? available : 0, cb.currency)}{frozen > 0 ? ` [Terblokir: ${formatCashBankBalance(frozen, cb.currency)}]` : ''}
                             </option>
                             );
                           })}
@@ -532,6 +705,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       )}
                     />
                     <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
+                    {selectedCashBank && (
+                      <FormHelperText color={textColor}>
+                        Saldo tersedia: {formatCashBankBalance(availableNativeBalance, selectedCashBank.currency)}
+                        {isUsdCashBank ? ` | Nilai buku tersedia: ${formatIDR(availableBookBalance)}` : ''}
+                      </FormHelperText>
+                    )}
                   </FormControl>
 
                   <HStack width="full" spacing={4} alignItems="flex-start">
@@ -591,7 +770,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiDollarSign} />
-                        <Text>Amount</Text>
+                        <Text>{isUsdCashBank ? 'Jumlah Beban Bruto (IDR)' : 'Amount'}</Text>
                       </HStack>
                     </FormLabel>
                     <Controller
@@ -610,7 +789,103 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       )}
                     />
                     <FormErrorMessage>{errors.amount?.message}</FormErrorMessage>
+                    <FormHelperText color={textColor}>
+                      Nilai yang diinput tetap dalam IDR sebagai beban bruto. Jika ada PPh, kas/bank yang keluar mengikuti nilai neto.
+                    </FormHelperText>
                   </FormControl>
+
+                  {requiresExchangeRate && (
+                    <Box width="full" p={4} borderRadius="md" bg={pphBg} borderWidth={1} borderColor={pphBorderColor}>
+                      <VStack spacing={3} align="stretch">
+                        <Input type="hidden" {...register('exchange_rate', { valueAsNumber: true })} />
+                        <FormControl isRequired>
+                          <FormLabel color={labelColor}>
+                            Kurs transaksi (IDR per USD)
+                          </FormLabel>
+                          <Input
+                            type="number"
+                            step="0.000001"
+                            min="0"
+                            value={exchangeRate || ''}
+                            onChange={(event) => {
+                              setManualRateOverride(true);
+                              setValue('exchange_rate', parseFloat(event.target.value) || undefined, {
+                                shouldValidate: true,
+                                shouldDirty: true,
+                              });
+                            }}
+                            placeholder="Contoh: 16880.270000"
+                            borderColor={borderColor}
+                          />
+                          <FormHelperText color={textColor}>
+                            Kurs ini dipakai untuk menghitung USD yang keluar dari rekening dan realized FX saat nilai buku bank USD berbeda dari kurs pembayaran.
+                          </FormHelperText>
+                        </FormControl>
+
+                        {referenceRate?.exchange_rate ? (
+                          <Alert status="info" borderRadius="md">
+                            <AlertIcon />
+                            <AlertDescription fontSize="sm">
+                              Kurs referensi API: 1 USD = {formatExchangeRate(referenceRate.exchange_rate)} dari {referenceRate.provider || referenceRate.source}. Anda tetap bisa override manual.
+                            </AlertDescription>
+                          </Alert>
+                        ) : (
+                          <Alert status="warning" borderRadius="md">
+                            <AlertIcon />
+                            <AlertDescription fontSize="sm">
+                              Kurs referensi USD/IDR belum tersedia. Sistem akan tetap memakai kurs manual yang Anda input.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+
+                        {loadingReferenceRate && (
+                          <Text fontSize="sm" color={textColor}>
+                            Mengambil kurs referensi USD/IDR...
+                          </Text>
+                        )}
+
+                        {exchangeRate && exchangeRate > 0 && (
+                          <Box p={3} borderRadius="md" bg={pphPreviewBg} borderWidth={1} borderColor={borderColor}>
+                            <VStack spacing={1} align="stretch" fontSize="sm">
+                              <HStack justify="space-between">
+                                <Text color={textColor}>Kas keluar (neto)</Text>
+                                <Text fontWeight="bold">{formatIDR(netPayment)}</Text>
+                              </HStack>
+                              <HStack justify="space-between">
+                                <Text color={textColor}>USD keluar dari bank</Text>
+                                <Text fontWeight="bold">{formatUsd(requiredNativeOut)}</Text>
+                              </HStack>
+                              <HStack justify="space-between">
+                                <Text color={textColor}>Carry rate bank saat ini</Text>
+                                <Text fontWeight="bold">{formatExchangeRate(currentCarryRate)}</Text>
+                              </HStack>
+                              <HStack justify="space-between">
+                                <Text color={textColor}>Nilai buku bank yang dikredit</Text>
+                                <Text fontWeight="bold">{formatIDR(bankBookOutAmount)}</Text>
+                              </HStack>
+                              <Divider />
+                              <HStack justify="space-between">
+                                <Text color={textColor}>Estimasi saldo akhir USD</Text>
+                                <Text fontWeight="bold">{formatUsd(endingNativeBalance)}</Text>
+                              </HStack>
+                              <HStack justify="space-between">
+                                <Text color={textColor}>Estimasi nilai buku akhir</Text>
+                                <Text fontWeight="bold">{formatIDR(endingBookBalanceIDR)}</Text>
+                              </HStack>
+                              <HStack justify="space-between">
+                                <Text color={estimatedForexType === 'LABA KURS' ? 'green.500' : estimatedForexType === 'RUGI KURS' ? 'red.500' : textColor}>
+                                  Estimasi {estimatedForexType}
+                                </Text>
+                                <Text fontWeight="bold" color={estimatedForexType === 'LABA KURS' ? 'green.500' : estimatedForexType === 'RUGI KURS' ? 'red.500' : textColor}>
+                                  {formatIDR(estimatedForexAmount)}
+                                </Text>
+                              </HStack>
+                            </VStack>
+                          </Box>
+                        )}
+                      </VStack>
+                    </Box>
+                  )}
 
                   {/* Reference Number */}
                   <FormControl>
@@ -737,7 +1012,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                               <HStack justify="space-between">
                                 <Text color={textColor}>Jumlah Bruto (Beban)</Text>
                                 <Text fontWeight="bold">
-                                  {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount)}
+                                  {formatIDR(amount)}
                                 </Text>
                               </HStack>
                               <HStack justify="space-between">
@@ -745,7 +1020,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                                   PPh Dipotong ({pphRate}%)
                                 </Text>
                                 <Text fontWeight="bold" color="red.500">
-                                  - {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(pphAmount)}
+                                  - {formatIDR(pphAmount)}
                                 </Text>
                               </HStack>
                               <Divider />
@@ -754,15 +1029,16 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                                   Dibayarkan (Neto)
                                 </Text>
                                 <Text fontWeight="bold" color={greenColor}>
-                                  {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(netPayment)}
+                                  {formatIDR(netPayment)}
                                 </Text>
                               </HStack>
                               <Alert status="info" borderRadius="md" mt={1} py={1}>
                                 <AlertIcon boxSize={3} />
                                 <AlertDescription fontSize="xs">
-                                  Jurnal: Debit Beban {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount)},
-                                  Credit Bank {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(netPayment)},
-                                  Credit Hutang PPh {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(pphAmount)}
+                                  Jurnal: Debit Beban {formatIDR(amount)},
+                                  Credit Bank {formatIDR(bankBookOutAmount)},
+                                  Credit Hutang PPh {formatIDR(pphAmount)}
+                                  {isUsdCashBank && estimatedForexAmount > 0 ? `, serta ${estimatedForexType} ${formatIDR(estimatedForexAmount)}` : ''}
                                 </AlertDescription>
                               </Alert>
                             </VStack>
@@ -807,7 +1083,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                 >
                   <HStack justify="space-between">
                     <Text fontSize="sm" color={textColor}>
-                      Selected Account:
+                      Selected Expense / Liability Account:
                     </Text>
                     <Badge colorScheme="blue">
                       {selectedAccount.code} - {selectedAccount.name}

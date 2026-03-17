@@ -375,7 +375,7 @@ const SaleDetailPage: React.FC = () => {
                   {sale.sale_items?.map((item, index) => (
                     <Tr key={index}>
                       <Td fontWeight="medium">
-                        {item.product?.name || t('sales.detail.notAvailable')}
+                        {item.product_name || item.product?.name || t('sales.detail.notAvailable')}
                       </Td>
                       <Td>{item.description || t('sales.detail.noInvoiceNumber')}</Td>
                       <Td isNumeric>{item.quantity || 0}</Td>

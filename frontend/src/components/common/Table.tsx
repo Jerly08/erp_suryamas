@@ -44,6 +44,7 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
   const hoverBg = useColorModeValue('gray.50', 'gray.700');
   const textColor = useColorModeValue('gray.700', 'gray.200');
   const headerTextColor = useColorModeValue('gray.600', 'gray.300');
+  const mutedTextColor = useColorModeValue('gray.500', 'gray.400');
   
   const renderCell = (item: T, column: Column<T>) => {
     if (column.cell) {
@@ -88,16 +89,16 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
 
   if (isLoading) {
     return (
-      <Card>
+      <Card bg={bgCard} borderColor={borderColor} variant="outline">
         {title && (
-          <CardHeader>
-            <Heading size="md">{title}</Heading>
+          <CardHeader borderBottomWidth="1px" borderColor={borderColor}>
+            <Heading size="md" color={textColor}>{title}</Heading>
           </CardHeader>
         )}
         <CardBody>
           <Flex justify="center" align="center" py={8}>
             <Spinner size="lg" color="brand.500" />
-            <Text ml={4}>Loading...</Text>
+            <Text ml={4} color={mutedTextColor}>Loading...</Text>
           </Flex>
         </CardBody>
       </Card>
@@ -121,7 +122,7 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
       <CardBody p={0}>
         {data.length === 0 ? (
           <Flex justify="center" align="center" py={8}>
-            <Text color="gray.500">{emptyMessage || 'No data available'}</Text>
+            <Text color={mutedTextColor}>{emptyMessage || 'No data available'}</Text>
           </Flex>
         ) : (
           <Box overflowX="auto">

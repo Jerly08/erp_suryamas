@@ -23,6 +23,7 @@ import {
     Th,
     Td,
     Divider,
+    useColorModeValue,
 } from '@chakra-ui/react';
 import { componentTemplateService } from '@/services/bomService';
 import { ComponentTemplate } from '@/types/bom';
@@ -45,6 +46,16 @@ const UseComponentTemplateModal: React.FC<UseComponentTemplateModalProps> = ({ i
     const [selectedId, setSelectedId] = useState<string>('');
     const [previewTemplate, setPreviewTemplate] = useState<ComponentTemplate | null>(null);
     const [loadingPreview, setLoadingPreview] = useState(false);
+    const modalBg = useColorModeValue('white', 'var(--bg-secondary)');
+    const cardBg = useColorModeValue('white', 'var(--bg-secondary)');
+    const selectedBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+    const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
+    const selectedBorderColor = useColorModeValue('blue.400', 'blue.300');
+    const hoverBorderColor = useColorModeValue('blue.300', 'blue.200');
+    const textColor = useColorModeValue('gray.700', 'var(--text-primary)');
+    const mutedTextColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+    const tableHeadBg = useColorModeValue('gray.50', 'var(--bg-tertiary)');
+    const footerBg = useColorModeValue('gray.50', 'whiteAlpha.100');
 
     const fetchTemplates = async () => {
         setLoading(true);
@@ -100,15 +111,15 @@ const UseComponentTemplateModal: React.FC<UseComponentTemplateModalProps> = ({ i
     return (
         <Modal isOpen={isOpen} onClose={onClose} size="3xl" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent maxH="85vh">
-                <ModalHeader borderBottomWidth="1px">Pilih Component Template</ModalHeader>
+            <ModalContent maxH="85vh" bg={modalBg} border="1px solid" borderColor={borderColor}>
+                <ModalHeader borderBottomWidth="1px" borderColor={borderColor} color={textColor}>Pilih Component Template</ModalHeader>
                 <ModalCloseButton />
                 <ModalBody pb={4}>
                     {loading ? (
                         <Flex justify="center" py={10}><Spinner size="lg" color="blue.500" /></Flex>
                     ) : templates.length === 0 ? (
                         <Box textAlign="center" py={10}>
-                            <Text color="gray.500">
+                            <Text color={mutedTextColor}>
                                 Belum ada template tersimpan. Buat BOM terlebih dahulu dan centang &quot;Save components as template&quot;.
                             </Text>
                         </Box>
@@ -123,17 +134,17 @@ const UseComponentTemplateModal: React.FC<UseComponentTemplateModalProps> = ({ i
                                             borderWidth="1px"
                                             borderRadius="md"
                                             cursor="pointer"
-                                            _hover={{ borderColor: 'blue.300', bg: 'blue.50' }}
-                                            borderColor={selectedId === tpl.id.toString() ? 'blue.400' : 'gray.200'}
-                                            bg={selectedId === tpl.id.toString() ? 'blue.50' : 'white'}
+                                            _hover={{ borderColor: hoverBorderColor, bg: selectedBg }}
+                                            borderColor={selectedId === tpl.id.toString() ? selectedBorderColor : borderColor}
+                                            bg={selectedId === tpl.id.toString() ? selectedBg : cardBg}
                                             onClick={() => handleSelectTemplate(tpl.id.toString())}
                                         >
                                             <Flex align="center" gap={3}>
                                                 <Radio value={tpl.id.toString()} />
                                                 <Box flex="1">
-                                                    <Text fontWeight="semibold">{tpl.name}</Text>
+                                                    <Text fontWeight="semibold" color={textColor}>{tpl.name}</Text>
                                                     {tpl.description && (
-                                                        <Text fontSize="xs" color="gray.500">{tpl.description}</Text>
+                                                        <Text fontSize="xs" color={mutedTextColor}>{tpl.description}</Text>
                                                     )}
                                                 </Box>
                                                 <Badge colorScheme="purple" fontSize="xs">{tpl.items?.length || 0} items</Badge>
@@ -148,13 +159,13 @@ const UseComponentTemplateModal: React.FC<UseComponentTemplateModalProps> = ({ i
                                 <>
                                     <Divider />
                                     <Box>
-                                        <Text fontWeight="semibold" mb={2} color="gray.700">Preview komponen:</Text>
+                                        <Text fontWeight="semibold" mb={2} color={textColor}>Preview komponen:</Text>
                                         {loadingPreview ? (
                                             <Flex justify="center" py={4}><Spinner size="sm" /></Flex>
                                         ) : previewTemplate ? (
-                                            <Box overflowX="auto" borderWidth="1px" borderRadius="md" maxH="200px" overflowY="auto">
+                                            <Box overflowX="auto" borderWidth="1px" borderRadius="md" maxH="200px" overflowY="auto" borderColor={borderColor}>
                                                 <Table size="sm" variant="simple">
-                                                    <Thead bg="gray.50" position="sticky" top={0} zIndex={1}>
+                                                    <Thead bg={tableHeadBg} position="sticky" top={0} zIndex={1}>
                                                         <Tr>
                                                             <Th>Material</Th>
                                                             <Th>Category</Th>
@@ -166,7 +177,7 @@ const UseComponentTemplateModal: React.FC<UseComponentTemplateModalProps> = ({ i
                                                         {previewTemplate.items?.map((item, idx) => (
                                                             <Tr key={item.id ?? idx}>
                                                                 <Td>
-                                                                    <Text fontSize="sm">
+                                                                    <Text fontSize="sm" color={textColor}>
                                                                         {item.component_product
                                                                             ? `${item.component_product.code ? item.component_product.code + ' - ' : ''}${item.component_product.name}`
                                                                             : `Product ID: ${item.component_product_id}`}
@@ -189,7 +200,7 @@ const UseComponentTemplateModal: React.FC<UseComponentTemplateModalProps> = ({ i
                         </VStack>
                     )}
                 </ModalBody>
-                <ModalFooter borderTopWidth="1px" bg="gray.50">
+                <ModalFooter borderTopWidth="1px" borderColor={borderColor} bg={footerBg}>
                     <Button variant="ghost" mr={3} onClick={onClose}>Batal</Button>
                     <Button
                         colorScheme="blue"

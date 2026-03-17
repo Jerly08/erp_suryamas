@@ -522,7 +522,7 @@ func (ers *EnhancedReportService) sortCustomersByRevenue(customerMap map[uint]*C
 }
 
 // getSaleItemsForCustomer fetches detailed sale items for a specific customer
-func (ers *EnhancedReportService) getSaleItemsForCustomer(customerID uint, startDate, endDate time.Time) ([]SaleItemDetail, error) {
+func (ers *EnhancedReportService) getSaleItemsForCustomer(customerID uint, startDate, endDate time.Time, projectID *uint) ([]SaleItemDetail, error) {
 	query := `
 		SELECT 
 			COALESCE(si.product_id, 0) as product_id,
@@ -544,8 +544,14 @@ func (ers *EnhancedReportService) getSaleItemsForCustomer(customerID uint, start
 		ORDER BY s.date DESC, si.id
 	`
 
+	args := []interface{}{customerID, startDate, endDate}
+	if projectID != nil {
+		query = strings.Replace(query, "ORDER BY s.date DESC, si.id", "  AND s.project_id = ?\n\t\tORDER BY s.date DESC, si.id", 1)
+		args = append(args, *projectID)
+	}
+
 	var items []SaleItemDetail
-	err := ers.db.Raw(query, customerID, startDate, endDate).Scan(&items).Error
+	err := ers.db.Raw(query, args...).Scan(&items).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query sale items: %w", err)
 	}

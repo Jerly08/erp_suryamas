@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -86,6 +87,9 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 	if request.Date.After(time.Now()) {
 		return nil, fmt.Errorf("payment date cannot be in the future")
 	}
+	if err := CheckClosedPeriod(s.db, request.Date); err != nil {
+		return nil, err
+	}
 
 	log.Printf("🚀 Starting CreateReceivablePayment: ContactID=%d, Amount=%.2f, Allocations=%d",
 		request.ContactID, request.Amount, len(request.Allocations))
@@ -105,6 +109,46 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 	tx := s.db.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %v", tx.Error)
+	}
+
+	var selectedCashBank *models.CashBank
+	cashBankMutation := &cashBankBalanceMutation{
+		NativeAmount:    request.Amount,
+		BookAmountIDR:   request.Amount,
+		Currency:        "IDR",
+		ExchangeRate:    1,
+		TransactionDate: request.Date,
+		Notes:           "Customer payment receipt",
+	}
+
+	if request.CashBankID > 0 {
+		var cashBank models.CashBank
+		if err := tx.First(&cashBank, request.CashBankID).Error; err != nil {
+			return nil, fmt.Errorf("cash/bank account not found: %v", err)
+		}
+
+		normalizedCurrency := normalizeCashBankCurrency(cashBank.Currency)
+		cashBankMutation.Currency = normalizedCurrency
+
+		if normalizedCurrency != "IDR" && normalizedCurrency != "USD" {
+			return nil, fmt.Errorf("sales receivable payment currently only supports IDR and USD cash/bank accounts")
+		}
+
+		if request.ExchangeRate > 0 {
+			cashBankMutation.ExchangeRate = request.ExchangeRate
+		}
+
+		if normalizedCurrency == "USD" {
+			if request.ExchangeRate <= 0 {
+				return nil, fmt.Errorf("exchange rate is required when receiving payment into USD cash/bank account")
+			}
+
+			cashBankMutation.ExchangeRate = request.ExchangeRate
+			cashBankMutation.NativeAmount = request.Amount / request.ExchangeRate
+			cashBankMutation.BookAmountIDR = request.Amount
+		}
+
+		selectedCashBank = &cashBank
 	}
 
 	// Robust transaction handling with automatic rollback
@@ -154,15 +198,30 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 	log.Printf("📝 Step 3: Creating payment record...")
 	stepStart = time.Now()
 	payment := &models.Payment{
-		Code:      code,
-		ContactID: request.ContactID,
-		UserID:    userID,
-		Date:      request.Date,
-		Amount:    request.Amount,
-		Method:    request.Method,
-		Reference: request.Reference,
-		Status:    models.PaymentStatusPending,
-		Notes:     request.Notes,
+		Code:                code,
+		ContactID:           request.ContactID,
+		UserID:              userID,
+		Date:                request.Date,
+		Amount:              request.Amount,
+		NativeAmount:        math.Abs(cashBankMutation.NativeAmount),
+		Currency:            cashBankMutation.Currency,
+		ExchangeRate:        cashBankMutation.ExchangeRate,
+		BookAmountIDR:       math.Abs(cashBankMutation.BookAmountIDR),
+		ForexGainLossAmount: 0,
+		Method:              request.Method,
+		Reference:           request.Reference,
+		Status:              models.PaymentStatusPending,
+		Notes:               request.Notes,
+	}
+	if payment.Currency == "" {
+		payment.Currency = "IDR"
+	}
+	if payment.ExchangeRate <= 0 {
+		if request.ExchangeRate > 0 {
+			payment.ExchangeRate = request.ExchangeRate
+		} else {
+			payment.ExchangeRate = 1
+		}
 	}
 
 	if err := tx.Create(payment).Error; err != nil {
@@ -176,6 +235,8 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 	stepStart = time.Now()
 	remainingAmount := request.Amount
 	totalAllocatedAmount := 0.0 // Track actual allocated amount
+	totalReceivableSettlementBookIDR := 0.0
+	affectedSaleIDs := make(map[uint]struct{})
 
 	for i, allocation := range request.Allocations {
 		if remainingAmount <= 0 {
@@ -253,17 +314,57 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 		}
 		log.Printf("✅ Sale updated successfully")
 
+		affectedSaleIDs[sale.ID] = struct{}{}
+
 		// Create SalePayment cross-reference
+		nativeAmount := allocatedAmount
+		bankBookAmountIDR := allocatedAmount
+		exchangeRate := 1.0
+		currency := "IDR"
+
+		if request.CashBankID > 0 && selectedCashBank != nil {
+			currency = cashBankMutation.Currency
+			exchangeRate = cashBankMutation.ExchangeRate
+			if request.Amount > 0 {
+				bankBookAmountIDR = payment.BookAmountIDR * (allocatedAmount / request.Amount)
+				nativeAmount = cashBankMutation.NativeAmount * (allocatedAmount / request.Amount)
+			}
+		}
+
+		receivableSettlementBookIDR, _, err := calculateSaleReceivableSettlementBookAmount(sale, allocatedAmount, request.ExchangeRate)
+		if err != nil {
+			log.Printf("âŒ Failed to calculate receivable settlement book amount for sale %d: %v", sale.ID, err)
+			return nil, fmt.Errorf("failed to calculate receivable settlement book amount for sale %d: %v", sale.ID, err)
+		}
+		totalReceivableSettlementBookIDR += receivableSettlementBookIDR
+
+		forexDiff := bankBookAmountIDR - receivableSettlementBookIDR
+		forexGainLossAmount := 0.0
+		forexGainLossType := ""
+		if forexDiff > 0.005 {
+			forexGainLossAmount = forexDiff
+			forexGainLossType = "GAIN"
+		} else if forexDiff < -0.005 {
+			forexGainLossAmount = -forexDiff
+			forexGainLossType = "LOSS"
+		}
+
 		salePayment := &models.SalePayment{
-			SaleID:        sale.ID,
-			Amount:        allocatedAmount,
-			PaymentDate:   payment.Date,
-			PaymentMethod: payment.Method,
-			Reference:     fmt.Sprintf("Payment ID: %d", payment.ID),
-			Notes:         fmt.Sprintf("Created from Payment Management - %s", payment.Notes),
-			CashBankID:    &request.CashBankID,
-			UserID:        userID,
-			Status:        models.SalePaymentStatusCompleted,
+			SaleID:              sale.ID,
+			Amount:              allocatedAmount,
+			NativeAmount:        nativeAmount,
+			Currency:            currency,
+			ExchangeRate:        exchangeRate,
+			BookAmountIDR:       bankBookAmountIDR,
+			ForexGainLossAmount: forexGainLossAmount,
+			ForexGainLossType:   forexGainLossType,
+			PaymentDate:         payment.Date,
+			PaymentMethod:       payment.Method,
+			Reference:           fmt.Sprintf("Payment ID: %d", payment.ID),
+			Notes:               fmt.Sprintf("Created from Payment Management - %s", payment.Notes),
+			CashBankID:          &request.CashBankID,
+			UserID:              userID,
+			Status:              models.SalePaymentStatusCompleted,
 		}
 
 		if err := tx.Create(salePayment).Error; err != nil {
@@ -280,13 +381,40 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 	}
 	log.Printf("✅ All allocations processed. Total allocated: %.2f (%.2fms)", totalAllocatedAmount, float64(time.Since(stepStart).Nanoseconds())/1000000)
 
+	for saleID := range affectedSaleIDs {
+		var syncedSale models.Sale
+		if err := tx.First(&syncedSale, saleID).Error; err != nil {
+			log.Printf("warning: failed to reload sale %d for payment schedule sync: %v", saleID, err)
+			return nil, fmt.Errorf("failed to reload sale %d for payment schedule sync: %v", saleID, err)
+		}
+		if err := syncSalePaymentScheduleProgress(tx, &syncedSale); err != nil {
+			log.Printf("warning: failed to sync sale payment schedules for sale %d: %v", saleID, err)
+			return nil, fmt.Errorf("failed to sync sale payment schedules for sale %d: %v", saleID, err)
+		}
+	}
+
+	payment.ForexGainLossAmount = 0
+	payment.ForexGainLossType = ""
+	overallForexDiff := payment.BookAmountIDR - totalReceivableSettlementBookIDR
+	if overallForexDiff > 0.005 {
+		payment.ForexGainLossAmount = overallForexDiff
+		payment.ForexGainLossType = "GAIN"
+	} else if overallForexDiff < -0.005 {
+		payment.ForexGainLossAmount = -overallForexDiff
+		payment.ForexGainLossType = "LOSS"
+	}
+	if err := tx.Save(payment).Error; err != nil {
+		log.Printf("âŒ Failed to update payment forex summary: %v", err)
+		return nil, fmt.Errorf("failed to update payment forex summary: %v", err)
+	}
+
 	// Step 5: Update Cash/Bank balance and record transaction (IN flow)
 	// 🔥 FIX: Use request.Amount (full payment amount) instead of totalAllocatedAmount
 	// Payment record should always reflect the full amount received from customer
 	// Allocation amount is for invoice tracking only, not for cash/bank balance
 	if request.CashBankID > 0 && request.Amount > 0 {
 		log.Printf("🏦 Updating cash/bank balance for receivable payment: amount=%.2f, cashBankID=%d", request.Amount, request.CashBankID)
-		if err := s.updateCashBankBalance(tx, request.CashBankID, request.Amount, "IN", payment.ID, userID); err != nil {
+		if err := s.updateCashBankBalance(tx, request.CashBankID, cashBankMutation.NativeAmount, "IN", payment.ID, userID, cashBankMutation); err != nil {
 			log.Printf("❌ Cash/Bank balance update failed: %v", err)
 			return nil, fmt.Errorf("cash/bank balance update failed: %v", err)
 		}
@@ -366,13 +494,25 @@ func (s *PaymentService) GetSaleByID(saleID uint) (*models.Sale, error) {
 		return nil, fmt.Errorf("sales repository not initialized")
 	}
 
-	return s.salesRepo.FindByID(saleID)
+	sale, err := s.salesRepo.FindByID(saleID)
+	if err != nil {
+		return nil, err
+	}
+
+	hydrateSalePaymentScheduleProgress(sale)
+	return sale, nil
 }
 
 // CreatePayablePayment creates payment for purchases/payables
 func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, userID uint) (*models.Payment, error) {
 	start := time.Now()
 	log.Printf("Starting CreatePayablePayment: ContactID=%d, Amount=%.2f", request.ContactID, request.Amount)
+	if request.Date.IsZero() {
+		return nil, fmt.Errorf("payment date is required")
+	}
+	if err := CheckClosedPeriod(s.db, request.Date); err != nil {
+		return nil, err
+	}
 
 	// Start transaction with timeout
 	tx := s.db.Begin()
@@ -392,6 +532,15 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 	}
 	log.Printf("Vendor validated: %s (ID: %d)", contact.Name, contact.ID)
 
+	cashBankMutation := &cashBankBalanceMutation{
+		NativeAmount:    -request.Amount,
+		BookAmountIDR:   -request.Amount,
+		Currency:        "IDR",
+		ExchangeRate:    1,
+		TransactionDate: request.Date,
+		Notes:           "Vendor payment disbursement",
+	}
+
 	// Check cash/bank balance
 	log.Printf("Checking balance for CashBankID: %d", request.CashBankID)
 	balanceCheckStart := time.Now()
@@ -403,12 +552,40 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 			return nil, errors.New("cash/bank account not found")
 		}
 
-		if cashBank.Balance < request.Amount {
+		normalizedCurrency := normalizeCashBankCurrency(cashBank.Currency)
+		cashBankMutation.Currency = normalizedCurrency
+
+		if normalizedCurrency != "IDR" && normalizedCurrency != "USD" {
 			tx.Rollback()
-			log.Printf("Insufficient balance: Available=%.2f, Required=%.2f", cashBank.Balance, request.Amount)
-			return nil, fmt.Errorf("insufficient balance. Available: %.2f", cashBank.Balance)
+			return nil, fmt.Errorf("payable payment currently only supports IDR and USD cash/bank accounts")
 		}
-		log.Printf("Balance check passed: %.2f available (%.2fms)", cashBank.Balance, float64(time.Since(balanceCheckStart).Nanoseconds())/1000000)
+
+		requiredNativeAmount := request.Amount
+		bookReductionIDR := request.Amount
+		if normalizedCurrency == "USD" {
+			if request.ExchangeRate <= 0 {
+				tx.Rollback()
+				return nil, fmt.Errorf("exchange rate is required when paying from USD cash/bank account")
+			}
+
+			requiredNativeAmount = request.Amount / request.ExchangeRate
+			calculatedBookReductionIDR, _, err := calculatePaymentReductionBookAmount(cashBank, requiredNativeAmount)
+			if err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to calculate USD carrying book amount: %v", err)
+			}
+			bookReductionIDR = calculatedBookReductionIDR
+			cashBankMutation.NativeAmount = -requiredNativeAmount
+			cashBankMutation.BookAmountIDR = -bookReductionIDR
+			cashBankMutation.ExchangeRate = request.ExchangeRate
+		}
+
+		if cashBank.Balance < requiredNativeAmount {
+			tx.Rollback()
+			log.Printf("Insufficient balance: Available=%.6f, Required=%.6f (%s)", cashBank.Balance, requiredNativeAmount, normalizedCurrency)
+			return nil, fmt.Errorf("insufficient balance. Available: %.6f, Required: %.6f", cashBank.Balance, requiredNativeAmount)
+		}
+		log.Printf("Balance check passed: %.6f available (%s) (%.2fms)", cashBank.Balance, normalizedCurrency, float64(time.Since(balanceCheckStart).Nanoseconds())/1000000)
 	}
 
 	// Generate payment code (prefix from settings)
@@ -424,15 +601,40 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 
 	// Create payment record
 	payment := &models.Payment{
-		Code:      code,
-		ContactID: request.ContactID,
-		UserID:    userID,
-		Date:      request.Date,
-		Amount:    request.Amount,
-		Method:    request.Method,
-		Reference: request.Reference,
-		Status:    models.PaymentStatusPending,
-		Notes:     request.Notes,
+		Code:          code,
+		ContactID:     request.ContactID,
+		UserID:        userID,
+		Date:          request.Date,
+		Amount:        request.Amount,
+		NativeAmount:  math.Abs(cashBankMutation.NativeAmount),
+		Currency:      cashBankMutation.Currency,
+		ExchangeRate:  cashBankMutation.ExchangeRate,
+		BookAmountIDR: math.Abs(cashBankMutation.BookAmountIDR),
+		Method:        request.Method,
+		Reference:     request.Reference,
+		Status:        models.PaymentStatusPending,
+		Notes:         request.Notes,
+	}
+	if payment.Currency == "" {
+		payment.Currency = "IDR"
+	}
+	if payment.ExchangeRate <= 0 {
+		if request.ExchangeRate > 0 {
+			payment.ExchangeRate = request.ExchangeRate
+		} else {
+			payment.ExchangeRate = 1
+		}
+	}
+	if payment.BookAmountIDR == 0 {
+		payment.BookAmountIDR = request.Amount
+	}
+	forexDiff := payment.BookAmountIDR - payment.Amount
+	if forexDiff > 0.005 {
+		payment.ForexGainLossAmount = forexDiff
+		payment.ForexGainLossType = "LOSS"
+	} else if forexDiff < -0.005 {
+		payment.ForexGainLossAmount = -forexDiff
+		payment.ForexGainLossType = "GAIN"
 	}
 
 	if err := tx.Create(payment).Error; err != nil {
@@ -513,7 +715,7 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 	if request.CashBankID > 0 {
 		log.Printf("🏦 Updating cash/bank balance for payable payment: amount=%.2f, cashBankID=%d", request.Amount, request.CashBankID)
 		// For payable (outgoing) payments, pass negative amount and direction OUT
-		if err := s.updateCashBankBalance(tx, request.CashBankID, -request.Amount, "OUT", payment.ID, userID); err != nil {
+		if err := s.updateCashBankBalance(tx, request.CashBankID, cashBankMutation.NativeAmount, "OUT", payment.ID, userID, cashBankMutation); err != nil {
 			log.Printf("❌ Cash/Bank balance update failed: %v", err)
 			tx.Rollback()
 			return nil, fmt.Errorf("cash/bank balance update failed: %v", err)
@@ -568,14 +770,39 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 }
 
 // updateCashBankBalance updates cash/bank balance and creates transaction record
-func (s *PaymentService) updateCashBankBalance(tx *gorm.DB, cashBankID uint, amount float64, direction string, referenceID uint, userID uint) error {
+func (s *PaymentService) updateCashBankBalance(tx *gorm.DB, cashBankID uint, amount float64, direction string, referenceID uint, userID uint, mutation *cashBankBalanceMutation) error {
+	guard := NewCashBankCurrencyGuard(s.db)
 	var cashBank models.CashBank
 	if err := tx.First(&cashBank, cashBankID).Error; err != nil {
 		return fmt.Errorf("cash/bank account not found: %v", err)
 	}
 
-	log.Printf("Updating Cash/Bank Balance: ID=%d, Name=%s, CurrentBalance=%.2f, Amount=%.2f, Direction=%s",
-		cashBankID, cashBank.Name, cashBank.Balance, amount, direction)
+	appliedMutation := mutation
+	if appliedMutation == nil {
+		appliedMutation = &cashBankBalanceMutation{
+			NativeAmount:    amount,
+			BookAmountIDR:   amount,
+			Currency:        normalizeCashBankCurrency(cashBank.Currency),
+			ExchangeRate:    1,
+			TransactionDate: time.Now(),
+			Notes:           fmt.Sprintf("Payment %s", direction),
+		}
+	}
+	if appliedMutation.TransactionDate.IsZero() {
+		appliedMutation.TransactionDate = time.Now()
+	}
+	if err := CheckClosedPeriod(tx, appliedMutation.TransactionDate); err != nil {
+		return err
+	}
+	if appliedMutation.Currency == "" {
+		appliedMutation.Currency = normalizeCashBankCurrency(cashBank.Currency)
+	}
+	if appliedMutation.Notes == "" {
+		appliedMutation.Notes = fmt.Sprintf("Payment %s", direction)
+	}
+
+	log.Printf("Updating Cash/Bank Balance: ID=%d, Name=%s, CurrentNative=%.6f, NativeDelta=%.6f, BookDeltaIDR=%.2f, Direction=%s, Currency=%s",
+		cashBankID, cashBank.Name, cashBank.Balance, amount, appliedMutation.BookAmountIDR, direction, appliedMutation.Currency)
 
 	// For receivable payments (IN), amount should be positive, balance increases
 	// For payable payments (OUT), amount should be negative, balance decreases
@@ -588,17 +815,29 @@ func (s *PaymentService) updateCashBankBalance(tx *gorm.DB, cashBankID uint, amo
 		}
 	}
 
-	// Update balance
 	newBalance := cashBank.Balance + amount
-
-	// Final safety check - balance should never go negative
 	if newBalance < 0 {
-		return fmt.Errorf("transaction would result in negative balance. Current: %.2f, Change: %.2f, Result: %.2f",
+		return fmt.Errorf("transaction would result in negative balance. Current: %.6f, Change: %.6f, Result: %.6f",
 			cashBank.Balance, amount, newBalance)
 	}
 
+	newBookBalanceIDR := cashBank.BookBalanceIDR + appliedMutation.BookAmountIDR
+	if !cashBank.IsForeignCurrency() {
+		newBookBalanceIDR = newBalance
+	}
+	if newBookBalanceIDR < 0 {
+		return fmt.Errorf("transaction would result in negative book balance. Current: %.2f, Change: %.2f, Result: %.2f",
+			cashBank.BookBalanceIDR, appliedMutation.BookAmountIDR, newBookBalanceIDR)
+	}
+
 	cashBank.Balance = newBalance
-	log.Printf("Balance updated successfully: %.2f -> %.2f", cashBank.Balance-amount, cashBank.Balance)
+	if cashBank.IsForeignCurrency() {
+		cashBank.BookBalanceIDR = newBookBalanceIDR
+		if appliedMutation.ExchangeRate > 0 {
+			cashBank.LastExchangeRate = appliedMutation.ExchangeRate
+		}
+	}
+	log.Printf("Balance updated successfully: native=%.6f, book_idr=%.2f", cashBank.Balance, cashBank.EffectiveBookBalanceIDR())
 
 	if err := tx.Save(&cashBank).Error; err != nil {
 		return err
@@ -607,7 +846,7 @@ func (s *PaymentService) updateCashBankBalance(tx *gorm.DB, cashBankID uint, amo
 	// ✅ CRITICAL: Sync linked COA account balance to maintain COA <> CashBank consistency
 	if cashBank.AccountID > 0 {
 		if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
-			newBalance, cashBank.AccountID).Error; err != nil {
+			cashBank.EffectiveBookBalanceIDR(), cashBank.AccountID).Error; err != nil {
 			log.Printf("⚠️ Warning: Failed to sync COA balance for GL account %d: %v", cashBank.AccountID, err)
 		} else {
 			log.Printf("🔄 Synced COA balance for GL account %d to %.2f", cashBank.AccountID, newBalance)
@@ -619,13 +858,20 @@ func (s *PaymentService) updateCashBankBalance(tx *gorm.DB, cashBankID uint, amo
 		CashBankID:      cashBankID,
 		ReferenceType:   "PAYMENT",
 		ReferenceID:     referenceID,
-		Amount:          amount,
+		Amount:          appliedMutation.NativeAmount,
+		Currency:        appliedMutation.Currency,
+		ExchangeRate:    appliedMutation.ExchangeRate,
+		BookAmountIDR:   appliedMutation.BookAmountIDR,
 		BalanceAfter:    cashBank.Balance,
-		TransactionDate: time.Now(),
-		Notes:           fmt.Sprintf("Payment %s", direction),
+		TransactionDate: appliedMutation.TransactionDate,
+		Notes:           appliedMutation.Notes,
 	}
 
-	return tx.Create(transaction).Error
+	if err := tx.Create(transaction).Error; err != nil {
+		return err
+	}
+
+	return guard.EnforceAfterTransaction(tx, cashBankID)
 }
 
 // createLegacyPayableJournalInTx creates legacy COA journal for vendor payable payment (AP↓, Bank↓)
@@ -945,7 +1191,12 @@ func (s *PaymentService) cancelPaymentTransaction(tx *gorm.DB, payment *models.P
 					sale.Status = models.SaleStatusInvoiced
 				}
 
-				tx.Save(&sale)
+				if err := tx.Save(&sale).Error; err != nil {
+					return fmt.Errorf("failed to reverse sale payment allocation: %v", err)
+				}
+				if err := syncSalePaymentScheduleProgress(tx, &sale); err != nil {
+					return fmt.Errorf("failed to sync sale payment schedules during payment cancellation: %v", err)
+				}
 			}
 		}
 
@@ -1266,11 +1517,50 @@ type PaymentCreateRequest struct {
 	CashBankID      uint                `json:"cash_bank_id"`
 	Date            time.Time           `json:"date" binding:"required"`
 	Amount          float64             `json:"amount" binding:"required,min=0"`
+	ExchangeRate    float64             `json:"exchange_rate"`
 	Method          string              `json:"method" binding:"required"`
 	Reference       string              `json:"reference"`
 	Notes           string              `json:"notes"`
 	Allocations     []InvoiceAllocation `json:"allocations"`
 	BillAllocations []BillAllocation    `json:"bill_allocations"`
+}
+
+type cashBankBalanceMutation struct {
+	NativeAmount    float64
+	BookAmountIDR   float64
+	Currency        string
+	ExchangeRate    float64
+	TransactionDate time.Time
+	Notes           string
+}
+
+func calculatePaymentReductionBookAmount(account *models.CashBank, nativeAmount float64) (float64, float64, error) {
+	if account == nil {
+		return 0, 0, fmt.Errorf("cash/bank account is required")
+	}
+	if !account.IsForeignCurrency() {
+		return nativeAmount, 1, nil
+	}
+	if nativeAmount <= 0 {
+		return 0, 0, fmt.Errorf("native amount must be greater than zero")
+	}
+	if account.Balance <= 0 {
+		return 0, 0, fmt.Errorf("foreign currency balance is not available")
+	}
+	if nativeAmount-account.Balance > 0.000001 {
+		return 0, 0, fmt.Errorf("native amount %.6f exceeds available balance %.6f", nativeAmount, account.Balance)
+	}
+
+	bookBalance := account.EffectiveBookBalanceIDR()
+	carryRate := 0.0
+	if bookBalance > 0 {
+		carryRate = bookBalance / account.Balance
+	}
+	bookAmountIDR := bookBalance * (nativeAmount / account.Balance)
+	if bookAmountIDR > bookBalance {
+		bookAmountIDR = bookBalance
+	}
+	return bookAmountIDR, carryRate, nil
 }
 
 type InvoiceAllocation struct {
@@ -1303,6 +1593,8 @@ func (s *PaymentService) GetUnpaidInvoices(customerID uint) ([]OutstandingInvoic
 			Date:              sale.Date.Format("2006-01-02"),
 			TotalAmount:       sale.TotalAmount,
 			OutstandingAmount: sale.OutstandingAmount,
+			Currency:          sale.Currency,
+			ExchangeRate:      sale.ExchangeRate,
 		}
 
 		// Add due date if available (sales usually don't have due date, but we can calculate it)
@@ -1362,6 +1654,8 @@ type OutstandingInvoice struct {
 	Date              string  `json:"date"`
 	TotalAmount       float64 `json:"total_amount"`
 	OutstandingAmount float64 `json:"outstanding_amount"`
+	Currency          string  `json:"currency,omitempty"`
+	ExchangeRate      float64 `json:"exchange_rate,omitempty"`
 	DueDate           *string `json:"due_date,omitempty"`
 }
 

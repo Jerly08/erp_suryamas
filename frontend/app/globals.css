@@ -444,6 +444,50 @@ body {
   background-color: var(--bg-tertiary) !important;
 }
 
+/* Toast styling aligned with light/dark theme */
+[id^='chakra-toast-manager'] .chakra-alert {
+  background-color: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--shadow-hover) !important;
+  backdrop-filter: blur(12px);
+}
+
+[id^='chakra-toast-manager'] .chakra-alert__title {
+  color: var(--text-primary) !important;
+  font-weight: 600 !important;
+}
+
+[id^='chakra-toast-manager'] .chakra-alert__desc {
+  color: var(--text-secondary) !important;
+}
+
+[id^='chakra-toast-manager'] .chakra-alert__icon,
+[id^='chakra-toast-manager'] .chakra-alert__spinner {
+  color: inherit !important;
+}
+
+[id^='chakra-toast-manager'] button[aria-label='Close'] {
+  color: var(--text-secondary) !important;
+}
+
+[id^='chakra-toast-manager'] .chakra-alert[data-status='success'] {
+  border-left: 4px solid #38a169 !important;
+}
+
+[id^='chakra-toast-manager'] .chakra-alert[data-status='error'] {
+  border-left: 4px solid #e53e3e !important;
+}
+
+[id^='chakra-toast-manager'] .chakra-alert[data-status='warning'] {
+  border-left: 4px solid #dd6b20 !important;
+}
+
+[id^='chakra-toast-manager'] .chakra-alert[data-status='info'] {
+  border-left: 4px solid #3182ce !important;
+}
+
 /* Ensure table cells don't clip dropdown content */
 .table td {
   position: relative;

@@ -126,16 +126,23 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
     }
   };
 
+  const translateOrFallback = (key: string, fallback: string) => {
+    const translated = t(key);
+    return translated === key ? fallback : translated;
+  };
+
   const getStatusLabel = (status: string) => {
     const statusKey = status.toLowerCase();
     const translationKey = `purchases.statuses.${statusKey}`;
-    return t(translationKey);
+    const fallback = status.replace(/_/g, ' ').toUpperCase();
+    return translateOrFallback(translationKey, fallback);
   };
 
   const getApprovalStatusLabel = (approvalStatus: string) => {
     const statusKey = (approvalStatus || '').toLowerCase();
     const translationKey = `purchases.approvalStatuses.${statusKey}`;
-    return t(translationKey);
+    const fallback = (approvalStatus || '').replace(/_/g, ' ').toUpperCase() || '-';
+    return translateOrFallback(translationKey, fallback);
   };
 
   return (
@@ -162,16 +169,16 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
             <Table variant="simple" size="md" className="table">
               <Thead bg={theadBg}>
                 <Tr>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.purchaseNumber')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.vendor')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.purchaseNumber', 'PURCHASE #')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.vendor', 'VENDOR')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">PR / Project</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.date')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.total')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.paidAmount')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.outstanding')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.status')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{t('purchases.table.approvalStatus')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold" textAlign="center">{t('purchases.table.actions')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.date', 'DATE')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.total', 'TOTAL')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.paidAmount', 'PAID AMOUNT')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.outstanding', 'OUTSTANDING')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.status', 'STATUS')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.approvalStatus', 'APPROVAL STATUS')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold" textAlign="center">{translateOrFallback('purchases.table.actions', 'ACTIONS')}</Th>
                 </Tr>
               </Thead>
               <Tbody>

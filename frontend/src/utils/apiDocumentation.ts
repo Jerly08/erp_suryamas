@@ -12,7 +12,6 @@ import { validateAllEndpoints, validateCriticalEndpoints } from './apiValidation
 export const SWAGGER_ENDPOINTS = {
   // Admin
   ADMIN_CHECK_CASHBANK_GL: '/api/admin/check-cashbank-gl-links',
-  ADMIN_FIX_CASHBANK_GL: '/api/admin/fix-cashbank-gl-links',
 
   // CashBank (legacy group under v1)
   CASHBANK_ACCOUNTS: '/api/v1/cashbank/accounts',
@@ -28,7 +27,6 @@ export const SWAGGER_ENDPOINTS = {
   MONITORING_BALANCE_HEALTH: '/api/monitoring/balance-health',
   MONITORING_BALANCE_SYNC: '/api/monitoring/balance-sync',
   MONITORING_DISCREPANCIES: '/api/monitoring/discrepancies',
-  MONITORING_FIX_DISCREPANCIES: '/api/monitoring/fix-discrepancies',
   MONITORING_SYNC_STATUS: '/api/monitoring/sync-status',
 
   // Payment Integration
@@ -330,7 +328,6 @@ export function generateUpdatedAPIEndpoints(): string {
     MONITORING_BALANCE_HEALTH: SWAGGER_ENDPOINTS.MONITORING_BALANCE_HEALTH,
     MONITORING_BALANCE_SYNC: SWAGGER_ENDPOINTS.MONITORING_BALANCE_SYNC,
     MONITORING_DISCREPANCIES: SWAGGER_ENDPOINTS.MONITORING_DISCREPANCIES,
-    MONITORING_FIX_DISCREPANCIES: SWAGGER_ENDPOINTS.MONITORING_FIX_DISCREPANCIES,
     MONITORING_SYNC_STATUS: SWAGGER_ENDPOINTS.MONITORING_SYNC_STATUS,
     
     // Payments - Grouped for better organization

@@ -5,6 +5,7 @@ import (
 	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/services"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,62 +23,94 @@ type AssetController struct {
 }
 
 type AssetCreateRequest struct {
-	Code               string    `json:"code"`
-	Name               string    `json:"name" binding:"required"`
-	CategoryID         *uint     `json:"category_id"`
-	Category           string    `json:"category" binding:"required"`
-	Status             string    `json:"status"`
-	PurchaseDate       time.Time `json:"purchase_date" binding:"required"`
-	PurchasePrice      float64   `json:"purchase_price" binding:"required,gt=0"`
-	SalvageValue       float64   `json:"salvage_value"`
-	UsefulLife         int       `json:"useful_life" binding:"gt=0"`
-	DepreciationMethod string    `json:"depreciation_method"`
-	IsActive           bool      `json:"is_active"`
-	Notes              string    `json:"notes"`
-	Location           string    `json:"location"`
-	Coordinates        string    `json:"coordinates"`
-	SerialNumber       string    `json:"serial_number"`
-	Condition          string    `json:"condition"`
-	AssetAccountID     *uint     `json:"asset_account_id"`
-	DepreciationAccountID *uint  `json:"depreciation_account_id"`
-	AccumulatedDepreciationAccountID *uint `json:"accumulated_depreciation_account_id"`
-	PaymentMethod      string    `json:"payment_method"` // CASH, BANK, CREDIT
-	PaymentAccountID   *uint     `json:"payment_account_id"` // Specific CASH/BANK account
-	CreditAccountID    *uint     `json:"credit_account_id"`  // Specific LIABILITY account
-	UserID             uint      `json:"user_id" binding:"required"`
+	Code                             string    `json:"code"`
+	Name                             string    `json:"name" binding:"required"`
+	CategoryID                       *uint     `json:"category_id"`
+	Category                         string    `json:"category" binding:"required"`
+	Status                           string    `json:"status"`
+	PurchaseDate                     time.Time `json:"purchase_date" binding:"required"`
+	PurchasePrice                    float64   `json:"purchase_price" binding:"required,gt=0"`
+	SalvageValue                     float64   `json:"salvage_value"`
+	UsefulLife                       int       `json:"useful_life" binding:"gte=0"`
+	DepreciationMethod               string    `json:"depreciation_method"`
+	IsActive                         bool      `json:"is_active"`
+	Notes                            string    `json:"notes"`
+	Location                         string    `json:"location"`
+	Coordinates                      string    `json:"coordinates"`
+	SerialNumber                     string    `json:"serial_number"`
+	Condition                        string    `json:"condition"`
+	AssetAccountID                   *uint     `json:"asset_account_id"`
+	DepreciationAccountID            *uint     `json:"depreciation_account_id"`
+	AccumulatedDepreciationAccountID *uint     `json:"accumulated_depreciation_account_id"`
+	OpeningAccumulatedDepreciation   float64   `json:"opening_accumulated_depreciation"`
+	PaymentMethod                    string    `json:"payment_method"`     // CASH, BANK, CREDIT
+	PaymentAccountID                 *uint     `json:"payment_account_id"` // Specific CASH/BANK account
+	CreditAccountID                  *uint     `json:"credit_account_id"`  // Specific LIABILITY account
+	UserID                           uint      `json:"user_id" binding:"required"`
 }
 
 type AssetUpdateRequest struct {
-	Name               string    `json:"name" binding:"required"`
-	CategoryID         *uint     `json:"category_id"`
-	Category           string    `json:"category" binding:"required"`
-	Status             string    `json:"status"`
-	PurchaseDate       time.Time `json:"purchase_date" binding:"required"`
-	PurchasePrice      float64   `json:"purchase_price" binding:"required,gt=0"`
-	SalvageValue       float64   `json:"salvage_value"`
-	UsefulLife         int       `json:"useful_life" binding:"gt=0"`
-	DepreciationMethod string    `json:"depreciation_method"`
-	IsActive           bool      `json:"is_active"`
-	Notes              string    `json:"notes"`
-	Location           string    `json:"location"`
-	Coordinates        string    `json:"coordinates"`
-	SerialNumber       string    `json:"serial_number"`
-	Condition          string    `json:"condition"`
-	AssetAccountID     *uint     `json:"asset_account_id"`
-	DepreciationAccountID *uint  `json:"depreciation_account_id"`
-	AccumulatedDepreciationAccountID *uint `json:"accumulated_depreciation_account_id"`
+	Name                             string    `json:"name" binding:"required"`
+	CategoryID                       *uint     `json:"category_id"`
+	Category                         string    `json:"category" binding:"required"`
+	Status                           string    `json:"status"`
+	PurchaseDate                     time.Time `json:"purchase_date" binding:"required"`
+	PurchasePrice                    float64   `json:"purchase_price" binding:"required,gt=0"`
+	SalvageValue                     float64   `json:"salvage_value"`
+	UsefulLife                       int       `json:"useful_life" binding:"gte=0"`
+	DepreciationMethod               string    `json:"depreciation_method"`
+	IsActive                         bool      `json:"is_active"`
+	Notes                            string    `json:"notes"`
+	Location                         string    `json:"location"`
+	Coordinates                      string    `json:"coordinates"`
+	SerialNumber                     string    `json:"serial_number"`
+	Condition                        string    `json:"condition"`
+	AssetAccountID                   *uint     `json:"asset_account_id"`
+	DepreciationAccountID            *uint     `json:"depreciation_account_id"`
+	AccumulatedDepreciationAccountID *uint     `json:"accumulated_depreciation_account_id"`
 }
 
 func NewAssetController(db *gorm.DB) *AssetController {
 	assetRepo := repositories.NewAssetRepository(db)
 	assetService := services.NewAssetService(assetRepo, db)
 	assetJournalSvc := services.NewAssetJournalServiceSSOT(db)
-	
+
 	return &AssetController{
 		assetService:    assetService,
 		db:              db,
 		assetJournalSvc: assetJournalSvc,
 	}
+}
+
+func assetFloatChanged(current, next float64) bool {
+	return math.Abs(current-next) > 0.0001
+}
+
+func sameAssetDate(current, next time.Time) bool {
+	return current.Format("2006-01-02") == next.Format("2006-01-02")
+}
+
+func sameUintPointer(current, next *uint) bool {
+	if current == nil && next == nil {
+		return true
+	}
+	if current == nil || next == nil {
+		return false
+	}
+	return *current == *next
+}
+
+func isPurchaseLinkedAsset(asset *models.Asset) bool {
+	return strings.Contains(asset.Notes, "Auto-created from Purchase")
+}
+
+func (ac *AssetController) hasPostedAssetJournal(assetID uint, sourceTypes ...string) (bool, error) {
+	var count int64
+	err := ac.db.Model(&models.SSOTJournalEntry{}).
+		Where("source_id = ? AND status = ? AND deleted_at IS NULL", assetID, "POSTED").
+		Where("source_type IN ?", sourceTypes).
+		Count(&count).Error
+	return count > 0, err
 }
 
 // GetAssets retrieves all assets with optional filtering
@@ -135,34 +168,39 @@ func (ac *AssetController) CreateAsset(c *gin.Context) {
 
 	// Convert request to asset model
 	asset := &models.Asset{
-		Code:                  req.Code,
-		Name:                  req.Name,
-		CategoryID:            req.CategoryID,
-		Category:              req.Category,
-		Status:                req.Status,
-		PurchaseDate:          req.PurchaseDate,
-		PurchasePrice:         req.PurchasePrice,
-		SalvageValue:          req.SalvageValue,
-		UsefulLife:            req.UsefulLife,
-		DepreciationMethod:    req.DepreciationMethod,
-		IsActive:              req.IsActive,
-		Notes:                 req.Notes,
-		Location:              req.Location,
-		Coordinates:           req.Coordinates,
-		MapsURL:               generateMapsURL(req.Coordinates),
-		SerialNumber:          req.SerialNumber,
-		Condition:             req.Condition,
-		AssetAccountID:        req.AssetAccountID,
-		DepreciationAccountID: req.DepreciationAccountID,
+		Code:                             req.Code,
+		Name:                             req.Name,
+		CategoryID:                       req.CategoryID,
+		Category:                         req.Category,
+		Status:                           req.Status,
+		PurchaseDate:                     req.PurchaseDate,
+		PurchasePrice:                    req.PurchasePrice,
+		SalvageValue:                     req.SalvageValue,
+		UsefulLife:                       req.UsefulLife,
+		DepreciationMethod:               req.DepreciationMethod,
+		IsActive:                         req.IsActive,
+		Notes:                            req.Notes,
+		Location:                         req.Location,
+		Coordinates:                      req.Coordinates,
+		MapsURL:                          generateMapsURL(req.Coordinates),
+		SerialNumber:                     req.SerialNumber,
+		Condition:                        req.Condition,
+		AssetAccountID:                   req.AssetAccountID,
+		DepreciationAccountID:            req.DepreciationAccountID,
 		AccumulatedDepreciationAccountID: req.AccumulatedDepreciationAccountID,
+		OpeningAccumulatedDepreciation:   req.OpeningAccumulatedDepreciation,
+		AccumulatedDepreciation:          req.OpeningAccumulatedDepreciation,
 	}
 
 	// Set defaults
 	if asset.Status == "" {
 		asset.Status = models.AssetStatusActive
 	}
-	if !asset.IsActive {
+	switch asset.Status {
+	case models.AssetStatusActive:
 		asset.IsActive = true
+	default:
+		asset.IsActive = false
 	}
 
 	// Default payment method if not provided
@@ -197,12 +235,12 @@ func (ac *AssetController) CapitalizeAsset(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Amount              float64   `json:"amount" binding:"required,gt=0"`
+		Amount              float64    `json:"amount" binding:"required,gt=0"`
 		Date                *time.Time `json:"date"`
-		Description         string    `json:"description"`
-		Reference           string    `json:"reference"`
-		SourceAccountID     *uint     `json:"source_account_id"`
-		FixedAssetAccountID *uint     `json:"fixed_asset_account_id"`
+		Description         string     `json:"description"`
+		Reference           string     `json:"reference"`
+		SourceAccountID     *uint      `json:"source_account_id"`
+		FixedAssetAccountID *uint      `json:"fixed_asset_account_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data", "details": err.Error()})
@@ -292,6 +330,44 @@ func (ac *AssetController) UpdateAsset(c *gin.Context) {
 			"details": err.Error(),
 		})
 		return
+	}
+
+	acquisitionFieldsChanged := assetFloatChanged(existingAsset.PurchasePrice, req.PurchasePrice) ||
+		existingAsset.Category != req.Category ||
+		!sameAssetDate(existingAsset.PurchaseDate, req.PurchaseDate) ||
+		(req.AssetAccountID != nil && !sameUintPointer(existingAsset.AssetAccountID, req.AssetAccountID))
+
+	depreciationFieldsChanged := assetFloatChanged(existingAsset.SalvageValue, req.SalvageValue) ||
+		existingAsset.UsefulLife != req.UsefulLife ||
+		existingAsset.DepreciationMethod != req.DepreciationMethod ||
+		!sameAssetDate(existingAsset.PurchaseDate, req.PurchaseDate)
+
+	if acquisitionFieldsChanged {
+		hasAssetJournal, journalErr := ac.hasPostedAssetJournal(uint(id), models.SSOTSourceTypeAsset, models.SSOTSourceTypeOpening)
+		if journalErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate asset journals", "details": journalErr.Error()})
+			return
+		}
+		if hasAssetJournal || isPurchaseLinkedAsset(existingAsset) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Nilai perolehan, tanggal perolehan, kategori, atau akun aset tidak bisa diubah karena jurnal perolehan sudah ada. Gunakan jurnal adjustment jika perlu koreksi.",
+			})
+			return
+		}
+	}
+
+	if depreciationFieldsChanged {
+		hasDepreciationJournal, journalErr := ac.hasPostedAssetJournal(uint(id), models.SSOTSourceTypeDepreciation)
+		if journalErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate depreciation journals", "details": journalErr.Error()})
+			return
+		}
+		if hasDepreciationJournal {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Masa manfaat, nilai sisa, metode penyusutan, atau tanggal dasar penyusutan tidak bisa diubah setelah jurnal penyusutan terposting.",
+			})
+			return
+		}
 	}
 
 	// Update fields
@@ -500,15 +576,15 @@ func (ac *AssetController) CalculateCurrentDepreciation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Depreciation calculated successfully",
 		"data": gin.H{
-			"asset_id":                    asset.ID,
-			"asset_name":                  asset.Name,
-			"as_of_date":                  asOfDate.Format("2006-01-02"),
-			"purchase_price":              asset.PurchasePrice,
-			"salvage_value":               asset.SalvageValue,
-			"accumulated_depreciation":    depreciation,
-			"current_book_value":          currentBookValue,
-			"depreciation_method":         asset.DepreciationMethod,
-		"useful_life_years":           asset.UsefulLife,
+			"asset_id":                 asset.ID,
+			"asset_name":               asset.Name,
+			"as_of_date":               asOfDate.Format("2006-01-02"),
+			"purchase_price":           asset.PurchasePrice,
+			"salvage_value":            asset.SalvageValue,
+			"accumulated_depreciation": depreciation,
+			"current_book_value":       currentBookValue,
+			"depreciation_method":      asset.DepreciationMethod,
+			"useful_life_years":        asset.UsefulLife,
 		},
 	})
 }
@@ -583,10 +659,10 @@ func (ac *AssetController) UploadAssetImage(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Image uploaded successfully",
+		"message":  "Image uploaded successfully",
 		"filename": filename,
-		"path": relativeImagePath,
-		"asset": asset,
+		"path":     relativeImagePath,
+		"asset":    asset,
 	})
 }
 
@@ -637,7 +713,7 @@ func (ac *AssetController) CreateAssetCategory(c *gin.Context) {
 		FixedAssetAccountCode:              req.FixedAssetAccountCode,
 		AccumulatedDepreciationAccountCode: req.AccumulatedDepreciationAccountCode,
 	}
-	
+
 	// Set default IsActive to true if not specified
 	if !req.IsActive {
 		category.IsActive = true
@@ -774,13 +850,13 @@ func generateMapsURL(coordinates string) string {
 	if coordinates == "" {
 		return ""
 	}
-	
+
 	// Validate coordinate format (lat,lng)
 	parts := strings.Split(coordinates, ",")
 	if len(parts) != 2 {
 		return ""
 	}
-	
+
 	// Generate Google Maps URL
 	return fmt.Sprintf("https://www.google.com/maps?q=%s", coordinates)
 }

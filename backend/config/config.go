@@ -171,6 +171,15 @@ func LoadConfig() *Config {
 		}
 	}
 
+	if config.Environment == "production" {
+		if config.JWTRefreshSecret == generateDefaultSecret() {
+			log.Fatal("FATAL: Using default refresh JWT secret in production! Please set JWT_REFRESH_SECRET")
+		}
+		if config.SessionSecret == generateDefaultSecret() {
+			log.Fatal("FATAL: Using default session secret in production! Please set SESSION_SECRET")
+		}
+	}
+
 	return config
 }
 

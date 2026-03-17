@@ -284,6 +284,20 @@ func (h *CashBankHandler) GetDepositSourceAccounts(c *gin.Context) {
 	}))
 }
 
+// GetReferenceExchangeRate handles GET /api/cash-bank/reference-rate
+func (h *CashBankHandler) GetReferenceExchangeRate(c *gin.Context) {
+	baseCurrency := c.DefaultQuery("base", "USD")
+	targetCurrency := c.DefaultQuery("target", "IDR")
+
+	rate, err := h.cashBankService.GetReferenceExchangeRate(baseCurrency, targetCurrency)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, utils.CreateErrorResponse("Failed to retrieve exchange rate reference", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Exchange rate reference retrieved successfully", rate))
+}
+
 // ReconcileAccount handles POST /api/cash-bank/accounts/:id/reconcile
 func (h *CashBankHandler) ReconcileAccount(c *gin.Context) {
 	accountID, err := strconv.ParseUint(c.Param("id"), 10, 32)

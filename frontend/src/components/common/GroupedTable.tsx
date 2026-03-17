@@ -17,10 +17,9 @@ import {
   Text,
   Badge,
   Box,
-  Divider,
   Collapse,
-  useDisclosure,
   IconButton,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiChevronDown, FiChevronRight } from 'react-icons/fi';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -64,6 +63,17 @@ function GroupedTable<T>({
 }: GroupedTableProps<T>) {
   const { t } = useTranslation();
   const [groups, setGroups] = React.useState<Record<string, Group<T>>>({});
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const cardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
+  const groupHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const groupHeaderHoverBg = useColorModeValue('gray.100', 'whiteAlpha.200');
+  const groupHeaderTextColor = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const tableHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const tableHeaderTextColor = useColorModeValue('gray.700', 'whiteAlpha.800');
+  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const tableBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
 
   React.useEffect(() => {
     // Group data by the specified field
@@ -149,16 +159,20 @@ function GroupedTable<T>({
 
   if (isLoading) {
     return (
-      <Card>
+      <Card bg={cardBg} borderColor={cardBorderColor} variant="outline">
         {title && (
-          <CardHeader>
-            <Heading size="md">{title}</Heading>
+          <CardHeader borderBottomWidth="1px" borderColor={cardBorderColor}>
+            <Heading size="md" color={headingColor}>
+              {title}
+            </Heading>
           </CardHeader>
         )}
         <CardBody>
           <Flex justify="center" align="center" py={8}>
             <Spinner size="lg" color="brand.500" />
-            <Text ml={4}>{t('common.loading')}</Text>
+            <Text ml={4} color={mutedTextColor}>
+              {t('common.loading')}
+            </Text>
           </Flex>
         </CardBody>
       </Card>
@@ -168,16 +182,18 @@ function GroupedTable<T>({
   const sortedGroups = Object.values(groups).sort((a, b) => a.key.localeCompare(b.key));
 
   return (
-    <Card>
+    <Card bg={cardBg} borderColor={cardBorderColor} variant="outline">
       {title && (
-        <CardHeader>
-          <Heading size="md">{title}</Heading>
+        <CardHeader borderBottomWidth="1px" borderColor={cardBorderColor}>
+          <Heading size="md" color={headingColor}>
+            {title}
+          </Heading>
         </CardHeader>
       )}
       <CardBody p={0}>
         {data.length === 0 ? (
           <Flex justify="center" align="center" py={8}>
-            <Text color="gray.500">{emptyMessage || t('common.noData')}</Text>
+            <Text color={mutedTextColor}>{emptyMessage || t('common.noData')}</Text>
           </Flex>
         ) : (
           <Box>
@@ -191,18 +207,19 @@ function GroupedTable<T>({
                     align="center"
                     px={4}
                     py={3}
-                    bg="gray.100"
+                    bg={groupHeaderBg}
                     cursor="pointer"
                     onClick={() => toggleGroup(group.key)}
-                    _hover={{ bg: 'gray.200' }}
+                    _hover={{ bg: groupHeaderHoverBg }}
                     borderBottom="1px solid"
-                    borderColor="gray.200"
+                    borderColor={tableBorderColor}
                   >
                     <IconButton
                       aria-label={group.isOpen ? 'Collapse group' : 'Expand group'}
                       icon={group.isOpen ? <FiChevronDown /> : <FiChevronRight />}
                       size="sm"
                       variant="ghost"
+                      color={groupHeaderTextColor}
                       mr={2}
                     />
                     <Badge
@@ -214,7 +231,7 @@ function GroupedTable<T>({
                     >
                       {groupLabels[group.key] || group.key}
                     </Badge>
-                    <Text fontWeight="semibold" fontSize="md">
+                    <Text fontWeight="semibold" fontSize="md" color={groupHeaderTextColor}>
                       {group.items.length} {group.items.length === 1 ? t('common.item') : t('common.items')}
                     </Text>
                   </Flex>
@@ -223,7 +240,7 @@ function GroupedTable<T>({
                   <Collapse in={group.isOpen} animateOpacity>
                     <Box overflowX="auto">
                       <ChakraTable variant="simple" size="sm">
-                        <Thead bg="gray.50">
+                        <Thead bg={tableHeaderBg}>
                           <Tr>
                             {groupColumns.map((column, index) => (
                               <Th
@@ -233,7 +250,8 @@ function GroupedTable<T>({
                                 px={4}
                                 py={3}
                                 fontSize="sm"
-                                color="gray.700"
+                                color={tableHeaderTextColor}
+                                borderColor={tableBorderColor}
                                 {...(column.headerStyle || {})}
                               >
                                 {column.header}
@@ -245,7 +263,8 @@ function GroupedTable<T>({
                                 px={4}
                                 py={3}
                                 fontSize="sm"
-                                color="gray.700"
+                                color={tableHeaderTextColor}
+                                borderColor={tableBorderColor}
                               >
                                 {t('common.actions')}
                               </Th>
@@ -254,7 +273,7 @@ function GroupedTable<T>({
                         </Thead>
                         <Tbody>
                           {group.items.map((item) => (
-                            <Tr key={String(item[keyField])} _hover={{ bg: 'gray.50' }}>
+                            <Tr key={String(item[keyField])} _hover={{ bg: rowHoverBg }}>
                               {groupColumns.map((column, index) => (
                                 <Td
                                   key={index}
@@ -262,6 +281,7 @@ function GroupedTable<T>({
                                   py={3}
                                   fontSize="sm"
                                   verticalAlign="middle"
+                                  borderColor={tableBorderColor}
                                   {...(column.cellStyle || {})}
                                 >
                                   {renderCellContent(renderCell(item, column))}
@@ -272,6 +292,7 @@ function GroupedTable<T>({
                                   px={4}
                                   py={3}
                                   verticalAlign="middle"
+                                  borderColor={tableBorderColor}
                                 >
                                   <Flex gap={2} justify="flex-end" wrap="wrap">
                                     {actions(item)}

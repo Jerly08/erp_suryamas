@@ -61,6 +61,20 @@ const ClosingHistoryModal: React.FC<ClosingHistoryModalProps> = ({
   const borderColor = useColorModeValue('gray.200', 'gray.600');
   const headerBg = useColorModeValue('gray.50', 'gray.700');
   const hoverBg = useColorModeValue('gray.50', 'gray.700');
+  const inputBg = useColorModeValue('white', 'whiteAlpha.100');
+  const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const inputHoverBorderColor = useColorModeValue('blue.400', 'blue.300');
+  const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.200');
+  const mutedTextColor = useColorModeValue('gray.600', 'gray.300');
+  const fieldStyles = {
+    bg: inputBg,
+    borderColor: inputBorderColor,
+    _hover: { borderColor: inputHoverBorderColor },
+    _focus: {
+      borderColor: inputFocusBorderColor,
+      boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+    },
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -152,7 +166,7 @@ const ClosingHistoryModal: React.FC<ClosingHistoryModalProps> = ({
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="5xl">
       <ModalOverlay />
-      <ModalContent bg={bgColor}>
+      <ModalContent bg={bgColor} borderWidth="1px" borderColor={borderColor}>
         <ModalHeader>
           <HStack spacing={3}>
             <Icon as={FiCalendar} />
@@ -190,6 +204,7 @@ const ClosingHistoryModal: React.FC<ClosingHistoryModalProps> = ({
                     value={filterYear}
                     onChange={(e) => setFilterYear(e.target.value)}
                     size="sm"
+                    {...fieldStyles}
                   >
                     <option value="all">All Years</option>
                     {getUniqueYears().map(year => (
@@ -207,6 +222,7 @@ const ClosingHistoryModal: React.FC<ClosingHistoryModalProps> = ({
                     value={filterStartDate}
                     onChange={(e) => setFilterStartDate(e.target.value)}
                     size="sm"
+                    {...fieldStyles}
                   />
                 </FormControl>
 
@@ -217,6 +233,7 @@ const ClosingHistoryModal: React.FC<ClosingHistoryModalProps> = ({
                     value={filterEndDate}
                     onChange={(e) => setFilterEndDate(e.target.value)}
                     size="sm"
+                    {...fieldStyles}
                   />
                 </FormControl>
               </HStack>
@@ -329,7 +346,7 @@ const ClosingHistoryModal: React.FC<ClosingHistoryModalProps> = ({
             {filteredHistory.length > 0 && (
               <Box p={3} bg={headerBg} borderRadius="md">
                 <HStack justify="space-between">
-                  <Text fontSize="sm" color="gray.600">
+              <Text fontSize="sm" color={mutedTextColor}>
                     Showing {filteredHistory.length} of {history.length} closing periods
                   </Text>
                   <HStack>

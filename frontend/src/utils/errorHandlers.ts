@@ -4,6 +4,7 @@
  */
 
 import { toast } from '@chakra-ui/react';
+import { shouldSuppressAuthErrorToast } from './authErrorHandler';
 
 // Error types enum
 export enum ErrorTypes {
@@ -135,7 +136,7 @@ export const handleSalesError = (
     errorMessages[ErrorTypes.UNKNOWN_ERROR];
 
   // Show toast notification if enabled
-  if (showToast) {
+  if (showToast && !shouldSuppressAuthErrorToast(error)) {
     const title = operation ? `Error ${operation}` : 'Error';
     
     toast({

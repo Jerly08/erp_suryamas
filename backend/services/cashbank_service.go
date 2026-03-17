@@ -1,7 +1,6 @@
 package services
 
 import (
-	appconfig "app-sistem-akuntansi/config"
 	"app-sistem-akuntansi/database"
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
@@ -10,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -62,12 +62,32 @@ func (s *CashBankService) GetCashBankAccounts(includeHolding ...bool) ([]models.
 	if len(includeHolding) > 0 {
 		include = includeHolding[0]
 	}
-	return s.cashBankRepo.FindAll(include)
+	accounts, err := s.cashBankRepo.FindAll(include)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range accounts {
+		if repairErr := s.repairForeignCurrencyBalanceState(&accounts[i]); repairErr != nil {
+			log.Printf("⚠️ [CASHBANK SERVICE] Failed to repair foreign currency balance state for cash bank %d: %v", accounts[i].ID, repairErr)
+		}
+	}
+
+	return accounts, nil
 }
 
 // GetCashBankByID retrieves cash/bank account by ID
 func (s *CashBankService) GetCashBankByID(id uint) (*models.CashBank, error) {
-	return s.cashBankRepo.FindByID(id)
+	account, err := s.cashBankRepo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if repairErr := s.repairForeignCurrencyBalanceState(account); repairErr != nil {
+		log.Printf("⚠️ [CASHBANK SERVICE] Failed to repair foreign currency balance state for cash bank %d: %v", account.ID, repairErr)
+	}
+
+	return account, nil
 }
 
 // CreateCashBankAccount creates a new cash or bank account
@@ -391,6 +411,15 @@ func normalizeCashBankCurrency(currency string) string {
 	return normalized
 }
 
+func supportsUsdIdrTransfer(sourceCurrency, destinationCurrency string) bool {
+	if sourceCurrency == destinationCurrency {
+		return true
+	}
+
+	return (sourceCurrency == "USD" && destinationCurrency == "IDR") ||
+		(sourceCurrency == "IDR" && destinationCurrency == "USD")
+}
+
 func (s *CashBankService) resolveAppliedExchangeRate(account *models.CashBank, providedRate float64) (float64, error) {
 	if !account.IsForeignCurrency() {
 		return 1, nil
@@ -441,16 +470,71 @@ func (s *CashBankService) syncCashBankBookBalanceToGL(tx *gorm.DB, account *mode
 	return tx.Exec("UPDATE accounts SET balance = ? , updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL", targetBalance, account.AccountID).Error
 }
 
-func (s *CashBankService) resolveForexAccountID(isGain bool) (uint64, error) {
-	accountType := "operating_expenses"
-	if isGain {
-		accountType = "other_income"
+func (s *CashBankService) repairForeignCurrencyBalanceState(account *models.CashBank) error {
+	if account == nil || !account.IsForeignCurrency() || account.ID == 0 {
+		return nil
 	}
-	accountID, err := appconfig.GetDefaultAccountID(accountType)
+	guard := NewCashBankCurrencyGuard(s.db)
+	beforeNative := account.Balance
+	beforeBook := account.BookBalanceIDR
+	if err := guard.EnforceAfterTransaction(nil, account.ID); err != nil {
+		return err
+	}
+	reloaded, err := s.cashBankRepo.FindByID(account.ID)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to reload repaired cash bank: %w", err)
 	}
-	return uint64(accountID), nil
+
+	if math.Abs(beforeNative-reloaded.Balance) > 0.0001 || math.Abs(beforeBook-reloaded.BookBalanceIDR) > 0.01 {
+		log.Printf("🔧 [CASHBANK SERVICE] Repaired foreign currency cash bank %d: native %.2f -> %.2f, book %.2f -> %.2f",
+			account.ID, beforeNative, reloaded.Balance, beforeBook, reloaded.BookBalanceIDR)
+	}
+
+	*account = *reloaded
+	return nil
+}
+
+func (s *CashBankService) resolveForexAccountID(tx *gorm.DB, isGain bool) (uint64, error) {
+	dbToUse := tx
+	if dbToUse == nil {
+		dbToUse = s.db
+	}
+
+	preferredCodes := []string{"8103", "8102"}
+	fallbackType := models.AccountTypeExpense
+	fallbackCategories := []string{models.CategoryOtherExpense, models.CategoryNonOperatingExpense}
+	if isGain {
+		preferredCodes = []string{"7103", "7102"}
+		fallbackType = models.AccountTypeRevenue
+		fallbackCategories = []string{models.CategoryOtherIncome}
+	}
+
+	for _, code := range preferredCodes {
+		var account models.Account
+		if err := dbToUse.
+			Where("code = ? AND deleted_at IS NULL AND is_active = ?", code, true).
+			First(&account).Error; err == nil {
+			return uint64(account.ID), nil
+		}
+	}
+
+	var fallback models.Account
+	if err := dbToUse.
+		Where("type = ? AND category IN ? AND is_header = ? AND deleted_at IS NULL AND is_active = ?",
+			fallbackType, fallbackCategories, false, true).
+		Order("code ASC").
+		First(&fallback).Error; err == nil {
+		return uint64(fallback.ID), nil
+	}
+
+	accountKind := "loss"
+	expectedCodes := "8103/8102"
+	if isGain {
+		accountKind = "gain"
+		expectedCodes = "7103/7102"
+	}
+
+	return 0, fmt.Errorf("failed to resolve forex %s account from COA. Expected account code %s or matching other income/expense leaf account", accountKind, expectedCodes)
 }
 
 func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
@@ -463,6 +547,11 @@ func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
 ) error {
 	if sourceAccount.AccountID == 0 || destAccount.AccountID == 0 {
 		return fmt.Errorf("both transfer accounts must be linked to GL accounts")
+	}
+
+	journalReference := strings.TrimSpace(request.Reference)
+	if journalReference == "" {
+		journalReference = transfer.TransferNumber
 	}
 
 	totalDebit := decimal.NewFromFloat(destinationBookAmountIDR)
@@ -486,7 +575,7 @@ func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
 
 	lineNumber := 3
 	if forexGainLossAmount > 0.005 {
-		gainAccountID, err := s.resolveForexAccountID(true)
+		gainAccountID, err := s.resolveForexAccountID(tx, true)
 		if err != nil {
 			return fmt.Errorf("failed to resolve forex gain account: %v", err)
 		}
@@ -501,7 +590,7 @@ func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
 		})
 		lineNumber++
 	} else if forexGainLossAmount < -0.005 {
-		lossAccountID, err := s.resolveForexAccountID(false)
+		lossAccountID, err := s.resolveForexAccountID(tx, false)
 		if err != nil {
 			return fmt.Errorf("failed to resolve forex loss account: %v", err)
 		}
@@ -523,9 +612,10 @@ func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
 		EntryNumber:     fmt.Sprintf("TRF-%d", time.Now().UnixNano()),
 		SourceType:      models.SSOTSourceTypeTransfer,
 		SourceID:        &sourceID,
+		SourceCode:      transfer.TransferNumber,
 		EntryDate:       request.Date.ToTimeWithCurrentTime(),
-		Description:     fmt.Sprintf("Transfer from %s to %s", sourceAccount.Name, destAccount.Name),
-		Reference:       request.Reference,
+		Description:     fmt.Sprintf("Cash/bank transfer %s from %s to %s", transfer.TransferNumber, sourceAccount.Name, destAccount.Name),
+		Reference:       journalReference,
 		Notes:           request.Notes,
 		TotalDebit:      totalDebit,
 		TotalCredit:     totalCredit,
@@ -560,6 +650,12 @@ func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
 // ProcessTransfer processes transfer between cash/bank accounts
 func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) (*CashBankTransfer, error) {
 	tx := s.db.Begin()
+	guard := NewCashBankCurrencyGuard(s.db)
+
+	if err := CheckClosedPeriod(tx, request.Date.ToTimeWithCurrentTime()); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
 
 	sourceAccount, err := s.cashBankRepo.FindByID(request.FromAccountID)
 	if err != nil {
@@ -608,21 +704,31 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 		return nil, fmt.Errorf("insufficient balance. Available: %.2f", sourceAccount.AvailableBalance())
 	}
 
-	sameCurrency := normalizeCashBankCurrency(sourceAccount.Currency) == normalizeCashBankCurrency(destAccount.Currency)
-	if !sameCurrency && !(sourceAccount.IsForeignCurrency() && !destAccount.IsForeignCurrency()) {
+	sourceCurrency := normalizeCashBankCurrency(sourceAccount.Currency)
+	destinationCurrency := normalizeCashBankCurrency(destAccount.Currency)
+	sameCurrency := sourceCurrency == destinationCurrency
+	if !supportsUsdIdrTransfer(sourceCurrency, destinationCurrency) {
 		tx.Rollback()
-		return nil, errors.New("different currency transfer is currently supported only from foreign currency accounts to IDR accounts")
+		return nil, errors.New("different currency transfer is currently supported only between USD and IDR accounts")
 	}
 
 	transferAmount := request.Amount
 	exchangeRateUsed := 1.0
 	if !sameCurrency {
-		exchangeRateUsed, err = s.resolveAppliedExchangeRate(sourceAccount, request.ExchangeRate)
-		if err != nil {
+		if request.ExchangeRate <= 0 {
 			tx.Rollback()
-			return nil, err
+			return nil, errors.New("exchange rate is required for USD/IDR transfers")
 		}
-		transferAmount = request.Amount * exchangeRateUsed
+		exchangeRateUsed = request.ExchangeRate
+		switch {
+		case sourceCurrency == "USD" && destinationCurrency == "IDR":
+			transferAmount = request.Amount * exchangeRateUsed
+		case sourceCurrency == "IDR" && destinationCurrency == "USD":
+			transferAmount = request.Amount / exchangeRateUsed
+		default:
+			tx.Rollback()
+			return nil, errors.New("unsupported USD/IDR transfer direction")
+		}
 	}
 
 	sourceBookAmountIDR, sourceCarryRate, err := s.calculateReductionBookAmount(sourceAccount, request.Amount)
@@ -636,12 +742,18 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 	forexGainLossAmount := 0.0
 	forexGainLossType := ""
 	if !sameCurrency {
-		destinationBookAmountIDR = transferAmount
-		forexGainLossAmount = destinationBookAmountIDR - sourceBookAmountIDR
-		if forexGainLossAmount > 0.005 {
-			forexGainLossType = "GAIN"
-		} else if forexGainLossAmount < -0.005 {
-			forexGainLossType = "LOSS"
+		switch {
+		case sourceCurrency == "USD" && destinationCurrency == "IDR":
+			destinationBookAmountIDR = transferAmount
+			forexGainLossAmount = destinationBookAmountIDR - sourceBookAmountIDR
+			if forexGainLossAmount > 0.005 {
+				forexGainLossType = "GAIN"
+			} else if forexGainLossAmount < -0.005 {
+				forexGainLossType = "LOSS"
+			}
+		case sourceCurrency == "IDR" && destinationCurrency == "USD":
+			destinationBookAmountIDR = request.Amount
+			destinationRate = exchangeRateUsed
 		}
 	} else if destAccount.IsForeignCurrency() {
 		destinationRate = sourceCarryRate
@@ -670,6 +782,15 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 		if err := tx.Create(transfer).Error; err != nil {
 			if strings.Contains(err.Error(), "duplicate key value violates unique constraint") && strings.Contains(err.Error(), "transfer_number_key") {
 				log.Printf("Transfer number collision detected (attempt %d), retrying...", retryAttempt+1)
+				time.Sleep(time.Millisecond * time.Duration(50*(retryAttempt+1)))
+				continue
+			}
+			if strings.Contains(err.Error(), "duplicate key value violates unique constraint") && strings.Contains(err.Error(), "cash_bank_transfers_pkey") {
+				log.Printf("Cash bank transfer ID sequence mismatch detected (attempt %d), syncing sequence and retrying...", retryAttempt+1)
+				if syncErr := s.syncCashBankTransferSequence(tx); syncErr != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("failed to sync cash bank transfer sequence: %v", syncErr)
+				}
 				time.Sleep(time.Millisecond * time.Duration(50*(retryAttempt+1)))
 				continue
 			}
@@ -758,6 +879,11 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 		return nil, fmt.Errorf("failed to create SSOT transfer journal entry: %v", err)
 	}
 
+	if err := guard.EnforceAfterTransaction(tx, sourceAccount.ID, destAccount.ID); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after transfer: %v", err)
+	}
+
 	return transfer, tx.Commit().Error
 }
 
@@ -766,6 +892,13 @@ func (s *CashBankService) ProcessDeposit(request DepositRequest, userID uint) (*
 	log.Printf("Processing deposit: AccountID=%d, Amount=%.2f, UserID=%d", request.AccountID, request.Amount, userID)
 
 	tx := s.db.Begin()
+	guard := NewCashBankCurrencyGuard(s.db)
+
+	if err := CheckClosedPeriod(tx, request.Date.ToTimeWithCurrentTime()); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	account, err := s.cashBankRepo.FindByID(request.AccountID)
 	if err != nil {
 		tx.Rollback()
@@ -841,6 +974,11 @@ func (s *CashBankService) ProcessDeposit(request DepositRequest, userID uint) (*
 		return nil, fmt.Errorf("failed to create SSOT deposit journal entry: %v", err)
 	}
 
+	if err := guard.EnforceAfterTransaction(tx, account.ID); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after deposit: %v", err)
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		return nil, fmt.Errorf("failed to commit deposit transaction: %v", err)
 	}
@@ -853,6 +991,13 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 	log.Printf("Processing withdrawal: AccountID=%d, Amount=%.2f, UserID=%d", request.AccountID, request.Amount, userID)
 
 	tx := s.db.Begin()
+	guard := NewCashBankCurrencyGuard(s.db)
+
+	if err := CheckClosedPeriod(tx, request.Date.ToTimeWithCurrentTime()); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	account, err := s.cashBankRepo.FindByID(request.AccountID)
 	if err != nil {
 		tx.Rollback()
@@ -937,6 +1082,11 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 	if _, err = s.sSOTJournalAdapter.CreateWithdrawalJournalEntryWithTx(tx, account, transaction, journalRequest); err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to create SSOT withdrawal journal entry: %v", err)
+	}
+
+	if err := guard.EnforceAfterTransaction(tx, account.ID); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after withdrawal: %v", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -1270,8 +1420,19 @@ func (s *CashBankService) generateTransferNumber() string {
 	return fmt.Sprintf("TRF/%04d/%02d/%04d-%04d", year, month, count, microsecond)
 }
 
+func (s *CashBankService) syncCashBankTransferSequence(tx *gorm.DB) error {
+	return tx.Exec(`
+		SELECT setval(
+			pg_get_serial_sequence('cash_bank_transfers', 'id'),
+			COALESCE((SELECT MAX(id) FROM cash_bank_transfers), 1),
+			true
+		)
+	`).Error
+}
+
 func (s *CashBankService) createOpeningBalanceTransaction(tx *gorm.DB, cashBank *models.CashBank, amount float64, date time.Time, userID uint, sourceAccountID *uint) error {
 	log.Printf("[OPENING BALANCE] Creating opening balance transaction: CashBankID=%d, Amount=%.2f, Date=%s, UserID=%d", cashBank.ID, amount, date.Format("2006-01-02"), userID)
+	guard := NewCashBankCurrencyGuard(s.db)
 
 	bookAmountIDR, appliedRate, err := s.calculateIncreaseBookAmount(cashBank, amount, cashBank.LastExchangeRate)
 	if err != nil {
@@ -1326,6 +1487,10 @@ func (s *CashBankService) createOpeningBalanceTransaction(tx *gorm.DB, cashBank 
 
 	if _, err := s.sSOTJournalAdapter.CreateOpeningBalanceJournalEntryWithTx(tx, cashBank, transaction, journalRequest); err != nil {
 		return fmt.Errorf("SSOT journal entry creation failed: %v", err)
+	}
+
+	if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+		return fmt.Errorf("failed to enforce cash/bank currency invariant after opening balance: %v", err)
 	}
 
 	return nil

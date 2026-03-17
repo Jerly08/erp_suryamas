@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"app-sistem-akuntansi/models"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -13,8 +14,28 @@ type BOMController struct {
 	DB *gorm.DB
 }
 
+var errBOMAssemblyComponent = errors.New("assembly product cannot be used as bom component")
+
 func NewBOMController(db *gorm.DB) *BOMController {
 	return &BOMController{DB: db}
+}
+
+func (bc *BOMController) findBOMByTargetProduct(targetProductID uint, excludeBOMID ...uint) (*models.BOM, error) {
+	var bom models.BOM
+	query := bc.DB.Where("target_product_id = ?", targetProductID)
+
+	if len(excludeBOMID) > 0 && excludeBOMID[0] != 0 {
+		query = query.Where("id <> ?", excludeBOMID[0])
+	}
+
+	if err := query.First(&bom).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &bom, nil
 }
 
 // GetBOMs gets a list of Master BOMs
@@ -64,7 +85,24 @@ func (bc *BOMController) CreateBOM(c *gin.Context) {
 		return
 	}
 
-	err := bc.DB.Transaction(func(tx *gorm.DB) error {
+	if !targetProduct.IsAssembly {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Target product must be a target assembly product"})
+		return
+	}
+
+	existingBOMForTarget, err := bc.findBOMByTargetProduct(payload.TargetProductID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate target product BOM linkage"})
+		return
+	}
+	if existingBOMForTarget != nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Target assembly product is already linked to another BOM template",
+		})
+		return
+	}
+
+	err = bc.DB.Transaction(func(tx *gorm.DB) error {
 		// Calculate total cost from items
 		var totalCost float64 = 0
 		var items []models.BOMItem
@@ -74,6 +112,10 @@ func (bc *BOMController) CreateBOM(c *gin.Context) {
 			var componentProduct models.Product
 			if err := tx.First(&componentProduct, itemPayload.ComponentProductID).Error; err != nil {
 				return err
+			}
+
+			if componentProduct.IsAssembly {
+				return errBOMAssemblyComponent
 			}
 
 			// Always use DB price — never trust frontend-supplied unit_price
@@ -131,6 +173,10 @@ func (bc *BOMController) CreateBOM(c *gin.Context) {
 	})
 
 	if err != nil {
+		if errors.Is(err, errBOMAssemblyComponent) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Assembly products cannot be used as BOM components"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create BOM: " + err.Error()})
 		return
 	}
@@ -167,6 +213,23 @@ func (bc *BOMController) UpdateBOM(c *gin.Context) {
 		return
 	}
 
+	if !targetProduct.IsAssembly {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Target product must be a target assembly product"})
+		return
+	}
+
+	existingBOMForTarget, err := bc.findBOMByTargetProduct(payload.TargetProductID, uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate target product BOM linkage"})
+		return
+	}
+	if existingBOMForTarget != nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Target assembly product is already linked to another BOM template",
+		})
+		return
+	}
+
 	err = bc.DB.Transaction(func(tx *gorm.DB) error {
 		// Delete old items first
 		if err := tx.Where("bom_id = ?", id).Delete(&models.BOMItem{}).Error; err != nil {
@@ -182,6 +245,10 @@ func (bc *BOMController) UpdateBOM(c *gin.Context) {
 			var componentProduct models.Product
 			if err := tx.First(&componentProduct, itemPayload.ComponentProductID).Error; err != nil {
 				return err
+			}
+
+			if componentProduct.IsAssembly {
+				return errBOMAssemblyComponent
 			}
 
 			// Always use DB price — never trust frontend-supplied unit_price
@@ -240,6 +307,10 @@ func (bc *BOMController) UpdateBOM(c *gin.Context) {
 	})
 
 	if err != nil {
+		if errors.Is(err, errBOMAssemblyComponent) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Assembly products cannot be used as BOM components"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update BOM: " + err.Error()})
 		return
 	}

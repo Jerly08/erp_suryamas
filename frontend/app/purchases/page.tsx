@@ -94,7 +94,7 @@ import {
   FiFileText,
   FiSearch
 } from 'react-icons/fi';
-import purchaseService, { Purchase, PurchaseFilterParams } from '@/services/purchaseService';
+import purchaseService, { Purchase, PurchaseFilterParams, PurchaseItem } from '@/services/purchaseService';
 import SubmitApprovalButton from '@/components/purchase/SubmitApprovalButton';
 import { ApprovalPanel } from '@/components/approval/ApprovalPanel';
 import PurchasePaymentForm from '@/components/purchase/PurchasePaymentForm';
@@ -173,6 +173,9 @@ interface BankAccount {
   type: string;
   balance?: number;
   currency: string;
+  book_balance_idr?: number;
+  last_exchange_rate?: number;
+  frozen_amount?: number;
 }
 
 interface Receipt {
@@ -252,9 +255,127 @@ const formatCurrency = (amount: number) => {
   }).format(amount);
 };
 
+const formatAccountBalance = (amount: number, currency?: string) => {
+  const normalizedCurrency = (currency || 'IDR').toUpperCase();
+
+  if (normalizedCurrency === 'USD') {
+    return `USD ${amount.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount);
+};
+
+const getAccountBookBalance = (account?: Partial<BankAccount>) => {
+  if (!account) return 0;
+
+  const normalizedCurrency = (account.currency || 'IDR').toUpperCase();
+  const nativeBalance = account.balance || 0;
+
+  if (normalizedCurrency === 'IDR') {
+    return nativeBalance;
+  }
+
+  if (typeof account.book_balance_idr === 'number') {
+    return account.book_balance_idr;
+  }
+
+  const fallbackRate = account.last_exchange_rate && account.last_exchange_rate > 0
+    ? account.last_exchange_rate
+    : 1;
+
+  return nativeBalance * fallbackRate;
+};
+
+const formatBankAccountSummary = (account?: Partial<BankAccount>) => {
+  if (!account) {
+    return formatAccountBalance(0, 'IDR');
+  }
+
+  const nativeLabel = formatAccountBalance(account.balance || 0, account.currency);
+  if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+    return nativeLabel;
+  }
+
+  return `${nativeLabel} | Nilai buku: ${formatCurrency(getAccountBookBalance(account))}`;
+};
+
 // Format date
 const formatDate = (date: string) => {
   return new Date(date).toLocaleDateString('id-ID');
+};
+
+const isReceiptablePurchaseItem = (item?: { item_type?: string | null }) => {
+  const itemType = String(item?.item_type || 'INVENTORY').toUpperCase();
+  return itemType !== 'PREPAID';
+};
+
+const getReceiptablePurchaseItems = <T extends { item_type?: string | null }>(items?: T[] | null): T[] => {
+  if (!Array.isArray(items)) return [];
+  return items.filter(isReceiptablePurchaseItem);
+};
+
+const purchaseHasReceiptableItems = (purchase: Purchase) => {
+  if (!Array.isArray(purchase.purchase_items) || purchase.purchase_items.length === 0) {
+    // Fallback: if list endpoint doesn't include items, don't hide the action prematurely.
+    return true;
+  }
+
+  return getReceiptablePurchaseItems(purchase.purchase_items).length > 0;
+};
+
+const createPurchaseItemFormData = (
+  overrides: Partial<PurchaseItemFormData> = {}
+): PurchaseItemFormData => ({
+  product_id: '',
+  quantity: '1',
+  unit_price: '0',
+  discount: '0',
+  tax: '0',
+  expense_account_id: '',
+  item_type: 'INVENTORY',
+  is_fixed_asset: false,
+  description: '',
+  asset_category_id: '',
+  amortization_month: '',
+  ...overrides,
+});
+
+const mapPurchaseItemToFormData = (item: PurchaseItem): PurchaseItemFormData => {
+  const itemType = item.item_type || (item.is_fixed_asset ? 'ASSET' : 'INVENTORY');
+
+  return createPurchaseItemFormData({
+    product_id: item.product_id?.toString() || '',
+    quantity: item.quantity?.toString() || '1',
+    unit_price: item.unit_price?.toString() || '0',
+    discount: item.discount?.toString() || '0',
+    tax: item.tax?.toString() || '0',
+    expense_account_id: item.expense_account_id?.toString() || '',
+    item_type: itemType,
+    is_fixed_asset: item.is_fixed_asset || itemType === 'ASSET',
+    description: item.description || '',
+    asset_category_id: item.asset_category_id?.toString() || '',
+    amortization_month: itemType === 'PREPAID' ? (item.amortization_month?.toString() || '12') : '',
+  });
+};
+
+const getPurchaseItemDisplayName = (item: PurchaseItem) => {
+  if (item.is_fixed_asset || item.item_type === 'ASSET') {
+    return `${item.description || 'Aset Tanpa Deskripsi'} (Aset Tetap)`;
+  }
+
+  if (item.item_type === 'PREPAID') {
+    return item.description || 'Prepaid Tanpa Deskripsi';
+  }
+
+  return item.product?.name || (item.product_id ? `Product #${item.product_id}` : 'Produk Tidak Ditemukan');
 };
 
 const columns = [
@@ -395,6 +516,35 @@ const PurchasesPage: React.FC = () => {
   const notesBoxBg = useColorModeValue('gray.50', 'gray.600');
   const tableBg = useColorModeValue('white', 'gray.700');
   const tableHeaderBg = useColorModeValue('gray.50', 'gray.600');
+  const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+  const inputTextColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const inputPlaceholderColor = useColorModeValue('gray.500', 'whiteAlpha.500');
+  const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const readOnlyInputBg = useColorModeValue('gray.100', 'whiteAlpha.100');
+  const helperTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
+  const warningTextColor = useColorModeValue('orange.600', 'orange.300');
+  const employeeInfoBg = useColorModeValue('blue.50', 'blue.900');
+  const employeeInfoBorder = useColorModeValue('blue.200', 'blue.700');
+  const employeeInfoText = useColorModeValue('blue.700', 'blue.100');
+  const greenButtonHoverBg = useColorModeValue('green.50', 'rgba(56, 161, 105, 0.16)');
+  const blueButtonHoverBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.16)');
+  const redButtonHoverBg = useColorModeValue('red.50', 'rgba(229, 62, 62, 0.16)');
+  const inventoryTypeBg = useColorModeValue('blue.50', 'rgba(49, 130, 206, 0.18)');
+  const inventoryTypeHoverBg = useColorModeValue('blue.100', 'rgba(49, 130, 206, 0.28)');
+  const inventoryTypeBorder = useColorModeValue('blue.300', 'blue.500');
+  const inventoryTypeText = useColorModeValue('blue.700', 'blue.200');
+  const assetTypeBg = useColorModeValue('orange.50', 'rgba(221, 107, 32, 0.18)');
+  const assetTypeHoverBg = useColorModeValue('orange.100', 'rgba(221, 107, 32, 0.28)');
+  const assetTypeBorder = useColorModeValue('orange.300', 'orange.500');
+  const assetTypeText = useColorModeValue('orange.700', 'orange.200');
+  const prepaidTypeBg = useColorModeValue('purple.50', 'rgba(128, 90, 213, 0.18)');
+  const prepaidTypeHoverBg = useColorModeValue('purple.100', 'rgba(128, 90, 213, 0.28)');
+  const prepaidTypeBorder = useColorModeValue('purple.300', 'purple.500');
+  const prepaidTypeText = useColorModeValue('purple.700', 'purple.200');
+  const fieldFocusStyles = {
+    borderColor: inputFocusBorder,
+    boxShadow: inputFocusShadow,
+  };
 
   // Tooltip descriptions for purchase page
   const tooltips = {
@@ -834,7 +984,6 @@ const PurchasesPage: React.FC = () => {
         reorder_level: 0,
         is_active: true,
         is_service: false,
-        taxable: true
       };
 
       const newProduct = await productService.createProduct(productPayload);
@@ -855,14 +1004,11 @@ const PurchasesPage: React.FC = () => {
         // Add a new item with the created product
         setFormData({
           ...formData,
-          items: [{
+          items: [createPurchaseItemFormData({
             product_id: newProduct.data.id.toString(),
-            quantity: '1',
             unit_price: newProduct.data.purchase_price?.toString() || '0',
-            discount: '0',
-            tax: '0',
             expense_account_id: defaultExpenseAccountId ? defaultExpenseAccountId.toString() : ''
-          }]
+          })]
         });
       }
 
@@ -1171,15 +1317,15 @@ const PurchasesPage: React.FC = () => {
       const closedPeriod = parseClosedPeriodError(errMsg);
       if (closedPeriod) {
         toast({
-          title: t('common.messages.toast.closedPeriodError'),
-          description: t('common.messages.toast.closedPeriodErrorDesc', { date: formatClosedPeriodDate(closedPeriod.date, language) }),
+          title: t('messages.toast.closedPeriodError'),
+          description: t('messages.toast.closedPeriodErrorDesc', { date: formatClosedPeriodDate(closedPeriod.date, language) }),
           status: 'error',
           duration: 5000,
           isClosable: true,
         });
       } else {
         toast({
-          title: t('common.messages.toast.error'),
+        title: t('messages.toast.error'),
           description: errMsg || t('purchases.messages.deleteError') || 'Failed to delete purchase',
           status: 'error',
           duration: 5000,
@@ -1321,8 +1467,20 @@ const PurchasesPage: React.FC = () => {
       // Ensure accounts catalog is loaded (to detect fixed asset 150x)
       await fetchExpenseAccounts();
 
+      const receiptableItems = getReceiptablePurchaseItems(detailResponse.purchase_items || []);
+      if (receiptableItems.length === 0) {
+        toast({
+          title: 'Receipt tidak diperlukan',
+          description: 'Purchase ini hanya berisi item prepaid seperti sewa dibayar di muka, jadi tidak perlu goods receipt.',
+          status: 'info',
+          duration: 5000,
+          isClosable: true,
+        });
+        return;
+      }
+
       // Initialize receipt form data with remaining quantity per item
-      const receiptItems = (detailResponse.purchase_items || []).map((item: any) => {
+      const receiptItems = receiptableItems.map((item: any) => {
         const receivedSoFar = receivedMap[item.id] || 0;
         const remaining = Math.max((item.quantity || 0) - receivedSoFar, 0);
         // Determine if the item's expense account is a Fixed Asset (150x) to default-enable asset creation
@@ -1339,7 +1497,7 @@ const PurchasesPage: React.FC = () => {
         };
       });
       const remainingMap: Record<number, number> = {};
-      (detailResponse.purchase_items || []).forEach((it: any) => {
+      receiptableItems.forEach((it: any) => {
         const receivedSoFar = receivedMap[it.id] || 0;
         remainingMap[it.id] = Math.max((it.quantity || 0) - receivedSoFar, 0);
       });
@@ -2322,6 +2480,8 @@ const PurchasesPage: React.FC = () => {
       // Set form data for editing
       setFormData({
         vendor_id: detailResponse.vendor_id?.toString() || '',
+        purchase_request_id: detailResponse.purchase_request_id?.toString() || '',
+        project_id: detailResponse.project_id?.toString() || '',
         date: detailResponse.date.split('T')[0], // Format for date input
         due_date: detailResponse.due_date ? detailResponse.due_date.split('T')[0] : '',
         notes: detailResponse.notes || '',
@@ -2339,21 +2499,13 @@ const PurchasesPage: React.FC = () => {
         bank_account_id: detailResponse.bank_account_id?.toString() || '',
         credit_account_id: detailResponse.credit_account_id?.toString() || '',
         payment_reference: detailResponse.payment_reference || '',
-        items: detailResponse.purchase_items?.map(item => ({
-          product_id: item.product_id.toString(),
-          quantity: item.quantity.toString(),
-          unit_price: item.unit_price.toString(),
-          discount: item.discount?.toString() || '0',
-          tax: item.tax?.toString() || '0',
-          expense_account_id: item.expense_account_id?.toString() || '1'
-        })) || [{
-          product_id: '2',
-          quantity: '1',
-          unit_price: '1000',
-          discount: '0',
-          tax: '0',
-          expense_account_id: '1'
-        }]
+        items: detailResponse.purchase_items?.map(mapPurchaseItemToFormData) || [
+          createPurchaseItemFormData({
+            product_id: '2',
+            unit_price: '1000',
+            expense_account_id: '1'
+          })
+        ]
       });
 
       await fetchVendors(); // Load vendors for dropdown
@@ -2434,13 +2586,13 @@ const PurchasesPage: React.FC = () => {
     const selectedAccount = getSelectedBankAccount();
     if (!selectedAccount) return false;
     const totalPayment = calculateFinanceTaxTotal();
-    return (selectedAccount.balance ?? 0) < totalPayment;
+    return getAccountBookBalance(selectedAccount) < totalPayment;
   };
 
   // Get accounts with sufficient balance for recommendations
   const getSufficientAccounts = (): BankAccount[] => {
     const totalPayment = calculateFinanceTaxTotal();
-    return bankAccounts.filter(a => (a.balance ?? 0) >= totalPayment);
+    return bankAccounts.filter(a => getAccountBookBalance(a) >= totalPayment);
   };
 
   // Save Finance Tax/Payment Config (only tax + payment fields, NO items)
@@ -2453,7 +2605,7 @@ const PurchasesPage: React.FC = () => {
       const selectedAccount = getSelectedBankAccount();
       toast({
         title: 'Saldo Tidak Mencukupi',
-        description: `Saldo ${selectedAccount?.name} (${formatCurrency(selectedAccount?.balance ?? 0)}) tidak mencukupi untuk pembayaran ${formatCurrency(calculateFinanceTaxTotal())}. Silakan pilih akun lain.`,
+        description: `Saldo ${selectedAccount?.name} (${formatBankAccountSummary(selectedAccount)}) tidak mencukupi untuk pembayaran ${formatCurrency(calculateFinanceTaxTotal())}. Silakan pilih akun lain.`,
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -2702,6 +2854,8 @@ const PurchasesPage: React.FC = () => {
       // Set form data for NEW purchase (cleared ID, cleared status-related fields)
       setFormData({
         vendor_id: detailResponse.vendor_id?.toString() || '',
+        purchase_request_id: '',
+        project_id: detailResponse.project_id?.toString() || '',
         date: new Date().toISOString().split('T')[0], // Use today's date
         due_date: '', // Clear due date
         notes: detailResponse.notes || '',
@@ -2719,14 +2873,7 @@ const PurchasesPage: React.FC = () => {
         bank_account_id: detailResponse.bank_account_id?.toString() || '',
         credit_account_id: detailResponse.credit_account_id?.toString() || '',
         payment_reference: '', // Clear payment reference
-        items: detailResponse.purchase_items?.map(item => ({
-          product_id: item.product_id.toString(),
-          quantity: item.quantity.toString(),
-          unit_price: item.unit_price.toString(),
-          discount: item.discount?.toString() || '0',
-          tax: item.tax?.toString() || '0',
-          expense_account_id: item.expense_account_id?.toString() || '1'
-        })) || []
+        items: detailResponse.purchase_items?.map(mapPurchaseItemToFormData) || []
       });
 
       // Reset selected purchase so it treats it as NEW
@@ -2939,9 +3086,11 @@ const PurchasesPage: React.FC = () => {
             </Button>
           )}
 
-        {/* Create Receipt button for APPROVED or PAID purchases for Inventory Manager, Admin, Director */}
+        {/* Create Receipt button for APPROVED or PAID purchases for roles allowed by purchase edit permission */}
         {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID') &&
-          (roleNorm === 'inventory_manager' || roleNorm === 'admin' || roleNorm === 'director') &&
+          canEdit &&
+          (roleNorm === 'inventory_manager' || roleNorm === 'admin' || roleNorm === 'director' || roleNorm === 'finance') &&
+          purchaseHasReceiptableItems(purchase) &&
           !fullyReceivedPurchases.has(purchase.id) && (
             <Button
               size="sm"
@@ -2959,10 +3108,10 @@ const PurchasesPage: React.FC = () => {
             </Button>
           )}
 
-        {/* View Receipts button always available (modal will show empty state if none) */}
+        {/* View Receipts button only for purchases that can have goods receipts */}
         {(
           roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director' || roleNorm === 'inventory_manager' || roleNorm === 'employee'
-        ) && (
+        ) && purchaseHasReceiptableItems(purchase) && (
             <Button
               size="sm"
               colorScheme="blue"
@@ -4283,8 +4432,8 @@ const PurchasesPage: React.FC = () => {
                           <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
                             <FormControl>
                               <FormLabel fontSize="sm" fontWeight="medium">{t('purchases.purchaseCode')}</FormLabel>
-                              <Input value={t('purchases.autoGenerated')} isReadOnly bg="gray.100" size="sm" color="gray.500" />
-                              <FormHelperText fontSize="xs">{t('purchases.autoGeneratedDesc')}</FormHelperText>
+                              <Input value={t('purchases.autoGenerated')} isReadOnly bg={readOnlyInputBg} borderColor={inputBorderColor} size="sm" color={helperTextColor} />
+                              <FormHelperText fontSize="xs" color={helperTextColor}>{t('purchases.autoGeneratedDesc')}</FormHelperText>
                             </FormControl>
 
                             <FormControl isRequired>
@@ -4299,6 +4448,12 @@ const PurchasesPage: React.FC = () => {
                                     onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
                                     size="sm"
                                     flex={1}
+                                    bg={inputBg}
+                                    color={inputTextColor}
+                                    borderColor={inputBorderColor}
+                                    _hover={{ borderColor: inputHoverBorder }}
+                                    _focusVisible={fieldFocusStyles}
+                                    _placeholder={{ color: inputPlaceholderColor }}
                                   >
                                     {vendors.map(vendor => (
                                       <option key={vendor.id} value={vendor.id}>
@@ -4315,7 +4470,7 @@ const PurchasesPage: React.FC = () => {
                                   variant="outline"
                                   onClick={onAddVendorOpen}
                                   title="Add New Vendor"
-                                  _hover={{ bg: 'green.50' }}
+                                  _hover={{ bg: greenButtonHoverBg }}
                                 />
                               </HStack>
                             </FormControl>
@@ -4334,12 +4489,12 @@ const PurchasesPage: React.FC = () => {
 
                                     // Map PR items to form items
                                     const prItems: PurchaseItemFormData[] = (selectedPr?.items || []).map((item: any) => ({
-                                      product_id: item.product_id?.toString() || '',
-                                      quantity: item.quantity?.toString() || '1',
-                                      unit_price: item.estimated_price?.toString() || '0',
-                                      discount: '0',
-                                      tax: '0',
-                                      expense_account_id: defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '',
+                                      ...createPurchaseItemFormData({
+                                        product_id: item.product_id?.toString() || '',
+                                        quantity: item.quantity?.toString() || '1',
+                                        unit_price: item.estimated_price?.toString() || '0',
+                                        expense_account_id: defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '',
+                                      })
                                     }));
 
                                     setFormData(prev => ({
@@ -4351,6 +4506,12 @@ const PurchasesPage: React.FC = () => {
                                     }));
                                   }}
                                   size="sm"
+                                  bg={inputBg}
+                                  color={inputTextColor}
+                                  borderColor={inputBorderColor}
+                                  _hover={{ borderColor: inputHoverBorder }}
+                                  _focusVisible={fieldFocusStyles}
+                                  _placeholder={{ color: inputPlaceholderColor }}
                                 >
                                   {purchaseRequests.map(pr => (
                                     <option key={pr.id} value={pr.id}>
@@ -4359,7 +4520,7 @@ const PurchasesPage: React.FC = () => {
                                   ))}
                                 </Select>
                               )}
-                              <FormHelperText fontSize="xs" color="orange.600">
+                              <FormHelperText fontSize="xs" color={warningTextColor}>
                                 Warning: Amount cannot exceed PR limit
                               </FormHelperText>
                             </FormControl>
@@ -4374,6 +4535,12 @@ const PurchasesPage: React.FC = () => {
                                   value={formData.project_id}
                                   onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
                                   size="sm"
+                                  bg={inputBg}
+                                  color={inputTextColor}
+                                  borderColor={inputBorderColor}
+                                  _hover={{ borderColor: inputHoverBorder }}
+                                  _focusVisible={fieldFocusStyles}
+                                  _placeholder={{ color: inputPlaceholderColor }}
                                 >
                                   {projects.map(proj => (
                                     <option key={proj.id} value={proj.id}>
@@ -4391,6 +4558,11 @@ const PurchasesPage: React.FC = () => {
                                 size="sm"
                                 value={formData.date}
                                 onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                                bg={inputBg}
+                                color={inputTextColor}
+                                borderColor={inputBorderColor}
+                                _hover={{ borderColor: inputHoverBorder }}
+                                _focusVisible={fieldFocusStyles}
                               />
                             </FormControl>
 
@@ -4401,6 +4573,11 @@ const PurchasesPage: React.FC = () => {
                                 size="sm"
                                 value={formData.due_date}
                                 onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                                bg={inputBg}
+                                color={inputTextColor}
+                                borderColor={inputBorderColor}
+                                _hover={{ borderColor: inputHoverBorder }}
+                                _focusVisible={fieldFocusStyles}
                               />
                             </FormControl>
                           </SimpleGrid>
@@ -4415,13 +4592,13 @@ const PurchasesPage: React.FC = () => {
                                 min={0}
                                 max={100}
                               >
-                                <NumberInputField placeholder="0" />
+                                <NumberInputField placeholder="0" bg={inputBg} color={inputTextColor} borderColor={inputBorderColor} _hover={{ borderColor: inputHoverBorder }} _focusVisible={fieldFocusStyles} />
                                 <NumberInputStepper>
                                   <NumberIncrementStepper />
                                   <NumberDecrementStepper />
                                 </NumberInputStepper>
                               </NumberInput>
-                              <FormHelperText fontSize="xs">Masukkan persentase diskon atas subtotal (0-100)</FormHelperText>
+                              <FormHelperText fontSize="xs" color={helperTextColor}>Masukkan persentase diskon atas subtotal (0-100)</FormHelperText>
                             </FormControl>
 
                             <FormControl>
@@ -4433,6 +4610,12 @@ const PurchasesPage: React.FC = () => {
                                 rows={3}
                                 size="sm"
                                 resize="vertical"
+                                bg={inputBg}
+                                color={inputTextColor}
+                                borderColor={inputBorderColor}
+                                _hover={{ borderColor: inputHoverBorder }}
+                                _focusVisible={fieldFocusStyles}
+                                _placeholder={{ color: inputPlaceholderColor }}
                               />
                             </FormControl>
                           </SimpleGrid>
@@ -4456,7 +4639,9 @@ const PurchasesPage: React.FC = () => {
                                   ...formData,
                                   items: [
                                     ...formData.items,
-                                    { product_id: '', quantity: '1', unit_price: '0', discount: '0', tax: '0', expense_account_id: isServiceCompany && expenseAccounts.length > 0 ? expenseAccounts[0].id!.toString() : '', item_type: 'INVENTORY', is_fixed_asset: false, description: '', asset_category_id: '' }
+                                    createPurchaseItemFormData({
+                                      expense_account_id: isServiceCompany && expenseAccounts.length > 0 ? expenseAccounts[0].id!.toString() : '',
+                                    })
                                   ]
                                 });
                               }}
@@ -4486,7 +4671,7 @@ const PurchasesPage: React.FC = () => {
                                     <Td colSpan={8} textAlign="center" py={8}>
                                       <VStack spacing={2}>
                                         <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
-                                        <Text fontSize="xs" color={textSecondary}>Click "Add Item" button to start adding purchase items</Text>
+                                        <Text fontSize="xs" color={textSecondary}>Click &quot;Add Item&quot; button to start adding purchase items</Text>
                                       </VStack>
                                     </Td>
                                   </Tr>
@@ -4517,20 +4702,17 @@ const PurchasesPage: React.FC = () => {
                                           fontSize="xs"
                                           fontWeight="medium"
                                           cursor="pointer"
-                                          bg={item.item_type === 'PREPAID' ? 'purple.50' : item.item_type === 'ASSET' ? 'orange.50' : 'blue.50'}
-                                          borderColor={item.item_type === 'PREPAID' ? 'purple.300' : item.item_type === 'ASSET' ? 'orange.300' : 'blue.300'}
-                                          color={item.item_type === 'PREPAID' ? 'purple.700' : item.item_type === 'ASSET' ? 'orange.700' : 'blue.700'}
+                                          bg={item.item_type === 'PREPAID' ? prepaidTypeBg : item.item_type === 'ASSET' ? assetTypeBg : inventoryTypeBg}
+                                          borderColor={item.item_type === 'PREPAID' ? prepaidTypeBorder : item.item_type === 'ASSET' ? assetTypeBorder : inventoryTypeBorder}
+                                          color={item.item_type === 'PREPAID' ? prepaidTypeText : item.item_type === 'ASSET' ? assetTypeText : inventoryTypeText}
                                           _hover={{
-                                            bg: item.item_type === 'PREPAID' ? 'purple.100' : item.item_type === 'ASSET' ? 'orange.100' : 'blue.100',
+                                            bg: item.item_type === 'PREPAID' ? prepaidTypeHoverBg : item.item_type === 'ASSET' ? assetTypeHoverBg : inventoryTypeHoverBg,
                                           }}
-                                          _focus={{
-                                            boxShadow: 'none',
-                                            borderColor: item.item_type === 'PREPAID' ? 'purple.500' : item.item_type === 'ASSET' ? 'orange.500' : 'blue.500',
-                                          }}
+                                          _focusVisible={fieldFocusStyles}
                                         >
-                                          <option value="INVENTORY" style={{ color: 'black' }}>📦 Persediaan</option>
-                                          <option value="ASSET" style={{ color: 'black' }}>🏢 Aset Tetap</option>
-                                          <option value="PREPAID" style={{ color: 'black' }}>⏳ Prepaid Expense</option>
+                                          <option value="INVENTORY">📦 Persediaan</option>
+                                          <option value="ASSET">🏢 Aset Tetap</option>
+                                          <option value="PREPAID">⏳ Prepaid Expense</option>
                                         </Select>
                                       </Td>
 
@@ -4548,8 +4730,12 @@ const PurchasesPage: React.FC = () => {
                                                 setFormData({ ...formData, items });
                                               }}
                                               size="sm"
-                                              borderColor="orange.300"
-                                              _focus={{ borderColor: 'orange.500', boxShadow: '0 0 0 1px orange' }}
+                                              bg={inputBg}
+                                              color={inputTextColor}
+                                              borderColor={assetTypeBorder}
+                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _focusVisible={fieldFocusStyles}
+                                              _placeholder={{ color: inputPlaceholderColor }}
                                             />
                                             <Select
                                               placeholder="Pilih Kategori Aset"
@@ -4560,8 +4746,12 @@ const PurchasesPage: React.FC = () => {
                                                 setFormData({ ...formData, items });
                                               }}
                                               size="sm"
-                                              borderColor="orange.300"
-                                              _focus={{ borderColor: 'orange.500' }}
+                                              bg={inputBg}
+                                              color={inputTextColor}
+                                              borderColor={assetTypeBorder}
+                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _focusVisible={fieldFocusStyles}
+                                              _placeholder={{ color: inputPlaceholderColor }}
                                               isDisabled={loadingAssetCategories}
                                             >
                                               {assetCategories.map((cat) => (
@@ -4586,30 +4776,46 @@ const PurchasesPage: React.FC = () => {
                                                 setFormData({ ...formData, items });
                                               }}
                                               size="sm"
-                                              borderColor="purple.300"
-                                              _focus={{ borderColor: 'purple.500', boxShadow: '0 0 0 1px purple' }}
+                                              bg={inputBg}
+                                              color={inputTextColor}
+                                              borderColor={prepaidTypeBorder}
+                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _focusVisible={fieldFocusStyles}
+                                              _placeholder={{ color: inputPlaceholderColor }}
                                             />
                                             <InputGroup size="sm">
                                               <NumberInput
                                                 min={1}
                                                 max={120}
-                                                value={item.amortization_month || '12'}
+                                                keepWithinRange={false}
+                                                clampValueOnBlur={false}
+                                                value={item.amortization_month}
                                                 onChange={(val) => {
                                                   const items = [...formData.items];
                                                   items[index] = { ...items[index], amortization_month: val };
                                                   setFormData({ ...formData, items });
                                                 }}
                                                 w="full"
-                                                borderColor="purple.300"
+                                                borderColor={prepaidTypeBorder}
                                               >
-                                                <NumberInputField pl="1.5rem" pr="3.5rem" />
+                                                <NumberInputField
+                                                  pl="1.5rem"
+                                                  pr="3.5rem"
+                                                  placeholder="12"
+                                                  bg={inputBg}
+                                                  color={inputTextColor}
+                                                  borderColor={prepaidTypeBorder}
+                                                  _hover={{ borderColor: inputHoverBorder }}
+                                                  _focusVisible={fieldFocusStyles}
+                                                  _placeholder={{ color: inputPlaceholderColor }}
+                                                />
                                                 <NumberInputStepper>
                                                   <NumberIncrementStepper />
                                                   <NumberDecrementStepper />
                                                 </NumberInputStepper>
                                               </NumberInput>
                                               <InputLeftElement width="1.5rem" justifyContent="center">
-                                                <Text fontSize="xs" color="gray.500">⏱️</Text>
+                                                <Text fontSize="xs" color={helperTextColor}>⏱️</Text>
                                               </InputLeftElement>
                                               <Box
                                                 position="absolute"
@@ -4619,7 +4825,7 @@ const PurchasesPage: React.FC = () => {
                                                 zIndex={1}
                                                 pointerEvents="none"
                                               >
-                                                <Text fontSize="xs" color="gray.500" fontWeight="medium">Bln</Text>
+                                                <Text fontSize="xs" color={helperTextColor} fontWeight="medium">Bln</Text>
                                               </Box>
                                             </InputGroup>
                                             <Badge colorScheme="purple" fontSize="2xs" px={2} py={0.5} borderRadius="md" w="fit-content" alignSelf="flex-start">
@@ -4649,6 +4855,12 @@ const PurchasesPage: React.FC = () => {
                                                 }}
                                                 size="sm"
                                                 maxW="280px"
+                                                bg={inputBg}
+                                                color={inputTextColor}
+                                                borderColor={inputBorderColor}
+                                                _hover={{ borderColor: inputHoverBorder }}
+                                                _focusVisible={fieldFocusStyles}
+                                                _placeholder={{ color: inputPlaceholderColor }}
                                               >
                                                 {products.map((p) => (
                                                   <option key={p.id} value={p.id?.toString()}>
@@ -4664,7 +4876,7 @@ const PurchasesPage: React.FC = () => {
                                                 variant="outline"
                                                 onClick={onAddProductOpen}
                                                 title="Add New Product"
-                                                _hover={{ bg: 'blue.50' }}
+                                                _hover={{ bg: blueButtonHoverBg }}
                                               />
                                             </HStack>
                                           )
@@ -4685,7 +4897,16 @@ const PurchasesPage: React.FC = () => {
                                             }}
                                             maxW="80px"
                                           >
-                                            <NumberInputField textAlign="right" fontSize="sm" />
+                                            <NumberInputField
+                                              textAlign="right"
+                                              fontSize="sm"
+                                              bg={inputBg}
+                                              color={inputTextColor}
+                                              borderColor={inputBorderColor}
+                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _focusVisible={fieldFocusStyles}
+                                              _placeholder={{ color: inputPlaceholderColor }}
+                                            />
                                             <NumberInputStepper>
                                               <NumberIncrementStepper />
                                               <NumberDecrementStepper />
@@ -4834,7 +5055,16 @@ const PurchasesPage: React.FC = () => {
                                               maxW="240px"
                                               size="sm"
                                             >
-                                              <NumberInputField placeholder="Account ID" fontSize="sm" />
+                                              <NumberInputField
+                                                placeholder="Account ID"
+                                                fontSize="sm"
+                                                bg={inputBg}
+                                                color={inputTextColor}
+                                                borderColor={inputBorderColor}
+                                                _hover={{ borderColor: inputHoverBorder }}
+                                                _focusVisible={fieldFocusStyles}
+                                                _placeholder={{ color: inputPlaceholderColor }}
+                                              />
                                             </NumberInput>
                                           </FormControl>
                                         )}
@@ -4867,7 +5097,7 @@ const PurchasesPage: React.FC = () => {
                                             items.splice(index, 1);
                                             setFormData({ ...formData, items });
                                           }}
-                                          _hover={{ bg: 'red.50' }}
+                                          _hover={{ bg: redButtonHoverBg }}
                                         />
                                       </Td>
                                     </Tr>
@@ -4901,7 +5131,7 @@ const PurchasesPage: React.FC = () => {
                           )}
 
                           <FormControl>
-                            <FormHelperText mt={3} fontSize="xs">
+                            <FormHelperText mt={3} fontSize="xs" color={helperTextColor}>
                               📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
                             </FormHelperText>
                           </FormControl>
@@ -4910,8 +5140,8 @@ const PurchasesPage: React.FC = () => {
 
                       {/* Employee Info Banner */}
                       {!isFinanceOrAdmin && (
-                        <Box p={4} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
-                          <Text fontSize="sm" color="blue.700" fontWeight="medium">
+                        <Box p={4} bg={employeeInfoBg} borderRadius="md" border="1px solid" borderColor={employeeInfoBorder}>
+                          <Text fontSize="sm" color={employeeInfoText} fontWeight="medium">
                             ℹ️ Konfigurasi Pajak dan Metode Pembayaran akan diatur oleh Finance saat proses approval. Default: PPN 11%, Metode Pembayaran Credit.
                           </Text>
                         </Box>
@@ -4942,13 +5172,21 @@ const PurchasesPage: React.FC = () => {
                                     max={100}
                                     step={0.1}
                                   >
-                                    <NumberInputField placeholder="11" />
+                                    <NumberInputField
+                                      placeholder="11"
+                                      bg={inputBg}
+                                      color={inputTextColor}
+                                      borderColor={inputBorderColor}
+                                      _hover={{ borderColor: inputHoverBorder }}
+                                      _focusVisible={fieldFocusStyles}
+                                      _placeholder={{ color: inputPlaceholderColor }}
+                                    />
                                     <NumberInputStepper>
                                       <NumberIncrementStepper />
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
+                                  <FormHelperText fontSize="xs" color={helperTextColor}>Pajak Pertambahan Nilai (default 11%)</FormHelperText>
                                 </FormControl>
 
                                 <FormControl>
@@ -4961,13 +5199,21 @@ const PurchasesPage: React.FC = () => {
                                     max={100}
                                     step={0.1}
                                   >
-                                    <NumberInputField placeholder="0" />
+                                    <NumberInputField
+                                      placeholder="0"
+                                      bg={inputBg}
+                                      color={inputTextColor}
+                                      borderColor={inputBorderColor}
+                                      _hover={{ borderColor: inputHoverBorder }}
+                                      _focusVisible={fieldFocusStyles}
+                                      _placeholder={{ color: inputPlaceholderColor }}
+                                    />
                                     <NumberInputStepper>
                                       <NumberIncrementStepper />
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
+                                  <FormHelperText fontSize="xs" color={helperTextColor}>Pajak tambahan lainnya (opsional)</FormHelperText>
                                 </FormControl>
                               </SimpleGrid>
                             </Box>
@@ -4990,13 +5236,21 @@ const PurchasesPage: React.FC = () => {
                                     max={100}
                                     step={0.1}
                                   >
-                                    <NumberInputField placeholder="2" />
+                                    <NumberInputField
+                                      placeholder="2"
+                                      bg={inputBg}
+                                      color={inputTextColor}
+                                      borderColor={inputBorderColor}
+                                      _hover={{ borderColor: inputHoverBorder }}
+                                      _focusVisible={fieldFocusStyles}
+                                      _placeholder={{ color: inputPlaceholderColor }}
+                                    />
                                     <NumberInputStepper>
                                       <NumberIncrementStepper />
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">PPh 21: 2% jasa konstruksi, 15% dividen/bunga</FormHelperText>
+                                  <FormHelperText fontSize="xs" color={helperTextColor}>PPh 21: 2% jasa konstruksi, 15% dividen/bunga</FormHelperText>
                                 </FormControl>
 
                                 <FormControl>
@@ -5009,13 +5263,21 @@ const PurchasesPage: React.FC = () => {
                                     max={100}
                                     step={0.1}
                                   >
-                                    <NumberInputField placeholder="2" />
+                                    <NumberInputField
+                                      placeholder="2"
+                                      bg={inputBg}
+                                      color={inputTextColor}
+                                      borderColor={inputBorderColor}
+                                      _hover={{ borderColor: inputHoverBorder }}
+                                      _focusVisible={fieldFocusStyles}
+                                      _placeholder={{ color: inputPlaceholderColor }}
+                                    />
                                     <NumberInputStepper>
                                       <NumberIncrementStepper />
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">PPh 23: 2% jasa umum, 15% dividen/bunga/royalti</FormHelperText>
+                                  <FormHelperText fontSize="xs" color={helperTextColor}>PPh 23: 2% jasa umum, 15% dividen/bunga/royalti</FormHelperText>
                                 </FormControl>
 
                                 <FormControl>
@@ -5028,13 +5290,21 @@ const PurchasesPage: React.FC = () => {
                                     max={100}
                                     step={0.1}
                                   >
-                                    <NumberInputField placeholder="0" />
+                                    <NumberInputField
+                                      placeholder="0"
+                                      bg={inputBg}
+                                      color={inputTextColor}
+                                      borderColor={inputBorderColor}
+                                      _hover={{ borderColor: inputHoverBorder }}
+                                      _focusVisible={fieldFocusStyles}
+                                      _placeholder={{ color: inputPlaceholderColor }}
+                                    />
                                     <NumberInputStepper>
                                       <NumberIncrementStepper />
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
+                                  <FormHelperText fontSize="xs" color={helperTextColor}>Potongan pajak lainnya (opsional)</FormHelperText>
                                 </FormControl>
                               </SimpleGrid>
                             </Box>
@@ -5894,10 +6164,7 @@ const PurchasesPage: React.FC = () => {
                               {financeTaxPurchase?.purchase_items?.map((item: any, idx) => (
                                 <Tr key={idx}>
                                   <Td fontSize="sm">
-                                    {item.is_fixed_asset || item.item_type === 'ASSET'
-                                      ? `${item.description || 'Aset Tanpa Deskripsi'} (Aset Tetap)`
-                                      : item.product?.name || `Product #${item.product_id}`
-                                    }
+                                    {getPurchaseItemDisplayName(item)}
                                   </Td>
                                   <Td fontSize="sm" isNumeric>{item.quantity}</Td>
                                   <Td fontSize="sm" isNumeric>{formatCurrency(item.unit_price)}</Td>
@@ -6020,7 +6287,7 @@ const PurchasesPage: React.FC = () => {
                                   const isSufficient = balance >= totalPayment;
                                   return (
                                     <option key={account.id} value={account.id.toString()}>
-                                      {account.name} ({account.code}) - {account.currency} | Saldo: {formatCurrency(balance)}{!isSufficient ? ' [KURANG]' : ''}
+                                      {account.name} ({account.code}) - {account.currency} | Saldo: {formatAccountBalance(balance, account.currency)}{!isSufficient ? ' [KURANG]' : ''}
                                     </option>
                                   );
                                 })}
@@ -6029,7 +6296,7 @@ const PurchasesPage: React.FC = () => {
                               {/* Show selected account balance info */}
                               {financeTaxForm.bank_account_id && getSelectedBankAccount() && !isBalanceInsufficient() && (
                                 <Text fontSize="xs" color="green.600" mt={1} fontWeight="medium">
-                                  Saldo tersedia: {formatCurrency(getSelectedBankAccount()?.balance ?? 0)} (mencukupi)
+                                  Saldo tersedia: {formatAccountBalance(getSelectedBankAccount()?.balance ?? 0, getSelectedBankAccount()?.currency)} (mencukupi)
                                 </Text>
                               )}
                             </FormControl>
@@ -6044,10 +6311,10 @@ const PurchasesPage: React.FC = () => {
                                   <AlertTitle fontSize="sm">Saldo Tidak Mencukupi</AlertTitle>
                                   <AlertDescription fontSize="xs">
                                     <Text>
-                                      Saldo <strong>{getSelectedBankAccount()?.name}</strong> ({formatCurrency(getSelectedBankAccount()?.balance ?? 0)}) tidak mencukupi untuk pembayaran sebesar <strong>{formatCurrency(calculateFinanceTaxTotal())}</strong>.
+                                      Saldo <strong>{getSelectedBankAccount()?.name}</strong> ({formatBankAccountSummary(getSelectedBankAccount())}) tidak mencukupi untuk pembayaran sebesar <strong>{formatCurrency(calculateFinanceTaxTotal())}</strong>.
                                     </Text>
                                     <Text mt={1}>
-                                      Kekurangan: <strong>{formatCurrency(calculateFinanceTaxTotal() - (getSelectedBankAccount()?.balance ?? 0))}</strong>
+                                      Kekurangan: <strong>{formatCurrency(calculateFinanceTaxTotal() - getAccountBookBalance(getSelectedBankAccount()))}</strong>
                                     </Text>
                                   </AlertDescription>
                                 </Box>
@@ -6079,7 +6346,7 @@ const PurchasesPage: React.FC = () => {
                                           <Text fontSize="xs" color="gray.500">{account.currency}</Text>
                                         </Box>
                                         <Text fontSize="xs" fontWeight="bold" color="green.600">
-                                          {formatCurrency(account.balance ?? 0)}
+                                          {formatBankAccountSummary(account)}
                                         </Text>
                                       </Flex>
                                     ))}

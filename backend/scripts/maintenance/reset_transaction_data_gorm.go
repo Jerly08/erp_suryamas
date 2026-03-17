@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,13 @@ import (
 
 	"gorm.io/gorm"
 )
+
+const (
+	coaMaintenanceCleanup = "cleanup"
+	coaMaintenanceRestore = "restore"
+)
+
+var coaMaintenanceAction string
 
 func main() {
 	fmt.Println("=== SISTEM AKUNTANSI - RESET DATA ===")
@@ -28,6 +36,7 @@ func main() {
 	fmt.Println("  7) TRUNCATE & RESET ID — Hapus SEMUA data transaksi + BOM/Project/PR + reset semua ID dari 0")
 	fmt.Println("  8) HAPUS MODUL — Hapus data modul tertentu (BOMs, Projects, PR, Products) secara selektif")
 	fmt.Println("")
+	fmt.Println("  9) MAINTENANCE COA â€” Cleanup / restore account COA inactive & soft deleted")
 	mode := askResetMode()
 
 	if mode == 1 {
@@ -41,6 +50,7 @@ func main() {
 		fmt.Println("")
 		fmt.Println("❌ Yang akan DIHAPUS:")
 		fmt.Println("   - Semua transaksi penjualan/pembelian")
+		fmt.Println("   - Semua prepaid expense dan jadwal amortisasinya")
 		fmt.Println("   - Semua classic journals & SSOT journals")
 		fmt.Println("   - Payments, inventory movements, expenses, notifications, stock alerts")
 		fmt.Println("   - Balance & stock akan direset ke 0, sequence direset")
@@ -68,6 +78,7 @@ func main() {
 	} else if mode == 7 {
 		fmt.Println("🔥 MODE TRUNCATE & RESET ID: HAPUS TOTAL + RESET ID")
 		fmt.Println("   - Melakukan TRUNCATE CASCADE pada SEMUA tabel transaksi + BOM/Project/PR")
+		fmt.Println("   - Termasuk prepaid expense dan jadwal amortisasi")
 		fmt.Println("   - Termasuk soft-delete (hard delete semua, deleted_at tidak dipertimbangkan)")
 		fmt.Println("   - Reset SEMUA sequence ID dari 1 (ID baru akan mulai dari 1)")
 		fmt.Println("   - COA, Contacts, Cash Banks TETAP ADA (hanya balance direset)")
@@ -76,9 +87,38 @@ func main() {
 	} else if mode == 8 {
 		fmt.Println("🗂️  MODE HAPUS MODUL: Hapus data modul tertentu secara selektif")
 		fmt.Println("   - Pilih modul mana yang ingin dihapus: BOMs, Projects, Purchase Requests, Products")
+		fmt.Println("   - Sekarang juga mendukung Prepaid Expenses + jurnal amortisasi/terminasi")
 		fmt.Println("   - Setiap modul dihapus beserta soft-delete-nya (hard delete)")
 		fmt.Println("   - Sequence ID direset untuk modul yang dipilih")
 		fmt.Println("   - Modul lain TIDAK terpengaruh")
+	} else if mode == 9 {
+		coaMaintenanceAction = askCOAMaintenanceAction()
+		if coaMaintenanceAction == coaMaintenanceCleanup {
+			fmt.Println("Aksi dipilih: cleanup akun COA inactive / soft deleted")
+			fmt.Println("ðŸ§¹ MODE MAINTENANCE COA: Cleanup akun inactive / soft deleted")
+			fmt.Println("   - Hanya menghapus account COA yang inactive / soft deleted")
+			fmt.Println("   - HANYA akun yang aman dihapus (tanpa child aktif, tanpa referensi, balance nol)")
+			fmt.Println("   - Account system critical atau yang masih direferensikan akan di-skip")
+			fmt.Println("   - Cocok untuk bersihkan sisa akun akibat bug cleanup lama")
+		} else {
+			fmt.Println("Aksi dipilih: restore akun COA inactive / soft deleted")
+			fmt.Println("â™»ï¸  MODE MAINTENANCE COA: Restore akun inactive / soft deleted")
+			fmt.Println("   - Mengaktifkan kembali account COA inactive")
+			fmt.Println("   - Memulihkan soft deleted account COA (deleted_at = NULL)")
+			fmt.Println("   - Jika ada konflik kode dengan akun lain yang belum terhapus, restore akan di-skip")
+			fmt.Println("   - Cocok untuk recovery akun COA yang sempat hilang setelah restart")
+		}
+		/* } else if mode == 9 {
+			if coaMaintenanceAction == coaMaintenanceCleanup {
+				fmt.Println("\nðŸ§¹ STEP 3: Cleanup account COA inactive / soft deleted yang aman dihapus...")
+			} else {
+				fmt.Println("\nâ™»ï¸  STEP 3: Restore account COA inactive / soft deleted...")
+			}
+			if err := executeCOAMaintenanceWithGORM(db, coaMaintenanceAction); err != nil {
+				log.Printf("âŒ Gagal maintenance COA: %v", err)
+				return
+			}
+		} */
 	} else {
 		fmt.Println("🔄 MODE RECOVERY: Akan mengembalikan semua soft deleted data")
 		fmt.Println("   - Set kolom 'deleted_at = NULL' untuk semua record yang soft deleted")
@@ -112,6 +152,8 @@ func main() {
 	fmt.Println("\n📊 STEP 2: Summary data saat ini...")
 	if mode == 3 {
 		showSoftDeletedDataSummary(db)
+	} else if mode == 9 {
+		showCOAMaintenanceSummary(db, coaMaintenanceAction)
 	} else if mode == 5 {
 		showPeriodClosingSummary(db)
 	} else {
@@ -173,6 +215,16 @@ func main() {
 			log.Printf("❌ Gagal hapus modul: %v", err)
 			return
 		}
+	} else if mode == 9 {
+		if coaMaintenanceAction == coaMaintenanceCleanup {
+			fmt.Println("\nSTEP 3: Cleanup account COA inactive / soft deleted yang aman dihapus...")
+		} else {
+			fmt.Println("\nSTEP 3: Restore account COA inactive / soft deleted...")
+		}
+		if err := executeCOAMaintenanceWithGORM(db, coaMaintenanceAction); err != nil {
+			log.Printf("Gagal maintenance COA: %v", err)
+			return
+		}
 	} else {
 		fmt.Println("\n🔄 STEP 3: Mengeksekusi RECOVERY soft deleted data...")
 		if err := executeRecoveryAllWithGORM(db); err != nil {
@@ -183,7 +235,11 @@ func main() {
 
 	// Step 4: Verify reset
 	fmt.Println("\n✅ STEP 4: Verifikasi hasil reset...")
-	showPostResetSummary(db)
+	if mode == 9 {
+		showCOAMaintenanceSummary(db, coaMaintenanceAction)
+	} else {
+		showPostResetSummary(db)
+	}
 
 	if mode == 1 {
 		fmt.Println("\n🎉 HARD DELETE RESET SELESAI!")
@@ -216,6 +272,16 @@ func main() {
 	} else if mode == 8 {
 		fmt.Println("\n🎉 HAPUS MODUL SELESAI!")
 		fmt.Println("Modul yang dipilih telah dihapus beserta semua data terkait dan soft-delete-nya.")
+	} else if mode == 9 {
+		if coaMaintenanceAction == coaMaintenanceCleanup {
+			fmt.Println("\nCLEANUP COA SELESAI!")
+			fmt.Println("Akun COA inactive / soft deleted yang aman telah dihapus permanen.")
+			fmt.Println("Akun yang masih punya referensi, child aktif, atau konflik tetap dipertahankan.")
+		} else {
+			fmt.Println("\nRESTORE COA SELESAI!")
+			fmt.Println("Akun COA inactive / soft deleted yang aman telah diaktifkan kembali.")
+			fmt.Println("Akun yang konflik dengan kode existing tetap di-skip agar tidak merusak data.")
+		}
 	} else {
 		fmt.Println("\n🎉 RECOVERY SELESAI!")
 		fmt.Println("Semua data yang soft deleted telah dipulihkan (deleted_at = NULL).")
@@ -223,9 +289,95 @@ func main() {
 	}
 }
 
+func deletePrepaidModuleDataWithGORM(db *gorm.DB) error {
+	fmt.Printf("\n   Menghapus modul: Prepaid Expenses...\n")
+
+	tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
+
+	var prepaidCount int64
+	var scheduleCount int64
+	var prepaidJournalCount int64
+
+	tx.Model(&models.PrepaidExpense{}).Count(&prepaidCount)
+	tx.Model(&models.PrepaidSchedule{}).Count(&scheduleCount)
+	tx.Model(&models.SSOTJournalEntry{}).
+		Where("source_type IN ?", []string{"PREPAID_AMORTIZATION", "PREPAID_TERMINATION"}).
+		Count(&prepaidJournalCount)
+
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PrepaidSchedule{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus prepaid_schedules: %v", err)
+	}
+
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PrepaidExpense{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus prepaid_expenses: %v", err)
+	}
+
+	if err := tx.Exec(`
+		DELETE FROM journal_event_log
+		WHERE journal_id IN (
+			SELECT id
+			FROM unified_journal_ledger
+			WHERE source_type IN ('PREPAID_AMORTIZATION', 'PREPAID_TERMINATION')
+		)
+	`).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus journal_event_log prepaid: %v", err)
+	}
+
+	if err := tx.Exec(`
+		DELETE FROM unified_journal_lines
+		WHERE journal_id IN (
+			SELECT id
+			FROM unified_journal_ledger
+			WHERE source_type IN ('PREPAID_AMORTIZATION', 'PREPAID_TERMINATION')
+		)
+	`).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus unified_journal_lines prepaid: %v", err)
+	}
+
+	if err := tx.Exec(`
+		DELETE FROM unified_journal_ledger
+		WHERE source_type IN ('PREPAID_AMORTIZATION', 'PREPAID_TERMINATION')
+	`).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus unified_journal_ledger prepaid: %v", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal commit hapus modul prepaid: %v", err)
+	}
+
+	resetSequenceIfExists(db, "prepaid_expenses_id_seq")
+	resetSequenceIfExists(db, "prepaid_schedules_id_seq")
+
+	fmt.Printf("   Deleted prepaid_expenses: %d\n", prepaidCount)
+	fmt.Printf("   Deleted prepaid_schedules: %d\n", scheduleCount)
+	fmt.Printf("   Deleted prepaid journals: %d\n", prepaidJournalCount)
+
+	return nil
+}
+
+func resetSequenceIfExists(db *gorm.DB, seqName string) {
+	var seqExists bool
+	db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = ? AND relkind = 'S')", seqName).Scan(&seqExists)
+	if !seqExists {
+		return
+	}
+
+	if err := db.Exec(fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH 1", seqName)).Error; err != nil {
+		fmt.Printf("   Warning: Gagal reset sequence %s: %v\n", seqName, err)
+	} else {
+		fmt.Printf("   Reset seq: %s\n", seqName)
+	}
+}
+
 func askResetMode() int {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Masukkan pilihan [1/2/3/4/5/6/7/8] (default 1): ")
+	fmt.Print("Masukkan pilihan [1/2/3/4/5/6/7/8/9] (default 1): ")
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "2" {
@@ -242,8 +394,26 @@ func askResetMode() int {
 		return 7
 	} else if input == "8" {
 		return 8
+	} else if input == "9" {
+		return 9
 	}
 	return 1
+}
+
+func askCOAMaintenanceAction() string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("")
+	fmt.Println("Mode 9 - Maintenance COA:")
+	fmt.Println("  1) Cleanup akun COA inactive / soft deleted yang aman dihapus")
+	fmt.Println("  2) Restore akun COA inactive / soft deleted")
+	fmt.Print("Pilih aksi [1/2] (default 2): ")
+
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	if input == "1" {
+		return coaMaintenanceCleanup
+	}
+	return coaMaintenanceRestore
 }
 
 func confirmReset() bool {
@@ -431,6 +601,15 @@ func executeTransactionResetWithGORM(db *gorm.DB) error {
 	}
 
 	fmt.Println("   🗑️  Menghapus approval dan workflow data...")
+	fmt.Println("   Menghapus prepaid expense related data...")
+	// Prepaid related - schedules first, then headers
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PrepaidSchedule{}).Error; err != nil {
+		fmt.Printf("   Warning: Delete PrepaidSchedule error: %v\n", err)
+	}
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PrepaidExpense{}).Error; err != nil {
+		fmt.Printf("   Warning: Delete PrepaidExpense error: %v\n", err)
+	}
+
 	// Approval system (hapus setelah purchase/sales yang mereference)
 	if err := tx.Unscoped().Where("1 = 1").Delete(&models.ApprovalHistory{}).Error; err != nil {
 		fmt.Printf("   ⚠️  Warning: Delete ApprovalHistory error (maybe table not exist): %v\n", err)
@@ -535,6 +714,8 @@ func resetMainSequences(db *gorm.DB) {
 		"purchase_receipts_id_seq",
 		"purchase_receipt_items_id_seq",
 		"purchase_documents_id_seq",
+		"prepaid_expenses_id_seq",
+		"prepaid_schedules_id_seq",
 		"transactions_id_seq",
 		"payments_id_seq",
 		"expenses_id_seq",
@@ -706,6 +887,7 @@ func showCurrentDataSummary(db *gorm.DB) {
 		TotalAccounts       int64 `json:"total_accounts"`
 		TotalSales          int64 `json:"total_sales"`
 		TotalPurchases      int64 `json:"total_purchases"`
+		TotalPrepaids       int64 `json:"total_prepaids"`
 		TotalTransactions   int64 `json:"total_transactions"`
 		TotalJournals       int64 `json:"total_journals"`
 		TotalJournalEntries int64 `json:"total_journal_entries"`
@@ -728,6 +910,7 @@ func showCurrentDataSummary(db *gorm.DB) {
 	db.Model(&models.Account{}).Where("deleted_at IS NULL").Count(&summary.TotalAccounts)
 	db.Model(&models.Sale{}).Count(&summary.TotalSales)
 	db.Model(&models.Purchase{}).Count(&summary.TotalPurchases)
+	db.Model(&models.PrepaidExpense{}).Count(&summary.TotalPrepaids)
 	db.Model(&models.Transaction{}).Count(&summary.TotalTransactions)
 	db.Model(&models.Journal{}).Count(&summary.TotalJournals)
 	db.Model(&models.JournalEntry{}).Count(&summary.TotalJournalEntries)
@@ -752,6 +935,7 @@ func showCurrentDataSummary(db *gorm.DB) {
 	fmt.Printf("   \n")
 	fmt.Printf("   Sales: %d (akan DIHAPUS)\n", summary.TotalSales)
 	fmt.Printf("   Purchases: %d (akan DIHAPUS)\n", summary.TotalPurchases)
+	fmt.Printf("   Prepaid Expenses: %d (akan DIHAPUS)\n", summary.TotalPrepaids)
 	fmt.Printf("   Transactions: %d (akan DIHAPUS)\n", summary.TotalTransactions)
 	fmt.Printf("   Classic Journals: %d (akan DIHAPUS)\n", summary.TotalJournals)
 	fmt.Printf("   Classic Journal Entries: %d (akan DIHAPUS)\n", summary.TotalJournalEntries)
@@ -887,24 +1071,26 @@ func executeRecoveryAllWithGORM(db *gorm.DB) error {
 
 func showPostResetSummary(db *gorm.DB) {
 	type PostResetSummary struct {
-		TotalAccounts           int64 `json:"total_accounts"`
-		TotalProducts           int64 `json:"total_products"`
-		TotalContacts           int64 `json:"total_contacts"`
-		TotalCashBanks          int64 `json:"total_cash_banks"`
-		RemainingSales          int64 `json:"remaining_sales"`
-		RemainingPurchases      int64 `json:"remaining_purchases"`
-		RemainingTransactions   int64 `json:"remaining_transactions"`
-		RemainingJournals       int64 `json:"remaining_journals"`
-		RemainingJournalEntries int64 `json:"remaining_journal_entries"`
-		RemainingJournalLines   int64 `json:"remaining_journal_lines"`
-		RemainingSSOTJournals   int64 `json:"remaining_ssot_journals"`
-		RemainingSSOTLines      int64 `json:"remaining_ssot_lines"`
-		RemainingSSOTEventLogs  int64 `json:"remaining_ssot_event_logs"`
-		RemainingNotifications  int64 `json:"remaining_notifications"`
-		RemainingStockAlerts    int64 `json:"remaining_stock_alerts"`
-		AccountsWithBalance     int64 `json:"accounts_with_balance"`
-		ProductsWithStock       int64 `json:"products_with_stock"`
-		CashBanksWithBalance    int64 `json:"cash_banks_with_balance"`
+		TotalAccounts             int64 `json:"total_accounts"`
+		TotalProducts             int64 `json:"total_products"`
+		TotalContacts             int64 `json:"total_contacts"`
+		TotalCashBanks            int64 `json:"total_cash_banks"`
+		RemainingSales            int64 `json:"remaining_sales"`
+		RemainingPurchases        int64 `json:"remaining_purchases"`
+		RemainingPrepaids         int64 `json:"remaining_prepaids"`
+		RemainingPrepaidSchedules int64 `json:"remaining_prepaid_schedules"`
+		RemainingTransactions     int64 `json:"remaining_transactions"`
+		RemainingJournals         int64 `json:"remaining_journals"`
+		RemainingJournalEntries   int64 `json:"remaining_journal_entries"`
+		RemainingJournalLines     int64 `json:"remaining_journal_lines"`
+		RemainingSSOTJournals     int64 `json:"remaining_ssot_journals"`
+		RemainingSSOTLines        int64 `json:"remaining_ssot_lines"`
+		RemainingSSOTEventLogs    int64 `json:"remaining_ssot_event_logs"`
+		RemainingNotifications    int64 `json:"remaining_notifications"`
+		RemainingStockAlerts      int64 `json:"remaining_stock_alerts"`
+		AccountsWithBalance       int64 `json:"accounts_with_balance"`
+		ProductsWithStock         int64 `json:"products_with_stock"`
+		CashBanksWithBalance      int64 `json:"cash_banks_with_balance"`
 	}
 
 	var summary PostResetSummary
@@ -918,6 +1104,8 @@ func showPostResetSummary(db *gorm.DB) {
 	// Count remaining transaction data (should be 0)
 	db.Model(&models.Sale{}).Count(&summary.RemainingSales)
 	db.Model(&models.Purchase{}).Count(&summary.RemainingPurchases)
+	db.Model(&models.PrepaidExpense{}).Count(&summary.RemainingPrepaids)
+	db.Model(&models.PrepaidSchedule{}).Count(&summary.RemainingPrepaidSchedules)
 	db.Model(&models.Transaction{}).Count(&summary.RemainingTransactions)
 	db.Model(&models.Journal{}).Count(&summary.RemainingJournals)
 	db.Model(&models.JournalEntry{}).Count(&summary.RemainingJournalEntries)
@@ -942,6 +1130,7 @@ func showPostResetSummary(db *gorm.DB) {
 	fmt.Printf("\n")
 
 	if summary.RemainingSales == 0 && summary.RemainingPurchases == 0 &&
+		summary.RemainingPrepaids == 0 && summary.RemainingPrepaidSchedules == 0 &&
 		summary.RemainingTransactions == 0 && summary.RemainingJournals == 0 &&
 		summary.RemainingJournalEntries == 0 && summary.RemainingJournalLines == 0 &&
 		summary.RemainingSSOTJournals == 0 && summary.RemainingSSOTLines == 0 &&
@@ -950,6 +1139,8 @@ func showPostResetSummary(db *gorm.DB) {
 		fmt.Printf("✅ Data transaksi berhasil dihapus:\n")
 		fmt.Printf("   - Sales: %d\n", summary.RemainingSales)
 		fmt.Printf("   - Purchases: %d\n", summary.RemainingPurchases)
+		fmt.Printf("   - Prepaid Expenses: %d\n", summary.RemainingPrepaids)
+		fmt.Printf("   - Prepaid Schedules: %d\n", summary.RemainingPrepaidSchedules)
 		fmt.Printf("   - Transactions: %d\n", summary.RemainingTransactions)
 		fmt.Printf("   - Classic Journals: %d\n", summary.RemainingJournals)
 		fmt.Printf("   - Classic Journal Entries: %d\n", summary.RemainingJournalEntries)
@@ -963,6 +1154,8 @@ func showPostResetSummary(db *gorm.DB) {
 		fmt.Printf("⚠️  Peringatan - Sisa data transaksi:\n")
 		fmt.Printf("   - Sales: %d\n", summary.RemainingSales)
 		fmt.Printf("   - Purchases: %d\n", summary.RemainingPurchases)
+		fmt.Printf("   - Prepaid Expenses: %d\n", summary.RemainingPrepaids)
+		fmt.Printf("   - Prepaid Schedules: %d\n", summary.RemainingPrepaidSchedules)
 		fmt.Printf("   - Transactions: %d\n", summary.RemainingTransactions)
 		fmt.Printf("   - Classic Journals: %d\n", summary.RemainingJournals)
 		fmt.Printf("   - Classic Journal Entries: %d\n", summary.RemainingJournalEntries)
@@ -1103,6 +1296,390 @@ func showPeriodClosingSummary(db *gorm.DB) {
 	}
 }
 
+type accountReferenceTarget struct {
+	TableName  string
+	ColumnName string
+}
+
+type coaMaintenanceCandidate struct {
+	ID          uint
+	Code        string
+	Name        string
+	Level       int
+	IsActive    bool
+	SoftDeleted bool
+	Reason      string
+}
+
+type coaMaintenancePlan struct {
+	TotalAffected     int
+	InactiveOnlyCount int64
+	SoftDeletedCount  int64
+	CleanupCandidates []coaMaintenanceCandidate
+	CleanupBlocked    []coaMaintenanceCandidate
+	RestoreCandidates []coaMaintenanceCandidate
+	RestoreBlocked    []coaMaintenanceCandidate
+}
+
+func showCOAMaintenanceSummary(db *gorm.DB, action string) {
+	plan, err := buildCOAMaintenancePlan(db)
+	if err != nil {
+		fmt.Printf("   Warning: gagal membuat summary maintenance COA: %v\n", err)
+		return
+	}
+
+	fmt.Println("COA maintenance summary:")
+	fmt.Printf("   - Total akun terdampak: %d\n", plan.TotalAffected)
+	fmt.Printf("   - Inactive (belum soft delete): %d\n", plan.InactiveOnlyCount)
+	fmt.Printf("   - Soft deleted: %d\n", plan.SoftDeletedCount)
+
+	if action == coaMaintenanceCleanup {
+		fmt.Printf("   - Aman dihapus permanen: %d\n", len(plan.CleanupCandidates))
+		fmt.Printf("   - Diblokir demi keamanan: %d\n", len(plan.CleanupBlocked))
+		printCOAMaintenanceCandidates("Siap dihapus", plan.CleanupCandidates)
+		printCOAMaintenanceCandidates("Diblokir cleanup", plan.CleanupBlocked)
+	} else {
+		fmt.Printf("   - Aman direstore: %d\n", len(plan.RestoreCandidates))
+		fmt.Printf("   - Diblokir restore: %d\n", len(plan.RestoreBlocked))
+		printCOAMaintenanceCandidates("Siap direstore", plan.RestoreCandidates)
+		printCOAMaintenanceCandidates("Diblokir restore", plan.RestoreBlocked)
+	}
+}
+
+func printCOAMaintenanceCandidates(title string, items []coaMaintenanceCandidate) {
+	if len(items) == 0 {
+		fmt.Printf("   - %s: tidak ada\n", title)
+		return
+	}
+
+	limit := 10
+	if len(items) < limit {
+		limit = len(items)
+	}
+
+	fmt.Printf("   - %s:\n", title)
+	for i := 0; i < limit; i++ {
+		item := items[i]
+		state := describeCOAState(item)
+		if item.Reason != "" {
+			fmt.Printf("     %s | %s | %s | %s\n", item.Code, item.Name, state, item.Reason)
+		} else {
+			fmt.Printf("     %s | %s | %s\n", item.Code, item.Name, state)
+		}
+	}
+
+	if len(items) > limit {
+		fmt.Printf("     ... dan %d akun lainnya\n", len(items)-limit)
+	}
+}
+
+func describeCOAState(item coaMaintenanceCandidate) string {
+	states := make([]string, 0, 2)
+	if !item.IsActive {
+		states = append(states, "inactive")
+	}
+	if item.SoftDeleted {
+		states = append(states, "soft-deleted")
+	}
+	if len(states) == 0 {
+		return "active"
+	}
+	return strings.Join(states, ", ")
+}
+
+func buildCOAMaintenancePlan(db *gorm.DB) (*coaMaintenancePlan, error) {
+	plan := &coaMaintenancePlan{}
+
+	if err := db.Model(&models.Account{}).
+		Where("is_active = ? AND deleted_at IS NULL", false).
+		Count(&plan.InactiveOnlyCount).Error; err != nil {
+		return nil, fmt.Errorf("gagal hitung akun inactive: %w", err)
+	}
+
+	if err := db.Unscoped().Model(&models.Account{}).
+		Where("deleted_at IS NOT NULL").
+		Count(&plan.SoftDeletedCount).Error; err != nil {
+		return nil, fmt.Errorf("gagal hitung akun soft deleted: %w", err)
+	}
+
+	var accounts []models.Account
+	if err := db.Unscoped().
+		Where("is_active = ? OR deleted_at IS NOT NULL", false).
+		Order("level ASC, code ASC, id ASC").
+		Find(&accounts).Error; err != nil {
+		return nil, fmt.Errorf("gagal ambil akun maintenance COA: %w", err)
+	}
+
+	plan.TotalAffected = len(accounts)
+	if len(accounts) == 0 {
+		return plan, nil
+	}
+
+	referenceTargets, err := loadAccountReferenceTargets(db)
+	if err != nil {
+		return nil, err
+	}
+
+	accountByID := make(map[uint]models.Account, len(accounts))
+	candidateChildren := make(map[uint][]models.Account)
+	for _, account := range accounts {
+		accountByID[account.ID] = account
+		if account.ParentID != nil {
+			candidateChildren[*account.ParentID] = append(candidateChildren[*account.ParentID], account)
+		}
+	}
+
+	restoreApproved := make(map[uint]bool)
+	restoreQueue := append([]models.Account(nil), accounts...)
+	sort.Slice(restoreQueue, func(i, j int) bool {
+		if restoreQueue[i].Level == restoreQueue[j].Level {
+			if restoreQueue[i].Code == restoreQueue[j].Code {
+				return restoreQueue[i].ID < restoreQueue[j].ID
+			}
+			return restoreQueue[i].Code < restoreQueue[j].Code
+		}
+		return restoreQueue[i].Level < restoreQueue[j].Level
+	})
+
+	for _, account := range restoreQueue {
+		reason := ""
+
+		if account.DeletedAt.Valid {
+			var conflictCount int64
+			if err := db.Model(&models.Account{}).
+				Where("code = ? AND deleted_at IS NULL AND id <> ?", account.Code, account.ID).
+				Count(&conflictCount).Error; err != nil {
+				return nil, fmt.Errorf("gagal cek konflik kode akun %s: %w", account.Code, err)
+			}
+			if conflictCount > 0 {
+				reason = "kode sudah dipakai akun COA lain yang belum dihapus"
+			}
+		}
+
+		if reason == "" && account.ParentID != nil {
+			if parent, ok := accountByID[*account.ParentID]; ok {
+				if (!parent.IsActive || parent.DeletedAt.Valid) && !restoreApproved[parent.ID] {
+					reason = fmt.Sprintf("parent account %s belum bisa direstore", parent.Code)
+				}
+			}
+		}
+
+		item := newCOAMaintenanceCandidate(account, reason)
+		if reason == "" {
+			restoreApproved[account.ID] = true
+			plan.RestoreCandidates = append(plan.RestoreCandidates, item)
+		} else {
+			plan.RestoreBlocked = append(plan.RestoreBlocked, item)
+		}
+	}
+
+	cleanupApproved := make(map[uint]bool)
+	cleanupQueue := append([]models.Account(nil), accounts...)
+	sort.Slice(cleanupQueue, func(i, j int) bool {
+		if cleanupQueue[i].Level == cleanupQueue[j].Level {
+			if cleanupQueue[i].Code == cleanupQueue[j].Code {
+				return cleanupQueue[i].ID < cleanupQueue[j].ID
+			}
+			return cleanupQueue[i].Code < cleanupQueue[j].Code
+		}
+		return cleanupQueue[i].Level > cleanupQueue[j].Level
+	})
+
+	for _, account := range cleanupQueue {
+		reasons := make([]string, 0, 4)
+
+		if account.IsSystemCritical {
+			reasons = append(reasons, "akun system critical")
+		}
+		if account.Balance != 0 {
+			reasons = append(reasons, fmt.Sprintf("balance masih %.2f", account.Balance))
+		}
+
+		var activeChildCount int64
+		if err := db.Model(&models.Account{}).
+			Where("parent_id = ? AND deleted_at IS NULL AND is_active = ?", account.ID, true).
+			Count(&activeChildCount).Error; err != nil {
+			return nil, fmt.Errorf("gagal cek child aktif akun %s: %w", account.Code, err)
+		}
+		if activeChildCount > 0 {
+			reasons = append(reasons, fmt.Sprintf("masih punya %d child account aktif", activeChildCount))
+		}
+
+		for _, child := range candidateChildren[account.ID] {
+			if !cleanupApproved[child.ID] {
+				reasons = append(reasons, fmt.Sprintf("child account %s belum aman dihapus", child.Code))
+				break
+			}
+		}
+
+		if len(reasons) == 0 {
+			referenceReason, err := findAccountReferenceBlocker(db, account.ID, referenceTargets)
+			if err != nil {
+				return nil, fmt.Errorf("gagal cek referensi akun %s: %w", account.Code, err)
+			}
+			if referenceReason != "" {
+				reasons = append(reasons, referenceReason)
+			}
+		}
+
+		item := newCOAMaintenanceCandidate(account, strings.Join(reasons, "; "))
+		if len(reasons) == 0 {
+			cleanupApproved[account.ID] = true
+			plan.CleanupCandidates = append(plan.CleanupCandidates, item)
+		} else {
+			plan.CleanupBlocked = append(plan.CleanupBlocked, item)
+		}
+	}
+
+	sort.Slice(plan.CleanupCandidates, func(i, j int) bool {
+		if plan.CleanupCandidates[i].Level == plan.CleanupCandidates[j].Level {
+			return plan.CleanupCandidates[i].Code < plan.CleanupCandidates[j].Code
+		}
+		return plan.CleanupCandidates[i].Level > plan.CleanupCandidates[j].Level
+	})
+	sort.Slice(plan.CleanupBlocked, func(i, j int) bool {
+		if plan.CleanupBlocked[i].Code == plan.CleanupBlocked[j].Code {
+			return plan.CleanupBlocked[i].ID < plan.CleanupBlocked[j].ID
+		}
+		return plan.CleanupBlocked[i].Code < plan.CleanupBlocked[j].Code
+	})
+	sort.Slice(plan.RestoreCandidates, func(i, j int) bool {
+		if plan.RestoreCandidates[i].Level == plan.RestoreCandidates[j].Level {
+			return plan.RestoreCandidates[i].Code < plan.RestoreCandidates[j].Code
+		}
+		return plan.RestoreCandidates[i].Level < plan.RestoreCandidates[j].Level
+	})
+	sort.Slice(plan.RestoreBlocked, func(i, j int) bool {
+		if plan.RestoreBlocked[i].Code == plan.RestoreBlocked[j].Code {
+			return plan.RestoreBlocked[i].ID < plan.RestoreBlocked[j].ID
+		}
+		return plan.RestoreBlocked[i].Code < plan.RestoreBlocked[j].Code
+	})
+
+	return plan, nil
+}
+
+func newCOAMaintenanceCandidate(account models.Account, reason string) coaMaintenanceCandidate {
+	return coaMaintenanceCandidate{
+		ID:          account.ID,
+		Code:        account.Code,
+		Name:        account.Name,
+		Level:       account.Level,
+		IsActive:    account.IsActive,
+		SoftDeleted: account.DeletedAt.Valid,
+		Reason:      reason,
+	}
+}
+
+func loadAccountReferenceTargets(db *gorm.DB) ([]accountReferenceTarget, error) {
+	var targets []accountReferenceTarget
+	if err := db.Raw(`
+		SELECT
+			tc.table_name AS table_name,
+			kcu.column_name AS column_name
+		FROM information_schema.table_constraints tc
+		INNER JOIN information_schema.key_column_usage kcu
+			ON tc.constraint_name = kcu.constraint_name
+			AND tc.table_schema = kcu.table_schema
+		INNER JOIN information_schema.constraint_column_usage ccu
+			ON ccu.constraint_name = tc.constraint_name
+			AND ccu.table_schema = tc.table_schema
+		WHERE tc.constraint_type = 'FOREIGN KEY'
+			AND tc.table_schema = 'public'
+			AND ccu.table_name = 'accounts'
+			AND ccu.column_name = 'id'
+		ORDER BY tc.table_name, kcu.column_name
+	`).Scan(&targets).Error; err != nil {
+		return nil, fmt.Errorf("gagal ambil foreign key ke accounts: %w", err)
+	}
+
+	filtered := make([]accountReferenceTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.TableName == "accounts" && target.ColumnName == "parent_id" {
+			continue
+		}
+		filtered = append(filtered, target)
+	}
+
+	return filtered, nil
+}
+
+func findAccountReferenceBlocker(db *gorm.DB, accountID uint, targets []accountReferenceTarget) (string, error) {
+	for _, target := range targets {
+		var refCount int64
+		query := fmt.Sprintf(`SELECT COUNT(*) FROM "%s" WHERE "%s" = ?`, target.TableName, target.ColumnName)
+		if err := db.Raw(query, accountID).Scan(&refCount).Error; err != nil {
+			return "", fmt.Errorf("gagal hitung referensi %s.%s: %w", target.TableName, target.ColumnName, err)
+		}
+		if refCount > 0 {
+			return fmt.Sprintf("masih direferensikan oleh %s.%s (%d)", target.TableName, target.ColumnName, refCount), nil
+		}
+	}
+
+	return "", nil
+}
+
+func executeCOAMaintenanceWithGORM(db *gorm.DB, action string) error {
+	plan, err := buildCOAMaintenancePlan(db)
+	if err != nil {
+		return err
+	}
+
+	if action == coaMaintenanceCleanup {
+		if len(plan.CleanupCandidates) == 0 {
+			fmt.Println("   Tidak ada akun COA yang aman dihapus.")
+			return nil
+		}
+
+		tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
+		for _, item := range plan.CleanupCandidates {
+			if err := tx.Unscoped().Delete(&models.Account{}, item.ID).Error; err != nil {
+				_ = tx.Rollback().Error
+				return fmt.Errorf("gagal hapus akun %s - %s: %w", item.Code, item.Name, err)
+			}
+			fmt.Printf("   Deleted COA: %s - %s\n", item.Code, item.Name)
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			_ = tx.Rollback().Error
+			return fmt.Errorf("gagal commit cleanup COA: %w", err)
+		}
+
+		fmt.Printf("   Cleanup selesai. Deleted: %d, blocked: %d\n", len(plan.CleanupCandidates), len(plan.CleanupBlocked))
+		return nil
+	}
+
+	if len(plan.RestoreCandidates) == 0 {
+		fmt.Println("   Tidak ada akun COA yang aman direstore.")
+		return nil
+	}
+
+	tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
+	for _, item := range plan.RestoreCandidates {
+		updates := map[string]interface{}{
+			"is_active":  true,
+			"deleted_at": nil,
+			"updated_at": time.Now(),
+		}
+		if err := tx.Unscoped().
+			Model(&models.Account{}).
+			Where("id = ?", item.ID).
+			Updates(updates).Error; err != nil {
+			_ = tx.Rollback().Error
+			return fmt.Errorf("gagal restore akun %s - %s: %w", item.Code, item.Name, err)
+		}
+		fmt.Printf("   Restored COA: %s - %s\n", item.Code, item.Name)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal commit restore COA: %w", err)
+	}
+
+	fmt.Printf("   Restore selesai. Restored: %d, blocked: %d\n", len(plan.RestoreCandidates), len(plan.RestoreBlocked))
+	return nil
+}
+
 // executeDeletePeriodClosingWithGORM menghapus semua data periode closing
 func executeDeletePeriodClosingWithGORM(db *gorm.DB) error {
 	start := time.Now()
@@ -1184,6 +1761,9 @@ func executeTruncateAndResetIDWithGORM(db *gorm.DB) error {
 		"purchase_documents",
 		"purchase_items",
 		"purchases",
+		// Prepaid related
+		"prepaid_schedules",
+		"prepaid_expenses",
 		// Purchase Request system
 		"purchase_request_items",
 		"purchase_requests",
@@ -1357,7 +1937,7 @@ func shouldSkipSequence(seqName string) bool {
 // ============================================================================
 
 // executeDeleteModuleDataWithGORM menghapus data modul tertentu secara selektif.
-// User memilih satu atau lebih modul: BOMs, Projects, Purchase Requests, Products.
+// User memilih satu atau lebih modul: BOMs, Projects, Purchase Requests, Products, Prepaid Expenses.
 func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	start := time.Now()
 
@@ -1367,8 +1947,9 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	fmt.Println("  b) Projects (semua project + project BOMs + project BOM items)")
 	fmt.Println("  c) Purchase Requests (semua PR + PR items + approval)")
 	fmt.Println("  d) Products (semua produk + stock)")
+	fmt.Println("  e) Prepaid Expenses (header + schedule + jurnal amortisasi/terminasi)")
 	fmt.Println("  all) Hapus semua modul di atas")
-	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c atau all): ")
+	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c,e atau all): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
@@ -1450,6 +2031,13 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 			"stock_alerts",
 			"products",
 		}, "Products")
+	}
+
+	// Hapus modul Prepaid Expenses
+	if deleteAll || selected["e"] {
+		if err := deletePrepaidModuleDataWithGORM(db); err != nil {
+			fmt.Printf("   âš ï¸  Warning: Gagal hapus modul prepaid: %v\n", err)
+		}
 	}
 
 	// Re-enable FK constraints

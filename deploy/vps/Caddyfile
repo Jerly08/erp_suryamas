@@ -1,0 +1,31 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size {$CLIENT_MAX_BODY_SIZE}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), camera=(), microphone=()"
+		-Server
+	}
+
+	reverse_proxy frontend:3000
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -125,6 +125,49 @@ const CashFlowPage: React.FC = () => {
     const textColor = useColorModeValue('gray.800', 'white');
     const descriptionColor = useColorModeValue('gray.600', 'gray.300');
     const summaryBg = useColorModeValue('gray.50', 'gray.700');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const inputHoverBorderColor = useColorModeValue('gray.400', 'whiteAlpha.400');
+    const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.300');
+    const infoIconColor = useColorModeValue('gray.500', 'gray.400');
+    const errorBg = useColorModeValue('red.50', 'rgba(229, 62, 62, 0.14)');
+    const errorBorderColor = useColorModeValue('red.200', 'red.700');
+    const companyHeaderBg = useColorModeValue('purple.50', 'rgba(128, 90, 213, 0.14)');
+    const companyHeaderTextColor = useColorModeValue('purple.800', 'purple.100');
+    const companyHeaderSubtextColor = useColorModeValue('purple.600', 'purple.200');
+    const statPurpleBg = useColorModeValue('purple.50', 'rgba(128, 90, 213, 0.14)');
+    const statBlueBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
+    const statOrangeBg = useColorModeValue('orange.50', 'rgba(221, 107, 32, 0.14)');
+    const statGreenBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.14)');
+    const hoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const dividerBorderColor = useColorModeValue('gray.100', 'whiteAlpha.100');
+    const summaryCashBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.14)');
+    const summaryCashBorder = useColorModeValue('green.200', 'green.700');
+    const summaryCashText = useColorModeValue('green.800', 'green.100');
+    const ratioBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
+    const ratioBorder = useColorModeValue('blue.200', 'blue.700');
+    const ratioText = useColorModeValue('blue.800', 'blue.100');
+    const modalBg = useColorModeValue('white', 'gray.800');
+    const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const modalBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const infoPanelBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
+    const infoPanelBorderColor = useColorModeValue('blue.200', 'blue.700');
+    const infoPanelTextColor = useColorModeValue('blue.700', 'blue.100');
+    const sectionHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const subtleTextColor = useColorModeValue('gray.500', 'gray.400');
+    const notePanelBg = useColorModeValue('yellow.50', 'rgba(214, 158, 46, 0.14)');
+    const notePanelBorderColor = useColorModeValue('yellow.200', 'yellow.700');
+    const notePanelTextColor = useColorModeValue('yellow.800', 'yellow.100');
+    const fieldStyles = {
+        bg: inputBg,
+        color: textColor,
+        borderColor: inputBorderColor,
+        _hover: { borderColor: inputHoverBorderColor },
+        _focusVisible: {
+            borderColor: inputFocusBorderColor,
+            boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+        },
+    };
 
     // State
     const [startDate, setStartDate] = useState('');
@@ -375,6 +418,103 @@ const CashFlowPage: React.FC = () => {
         }).format(Number(amount));
     };
 
+    type AmountVariant = 'cashflow' | 'performance';
+
+    const getAmountMeta = (amount: number | null | undefined, variant: AmountVariant = 'cashflow') => {
+        const value = Number(amount || 0);
+        const isPositive = value > 0;
+        const isNegative = value < 0;
+
+        if (variant === 'performance') {
+            return {
+                value,
+                absoluteValue: Math.abs(value),
+                badgeLabel: isPositive ? 'Laba' : isNegative ? 'Rugi' : 'Impas',
+                badgeScheme: isPositive ? 'green' : isNegative ? 'red' : 'gray',
+                textColor: isPositive ? 'green.600' : isNegative ? 'red.500' : subtleTextColor,
+            };
+        }
+
+        return {
+            value,
+            absoluteValue: Math.abs(value),
+            badgeLabel: isPositive ? 'Kas Masuk' : isNegative ? 'Kas Keluar' : 'Nihil',
+            badgeScheme: isPositive ? 'green' : isNegative ? 'red' : 'gray',
+            textColor: isPositive ? 'green.600' : isNegative ? 'red.500' : subtleTextColor,
+        };
+    };
+
+    const renderAmountInline = (
+        amount: number | null | undefined,
+        options?: {
+            variant?: AmountVariant;
+            showBadge?: boolean;
+            fontSize?: string;
+            fontWeight?: string;
+            justify?: string;
+            minW?: string;
+            textAlign?: 'left' | 'center' | 'right';
+            badgeSize?: string;
+        }
+    ) => {
+        const meta = getAmountMeta(amount, options?.variant || 'cashflow');
+        return (
+            <HStack
+                spacing={2}
+                justify={options?.justify || 'flex-end'}
+                flexWrap="wrap"
+                minW={options?.minW}
+            >
+                {options?.showBadge !== false && (
+                    <Badge colorScheme={meta.badgeScheme} fontSize={options?.badgeSize || '0.65rem'} px={2} py={0.5} borderRadius="full">
+                        {meta.badgeLabel}
+                    </Badge>
+                )}
+                <Text
+                    fontSize={options?.fontSize || 'sm'}
+                    fontWeight={options?.fontWeight || 'semibold'}
+                    color={meta.textColor}
+                    textAlign={options?.textAlign || 'right'}
+                >
+                    {formatCurrency(meta.absoluteValue)}
+                </Text>
+            </HStack>
+        );
+    };
+
+    const renderAmountStack = (
+        amount: number | null | undefined,
+        options?: {
+            variant?: AmountVariant;
+            showBadge?: boolean;
+            amountFontSize?: string;
+            amountFontWeight?: string;
+        }
+    ) => {
+        const meta = getAmountMeta(amount, options?.variant || 'cashflow');
+        return (
+            <VStack spacing={1} align="center">
+                {options?.showBadge !== false && (
+                    <Badge colorScheme={meta.badgeScheme} fontSize="0.65rem" px={2} py={0.5} borderRadius="full">
+                        {meta.badgeLabel}
+                    </Badge>
+                )}
+                <Text
+                    fontSize={options?.amountFontSize || '2xl'}
+                    fontWeight={options?.amountFontWeight || 'bold'}
+                    color={meta.textColor}
+                >
+                    {formatCurrency(meta.absoluteValue)}
+                </Text>
+            </VStack>
+        );
+    };
+
+    const formatAmountNarrative = (amount: number | null | undefined, variant: AmountVariant = 'cashflow') => {
+        const meta = getAmountMeta(amount, variant);
+        return `${meta.badgeLabel} ${formatCurrency(meta.absoluteValue)}`;
+    };
+
     const op = data?.operating_activities;
     const inv = data?.investing_activities;
     const fin = data?.financing_activities;
@@ -498,7 +638,7 @@ const CashFlowPage: React.FC = () => {
                                             <Icon as={FiCalendar} />
                                             <Text>{t('reports.closedPeriod') || 'Periode tutup'}</Text>
                                             <Tooltip label={t('reports.modal.selectClosedPeriodTooltip') || 'Pilih periode tutup untuk memuat laporan berdasarkan periode fiskal yang telah ditutup'} placement="top">
-                                                <Box><Icon as={FiInfo} color="gray.500" /></Box>
+                                                <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                             </Tooltip>
                                         </HStack>
                                     </FormLabel>
@@ -521,6 +661,7 @@ const CashFlowPage: React.FC = () => {
                                             }
                                         }}
                                         isDisabled={loadingClosedPeriods}
+                                        {...fieldStyles}
                                     >
                                         {closedPeriods.map((period, index) => (
                                             <option key={`${period.date}-${index}`} value={period.date}>
@@ -551,6 +692,7 @@ const CashFlowPage: React.FC = () => {
                                         type="date"
                                         value={startDate}
                                         onChange={(e) => setStartDate(e.target.value)}
+                                        {...fieldStyles}
                                     />
                                 </FormControl>
                                 <FormControl flex="1" minW="200px">
@@ -559,6 +701,7 @@ const CashFlowPage: React.FC = () => {
                                         type="date"
                                         value={endDate}
                                         onChange={(e) => setEndDate(e.target.value)}
+                                        {...fieldStyles}
                                     />
                                 </FormControl>
                                 <Button
@@ -589,7 +732,7 @@ const CashFlowPage: React.FC = () => {
 
                 {/* Error State */}
                 {error && (
-                    <Box bg="red.50" p={4} borderRadius="md">
+                    <Box bg={errorBg} p={4} borderRadius="md" border="1px solid" borderColor={errorBorderColor}>
                         <Text color="red.600" fontWeight="medium">Error: {error}</Text>
                         <Button mt={2} size="sm" colorScheme="red" variant="outline" onClick={fetchReport}>
                             {t('reports.modal.retry') || 'Coba Lagi'}
@@ -601,18 +744,18 @@ const CashFlowPage: React.FC = () => {
                 {data && !loading && (
                     <VStack spacing={6} align="stretch">
                         {/* Company Header */}
-                        <Box bg="purple.50" p={4} borderRadius="md">
+                        <Box bg={companyHeaderBg} p={4} borderRadius="md">
                             <HStack justify="space-between" align="start">
                                 <VStack align="start" spacing={1}>
-                                    <Text fontSize="lg" fontWeight="bold" color="purple.800">
+                                    <Text fontSize="lg" fontWeight="bold" color={companyHeaderTextColor}>
                                         {companyInfo?.name || data.company?.name || t('common.name') || 'Perusahaan'}
                                     </Text>
-                                    <Text fontSize="sm" color="purple.600">
+                                    <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                         {companyInfo?.address || (data.company as any)?.address || ''}
                                     </Text>
                                 </VStack>
                                 <VStack align="end" spacing={1}>
-                                    <Text fontSize="sm" color="purple.600">
+                                    <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                         {t('reports.modal.currency') || 'Mata Uang'}: {data.currency || 'IDR'}
                                     </Text>
                                 </VStack>
@@ -629,31 +772,34 @@ const CashFlowPage: React.FC = () => {
                             </Text>
                         </Box>
 
+                        <Box bg={notePanelBg} p={4} borderRadius="md" border="1px solid" borderColor={notePanelBorderColor}>
+                            <Text fontSize="sm" fontWeight="semibold" color={notePanelTextColor} mb={1}>
+                                Cara membaca angka di laporan ini
+                            </Text>
+                            <Text fontSize="sm" color={notePanelTextColor}>
+                                Nilai negatif sekarang ditampilkan sebagai <b>Kas Keluar</b> dan nilai positif sebagai <b>Kas Masuk</b>, jadi lebih mudah dibaca tanpa harus menebak arti tanda minus.
+                            </Text>
+                        </Box>
+
                         {/* Summary Statistics */}
                         <SimpleGrid columns={[1, 2, 4]} spacing={4}>
-                            <Box bg="purple.50" p={4} borderRadius="md" textAlign="center">
-                                <Text fontSize="2xl" fontWeight="bold" color="purple.600">
-                                    {formatCurrency(data.cash_at_beginning || 0)}
-                                </Text>
-                                <Text fontSize="sm" color="purple.800">Kas Awal</Text>
+                            <Box bg={statPurpleBg} p={4} borderRadius="md" textAlign="center">
+                                {renderAmountStack(data.cash_at_beginning || 0, { showBadge: false })}
+                                <Text fontSize="sm" color={companyHeaderTextColor}>Kas Awal</Text>
+                                <Text fontSize="xs" color={subtleTextColor}>Saldo awal periode</Text>
                             </Box>
-                            <Box bg="blue.50" p={4} borderRadius="md" textAlign="center">
-                                <Text fontSize="2xl" fontWeight="bold" color="blue.600">
-                                    {formatCurrency(op?.total_operating_cash_flow || 0)}
-                                </Text>
-                                <Text fontSize="sm" color="blue.800">Arus Kas Operasi</Text>
+                            <Box bg={statBlueBg} p={4} borderRadius="md" textAlign="center">
+                                {renderAmountStack(op?.total_operating_cash_flow || 0)}
+                                <Text fontSize="sm" color={ratioText}>Arus Kas Operasi</Text>
                             </Box>
-                            <Box bg="orange.50" p={4} borderRadius="md" textAlign="center">
-                                <Text fontSize="2xl" fontWeight="bold" color={(data.net_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'}>
-                                    {formatCurrency(data.net_cash_flow || 0)}
-                                </Text>
+                            <Box bg={statOrangeBg} p={4} borderRadius="md" textAlign="center">
+                                {renderAmountStack(data.net_cash_flow || 0)}
                                 <Text fontSize="sm" color="orange.800">Perubahan Bersih</Text>
                             </Box>
-                            <Box bg="green.50" p={4} borderRadius="md" textAlign="center">
-                                <Text fontSize="2xl" fontWeight="bold" color="green.600">
-                                    {formatCurrency(data.cash_at_end || 0)}
-                                </Text>
-                                <Text fontSize="sm" color="green.800">Kas Akhir</Text>
+                            <Box bg={statGreenBg} p={4} borderRadius="md" textAlign="center">
+                                {renderAmountStack(data.cash_at_end || 0, { showBadge: false })}
+                                <Text fontSize="sm" color={summaryCashText}>Kas Akhir</Text>
+                                <Text fontSize="xs" color={subtleTextColor}>Saldo akhir periode</Text>
                             </Box>
                         </SimpleGrid>
 
@@ -664,13 +810,11 @@ const CashFlowPage: React.FC = () => {
                                     <Badge colorScheme="teal" px={2} py={1} fontSize="sm">A</Badge>
                                     <Text fontSize="md" fontWeight="bold" color={headingColor}>Aktivitas Operasi</Text>
                                     <Tooltip label="Arus kas dari kegiatan operasional perusahaan (metode tidak langsung)">
-                                        <Box><Icon as={FiInfo} color="gray.400" /></Box>
+                                        <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                     </Tooltip>
                                 </HStack>
                                 <HStack spacing={2}>
-                                    <Text fontSize="md" fontWeight="bold" color={(op?.total_operating_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'}>
-                                        {formatCurrency(op?.total_operating_cash_flow || 0)}
-                                    </Text>
+                                    {renderAmountInline(op?.total_operating_cash_flow || 0, { fontSize: 'md', fontWeight: 'bold' })}
                                     <Tooltip label="Lihat rincian akun">
                                         <IconButton
                                             icon={<FiEye />}
@@ -685,29 +829,25 @@ const CashFlowPage: React.FC = () => {
                             </HStack>
 
                             {/* Net Income */}
-                            <HStack justify="space-between" pl={4} py={1} bg="teal.50" borderRadius="md" mb={2} px={3}>
+                            <HStack justify="space-between" pl={4} py={1} bg={sectionHeaderBg} borderRadius="md" mb={2} px={3}>
                                 <Text fontSize="sm" fontWeight="semibold" color="teal.700">Laba Bersih</Text>
-                                <Text fontSize="sm" fontWeight="semibold" color="teal.700">{formatCurrency(op?.net_income || 0)}</Text>
+                                {renderAmountInline(op?.net_income || 0, { variant: 'performance', fontSize: 'sm', fontWeight: 'semibold' })}
                             </HStack>
 
                             {/* Adjustments */}
                             {((op?.adjustments?.items?.length || 0) > 0 || (op?.adjustments?.total_adjustments || 0) !== 0) && (
                                 <Box mb={2}>
-                                    <Text fontSize="xs" fontWeight="semibold" color="gray.500" pl={4} mb={1}>Penyesuaian Non-Kas:</Text>
+                                    <Text fontSize="xs" fontWeight="semibold" color={subtleTextColor} pl={4} mb={1}>Penyesuaian Non-Kas:</Text>
                                     <VStack spacing={0} align="stretch">
                                         {(op?.adjustments?.items || []).map((item, i) => (
-                                            <HStack key={`adj-${i}`} justify="space-between" pl={8} py={1} _hover={{ bg: 'gray.50' }} borderRadius="md">
+                                            <HStack key={`adj-${i}`} justify="space-between" pl={8} py={1} _hover={{ bg: hoverBg }} borderRadius="md">
                                                 <Text fontSize="sm" color={descriptionColor}>{item.account_code} {item.account_name}</Text>
-                                                <Text fontSize="sm" fontWeight="medium" color={item.amount < 0 ? 'red.500' : textColor} minW="120px" textAlign="right">
-                                                    {formatCurrency(item.amount)}
-                                                </Text>
+                                                {renderAmountInline(item.amount, { fontSize: 'sm', fontWeight: 'medium', minW: '200px' })}
                                             </HStack>
                                         ))}
-                                        <HStack justify="space-between" pl={4} py={1} borderTopWidth="1px" borderColor="gray.100" mt={1}>
+                                        <HStack justify="space-between" pl={4} py={1} borderTopWidth="1px" borderColor={dividerBorderColor} mt={1}>
                                             <Text fontSize="sm" fontWeight="semibold">Total Penyesuaian</Text>
-                                            <Text fontSize="sm" fontWeight="semibold" minW="120px" textAlign="right">
-                                                {formatCurrency(op?.adjustments?.total_adjustments || 0)}
-                                            </Text>
+                                            {renderAmountInline(op?.adjustments?.total_adjustments || 0, { fontSize: 'sm', fontWeight: 'semibold', minW: '200px' })}
                                         </HStack>
                                     </VStack>
                                 </Box>
@@ -716,21 +856,17 @@ const CashFlowPage: React.FC = () => {
                             {/* Working Capital Changes */}
                             {((op?.working_capital_changes?.items?.length || 0) > 0 || (op?.working_capital_changes?.total_working_capital_changes || 0) !== 0) && (
                                 <Box mb={2}>
-                                    <Text fontSize="xs" fontWeight="semibold" color="gray.500" pl={4} mb={1}>Perubahan Modal Kerja:</Text>
+                                    <Text fontSize="xs" fontWeight="semibold" color={subtleTextColor} pl={4} mb={1}>Perubahan Modal Kerja:</Text>
                                     <VStack spacing={0} align="stretch">
                                         {(op?.working_capital_changes?.items || []).map((item, i) => (
-                                            <HStack key={`wc-${i}`} justify="space-between" pl={8} py={1} _hover={{ bg: 'gray.50' }} borderRadius="md">
+                                            <HStack key={`wc-${i}`} justify="space-between" pl={8} py={1} _hover={{ bg: hoverBg }} borderRadius="md">
                                                 <Text fontSize="sm" color={descriptionColor}>{item.account_code} {item.account_name}</Text>
-                                                <Text fontSize="sm" fontWeight="medium" color={item.amount < 0 ? 'red.500' : textColor} minW="120px" textAlign="right">
-                                                    {formatCurrency(item.amount)}
-                                                </Text>
+                                                {renderAmountInline(item.amount, { fontSize: 'sm', fontWeight: 'medium', minW: '200px' })}
                                             </HStack>
                                         ))}
-                                        <HStack justify="space-between" pl={4} py={1} borderTopWidth="1px" borderColor="gray.100" mt={1}>
+                                        <HStack justify="space-between" pl={4} py={1} borderTopWidth="1px" borderColor={dividerBorderColor} mt={1}>
                                             <Text fontSize="sm" fontWeight="semibold">Total Perubahan Modal Kerja</Text>
-                                            <Text fontSize="sm" fontWeight="semibold" minW="120px" textAlign="right">
-                                                {formatCurrency(op?.working_capital_changes?.total_working_capital_changes || 0)}
-                                            </Text>
+                                            {renderAmountInline(op?.working_capital_changes?.total_working_capital_changes || 0, { fontSize: 'sm', fontWeight: 'semibold', minW: '200px' })}
                                         </HStack>
                                     </VStack>
                                 </Box>
@@ -739,9 +875,7 @@ const CashFlowPage: React.FC = () => {
                             <Divider my={2} />
                             <HStack justify="space-between" pl={4} py={1}>
                                 <Text fontSize="sm" fontWeight="bold" color={headingColor}>Total Arus Kas dari Aktivitas Operasi</Text>
-                                <Text fontSize="sm" fontWeight="bold" color={(op?.total_operating_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'} minW="120px" textAlign="right">
-                                    {formatCurrency(op?.total_operating_cash_flow || 0)}
-                                </Text>
+                                {renderAmountInline(op?.total_operating_cash_flow || 0, { fontSize: 'sm', fontWeight: 'bold', minW: '220px' })}
                             </HStack>
                         </Box>
 
@@ -752,13 +886,11 @@ const CashFlowPage: React.FC = () => {
                                     <Badge colorScheme="purple" px={2} py={1} fontSize="sm">B</Badge>
                                     <Text fontSize="md" fontWeight="bold" color={headingColor}>Aktivitas Investasi</Text>
                                     <Tooltip label="Arus kas dari pembelian/penjualan aset tetap dan investasi">
-                                        <Box><Icon as={FiInfo} color="gray.400" /></Box>
+                                        <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                     </Tooltip>
                                 </HStack>
                                 <HStack spacing={2}>
-                                    <Text fontSize="md" fontWeight="bold" color={(inv?.total_investing_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'}>
-                                        {formatCurrency(inv?.total_investing_cash_flow || 0)}
-                                    </Text>
+                                    {renderAmountInline(inv?.total_investing_cash_flow || 0, { fontSize: 'md', fontWeight: 'bold' })}
                                     <Tooltip label="Lihat rincian akun">
                                         <IconButton
                                             icon={<FiEye />}
@@ -775,24 +907,20 @@ const CashFlowPage: React.FC = () => {
                             {(inv?.items?.length || 0) > 0 ? (
                                 <VStack spacing={0} align="stretch">
                                     {inv!.items.map((item, i) => (
-                                        <HStack key={`inv-${i}`} justify="space-between" pl={4} py={1} _hover={{ bg: 'gray.50' }} borderRadius="md">
+                                        <HStack key={`inv-${i}`} justify="space-between" pl={4} py={1} _hover={{ bg: hoverBg }} borderRadius="md">
                                             <Text fontSize="sm" color={descriptionColor}>{item.account_code} {item.account_name}</Text>
-                                            <Text fontSize="sm" fontWeight="medium" color={item.amount < 0 ? 'red.500' : textColor} minW="120px" textAlign="right">
-                                                {formatCurrency(item.amount)}
-                                            </Text>
+                                            {renderAmountInline(item.amount, { fontSize: 'sm', fontWeight: 'medium', minW: '200px' })}
                                         </HStack>
                                     ))}
                                 </VStack>
                             ) : (
-                                <Text fontSize="sm" color="gray.400" pl={4} fontStyle="italic">Tidak ada aktivitas investasi pada periode ini</Text>
+                                <Text fontSize="sm" color={subtleTextColor} pl={4} fontStyle="italic">Tidak ada aktivitas investasi pada periode ini</Text>
                             )}
 
                             <Divider my={2} />
                             <HStack justify="space-between" pl={4} py={1}>
                                 <Text fontSize="sm" fontWeight="bold" color={headingColor}>Total Arus Kas dari Aktivitas Investasi</Text>
-                                <Text fontSize="sm" fontWeight="bold" color={(inv?.total_investing_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'} minW="120px" textAlign="right">
-                                    {formatCurrency(inv?.total_investing_cash_flow || 0)}
-                                </Text>
+                                {renderAmountInline(inv?.total_investing_cash_flow || 0, { fontSize: 'sm', fontWeight: 'bold', minW: '220px' })}
                             </HStack>
                         </Box>
 
@@ -803,13 +931,11 @@ const CashFlowPage: React.FC = () => {
                                     <Badge colorScheme="green" px={2} py={1} fontSize="sm">C</Badge>
                                     <Text fontSize="md" fontWeight="bold" color={headingColor}>Aktivitas Pendanaan</Text>
                                     <Tooltip label="Arus kas dari modal, pinjaman, dan dividen">
-                                        <Box><Icon as={FiInfo} color="gray.400" /></Box>
+                                        <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                     </Tooltip>
                                 </HStack>
                                 <HStack spacing={2}>
-                                    <Text fontSize="md" fontWeight="bold" color={(fin?.total_financing_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'}>
-                                        {formatCurrency(fin?.total_financing_cash_flow || 0)}
-                                    </Text>
+                                    {renderAmountInline(fin?.total_financing_cash_flow || 0, { fontSize: 'md', fontWeight: 'bold' })}
                                     <Tooltip label="Lihat rincian akun">
                                         <IconButton
                                             icon={<FiEye />}
@@ -826,31 +952,27 @@ const CashFlowPage: React.FC = () => {
                             {(fin?.items?.length || 0) > 0 ? (
                                 <VStack spacing={0} align="stretch">
                                     {fin!.items.map((item, i) => (
-                                        <HStack key={`fin-${i}`} justify="space-between" pl={4} py={1} _hover={{ bg: 'gray.50' }} borderRadius="md">
+                                        <HStack key={`fin-${i}`} justify="space-between" pl={4} py={1} _hover={{ bg: hoverBg }} borderRadius="md">
                                             <Text fontSize="sm" color={descriptionColor}>{item.account_code} {item.account_name}</Text>
-                                            <Text fontSize="sm" fontWeight="medium" color={item.amount < 0 ? 'red.500' : textColor} minW="120px" textAlign="right">
-                                                {formatCurrency(item.amount)}
-                                            </Text>
+                                            {renderAmountInline(item.amount, { fontSize: 'sm', fontWeight: 'medium', minW: '200px' })}
                                         </HStack>
                                     ))}
                                 </VStack>
                             ) : (
-                                <Text fontSize="sm" color="gray.400" pl={4} fontStyle="italic">Tidak ada aktivitas pendanaan pada periode ini</Text>
+                                <Text fontSize="sm" color={subtleTextColor} pl={4} fontStyle="italic">Tidak ada aktivitas pendanaan pada periode ini</Text>
                             )}
 
                             <Divider my={2} />
                             <HStack justify="space-between" pl={4} py={1}>
                                 <Text fontSize="sm" fontWeight="bold" color={headingColor}>Total Arus Kas dari Aktivitas Pendanaan</Text>
-                                <Text fontSize="sm" fontWeight="bold" color={(fin?.total_financing_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'} minW="120px" textAlign="right">
-                                    {formatCurrency(fin?.total_financing_cash_flow || 0)}
-                                </Text>
+                                {renderAmountInline(fin?.total_financing_cash_flow || 0, { fontSize: 'sm', fontWeight: 'bold', minW: '220px' })}
                             </HStack>
                         </Box>
 
                         {/* ═══ CASH FLOW SUMMARY ═══ */}
-                        <Box bg="green.50" p={4} borderRadius="md" border="1px" borderColor="green.200">
+                        <Box bg={summaryCashBg} p={4} borderRadius="md" border="1px" borderColor={summaryCashBorder}>
                             <HStack justify="space-between" mb={3}>
-                                <Text fontSize="md" fontWeight="bold" color="green.800">
+                                <Text fontSize="md" fontWeight="bold" color={summaryCashText}>
                                     Ringkasan Arus Kas
                                 </Text>
                                 <Tooltip label="Lihat rincian semua akun">
@@ -867,31 +989,29 @@ const CashFlowPage: React.FC = () => {
                             <SimpleGrid columns={[1, 2]} spacing={3}>
                                 <VStack spacing={2}>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Kas Awal Periode:</Text>
+                                        <Text fontSize="sm" color={summaryCashText}>Kas Awal Periode:</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{formatCurrency(data.cash_at_beginning || 0)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Arus Kas Operasi (A):</Text>
-                                        <Text fontSize="sm" fontWeight="semibold">{formatCurrency(op?.total_operating_cash_flow || 0)}</Text>
+                                        <Text fontSize="sm" color={summaryCashText}>Arus Kas Operasi (A):</Text>
+                                        {renderAmountInline(op?.total_operating_cash_flow || 0, { fontSize: 'sm', fontWeight: 'semibold', minW: '180px' })}
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Arus Kas Investasi (B):</Text>
-                                        <Text fontSize="sm" fontWeight="semibold">{formatCurrency(inv?.total_investing_cash_flow || 0)}</Text>
+                                        <Text fontSize="sm" color={summaryCashText}>Arus Kas Investasi (B):</Text>
+                                        {renderAmountInline(inv?.total_investing_cash_flow || 0, { fontSize: 'sm', fontWeight: 'semibold', minW: '180px' })}
                                     </HStack>
                                 </VStack>
                                 <VStack spacing={2}>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Arus Kas Pendanaan (C):</Text>
-                                        <Text fontSize="sm" fontWeight="semibold">{formatCurrency(fin?.total_financing_cash_flow || 0)}</Text>
+                                        <Text fontSize="sm" color={summaryCashText}>Arus Kas Pendanaan (C):</Text>
+                                        {renderAmountInline(fin?.total_financing_cash_flow || 0, { fontSize: 'sm', fontWeight: 'semibold', minW: '180px' })}
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Kenaikan (Penurunan) Bersih:</Text>
-                                        <Text fontSize="sm" fontWeight="semibold" color={(data.net_cash_flow || 0) >= 0 ? 'green.600' : 'red.600'}>
-                                            {formatCurrency(data.net_cash_flow || 0)}
-                                        </Text>
+                                        <Text fontSize="sm" color={summaryCashText}>Kenaikan (Penurunan) Bersih:</Text>
+                                        {renderAmountInline(data.net_cash_flow || 0, { fontSize: 'sm', fontWeight: 'semibold', minW: '180px' })}
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700" fontWeight="bold">Kas Akhir Periode:</Text>
+                                        <Text fontSize="sm" color={summaryCashText} fontWeight="bold">Kas Akhir Periode:</Text>
                                         <Text fontSize="md" fontWeight="bold" color="green.700">
                                             {formatCurrency(data.cash_at_end || 0)}
                                         </Text>
@@ -902,21 +1022,21 @@ const CashFlowPage: React.FC = () => {
 
                         {/* Cash Flow Ratios */}
                         {data.cash_flow_ratios && (
-                            <Box bg="blue.50" p={4} borderRadius="md" border="1px" borderColor="blue.200">
-                                <Text fontSize="md" fontWeight="bold" color="blue.800" mb={3}>
+                            <Box bg={ratioBg} p={4} borderRadius="md" border="1px" borderColor={ratioBorder}>
+                                <Text fontSize="md" fontWeight="bold" color={ratioText} mb={3}>
                                     Rasio Arus Kas
                                 </Text>
                                 <SimpleGrid columns={[1, 3]} spacing={3}>
                                     <HStack justify="space-between">
-                                        <Text fontSize="sm" color="blue.700">Operating CF Ratio:</Text>
+                                        <Text fontSize="sm" color={ratioText}>Operating CF Ratio:</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{(data.cash_flow_ratios.operating_cash_flow_ratio || 0).toFixed(2)}x</Text>
                                     </HStack>
                                     <HStack justify="space-between">
-                                        <Text fontSize="sm" color="blue.700">Free Cash Flow:</Text>
-                                        <Text fontSize="sm" fontWeight="semibold">{formatCurrency(data.cash_flow_ratios.free_cash_flow || 0)}</Text>
+                                        <Text fontSize="sm" color={ratioText}>Free Cash Flow:</Text>
+                                        {renderAmountInline(data.cash_flow_ratios.free_cash_flow || 0, { fontSize: 'sm', fontWeight: 'semibold', minW: '180px' })}
                                     </HStack>
                                     <HStack justify="space-between">
-                                        <Text fontSize="sm" color="blue.700">CF to Debt Ratio:</Text>
+                                        <Text fontSize="sm" color={ratioText}>CF to Debt Ratio:</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{(data.cash_flow_ratios.cash_flow_to_debt_ratio || 0).toFixed(2)}x</Text>
                                     </HStack>
                                 </SimpleGrid>
@@ -949,10 +1069,10 @@ const CashFlowPage: React.FC = () => {
             {/* ═══ BREAKDOWN MODAL ═══ */}
             <Modal isOpen={isBreakdownOpen} onClose={onBreakdownClose} size="xl" scrollBehavior="inside">
                 <ModalOverlay />
-                <ModalContent maxW="650px">
-                    <ModalHeader pb={2}>
+                <ModalContent maxW="650px" bg={modalBg} border="1px solid" borderColor={modalBorderColor}>
+                    <ModalHeader pb={2} bg={modalHeaderBg} borderBottom="1px solid" borderColor={modalBorderColor}>
                         <VStack align="start" spacing={1}>
-                            <Text fontSize="lg" fontWeight="bold" color="purple.700">
+                            <Text fontSize="lg" fontWeight="bold" color={headingColor}>
                                 Rincian Perhitungan
                             </Text>
                             {breakdownData && (
@@ -963,8 +1083,8 @@ const CashFlowPage: React.FC = () => {
                     <ModalCloseButton />
                     <ModalBody pb={6}>
                         {breakdownData?.formula && (
-                            <Box bg="blue.50" p={3} borderRadius="md" mb={4} borderLeft="4px solid" borderColor="blue.400">
-                                <Text fontSize="sm" color="blue.700">
+                            <Box bg={infoPanelBg} p={3} borderRadius="md" mb={4} borderLeft="4px solid" borderColor={infoPanelBorderColor}>
+                                <Text fontSize="sm" color={infoPanelTextColor}>
                                     Formula: {breakdownData.formula}
                                 </Text>
                             </Box>
@@ -972,15 +1092,15 @@ const CashFlowPage: React.FC = () => {
 
                         {breakdownData?.components.map((comp, ci) => (
                             <Box key={ci} mb={4}>
-                                <HStack justify="space-between" mb={2} bg="gray.50" p={2} borderRadius="md">
+                                <HStack justify="space-between" mb={2} bg={sectionHeaderBg} p={2} borderRadius="md">
                                     <HStack>
-                                        <Badge colorScheme={comp.total >= 0 ? 'green' : 'red'} fontSize="xs">
-                                            {comp.total >= 0 ? '+' : '-'}
+                                        <Badge colorScheme={getAmountMeta(comp.total).badgeScheme} fontSize="xs">
+                                            {getAmountMeta(comp.total).badgeLabel}
                                         </Badge>
                                         <Text fontSize="sm" fontWeight="bold">{comp.label}</Text>
                                     </HStack>
-                                    <Text fontSize="sm" fontWeight="bold" color={comp.total >= 0 ? 'green.600' : 'red.600'}>
-                                        {formatCurrency(comp.total)}
+                                    <Text fontSize="sm" fontWeight="bold" color={getAmountMeta(comp.total).textColor}>
+                                        {formatCurrency(getAmountMeta(comp.total).absoluteValue)}
                                     </Text>
                                 </HStack>
 
@@ -995,28 +1115,28 @@ const CashFlowPage: React.FC = () => {
                                         </Thead>
                                         <Tbody>
                                             {comp.items.map((item: any, ii: number) => (
-                                                <Tr key={ii} _hover={{ bg: 'gray.50' }}>
-                                                    <Td fontSize="xs" py={1} color="gray.500" w="90px">
+                                                <Tr key={ii} _hover={{ bg: hoverBg }}>
+                                                    <Td fontSize="xs" py={1} color={subtleTextColor} w="90px">
                                                         {item.account_code || '-'}
                                                     </Td>
                                                     <Td fontSize="xs" py={1}>
                                                         {item.account_name || item.name || '-'}
                                                     </Td>
-                                                    <Td fontSize="xs" py={1} isNumeric color={item.amount < 0 ? 'red.500' : undefined}>
-                                                        {formatCurrency(item.amount)}
+                                                    <Td fontSize="xs" py={1} isNumeric color={getAmountMeta(item.amount).textColor}>
+                                                        {formatAmountNarrative(item.amount)}
                                                     </Td>
                                                 </Tr>
                                             ))}
                                         </Tbody>
                                     </Table>
                                 ) : comp.description ? (
-                                    <Box bg="yellow.50" p={3} borderRadius="md" borderLeft="3px solid" borderColor="yellow.400">
-                                        <Text fontSize="xs" color="yellow.800" fontStyle="italic">
+                                    <Box bg={notePanelBg} p={3} borderRadius="md" borderLeft="3px solid" borderColor={notePanelBorderColor}>
+                                        <Text fontSize="xs" color={notePanelTextColor} fontStyle="italic">
                                             {comp.description}
                                         </Text>
                                     </Box>
                                 ) : (
-                                    <Text fontSize="xs" color="gray.400" fontStyle="italic" pl={2}>
+                                    <Text fontSize="xs" color={subtleTextColor} fontStyle="italic" pl={2}>
                                         Tidak ada item pada seksi ini
                                     </Text>
                                 )}

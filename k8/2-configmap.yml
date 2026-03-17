@@ -5,7 +5,5 @@ metadata:
   namespace: dbm-accounting
 data:  
   TZ: "Asia/Jakarta"
-  DATABASE_URL: "postgres://akuntansi:akuntansi123@10.11.12.212/akuntansi?sslmode=disable"
-  JWT_SECRET: "9838943jf3ekfjekfhjj398293r3-hakdkur392-3ucjdslfjdafcdf"
   SERVER_PORT: "8080"
-  ENVIRONMENT: "development"
+  ENVIRONMENT: "production"

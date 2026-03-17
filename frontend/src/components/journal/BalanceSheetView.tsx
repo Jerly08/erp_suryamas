@@ -17,9 +17,8 @@ import {
     Card,
     CardBody,
     Heading,
-    Divider,
     SimpleGrid,
-    Badge,
+    useColorModeValue,
 } from '@chakra-ui/react';
 import { useTranslation } from '@/hooks/useTranslation';
 import { ssotBalanceSheetReportService, SSOTBalanceSheetData, BSAccountItem } from '@/services/ssotBalanceSheetReportService';
@@ -30,6 +29,35 @@ import { exportBalanceSheetToPDF, exportBalanceSheetToCSV } from '@/utils/journa
 export default function BalanceSheetView() {
     const { t } = useTranslation();
     const toast = useToast();
+    const cardBg = useColorModeValue('white', 'gray.800');
+    const textColor = useColorModeValue('gray.800', 'gray.100');
+    const mutedTextColor = useColorModeValue('gray.500', 'gray.400');
+    const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const inputHoverBorderColor = useColorModeValue('gray.400', 'whiteAlpha.400');
+    const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.300');
+    const assetHeadingColor = useColorModeValue('green.600', 'green.300');
+    const assetHeadingBorderColor = useColorModeValue('green.200', 'green.700');
+    const totalAssetsBg = useColorModeValue('green.100', 'green.900');
+    const liabilitiesHeadingColor = useColorModeValue('red.600', 'red.300');
+    const liabilitiesHeadingBorderColor = useColorModeValue('red.200', 'red.700');
+    const totalLiabilitiesBg = useColorModeValue('red.50', 'red.900');
+    const equityHeadingColor = useColorModeValue('blue.600', 'blue.300');
+    const totalEquityBg = useColorModeValue('blue.50', 'blue.900');
+    const totalLiabilitiesEquityBg = useColorModeValue('purple.100', 'purple.900');
+    const unbalancedBg = useColorModeValue('red.100', 'red.900');
+    const unbalancedTextColor = useColorModeValue('red.700', 'red.200');
+    const fieldStyles = {
+        bg: inputBg,
+        color: textColor,
+        borderColor: inputBorderColor,
+        _hover: { borderColor: inputHoverBorderColor },
+        _focusVisible: {
+            borderColor: inputFocusBorderColor,
+            boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+        },
+    };
 
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<SSOTBalanceSheetData | null>(null);
@@ -101,10 +129,14 @@ export default function BalanceSheetView() {
         }).format(val);
     };
 
-    const AccountSection = ({ title, items, total, color = 'gray' }: { title: string, items: BSAccountItem[], total: number, color?: string }) => (
+    const AccountSection = ({ title, items, total, color = 'gray' }: { title: string, items: BSAccountItem[], total: number, color?: string }) => {
+        const sectionTitleColor = useColorModeValue(`${color}.700`, `${color}.200`);
+        const sectionTotalBg = useColorModeValue(`${color}.50`, `${color}.900`);
+
+        return (
         <Box mb={6}>
-            <Text fontWeight="bold" fontSize="md" mb={2} color={`${color}.700`}>{title}</Text>
-            <Table size="sm" variant="simple">
+            <Text fontWeight="bold" fontSize="md" mb={2} color={sectionTitleColor}>{title}</Text>
+            <Table size="sm" variant="simple" color={textColor}>
                 <Tbody>
                     {(items || []).map((item, idx) => (
                         <Tr key={idx}>
@@ -112,7 +144,7 @@ export default function BalanceSheetView() {
                             <Td isNumeric>{formatCurrency(item.amount)}</Td>
                         </Tr>
                     ))}
-                    <Tr bg={`${color}.50`}>
+                    <Tr bg={sectionTotalBg}>
                         <Td fontWeight="semibold">Total {title}</Td>
                         <Td isNumeric fontWeight="bold">{formatCurrency(total)}</Td>
                     </Tr>
@@ -120,31 +152,34 @@ export default function BalanceSheetView() {
             </Table>
         </Box>
     );
+    };
 
     return (
         <Box>
-            <Card variant="outline" mb={4}>
+            <Card variant="outline" mb={4} bg={cardBg} borderColor={borderColor}>
                 <CardBody py={4}>
                     <HStack justify="space-between">
                         <HStack spacing={4} align="flex-end">
                             <Box>
-                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.startDate')}</Text>
+                                <Text fontSize="xs" color={mutedTextColor} mb={1}>{t('journal.filters.startDate')}</Text>
                                 <Input
                                     type="date"
                                     value={startDate}
                                     onChange={(e) => setStartDate(e.target.value)}
                                     size="sm"
                                     width="140px"
+                                    {...fieldStyles}
                                 />
                             </Box>
                             <Box>
-                                <Text fontSize="xs" color="gray.500" mb={1}>{t('journal.filters.endDate')}</Text>
+                                <Text fontSize="xs" color={mutedTextColor} mb={1}>{t('journal.filters.endDate')}</Text>
                                 <Input
                                     type="date"
                                     value={endDate}
                                     onChange={(e) => setEndDate(e.target.value)}
                                     size="sm"
                                     width="140px"
+                                    {...fieldStyles}
                                 />
                             </Box>
                             <Button
@@ -176,13 +211,13 @@ export default function BalanceSheetView() {
             )}
 
             {data && (
-                <Card variant="outline">
+                <Card variant="outline" bg={cardBg} borderColor={borderColor}>
                     <CardBody>
                         <VStack spacing={6} align="stretch">
                             <Box textAlign="center" mb={4}>
-                                <Heading size="lg">{data.company?.name}</Heading>
-                                <Text fontSize="xl" fontWeight="medium">{t('journal.balanceSheet')}</Text>
-                                <Text color="gray.500">
+                                <Heading size="lg" color={textColor}>{data.company?.name}</Heading>
+                                <Text fontSize="xl" fontWeight="medium" color={textColor}>{t('journal.balanceSheet')}</Text>
+                                <Text color={mutedTextColor}>
                                     {t('journal.balanceSheetReport.period') || 'Periode'}: {new Date(startDate).toLocaleDateString('id-ID', { dateStyle: 'long' })} - {new Date(endDate).toLocaleDateString('id-ID', { dateStyle: 'long' })}
                                 </Text>
                             </Box>
@@ -190,7 +225,7 @@ export default function BalanceSheetView() {
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={8}>
                                 {/* ASSETS */}
                                 <Box>
-                                    <Heading size="md" mb={4} color="green.600" borderBottomWidth="2px" borderColor="green.200" pb={2}>{t('journal.balanceSheetReport.assets')}</Heading>
+                                    <Heading size="md" mb={4} color={assetHeadingColor} borderBottomWidth="2px" borderColor={assetHeadingBorderColor} pb={2}>{t('journal.balanceSheetReport.assets')}</Heading>
                                     <AccountSection
                                         title={t('journal.balanceSheetReport.currentAssets')}
                                         items={data.assets.current_assets.items}
@@ -203,7 +238,7 @@ export default function BalanceSheetView() {
                                         total={data.assets.non_current_assets.total_non_current_assets}
                                         color="teal"
                                     />
-                                    <Box bg="green.100" p={2} borderRadius="md">
+                                    <Box bg={totalAssetsBg} p={2} borderRadius="md">
                                         <HStack justify="space-between">
                                             <Text fontWeight="bold" fontSize="lg">{t('journal.balanceSheetReport.totalAssets')}</Text>
                                             <Text fontWeight="bold" fontSize="lg">{formatCurrency(data.assets.total_assets)}</Text>
@@ -213,7 +248,7 @@ export default function BalanceSheetView() {
 
                                 {/* LIABILITIES & EQUITY */}
                                 <Box>
-                                    <Heading size="md" mb={4} color="red.600" borderBottomWidth="2px" borderColor="red.200" pb={2}>{t('journal.balanceSheetReport.liabilitiesEquity')}</Heading>
+                                    <Heading size="md" mb={4} color={liabilitiesHeadingColor} borderBottomWidth="2px" borderColor={liabilitiesHeadingBorderColor} pb={2}>{t('journal.balanceSheetReport.liabilitiesEquity')}</Heading>
                                     <AccountSection
                                         title={t('journal.balanceSheetReport.currentLiabilities')}
                                         items={data.liabilities.current_liabilities.items}
@@ -226,28 +261,28 @@ export default function BalanceSheetView() {
                                         total={data.liabilities.non_current_liabilities.total_non_current_liabilities}
                                         color="orange"
                                     />
-                                    <Box bg="red.50" p={2} borderRadius="md" mb={4}>
+                                    <Box bg={totalLiabilitiesBg} p={2} borderRadius="md" mb={4}>
                                         <HStack justify="space-between">
                                             <Text fontWeight="bold">{t('journal.balanceSheetReport.totalLiabilities')}</Text>
                                             <Text fontWeight="bold">{formatCurrency(data.liabilities.total_liabilities)}</Text>
                                         </HStack>
                                     </Box>
 
-                                    <Heading size="sm" mb={4} color="blue.600">{t('journal.balanceSheetReport.equity')}</Heading>
+                                    <Heading size="sm" mb={4} color={equityHeadingColor}>{t('journal.balanceSheetReport.equity')}</Heading>
                                     <AccountSection
                                         title={t('journal.balanceSheetReport.equitySection')}
                                         items={data.equity.items}
                                         total={data.equity.total_equity}
                                         color="blue"
                                     />
-                                    <Box bg="blue.50" p={2} borderRadius="md" mb={4}>
+                                    <Box bg={totalEquityBg} p={2} borderRadius="md" mb={4}>
                                         <HStack justify="space-between">
                                             <Text fontWeight="bold">{t('journal.balanceSheetReport.totalEquity')}</Text>
                                             <Text fontWeight="bold">{formatCurrency(data.equity.total_equity)}</Text>
                                         </HStack>
                                     </Box>
 
-                                    <Box bg="purple.100" p={2} borderRadius="md">
+                                    <Box bg={totalLiabilitiesEquityBg} p={2} borderRadius="md">
                                         <HStack justify="space-between">
                                             <Text fontWeight="bold" fontSize="lg">{t('journal.balanceSheetReport.totalLiabilitiesEquity')}</Text>
                                             <Text fontWeight="bold" fontSize="lg">{formatCurrency(data.total_liabilities_and_equity)}</Text>
@@ -257,8 +292,8 @@ export default function BalanceSheetView() {
                             </SimpleGrid>
 
                             {!data.is_balanced && (
-                                <Box bg="red.100" p={4} borderRadius="md" textAlign="center">
-                                    <Text color="red.700" fontWeight="bold">
+                                <Box bg={unbalancedBg} p={4} borderRadius="md" textAlign="center">
+                                    <Text color={unbalancedTextColor} fontWeight="bold">
                                         {t('journal.balanceSheetReport.unbalanced', { amount: formatCurrency(data.balance_difference) })}
                                     </Text>
                                 </Box>

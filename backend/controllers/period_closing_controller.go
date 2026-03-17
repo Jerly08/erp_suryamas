@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -70,7 +71,7 @@ func (pcc *PeriodClosingController) PreviewClosing(c *gin.Context) {
 		return
 	}
 
-	startDate, err := time.Parse("2006-01-02", startDateStr)
+	startDate, err := time.ParseInLocation("2006-01-02", startDateStr, time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -80,7 +81,7 @@ func (pcc *PeriodClosingController) PreviewClosing(c *gin.Context) {
 		return
 	}
 
-	endDate, err := time.Parse("2006-01-02", endDateStr)
+	endDate, err := time.ParseInLocation("2006-01-02", endDateStr, time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -128,7 +129,7 @@ func (pcc *PeriodClosingController) ExecuteClosing(c *gin.Context) {
 	}
 
 	// Parse dates
-	startDate, err := time.Parse("2006-01-02", req.StartDate)
+	startDate, err := time.ParseInLocation("2006-01-02", req.StartDate, time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -138,7 +139,7 @@ func (pcc *PeriodClosingController) ExecuteClosing(c *gin.Context) {
 		return
 	}
 
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
+	endDate, err := time.ParseInLocation("2006-01-02", req.EndDate, time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -180,6 +181,15 @@ func (pcc *PeriodClosingController) ExecuteClosing(c *gin.Context) {
 
 	err = pcc.service.ExecutePeriodClosing(c.Request.Context(), startDate, endDate, description, userIDUint64)
 	if err != nil {
+		if errors.Is(err, services.ErrNoBalancesToClose) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "No balances to close for the selected period",
+				"details": err.Error(),
+			})
+			return
+		}
+
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   "Failed to execute period closing",
@@ -246,7 +256,7 @@ func (pcc *PeriodClosingController) CheckDateInClosedPeriod(c *gin.Context) {
 		return
 	}
 
-	date, err := time.Parse("2006-01-02", dateStr)
+	date, err := time.ParseInLocation("2006-01-02", dateStr, time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -295,7 +305,7 @@ func (pcc *PeriodClosingController) ReopenPeriod(c *gin.Context) {
 	}
 
 	// Parse dates
-	startDate, err := time.Parse("2006-01-02", req.StartDate)
+	startDate, err := time.ParseInLocation("2006-01-02", req.StartDate, time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -304,7 +314,7 @@ func (pcc *PeriodClosingController) ReopenPeriod(c *gin.Context) {
 		return
 	}
 
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
+	endDate, err := time.ParseInLocation("2006-01-02", req.EndDate, time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -349,6 +359,6 @@ func (pcc *PeriodClosingController) ReopenPeriod(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": "Periode berhasil dibuka kembali. Jurnal penutup telah dihapus dan saldo akun telah dihitung ulang.",
+		"message": "Periode berhasil dibuka kembali. Jurnal penutup telah dibalik dengan jurnal pembalik dan saldo akun telah dihitung ulang.",
 	})
 }

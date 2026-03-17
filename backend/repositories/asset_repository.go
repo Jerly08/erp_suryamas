@@ -76,7 +76,18 @@ func (r *AssetRepository) CodeExists(code string) (bool, error) {
 func (r *AssetRepository) Create(asset *models.Asset) error {
 	// Let the database handle unique constraint checking to prevent race conditions
 	// The service layer handles retries if there's a unique constraint violation
-	return r.db.Create(asset).Error
+	intendedIsActive := asset.IsActive
+	if err := r.db.Select("*").Create(asset).Error; err != nil {
+		return err
+	}
+
+	// GORM can still fall back to the DB default for bool fields with `default:true`.
+	// Re-apply the intended flag explicitly so PENDING/INACTIVE assets persist as false.
+	if err := r.db.Exec("UPDATE assets SET is_active = ? WHERE id = ?", intendedIsActive, asset.ID).Error; err != nil {
+		return err
+	}
+	asset.IsActive = intendedIsActive
+	return nil
 }
 
 // Update updates an existing asset
@@ -142,7 +153,7 @@ func (r *AssetRepository) GetAssetsByCategory(category string) ([]models.Asset, 
 // GetAssetsForDepreciation retrieves assets that need depreciation calculation
 func (r *AssetRepository) GetAssetsForDepreciation() ([]models.Asset, error) {
 	var assets []models.Asset
-	err := r.db.Where("is_active = ? AND status = ? AND useful_life > 0", 
+	err := r.db.Where("is_active = ? AND status = ? AND useful_life > 0",
 		true, models.AssetStatusActive).
 		Preload("AssetAccount").Preload("DepreciationAccount").Preload("AccumulatedDepreciationAccount").
 		Find(&assets).Error

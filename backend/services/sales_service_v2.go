@@ -3,12 +3,19 @@ package services
 import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+)
+
+const (
+	manualSaleProductCode = "MANUAL-SALE-ITEM"
+	manualSaleProductName = "Manual Sale Item"
 )
 
 // SalesServiceV2 handles all sales operations with clean business logic
@@ -52,6 +59,167 @@ func NewSalesServiceV2(
 	}
 }
 
+func normalizeSaleItemProductName(item *models.SaleItemRequest) string {
+	if item == nil {
+		return ""
+	}
+
+	if name := strings.TrimSpace(item.ProductName); name != "" {
+		return name
+	}
+
+	if item.ProductID == 0 {
+		return strings.TrimSpace(item.Description)
+	}
+
+	return ""
+}
+
+func (s *SalesServiceV2) ensureManualSaleProduct(tx *gorm.DB) (*models.Product, error) {
+	var product models.Product
+	err := tx.Unscoped().Where("code = ?", manualSaleProductCode).First(&product).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to load manual sale product: %v", err)
+	}
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		product = models.Product{
+			Code:        manualSaleProductCode,
+			Name:        manualSaleProductName,
+			Description: "System service product for manual sales items",
+			Unit:        "pcs",
+			IsActive:    true,
+			IsService:   true,
+			Taxable:     true,
+		}
+		if err := tx.Create(&product).Error; err != nil {
+			return nil, fmt.Errorf("failed to create manual sale product: %v", err)
+		}
+		return &product, nil
+	}
+
+	updates := map[string]interface{}{}
+	if product.DeletedAt.Valid {
+		updates["deleted_at"] = nil
+	}
+	if !product.IsActive {
+		updates["is_active"] = true
+	}
+	if !product.IsService {
+		updates["is_service"] = true
+	}
+	if strings.TrimSpace(product.Name) == "" {
+		updates["name"] = manualSaleProductName
+	}
+	if strings.TrimSpace(product.Unit) == "" {
+		updates["unit"] = "pcs"
+	}
+
+	if len(updates) > 0 {
+		if err := tx.Unscoped().Model(&product).Updates(updates).Error; err != nil {
+			return nil, fmt.Errorf("failed to update manual sale product: %v", err)
+		}
+		if err := tx.Unscoped().Where("id = ?", product.ID).First(&product).Error; err != nil {
+			return nil, fmt.Errorf("failed to reload manual sale product: %v", err)
+		}
+	}
+
+	return &product, nil
+}
+
+func (s *SalesServiceV2) prepareSaleItemRequest(tx *gorm.DB, item *models.SaleItemRequest) error {
+	if item == nil {
+		return fmt.Errorf("sale item is required")
+	}
+
+	manualName := normalizeSaleItemProductName(item)
+	if item.ProductID == 0 {
+		if manualName == "" {
+			return fmt.Errorf("manual sale item must include a product name")
+		}
+
+		manualProduct, err := s.ensureManualSaleProduct(tx)
+		if err != nil {
+			return err
+		}
+
+		item.ProductID = manualProduct.ID
+		item.ProductName = manualName
+		return nil
+	}
+
+	var product models.Product
+	if err := tx.Select("id", "name").First(&product, item.ProductID).Error; err != nil {
+		return fmt.Errorf("failed to load product %d: %v", item.ProductID, err)
+	}
+
+	if manualName != "" {
+		item.ProductName = manualName
+	} else {
+		item.ProductName = product.Name
+	}
+
+	return nil
+}
+
+func buildImmediateSaleCashBankMutation(sale *models.Sale, cashBank *models.CashBank) (*cashBankBalanceMutation, error) {
+	if sale == nil {
+		return nil, fmt.Errorf("sale is required")
+	}
+	if cashBank == nil {
+		return nil, fmt.Errorf("cash/bank account is required")
+	}
+
+	currency := normalizeCashBankCurrency(cashBank.Currency)
+	mutation := &cashBankBalanceMutation{
+		NativeAmount:    sale.TotalAmount,
+		BookAmountIDR:   sale.TotalAmount,
+		Currency:        currency,
+		ExchangeRate:    1,
+		TransactionDate: sale.Date,
+		Notes:           fmt.Sprintf("Immediate payment - Invoice #%s", sale.InvoiceNumber),
+	}
+
+	if !cashBank.IsForeignCurrency() {
+		return mutation, nil
+	}
+
+	exchangeRate := 0.0
+	if strings.ToUpper(strings.TrimSpace(sale.Currency)) == currency && sale.ExchangeRate > 0 {
+		exchangeRate = sale.ExchangeRate
+	}
+	if exchangeRate <= 0 && cashBank.LastExchangeRate > 0 {
+		exchangeRate = cashBank.LastExchangeRate
+	}
+	if exchangeRate <= 1 {
+		return nil, fmt.Errorf("exchange rate is required for immediate payment into foreign cash/bank account %s", cashBank.Name)
+	}
+
+	mutation.ExchangeRate = exchangeRate
+	mutation.BookAmountIDR = sale.TotalAmount
+	mutation.NativeAmount = sale.TotalAmount / exchangeRate
+	if mutation.NativeAmount <= 0 {
+		return nil, fmt.Errorf("failed to derive native foreign amount for immediate payment")
+	}
+
+	return mutation, nil
+}
+
+func (s *SalesServiceV2) enforceCashBankGuards(tx *gorm.DB, cashBankIDs map[uint]struct{}) error {
+	if len(cashBankIDs) == 0 {
+		return nil
+	}
+
+	guard := NewCashBankCurrencyGuard(s.db)
+	for cashBankID := range cashBankIDs {
+		if err := guard.EnforceAfterTransaction(tx, cashBankID); err != nil {
+			return fmt.Errorf("failed to enforce cash/bank currency invariant for account %d: %w", cashBankID, err)
+		}
+	}
+
+	return nil
+}
+
 // CreateSale creates a new sale
 func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uint) (*models.Sale, error) {
 	// Start transaction
@@ -67,10 +235,16 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 	stockValidationReq := models.StockValidationRequest{
 		Items: make([]models.SaleItemRequest, 0, len(request.Items)),
 	}
-	for _, item := range request.Items {
+	for i := range request.Items {
+		if err := s.prepareSaleItemRequest(tx, &request.Items[i]); err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("invalid sale item #%d: %v", i+1, err)
+		}
+		item := request.Items[i]
 		stockValidationReq.Items = append(stockValidationReq.Items, models.SaleItemRequest{
-			ProductID: item.ProductID,
-			Quantity:  item.Quantity,
+			ProductID:   item.ProductID,
+			ProductName: item.ProductName,
+			Quantity:    item.Quantity,
 		})
 	}
 
@@ -127,15 +301,14 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		return nil, fmt.Errorf("failed to generate sales code: %v", err)
 	}
 
-	// Handle enhanced tax configuration
+	// Tax should follow the saved transaction payload.
+	// Do not inject a default tax rate from backend settings here.
 	ppnPercent := request.PPNPercent
 	if ppnPercent == nil {
-		// Use PPNRate if PPNPercent is not provided
 		if request.PPNRate != nil {
 			ppnPercent = request.PPNRate
 		} else {
-			// Only default to 11 if absolutely no PPN info is provided
-			defaultPPN := 11.0
+			defaultPPN := 0.0
 			ppnPercent = &defaultPPN
 		}
 	}
@@ -180,6 +353,13 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		Reference:          request.Reference,
 	}
 
+	if err := validateSalePaymentScheduleMode(sale.PaymentTerms, sale.PaymentMethodType); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	sale.DueDate = deriveSaleDueDate(sale.PaymentTerms, sale.DueDate, request.PaymentSchedules)
+
 	// Calculate totals
 	var subtotal float64 = 0
 	var totalPPN float64 = 0
@@ -197,27 +377,13 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			discountPercent = &defaultDiscount
 		}
 
-		// Set default revenue account if not provided or 0
 		revenueAccountID := itemRequest.RevenueAccountID
 		if revenueAccountID == 0 {
-			// ✅ FIX: Use LEAF account 4101-001 (Penjualan Lokal) instead of HEADER 4101
-			// Posting to header account causes balance to be overwritten to 0 by
-			// RecalculateAllParentBalances() which recalculates headers as SUM(children)
-			var defaultAccount models.Account
-			if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&defaultAccount).Error; err != nil {
-				// Fallback: try header 4101 if leaf doesn't exist, then any revenue account
-				if err := tx.Where("code = ? AND deleted_at IS NULL", "4101").First(&defaultAccount).Error; err != nil {
-					if err := tx.Where("type = ? AND deleted_at IS NULL", "REVENUE").First(&defaultAccount).Error; err != nil {
-						tx.Rollback()
-						return nil, fmt.Errorf("failed to find default revenue account: %v", err)
-					}
-				}
-			}
-			revenueAccountID = defaultAccount.ID
+			tx.Rollback()
+			return nil, fmt.Errorf("revenue account / COA wajib dipilih untuk item '%s'", normalizeSaleItemProductName(&itemRequest))
 		}
 
-		// ✅ FIX: Guard against header accounts — ALWAYS redirect to leaf child
-		// This catches cases where the frontend sends a header account ID (e.g., from tax_account_settings)
+		// Redirect header account to its leaf child when needed.
 		if revenueAccountID != 0 {
 			var revAcc models.Account
 			if err := tx.First(&revAcc, revenueAccountID).Error; err == nil && revAcc.IsHeader {
@@ -227,17 +393,18 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 					revenueAccountID = leafAcc.ID
 					log.Printf("✅ Redirected to leaf revenue account %s (ID=%d)", leafAcc.Code, leafAcc.ID)
 				} else {
-					// Use 4101-001 as absolute fallback
-					if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&leafAcc).Error; err == nil {
-						revenueAccountID = leafAcc.ID
-						log.Printf("✅ Fallback to 4101-001 (ID=%d)", leafAcc.ID)
-					}
+					tx.Rollback()
+					return nil, fmt.Errorf("akun COA pendapatan '%s' adalah header dan tidak memiliki akun detail aktif", revAcc.Code)
 				}
+			} else if err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("revenue account / COA item tidak ditemukan: %v", err)
 			}
 		}
 
 		item := models.SaleItem{
 			ProductID:        itemRequest.ProductID,
+			ProductName:      itemRequest.ProductName,
 			Description:      itemRequest.Description,
 			Location:         itemRequest.Location,
 			Quantity:         int(itemRequest.Quantity),
@@ -329,11 +496,19 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		return nil, fmt.Errorf("failed to create sale: %v", err)
 	}
 
+	if err := s.syncSalePaymentSchedules(tx, sale, request.PaymentSchedules); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	// Load relationships
-	if err := tx.Preload("Customer").Preload("SaleItems.Product").First(&sale, sale.ID).Error; err != nil {
+	if err := tx.Preload("Customer").Preload("SaleItems.Product").Preload("PaymentSchedules", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sequence ASC")
+	}).First(&sale, sale.ID).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to load sale relationships: %v", err)
 	}
+	hydrateSalePaymentScheduleProgress(sale)
 
 	// IMPORTANT: NO JOURNAL ENTRIES FOR DRAFT STATUS
 	// Journal will only be created when status changes to INVOICED or PAID
@@ -453,10 +628,26 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 			}
 		}
 
+		if err := validateSalePaymentScheduleMode(sale.PaymentTerms, sale.PaymentMethodType); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		if request.PaymentSchedules != nil {
+			sale.DueDate = deriveSaleDueDate(sale.PaymentTerms, sale.DueDate, request.PaymentSchedules)
+		}
+
 		// Save and return (skip item/tax recalculation)
 		if err := tx.Save(&sale).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to update sale: %v", err)
+		}
+
+		if request.PaymentSchedules != nil || strings.ToUpper(strings.TrimSpace(sale.PaymentTerms)) != "CUSTOM" {
+			if err := s.syncSalePaymentSchedules(tx, &sale, request.PaymentSchedules); err != nil {
+				tx.Rollback()
+				return nil, err
+			}
 		}
 
 		if err := tx.Commit().Error; err != nil {
@@ -464,7 +655,10 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		}
 
 		// Reload with relationships
-		s.db.Preload("Customer").Preload("SaleItems.Product").Preload("InvoiceType").First(&sale, sale.ID)
+		s.db.Preload("Customer").Preload("SaleItems.Product").Preload("InvoiceType").Preload("PaymentSchedules", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sequence ASC")
+		}).First(&sale, sale.ID)
+		hydrateSalePaymentScheduleProgress(&sale)
 
 		log.Printf("✅ [UpdateSale] Partial edit completed for %s sale #%d", sale.Status, sale.ID)
 		return &sale, nil
@@ -561,8 +755,24 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		sale.Reference = *request.Reference
 	}
 
+	if err := validateSalePaymentScheduleMode(sale.PaymentTerms, sale.PaymentMethodType); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if request.PaymentSchedules != nil {
+		sale.DueDate = deriveSaleDueDate(sale.PaymentTerms, sale.DueDate, request.PaymentSchedules)
+	}
+
 	// Recalculate if items are updated
 	if request.Items != nil {
+		for i := range request.Items {
+			if err := s.prepareSaleItemRequest(tx, &request.Items[i]); err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("invalid sale item #%d: %v", i+1, err)
+			}
+		}
+
 		// Delete old items
 		if err := tx.Where("sale_id = ?", sale.ID).Delete(&models.SaleItem{}).Error; err != nil {
 			tx.Rollback()
@@ -586,24 +796,12 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				discountPercent = &defaultDiscount
 			}
 
-			// Set default revenue account if not provided or 0
 			revenueAccountID := itemRequest.RevenueAccountID
 			if revenueAccountID == 0 {
-				// ✅ FIX: Use LEAF account 4101-001 instead of HEADER 4101
-				var defaultAccount models.Account
-				if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&defaultAccount).Error; err != nil {
-					// Fallback: try header 4101 if leaf doesn't exist, then any revenue account
-					if err := tx.Where("code = ? AND deleted_at IS NULL", "4101").First(&defaultAccount).Error; err != nil {
-						if err := tx.Where("type = ? AND deleted_at IS NULL", "REVENUE").First(&defaultAccount).Error; err != nil {
-							tx.Rollback()
-							return nil, fmt.Errorf("failed to find default revenue account: %v", err)
-						}
-					}
-				}
-				revenueAccountID = defaultAccount.ID
+				tx.Rollback()
+				return nil, fmt.Errorf("revenue account / COA wajib dipilih untuk item '%s'", normalizeSaleItemProductName(&itemRequest))
 			}
 
-			// ✅ FIX: Guard against header accounts — ALWAYS redirect to leaf child
 			if revenueAccountID != 0 {
 				var revAcc models.Account
 				if err := tx.First(&revAcc, revenueAccountID).Error; err == nil && revAcc.IsHeader {
@@ -613,16 +811,19 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 						revenueAccountID = leafAcc.ID
 						log.Printf("✅ Redirected to leaf revenue account %s (ID=%d)", leafAcc.Code, leafAcc.ID)
 					} else {
-						if err := tx.Where("code = ? AND deleted_at IS NULL", "4101-001").First(&leafAcc).Error; err == nil {
-							revenueAccountID = leafAcc.ID
-						}
+						tx.Rollback()
+						return nil, fmt.Errorf("akun COA pendapatan '%s' adalah header dan tidak memiliki akun detail aktif", revAcc.Code)
 					}
+				} else if err != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("revenue account / COA item tidak ditemukan: %v", err)
 				}
 			}
 
 			item := models.SaleItem{
 				SaleID:           sale.ID,
 				ProductID:        itemRequest.ProductID,
+				ProductName:      itemRequest.ProductName,
 				Description:      itemRequest.Description,
 				Location:         itemRequest.Location,
 				Quantity:         int(itemRequest.Quantity),
@@ -753,6 +954,13 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		return nil, fmt.Errorf("failed to update sale: %v", err)
 	}
 
+	if request.PaymentSchedules != nil || strings.ToUpper(strings.TrimSpace(sale.PaymentTerms)) != "CUSTOM" {
+		if err := s.syncSalePaymentSchedules(tx, &sale, request.PaymentSchedules); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
 	// Handle journal updates based on status
 	if err := s.salesJournalService.UpdateSalesJournal(&sale, oldStatus, tx); err != nil {
 		tx.Rollback()
@@ -765,7 +973,10 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	}
 
 	// Reload with relationships
-	s.db.Preload("Customer").Preload("SaleItems.Product").First(&sale, sale.ID)
+	s.db.Preload("Customer").Preload("SaleItems.Product").Preload("PaymentSchedules", func(db *gorm.DB) *gorm.DB {
+		return db.Order("sequence ASC")
+	}).First(&sale, sale.ID)
+	hydrateSalePaymentScheduleProgress(&sale)
 
 	// Recalculate project sales revenue if sale is linked to a project
 	if sale.ProjectID != nil && *sale.ProjectID > 0 {
@@ -836,6 +1047,11 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 
 	// ✅ CRITICAL FIX: Prevent duplicate invoice creation
 	// Check if invoice already created (has invoice number or status is INVOICED/PAID)
+	if err := CheckClosedPeriod(tx, sale.Date); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
 	if sale.InvoiceNumber != "" || sale.Status == "INVOICED" || sale.Status == "PAID" {
 		tx.Rollback()
 		return nil, fmt.Errorf("invoice already created for this sale (Invoice #%s, Status: %s)",
@@ -910,31 +1126,31 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 		return nil, fmt.Errorf("failed to create invoice: %v", err)
 	}
 
-	// ✅ FIX: Recalculate PPN if it was lost (e.g., sale created before PPN fix)
-	// This ensures PPN Keluaran is always posted for taxable credit sales
-	if sale.PPN == 0 && sale.PPNPercent > 0 {
-		ppnRate := sale.PPNPercent
-		if ppnRate == 0 {
-			ppnRate = sale.PPNRate
-		}
+	// Keep invoice amounts identical to the saved draft/confirmed sale.
+	// We only recover PPN from persisted item-level tax amounts when they already
+	// exist in the transaction, and never infer tax from a default rate here.
+	if sale.PPN == 0 && sale.PPNAmount == 0 {
+		var persistedItemPPN float64
+		if err := tx.Model(&models.SaleItem{}).
+			Where("sale_id = ?", sale.ID).
+			Select("COALESCE(SUM(ppn_amount), 0)").
+			Scan(&persistedItemPPN).Error; err != nil {
+			log.Printf("⚠️ [CreateInvoice] Failed to inspect persisted item PPN for Sale #%d: %v", sale.ID, err)
+		} else if persistedItemPPN > 0 {
+			taxableAmount := sale.TaxableAmount
+			if taxableAmount == 0 {
+				taxableAmount = sale.Subtotal - sale.DiscountAmount
+			}
 
-		// Calculate TaxableAmount if not set
-		taxableAmount := sale.TaxableAmount
-		if taxableAmount == 0 {
-			taxableAmount = sale.Subtotal - sale.DiscountAmount
-		}
-
-		if taxableAmount > 0 && ppnRate > 0 {
-			sale.PPN = taxableAmount * (ppnRate / 100)
-			sale.PPNAmount = sale.PPN
-			sale.PPNRate = ppnRate
+			sale.PPN = persistedItemPPN
+			sale.PPNAmount = persistedItemPPN
+			if sale.PPNRate == 0 {
+				sale.PPNRate = sale.PPNPercent
+			}
 			sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
 			sale.TotalAmount = taxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
 			sale.OutstandingAmount = sale.TotalAmount - sale.PaidAmount
 
-			log.Printf("⚠️ [CreateInvoice] PPN recalculated: PPN=%.2f (PPNPercent=%.2f, TaxableAmount=%.2f)", sale.PPN, ppnRate, taxableAmount)
-
-			// Save updated PPN to DB
 			if err := tx.Model(&sale).Updates(map[string]interface{}{
 				"ppn":                sale.PPN,
 				"ppn_amount":         sale.PPNAmount,
@@ -943,10 +1159,12 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 				"total_amount":       sale.TotalAmount,
 				"outstanding_amount": sale.OutstandingAmount,
 			}).Error; err != nil {
-				log.Printf("⚠️ Warning: Failed to save recalculated PPN: %v", err)
+				log.Printf("⚠️ [CreateInvoice] Failed to sync persisted item PPN for Sale #%d: %v", sale.ID, err)
 			} else {
-				log.Printf("✅ [CreateInvoice] PPN saved: PPN=%.2f, TotalAmount=%.2f", sale.PPN, sale.TotalAmount)
+				log.Printf("✅ [CreateInvoice] Synced persisted item PPN for Sale #%d: %.2f", sale.ID, sale.PPN)
 			}
+		} else if sale.PPNPercent > 0 || sale.PPNRate > 0 {
+			log.Printf("ℹ️ [CreateInvoice] Sale #%d has tax rate metadata but no persisted PPN amount. Invoice will keep saved non-tax total without injecting tax.", sale.ID)
 		}
 	}
 
@@ -1001,29 +1219,43 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 
 		// Create cash/bank transaction record for audit trail
 		if sale.CashBankID != nil && *sale.CashBankID > 0 {
-			// Read actual cash/bank balance for accurate balance_after
 			var cashBankForBalance models.CashBank
-			var balanceAfter float64
 			if err := tx.First(&cashBankForBalance, *sale.CashBankID).Error; err != nil {
-				log.Printf("⚠️ Warning: Failed to load cash/bank for balance_after: %v", err)
-				balanceAfter = 0
-			} else {
-				balanceAfter = cashBankForBalance.Balance
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to load cash/bank for immediate payment sale: %v", err)
 			}
 
+			mutation, err := buildImmediateSaleCashBankMutation(&sale, &cashBankForBalance)
+			if err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to prepare immediate payment cash/bank mutation: %v", err)
+			}
+
+			balanceAfter := cashBankForBalance.Balance
+			if cashBankForBalance.IsForeignCurrency() {
+				balanceAfter += mutation.NativeAmount
+			}
+
+			guard := NewCashBankCurrencyGuard(s.db)
 			cashBankTransaction := &models.CashBankTransaction{
 				CashBankID:      *sale.CashBankID,
 				ReferenceType:   "SALE",
 				ReferenceID:     sale.ID,
-				Amount:          sale.TotalAmount,
+				Amount:          mutation.NativeAmount,
+				Currency:        mutation.Currency,
+				ExchangeRate:    mutation.ExchangeRate,
+				BookAmountIDR:   mutation.BookAmountIDR,
 				BalanceAfter:    balanceAfter,
 				TransactionDate: sale.Date,
-				Notes:           fmt.Sprintf("Immediate payment - Invoice #%s", sale.InvoiceNumber),
+				Notes:           mutation.Notes,
 			}
 
 			if err := tx.Create(cashBankTransaction).Error; err != nil {
 				log.Printf("⚠️ Warning: Failed to create cash/bank transaction record: %v", err)
 				// Don't fail transaction, this is just for audit trail
+			} else if err := guard.EnforceAfterTransaction(tx, *sale.CashBankID); err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after sale payment: %v", err)
 			}
 		}
 
@@ -1163,16 +1395,65 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 		actualAmount = sale.OutstandingAmount
 	}
 
+	bankCurrency := "IDR"
+	bankExchangeRate := 1.0
+	bankNativeAmount := actualAmount
+	bankBookAmountIDR := actualAmount
+	receivableSettlementBookIDR, _, err := calculateSaleReceivableSettlementBookAmount(&sale, actualAmount, paymentRequest.ExchangeRate)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to calculate receivable historical book amount: %v", err)
+	}
+	forexGainLossAmount := 0.0
+	forexGainLossType := ""
+
+	var cashBank *models.CashBank
+	if paymentRequest.CashBankID != nil && *paymentRequest.CashBankID > 0 {
+		var loadedCashBank models.CashBank
+		if err := tx.First(&loadedCashBank, *paymentRequest.CashBankID).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("cash/bank account not found: %v", err)
+		}
+
+		bankCurrency = normalizeCashBankCurrency(loadedCashBank.Currency)
+		if bankCurrency == "USD" {
+			if paymentRequest.ExchangeRate <= 0 {
+				tx.Rollback()
+				return nil, fmt.Errorf("exchange rate is required when receiving payment into USD cash/bank account")
+			}
+			bankExchangeRate = paymentRequest.ExchangeRate
+			bankNativeAmount = actualAmount / paymentRequest.ExchangeRate
+			bankBookAmountIDR = actualAmount
+		}
+
+		cashBank = &loadedCashBank
+	}
+
+	forexDiff := bankBookAmountIDR - receivableSettlementBookIDR
+	if forexDiff > 0.005 {
+		forexGainLossAmount = forexDiff
+		forexGainLossType = "GAIN"
+	} else if forexDiff < -0.005 {
+		forexGainLossAmount = -forexDiff
+		forexGainLossType = "LOSS"
+	}
+
 	// Create payment record
 	payment := &models.SalePayment{
-		SaleID:        saleID,
-		PaymentDate:   paymentRequest.PaymentDate,
-		Amount:        actualAmount,
-		PaymentMethod: paymentRequest.PaymentMethod,
-		Reference:     paymentRequest.Reference,
-		CashBankID:    paymentRequest.CashBankID,
-		Notes:         paymentRequest.Notes,
-		UserID:        userID,
+		SaleID:              saleID,
+		PaymentDate:         paymentRequest.PaymentDate,
+		Amount:              actualAmount,
+		NativeAmount:        bankNativeAmount,
+		Currency:            bankCurrency,
+		ExchangeRate:        bankExchangeRate,
+		BookAmountIDR:       bankBookAmountIDR,
+		ForexGainLossAmount: forexGainLossAmount,
+		ForexGainLossType:   forexGainLossType,
+		PaymentMethod:       paymentRequest.PaymentMethod,
+		Reference:           paymentRequest.Reference,
+		CashBankID:          paymentRequest.CashBankID,
+		Notes:               paymentRequest.Notes,
+		UserID:              userID,
 	}
 
 	if err := tx.Create(&payment).Error; err != nil {
@@ -1194,6 +1475,10 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to update sale: %v", err)
 	}
+	if err := syncSalePaymentScheduleProgress(tx, &sale); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to sync sale payment schedules: %v", err)
+	}
 
 	// Create payment journal entries
 	if err := s.salesJournalService.CreateSalesPaymentJournal(payment, &sale, tx); err != nil {
@@ -1203,26 +1488,36 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 
 	// ✅ CRITICAL FIX: Update cash_banks.balance for Cash & Bank Management view
 	// This is SEPARATE from accounts.balance (COA tree view) which is updated by journal entries
-	if payment.CashBankID != nil && *payment.CashBankID > 0 {
-		var cashBank models.CashBank
-		if err := tx.First(&cashBank, *payment.CashBankID).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("cash/bank account not found: %v", err)
-		}
-
+	if cashBank != nil && payment.CashBankID != nil && *payment.CashBankID > 0 {
 		// Increase cash/bank balance for payment IN (customer paying us)
-		cashBank.Balance += payment.Amount
-		if err := tx.Save(&cashBank).Error; err != nil {
+		cashBank.Balance += payment.NativeAmount
+		if cashBank.IsForeignCurrency() {
+			cashBank.BookBalanceIDR += payment.BookAmountIDR
+			if payment.ExchangeRate > 0 {
+				cashBank.LastExchangeRate = payment.ExchangeRate
+			}
+		}
+		if err := tx.Save(cashBank).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to update cash/bank balance: %v", err)
 		}
+		if cashBank.AccountID > 0 {
+			if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
+				cashBank.EffectiveBookBalanceIDR(), cashBank.AccountID).Error; err != nil {
+				log.Printf("⚠️ Warning: failed to sync GL balance for cash/bank account %d: %v", cashBank.AccountID, err)
+			}
+		}
 
 		// Create cash/bank transaction record for audit trail
+		guard := NewCashBankCurrencyGuard(s.db)
 		cashBankTransaction := &models.CashBankTransaction{
 			CashBankID:      *payment.CashBankID,
 			ReferenceType:   "SALES_PAYMENT",
 			ReferenceID:     payment.ID,
-			Amount:          payment.Amount, // Positive for incoming payment
+			Amount:          payment.NativeAmount, // Positive for incoming payment
+			Currency:        bankCurrency,
+			ExchangeRate:    payment.ExchangeRate,
+			BookAmountIDR:   payment.BookAmountIDR,
 			BalanceAfter:    cashBank.Balance,
 			TransactionDate: payment.PaymentDate,
 			Notes:           fmt.Sprintf("Customer payment - Invoice #%s", sale.InvoiceNumber),
@@ -1233,8 +1528,13 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 			return nil, fmt.Errorf("failed to create cash/bank transaction: %v", err)
 		}
 
+		if err := guard.EnforceAfterTransaction(tx, *payment.CashBankID); err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after customer payment: %v", err)
+		}
+
 		log.Printf("💰 Updated Cash/Bank #%d balance: +%.2f (new balance: %.2f)",
-			*payment.CashBankID, payment.Amount, cashBank.Balance)
+			*payment.CashBankID, payment.NativeAmount, cashBank.Balance)
 	} else {
 		log.Printf("⚠️ Warning: No CashBankID provided for payment #%d, cash_banks balance not updated", payment.ID)
 	}
@@ -1314,6 +1614,7 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 
 	// 3. Remove SALES_PAYMENT journal entries (from ProcessPayment)
 	var salePayments []models.SalePayment
+	affectedCashBankIDs := make(map[uint]struct{})
 	if err := tx.Where("sale_id = ?", sale.ID).Find(&salePayments).Error; err == nil && len(salePayments) > 0 {
 		log.Printf("🗑️ Found %d payment records for cancelled Sale #%d, cleaning up...", len(salePayments), sale.ID)
 		for _, payment := range salePayments {
@@ -1344,60 +1645,50 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 				log.Printf("🗑️ Deleted SALES_PAYMENT journal for payment #%d", payment.ID)
 			}
 
-			// 4. Reverse cash/bank balance for this payment
 			if payment.CashBankID != nil && *payment.CashBankID > 0 {
-				var cashBank models.CashBank
-				if err := tx.First(&cashBank, *payment.CashBankID).Error; err == nil {
-					oldBalance := cashBank.Balance
-					cashBank.Balance -= payment.Amount // Reverse: subtract the payment that was added
-					if err := tx.Save(&cashBank).Error; err != nil {
-						log.Printf("⚠️ Warning: Failed to reverse cash/bank balance for payment #%d: %v", payment.ID, err)
-					} else {
-						log.Printf("✅ Cash/bank balance reversed for payment #%d: %s %.2f → %.2f (-%.2f)",
-							payment.ID, cashBank.Name, oldBalance, cashBank.Balance, payment.Amount)
-					}
-				}
+				affectedCashBankIDs[*payment.CashBankID] = struct{}{}
 			}
 		}
 
 		// Soft-delete cash/bank transaction records for SALES_PAYMENT
-		tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE cash_bank_transactions 
 			SET deleted_at = CURRENT_TIMESTAMP
 			WHERE reference_type = 'SALES_PAYMENT' AND reference_id IN (
 				SELECT id FROM sale_payments WHERE sale_id = ?
 			) AND deleted_at IS NULL
-		`, sale.ID)
+		`, sale.ID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to soft-delete SALES_PAYMENT cash/bank transactions: %v", err)
+		}
 		log.Printf("🗑️ Soft-deleted SALES_PAYMENT cash/bank transactions for Sale #%d", sale.ID)
 	}
 
-	// 5. Reverse cash/bank for immediate-payment sales (CASH/BANK auto-paid on invoice)
+	// 4. Reverse cash/bank for immediate-payment sales (CASH/BANK auto-paid on invoice)
 	pm := strings.ToUpper(strings.TrimSpace(sale.PaymentMethodType))
 	if (oldStatus == "INVOICED" || oldStatus == "PAID") && (pm == "CASH" || strings.HasPrefix(pm, "BANK")) {
 		if sale.CashBankID != nil && *sale.CashBankID > 0 {
-			var cashBank models.CashBank
-			if err := tx.First(&cashBank, *sale.CashBankID).Error; err == nil {
-				oldBalance := cashBank.Balance
-				cashBank.Balance -= sale.TotalAmount // Reverse: subtract the auto-payment
-				if err := tx.Save(&cashBank).Error; err != nil {
-					log.Printf("⚠️ Warning: Failed to reverse cash/bank for immediate-payment sale: %v", err)
-				} else {
-					log.Printf("✅ Cash/bank reversed for auto-paid Sale #%d: %s %.2f → %.2f (-%.2f)",
-						sale.ID, cashBank.Name, oldBalance, cashBank.Balance, sale.TotalAmount)
-				}
-			}
+			affectedCashBankIDs[*sale.CashBankID] = struct{}{}
 		}
 
 		// Soft-delete the SALE cash/bank transaction record
-		tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE cash_bank_transactions 
 			SET deleted_at = CURRENT_TIMESTAMP
 			WHERE reference_type = 'SALE' AND reference_id = ? AND deleted_at IS NULL
-		`, sale.ID)
+		`, sale.ID).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to soft-delete SALE cash/bank transaction: %v", err)
+		}
 		log.Printf("🗑️ Soft-deleted SALE cash/bank transaction for Sale #%d", sale.ID)
 	}
 
-	// 6. Restore stock if needed
+	if err := s.enforceCashBankGuards(tx, affectedCashBankIDs); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// 5. Restore stock if needed
 	if s.stockService != nil && (oldStatus == "INVOICED" || oldStatus == "PAID") {
 		for _, item := range sale.SaleItems {
 			if item.Product.IsService {
@@ -1446,7 +1737,14 @@ func (s *SalesServiceV2) GetSales(filter models.SalesFilter) (*models.SalesResul
 
 	// Apply filters
 	if filter.Status != "" {
-		query = query.Where("status = ?", filter.Status)
+		switch filter.Status {
+		case models.SaleStatusDraft:
+			query = query.Where("status IN ?", []string{models.SaleStatusDraft, models.SaleStatusPending, models.SaleStatusConfirmed})
+		case models.SaleStatusInvoiced:
+			query = query.Where("status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue})
+		default:
+			query = query.Where("status = ?", filter.Status)
+		}
 	}
 	if filter.CustomerID != "" {
 		query = query.Where("customer_id = ?", filter.CustomerID)
@@ -1508,10 +1806,14 @@ func (s *SalesServiceV2) GetSaleByID(saleID uint) (*models.Sale, error) {
 		Preload("Project").
 		Preload("InvoiceType").
 		Preload("SaleItems.Product").
+		Preload("PaymentSchedules", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sequence ASC")
+		}).
 		Preload("SalePayments").
 		First(&sale, saleID).Error; err != nil {
 		return nil, fmt.Errorf("sale not found")
 	}
+	hydrateSalePaymentScheduleProgress(&sale)
 	return &sale, nil
 }
 
@@ -1601,6 +1903,33 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 	}
 
 	for _, it := range req.Items {
+		manualName := normalizeSaleItemProductName(&it)
+		if it.ProductID == 0 && manualName != "" {
+			result.Items = append(result.Items, models.StockValidationItem{
+				ProductID:    0,
+				ProductCode:  manualSaleProductCode,
+				ProductName:  manualName,
+				RequestedQty: int(it.Quantity),
+				AvailableQty: 0,
+				IsService:    true,
+				IsSufficient: true,
+			})
+			continue
+		}
+
+		if it.ProductID == 0 {
+			itemRes := models.StockValidationItem{
+				ProductID:    0,
+				ProductName:  manualName,
+				RequestedQty: int(it.Quantity),
+				IsSufficient: false,
+				Warning:      "Nama produk manual wajib diisi",
+			}
+			result.Items = append(result.Items, itemRes)
+			result.HasInsufficient = true
+			continue
+		}
+
 		p, ok := prodMap[it.ProductID]
 		if !ok {
 			// Unknown product, mark as insufficient
@@ -1736,11 +2065,130 @@ func getOrDefaultStr(value string, defaultValue string) string {
 	return value
 }
 
+func saleScheduleIsZero(value float64) bool {
+	return math.Abs(value) < 0.0001
+}
+
+func (s *SalesServiceV2) validateSalePaymentSchedules(schedules []models.SalePaymentScheduleRequest) error {
+	if len(schedules) == 0 {
+		return fmt.Errorf("jadwal termin wajib diisi untuk payment terms custom")
+	}
+
+	totalPercentage := 0.0
+	for index, schedule := range schedules {
+		if schedule.Percentage <= 0 {
+			return fmt.Errorf("persentase termin #%d harus lebih besar dari 0", index+1)
+		}
+		if schedule.DueDate.IsZero() {
+			return fmt.Errorf("jatuh tempo termin #%d wajib diisi", index+1)
+		}
+		totalPercentage += schedule.Percentage
+	}
+
+	if math.Abs(totalPercentage-100) > 0.01 {
+		return fmt.Errorf("total persentase termin harus 100%%, saat ini %.2f%%", totalPercentage)
+	}
+
+	return nil
+}
+
+func validateSalePaymentScheduleMode(paymentTerms, paymentMethodType string) error {
+	if strings.ToUpper(strings.TrimSpace(paymentTerms)) == "CUSTOM" &&
+		strings.ToUpper(strings.TrimSpace(paymentMethodType)) != "CREDIT" {
+		return fmt.Errorf("jadwal termin hanya dapat digunakan untuk penjualan kredit/piutang")
+	}
+
+	return nil
+}
+
+func buildSalePaymentSchedules(saleID uint, totalAmount float64, schedules []models.SalePaymentScheduleRequest) []models.SalePaymentSchedule {
+	result := make([]models.SalePaymentSchedule, 0, len(schedules))
+	allocated := 0.0
+
+	for index, schedule := range schedules {
+		amount := totalAmount * schedule.Percentage / 100
+		if index == len(schedules)-1 {
+			amount = totalAmount - allocated
+		} else {
+			allocated += amount
+		}
+
+		sequence := schedule.Sequence
+		if sequence <= 0 {
+			sequence = index + 1
+		}
+
+		result = append(result, models.SalePaymentSchedule{
+			SaleID:      saleID,
+			Sequence:    sequence,
+			Percentage:  schedule.Percentage,
+			Amount:      amount,
+			DueDate:     schedule.DueDate,
+			Description: strings.TrimSpace(schedule.Description),
+			Status:      "PENDING",
+		})
+	}
+
+	return result
+}
+
+func (s *SalesServiceV2) syncSalePaymentSchedules(tx *gorm.DB, sale *models.Sale, scheduleRequests []models.SalePaymentScheduleRequest) error {
+	if sale == nil {
+		return fmt.Errorf("sale is required")
+	}
+
+	if err := tx.Where("sale_id = ?", sale.ID).Delete(&models.SalePaymentSchedule{}).Error; err != nil {
+		return fmt.Errorf("failed to clear previous payment schedules: %v", err)
+	}
+
+	sale.PaymentSchedules = []models.SalePaymentSchedule{}
+
+	if strings.ToUpper(strings.TrimSpace(sale.PaymentTerms)) != "CUSTOM" {
+		return nil
+	}
+
+	if err := s.validateSalePaymentSchedules(scheduleRequests); err != nil {
+		return err
+	}
+
+	schedules := buildSalePaymentSchedules(sale.ID, sale.TotalAmount, scheduleRequests)
+	if len(schedules) == 0 {
+		return nil
+	}
+
+	if err := tx.Create(&schedules).Error; err != nil {
+		return fmt.Errorf("failed to create payment schedules: %v", err)
+	}
+
+	sale.PaymentSchedules = schedules
+	hydrateSalePaymentScheduleProgress(sale)
+	return nil
+}
+
+func deriveSaleDueDate(paymentTerms string, dueDate time.Time, schedules []models.SalePaymentScheduleRequest) time.Time {
+	if strings.ToUpper(strings.TrimSpace(paymentTerms)) != "CUSTOM" || len(schedules) == 0 {
+		return dueDate
+	}
+
+	latest := dueDate
+	for _, schedule := range schedules {
+		if schedule.DueDate.IsZero() {
+			continue
+		}
+		if latest.IsZero() || schedule.DueDate.After(latest) {
+			latest = schedule.DueDate
+		}
+	}
+
+	return latest
+}
+
 // GetSalesSummary gets sales summary with date filtering
 func (s *SalesServiceV2) GetSalesSummary(startDate, endDate *time.Time) (*models.SalesSummaryResponse, error) {
 	log.Printf("📊 Getting sales summary (start: %v, end: %v)", startDate, endDate)
 
-	query := s.db.Model(&models.Sale{})
+	query := s.db.Model(&models.Sale{}).
+		Where("status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid})
 
 	// Apply date filters if provided
 	if startDate != nil {
@@ -1810,6 +2258,7 @@ func (s *SalesServiceV2) getTopCustomers(startDate, endDate *time.Time) ([]model
 		Select("sales.customer_id, contacts.name as customer_name, COUNT(sales.id) as total_orders, SUM(sales.total_amount) as total_amount").
 		Joins("LEFT JOIN contacts ON contacts.id = sales.customer_id").
 		Where("sales.deleted_at IS NULL").
+		Where("sales.status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid}).
 		Group("sales.customer_id, contacts.name").
 		Order("total_amount DESC").
 		Limit(5)
@@ -1835,7 +2284,7 @@ func (s *SalesServiceV2) getTopCustomers(startDate, endDate *time.Time) ([]model
 func (s *SalesServiceV2) recalculateProjectSalesRevenue(projectID uint) {
 	var totalRevenue float64
 	err := s.db.Model(&models.Sale{}).
-		Where("project_id = ? AND deleted_at IS NULL AND status IN ('INVOICED', 'PAID', 'CONFIRMED', 'DRAFT')", projectID).
+		Where("project_id = ? AND deleted_at IS NULL AND status IN ('INVOICED', 'OVERDUE', 'PAID')", projectID).
 		Select("COALESCE(SUM(total_amount), 0)").
 		Scan(&totalRevenue).Error
 

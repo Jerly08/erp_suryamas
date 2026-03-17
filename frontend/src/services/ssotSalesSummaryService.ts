@@ -83,6 +83,7 @@ export interface SSOTSalesSummaryParams {
   start_date: string;
   end_date: string;
   format?: 'json' | 'pdf' | 'excel';
+  project_id?: number;
 }
 
 class SSOTSalesSummaryService {
@@ -94,6 +95,10 @@ class SSOTSalesSummaryService {
         end_date: params.end_date,
         format: params.format || 'json'
       });
+
+      if (params.project_id) {
+        queryParams.set('project_id', params.project_id.toString());
+      }
 
       const response = await api.get(API_ENDPOINTS.SSOT_REPORTS.SALES_SUMMARY + `?${queryParams}`);
 

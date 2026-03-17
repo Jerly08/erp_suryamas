@@ -45,6 +45,9 @@ func (c *EnhancedInvoiceController) GenerateCleanInvoicePDF(ctx *gin.Context) {
 		Preload("User").
 		Preload("SalesPerson").
 		Preload("SaleItems.Product").
+		Preload("PaymentSchedules", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sequence ASC")
+		}).
 		First(&sale, uint(saleID)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			ctx.JSON(http.StatusNotFound, gin.H{
@@ -71,7 +74,7 @@ func (c *EnhancedInvoiceController) GenerateCleanInvoicePDF(ctx *gin.Context) {
 	// Get language from query parameter (defaults to user's language from settings)
 	lang := ctx.Query("lang")
 	var pdfBytes []byte
-	
+
 	if lang != "" {
 		// Use specified language
 		pdfBytes, err = c.pdfService.GenerateInvoicePDFWithLanguage(&sale, lang)
@@ -79,7 +82,7 @@ func (c *EnhancedInvoiceController) GenerateCleanInvoicePDF(ctx *gin.Context) {
 		// Use default language from settings
 		pdfBytes, err = c.pdfService.GenerateInvoicePDF(&sale)
 	}
-	
+
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to generate invoice PDF",
@@ -89,13 +92,13 @@ func (c *EnhancedInvoiceController) GenerateCleanInvoicePDF(ctx *gin.Context) {
 	}
 
 	// Determine filename
-	filename := fmt.Sprintf("invoice_%s_%s.pdf", 
-		sale.Code, 
+	filename := fmt.Sprintf("invoice_%s_%s.pdf",
+		sale.Code,
 		time.Now().Format("20060102"))
-		
+
 	if sale.InvoiceNumber != "" {
-		filename = fmt.Sprintf("invoice_%s_%s.pdf", 
-			sale.InvoiceNumber, 
+		filename = fmt.Sprintf("invoice_%s_%s.pdf",
+			sale.InvoiceNumber,
 			time.Now().Format("20060102"))
 	}
 
@@ -155,18 +158,18 @@ func (c *EnhancedInvoiceController) PreviewInvoice(ctx *gin.Context) {
 				"can_generate_pdf": sale.Status != "DRAFT",
 				"filename": func() string {
 					if sale.InvoiceNumber != "" {
-						return fmt.Sprintf("invoice_%s_%s.pdf", 
-							sale.InvoiceNumber, 
+						return fmt.Sprintf("invoice_%s_%s.pdf",
+							sale.InvoiceNumber,
 							time.Now().Format("20060102"))
 					}
-					return fmt.Sprintf("invoice_%s_%s.pdf", 
-						sale.Code, 
+					return fmt.Sprintf("invoice_%s_%s.pdf",
+						sale.Code,
 						time.Now().Format("20060102"))
 				}(),
 				"status_info": gin.H{
 					"current_status": sale.Status,
-					"can_invoice":   sale.Status == "CONFIRMED" || sale.Status == "DRAFT",
-					"is_invoiced":   sale.Status == "INVOICED" || sale.Status == "PAID",
+					"can_invoice":    sale.Status == "CONFIRMED" || sale.Status == "DRAFT",
+					"is_invoiced":    sale.Status == "INVOICED" || sale.Status == "PAID",
 				},
 			},
 		},
@@ -220,11 +223,11 @@ func (c *EnhancedInvoiceController) GetInvoiceTemplateData(ctx *gin.Context) {
 			"logo":    settings.CompanyLogo,
 		},
 		"invoice": gin.H{
-			"number":      sale.InvoiceNumber,
-			"sale_code":   sale.Code,
-			"date":        sale.Date.Format("02/01/2006"),
-			"due_date":    formatDueDate(sale.DueDate),
-			"status":      sale.Status,
+			"number":    sale.InvoiceNumber,
+			"sale_code": sale.Code,
+			"date":      sale.Date.Format("02/01/2006"),
+			"due_date":  formatDueDate(sale.DueDate),
+			"status":    sale.Status,
 		},
 		"customer": gin.H{
 			"name":    sale.Customer.Name,
@@ -232,11 +235,11 @@ func (c *EnhancedInvoiceController) GetInvoiceTemplateData(ctx *gin.Context) {
 			"phone":   sale.Customer.Phone,
 			"email":   sale.Customer.Email,
 		},
-		"items": prepareItemsForTemplate(sale.SaleItems),
-		"summary": calculateInvoiceSummary(&sale),
+		"items":         prepareItemsForTemplate(sale.SaleItems),
+		"summary":       calculateInvoiceSummary(&sale),
 		"payment_terms": sale.PaymentTerms,
-		"notes": sale.Notes,
-		"generated_at": time.Now().Format("02/01/2006 15:04"),
+		"notes":         sale.Notes,
+		"generated_at":  time.Now().Format("02/01/2006 15:04"),
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
@@ -264,20 +267,20 @@ func calculateInvoiceSummary(sale *models.Sale) gin.H {
 	ppnAmount := taxableAmount * (sale.PPNPercent / 100)
 
 	return gin.H{
-		"subtotal":       subtotal,
+		"subtotal":         subtotal,
 		"discount_percent": sale.DiscountPercent,
-		"discount_amount": discountAmount,
-		"taxable_amount": taxableAmount,
-		"ppn_percent":    sale.PPNPercent,
-		"ppn_amount":     ppnAmount,
-		"total_amount":   sale.TotalAmount,
-		"currency":       sale.Currency,
+		"discount_amount":  discountAmount,
+		"taxable_amount":   taxableAmount,
+		"ppn_percent":      sale.PPNPercent,
+		"ppn_amount":       ppnAmount,
+		"total_amount":     sale.TotalAmount,
+		"currency":         sale.Currency,
 	}
 }
 
 func prepareItemsForTemplate(saleItems []models.SaleItem) []gin.H {
 	items := make([]gin.H, 0, len(saleItems))
-	
+
 	for i, item := range saleItems {
 		lineTotal := item.LineTotal
 		if lineTotal == 0 {
@@ -294,11 +297,14 @@ func prepareItemsForTemplate(saleItems []models.SaleItem) []gin.H {
 			"line_total":  lineTotal,
 		})
 	}
-	
+
 	return items
 }
 
 func getItemDescription(item models.SaleItem) string {
+	if item.ProductName != "" {
+		return item.ProductName
+	}
 	if item.Product.ID != 0 && item.Product.Name != "" {
 		return item.Product.Name
 	}
@@ -345,8 +351,8 @@ func (c *EnhancedInvoiceController) ValidateInvoiceGeneration(ctx *gin.Context) 
 	// Validation logic
 	validation := gin.H{
 		"can_generate_pdf": true,
-		"issues":          []string{},
-		"warnings":        []string{},
+		"issues":           []string{},
+		"warnings":         []string{},
 	}
 
 	// Check status

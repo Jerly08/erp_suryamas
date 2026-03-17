@@ -33,7 +33,7 @@ type Sale struct {
 	// Legacy tax fields (kept for backward compatibility)
 	Tax        float64 `json:"tax" gorm:"type:decimal(15,2);default:0"`
 	PPN        float64 `json:"ppn" gorm:"type:decimal(15,2);default:0"`
-	PPNPercent float64 `json:"ppn_percent" gorm:"type:decimal(5,2);default:11"`
+	PPNPercent float64 `json:"ppn_percent" gorm:"type:decimal(5,2);default:0"`
 	PPh        float64 `json:"pph" gorm:"type:decimal(15,2);default:0"`
 	PPhPercent float64 `json:"pph_percent" gorm:"type:decimal(5,2);default:0"`
 	PPhType    string  `json:"pph_type" gorm:"size:20"`
@@ -73,14 +73,15 @@ type Sale struct {
 	DeletedAt          gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Customer     Contact       `json:"customer" gorm:"foreignKey:CustomerID"`
-	User         User          `json:"user" gorm:"foreignKey:UserID"`
-	SalesPerson  *Contact      `json:"sales_person" gorm:"foreignKey:SalesPersonID"`
-	InvoiceType  *InvoiceType  `json:"invoice_type" gorm:"foreignKey:InvoiceTypeID"`
-	Project      *Project      `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
-	SaleItems    []SaleItem    `json:"sale_items" gorm:"foreignKey:SaleID"`
-	SalePayments []SalePayment `json:"sale_payments" gorm:"foreignKey:SaleID"`
-	SaleReturns  []SaleReturn  `json:"sale_returns" gorm:"foreignKey:SaleID"`
+	Customer         Contact               `json:"customer" gorm:"foreignKey:CustomerID"`
+	User             User                  `json:"user" gorm:"foreignKey:UserID"`
+	SalesPerson      *Contact              `json:"sales_person" gorm:"foreignKey:SalesPersonID"`
+	InvoiceType      *InvoiceType          `json:"invoice_type" gorm:"foreignKey:InvoiceTypeID"`
+	Project          *Project              `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	SaleItems        []SaleItem            `json:"sale_items" gorm:"foreignKey:SaleID"`
+	PaymentSchedules []SalePaymentSchedule `json:"payment_schedules" gorm:"foreignKey:SaleID"`
+	SalePayments     []SalePayment         `json:"sale_payments" gorm:"foreignKey:SaleID"`
+	SaleReturns      []SaleReturn          `json:"sale_returns" gorm:"foreignKey:SaleID"`
 }
 
 // AfterFind hook to ensure computed fields are set correctly
@@ -94,6 +95,7 @@ type SaleItem struct {
 	ID              uint    `json:"id" gorm:"primaryKey"`
 	SaleID          uint    `json:"sale_id" gorm:"not null;index"`
 	ProductID       uint    `json:"product_id" gorm:"not null;index"`
+	ProductName     string  `json:"product_name" gorm:"size:255;default:''"`
 	Description     string  `json:"description" gorm:"type:text"`
 	Location        string  `json:"location" gorm:"size:255"`
 	Quantity        int     `json:"quantity" gorm:"not null"`
@@ -121,6 +123,24 @@ type SaleItem struct {
 	Product        Product  `json:"product" gorm:"foreignKey:ProductID"`
 	RevenueAccount Account  `json:"revenue_account" gorm:"foreignKey:RevenueAccountID"`
 	TaxAccount     *Account `json:"tax_account" gorm:"foreignKey:TaxAccountID"`
+}
+
+type SalePaymentSchedule struct {
+	ID          uint           `json:"id" gorm:"primaryKey"`
+	SaleID      uint           `json:"sale_id" gorm:"not null;index"`
+	Sequence    int            `json:"sequence" gorm:"not null"`
+	Percentage  float64        `json:"percentage" gorm:"type:decimal(8,4);default:0"`
+	Amount      float64        `json:"amount" gorm:"type:decimal(15,2);default:0"`
+	PaidAmount  float64        `json:"paid_amount" gorm:"-"`
+	Outstanding float64        `json:"outstanding_amount" gorm:"-"`
+	DueDate     time.Time      `json:"due_date" gorm:"not null"`
+	Description string         `json:"description" gorm:"size:255"`
+	Status      string         `json:"status" gorm:"size:20;default:'PENDING'"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+
+	Sale Sale `json:"-" gorm:"foreignKey:SaleID"`
 }
 
 // Sale Type Constants
@@ -171,24 +191,25 @@ type SaleCreateRequest struct {
 	PPhType    string   `json:"pph_type"`
 
 	// Enhanced tax configuration (similar to Purchase model)
-	PPNRate            *float64          `json:"ppn_rate"`             // PPN percentage (pointer to allow 0)
-	OtherTaxAdditions  float64           `json:"other_tax_additions"`  // Other tax additions
-	PPh21Rate          float64           `json:"pph21_rate"`           // PPh 21 percentage
-	PPh23Rate          float64           `json:"pph23_rate"`           // PPh 23 percentage
-	OtherTaxDeductions float64           `json:"other_tax_deductions"` // Other tax deductions
-	PaymentTerms       string            `json:"payment_terms"`
-	PaymentMethod      string            `json:"payment_method"`
-	PaymentMethodType  string            `json:"payment_method_type"` // CASH, BANK, CREDIT
-	CashBankID         *uint             `json:"cash_bank_id"`
-	ShippingMethod     string            `json:"shipping_method"`
-	ShippingCost       float64           `json:"shipping_cost"`
-	ShippingTaxable    bool              `json:"shipping_taxable"`
-	BillingAddress     string            `json:"billing_address"`
-	ShippingAddress    string            `json:"shipping_address"`
-	Notes              string            `json:"notes"`
-	InternalNotes      string            `json:"internal_notes"`
-	Reference          string            `json:"reference"`
-	Items              []SaleItemRequest `json:"items" binding:"required,min=1"`
+	PPNRate            *float64                     `json:"ppn_rate"`             // PPN percentage (pointer to allow 0)
+	OtherTaxAdditions  float64                      `json:"other_tax_additions"`  // Other tax additions
+	PPh21Rate          float64                      `json:"pph21_rate"`           // PPh 21 percentage
+	PPh23Rate          float64                      `json:"pph23_rate"`           // PPh 23 percentage
+	OtherTaxDeductions float64                      `json:"other_tax_deductions"` // Other tax deductions
+	PaymentTerms       string                       `json:"payment_terms"`
+	PaymentMethod      string                       `json:"payment_method"`
+	PaymentMethodType  string                       `json:"payment_method_type"` // CASH, BANK, CREDIT
+	CashBankID         *uint                        `json:"cash_bank_id"`
+	ShippingMethod     string                       `json:"shipping_method"`
+	ShippingCost       float64                      `json:"shipping_cost"`
+	ShippingTaxable    bool                         `json:"shipping_taxable"`
+	BillingAddress     string                       `json:"billing_address"`
+	ShippingAddress    string                       `json:"shipping_address"`
+	Notes              string                       `json:"notes"`
+	InternalNotes      string                       `json:"internal_notes"`
+	Reference          string                       `json:"reference"`
+	Items              []SaleItemRequest            `json:"items" binding:"required,min=1"`
+	PaymentSchedules   []SalePaymentScheduleRequest `json:"payment_schedules"`
 }
 
 type SaleUpdateRequest struct {
@@ -205,28 +226,30 @@ type SaleUpdateRequest struct {
 	PPhType    *string  `json:"pph_type"`
 
 	// Enhanced tax configuration (similar to Purchase model)
-	PPNRate            *float64          `json:"ppn_rate"`             // PPN percentage
-	OtherTaxAdditions  *float64          `json:"other_tax_additions"`  // Other tax additions
-	PPh21Rate          *float64          `json:"pph21_rate"`           // PPh 21 percentage
-	PPh23Rate          *float64          `json:"pph23_rate"`           // PPh 23 percentage
-	OtherTaxDeductions *float64          `json:"other_tax_deductions"` // Other tax deductions
-	PaymentTerms       *string           `json:"payment_terms"`
-	PaymentMethod      *string           `json:"payment_method"`
-	PaymentMethodType  *string           `json:"payment_method_type"` // CASH, BANK, CREDIT
-	CashBankID         *uint             `json:"cash_bank_id"`
-	ShippingMethod     *string           `json:"shipping_method"`
-	ShippingCost       *float64          `json:"shipping_cost"`
-	ShippingTaxable    *bool             `json:"shipping_taxable"`
-	BillingAddress     *string           `json:"billing_address"`
-	ShippingAddress    *string           `json:"shipping_address"`
-	Notes              *string           `json:"notes"`
-	InternalNotes      *string           `json:"internal_notes"`
-	Reference          *string           `json:"reference"`
-	Items              []SaleItemRequest `json:"items"`
+	PPNRate            *float64                     `json:"ppn_rate"`             // PPN percentage
+	OtherTaxAdditions  *float64                     `json:"other_tax_additions"`  // Other tax additions
+	PPh21Rate          *float64                     `json:"pph21_rate"`           // PPh 21 percentage
+	PPh23Rate          *float64                     `json:"pph23_rate"`           // PPh 23 percentage
+	OtherTaxDeductions *float64                     `json:"other_tax_deductions"` // Other tax deductions
+	PaymentTerms       *string                      `json:"payment_terms"`
+	PaymentMethod      *string                      `json:"payment_method"`
+	PaymentMethodType  *string                      `json:"payment_method_type"` // CASH, BANK, CREDIT
+	CashBankID         *uint                        `json:"cash_bank_id"`
+	ShippingMethod     *string                      `json:"shipping_method"`
+	ShippingCost       *float64                     `json:"shipping_cost"`
+	ShippingTaxable    *bool                        `json:"shipping_taxable"`
+	BillingAddress     *string                      `json:"billing_address"`
+	ShippingAddress    *string                      `json:"shipping_address"`
+	Notes              *string                      `json:"notes"`
+	InternalNotes      *string                      `json:"internal_notes"`
+	Reference          *string                      `json:"reference"`
+	Items              []SaleItemRequest            `json:"items"`
+	PaymentSchedules   []SalePaymentScheduleRequest `json:"payment_schedules"`
 }
 
 type SaleItemRequest struct {
-	ProductID       uint     `json:"product_id" binding:"required"`
+	ProductID       uint     `json:"product_id"`
+	ProductName     string   `json:"product_name"`
 	Description     string   `json:"description"`
 	Location        string   `json:"location"`
 	Quantity        float64  `json:"quantity" binding:"required,min=1"` // Accept float from frontend
@@ -239,6 +262,13 @@ type SaleItemRequest struct {
 	Taxable          *bool    `json:"taxable"`
 	RevenueAccountID uint     `json:"revenue_account_id"`
 	TaxAccountID     *uint    `json:"tax_account_id"`
+}
+
+type SalePaymentScheduleRequest struct {
+	Sequence    int       `json:"sequence"`
+	Percentage  float64   `json:"percentage"`
+	DueDate     time.Time `json:"due_date"`
+	Description string    `json:"description"`
 }
 
 // Return related to a Sale
@@ -366,6 +396,7 @@ type SalePaymentRequest struct {
 	Amount        float64   `json:"amount" binding:"required,min=0"`
 	PaymentDate   time.Time `json:"payment_date" binding:"required"`
 	PaymentMethod string    `json:"payment_method" binding:"required"`
+	ExchangeRate  float64   `json:"exchange_rate"`
 	Reference     string    `json:"reference"`
 	Notes         string    `json:"notes"`
 	CashBankID    *uint     `json:"cash_bank_id"` // Add cashbank integration
@@ -398,20 +429,26 @@ type SalePaymentSummary struct {
 
 // SalePayment model enhancement
 type SalePayment struct {
-	ID            uint           `json:"id" gorm:"primaryKey"`
-	SaleID        uint           `json:"sale_id" gorm:"not null;index"`
-	Amount        float64        `json:"amount" gorm:"type:decimal(15,2);not null"`
-	PaymentDate   time.Time      `json:"payment_date" gorm:"not null;index"`
-	PaymentMethod string         `json:"payment_method" gorm:"size:50;not null"`
-	Reference     string         `json:"reference" gorm:"size:100"`
-	Notes         string         `json:"notes" gorm:"type:text"`
-	CashBankID    *uint          `json:"cash_bank_id" gorm:"index"`
-	AccountID     *uint          `json:"account_id" gorm:"index"`
-	UserID        uint           `json:"user_id" gorm:"not null;index"`
-	Status        string         `json:"status" gorm:"size:20;default:'COMPLETED'"` // COMPLETED, PENDING, CANCELLED
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                  uint           `json:"id" gorm:"primaryKey"`
+	SaleID              uint           `json:"sale_id" gorm:"not null;index"`
+	Amount              float64        `json:"amount" gorm:"type:decimal(15,2);not null"`
+	NativeAmount        float64        `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
+	Currency            string         `json:"currency" gorm:"size:5;default:'IDR';not null"`
+	ExchangeRate        float64        `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
+	BookAmountIDR       float64        `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
+	ForexGainLossAmount float64        `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
+	ForexGainLossType   string         `json:"forex_gain_loss_type" gorm:"size:10"`
+	PaymentDate         time.Time      `json:"payment_date" gorm:"not null;index"`
+	PaymentMethod       string         `json:"payment_method" gorm:"size:50;not null"`
+	Reference           string         `json:"reference" gorm:"size:100"`
+	Notes               string         `json:"notes" gorm:"type:text"`
+	CashBankID          *uint          `json:"cash_bank_id" gorm:"index"`
+	AccountID           *uint          `json:"account_id" gorm:"index"`
+	UserID              uint           `json:"user_id" gorm:"not null;index"`
+	Status              string         `json:"status" gorm:"size:20;default:'COMPLETED'"` // COMPLETED, PENDING, CANCELLED
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	DeletedAt           gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
 	Sale     Sale      `json:"sale" gorm:"foreignKey:SaleID"`
@@ -423,7 +460,8 @@ type SalePayment struct {
 // Item Create/Update DTOs
 type SaleItemCreateRequest struct {
 	SaleID           uint    `json:"sale_id" binding:"required"`
-	ProductID        uint    `json:"product_id" binding:"required"`
+	ProductID        uint    `json:"product_id"`
+	ProductName      string  `json:"product_name"`
 	Quantity         int     `json:"quantity" binding:"required,min=1"`
 	UnitPrice        float64 `json:"unit_price" binding:"required,min=0"`
 	Discount         float64 `json:"discount"`
@@ -432,6 +470,7 @@ type SaleItemCreateRequest struct {
 }
 
 type SaleItemUpdateRequest struct {
+	ProductName      *string  `json:"product_name"`
 	Quantity         *int     `json:"quantity"`
 	UnitPrice        *float64 `json:"unit_price"`
 	Discount         *float64 `json:"discount"`

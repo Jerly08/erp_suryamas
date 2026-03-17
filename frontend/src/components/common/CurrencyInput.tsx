@@ -9,6 +9,7 @@ import {
   FormControl,
   FormLabel,
   FormErrorMessage,
+  useColorModeValue,
 } from '@chakra-ui/react';
 
 interface CurrencyInputProps {
@@ -42,6 +43,17 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
 }) => {
   const [displayValue, setDisplayValue] = useState<string>('');
   const [isFocused, setIsFocused] = useState(false);
+  const isCompactSize = size === 'sm' || size === 'xs';
+  const prefixWidth = isCompactSize ? '28px' : '40px';
+  const inputFontSize = isCompactSize ? 'xs' : 'sm';
+  const inputBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const inputTextColor = useColorModeValue('gray.800', 'var(--text-primary)');
+  const placeholderColor = useColorModeValue('gray.400', 'var(--text-secondary)');
+  const borderColor = useColorModeValue(isInvalid ? 'red.500' : 'gray.300', isInvalid ? 'red.300' : 'var(--border-color)');
+  const hoverBorderColor = useColorModeValue(isInvalid ? 'red.500' : 'gray.400', isInvalid ? 'red.300' : 'gray.500');
+  const prefixColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+  const disabledBg = useColorModeValue('gray.100', 'whiteAlpha.100');
+  const labelColor = useColorModeValue('gray.700', 'var(--text-primary)');
 
   // Format number to IDR currency display
   const formatToIDR = (amount: number): string => {
@@ -115,8 +127,8 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
 
   const inputElement = (
     <InputGroup size={size}>
-      <InputLeftElement pointerEvents="none">
-        <Text color="gray.500" fontSize={size === 'sm' ? 'xs' : 'sm'} fontWeight="medium">
+      <InputLeftElement pointerEvents="none" width={prefixWidth}>
+        <Text color={prefixColor} fontSize={inputFontSize} fontWeight="medium">
           Rp
         </Text>
       </InputLeftElement>
@@ -129,9 +141,20 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
         placeholder={placeholder}
         isDisabled={isDisabled}
         isInvalid={isInvalid}
-        paddingLeft="40px"
+        paddingLeft={prefixWidth}
+        paddingRight={isCompactSize ? '8px' : '12px'}
         textAlign="right"
         fontFamily="mono"
+        fontSize={inputFontSize}
+        bg={isDisabled ? disabledBg : inputBg}
+        color={inputTextColor}
+        borderColor={borderColor}
+        _hover={{ borderColor: hoverBorderColor }}
+        _focusVisible={{
+          borderColor: isInvalid ? 'red.500' : 'blue.400',
+          boxShadow: isInvalid ? '0 0 0 1px var(--chakra-colors-red-500)' : '0 0 0 1px var(--chakra-colors-blue-400)',
+        }}
+        _placeholder={{ color: placeholderColor }}
       />
     </InputGroup>
   );
@@ -139,7 +162,7 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   if (label && showLabel) {
     return (
       <FormControl isRequired={isRequired} isInvalid={isInvalid}>
-        <FormLabel fontSize="sm" fontWeight="medium">
+        <FormLabel fontSize="sm" fontWeight="medium" color={labelColor}>
           {label}
         </FormLabel>
         {inputElement}

@@ -13,6 +13,7 @@ import {
   Badge,
   HStack,
   Portal,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiChevronDown, FiChevronUp, FiX } from 'react-icons/fi';
 
@@ -58,6 +59,20 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const [selectedOption, setSelectedOption] = useState<SearchableSelectOption | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const inputBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const inputTextColor = useColorModeValue('gray.800', 'var(--text-primary)');
+  const mutedTextColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+  const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
+  const hoverBorderColor = useColorModeValue('gray.300', 'gray.500');
+  const selectedBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.16)');
+  const selectedBorderColor = useColorModeValue('green.300', 'green.400');
+  const dropdownBg = useColorModeValue('white', 'var(--bg-secondary)');
+  const optionHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const optionSelectedBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.16)');
+  const optionBorderColor = useColorModeValue('gray.100', 'var(--border-color)');
+  const scrollbarTrack = useColorModeValue('#f1f1f1', 'rgba(255,255,255,0.08)');
+  const scrollbarThumb = useColorModeValue('#888', '#718096');
+  const scrollbarThumbHover = useColorModeValue('#555', '#A0AEC0');
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -211,8 +226,12 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
           onFocus={handleInputFocus}
           placeholder={selectedOption ? '' : placeholder}
           isDisabled={isDisabled}
-          bg={selectedOption ? 'green.50' : 'white'}
-          borderColor={selectedOption ? 'green.300' : 'gray.200'}
+          bg={selectedOption ? selectedBg : inputBg}
+          color={inputTextColor}
+          borderColor={selectedOption ? selectedBorderColor : borderColor}
+          _hover={{ borderColor: selectedOption ? selectedBorderColor : hoverBorderColor }}
+          _focusVisible={{ borderColor: selectedOption ? selectedBorderColor : 'blue.400', boxShadow: selectedOption ? '0 0 0 1px var(--chakra-colors-green-400)' : '0 0 0 1px var(--chakra-colors-blue-400)' }}
+          _placeholder={{ color: mutedTextColor }}
           size={size}
         />
         <InputRightElement width="4.5rem">
@@ -248,9 +267,9 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
             left={`${dropdownPosition.left}px`}
             width={`${dropdownPosition.width}px`}
             zIndex={2000}
-            bg="white"
+            bg={dropdownBg}
             border="1px"
-            borderColor="gray.200"
+            borderColor={borderColor}
             borderRadius="md"
             boxShadow="xl"
             maxHeight="300px"
@@ -265,22 +284,22 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
                 width: '8px',
               },
               '&::-webkit-scrollbar-track': {
-                background: '#f1f1f1',
+                background: scrollbarTrack,
                 borderRadius: '4px',
               },
               '&::-webkit-scrollbar-thumb': {
-                background: '#888',
+                background: scrollbarThumb,
                 borderRadius: '4px',
               },
               '&::-webkit-scrollbar-thumb:hover': {
-                background: '#555',
+                background: scrollbarThumbHover,
               },
             }}
           >
           {isLoading ? (
             <Box p={4} textAlign="center">
               <Spinner size="sm" />
-              <Text ml={2} fontSize="sm">Loading...</Text>
+              <Text ml={2} fontSize="sm" color={inputTextColor}>Loading...</Text>
             </Box>
           ) : filteredOptions.length > 0 ? (
             <List>
@@ -290,14 +309,14 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
                   data-option-id={option.id}
                   p={3}
                   cursor="pointer"
-                  _hover={{ bg: 'gray.50' }}
-                  bg={selectedOption?.id === option.id ? 'blue.50' : 'white'}
+                  _hover={{ bg: optionHoverBg }}
+                  bg={selectedOption?.id === option.id ? optionSelectedBg : dropdownBg}
                   borderBottom="1px"
-                  borderColor="gray.100"
+                  borderColor={optionBorderColor}
                   onClick={() => handleOptionSelect(option)}
                 >
                   <HStack justify="space-between">
-                    <Text fontSize="sm">
+                    <Text fontSize="sm" color={inputTextColor}>
                       {displayFormat(option)}
                     </Text>
                     {option.active === false && (
@@ -311,7 +330,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
             </List>
           ) : (
             <Box p={4} textAlign="center">
-              <Text fontSize="sm" color="gray.500">
+              <Text fontSize="sm" color={mutedTextColor}>
                 {searchTerm ? 'No results found' : 'No options available'}
               </Text>
             </Box>

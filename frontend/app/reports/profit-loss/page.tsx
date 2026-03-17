@@ -126,6 +126,48 @@ const ProfitLossPage: React.FC = () => {
     const textColor = useColorModeValue('gray.800', 'white');
     const descriptionColor = useColorModeValue('gray.600', 'gray.300');
     const summaryBg = useColorModeValue('gray.50', 'gray.700');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const inputHoverBorderColor = useColorModeValue('gray.400', 'whiteAlpha.400');
+    const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.300');
+    const infoIconColor = useColorModeValue('gray.500', 'gray.400');
+    const errorBg = useColorModeValue('red.50', 'rgba(229, 62, 62, 0.14)');
+    const errorBorderColor = useColorModeValue('red.200', 'red.700');
+    const companyHeaderBg = useColorModeValue('purple.50', 'rgba(128, 90, 213, 0.14)');
+    const companyHeaderTextColor = useColorModeValue('purple.800', 'purple.100');
+    const companyHeaderSubtextColor = useColorModeValue('purple.600', 'purple.200');
+    const revenueStatBg = useColorModeValue('purple.50', 'rgba(128, 90, 213, 0.14)');
+    const revenueStatText = useColorModeValue('purple.800', 'purple.100');
+    const expenseStatBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
+    const expenseStatText = useColorModeValue('blue.800', 'blue.100');
+    const profitStatBg = useColorModeValue('orange.50', 'rgba(221, 107, 32, 0.14)');
+    const profitStatText = useColorModeValue('orange.800', 'orange.100');
+    const lossStatBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.14)');
+    const lossStatText = useColorModeValue('green.800', 'green.100');
+    const nestedCardBg = useColorModeValue('white', 'whiteAlpha.50');
+    const nestedCardTextColor = useColorModeValue('gray.700', 'gray.200');
+    const metricsBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.14)');
+    const metricsBorderColor = useColorModeValue('green.200', 'green.700');
+    const metricsTextColor = useColorModeValue('green.800', 'green.100');
+    const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const modalBg = useColorModeValue('white', 'gray.800');
+    const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const modalBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const infoPanelBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
+    const infoPanelBorderColor = useColorModeValue('blue.200', 'blue.700');
+    const infoPanelTextColor = useColorModeValue('blue.700', 'blue.100');
+    const tableHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const emptyTextColor = useColorModeValue('gray.500', 'gray.400');
+    const fieldStyles = {
+        bg: inputBg,
+        color: textColor,
+        borderColor: inputBorderColor,
+        _hover: { borderColor: inputHoverBorderColor },
+        _focusVisible: {
+            borderColor: inputFocusBorderColor,
+            boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+        },
+    };
 
     // State
     const [startDate, setStartDate] = useState('');
@@ -492,7 +534,7 @@ const ProfitLossPage: React.FC = () => {
                                             <Icon as={FiCalendar} />
                                             <Text>{t('reports.closedPeriod')}</Text>
                                             <Tooltip label={t('reports.modal.selectClosedPeriodTooltip')} placement="top">
-                                                <Box><Icon as={FiInfo} color="gray.500" /></Box>
+                                                <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                             </Tooltip>
                                         </HStack>
                                     </FormLabel>
@@ -515,6 +557,7 @@ const ProfitLossPage: React.FC = () => {
                                             }
                                         }}
                                         isDisabled={loadingClosedPeriods}
+                                        {...fieldStyles}
                                     >
                                         {closedPeriods.map((period, index) => (
                                             <option key={`${period.date}-${index}`} value={period.date}>
@@ -545,6 +588,7 @@ const ProfitLossPage: React.FC = () => {
                                         type="date"
                                         value={startDate}
                                         onChange={(e) => setStartDate(e.target.value)}
+                                        {...fieldStyles}
                                     />
                                 </FormControl>
                                 <FormControl flex="1" minW="200px">
@@ -553,6 +597,7 @@ const ProfitLossPage: React.FC = () => {
                                         type="date"
                                         value={endDate}
                                         onChange={(e) => setEndDate(e.target.value)}
+                                        {...fieldStyles}
                                     />
                                 </FormControl>
                                 <Button
@@ -583,7 +628,7 @@ const ProfitLossPage: React.FC = () => {
 
                 {/* Error State */}
                 {error && (
-                    <Box bg="red.50" p={4} borderRadius="md">
+                    <Box bg={errorBg} p={4} borderRadius="md" border="1px solid" borderColor={errorBorderColor}>
                         <Text color="red.600" fontWeight="medium">Error: {error}</Text>
                         <Button mt={2} size="sm" colorScheme="red" variant="outline" onClick={fetchReport}>
                             {t('reports.modal.retry')}
@@ -596,18 +641,18 @@ const ProfitLossPage: React.FC = () => {
                     <VStack spacing={6} align="stretch">
                         {/* Company Header */}
                         {data.company && (
-                            <Box bg="purple.50" p={4} borderRadius="md">
+                            <Box bg={companyHeaderBg} p={4} borderRadius="md">
                                 <HStack justify="space-between" align="start">
                                     <VStack align="start" spacing={1}>
-                                        <Text fontSize="lg" fontWeight="bold" color="purple.800">
+                                        <Text fontSize="lg" fontWeight="bold" color={companyHeaderTextColor}>
                                             {data.company.name || t('common.name')}
                                         </Text>
-                                        <Text fontSize="sm" color="purple.600">
+                                        <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                             {data.company.address || ''} {data.company.city ? `, ${data.company.city}` : ''}
                                         </Text>
                                     </VStack>
                                     <VStack align="end" spacing={1}>
-                                        <Text fontSize="sm" color="purple.600">
+                                        <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                             {t('reports.modal.currency')}: {data.currency || 'IDR'}
                                         </Text>
                                     </VStack>
@@ -627,29 +672,29 @@ const ProfitLossPage: React.FC = () => {
 
                         {/* Summary Statistics */}
                         <SimpleGrid columns={[1, 2, 4]} spacing={4}>
-                            <Box bg="purple.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={revenueStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="purple.600">
                                     {formatCurrency(data.total_revenue || 0)}
                                 </Text>
-                                <Text fontSize="sm" color="purple.800">{t('reports.modal.totalRevenue')}</Text>
+                                <Text fontSize="sm" color={revenueStatText}>{t('reports.modal.totalRevenue')}</Text>
                             </Box>
-                            <Box bg="blue.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={expenseStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="blue.600">
                                     {formatCurrency(data.total_expenses || 0)}
                                 </Text>
-                                <Text fontSize="sm" color="blue.800">{t('reports.modal.totalExpenses')}</Text>
+                                <Text fontSize="sm" color={expenseStatText}>{t('reports.modal.totalExpenses')}</Text>
                             </Box>
-                            <Box bg="orange.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={profitStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="orange.600">
                                     {formatCurrency(data.net_profit || 0)}
                                 </Text>
-                                <Text fontSize="sm" color="orange.800">{t('reports.modal.netProfit')}</Text>
+                                <Text fontSize="sm" color={profitStatText}>{t('reports.modal.netProfit')}</Text>
                             </Box>
-                            <Box bg="green.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={lossStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="green.600">
                                     {formatCurrency(data.net_loss || 0)}
                                 </Text>
-                                <Text fontSize="sm" color="green.800">{t('reports.modal.netLoss')}</Text>
+                                <Text fontSize="sm" color={lossStatText}>{t('reports.modal.netLoss')}</Text>
                             </Box>
                         </SimpleGrid>
 
@@ -661,9 +706,9 @@ const ProfitLossPage: React.FC = () => {
                                 </Text>
                                 <SimpleGrid columns={[1, 2, 3]} spacing={4}>
                                     {data.revenue_details.map((revenue: any) => (
-                                        <Box key={revenue.account_id} bg="white" p={4} borderRadius="md" border="1px" borderColor={borderColor}>
+                                        <Box key={revenue.account_id} bg={nestedCardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                                             <VStack align="start" spacing={0}>
-                                                <Text fontSize="sm" color="gray.700">{revenue.account_name || t('accounts.title')}</Text>
+                                                <Text fontSize="sm" color={nestedCardTextColor}>{revenue.account_name || t('accounts.title')}</Text>
                                                 <Text fontSize="md" fontWeight="bold" color="purple.600">{formatCurrency(revenue.amount || 0)}</Text>
                                             </VStack>
                                         </Box>
@@ -680,9 +725,9 @@ const ProfitLossPage: React.FC = () => {
                                 </Text>
                                 <SimpleGrid columns={[1, 2, 3]} spacing={4}>
                                     {data.expense_details.map((expense: any) => (
-                                        <Box key={expense.account_id} bg="white" p={4} borderRadius="md" border="1px" borderColor={borderColor}>
+                                        <Box key={expense.account_id} bg={nestedCardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                                             <VStack align="start" spacing={0}>
-                                                <Text fontSize="sm" color="gray.700">{expense.account_name || t('accounts.title')}</Text>
+                                                <Text fontSize="sm" color={nestedCardTextColor}>{expense.account_name || t('accounts.title')}</Text>
                                                 <Text fontSize="md" fontWeight="bold" color="blue.600">{formatCurrency(expense.amount || 0)}</Text>
                                             </VStack>
                                         </Box>
@@ -693,36 +738,36 @@ const ProfitLossPage: React.FC = () => {
 
                         {/* Financial Metrics */}
                         {data.financialMetrics && (
-                            <Box bg="green.50" p={4} borderRadius="md" border="1px" borderColor="green.200">
-                                <Text fontSize="md" fontWeight="bold" color="green.800" mb={3}>
+                            <Box bg={metricsBg} p={4} borderRadius="md" border="1px" borderColor={metricsBorderColor}>
+                                <Text fontSize="md" fontWeight="bold" color={metricsTextColor} mb={3}>
                                     {t('reports.modal.keyFinancialMetrics')}
                                 </Text>
                                 <SimpleGrid columns={[1, 2]} spacing={3}>
                                     <VStack spacing={2}>
                                         <HStack justify="space-between" w="full">
-                                            <Text fontSize="sm" color="green.700">{t('reports.modal.grossProfit')}:</Text>
+                                            <Text fontSize="sm" color={metricsTextColor}>{t('reports.modal.grossProfit')}:</Text>
                                             <Text fontSize="sm" fontWeight="semibold">{formatCurrency(data.financialMetrics.grossProfit || 0)}</Text>
                                         </HStack>
                                         <HStack justify="space-between" w="full">
-                                            <Text fontSize="sm" color="green.700">{t('reports.modal.grossMargin')}:</Text>
+                                            <Text fontSize="sm" color={metricsTextColor}>{t('reports.modal.grossMargin')}:</Text>
                                             <Text fontSize="sm" fontWeight="semibold">{(data.financialMetrics.grossProfitMargin || 0).toFixed(1)}%</Text>
                                         </HStack>
                                         <HStack justify="space-between" w="full">
-                                            <Text fontSize="sm" color="green.700">{t('reports.modal.operatingIncome')}:</Text>
+                                            <Text fontSize="sm" color={metricsTextColor}>{t('reports.modal.operatingIncome')}:</Text>
                                             <Text fontSize="sm" fontWeight="semibold">{formatCurrency(data.financialMetrics.operatingIncome || 0)}</Text>
                                         </HStack>
                                     </VStack>
                                     <VStack spacing={2}>
                                         <HStack justify="space-between" w="full">
-                                            <Text fontSize="sm" color="green.700">{t('reports.modal.operatingMargin')}:</Text>
+                                            <Text fontSize="sm" color={metricsTextColor}>{t('reports.modal.operatingMargin')}:</Text>
                                             <Text fontSize="sm" fontWeight="semibold">{(data.financialMetrics.operatingMargin || 0).toFixed(1)}%</Text>
                                         </HStack>
                                         <HStack justify="space-between" w="full">
-                                            <Text fontSize="sm" color="green.700">{t('reports.modal.netIncome')}:</Text>
+                                            <Text fontSize="sm" color={metricsTextColor}>{t('reports.modal.netIncome')}:</Text>
                                             <Text fontSize="sm" fontWeight="semibold">{formatCurrency(data.financialMetrics.netIncome || 0)}</Text>
                                         </HStack>
                                         <HStack justify="space-between" w="full">
-                                            <Text fontSize="sm" color="green.700">{t('reports.modal.netMargin')}:</Text>
+                                            <Text fontSize="sm" color={metricsTextColor}>{t('reports.modal.netMargin')}:</Text>
                                             <Text fontSize="sm" fontWeight="semibold">{(data.financialMetrics.netIncomeMargin || 0).toFixed(1)}%</Text>
                                         </HStack>
                                     </VStack>
@@ -747,7 +792,7 @@ const ProfitLossPage: React.FC = () => {
                                         {section.items && section.items.length > 0 && (
                                             <VStack spacing={1} align="stretch">
                                                 {section.items.map((item: any, itemIndex: number) => (
-                                                    <HStack key={itemIndex} justify="space-between" pl={4} py={1} _hover={{ bg: 'gray.50' }} borderRadius="md">
+                                                    <HStack key={itemIndex} justify="space-between" pl={4} py={1} _hover={{ bg: rowHoverBg }} borderRadius="md">
                                                         <Text fontSize="sm" color={descriptionColor} flex={1}>
                                                             {item.name}
                                                         </Text>
@@ -803,14 +848,14 @@ const ProfitLossPage: React.FC = () => {
             {/* Transaction Detail Modal */}
             <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="xl" scrollBehavior="inside">
                 <ModalOverlay />
-                <ModalContent maxW="800px">
-                    <ModalHeader>
+                <ModalContent maxW="800px" bg={modalBg} border="1px solid" borderColor={modalBorderColor}>
+                    <ModalHeader bg={modalHeaderBg} borderBottom="1px solid" borderColor={modalBorderColor}>
                         <VStack align="start" spacing={1}>
                             <Text>{t('reports.modal.transactionDetails') || 'Transaction Details'}</Text>
                             {selectedAccount && (
                                 <HStack>
                                     <Badge colorScheme="purple">{selectedAccount.code}</Badge>
-                                    <Text fontSize="sm" color="gray.600">{selectedAccount.name}</Text>
+                                    <Text fontSize="sm" color={descriptionColor}>{selectedAccount.name}</Text>
                                 </HStack>
                             )}
                         </VStack>
@@ -820,12 +865,12 @@ const ProfitLossPage: React.FC = () => {
                         {loadingDetails ? (
                             <VStack py={8}>
                                 <Spinner size="lg" color="blue.500" />
-                                <Text color="gray.500">{t('common.loading') || 'Loading...'}</Text>
+                                <Text color={emptyTextColor}>{t('common.loading') || 'Loading...'}</Text>
                             </VStack>
                         ) : transactionDetails.length > 0 ? (
                             <TableContainer>
                                 <Table size="sm" variant="striped">
-                                    <Thead>
+                                    <Thead bg={tableHeaderBg}>
                                         <Tr>
                                             <Th>{t('journal.entryNumber') || 'No. Jurnal'}</Th>
                                             <Th>{t('common.date') || 'Tanggal'}</Th>
@@ -848,10 +893,10 @@ const ProfitLossPage: React.FC = () => {
                                                 <Td fontSize="sm" maxW="200px" isTruncated>
                                                     {tx.description}
                                                 </Td>
-                                                <Td isNumeric fontSize="sm" color={tx.debit_amount > 0 ? 'green.600' : 'gray.400'}>
+                                                <Td isNumeric fontSize="sm" color={tx.debit_amount > 0 ? 'green.600' : emptyTextColor}>
                                                     {tx.debit_amount > 0 ? formatCurrency(tx.debit_amount) : '-'}
                                                 </Td>
-                                                <Td isNumeric fontSize="sm" color={tx.credit_amount > 0 ? 'red.600' : 'gray.400'}>
+                                                <Td isNumeric fontSize="sm" color={tx.credit_amount > 0 ? 'red.600' : emptyTextColor}>
                                                     {tx.credit_amount > 0 ? formatCurrency(tx.credit_amount) : '-'}
                                                 </Td>
                                             </Tr>
@@ -861,7 +906,7 @@ const ProfitLossPage: React.FC = () => {
                             </TableContainer>
                         ) : (
                             <VStack py={8}>
-                                <Text color="gray.500">{t('reports.modal.noTransactionsFound') || 'No transactions found for this account in the selected period'}</Text>
+                                <Text color={emptyTextColor}>{t('reports.modal.noTransactionsFound') || 'No transactions found for this account in the selected period'}</Text>
                             </VStack>
                         )}
                     </ModalBody>
@@ -876,8 +921,8 @@ const ProfitLossPage: React.FC = () => {
             {/* Calculation Breakdown Modal */}
             <Modal isOpen={isBreakdownOpen} onClose={onBreakdownClose} size="xl" scrollBehavior="inside">
                 <ModalOverlay />
-                <ModalContent maxW="700px">
-                    <ModalHeader>
+                <ModalContent maxW="700px" bg={modalBg} border="1px solid" borderColor={modalBorderColor}>
+                    <ModalHeader bg={modalHeaderBg} borderBottom="1px solid" borderColor={modalBorderColor}>
                         <VStack align="start" spacing={1}>
                             <Text>Rincian Perhitungan</Text>
                             {selectedCalcItem && (
@@ -890,8 +935,8 @@ const ProfitLossPage: React.FC = () => {
                         {selectedCalcItem && (
                             <VStack spacing={4} align="stretch">
                                 {/* Formula */}
-                                <Box bg="blue.50" p={3} borderRadius="md" border="1px" borderColor="blue.200">
-                                    <Text fontSize="sm" color="blue.700" fontWeight="semibold">
+                                <Box bg={infoPanelBg} p={3} borderRadius="md" border="1px" borderColor={infoPanelBorderColor}>
+                                    <Text fontSize="sm" color={infoPanelTextColor} fontWeight="semibold">
                                         Formula: {selectedCalcItem.formula}
                                     </Text>
                                 </Box>
@@ -913,7 +958,7 @@ const ProfitLossPage: React.FC = () => {
                                         {component.items && component.items.length > 0 && (
                                             <TableContainer mt={2}>
                                                 <Table size="sm" variant="simple">
-                                                    <Thead bg="gray.50">
+                                                    <Thead bg={tableHeaderBg}>
                                                         <Tr>
                                                             <Th width="120px">Kode Akun</Th>
                                                             <Th>Nama Akun</Th>
@@ -922,7 +967,7 @@ const ProfitLossPage: React.FC = () => {
                                                     </Thead>
                                                     <Tbody>
                                                         {component.items.map((item: any, itemIdx: number) => (
-                                                            <Tr key={itemIdx} _hover={{ bg: 'gray.50' }}>
+                                                            <Tr key={itemIdx} _hover={{ bg: rowHoverBg }}>
                                                                 <Td>
                                                                     <Badge colorScheme="purple" fontSize="xs">
                                                                         {item.account_code || '-'}
@@ -945,7 +990,7 @@ const ProfitLossPage: React.FC = () => {
                                             </TableContainer>
                                         )}
                                         {(!component.items || component.items.length === 0) && (
-                                            <Text fontSize="sm" color="gray.500" pl={4} fontStyle="italic">
+                                            <Text fontSize="sm" color={emptyTextColor} pl={4} fontStyle="italic">
                                                 Tidak ada akun detail tersedia
                                             </Text>
                                         )}
@@ -953,7 +998,7 @@ const ProfitLossPage: React.FC = () => {
                                 ))}
 
                                 {selectedCalcItem.components.length === 0 && (
-                                    <Text color="gray.500" textAlign="center">
+                                    <Text color={emptyTextColor} textAlign="center">
                                         Tidak ada rincian tersedia untuk item ini
                                     </Text>
                                 )}

@@ -27,6 +27,65 @@ type SalesController struct {
 	accountRepo           repositories.AccountRepository
 }
 
+func mapSaleWriteError(err error) (int, string, map[string]string, map[string]interface{}, bool) {
+	if err == nil {
+		return 0, "", nil, nil, false
+	}
+
+	errorMsg := strings.TrimSpace(err.Error())
+
+	switch {
+	case strings.Contains(errorMsg, "customer not found"):
+		return http.StatusNotFound, "Customer not found", nil, nil, true
+	case strings.Contains(errorMsg, "sale not found"):
+		return http.StatusNotFound, "Sale not found", nil, nil, true
+	case strings.Contains(errorMsg, "stock tidak mencukupi"),
+		strings.Contains(errorMsg, "stock habis"),
+		strings.Contains(errorMsg, "stock tidak cukup"),
+		strings.Contains(errorMsg, "stok 0"):
+		return http.StatusBadRequest, "Stock validation failed", map[string]string{
+			"items": errorMsg,
+		}, nil, true
+	case strings.Contains(errorMsg, "manual sale item"),
+		strings.Contains(errorMsg, "product name"),
+		strings.Contains(errorMsg, "invalid sale item"),
+		strings.Contains(errorMsg, "validation"):
+		return http.StatusBadRequest, "Sale validation failed", map[string]string{
+			"items": errorMsg,
+		}, nil, true
+	case strings.Contains(errorMsg, "inventory"),
+		strings.Contains(errorMsg, "tidak bisa mengubah"),
+		strings.Contains(errorMsg, "closed period"),
+		strings.Contains(errorMsg, "CLOSED_PERIOD:"):
+		return http.StatusBadRequest, "Sale update is not allowed", nil, map[string]interface{}{
+			"details": errorMsg,
+		}, true
+	default:
+		return 0, "", nil, nil, false
+	}
+}
+
+func sendSaleWriteError(c *gin.Context, err error) {
+	status, message, validationErrors, context, handled := mapSaleWriteError(err)
+	if !handled {
+		utils.SendInternalError(c, "Failed to process sale", err.Error())
+		return
+	}
+
+	switch status {
+	case http.StatusNotFound:
+		utils.SendNotFound(c, message)
+	case http.StatusBadRequest:
+		if len(validationErrors) > 0 {
+			utils.SendValidationError(c, message, validationErrors)
+			return
+		}
+		utils.SendBusinessRuleError(c, message, context)
+	default:
+		utils.SendInternalError(c, message, err.Error())
+	}
+}
+
 func NewSalesController(salesServiceV2 *services.SalesServiceV2, paymentService *services.PaymentService, unifiedPaymentService *services.UnifiedSalesPaymentService, pdfService services.PDFServiceInterface, db *gorm.DB, accountRepo repositories.AccountRepository) *SalesController {
 	return &SalesController{
 		salesServiceV2:        salesServiceV2, // Use V2 service
@@ -210,9 +269,7 @@ func (sc *SalesController) CreateSale(c *gin.Context) {
 	var request models.SaleCreateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("❌ Invalid sale creation request: %v", err)
-		utils.SendValidationError(c, "Invalid sale data", map[string]string{
-			"request": "Please check the request format and required fields",
-		})
+		utils.SendValidationError(c, "Invalid sale data", utils.FormatValidationError(err))
 		return
 	}
 
@@ -241,33 +298,7 @@ func (sc *SalesController) CreateSale(c *gin.Context) {
 	sale, err := sc.salesServiceV2.CreateSale(request, userID)
 	if err != nil {
 		log.Printf("❌ Failed to create sale: %v", err)
-
-		// Handle specific error types
-		errorMsg := err.Error()
-		switch {
-		case strings.Contains(errorMsg, "customer not found"):
-			utils.SendNotFound(c, "Customer not found")
-		case strings.Contains(errorMsg, "stock tidak mencukupi") ||
-			strings.Contains(errorMsg, "stock habis") ||
-			strings.Contains(errorMsg, "stock tidak cukup"):
-			// Stock validation failed - return 400 with clear message
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "Stock Validation Failed",
-				"message": errorMsg,
-				"code":    "INSUFFICIENT_STOCK",
-			})
-		case strings.Contains(errorMsg, "validation"):
-			utils.SendValidationError(c, "Sale validation failed", map[string]string{
-				"details": errorMsg,
-			})
-		case strings.Contains(errorMsg, "inventory"):
-			utils.SendBusinessRuleError(c, "Inventory validation failed", map[string]interface{}{
-				"details": errorMsg,
-			})
-		default:
-			utils.SendInternalError(c, "Failed to create sale", errorMsg)
-		}
+		sendSaleWriteError(c, err)
 		return
 	}
 
@@ -291,13 +322,15 @@ func (sc *SalesController) CreateSale(c *gin.Context) {
 func (sc *SalesController) UpdateSale(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sale ID"})
+		utils.SendValidationError(c, "Invalid sale ID", map[string]string{
+			"id": "Sale ID must be a valid positive number",
+		})
 		return
 	}
 
 	var request models.SaleUpdateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		utils.SendValidationError(c, "Invalid sale update data", utils.FormatValidationError(err))
 		return
 	}
 
@@ -311,11 +344,12 @@ func (sc *SalesController) UpdateSale(c *gin.Context) {
 
 	sale, err := sc.salesServiceV2.UpdateSale(uint(id), request, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("❌ Failed to update sale %d: %v", id, err)
+		sendSaleWriteError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, sale)
+	utils.SendSuccess(c, "Sale updated successfully", sale)
 }
 
 // DeleteSale godoc
@@ -401,6 +435,25 @@ func (sc *SalesController) InvoiceSale(c *gin.Context) {
 	}
 
 	userID := c.MustGet("user_id").(uint)
+
+	sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Sale Not Found",
+			"message": "Sale dengan ID tersebut tidak ditemukan",
+		})
+		return
+	}
+	if err := services.CheckClosedPeriod(sc.db, sale.Date); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Periode Sudah Ditutup",
+			"message": err.Error(),
+			"code":    "PERIOD_CLOSED",
+		})
+		return
+	}
 
 	invoice, err := sc.salesServiceV2.CreateInvoice(uint(id), userID)
 	if err != nil {
@@ -651,12 +704,13 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Amount     float64   `json:"amount" binding:"required,min=0"`
-		Date       time.Time `json:"date" binding:"required"`
-		Method     string    `json:"method" binding:"required"`
-		CashBankID uint      `json:"cash_bank_id" binding:"required"`
-		Reference  string    `json:"reference"`
-		Notes      string    `json:"notes"`
+		Amount       float64   `json:"amount" binding:"required,min=0"`
+		Date         time.Time `json:"date" binding:"required"`
+		Method       string    `json:"method" binding:"required"`
+		CashBankID   uint      `json:"cash_bank_id" binding:"required"`
+		ExchangeRate float64   `json:"exchange_rate"`
+		Reference    string    `json:"reference"`
+		Notes        string    `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -665,12 +719,13 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 			"error":   "Invalid request data",
 			"details": err.Error(),
 			"expected_fields": map[string]string{
-				"amount":       "number (required, min=0)",
-				"date":         "datetime string (required, ISO format)",
-				"method":       "string (required)",
-				"cash_bank_id": "number (required)",
-				"reference":    "string (optional)",
-				"notes":        "string (optional)",
+				"amount":        "number (required, min=0)",
+				"date":          "datetime string (required, ISO format)",
+				"method":        "string (required)",
+				"cash_bank_id":  "number (required)",
+				"exchange_rate": "number (optional, required when cash/bank currency is USD)",
+				"reference":     "string (optional)",
+				"notes":         "string (optional)",
 			},
 		})
 		return
@@ -730,13 +785,14 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 
 	// Create payment request for Payment Management service
 	paymentRequest := services.PaymentCreateRequest{
-		ContactID:  sale.CustomerID,
-		CashBankID: request.CashBankID,
-		Date:       request.Date,
-		Amount:     request.Amount,
-		Method:     request.Method,
-		Reference:  request.Reference,
-		Notes:      fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
+		ContactID:    sale.CustomerID,
+		CashBankID:   request.CashBankID,
+		Date:         request.Date,
+		Amount:       request.Amount,
+		Method:       request.Method,
+		ExchangeRate: request.ExchangeRate,
+		Reference:    request.Reference,
+		Notes:        fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
 		Allocations: []services.InvoiceAllocation{
 			{
 				InvoiceID: uint(id),
@@ -937,6 +993,22 @@ func (sc *SalesController) ExportSaleInvoicePDF(c *gin.Context) {
 	sale, err := sc.salesServiceV2.GetSaleByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Sale not found"})
+		return
+	}
+
+	if sale.Status == "DRAFT" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Cannot generate invoice for draft sale",
+			"message": "Please confirm the sale first before generating invoice",
+		})
+		return
+	}
+
+	if sale.Status == "CANCELLED" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Cannot generate invoice for cancelled sale",
+			"message": "Cancelled sales should not be exported as active invoices",
+		})
 		return
 	}
 

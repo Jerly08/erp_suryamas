@@ -121,11 +121,13 @@ func getServiceAccounts() []models.Account {
 		{Code: "7000", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 1, IsHeader: true, IsActive: true},
 		{Code: "7101", Name: "PENDAPATAN BUNGA", Type: models.AccountTypeRevenue, Category: models.CategoryInterestIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7102", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "7103", Name: "LABA SELISIH KURS", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER EXPENSES (8xxx - pure EXPENSE)
 		{Code: "8000", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryNonOperatingExpense, Level: 1, IsHeader: true, IsActive: true},
 		{Code: "8101", Name: "BEBAN BUNGA", Type: models.AccountTypeExpense, Category: models.CategoryInterestExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8102", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "8103", Name: "RUGI SELISIH KURS", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 
 		// TAX (9xxx - pure EXPENSE)
 		{Code: "9000", Name: "PAJAK PENGHASILAN", Type: models.AccountTypeExpense, Category: models.CategoryTaxExpense, Level: 1, IsHeader: true, IsActive: true},
@@ -163,11 +165,13 @@ func getTradingAccounts() []models.Account {
 		{Code: "7000", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 1, IsHeader: true, IsActive: true},
 		{Code: "7101", Name: "PENDAPATAN BUNGA", Type: models.AccountTypeRevenue, Category: models.CategoryInterestIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7102", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "7103", Name: "LABA SELISIH KURS", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER EXPENSES (8xxx - pure EXPENSE)
 		{Code: "8000", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryNonOperatingExpense, Level: 1, IsHeader: true, IsActive: true},
 		{Code: "8101", Name: "BEBAN BUNGA", Type: models.AccountTypeExpense, Category: models.CategoryInterestExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8102", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "8103", Name: "RUGI SELISIH KURS", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 
 		// TAX (9xxx - pure EXPENSE)
 		{Code: "9000", Name: "PAJAK PENGHASILAN", Type: models.AccountTypeExpense, Category: models.CategoryTaxExpense, Level: 1, IsHeader: true, IsActive: true},
@@ -206,11 +210,13 @@ func getManufacturingAccounts() []models.Account {
 		{Code: "7000", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 1, IsHeader: true, IsActive: true},
 		{Code: "7101", Name: "PENDAPATAN BUNGA", Type: models.AccountTypeRevenue, Category: models.CategoryInterestIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7102", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "7103", Name: "LABA SELISIH KURS", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER EXPENSES (8xxx - pure EXPENSE)
 		{Code: "8000", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryNonOperatingExpense, Level: 1, IsHeader: true, IsActive: true},
 		{Code: "8101", Name: "BEBAN BUNGA", Type: models.AccountTypeExpense, Category: models.CategoryInterestExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8102", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "8103", Name: "RUGI SELISIH KURS", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 
 		// TAX (9xxx - pure EXPENSE)
 		{Code: "9000", Name: "PAJAK PENGHASILAN", Type: models.AccountTypeExpense, Category: models.CategoryTaxExpense, Level: 1, IsHeader: true, IsActive: true},

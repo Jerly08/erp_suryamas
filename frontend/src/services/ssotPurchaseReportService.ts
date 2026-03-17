@@ -102,6 +102,7 @@ export interface SSOTPurchaseReportParams {
   start_date: string;
   end_date: string;
   format?: 'json' | 'pdf' | 'csv';
+  project_id?: number;
 }
 
 class SSOTPurchaseReportService {
@@ -113,6 +114,10 @@ class SSOTPurchaseReportService {
         end_date: params.end_date,
         format: params.format || 'json'
       });
+
+      if (params.project_id) {
+        queryParams.set('project_id', params.project_id.toString());
+      }
 
       const response = await api.get(API_ENDPOINTS.SSOT_REPORTS.PURCHASE_REPORT + `?${queryParams}`);
 
@@ -299,6 +304,10 @@ class SSOTPurchaseReportService {
         format: pdfParams.format
       });
 
+      if (pdfParams.project_id) {
+        queryParams.set('project_id', pdfParams.project_id.toString());
+      }
+
       const response = await api.get(
         API_ENDPOINTS.SSOT_REPORTS.PURCHASE_REPORT + `?${queryParams}`,
         {
@@ -325,6 +334,10 @@ class SSOTPurchaseReportService {
         end_date: csvParams.end_date,
         format: csvParams.format
       });
+
+      if (csvParams.project_id) {
+        queryParams.set('project_id', csvParams.project_id.toString());
+      }
 
       const response = await api.get(
         API_ENDPOINTS.SSOT_REPORTS.PURCHASE_REPORT + `?${queryParams}`,

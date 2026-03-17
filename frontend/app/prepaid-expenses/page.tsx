@@ -1,8 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import SimpleLayout from '@/components/layout/SimpleLayout';
+import { useAuth } from '@/contexts/AuthContext';
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogOverlay,
   Box,
   Button,
   Flex,
@@ -28,9 +35,10 @@ import {
   VStack,
   HStack,
   Divider,
-  Select
+  Select,
+  useColorModeValue
 } from '@chakra-ui/react';
-import { FiRefreshCw, FiEye, FiCheckCircle, FiXCircle } from 'react-icons/fi';
+import { FiRefreshCw, FiEye, FiCheckCircle, FiXCircle, FiTrash2 } from 'react-icons/fi';
 import api from '@/services/api';
 
 interface PrepaidExpense {
@@ -69,6 +77,8 @@ interface Account {
 }
 
 export default function PrepaidExpensesPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [prepaids, setPrepaids] = useState<PrepaidExpense[]>([]);
   const [schedules, setSchedules] = useState<PrepaidSchedule[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -77,10 +87,31 @@ export default function PrepaidExpensesPage() {
 
   const { isOpen, onOpen, onClose } = useDisclosure();
   const { isOpen: isTerminateOpen, onOpen: onTerminateOpen, onClose: onTerminateClose } = useDisclosure();
+  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
   const [terminateType, setTerminateType] = useState('REFUND');
   const [destinationAccount, setDestinationAccount] = useState('');
   const [prepaidToTerminate, setPrepaidToTerminate] = useState<PrepaidExpense | null>(null);
+  const [prepaidToDelete, setPrepaidToDelete] = useState<PrepaidExpense | null>(null);
+  const [isDeleteSubmitting, setIsDeleteSubmitting] = useState(false);
+  const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
   const toast = useToast();
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const textColor = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const panelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const tableHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+  const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const modalBg = useColorModeValue('white', 'gray.800');
+  const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const modalFooterBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const fieldFocusStyles = {
+    borderColor: 'blue.400',
+    boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
+  };
 
   const fetchPrepaids = async () => {
     setLoading(true);
@@ -233,6 +264,46 @@ export default function PrepaidExpensesPage() {
     }
   };
 
+  const handleDeleteClick = (prepaid: PrepaidExpense) => {
+    setPrepaidToDelete(prepaid);
+    onDeleteOpen();
+  };
+
+  const handleDeleteSubmit = async () => {
+    if (!prepaidToDelete) return;
+
+    setIsDeleteSubmitting(true);
+    try {
+      await api.delete(`/api/v1/prepaid/${prepaidToDelete.id}`);
+
+      toast({
+        title: 'Sukses',
+        description: 'Transaksi prepaid berhasil dihapus',
+        status: 'success',
+        duration: 3000
+      });
+
+      if (selectedPrepaid?.id === prepaidToDelete.id) {
+        setSelectedPrepaid(null);
+        setSchedules([]);
+        onClose();
+      }
+
+      onDeleteClose();
+      setPrepaidToDelete(null);
+      fetchPrepaids();
+    } catch (error: any) {
+      toast({
+        title: 'Gagal hapus',
+        description: error.response?.data?.error || 'Terjadi kesalahan sistem',
+        status: 'error',
+        duration: 5000
+      });
+    } finally {
+      setIsDeleteSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     fetchPrepaids();
     fetchAccounts();
@@ -242,18 +313,18 @@ export default function PrepaidExpensesPage() {
   const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
 
   return (
-    <SimpleLayout title="Prepaid Expenses">
+    <SimpleLayout>
       <Box p={6}>
       <Flex justifyContent="space-between" alignItems="center" mb={6}>
-        <Heading size="lg">Prepaid Expenses (Amortisasi)</Heading>
+        <Heading size="lg" color={headingColor}>Prepaid Expenses (Amortisasi)</Heading>
         <Button leftIcon={<Icon as={FiRefreshCw} />} onClick={fetchPrepaids} isLoading={loading}>
           Refresh
         </Button>
       </Flex>
 
-      <Box bg="white" p={4} borderRadius="md" shadow="sm" overflowX="auto">
+      <Box bg={cardBg} p={4} borderRadius="md" shadow="sm" overflowX="auto" borderWidth="1px" borderColor={borderColor}>
         <Table variant="simple" size="sm">
-          <Thead bg="gray.50">
+          <Thead bg={tableHeaderBg}>
             <Tr>
               <Th>Item Name</Th>
               <Th>Purchase Info</Th>
@@ -266,7 +337,7 @@ export default function PrepaidExpensesPage() {
           </Thead>
           <Tbody>
             {prepaids.map((item) => (
-              <Tr key={item.id}>
+              <Tr key={item.id} _hover={{ bg: rowHoverBg }}>
                 <Td fontWeight="bold">{item.name}</Td>
                 <Td>PO #{item.purchase_id}</Td>
                 <Td isNumeric>{formatCurrency(item.total_amount)}</Td>
@@ -275,7 +346,7 @@ export default function PrepaidExpensesPage() {
                 </Td>
                 <Td>
                   {item.amortization_month} Bulan <br/>
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color={mutedTextColor}>
                     ({formatDate(item.start_date)} - {formatDate(item.end_date)})
                   </Text>
                 </Td>
@@ -285,19 +356,26 @@ export default function PrepaidExpensesPage() {
                   </Badge>
                 </Td>
                 <Td>
-                  <Button size="sm" colorScheme="blue" leftIcon={<Icon as={FiEye} />} onClick={() => loadPrepaidDetails(item)}>
-                    Jadwal
-                  </Button>
-                  {item.status === 'ACTIVE' && (
-                    <Button ml={2} size="sm" colorScheme="orange" leftIcon={<Icon as={FiXCircle} />} onClick={() => handleTerminateClick(item)}>
-                      Terminasi
+                  <HStack spacing={2}>
+                    <Button size="sm" colorScheme="blue" leftIcon={<Icon as={FiEye} />} onClick={() => loadPrepaidDetails(item)}>
+                      Jadwal
                     </Button>
-                  )}
+                    {item.status === 'ACTIVE' && (
+                      <Button size="sm" colorScheme="orange" leftIcon={<Icon as={FiXCircle} />} onClick={() => handleTerminateClick(item)}>
+                        Terminasi
+                      </Button>
+                    )}
+                    {isAdmin && (
+                      <Button size="sm" colorScheme="red" variant="outline" leftIcon={<Icon as={FiTrash2} />} onClick={() => handleDeleteClick(item)}>
+                        Hapus
+                      </Button>
+                    )}
+                  </HStack>
                 </Td>
               </Tr>
             ))}
             {prepaids.length === 0 && !loading && (
-              <Tr><Td colSpan={7} textAlign="center" py={6} color="gray.500">Tidak ada data prepaid expense</Td></Tr>
+              <Tr><Td colSpan={7} textAlign="center" py={6} color={mutedTextColor}>Tidak ada data prepaid expense</Td></Tr>
             )}
           </Tbody>
         </Table>
@@ -306,21 +384,23 @@ export default function PrepaidExpensesPage() {
       {/* Modal Detail & Jadwal */}
       <Modal isOpen={isOpen} onClose={onClose} size="4xl">
         <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Jadwal Amortisasi - {selectedPrepaid?.name}</ModalHeader>
-          <ModalCloseButton />
+        <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+          <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>Jadwal Amortisasi - {selectedPrepaid?.name}</ModalHeader>
+          <ModalCloseButton color={textColor} />
 
           <ModalBody>
-            <Flex gap={6} mb={6} bg="gray.50" p={4} borderRadius="md">
+            <Flex gap={6} mb={6} bg={panelBg} p={4} borderRadius="md" borderWidth="1px" borderColor={borderColor}>
               <VStack align="start" flex={1} spacing={2}>
-                <Text fontWeight="bold" color="gray.500" fontSize="sm">Total Saldo Prepaid</Text>
-                <Text fontSize="xl" fontWeight="bold">{selectedPrepaid && formatCurrency(selectedPrepaid.total_amount)}</Text>
+                <Text fontWeight="bold" color={mutedTextColor} fontSize="sm">Total Saldo Prepaid</Text>
+                <Text fontSize="xl" fontWeight="bold" color={textColor}>{selectedPrepaid && formatCurrency(selectedPrepaid.total_amount)}</Text>
               </VStack>
               <VStack align="start" flex={1} spacing={2}>
-                <Text fontWeight="bold" color="gray.500" fontSize="sm">Akun Beban Tujuan (Expense)</Text>
-                <Select size="sm" bg="white"
+                <Text fontWeight="bold" color={mutedTextColor} fontSize="sm">Akun Beban Tujuan (Expense)</Text>
+                <Select size="sm" bg={inputBg} borderColor={inputBorderColor} color={textColor}
                   value={selectedPrepaid?.expense_account_id || ''}
                   onChange={handleSetExpenseAccount}
+                  _hover={{ borderColor: inputBorderColor }}
+                  _focusVisible={fieldFocusStyles}
                 >
                   <option value="">-- Pilih Akun Beban --</option>
                   {accounts
@@ -374,7 +454,7 @@ export default function PrepaidExpensesPage() {
             </Table>
 
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
              <Button onClick={onClose}>Tutup</Button>
           </ModalFooter>
         </ModalContent>
@@ -383,18 +463,18 @@ export default function PrepaidExpensesPage() {
       {/* Modal Terminate */}
       <Modal isOpen={isTerminateOpen} onClose={onTerminateClose}>
         <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Terminasi Prepaid - {prepaidToTerminate?.name}</ModalHeader>
-          <ModalCloseButton />
+        <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+          <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>Terminasi Prepaid - {prepaidToTerminate?.name}</ModalHeader>
+          <ModalCloseButton color={textColor} />
           <ModalBody>
             <VStack spacing={4} align="stretch">
               <Box>
-                 <Text fontWeight="bold" mb={2}>Tipe Terminasi</Text>
-                 <Select value={terminateType} onChange={(e) => setTerminateType(e.target.value)}>
+                 <Text fontWeight="bold" mb={2} color={textColor}>Tipe Terminasi</Text>
+                 <Select value={terminateType} onChange={(e) => setTerminateType(e.target.value)} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles}>
                    <option value="REFUND">Refund (Pengembalian Dana)</option>
                    <option value="WRITEOFF">Write-off (Penghapusan/Pembebanan Sekaligus)</option>
                  </Select>
-                 <Text fontSize="sm" color="gray.500" mt={1}>
+                 <Text fontSize="sm" color={mutedTextColor} mt={1}>
                    {terminateType === 'REFUND'
                      ? 'Pilih Refund jika sisa dana dikembalikan oleh vendor (masuk ke Kas/Bank).'
                      : 'Pilih Write-off jika sisa dana tidak dikembalikan dan diakui sebagai beban sisa sekaligus.'}
@@ -402,10 +482,10 @@ export default function PrepaidExpensesPage() {
               </Box>
 
               <Box>
-                 <Text fontWeight="bold" mb={2}>
+                 <Text fontWeight="bold" mb={2} color={textColor}>
                    {terminateType === 'REFUND' ? 'Akun Penerimaan (Kas/Bank)' : 'Akun Beban / Kerugian'}
                  </Text>
-                 <Select value={destinationAccount} onChange={(e) => setDestinationAccount(e.target.value)}>
+                 <Select value={destinationAccount} onChange={(e) => setDestinationAccount(e.target.value)} bg={inputBg} borderColor={inputBorderColor} color={textColor} _hover={{ borderColor: inputBorderColor }} _focusVisible={fieldFocusStyles}>
                    <option value="">-- Pilih Akun --</option>
                    {accounts
                      .filter((a: Account) => {
@@ -423,12 +503,51 @@ export default function PrepaidExpensesPage() {
               </Box>
             </VStack>
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
              <Button variant="ghost" mr={3} onClick={onTerminateClose}>Batal</Button>
              <Button colorScheme="red" onClick={handleTerminateSubmit}>Proses Terminasi</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
+
+      <AlertDialog
+        isOpen={isDeleteOpen}
+        leastDestructiveRef={cancelDeleteRef}
+        onClose={() => {
+          if (isDeleteSubmitting) return;
+          onDeleteClose();
+          setPrepaidToDelete(null);
+        }}
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold" color={textColor}>
+              Hapus Transaksi Prepaid
+            </AlertDialogHeader>
+
+            <AlertDialogBody>
+              <Text mb={2} color={textColor}>
+                Hapus prepaid <strong>{prepaidToDelete?.name}</strong>?
+              </Text>
+              <Text fontSize="sm" color={mutedTextColor}>
+                Aksi ini hanya untuk admin dan akan gagal jika prepaid sudah memiliki jurnal amortisasi atau terminasi.
+              </Text>
+            </AlertDialogBody>
+
+            <AlertDialogFooter>
+              <Button ref={cancelDeleteRef} onClick={() => {
+                onDeleteClose();
+                setPrepaidToDelete(null);
+              }} isDisabled={isDeleteSubmitting}>
+                Batal
+              </Button>
+              <Button colorScheme="red" onClick={handleDeleteSubmit} ml={3} isLoading={isDeleteSubmitting}>
+                Hapus
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
 
     </Box>
     </SimpleLayout>

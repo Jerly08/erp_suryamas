@@ -25,7 +25,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { FiFilePlus } from 'react-icons/fi';
-import { Payment } from '@/services/paymentService';
+import { Payment, stripInternalPaymentReference } from '@/services/paymentService';
 import paymentService from '@/services/paymentService';
 import { exportPaymentDetailToPDF } from '../../utils/pdfExport';
 
@@ -165,7 +165,7 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                   <Tbody>
                     <Tr>
                       <Td fontWeight="medium" w="30%">Reference:</Td>
-                      <Td>{payment.reference || '-'}</Td>
+                      <Td>{stripInternalPaymentReference(payment.reference) || '-'}</Td>
                     </Tr>
                     <Tr>
                       <Td fontWeight="medium">Notes:</Td>

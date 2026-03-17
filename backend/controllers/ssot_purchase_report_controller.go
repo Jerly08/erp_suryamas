@@ -45,6 +45,7 @@ type GetPurchaseReportResponse struct {
 // @Produce json
 // @Param start_date query string true "Start date (YYYY-MM-DD format)"
 // @Param end_date query string true "End date (YYYY-MM-DD format)"
+// @Param project_id query int false "Filter by project ID"
 // @Param format query string false "Output format (json, pdf, csv)" default(json)
 // @Success 200 {object} GetPurchaseReportResponse "Purchase report generated successfully"
 // @Failure 400 {object} GetPurchaseReportResponse "Invalid date parameters"
@@ -54,6 +55,7 @@ func (c *SSOTPurchaseReportController) GetPurchaseReport(ctx *gin.Context) {
 	// Parse query parameters
 	startDateStr := ctx.Query("start_date")
 	endDateStr := ctx.Query("end_date")
+	projectIDStr := ctx.Query("project_id")
 	format := ctx.DefaultQuery("format", "json")
 
 	if startDateStr == "" || endDateStr == "" {
@@ -92,9 +94,26 @@ func (c *SSOTPurchaseReportController) GetPurchaseReport(ctx *gin.Context) {
 	// Adjust end date to include the entire day
 	endDate = endDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 
+	var projectID *uint
+	if projectIDStr != "" {
+		parsedProjectID, err := strconv.ParseUint(projectIDStr, 10, 64)
+		if err != nil || parsedProjectID == 0 {
+			ctx.JSON(http.StatusBadRequest, GetPurchaseReportResponse{
+				Success:   false,
+				Message:   "project_id must be a valid positive integer",
+				Error:     "Invalid project_id parameter",
+				Timestamp: time.Now(),
+			})
+			return
+		}
+
+		projectIDValue := uint(parsedProjectID)
+		projectID = &projectIDValue
+	}
+
 	// Generate report
 	reportContext := context.Background()
-	report, err := c.reportService.GeneratePurchaseReport(reportContext, startDate, endDate)
+	report, err := c.reportService.GeneratePurchaseReport(reportContext, startDate, endDate, projectID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, GetPurchaseReportResponse{
 			Success:   false,
@@ -164,6 +183,7 @@ func (c *SSOTPurchaseReportController) GetPurchaseReport(ctx *gin.Context) {
 // @Produce json
 // @Param start_date query string true "Start date (YYYY-MM-DD format)"
 // @Param end_date query string true "End date (YYYY-MM-DD format)"
+// @Param project_id query int false "Filter by project ID"
 // @Success 200 {object} map[string]interface{} "Purchase summary data"
 // @Failure 400 {object} GetPurchaseReportResponse "Invalid parameters"
 // @Failure 500 {object} GetPurchaseReportResponse "Internal server error"
@@ -172,6 +192,7 @@ func (c *SSOTPurchaseReportController) GetPurchaseSummary(ctx *gin.Context) {
 	// Parse query parameters
 	startDateStr := ctx.Query("start_date")
 	endDateStr := ctx.Query("end_date")
+	projectIDStr := ctx.Query("project_id")
 
 	if startDateStr == "" || endDateStr == "" {
 		ctx.JSON(http.StatusBadRequest, GetPurchaseReportResponse{
@@ -209,9 +230,26 @@ func (c *SSOTPurchaseReportController) GetPurchaseSummary(ctx *gin.Context) {
 	// Adjust end date to include the entire day
 	endDate = endDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 
+	var projectID *uint
+	if projectIDStr != "" {
+		parsedProjectID, err := strconv.ParseUint(projectIDStr, 10, 64)
+		if err != nil || parsedProjectID == 0 {
+			ctx.JSON(http.StatusBadRequest, GetPurchaseReportResponse{
+				Success:   false,
+				Message:   "project_id must be a valid positive integer",
+				Error:     "Invalid project_id parameter",
+				Timestamp: time.Now(),
+			})
+			return
+		}
+
+		projectIDValue := uint(parsedProjectID)
+		projectID = &projectIDValue
+	}
+
 	// Generate report
 	reportContext := context.Background()
-	report, err := c.reportService.GeneratePurchaseReport(reportContext, startDate, endDate)
+	report, err := c.reportService.GeneratePurchaseReport(reportContext, startDate, endDate, projectID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, GetPurchaseReportResponse{
 			Success:   false,
@@ -262,6 +300,7 @@ func (c *SSOTPurchaseReportController) GetPurchaseSummary(ctx *gin.Context) {
 // @Produce json
 // @Param start_date query string true "Start date (YYYY-MM-DD format)"
 // @Param end_date query string true "End date (YYYY-MM-DD format)"
+// @Param project_id query int false "Filter by project ID"
 // @Success 200 {object} map[string]interface{} "Validation results"
 // @Failure 400 {object} GetPurchaseReportResponse "Invalid parameters"
 // @Failure 500 {object} GetPurchaseReportResponse "Internal server error"
@@ -270,6 +309,7 @@ func (c *SSOTPurchaseReportController) ValidatePurchaseReport(ctx *gin.Context) 
 	// Parse query parameters
 	startDateStr := ctx.Query("start_date")
 	endDateStr := ctx.Query("end_date")
+	projectIDStr := ctx.Query("project_id")
 
 	if startDateStr == "" || endDateStr == "" {
 		ctx.JSON(http.StatusBadRequest, GetPurchaseReportResponse{
@@ -307,9 +347,26 @@ func (c *SSOTPurchaseReportController) ValidatePurchaseReport(ctx *gin.Context) 
 	// Adjust end date to include the entire day
 	endDate = endDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 
+	var projectID *uint
+	if projectIDStr != "" {
+		parsedProjectID, err := strconv.ParseUint(projectIDStr, 10, 64)
+		if err != nil || parsedProjectID == 0 {
+			ctx.JSON(http.StatusBadRequest, GetPurchaseReportResponse{
+				Success:   false,
+				Message:   "project_id must be a valid positive integer",
+				Error:     "Invalid project_id parameter",
+				Timestamp: time.Now(),
+			})
+			return
+		}
+
+		projectIDValue := uint(parsedProjectID)
+		projectID = &projectIDValue
+	}
+
 	// Generate report
 	reportContext := context.Background()
-	report, err := c.reportService.GeneratePurchaseReport(reportContext, startDate, endDate)
+	report, err := c.reportService.GeneratePurchaseReport(reportContext, startDate, endDate, projectID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, GetPurchaseReportResponse{
 			Success:   false,

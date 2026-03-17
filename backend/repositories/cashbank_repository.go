@@ -15,7 +15,7 @@ type CashBankRepository struct {
 	db *gorm.DB
 }
 
-const cashBankBookBalanceExpr = "CASE WHEN UPPER(COALESCE(currency, 'IDR')) = 'IDR' THEN balance ELSE book_balance_idr END"
+const cashBankBookBalanceExpr = "CASE WHEN UPPER(COALESCE(currency, 'IDR')) = 'IDR' THEN balance ELSE book_balance_id_r END"
 
 func NewCashBankRepository(db *gorm.DB) *CashBankRepository {
 	return &CashBankRepository{db: db}

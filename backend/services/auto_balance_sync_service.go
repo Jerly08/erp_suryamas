@@ -34,16 +34,27 @@ func (s *AutoBalanceSyncService) SyncCashBankToAccount(cashBankID uint) error {
 		return fmt.Errorf("cash bank not found: %w", err)
 	}
 
-	// Calculate actual balance from transactions
-	var actualBalance float64
+	// Recalculate native and book balances from transaction history.
+	var totals struct {
+		NativeBalance float64
+		BookBalance   float64
+	}
 	balanceQuery := `
-		SELECT COALESCE(SUM(amount), 0) as actual_balance
-		FROM cash_bank_transactions 
+		SELECT
+			COALESCE(SUM(amount), 0) AS native_balance,
+			COALESCE(SUM(book_amount_id_r), 0) AS book_balance
+		FROM cash_bank_transactions
 		WHERE cash_bank_id = ? AND deleted_at IS NULL
 	`
-	
-	if err := s.db.Raw(balanceQuery, cashBankID).Scan(&actualBalance).Error; err != nil {
+
+	if err := s.db.Raw(balanceQuery, cashBankID).Scan(&totals).Error; err != nil {
 		return fmt.Errorf("failed to calculate actual balance: %w", err)
+	}
+
+	actualBalance := totals.NativeBalance
+	actualBookBalance := actualBalance
+	if cashBank.IsForeignCurrency() {
+		actualBookBalance = totals.BookBalance
 	}
 
 	// Start transaction for atomic updates
@@ -58,8 +69,19 @@ func (s *AutoBalanceSyncService) SyncCashBankToAccount(cashBankID uint) error {
 		}
 	}()
 
+	cashBankUpdates := map[string]interface{}{
+		"balance":    actualBalance,
+		"updated_at": time.Now(),
+	}
+	if cashBank.IsForeignCurrency() {
+		cashBankUpdates["book_balance_id_r"] = actualBookBalance
+		if actualBalance > 0 && actualBookBalance > 0 {
+			cashBankUpdates["last_exchange_rate"] = actualBookBalance / actualBalance
+		}
+	}
+
 	// Update cash bank balance
-	if err := tx.Model(&cashBank).Where("id = ?", cashBankID).Update("balance", actualBalance).Error; err != nil {
+	if err := tx.Model(&cashBank).Where("id = ?", cashBankID).Updates(cashBankUpdates).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to update cash bank balance: %w", err)
 	}
@@ -68,7 +90,7 @@ func (s *AutoBalanceSyncService) SyncCashBankToAccount(cashBankID uint) error {
 	if cashBank.AccountID > 0 {
 		if err := tx.Model(&models.Account{}).
 			Where("id = ? AND deleted_at IS NULL", cashBank.AccountID).
-			Update("balance", actualBalance).Error; err != nil {
+			Update("balance", actualBookBalance).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to update COA account balance: %w", err)
 		}
@@ -84,7 +106,7 @@ func (s *AutoBalanceSyncService) SyncCashBankToAccount(cashBankID uint) error {
 		return fmt.Errorf("failed to commit balance sync: %w", err)
 	}
 
-	log.Printf("✅ Balance sync completed for cash bank ID: %d (Balance: %.2f)", cashBankID, actualBalance)
+	log.Printf("✅ Balance sync completed for cash bank ID: %d (Native: %.2f, Book IDR: %.2f)", cashBankID, actualBalance, actualBookBalance)
 	return nil
 }
 
@@ -143,10 +165,10 @@ func (s *AutoBalanceSyncService) ValidateBalanceConsistency() (*BalanceConsisten
 	log.Println("🔍 Starting balance consistency validation...")
 
 	report := &BalanceConsistencyReport{
-		Timestamp:        time.Now(),
-		CashBankIssues:   []CashBankBalanceIssue{},
+		Timestamp:         time.Now(),
+		CashBankIssues:    []CashBankBalanceIssue{},
 		ParentChildIssues: []ParentChildBalanceIssue{},
-		IsConsistent:     true,
+		IsConsistent:      true,
 	}
 
 	// Check cash bank vs COA consistency
@@ -240,15 +262,15 @@ func (s *AutoBalanceSyncService) ValidateBalanceConsistency() (*BalanceConsisten
 	report.BalanceTotals = balanceTotals
 
 	// Calculate balance equation (Assets + Expenses + Liabilities + Equity + Revenue should = 0)
-	balanceEquation := balanceTotals.Assets + balanceTotals.Expenses + 
-					  balanceTotals.Liabilities + balanceTotals.Equity + balanceTotals.Revenue
+	balanceEquation := balanceTotals.Assets + balanceTotals.Expenses +
+		balanceTotals.Liabilities + balanceTotals.Equity + balanceTotals.Revenue
 	report.BalanceEquationDifference = balanceEquation
 
 	if balanceEquation > 0.01 || balanceEquation < -0.01 {
 		report.IsConsistent = false
 	}
 
-	log.Printf("✅ Balance consistency validation completed. Issues found: CashBank=%d, ParentChild=%d, BalanceSheet=%.2f", 
+	log.Printf("✅ Balance consistency validation completed. Issues found: CashBank=%d, ParentChild=%d, BalanceSheet=%.2f",
 		len(cashBankIssues), len(parentChildIssues), balanceEquation)
 
 	return report, nil
@@ -288,31 +310,31 @@ func (s *AutoBalanceSyncService) FixAllBalanceIssues() error {
 
 // Balance consistency report structures
 type BalanceConsistencyReport struct {
-	Timestamp                 time.Time                    `json:"timestamp"`
-	IsConsistent              bool                         `json:"is_consistent"`
-	CashBankIssues            []CashBankBalanceIssue      `json:"cash_bank_issues"`
-	ParentChildIssues         []ParentChildBalanceIssue   `json:"parent_child_issues"`
-	BalanceTotals             BalanceSheetTotals          `json:"balance_totals"`
-	BalanceEquationDifference float64                     `json:"balance_equation_difference"`
+	Timestamp                 time.Time                 `json:"timestamp"`
+	IsConsistent              bool                      `json:"is_consistent"`
+	CashBankIssues            []CashBankBalanceIssue    `json:"cash_bank_issues"`
+	ParentChildIssues         []ParentChildBalanceIssue `json:"parent_child_issues"`
+	BalanceTotals             BalanceSheetTotals        `json:"balance_totals"`
+	BalanceEquationDifference float64                   `json:"balance_equation_difference"`
 }
 
 type CashBankBalanceIssue struct {
-	ID             uint    `json:"id"`
-	Code           string  `json:"code"`
-	Name           string  `json:"name"`
+	ID              uint    `json:"id"`
+	Code            string  `json:"code"`
+	Name            string  `json:"name"`
 	CashBankBalance float64 `json:"cash_bank_balance"`
-	COABalance     float64 `json:"coa_balance"`
-	Difference     float64 `json:"difference"`
-	TransactionSum float64 `json:"transaction_sum"`
+	COABalance      float64 `json:"coa_balance"`
+	Difference      float64 `json:"difference"`
+	TransactionSum  float64 `json:"transaction_sum"`
 }
 
 type ParentChildBalanceIssue struct {
-	ID           uint    `json:"id"`
-	Code         string  `json:"code"`
-	Name         string  `json:"name"`
+	ID            uint    `json:"id"`
+	Code          string  `json:"code"`
+	Name          string  `json:"name"`
 	ParentBalance float64 `json:"parent_balance"`
-	ChildrenSum  float64 `json:"children_sum"`
-	Difference   float64 `json:"difference"`
+	ChildrenSum   float64 `json:"children_sum"`
+	Difference    float64 `json:"difference"`
 }
 
 type BalanceSheetTotals struct {

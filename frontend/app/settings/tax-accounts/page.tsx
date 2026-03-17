@@ -209,6 +209,46 @@ const TaxAccountSettingsPage: React.FC = () => {
   const greenColor = useColorModeValue('green.500', 'green.300');
   const purpleColor = useColorModeValue('purple.500', 'purple.300');
   const orangeColor = useColorModeValue('orange.500', 'orange.300');
+  const redColor = useColorModeValue('red.500', 'red.300');
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const textColor = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.600', 'whiteAlpha.700');
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const cardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const statusCardBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const modalBg = useColorModeValue('white', 'gray.800');
+  const modalBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const modalFooterBg = useColorModeValue('gray.50', 'gray.750');
+  const dividerColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const inputBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const inputHoverBg = useColorModeValue('white', 'whiteAlpha.160');
+  const inputFocusBg = useColorModeValue('white', 'gray.700');
+  const inputBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const inputHoverBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const inputFocusBorderColor = useColorModeValue('blue.400', 'blue.300');
+  const inputPlaceholderColor = useColorModeValue('gray.500', 'whiteAlpha.500');
+  const lockedInputBg = useColorModeValue('gray.100', 'whiteAlpha.120');
+  const lockedInputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.260');
+  const selectedHelperColor = useColorModeValue('blue.600', 'blue.200');
+  const suggestionCardBg = useColorModeValue('white', 'gray.750');
+  const salesSuggestionBorder = useColorModeValue('blue.100', 'blue.700');
+  const purchaseSuggestionBorder = useColorModeValue('orange.100', 'orange.700');
+  const taxSuggestionBorder = useColorModeValue('green.100', 'green.700');
+  const inventorySuggestionBorder = useColorModeValue('purple.100', 'purple.700');
+  const fieldStyles = {
+    bg: inputBg,
+    borderColor: inputBorderColor,
+    color: textColor,
+    _placeholder: { color: inputPlaceholderColor },
+    _hover: {
+      bg: inputHoverBg,
+      borderColor: inputHoverBorderColor,
+    },
+    _focus: {
+      bg: inputFocusBg,
+      borderColor: inputFocusBorderColor,
+    },
+  };
 
   // Critical accounts that should not be changed
   const isCriticalAccount = (fieldName: string): boolean => {
@@ -573,7 +613,7 @@ const TaxAccountSettingsPage: React.FC = () => {
 
     return (
       <FormControl isRequired={isRequired} isInvalid={!!hasError}>
-        <FormLabel fontWeight="semibold" color="gray.600" fontSize="sm">
+        <FormLabel fontWeight="semibold" color={mutedTextColor} fontSize="sm">
           <HStack>
             <Text>{label}</Text>
             {tooltipInfo && (
@@ -604,11 +644,19 @@ const TaxAccountSettingsPage: React.FC = () => {
           placeholder={`${t('settings.taxAccounts.renderSelect.selectPlaceholder', { label })}`}
           variant="filled"
           isDisabled={isCritical || isSelectedCritical}
-          bg={(isCritical || isSelectedCritical) ? 'gray.200' : undefined}
+          {...fieldStyles}
+          bg={(isCritical || isSelectedCritical) ? lockedInputBg : inputBg}
+          borderColor={(isCritical || isSelectedCritical) ? lockedInputBorderColor : inputBorderColor}
           cursor={(isCritical || isSelectedCritical) ? 'not-allowed' : undefined}
           opacity={(isCritical || isSelectedCritical) ? 0.7 : 1}
-          _hover={{ bg: (isCritical || isSelectedCritical) ? 'gray.200' : 'gray.100' }}
-          _focus={{ bg: 'white', borderColor: 'blue.500' }}
+          _hover={{
+            bg: (isCritical || isSelectedCritical) ? lockedInputBg : inputHoverBg,
+            borderColor: (isCritical || isSelectedCritical) ? lockedInputBorderColor : inputHoverBorderColor,
+          }}
+          _focus={{
+            bg: (isCritical || isSelectedCritical) ? lockedInputBg : inputFocusBg,
+            borderColor: (isCritical || isSelectedCritical) ? lockedInputBorderColor : inputFocusBorderColor,
+          }}
         >
           {recommended.length > 0 ? (
             recommended.map((account) => (
@@ -626,7 +674,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         </Select>
         {hasError && <FormErrorMessage>{hasError}</FormErrorMessage>}
         {currentAccount && currentValue && (
-          <FormHelperText fontSize="xs" color="blue.600" fontWeight="medium">
+          <FormHelperText fontSize="xs" color={selectedHelperColor} fontWeight="medium">
             <HStack spacing={1}>
               <Icon as={FiCheck} color="green.500" boxSize={3} />
               <Text>
@@ -636,7 +684,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           </FormHelperText>
         )}
         {(isCritical || isSelectedCritical) && !hasError && (
-          <FormHelperText fontSize="xs" color="red.600" fontWeight="medium">
+          <FormHelperText fontSize="xs" color={redColor} fontWeight="medium">
             <HStack spacing={1}>
               <Icon as={FiInfo} />
               <Text>
@@ -647,7 +695,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           </FormHelperText>
         )}
         {description && !hasError && !isCritical && !isSelectedCritical && !currentAccount && (
-          <FormHelperText fontSize="xs" color="gray.500">
+          <FormHelperText fontSize="xs" color={mutedTextColor}>
             {description}
           </FormHelperText>
         )}
@@ -677,7 +725,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           <HStack justify="space-between" width="full">
             <VStack alignItems="start" spacing={2}>
               <HStack spacing={3}>
-                <Heading as="h1" size="xl">{t('settings.taxAccounts.title')}</Heading>
+                <Heading as="h1" size="xl" color={headingColor}>{t('settings.taxAccounts.title')}</Heading>
                 {companyType && (
                   <Badge
                     colorScheme={
@@ -694,7 +742,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                   </Badge>
                 )}
               </HStack>
-              <Text color="gray.600" fontSize="sm">
+              <Text color={mutedTextColor} fontSize="sm">
                 {t('settings.taxAccounts.subtitle')}
               </Text>
             </VStack>
@@ -766,7 +814,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           {/* Main Content - Tax Accounts Configuration */}
           <Box width="full">
             {/* VAT/PPN Accounts - Critical for Sales & Purchase */}
-            <Card mb={6}>
+            <Card mb={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
               <CardHeader>
                 <HStack spacing={3} justify="space-between">
                   <HStack spacing={3}>
@@ -857,7 +905,7 @@ const TaxAccountSettingsPage: React.FC = () => {
             )}
 
             {/* Withholding Tax Accounts */}
-            <Card mb={6}>
+            <Card mb={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
               <CardHeader>
                 <HStack spacing={3} justify="space-between">
                   <HStack spacing={3}>
@@ -931,7 +979,7 @@ const TaxAccountSettingsPage: React.FC = () => {
 
             {/* Inventory & COGS Accounts - Hidden for SERVICE companies */}
             {companyType !== 'SERVICE' && (
-              <Card>
+              <Card bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
                 <CardHeader>
                   <HStack spacing={3} justify="space-between">
                     <HStack spacing={3}>
@@ -997,7 +1045,7 @@ const TaxAccountSettingsPage: React.FC = () => {
 
           {/* Current Status */}
           {settings && (
-            <Card width="full" bg="gray.50">
+            <Card width="full" bg={statusCardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
               <CardHeader>
                 <HStack spacing={2}>
                   <Icon as={FiCheck} color="green.500" />
@@ -1008,10 +1056,10 @@ const TaxAccountSettingsPage: React.FC = () => {
                 <VStack spacing={6} alignItems="start" width="full">
                   {/* VAT/PPN Status */}
                   <Box width="full">
-                    <Text fontSize="sm" fontWeight="bold" mb={3} color="purple.600">{t('settings.taxAccounts.statusSection.vatAccounts')}</Text>
+                    <Text fontSize="sm" fontWeight="bold" mb={3} color={purpleColor}>{t('settings.taxAccounts.statusSection.vatAccounts')}</Text>
                     <SimpleGrid columns={[1, 2]} spacing={4}>
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.ppnMasukan')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.ppnMasukan')}</Text>
                         {settings.purchase_input_vat_account ? (
                           <HStack spacing={2}>
                             <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
@@ -1022,13 +1070,13 @@ const TaxAccountSettingsPage: React.FC = () => {
                         ) : (
                           <HStack spacing={2}>
                             <Badge colorScheme="red">{t('settings.taxAccounts.status.notSet')}</Badge>
-                            <Text fontSize="xs" color="red.500">{t('settings.taxAccounts.status.requiredForSetorPPN')}</Text>
+                            <Text fontSize="xs" color={redColor}>{t('settings.taxAccounts.status.requiredForSetorPPN')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.ppnKeluaran')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.ppnKeluaran')}</Text>
                         {settings.sales_output_vat_account ? (
                           <HStack spacing={2}>
                             <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
@@ -1039,21 +1087,21 @@ const TaxAccountSettingsPage: React.FC = () => {
                         ) : (
                           <HStack spacing={2}>
                             <Badge colorScheme="red">{t('settings.taxAccounts.status.notSet')}</Badge>
-                            <Text fontSize="xs" color="red.500">{t('settings.taxAccounts.status.requiredForSetorPPN')}</Text>
+                            <Text fontSize="xs" color={redColor}>{t('settings.taxAccounts.status.requiredForSetorPPN')}</Text>
                           </HStack>
                         )}
                       </VStack>
                     </SimpleGrid>
                   </Box>
 
-                  <Divider />
+                  <Divider borderColor={dividerColor} />
 
                   {/* Withholding Tax Status */}
                   <Box width="full">
-                    <Text fontSize="sm" fontWeight="bold" mb={3} color="green.600">{t('settings.taxAccounts.statusSection.withholdingTitle')}</Text>
+                    <Text fontSize="sm" fontWeight="bold" mb={3} color={greenColor}>{t('settings.taxAccounts.statusSection.withholdingTitle')}</Text>
                     <SimpleGrid columns={[1, 2, 3]} spacing={6}>
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.pph21Label')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.pph21Label')}</Text>
                         {settings.withholding_tax21_account ? (
                           <HStack spacing={2}>
                             <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
@@ -1064,13 +1112,13 @@ const TaxAccountSettingsPage: React.FC = () => {
                         ) : (
                           <HStack spacing={2}>
                             <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
-                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
+                            <Text fontSize="xs" color={mutedTextColor}>{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.pph23Label')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.pph23Label')}</Text>
                         {settings.withholding_tax23_account ? (
                           <HStack spacing={2}>
                             <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
@@ -1081,13 +1129,13 @@ const TaxAccountSettingsPage: React.FC = () => {
                         ) : (
                           <HStack spacing={2}>
                             <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
-                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
+                            <Text fontSize="xs" color={mutedTextColor}>{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.pph25Label')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.pph25Label')}</Text>
                         {settings.withholding_tax25_account ? (
                           <HStack spacing={2}>
                             <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
@@ -1098,13 +1146,13 @@ const TaxAccountSettingsPage: React.FC = () => {
                         ) : (
                           <HStack spacing={2}>
                             <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
-                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
+                            <Text fontSize="xs" color={mutedTextColor}>{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.taxPayable')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.taxPayable')}</Text>
                         {settings.tax_payable_account ? (
                           <HStack spacing={2}>
                             <Badge colorScheme="green">{t('settings.taxAccounts.status.configured')}</Badge>
@@ -1115,25 +1163,25 @@ const TaxAccountSettingsPage: React.FC = () => {
                         ) : (
                           <HStack spacing={2}>
                             <Badge colorScheme="gray">{t('settings.taxAccounts.status.notSet')}</Badge>
-                            <Text fontSize="xs" color="gray.500">{t('settings.taxAccounts.status.optional')}</Text>
+                            <Text fontSize="xs" color={mutedTextColor}>{t('settings.taxAccounts.status.optional')}</Text>
                           </HStack>
                         )}
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.configStatus')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.configStatus')}</Text>
                         <Badge colorScheme={settings.is_active ? 'green' : 'gray'} fontSize="sm">
                           {settings.is_active ? t('settings.taxAccounts.status.active') : t('settings.taxAccounts.status.inactive')}
                         </Badge>
-                        <Text fontSize="xs" color="gray.500">
+                        <Text fontSize="xs" color={mutedTextColor}>
                           {t('settings.taxAccounts.statusSection.lastUpdated')}: {new Date(settings.updated_at).toLocaleDateString()}
                         </Text>
                       </VStack>
 
                       <VStack spacing={2} alignItems="start">
-                        <Text fontSize="xs" color="gray.500" fontWeight="bold">{t('settings.taxAccounts.statusSection.updatedBy')}</Text>
+                        <Text fontSize="xs" color={mutedTextColor} fontWeight="bold">{t('settings.taxAccounts.statusSection.updatedBy')}</Text>
                         <Text fontSize="sm">{settings.updated_by_user?.name || 'System'}</Text>
-                        <Text fontSize="xs" color="gray.500">
+                        <Text fontSize="xs" color={mutedTextColor}>
                           {new Date(settings.updated_at).toLocaleTimeString()}
                         </Text>
                       </VStack>
@@ -1148,7 +1196,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         {/* Suggestions Modal */}
         <Modal isOpen={isSuggestionsOpen} onClose={onSuggestionsClose} size="4xl">
           <ModalOverlay />
-          <ModalContent>
+          <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor}>
             <ModalHeader>
               <HStack spacing={3}>
                 <Icon as={FiInfo} color="blue.500" />
@@ -1172,10 +1220,10 @@ const TaxAccountSettingsPage: React.FC = () => {
                   {/* Sales Section */}
                   {suggestions.sales && (
                     <Box width="full">
-                      <Text fontSize="md" fontWeight="bold" mb={3} color="blue.600">💰 Akun Penjualan</Text>
+                      <Text fontSize="md" fontWeight="bold" mb={3} color={blueColor}>💰 Akun Penjualan</Text>
                       <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
                         {Object.entries(suggestions.sales || {}).map(([key, suggestion]) => (
-                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="blue.100">
+                          <Card key={key} size="sm" variant="outline" bg={suggestionCardBg} borderWidth="2px" borderColor={salesSuggestionBorder}>
                             <CardHeader pb={2}>
                               <HStack spacing={2}>
                                 <Icon as={FiDollarSign} color="blue.500" />
@@ -1186,8 +1234,8 @@ const TaxAccountSettingsPage: React.FC = () => {
                             </CardHeader>
                             <CardBody pt={0}>
                               <VStack spacing={3} alignItems="start">
-                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
-                                <Divider />
+                                <Text fontSize="sm" color={mutedTextColor}>{suggestion.description}</Text>
+                                <Divider borderColor={dividerColor} />
                                 <Box width="full">
                                   <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
                                   <HStack spacing={2} wrap="wrap">
@@ -1215,10 +1263,10 @@ const TaxAccountSettingsPage: React.FC = () => {
                   {/* Purchase Section */}
                   {suggestions.purchase && (
                     <Box width="full">
-                      <Text fontSize="md" fontWeight="bold" mb={3} color="orange.600">🛒 Akun Pembelian</Text>
+                      <Text fontSize="md" fontWeight="bold" mb={3} color={orangeColor}>🛒 Akun Pembelian</Text>
                       <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
                         {Object.entries(suggestions.purchase || {}).map(([key, suggestion]) => (
-                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="orange.100">
+                          <Card key={key} size="sm" variant="outline" bg={suggestionCardBg} borderWidth="2px" borderColor={purchaseSuggestionBorder}>
                             <CardHeader pb={2}>
                               <HStack spacing={2}>
                                 <Icon as={FiDollarSign} color="orange.500" />
@@ -1229,8 +1277,8 @@ const TaxAccountSettingsPage: React.FC = () => {
                             </CardHeader>
                             <CardBody pt={0}>
                               <VStack spacing={3} alignItems="start">
-                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
-                                <Divider />
+                                <Text fontSize="sm" color={mutedTextColor}>{suggestion.description}</Text>
+                                <Divider borderColor={dividerColor} />
                                 <Box width="full">
                                   <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
                                   <HStack spacing={2} wrap="wrap">
@@ -1258,10 +1306,10 @@ const TaxAccountSettingsPage: React.FC = () => {
                   {/* Tax Section */}
                   {suggestions.tax && (
                     <Box width="full">
-                      <Text fontSize="md" fontWeight="bold" mb={3} color="green.600">🏛️ Akun Pajak Penghasilan</Text>
+                      <Text fontSize="md" fontWeight="bold" mb={3} color={greenColor}>🏛️ Akun Pajak Penghasilan</Text>
                       <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
                         {Object.entries(suggestions.tax || {}).map(([key, suggestion]) => (
-                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="green.100">
+                          <Card key={key} size="sm" variant="outline" bg={suggestionCardBg} borderWidth="2px" borderColor={taxSuggestionBorder}>
                             <CardHeader pb={2}>
                               <HStack spacing={2}>
                                 <Icon as={FiDollarSign} color="green.500" />
@@ -1272,8 +1320,8 @@ const TaxAccountSettingsPage: React.FC = () => {
                             </CardHeader>
                             <CardBody pt={0}>
                               <VStack spacing={3} alignItems="start">
-                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
-                                <Divider />
+                                <Text fontSize="sm" color={mutedTextColor}>{suggestion.description}</Text>
+                                <Divider borderColor={dividerColor} />
                                 <Box width="full">
                                   <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
                                   <HStack spacing={2} wrap="wrap">
@@ -1309,10 +1357,10 @@ const TaxAccountSettingsPage: React.FC = () => {
                   {/* Inventory Section */}
                   {suggestions.inventory && (
                     <Box width="full">
-                      <Text fontSize="md" fontWeight="bold" mb={3} color="purple.600">📦 Persediaan & HPP</Text>
+                      <Text fontSize="md" fontWeight="bold" mb={3} color={purpleColor}>📦 Persediaan & HPP</Text>
                       <SimpleGrid columns={[1, 1, 2]} spacing={4} width="full">
                         {Object.entries(suggestions.inventory || {}).map(([key, suggestion]) => (
-                          <Card key={key} size="sm" variant="outline" borderWidth="2px" borderColor="purple.100">
+                          <Card key={key} size="sm" variant="outline" bg={suggestionCardBg} borderWidth="2px" borderColor={inventorySuggestionBorder}>
                             <CardHeader pb={2}>
                               <HStack spacing={2}>
                                 <Icon as={FiDollarSign} color="purple.500" />
@@ -1323,8 +1371,8 @@ const TaxAccountSettingsPage: React.FC = () => {
                             </CardHeader>
                             <CardBody pt={0}>
                               <VStack spacing={3} alignItems="start">
-                                <Text fontSize="sm" color="gray.600">{suggestion.description}</Text>
-                                <Divider />
+                                <Text fontSize="sm" color={mutedTextColor}>{suggestion.description}</Text>
+                                <Divider borderColor={dividerColor} />
                                 <Box width="full">
                                   <Text fontSize="xs" fontWeight="semibold" mb={1}>{t('settings.taxAccounts.suggestions.suggestedCodes')}</Text>
                                   <HStack spacing={2} wrap="wrap">
@@ -1368,7 +1416,7 @@ const TaxAccountSettingsPage: React.FC = () => {
                 </VStack>
               )}
             </ModalBody>
-            <ModalFooter>
+            <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={modalBorderColor}>
               <Button colorScheme="blue" onClick={onSuggestionsClose}>{t('common.close')}</Button>
             </ModalFooter>
           </ModalContent>

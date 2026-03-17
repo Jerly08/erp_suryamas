@@ -1,14 +1,22 @@
 import { UseToastOptions } from '@chakra-ui/react';
 import { ErrorDetail } from '../components/common/ErrorAlert';
+import { shouldSuppressAuthErrorToast } from './authErrorHandler';
 
 export interface APIError {
   response?: {
     data?: {
-      error?: string;
+      error?: string | {
+        code?: string;
+        message?: string;
+        details?: unknown;
+        validation?: Record<string, string>;
+        context?: Record<string, unknown>;
+      };
       message?: string;
-      details?: any;
+      details?: unknown;
       errors?: ValidationErrorResponse[];
       validationErrors?: ValidationErrorResponse[];
+      validation_errors?: ValidationErrorResponse[];
     };
     status?: number;
     statusText?: string;
@@ -21,8 +29,8 @@ export interface ValidationErrorResponse {
   field?: string;
   code?: string;
   message: string;
-  value?: any;
-  context?: Record<string, any>;
+  value?: unknown;
+  context?: Record<string, unknown>;
 }
 
 export interface ParsedValidationError {
@@ -42,13 +50,58 @@ export interface ErrorHandlerOptions {
   duration?: number;
 }
 
+interface APIErrorPayload {
+  error?: APIError['response'] extends { data?: infer T } ? T extends { error?: infer E } ? E : never : never;
+  message?: string;
+  details?: unknown;
+  errors?: ValidationErrorResponse[];
+  validationErrors?: ValidationErrorResponse[];
+  validation_errors?: ValidationErrorResponse[];
+}
+
+const isErrorObject = (value: APIErrorPayload['error']): value is NonNullable<Exclude<APIErrorPayload['error'], string>> => {
+  return typeof value === 'object' && value !== null;
+};
+
+const extractMessageFromPayload = (errorData?: APIErrorPayload, fallback?: string): string => {
+  if (typeof errorData === 'string') {
+    return errorData;
+  }
+
+  if (isErrorObject(errorData?.error) && typeof errorData.error.message === 'string' && errorData.error.message.trim()) {
+    return errorData.error.message;
+  }
+
+  if (typeof errorData?.message === 'string' && errorData.message.trim()) {
+    return errorData.message;
+  }
+
+  if (typeof errorData?.error === 'string' && errorData.error.trim()) {
+    return errorData.error;
+  }
+
+  if (isErrorObject(errorData?.error) && typeof errorData.error.details === 'string' && errorData.error.details.trim()) {
+    return errorData.error.details;
+  }
+
+  if (typeof errorData?.details === 'string' && errorData.details.trim()) {
+    return errorData.details;
+  }
+
+  if (fallback) {
+    return fallback;
+  }
+
+  return 'An unexpected error occurred';
+};
+
 export class ErrorHandler {
   /**
    * Parse validation errors from backend response into structured format
    */
   static parseValidationError(error: APIError): ParsedValidationError {
     const status = error?.response?.status;
-    const errorData = error?.response?.data;
+    const errorData = error?.response?.data as APIErrorPayload | undefined;
     
     // Default error structure
     const parsed: ParsedValidationError = {
@@ -82,10 +135,20 @@ export class ErrorHandler {
     }
 
     // Parse structured validation errors from different possible locations
-    const validationErrors = errorData?.errors || 
-                           errorData?.validationErrors || 
-                           errorData?.validation_errors || 
-                           [];
+    const rawValidationErrors = errorData?.errors ||
+      errorData?.validationErrors ||
+      errorData?.validation_errors ||
+      [];
+    const nestedValidationErrors = isErrorObject(errorData?.error) ? errorData.error.validation : undefined;
+    const validationErrors = rawValidationErrors.length > 0
+      ? rawValidationErrors
+      : nestedValidationErrors
+        ? Object.entries(nestedValidationErrors).map(([field, message]) => ({
+            field,
+            message,
+          }))
+        : [];
+
     if (validationErrors.length > 0) {
       parsed.errors = validationErrors.map((err: ValidationErrorResponse) => {
         const errorDetail: ErrorDetail = {
@@ -114,23 +177,32 @@ export class ErrorHandler {
       });
     }
 
+    if (parsed.errors.length === 0 && isErrorObject(errorData?.error)) {
+      const context = errorData.error.context;
+      const detailMessage = typeof errorData.error.details === 'string'
+        ? errorData.error.details
+        : typeof errorData.error.message === 'string'
+          ? errorData.error.message
+          : undefined;
+
+      if (detailMessage || context) {
+        parsed.errors = [{
+          field: context?.field || context?.code,
+          message: detailMessage || 'Please review the request and try again.',
+          context,
+        }];
+      }
+    }
+
     // Extract main error message and ensure it's a string
     // Handle different error response formats from Go backend
     try {
-      if (typeof errorData === 'string') {
-        parsed.message = errorData;
-      } else if (errorData?.error) {
-        parsed.message = String(errorData.error);
-      } else if (errorData?.message) {
-        parsed.message = String(errorData.message);
-      } else if (errorData?.details) {
-        parsed.message = String(errorData.details);
-      } else if (error?.message) {
-        parsed.message = String(error.message);
+      if (errorData) {
+        parsed.message = extractMessageFromPayload(errorData, error?.message);
       } else if (error?.response?.statusText) {
         parsed.message = `${error.response.status}: ${error.response.statusText}`;
       } else {
-        parsed.message = 'An unexpected error occurred';
+        parsed.message = extractMessageFromPayload(undefined, error?.message);
       }
     } catch (e) {
       console.warn('Error parsing message:', e);
@@ -182,22 +254,17 @@ export class ErrorHandler {
    */
   static extractErrorMessage(error: APIError, fallback: string = 'An unexpected error occurred'): string {
     // Try to get error message from various possible locations
-    if (error?.response?.data?.error) {
-      return error.response.data.error;
+    const errorData = error?.response?.data as APIErrorPayload | undefined;
+    const message = extractMessageFromPayload(errorData, error?.message);
+
+    if (message && message !== 'An unexpected error occurred') {
+      return message;
     }
-    
-    if (error?.response?.data?.message) {
-      return error.response.data.message;
-    }
-    
-    if (error?.message) {
-      return error.message;
-    }
-    
+
     if (error?.response?.statusText) {
       return `${error.response.status}: ${error.response.statusText}`;
     }
-    
+
     return fallback;
   }
 
@@ -248,7 +315,7 @@ export class ErrorHandler {
     }
 
     // Show toast notification if enabled
-    if (showToast) {
+    if (showToast && !shouldSuppressAuthErrorToast(error)) {
       const title = this.getErrorTitle(operation, severity);
       
       toast({
@@ -338,14 +405,16 @@ export class ErrorHandler {
     if (isNetworkError) {
       const message = 'Network connection failed. Please check your internet connection.';
       
-      toast({
-        title: 'Connection Error',
-        description: message,
-        status: 'error',
-        duration: 8000,
-        isClosable: true,
-        position: 'top-right'
-      });
+      if (!shouldSuppressAuthErrorToast(error)) {
+        toast({
+          title: 'Connection Error',
+          description: message,
+          status: 'error',
+          duration: 8000,
+          isClosable: true,
+          position: 'top-right'
+        });
+      }
       
       return message;
     }

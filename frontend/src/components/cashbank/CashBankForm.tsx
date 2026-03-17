@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
   Modal,
@@ -24,9 +24,6 @@ import {
   HStack,
   NumberInput,
   NumberInputField,
-  NumberInputStepper,
-  NumberIncrementStepper,
-  NumberDecrementStepper,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -36,7 +33,6 @@ import {
   Checkbox,
   Text,
   VStack,
-  Divider,
   Card,
   CardBody,
   SimpleGrid,
@@ -45,12 +41,13 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { useForm, Controller } from 'react-hook-form';
-import { FiUser, FiDollarSign, FiCalendar, FiCreditCard, FiFileText, FiSettings } from 'react-icons/fi';
-import { CashBank, CashBankCreateRequest, CashBankUpdateRequest } from '@/services/cashbankService';
+import { FiDollarSign, FiCalendar, FiCreditCard, FiFileText, FiSettings } from 'react-icons/fi';
+import { CashBank, CashBankCreateRequest, CashBankUpdateRequest, ReferenceExchangeRate } from '@/services/cashbankService';
 import cashbankService from '@/services/cashbankService';
 import accountService from '@/services/accountService';
 import { useAuth } from '@/contexts/AuthContext';
 import { Account } from '@/types/account';
+import { roundUsdIdrRate } from '@/utils/exchangeRate';
 
 interface CashBankFormProps {
   isOpen: boolean;
@@ -132,6 +129,70 @@ const formatOpeningBalanceDisplay = (value: number | undefined, currency: 'IDR' 
   }).format(value);
 };
 
+const formatIDRPreview = (value: number | undefined): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 'Rp 0';
+  }
+
+  return `Rp ${new Intl.NumberFormat('id-ID', {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(value)}`;
+};
+
+const formatUSDPreview = (value: number | undefined): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 'USD 0.00';
+  }
+
+  return `USD ${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)}`;
+};
+
+const formatReferenceTimestamp = (value?: string): string => {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString('id-ID');
+};
+
+const getRateSourceMeta = (options: {
+  hasReferenceRate: boolean;
+  isManualOverride: boolean;
+}) => {
+  if (options.isManualOverride) {
+    return {
+      label: 'MANUAL',
+      colorScheme: 'orange',
+      description: 'Kurs aktif saat ini sudah Anda ubah manual dan akan dipakai saat akun dibuat.',
+    };
+  }
+
+  if (options.hasReferenceRate) {
+    return {
+      label: 'API',
+      colorScheme: 'blue',
+      description: 'Kurs aktif saat ini mengikuti referensi API dan tetap bisa Anda ubah bila perlu.',
+    };
+  }
+
+  return {
+    label: 'MANUAL',
+    colorScheme: 'gray',
+    description: 'Kurs aktif saat ini menunggu input manual karena referensi API belum tersedia.',
+  };
+};
+
+type OpeningRateMode = 'api' | 'manual' | 'fallback';
+
 const getOpeningBalancePlaceholder = (currency: 'IDR' | 'USD'): string => {
   return currency === 'USD' ? 'Contoh: 1,250.00' : 'Contoh: 1.000.000';
 };
@@ -172,10 +233,13 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [equityAccounts, setEquityAccounts] = useState<AccountOption[]>([]);
-
-
   const [openingBalanceDisplay, setOpeningBalanceDisplay] = useState<string>('');
+  const [referenceRateInfo, setReferenceRateInfo] = useState<ReferenceExchangeRate | null>(null);
+  const [referenceRateError, setReferenceRateError] = useState<string | null>(null);
+  const [loadingReferenceRate, setLoadingReferenceRate] = useState(false);
+  const [openingRateMode, setOpeningRateMode] = useState<OpeningRateMode>('fallback');
   const toast = useToast();
+  const openingRateModeRef = useRef<OpeningRateMode>('fallback');
 
   // Color mode values
   const modalContentBg = useColorModeValue('white', 'gray.800');
@@ -226,11 +290,26 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
   });
 
   const watchedOpeningBalance = watch('opening_balance');
+  const watchedOpeningExchangeRate = watch('opening_exchange_rate');
   const watchedType = watch('type');
   const watchedCurrency = watch('currency');
   const watchedHoldingAccount = watch('is_holding_account');
   const normalizedWatchedCurrency = normalizeCurrencyCode(watchedCurrency);
   const openingBalanceAlert = getOpeningBalanceAlertConfig(normalizedWatchedCurrency);
+  const openingBookValuePreview = normalizedWatchedCurrency === 'USD'
+    ? (watchedOpeningBalance || 0) * (watchedOpeningExchangeRate || 0)
+    : (watchedOpeningBalance || 0);
+  const roundedOpeningReferenceRate = roundUsdIdrRate(referenceRateInfo?.exchange_rate, 0);
+  const openingRateManuallyAdjusted = Boolean(referenceRateInfo && watchedOpeningExchangeRate && Math.abs((watchedOpeningExchangeRate || 0) - roundedOpeningReferenceRate) > 0.0001);
+  const openingRateSource = getRateSourceMeta({
+    hasReferenceRate: openingRateMode === 'api' && Boolean(referenceRateInfo),
+    isManualOverride: openingRateMode === 'manual',
+  });
+
+  const updateOpeningRateMode = (nextMode: OpeningRateMode) => {
+    openingRateModeRef.current = nextMode;
+    setOpeningRateMode(nextMode);
+  };
 
   // Load available GL accounts based on selected type (CASH or BANK)
   // This endpoint returns only GL accounts that:
@@ -294,6 +373,64 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
     loadEquityAccounts();
   }, [token, isOpen, mode]);
 
+  useEffect(() => {
+    if (!isOpen || mode !== 'create' || normalizedWatchedCurrency !== 'USD') {
+      setReferenceRateInfo(null);
+      setReferenceRateError(null);
+      setLoadingReferenceRate(false);
+      updateOpeningRateMode('fallback');
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadReferenceRate = async () => {
+      try {
+        setLoadingReferenceRate(true);
+        setReferenceRateError(null);
+        const reference = await cashbankService.getReferenceExchangeRate('USD', 'IDR');
+        if (cancelled) {
+          return;
+        }
+        if (!reference) {
+          setReferenceRateInfo(null);
+          setReferenceRateError('Kurs referensi API belum tersedia. Anda tetap bisa mengisi kurs manual sesuai kurs perusahaan.');
+          if (openingRateModeRef.current !== 'manual') {
+            updateOpeningRateMode('fallback');
+          }
+          return;
+        }
+
+        setReferenceRateInfo(reference);
+        if (openingRateModeRef.current !== 'manual') {
+          setValue('opening_exchange_rate', roundUsdIdrRate(reference.exchange_rate, 1), { shouldValidate: true });
+          updateOpeningRateMode('api');
+        }
+      } catch (fetchError) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error('Error loading reference exchange rate:', fetchError);
+        setReferenceRateInfo(null);
+        setReferenceRateError('Kurs referensi API belum tersedia. Anda tetap bisa mengisi kurs manual sesuai kurs perusahaan.');
+        if (openingRateModeRef.current !== 'manual') {
+          updateOpeningRateMode('fallback');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingReferenceRate(false);
+        }
+      }
+    };
+
+    void loadReferenceRate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, mode, normalizedWatchedCurrency, setValue]);
+
   // Initialize form data when editing or opening modal
   useEffect(() => {
     if (!isOpen) {
@@ -310,7 +447,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
         branch: account.branch || '',
         currency: (account.currency || 'IDR').toUpperCase(),
         opening_balance: 0,
-        opening_exchange_rate: account.last_exchange_rate && account.last_exchange_rate > 0 ? account.last_exchange_rate : 1,
+      opening_exchange_rate: roundUsdIdrRate(account.last_exchange_rate, 1),
         opening_date: new Date().toISOString().split('T')[0],
         description: account.description || '',
         account_id: account.account_id,
@@ -319,6 +456,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
         allow_direct_transactions: account.allow_direct_transactions ?? !account.is_holding_account
       });
       setOpeningBalanceDisplay('');
+      updateOpeningRateMode('fallback');
       return;
     }
 
@@ -340,6 +478,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       allow_direct_transactions: true
     });
     setOpeningBalanceDisplay('');
+    updateOpeningRateMode('fallback');
   }, [isOpen, mode, account, reset]);
 
   const onSubmit = async (data: CashBankFormData) => {
@@ -374,7 +513,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       const submitData: CashBankCreateRequest = {
         ...data,
         currency: normalizedCurrency,
-        opening_exchange_rate: normalizedCurrency === 'IDR' ? 1 : data.opening_exchange_rate,
+      opening_exchange_rate: normalizedCurrency === 'IDR' ? 1 : roundUsdIdrRate(data.opening_exchange_rate, 1),
         is_holding_account: Boolean(data.is_holding_account),
         allow_direct_transactions: data.is_holding_account ? Boolean(data.allow_direct_transactions) : true,
       };
@@ -622,6 +761,13 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                                     ),
                                   );
                                 }
+
+                                if (nextCurrency === 'IDR') {
+                                  setValue('opening_exchange_rate', 1, { shouldValidate: true });
+                                  updateOpeningRateMode('fallback');
+                                } else {
+                                  updateOpeningRateMode('fallback');
+                                }
                               }}
                               isDisabled={mode === 'edit'}
                               bg={mode === 'edit' ? readOnlyBg : undefined}
@@ -868,20 +1014,103 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                             },
                           }}
                           render={({ field }) => (
-                            <NumberInput
-                              min={0}
-                              precision={4}
-                              value={typeof field.value === 'number' ? field.value : undefined}
-                              onChange={(_, valueAsNumber) => field.onChange(Number.isFinite(valueAsNumber) ? valueAsNumber : undefined)}
-                            >
-                              <NumberInputField placeholder="Contoh: 16250" />
-                            </NumberInput>
+                            <InputGroup>
+                              <InputLeftAddon bg={inputAddonBg} color={textColor} fontWeight="medium">
+                                IDR
+                              </InputLeftAddon>
+                              <NumberInput
+                                min={0}
+                                precision={0}
+                                value={typeof field.value === 'number' ? field.value : undefined}
+                                onChange={(_, valueAsNumber) => {
+                                  updateOpeningRateMode('manual');
+                                  field.onChange(Number.isFinite(valueAsNumber) ? roundUsdIdrRate(valueAsNumber, 0) : undefined);
+                                }}
+                                w="100%"
+                              >
+                                <NumberInputField placeholder="Contoh: 16935" pl={3} />
+                              </NumberInput>
+                            </InputGroup>
                           )}
                         />
                         <FormErrorMessage>{errors.opening_exchange_rate?.message}</FormErrorMessage>
                         <Text fontSize="xs" color={mutedTextColor} mt={1}>
                           Isi kurs 1 USD ke IDR. Kurs ini dipakai untuk menghitung nilai buku Rupiah yang masuk ke neraca saat saldo awal dibuat.
                         </Text>
+                        {referenceRateInfo && (
+                          <Alert status="info" borderRadius="md" mt={3}>
+                            <AlertIcon />
+                            <Box>
+                              <AlertTitle fontSize="sm" mb={1}>
+                                Kurs referensi API
+                              </AlertTitle>
+                              <AlertDescription fontSize="sm">
+                                Disarankan dari {referenceRateInfo.provider}: 1 USD = {formatIDRPreview(roundUsdIdrRate(referenceRateInfo.exchange_rate, 0))}.
+                                Diambil {formatReferenceTimestamp(referenceRateInfo.fetched_at)} dan tetap bisa Anda ubah sebelum simpan.
+                              </AlertDescription>
+                            </Box>
+                          </Alert>
+                        )}
+                        {loadingReferenceRate && (
+                          <Text fontSize="xs" color={mutedTextColor} mt={2}>
+                            Mengambil kurs referensi USD/IDR dari API...
+                          </Text>
+                        )}
+                        {referenceRateError && (
+                          <Alert status="warning" borderRadius="md" mt={3}>
+                            <AlertIcon />
+                            <AlertDescription fontSize="sm">
+                              {referenceRateError}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <Text fontSize="xs" color={textColor} mt={1} fontWeight="medium">
+                          Preview kurs: 1 USD = {formatIDRPreview(watchedOpeningExchangeRate)}
+                        </Text>
+                        <HStack spacing={2} mt={2} align="center">
+                          <Badge colorScheme={openingRateSource.colorScheme} variant="subtle">
+                            {openingRateSource.label}
+                          </Badge>
+                          <Text fontSize="xs" color={mutedTextColor}>
+                            {openingRateSource.description}
+                          </Text>
+                        </HStack>
+                        {referenceRateInfo && (
+                          <HStack spacing={3} mt={2} align="center">
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              colorScheme="blue"
+                              onClick={() => {
+                                setValue('opening_exchange_rate', roundUsdIdrRate(referenceRateInfo.exchange_rate, 1), { shouldValidate: true });
+                                updateOpeningRateMode('api');
+                              }}
+                            >
+                              Pakai kurs API
+                            </Button>
+                            <Text fontSize="xs" color={mutedTextColor}>
+                              Anda juga bisa langsung ketik angka kurs manual di field di atas.
+                            </Text>
+                          </HStack>
+                        )}
+                        {openingRateManuallyAdjusted && (
+                          <Text fontSize="xs" color={warningTextColor} mt={1}>
+                            Anda sedang memakai kurs manual yang berbeda dari kurs referensi API.
+                          </Text>
+                        )}
+                        {(watchedOpeningBalance || 0) > 0 && (watchedOpeningExchangeRate || 0) > 0 && (
+                          <Alert status="info" borderRadius="md" mt={3}>
+                            <AlertIcon />
+                            <Box>
+                              <AlertTitle fontSize="sm" mb={1}>
+                                Estimasi nilai buku saldo awal
+                              </AlertTitle>
+                              <AlertDescription fontSize="sm">
+                                {formatUSDPreview(watchedOpeningBalance)} x {formatIDRPreview(watchedOpeningExchangeRate)} = {formatIDRPreview(openingBookValuePreview)}
+                              </AlertDescription>
+                            </Box>
+                          </Alert>
+                        )}
                       </FormControl>
                     )}
 

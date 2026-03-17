@@ -119,7 +119,7 @@ type MonthlyTaxSummary struct {
 }
 
 // GeneratePurchaseReport generates comprehensive purchase report from SSOT data
-func (s *SSOTPurchaseReportService) GeneratePurchaseReport(ctx context.Context, startDate, endDate time.Time) (*PurchaseReportData, error) {
+func (s *SSOTPurchaseReportService) GeneratePurchaseReport(ctx context.Context, startDate, endDate time.Time, projectID *uint) (*PurchaseReportData, error) {
 	result := &PurchaseReportData{
 		Company:     s.getCompanyInfo(),
 		StartDate:   startDate,
@@ -129,7 +129,7 @@ func (s *SSOTPurchaseReportService) GeneratePurchaseReport(ctx context.Context, 
 	}
 
 	// Get purchase transactions from SSOT journal
-	purchaseSummary, err := s.getPurchaseSummary(ctx, startDate, endDate)
+	purchaseSummary, err := s.getPurchaseSummary(ctx, startDate, endDate, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get purchase summary: %w", err)
 	}
@@ -142,31 +142,31 @@ func (s *SSOTPurchaseReportService) GeneratePurchaseReport(ctx context.Context, 
 	result.OutstandingPayables = purchaseSummary.TotalAmount - purchaseSummary.TotalPaid
 
 	// Get detailed analyses
-	result.PurchasesByVendor, err = s.getPurchasesByVendor(ctx, startDate, endDate)
+	result.PurchasesByVendor, err = s.getPurchasesByVendor(ctx, startDate, endDate, projectID)
 	if err != nil {
 		log.Printf("Error getting purchases by vendor: %v", err)
 		result.PurchasesByVendor = []VendorPurchaseSummary{}
 	}
 
-	result.PurchasesByMonth, err = s.getPurchasesByMonth(ctx, startDate, endDate)
+	result.PurchasesByMonth, err = s.getPurchasesByMonth(ctx, startDate, endDate, projectID)
 	if err != nil {
 		log.Printf("Error getting purchases by month: %v", err)
 		result.PurchasesByMonth = []MonthlyPurchaseSummary{}
 	}
 
-	result.PurchasesByCategory, err = s.getPurchasesByCategory(ctx, startDate, endDate)
+	result.PurchasesByCategory, err = s.getPurchasesByCategory(ctx, startDate, endDate, projectID)
 	if err != nil {
 		log.Printf("Error getting purchases by category: %v", err)
 		result.PurchasesByCategory = []CategoryPurchaseSummary{}
 	}
 
-	result.PaymentAnalysis, err = s.getPaymentAnalysis(ctx, startDate, endDate)
+	result.PaymentAnalysis, err = s.getPaymentAnalysis(ctx, startDate, endDate, projectID)
 	if err != nil {
 		log.Printf("Error getting payment analysis: %v", err)
 		result.PaymentAnalysis = PurchasePaymentAnalysis{}
 	}
 
-	result.TaxAnalysis, err = s.getTaxAnalysis(ctx, startDate, endDate)
+	result.TaxAnalysis, err = s.getTaxAnalysis(ctx, startDate, endDate, projectID)
 	if err != nil {
 		log.Printf("Error getting tax analysis: %v", err)
 		result.TaxAnalysis = PurchaseTaxAnalysis{}
@@ -184,7 +184,7 @@ type purchaseBaseSummary struct {
 }
 
 // getPurchaseSummary gets basic purchase statistics from purchases table (primary source)
-func (s *SSOTPurchaseReportService) getPurchaseSummary(ctx context.Context, startDate, endDate time.Time) (*purchaseBaseSummary, error) {
+func (s *SSOTPurchaseReportService) getPurchaseSummary(ctx context.Context, startDate, endDate time.Time, projectID *uint) (*purchaseBaseSummary, error) {
 	// Use purchases table paid_amount field which is accurately maintained by payment system
 	query := `
 		SELECT 
@@ -198,8 +198,14 @@ func (s *SSOTPurchaseReportService) getPurchaseSummary(ctx context.Context, star
 		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 	`
 
+	args := []interface{}{startDate, endDate}
+	if projectID != nil {
+		query += " AND p.project_id = ?"
+		args = append(args, *projectID)
+	}
+
 	var summary purchaseBaseSummary
-	err := s.db.WithContext(ctx).Raw(query, startDate, endDate).Scan(&summary).Error
+	err := s.db.WithContext(ctx).Raw(query, args...).Scan(&summary).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query purchase summary: %w", err)
 	}
@@ -208,7 +214,7 @@ func (s *SSOTPurchaseReportService) getPurchaseSummary(ctx context.Context, star
 }
 
 // getPurchasesByVendor gets purchase summary grouped by vendor - using purchases table as source
-func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, startDate, endDate time.Time) ([]VendorPurchaseSummary, error) {
+func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, startDate, endDate time.Time, projectID *uint) ([]VendorPurchaseSummary, error) {
 	// Use purchases table paid_amount field for accurate payment tracking
 	query := `
 		SELECT 
@@ -236,6 +242,14 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
 		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
+	`
+
+	args := []interface{}{startDate, endDate}
+	if projectID != nil {
+		query += " AND p.project_id = ?"
+		args = append(args, *projectID)
+	}
+	query += `
 		GROUP BY p.vendor_id, c.name
 		ORDER BY total_amount DESC
 	`
@@ -252,7 +266,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 		Descriptions     string    `json:"descriptions"`
 	}
 
-	err := s.db.WithContext(ctx).Raw(query, startDate, endDate).Scan(&vendors).Error
+	err := s.db.WithContext(ctx).Raw(query, args...).Scan(&vendors).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query purchases by vendor: %w", err)
 	}
@@ -297,7 +311,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 
 	// Fetch items for each vendor using SSOT journal source_id
 	for i := range result {
-		items, err := s.getPurchaseItemsFromSSOT(ctx, startDate, endDate, result[i].VendorName)
+		items, err := s.getPurchaseItemsFromSSOT(ctx, startDate, endDate, result[i].VendorName, projectID)
 		if err != nil {
 			log.Printf("Warning: Failed to get items for vendor %s: %v", result[i].VendorName, err)
 			continue
@@ -312,7 +326,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 }
 
 // getPurchaseItemsFromSSOT gets detailed items purchased - using purchases table directly
-func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context, startDate, endDate time.Time, vendorName string) ([]PurchaseItemDetail, error) {
+func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context, startDate, endDate time.Time, vendorName string, projectID *uint) ([]PurchaseItemDetail, error) {
 	// FIX: Query from purchases table directly, not from journal
 	query := `
 		SELECT 
@@ -334,11 +348,19 @@ func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context
 		  AND pi.deleted_at IS NULL
 		  AND v.name = ?
 		  AND (pur.status = 'APPROVED' OR pur.status = 'COMPLETED' OR pur.status = 'POSTED' OR pur.status = 'PAID' OR pur.status = 'LUNAS' OR pur.approval_status = 'APPROVED')
+	`
+
+	args := []interface{}{startDate, endDate, vendorName}
+	if projectID != nil {
+		query += " AND pur.project_id = ?"
+		args = append(args, *projectID)
+	}
+	query += `
 		ORDER BY pur.date DESC, pi.id
 	`
 
 	var items []PurchaseItemDetail
-	err := s.db.WithContext(ctx).Raw(query, startDate, endDate, vendorName).Scan(&items).Error
+	err := s.db.WithContext(ctx).Raw(query, args...).Scan(&items).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query purchase items from SSOT: %w", err)
 	}
@@ -348,7 +370,7 @@ func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context
 }
 
 // getPurchasesByMonth gets purchase summary grouped by month - using purchases table
-func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, startDate, endDate time.Time) ([]MonthlyPurchaseSummary, error) {
+func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, startDate, endDate time.Time, projectID *uint) ([]MonthlyPurchaseSummary, error) {
 	// Use purchases table paid_amount field for accurate payment tracking
 	query := `
 		SELECT 
@@ -361,6 +383,14 @@ func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, sta
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
 		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
+	`
+
+	args := []interface{}{startDate, endDate}
+	if projectID != nil {
+		query += " AND p.project_id = ?"
+		args = append(args, *projectID)
+	}
+	query += `
 		GROUP BY EXTRACT(YEAR FROM p.date), EXTRACT(MONTH FROM p.date)
 		ORDER BY year, month
 	`
@@ -373,7 +403,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, sta
 		TotalPaid      float64 `json:"total_paid"`
 	}
 
-	err := s.db.WithContext(ctx).Raw(query, startDate, endDate).Scan(&months).Error
+	err := s.db.WithContext(ctx).Raw(query, args...).Scan(&months).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query purchases by month: %w", err)
 	}
@@ -408,7 +438,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, sta
 }
 
 // getPurchasesByCategory gets purchase summary grouped by account category - fallback to inventory
-func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, startDate, endDate time.Time) ([]CategoryPurchaseSummary, error) {
+func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, startDate, endDate time.Time, projectID *uint) ([]CategoryPurchaseSummary, error) {
 	// Use a subquery to get one category per purchase (picking the first debit account),
 	// preventing row fan-out from multiple journal lines per purchase.
 	// Use p.total_amount consistently (matching the summary query).
@@ -437,6 +467,14 @@ func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, 
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
 		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
+	`
+
+	args := []interface{}{startDate, endDate}
+	if projectID != nil {
+		query += " AND p.project_id = ?"
+		args = append(args, *projectID)
+	}
+	query += `
 		GROUP BY cat.account_code, cat.account_name
 		ORDER BY total_amount DESC
 	`
@@ -449,7 +487,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, 
 		TotalAmount    float64 `json:"total_amount"`
 	}
 
-	err := s.db.WithContext(ctx).Raw(query, startDate, endDate).Scan(&categories).Error
+	err := s.db.WithContext(ctx).Raw(query, args...).Scan(&categories).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query purchases by category: %w", err)
 	}
@@ -484,7 +522,7 @@ func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, 
 }
 
 // getPaymentAnalysis analyzes payment patterns in purchases - using purchases table
-func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, startDate, endDate time.Time) (PurchasePaymentAnalysis, error) {
+func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, startDate, endDate time.Time, projectID *uint) (PurchasePaymentAnalysis, error) {
 	// FIX: Use payment_method field from purchases table
 	query := `
 		SELECT 
@@ -511,6 +549,12 @@ func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, star
 		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 	`
 
+	args := []interface{}{startDate, endDate}
+	if projectID != nil {
+		query += " AND p.project_id = ?"
+		args = append(args, *projectID)
+	}
+
 	var analysis struct {
 		CashPurchases     int64   `json:"cash_purchases"`
 		CreditPurchases   int64   `json:"credit_purchases"`
@@ -519,7 +563,7 @@ func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, star
 		AverageOrderValue float64 `json:"average_order_value"`
 	}
 
-	err := s.db.WithContext(ctx).Raw(query, startDate, endDate).Scan(&analysis).Error
+	err := s.db.WithContext(ctx).Raw(query, args...).Scan(&analysis).Error
 	if err != nil {
 		return PurchasePaymentAnalysis{}, fmt.Errorf("failed to analyze payment patterns: %w", err)
 	}
@@ -545,7 +589,7 @@ func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, star
 }
 
 // getTaxAnalysis analyzes tax information in purchases - using purchases table with tax fields
-func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDate, endDate time.Time) (PurchaseTaxAnalysis, error) {
+func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDate, endDate time.Time, projectID *uint) (PurchaseTaxAnalysis, error) {
 	// FIX: Get tax from purchases table tax field, fallback to journal if needed
 	taxQuery := `
 		SELECT 
@@ -557,12 +601,18 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
 	`
 
+	taxArgs := []interface{}{startDate, endDate}
+	if projectID != nil {
+		taxQuery += " AND p.project_id = ?"
+		taxArgs = append(taxArgs, *projectID)
+	}
+
 	var taxSummary struct {
 		TotalTaxableAmount float64 `json:"total_taxable_amount"`
 		TotalTaxAmount     float64 `json:"total_tax_amount"`
 	}
 
-	err := s.db.WithContext(ctx).Raw(taxQuery, startDate, endDate).Scan(&taxSummary).Error
+	err := s.db.WithContext(ctx).Raw(taxQuery, taxArgs...).Scan(&taxSummary).Error
 	if err != nil {
 		return PurchaseTaxAnalysis{}, fmt.Errorf("failed to analyze tax: %w", err)
 	}
@@ -582,6 +632,14 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
 		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
+	`
+
+	monthlyTaxArgs := []interface{}{startDate, endDate}
+	if projectID != nil {
+		monthlyTaxQuery += " AND p.project_id = ?"
+		monthlyTaxArgs = append(monthlyTaxArgs, *projectID)
+	}
+	monthlyTaxQuery += `
 		GROUP BY EXTRACT(YEAR FROM p.date), EXTRACT(MONTH FROM p.date)
 		ORDER BY year, month
 	`
@@ -592,7 +650,7 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		TaxAmount float64 `json:"tax_amount"`
 	}
 
-	err = s.db.WithContext(ctx).Raw(monthlyTaxQuery, startDate, endDate).Scan(&monthlyTax).Error
+	err = s.db.WithContext(ctx).Raw(monthlyTaxQuery, monthlyTaxArgs...).Scan(&monthlyTax).Error
 	if err != nil {
 		log.Printf("Error getting monthly tax data: %v", err)
 		monthlyTax = []struct {

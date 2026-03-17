@@ -1,10 +1,10 @@
 package repositories
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
 	"strings"
 	"time"
-	"app-sistem-akuntansi/models"
 
 	"gorm.io/gorm"
 )
@@ -48,11 +48,14 @@ func (r *SalesRepository) FindByID(id uint) (*models.Sale, error) {
 		Preload("SalePayments.CashBank").
 		Preload("SalePayments.Account").
 		Preload("SalePayments.User").
+		Preload("PaymentSchedules", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sequence ASC")
+		}).
 		Preload("SaleReturns").
 		Preload("SaleReturns.ReturnItems").
 		Preload("SaleReturns.User").
 		First(&sale, id).Error
-	
+
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +93,17 @@ func (r *SalesRepository) FindWithFilter(filter models.SalesFilter) ([]models.Sa
 
 	// Apply filters to both queries
 	if filter.Status != "" {
-		countQuery = countQuery.Where("status = ?", filter.Status)
-		dataQuery = dataQuery.Where("status = ?", filter.Status)
+		switch filter.Status {
+		case models.SaleStatusDraft:
+			countQuery = countQuery.Where("status IN ?", []string{models.SaleStatusDraft, models.SaleStatusPending, models.SaleStatusConfirmed})
+			dataQuery = dataQuery.Where("status IN ?", []string{models.SaleStatusDraft, models.SaleStatusPending, models.SaleStatusConfirmed})
+		case models.SaleStatusInvoiced:
+			countQuery = countQuery.Where("status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue})
+			dataQuery = dataQuery.Where("status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue})
+		default:
+			countQuery = countQuery.Where("status = ?", filter.Status)
+			dataQuery = dataQuery.Where("status = ?", filter.Status)
+		}
 	}
 
 	if filter.CustomerID != "" {
@@ -301,7 +313,7 @@ func (r *SalesRepository) CountInvoicesByMonth(year, month int) (int64, error) {
 	endDate := lastDay.Format("2006-01-02")
 
 	err := r.db.Model(&models.Sale{}).
-		Where("invoice_number IS NOT NULL AND invoice_number != '' AND date BETWEEN ? AND ?", 
+		Where("invoice_number IS NOT NULL AND invoice_number != '' AND date BETWEEN ? AND ?",
 			startDate, endDate).
 		Count(&count).Error
 
@@ -317,7 +329,7 @@ func (r *SalesRepository) CountQuotationsByMonth(year, month int) (int64, error)
 	endDate := lastDay.Format("2006-01-02")
 
 	err := r.db.Model(&models.Sale{}).
-		Where("quotation_number IS NOT NULL AND quotation_number != '' AND date BETWEEN ? AND ?", 
+		Where("quotation_number IS NOT NULL AND quotation_number != '' AND date BETWEEN ? AND ?",
 			startDate, endDate).
 		Count(&count).Error
 
@@ -363,7 +375,7 @@ func (r *SalesRepository) CountCreditNotesByMonth(year, month int) (int64, error
 	endDate := lastDay.Format("2006-01-02")
 
 	err := r.db.Model(&models.SaleReturn{}).
-		Where("credit_note_number IS NOT NULL AND credit_note_number != '' AND date BETWEEN ? AND ?", 
+		Where("credit_note_number IS NOT NULL AND credit_note_number != '' AND date BETWEEN ? AND ?",
 			startDate, endDate).
 		Count(&count).Error
 
@@ -381,7 +393,7 @@ func (r *SalesRepository) GetSalesSummary(startDate, endDate string) (*models.Sa
 	}
 
 	query := r.db.Model(&models.Sale{}).
-		Where("status != ?", models.SaleStatusCancelled)
+		Where("status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid})
 
 	if startDate != "" {
 		query = query.Where("date >= ?", startDate)
@@ -417,7 +429,7 @@ func (r *SalesRepository) GetSalesSummary(startDate, endDate string) (*models.Sa
 			COUNT(*) as total_orders
 		`).
 		Joins("JOIN contacts ON contacts.id = sales.customer_id").
-		Where("sales.status != ?", models.SaleStatusCancelled)
+		Where("sales.status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid})
 
 	if startDate != "" {
 		customerQuery = customerQuery.Where("sales.date >= ?", startDate)
@@ -524,7 +536,7 @@ func (r *SalesRepository) GetReceivablesReport() (*models.ReceivablesReportRespo
 			sales.status
 		`, now, now).
 		Joins("JOIN contacts ON contacts.id = sales.customer_id").
-		Where("sales.outstanding_amount > 0 AND sales.status IN (?)", 
+		Where("sales.outstanding_amount > 0 AND sales.status IN (?)",
 			[]string{models.SaleStatusInvoiced, models.SaleStatusOverdue}).
 		Order("sales.due_date ASC").
 		Scan(&receivables).Error
@@ -549,7 +561,6 @@ func (r *SalesRepository) GetReceivablesReport() (*models.ReceivablesReportRespo
 	}, nil
 }
 
-
 // GetCustomerOutstandingAmount gets customer outstanding amount
 func (r *SalesRepository) GetCustomerOutstandingAmount(customerID uint) (float64, error) {
 	var totalOutstanding float64
@@ -569,7 +580,7 @@ func (r *SalesRepository) CreateJournal(journal *models.Journal) error {
 func (r *SalesRepository) CountOrdersByMonth(year, month int) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.Sale{}).
-		Where("type = ? AND EXTRACT(year FROM created_at) = ? AND EXTRACT(month FROM created_at) = ?", 
+		Where("type = ? AND EXTRACT(year FROM created_at) = ? AND EXTRACT(month FROM created_at) = ?",
 			"ORDER", year, month).
 		Count(&count).Error
 	return count, err
@@ -579,7 +590,7 @@ func (r *SalesRepository) CountOrdersByMonth(year, month int) (int64, error) {
 func (r *SalesRepository) CountJournalsByMonth(year, month int) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.Journal{}).
-		Where("reference_type = ? AND EXTRACT(year FROM date) = ? AND EXTRACT(month FROM date) = ?", 
+		Where("reference_type = ? AND EXTRACT(year FROM date) = ? AND EXTRACT(month FROM date) = ?",
 			models.JournalRefTypeSale, year, month).
 		Count(&count).Error
 	return count, err
@@ -588,8 +599,8 @@ func (r *SalesRepository) CountJournalsByMonth(year, month int) (int64, error) {
 // FindInvoicesDueOn finds invoices that are due on a specific date
 func (r *SalesRepository) FindInvoicesDueOn(dueDate time.Time) ([]models.Sale, error) {
 	var sales []models.Sale
-	err := r.db.Where("due_date = ? AND outstanding_amount > 0 AND status IN (?)", 
-		dueDate.Format("2006-01-02"), 
+	err := r.db.Where("due_date = ? AND outstanding_amount > 0 AND status IN (?)",
+		dueDate.Format("2006-01-02"),
 		[]string{models.SaleStatusInvoiced}).
 		Preload("Customer").
 		Preload("SaleItems").
@@ -601,8 +612,8 @@ func (r *SalesRepository) FindInvoicesDueOn(dueDate time.Time) ([]models.Sale, e
 // FindInvoicesOverdueAsOf finds invoices that are overdue as of a specific date
 func (r *SalesRepository) FindInvoicesOverdueAsOf(asOfDate time.Time) ([]models.Sale, error) {
 	var sales []models.Sale
-	err := r.db.Where("due_date < ? AND outstanding_amount > 0 AND status IN (?)", 
-		asOfDate.Format("2006-01-02"), 
+	err := r.db.Where("due_date < ? AND outstanding_amount > 0 AND status IN (?)",
+		asOfDate.Format("2006-01-02"),
 		[]string{models.SaleStatusInvoiced, models.SaleStatusOverdue}).
 		Preload("Customer").
 		Preload("SaleItems").
@@ -614,7 +625,7 @@ func (r *SalesRepository) FindInvoicesOverdueAsOf(asOfDate time.Time) ([]models.
 // FindOverdueInvoicesForInterest finds overdue invoices that need interest calculation
 func (r *SalesRepository) FindOverdueInvoicesForInterest() ([]models.Sale, error) {
 	var sales []models.Sale
-	err := r.db.Where("status = ? AND outstanding_amount > 0 AND due_date < ?", 
+	err := r.db.Where("status = ? AND outstanding_amount > 0 AND due_date < ?",
 		models.SaleStatusOverdue, time.Now().Format("2006-01-02")).
 		Preload("Customer").
 		Preload("SaleItems").
@@ -626,7 +637,7 @@ func (r *SalesRepository) FindOverdueInvoicesForInterest() ([]models.Sale, error
 // FindOverdueInvoicesWithDays finds all overdue invoices with calculated overdue days
 func (r *SalesRepository) FindOverdueInvoicesWithDays() ([]models.Sale, error) {
 	var sales []models.Sale
-	err := r.db.Where("status = ? AND outstanding_amount > 0", 
+	err := r.db.Where("status = ? AND outstanding_amount > 0",
 		models.SaleStatusOverdue).
 		Preload("Customer").
 		Preload("SaleItems").

@@ -42,5 +42,7 @@ spec:
           envFrom:
             - configMapRef:
                 name: cm-dbm-accounting
+            - secretRef:
+                name: sec-dbm-accounting-app
          
     

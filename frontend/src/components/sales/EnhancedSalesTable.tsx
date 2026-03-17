@@ -83,9 +83,21 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
   const { t } = useTranslation();
   const displayTitle = title || t('sales.title');
 
+  const getWorkflowStatus = (status: string) => {
+    switch (status) {
+      case 'PENDING':
+      case 'CONFIRMED':
+        return 'DRAFT';
+      case 'OVERDUE':
+        return 'INVOICED';
+      default:
+        return status;
+    }
+  };
+
   // Get status label with translation
   const getStatusLabel = (status: string) => {
-    const statusKey = status.toLowerCase();
+    const statusKey = getWorkflowStatus(status).toLowerCase();
     const translationKey = `sales.statuses.${statusKey}`;
     return t(translationKey);
   };
@@ -111,11 +123,9 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
 
   // Get status color based on status
   const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
+    switch (getWorkflowStatus(status)?.toLowerCase()) {
       case 'paid': return 'green';
       case 'invoiced': return 'blue';
-      case 'confirmed': return 'purple';
-      case 'overdue': return 'red';
       case 'draft': return 'gray';
       case 'cancelled': return 'red';
       default: return 'gray';
@@ -157,7 +167,10 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                 </Tr>
               </Thead>
               <Tbody>
-                {sales.map((sale, index) => (
+                {sales.map((sale, index) => {
+                  const workflowStatus = getWorkflowStatus(sale.status);
+
+                  return (
                   <Tr
                     key={sale.id}
                     _hover={{ bg: hoverBg }}
@@ -252,7 +265,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                           )}
 
 
-                          {(sale.status === 'DRAFT' || sale.status === 'INVOICED' || sale.status === 'OVERDUE') && canEdit && onEdit && (
+                          {(workflowStatus === 'DRAFT' || workflowStatus === 'INVOICED') && canEdit && onEdit && (
                             <MenuItem
                               icon={<FiEdit />}
                               onClick={() => {
@@ -263,7 +276,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                               {t('common.edit')}
                             </MenuItem>
                           )}
-                          {sale.status === 'DRAFT' && canEdit && onConfirm && (
+                          {workflowStatus === 'DRAFT' && canEdit && onConfirm && (
                             <MenuItem
                               icon={<FiCheck />}
                               onClick={() => {
@@ -274,17 +287,17 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                               {t('sales.invoice')}
                             </MenuItem>
                           )}
-                          {sale.status === 'INVOICED' && sale.outstanding_amount > 0 && canEdit && onPayment && (
+                          {workflowStatus === 'INVOICED' && sale.outstanding_amount > 0 && canEdit && onPayment && (
                             <MenuItem icon={<FiDollarSign />} onClick={() => onPayment(sale)}>
                               {t('purchases.payment.recordPayment')}
                             </MenuItem>
                           )}
-                          {canEdit && sale.status !== 'PAID' && sale.status !== 'CANCELLED' && onCancel && (
+                          {canEdit && workflowStatus !== 'PAID' && workflowStatus !== 'CANCELLED' && onCancel && (
                             <MenuItem icon={<FiX />} onClick={() => onCancel(sale)}>
                               {t('common.cancel')}
                             </MenuItem>
                           )}
-                          {onDownloadInvoice && (
+                          {onDownloadInvoice && workflowStatus !== 'DRAFT' && workflowStatus !== 'CANCELLED' && (
                             <MenuItem
                               icon={<FiDownload />}
                               onClick={() => {
@@ -296,7 +309,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                             </MenuItem>
                           )}
                           {/* Create Receipt visible when fully paid */}
-                          {(onCreateReceipt && (sale.status === 'PAID' || sale.outstanding_amount === 0)) && (
+                          {(onCreateReceipt && (workflowStatus === 'PAID' || sale.outstanding_amount === 0)) && (
                             <MenuItem
                               icon={<FiDownload />}
                               onClick={() => {
@@ -336,7 +349,8 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                       </Menu>
                     </Td>
                   </Tr>
-                ))}
+                  );
+                })}
               </Tbody>
             </Table>
           </Box>

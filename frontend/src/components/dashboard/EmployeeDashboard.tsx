@@ -19,7 +19,8 @@ import {
   ListIcon,
   Badge,
   Flex,
-  Spinner
+  Spinner,
+  useColorModeValue
 } from '@chakra-ui/react';
 import {
   FiUser,
@@ -105,6 +106,17 @@ export const EmployeeDashboard = () => {
   const [employeeData, setEmployeeData] = useState<EmployeeDashboardData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const textColor = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const cardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const statCardBg = useColorModeValue('white', 'whiteAlpha.100');
+  const statCardShadow = useColorModeValue('sm', 'dark-lg');
+  const listItemBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const unreadListItemBg = useColorModeValue('blue.50', 'blue.900');
+  const errorBg = useColorModeValue('red.50', 'red.900');
+  const errorTextColor = useColorModeValue('red.700', 'red.200');
 
   useEffect(() => {
     const fetchEmployeeDashboard = async () => {
@@ -125,9 +137,17 @@ export const EmployeeDashboard = () => {
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value || 0);
 
+  const getUnreadNotificationLabel = (count: number) => {
+    if (count === 1) {
+      return t('notifications.unread', { count });
+    }
+
+    return t('notifications.unread_plural', { count });
+  };
+
   return (
     <Box>
-      <Heading as="h2" size="xl" mb={6} color="gray.800">
+      <Heading as="h2" size="xl" mb={6} color={headingColor}>
         {t('navigation.dashboard')} - {t('users.employee')}
       </Heading>
 
@@ -138,46 +158,48 @@ export const EmployeeDashboard = () => {
       ) : (
         <>
           {error && (
-            <Box bg="red.50" p={4} borderRadius="lg" borderLeft="4px solid" borderColor="red.500" mb={4}>
-              <Text color="red.700">{error}</Text>
+            <Box bg={errorBg} p={4} borderRadius="lg" borderLeft="4px solid" borderColor="red.500" mb={4}>
+              <Text color={errorTextColor}>{error}</Text>
             </Box>
           )}
 
           {/* Quick Stats Summary */}
           {employeeData?.quick_stats && (
             <Flex gap={4} flexWrap="wrap" mt={2}>
-              <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="180px">
+              <Box bg={statCardBg} border="1px" borderColor={cardBorderColor} p={4} borderRadius="lg" boxShadow={statCardShadow} flex="1" minW="180px">
                 <Heading as="h3" size="sm" mb={2} color="orange.600">{t('dashboard.pendingApprovals')}</Heading>
                 <Text fontSize="2xl" fontWeight="bold" color="orange.600">
                   {employeeData.quick_stats.pending_approvals_count}
                 </Text>
               </Box>
-              <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="180px">
+              <Box bg={statCardBg} border="1px" borderColor={cardBorderColor} p={4} borderRadius="lg" boxShadow={statCardShadow} flex="1" minW="180px">
                 <Heading as="h3" size="sm" mb={2} color="blue.600">{t('purchases.purchaseOrder')}</Heading>
                 <Text fontSize="2xl" fontWeight="bold" color="blue.600">
                   {employeeData.quick_stats.submitted_requests_count}
                 </Text>
                 {employeeData.quick_stats.pending_requests_count > 0 && (
-                  <Text fontSize="sm" color="gray.500">
-                    {employeeData.quick_stats.pending_requests_count} pending
+                  <Text fontSize="sm" color={mutedTextColor}>
+                    {employeeData.quick_stats.pending_requests_count} {t('dashboard.pendingStatus')}
                   </Text>
                 )}
               </Box>
-              <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="180px">
+              <Box bg={statCardBg} border="1px" borderColor={cardBorderColor} p={4} borderRadius="lg" boxShadow={statCardShadow} flex="1" minW="180px">
                 <Heading as="h3" size="sm" mb={2} color="red.600">
-                  <Icon as={FiBell} mr={1} />{t('common.labels.notification') || 'Notifikasi'}
+                  <Icon as={FiBell} mr={1} />{t('notifications.title')}
                 </Heading>
                 <Text fontSize="2xl" fontWeight="bold" color="red.600">
                   {employeeData.quick_stats.unread_notifications_count}
                 </Text>
-                <Text fontSize="sm" color="gray.500">belum dibaca</Text>
+                <Text fontSize="sm" color={mutedTextColor}>
+                  {getUnreadNotificationLabel(employeeData.quick_stats.unread_notifications_count)}
+                </Text>
               </Box>
             </Flex>
           )}
 
           {/* Pending Approvals */}
           {employeeData?.pending_approvals && employeeData.pending_approvals.length > 0 && (
-            <Card mt={6}>
+            <Card mt={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
               <CardHeader>
                 <Heading size="md" display="flex" alignItems="center">
                   <Icon as={FiBell} mr={2} color="orange.500" />
@@ -187,15 +209,15 @@ export const EmployeeDashboard = () => {
               <CardBody>
                 <List spacing={3}>
                   {employeeData.pending_approvals.slice(0, 5).map((approval, index) => (
-                    <ListItem key={`approval-${approval.id}-${index}`} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
+                    <ListItem key={`approval-${approval.id}-${index}`} display="flex" alignItems="center" p={3} bg={listItemBg} borderRadius="md">
                       <ListIcon as={FiBell} color={approval.priority === 'HIGH' ? 'red.500' : 'orange.500'} />
                       <Box flex="1">
                         <Text fontWeight="medium">{approval.request_title || approval.request_code}</Text>
-                        <Text fontSize="sm" color="gray.600">
+                        <Text fontSize="sm" color={textColor}>
                           {approval.request_type} • {approval.step_name} • {formatCurrency(approval.total_amount)}
                         </Text>
-                        <Text fontSize="xs" color="gray.500">
-                          {t('common.labels.requestedBy') || 'Dari'}: {approval.requester_name} • {new Date(approval.created_at).toLocaleString('id-ID')}
+                        <Text fontSize="xs" color={mutedTextColor}>
+                          {t('common.labels.requestedBy')}: {approval.requester_name} • {new Date(approval.created_at).toLocaleString('id-ID')}
                         </Text>
                       </Box>
                       <Badge
@@ -213,7 +235,7 @@ export const EmployeeDashboard = () => {
 
           {/* Submitted Requests */}
           {employeeData?.submitted_requests && employeeData.submitted_requests.length > 0 && (
-            <Card mt={6}>
+            <Card mt={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
               <CardHeader>
                 <Heading size="md" display="flex" alignItems="center">
                   <Icon as={FiFileText} mr={2} color="blue.500" />
@@ -223,14 +245,14 @@ export const EmployeeDashboard = () => {
               <CardBody>
                 <List spacing={3}>
                   {employeeData.submitted_requests.slice(0, 5).map((req, index) => (
-                    <ListItem key={`req-${req.id}-${index}`} display="flex" alignItems="center" p={3} bg="gray.50" borderRadius="md">
+                    <ListItem key={`req-${req.id}-${index}`} display="flex" alignItems="center" p={3} bg={listItemBg} borderRadius="md">
                       <ListIcon as={FiFileText} color="blue.500" />
                       <Box flex="1">
                         <Text fontWeight="medium">{req.request_title || req.request_code}</Text>
-                        <Text fontSize="sm" color="gray.600">
+                        <Text fontSize="sm" color={textColor}>
                           {req.current_step_name} • {formatCurrency(req.total_amount)}
                         </Text>
-                        <Text fontSize="xs" color="gray.500">
+                        <Text fontSize="xs" color={mutedTextColor}>
                           {new Date(req.created_at).toLocaleString('id-ID')}
                         </Text>
                       </Box>
@@ -249,24 +271,24 @@ export const EmployeeDashboard = () => {
 
           {/* Recent Notifications */}
           {employeeData?.recent_notifications && employeeData.recent_notifications.length > 0 && (
-            <Card mt={6}>
+            <Card mt={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
               <CardHeader>
                 <Heading size="md" display="flex" alignItems="center">
                   <Icon as={FiActivity} mr={2} color="purple.500" />
-                  {t('common.labels.notification') || 'Notifikasi Terbaru'}
+                  {t('dashboard.recentNotifications')}
                 </Heading>
               </CardHeader>
               <CardBody>
                 <List spacing={3}>
                   {employeeData.recent_notifications.slice(0, 5).map((notif, index) => (
-                    <ListItem key={`notif-${notif.id}-${index}`} display="flex" alignItems="center" p={3} bg={notif.is_read ? 'gray.50' : 'blue.50'} borderRadius="md">
+                    <ListItem key={`notif-${notif.id}-${index}`} display="flex" alignItems="center" p={3} bg={notif.is_read ? listItemBg : unreadListItemBg} borderRadius="md">
                       <ListIcon as={FiBell} color={notif.is_read ? 'gray.400' : 'blue.500'} />
                       <Box flex="1">
                         <Text fontWeight={notif.is_read ? 'normal' : 'bold'}>{notif.title}</Text>
-                        <Text fontSize="sm" color="gray.600">
+                        <Text fontSize="sm" color={textColor}>
                           {notif.message}
                         </Text>
-                        <Text fontSize="xs" color="gray.500">
+                        <Text fontSize="xs" color={mutedTextColor}>
                           {new Date(notif.created_at).toLocaleString('id-ID')}
                         </Text>
                       </Box>
@@ -284,7 +306,7 @@ export const EmployeeDashboard = () => {
           )}
 
           {/* Akses Cepat - Employee Features */}
-          <Card mt={6}>
+            <Card mt={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
             <CardHeader>
               <Heading size="md" display="flex" alignItems="center">
                 <Icon as={FiPlus} mr={2} color="blue.500" />

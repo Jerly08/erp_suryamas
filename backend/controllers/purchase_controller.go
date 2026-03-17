@@ -351,6 +351,14 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
 		return
 	}
+	if err := services.CheckClosedPeriod(pc.db, purchase.Date); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Periode transaksi sudah ditutup",
+			"details": err.Error(),
+			"code":    "PERIOD_CLOSED",
+		})
+		return
+	}
 
 	if purchase.Status == models.PurchaseStatusDraft {
 		roleNorm := strings.ToLower(strings.TrimSpace(userRole))
@@ -962,12 +970,13 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Amount     float64 `json:"amount" binding:"required,gt=0"`
-		Date       string  `json:"date" binding:"required"`
-		Method     string  `json:"method" binding:"required"`
-		CashBankID uint    `json:"cash_bank_id" binding:"required"`
-		Reference  string  `json:"reference"`
-		Notes      string  `json:"notes"`
+		Amount       float64 `json:"amount" binding:"required,gt=0"`
+		ExchangeRate float64 `json:"exchange_rate"`
+		Date         string  `json:"date" binding:"required"`
+		Method       string  `json:"method" binding:"required"`
+		CashBankID   uint    `json:"cash_bank_id" binding:"required"`
+		Reference    string  `json:"reference"`
+		Notes        string  `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -976,12 +985,13 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 			"error":   "Invalid request data",
 			"details": err.Error(),
 			"expected_fields": map[string]string{
-				"amount":       "number (required, min=0)",
-				"date":         "datetime string (required, ISO format)",
-				"method":       "string (required)",
-				"cash_bank_id": "number (required)",
-				"reference":    "string (optional)",
-				"notes":        "string (optional)",
+				"amount":        "number (required, min=0)",
+				"exchange_rate": "number (optional, required for USD cash/bank)",
+				"date":          "datetime string (required, ISO format)",
+				"method":        "string (required)",
+				"cash_bank_id":  "number (required)",
+				"reference":     "string (optional)",
+				"notes":         "string (optional)",
 			},
 		})
 		return
@@ -1068,17 +1078,18 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 
 	// Create payment request for Payment Management service
 	paymentRequest := services.PaymentCreateRequest{
-		ContactID:  purchase.VendorID,
-		CashBankID: request.CashBankID,
-		Date:       paymentDate, // Use the parsed paymentDate
-		Amount:     request.Amount,
-		Method:     request.Method,
-		Reference:  request.Reference,
-		Notes:      fmt.Sprintf("Payment for Purchase %s - %s", purchase.Code, request.Notes),
-		Allocations: []services.InvoiceAllocation{
+		ContactID:    purchase.VendorID,
+		CashBankID:   request.CashBankID,
+		Date:         paymentDate, // Use the parsed paymentDate
+		Amount:       request.Amount,
+		ExchangeRate: request.ExchangeRate,
+		Method:       request.Method,
+		Reference:    request.Reference,
+		Notes:        fmt.Sprintf("Payment for Purchase %s - %s", purchase.Code, request.Notes),
+		BillAllocations: []services.BillAllocation{
 			{
-				InvoiceID: uint(purchaseID),
-				Amount:    request.Amount,
+				BillID: uint(purchaseID),
+				Amount: request.Amount,
 			},
 		},
 	}

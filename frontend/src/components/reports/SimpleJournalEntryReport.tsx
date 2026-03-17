@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Box,
   VStack,
@@ -26,10 +26,8 @@ import {
   Alert,
   AlertIcon,
   Badge,
-  Flex,
   useToast,
   useColorModeValue,
-  Divider,
   SimpleGrid,
   Stat,
   StatLabel,
@@ -40,13 +38,11 @@ import {
 } from '@chakra-ui/react';
 import {
   FiBook,
-  FiCalendar,
   FiSearch,
   FiRefreshCw,
   FiDownload,
   FiFileText,
   FiFilter,
-  FiEye,
 } from 'react-icons/fi';
 import { ssotJournalService, SSOTJournalEntry } from '@/services/ssotJournalService';
 import { formatCurrency } from '@/utils/formatters';
@@ -62,8 +58,6 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
   const [loading, setLoading] = useState(false);
   const [entries, setEntries] = useState<SSOTJournalEntry[]>([]);
   const [filteredEntries, setFilteredEntries] = useState<SSOTJournalEntry[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  
   // Filters
   const [startDate, setStartDate] = useState(() => {
     const today = new Date();
@@ -89,7 +83,7 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
   const mutedColor = useColorModeValue('gray.600', 'gray.400');
 
   // Load journal entries
-  const loadJournalEntries = async () => {
+  const loadJournalEntries = useCallback(async () => {
     setLoading(true);
     try {
       const response = await ssotJournalService.getJournalEntries({
@@ -102,7 +96,6 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
       });
 
       setEntries(response.data || []);
-      setTotalCount(response.total || 0);
       
       const successToastId = 'simple-journal-load-success';
       if (!toast.isActive(successToastId)) {
@@ -125,11 +118,10 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
         isClosable: true,
       });
       setEntries([]);
-      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  };
+  }, [startDate, endDate, statusFilter, sourceTypeFilter, toast]);
 
   // Filter entries based on search term
   useEffect(() => {
@@ -152,7 +144,7 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
     if (hasLoadedRef.current) return;
     hasLoadedRef.current = true;
     loadJournalEntries();
-  }, []);
+  }, [loadJournalEntries]);
 
   // Get status color
   const getStatusColor = (status: string) => {
@@ -177,6 +169,14 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
         return 'orange';
       case 'PAYMENT':
         return 'purple';
+      case 'TRANSFER':
+        return 'teal';
+      case 'CASH_BANK':
+        return 'cyan';
+      case 'OPENING':
+        return 'green';
+      case 'ADJUSTMENT':
+        return 'pink';
       case 'MANUAL':
         return 'gray';
       default:
@@ -348,6 +348,10 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
                   <option value="SALE">Sale</option>
                   <option value="PURCHASE">Purchase</option>
                   <option value="PAYMENT">Payment</option>
+                  <option value="TRANSFER">Transfer</option>
+                  <option value="CASH_BANK">Cash/Bank</option>
+                  <option value="OPENING">Opening</option>
+                  <option value="ADJUSTMENT">Adjustment</option>
                 </Select>
               </FormControl>
             </SimpleGrid>

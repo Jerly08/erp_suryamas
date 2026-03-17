@@ -3,6 +3,7 @@ package repositories
 import (
 	"app-sistem-akuntansi/models"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -262,6 +263,9 @@ func (r *PurchaseRepository) AreAllItemsFullyReceived(purchaseID uint) (bool, er
 		return false, err
 	}
 	for _, it := range items {
+		if strings.EqualFold(strings.TrimSpace(it.ItemType), models.PurchaseItemTypePrepaid) {
+			continue
+		}
 		received, err := r.SumReceivedQtyByPurchaseItem(it.ID)
 		if err != nil {
 			return false, err

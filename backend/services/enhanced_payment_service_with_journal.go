@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type ExpensePaymentRequest struct {
 	CashBankID        uint      `json:"cash_bank_id" binding:"required"`
 	Date              time.Time `json:"date" binding:"required"`
 	Amount            float64   `json:"amount" binding:"required,min=0.01"`
+	ExchangeRate      float64   `json:"exchange_rate"`
 	Method            string    `json:"method" binding:"required"`
 	Reference         string    `json:"reference"`
 	Notes             string    `json:"notes"`
@@ -83,13 +85,14 @@ func NewEnhancedPaymentServiceWithJournal(
 
 // PaymentWithJournalRequest extends payment request with journal integration options
 type PaymentWithJournalRequest struct {
-	ContactID  uint      `json:"contact_id" binding:"required"`
-	CashBankID uint      `json:"cash_bank_id" binding:"required"`
-	Date       time.Time `json:"date" binding:"required"`
-	Amount     float64   `json:"amount" binding:"required,min=0.01"`
-	Method     string    `json:"method" binding:"required"`
-	Reference  string    `json:"reference"`
-	Notes      string    `json:"notes"`
+	ContactID    uint      `json:"contact_id" binding:"required"`
+	CashBankID   uint      `json:"cash_bank_id" binding:"required"`
+	Date         time.Time `json:"date" binding:"required"`
+	Amount       float64   `json:"amount" binding:"required,min=0.01"`
+	ExchangeRate float64   `json:"exchange_rate"`
+	Method       string    `json:"method" binding:"required"`
+	Reference    string    `json:"reference"`
+	Notes        string    `json:"notes"`
 
 	// Journal integration options
 	AutoCreateJournal bool `json:"auto_create_journal" default:"true"`
@@ -136,6 +139,17 @@ type PaymentProcessingSummary struct {
 	AccountBalancesUpdated bool            `json:"account_balances_updated"`
 	AllocationsCreated     int             `json:"allocations_created"`
 	TransactionID          string          `json:"transaction_id"`
+}
+
+type expensePaymentCalculation struct {
+	NormalizedCurrency  string
+	AppliedExchangeRate float64
+	NetCashPaymentIDR   float64
+	NativeCashOut       float64
+	BankBookOutIDR      float64
+	ForexDiff           float64
+	ForexGainLossAmount float64
+	ForexGainLossType   string
 }
 
 // CreateExpensePayment creates a direct expense payment (Expense/Liability from COA) with SSOT journal integration.
@@ -195,6 +209,9 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		if err := tx.First(&expenseAccount, req.ExpenseAccountID).Error; err != nil {
 			return fmt.Errorf("expense account not found: %w", err)
 		}
+		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
+			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		}
 
 		// Load contact if provided (optional for bulk payments like salaries)
 		contactName := "Umum"
@@ -206,20 +223,33 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			contactName = contact.Name
 		}
 
+		calculation, err := eps.calculateExpensePaymentAmounts(cashBank, req.Amount, req.PPHAmount, req.ExchangeRate)
+		if err != nil {
+			return err
+		}
+
 		// Build payment model (cash out, treated similar to PAY prefix)
 		payment = &models.Payment{
-			ContactID:   req.ContactID,
-			UserID:      req.UserID,
-			Date:        req.Date,
-			Amount:      req.Amount,
-			Method:      req.Method,
-			Reference:   req.Reference,
-			Status:      models.PaymentStatusCompleted,
-			PaymentType: models.PaymentTypeExpense,
-			Notes:       fmt.Sprintf("%s [Contact: %s]", req.Notes, contactName),
-			PPHType:     req.PPHType,
-			PPHRate:     req.PPHRate,
-			PPHAmount:   req.PPHAmount,
+			ContactID:           req.ContactID,
+			UserID:              req.UserID,
+			Date:                req.Date,
+			Amount:              req.Amount,
+			NativeAmount:        calculation.NativeCashOut,
+			Currency:            calculation.NormalizedCurrency,
+			ExchangeRate:        calculation.AppliedExchangeRate,
+			BookAmountIDR:       calculation.BankBookOutIDR,
+			ForexGainLossAmount: calculation.ForexGainLossAmount,
+			ForexGainLossType:   calculation.ForexGainLossType,
+			Method:              req.Method,
+			ExpenseAccountID:    &req.ExpenseAccountID,
+			CashBankID:          &req.CashBankID,
+			Reference:           req.Reference,
+			Status:              models.PaymentStatusCompleted,
+			PaymentType:         models.PaymentTypeExpense,
+			Notes:               fmt.Sprintf("%s [Contact: %s]", req.Notes, contactName),
+			PPHType:             req.PPHType,
+			PPHRate:             req.PPHRate,
+			PPHAmount:           req.PPHAmount,
 		}
 
 		// Generate payment code using vendor-style prefix (PAY-YYYY/MM-XXXX)
@@ -237,6 +267,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		// Prepare journal entry
 		var journalLines []JournalLineRequest
 		grossAmount := decimal.NewFromFloat(req.Amount)
+		bankCreditAmount := decimal.NewFromFloat(calculation.BankBookOutIDR)
 
 		if req.PPHAmount > 0 && req.PPHType != "" {
 			// === 3-LINE JOURNAL WITH PPh WITHHOLDING ===
@@ -262,7 +293,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
-					CreditAmount: netAmount,
+					CreditAmount: bankCreditAmount,
 					Description:  fmt.Sprintf("Pembayaran neto via %s - %s", cashBank.Name, payment.Code),
 				},
 				{
@@ -276,8 +307,6 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			log.Printf("📋 Expense with PPh: Gross=%.2f, PPh(%s %.1f%%)=%.2f, Net=%.2f",
 				req.Amount, req.PPHType, req.PPHRate, req.PPHAmount, netAmount.InexactFloat64())
 
-			// IMPORTANT: CashBank movement should use NET amount (what actually leaves the bank)
-			req.Amount = netAmount.InexactFloat64()
 		} else {
 			// === STANDARD 2-LINE JOURNAL (no tax) ===
 			// Debit: Expense, Credit: Cash/Bank
@@ -291,10 +320,15 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
-					CreditAmount: grossAmount,
+					CreditAmount: bankCreditAmount,
 					Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
 				},
 			}
+		}
+		if fxLine, err := eps.buildRealizedFXJournalLine(tx, calculation.ForexDiff, true, payment.Code); err != nil {
+			return err
+		} else if fxLine != nil {
+			journalLines = append(journalLines, *fxLine)
 		}
 
 		journalRequest := &JournalEntryRequest{
@@ -322,7 +356,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		}
 
 		// Apply cash/bank movement (treat as vendor/outgoing)
-		if err := eps.applyCashBankMovement(tx, cashBank, "VENDOR", req.Amount, payment, req.Date); err != nil {
+		if err := eps.applyCashBankMovement(tx, cashBank, "VENDOR", calculation.NetCashPaymentIDR, payment, req.Date); err != nil {
 			return fmt.Errorf("failed to update cash/bank balances: %w", err)
 		}
 
@@ -353,6 +387,9 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 		if err := tx.First(&expenseAccount, req.ExpenseAccountID).Error; err != nil {
 			return fmt.Errorf("expense account not found: %w", err)
 		}
+		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
+			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		}
 
 		// Load contact name if provided
 		contactName := "Umum"
@@ -364,19 +401,32 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			contactName = contact.Name
 		}
 
+		calculation, err := eps.calculateExpensePaymentAmounts(cashBank, req.Amount, req.PPHAmount, req.ExchangeRate)
+		if err != nil {
+			return err
+		}
+
 		payment = &models.Payment{
-			ContactID:   req.ContactID,
-			UserID:      req.UserID,
-			Date:        req.Date,
-			Amount:      req.Amount,
-			Method:      req.Method,
-			Reference:   fmt.Sprintf("__EXP_ACC:%d,CB:%d__%s", req.ExpenseAccountID, req.CashBankID, req.Reference),
-			Status:      models.PaymentStatusDraft,
-			PaymentType: models.PaymentTypeExpense,
-			Notes:       fmt.Sprintf("%s [Contact: %s] [Beban: %s] [CashBank: %s]", req.Notes, contactName, expenseAccount.Name, cashBank.Name),
-			PPHType:     req.PPHType,
-			PPHRate:     req.PPHRate,
-			PPHAmount:   req.PPHAmount,
+			ContactID:           req.ContactID,
+			UserID:              req.UserID,
+			Date:                req.Date,
+			Amount:              req.Amount,
+			NativeAmount:        calculation.NativeCashOut,
+			Currency:            calculation.NormalizedCurrency,
+			ExchangeRate:        calculation.AppliedExchangeRate,
+			BookAmountIDR:       calculation.BankBookOutIDR,
+			ForexGainLossAmount: calculation.ForexGainLossAmount,
+			ForexGainLossType:   calculation.ForexGainLossType,
+			Method:              req.Method,
+			ExpenseAccountID:    &req.ExpenseAccountID,
+			CashBankID:          &req.CashBankID,
+			Reference:           req.Reference,
+			Status:              models.PaymentStatusDraft,
+			PaymentType:         models.PaymentTypeExpense,
+			Notes:               fmt.Sprintf("%s [Contact: %s] [Beban: %s] [CashBank: %s]", req.Notes, contactName, expenseAccount.Name, cashBank.Name),
+			PPHType:             req.PPHType,
+			PPHRate:             req.PPHRate,
+			PPHAmount:           req.PPHAmount,
 		}
 
 		code, err := eps.generatePaymentCode(tx, req.Method, "VENDOR")
@@ -415,22 +465,29 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		return nil, fmt.Errorf("only expense payments can be approved via this endpoint")
 	}
 
-	// Parse expense account and cash bank IDs from Notes is not reliable.
-	// Instead we need to store them. For now we query by looking at the journal
-	// request fields stored in Notes — but the cleanest solution is to add columns.
-	// Since we don't want schema changes right now, we look up via SSOT journal preview:
-	// we re-build the request from persisted data using a helper.
-	//
-	// APPROACH: We store expense_account_id and cash_bank_id in a dedicated approach.
-	// The payment.Notes field encodes "[Beban: <name>] [CashBank: <name>]" which isn't
-	// query-friendly. Instead we save expense_account_id/cash_bank_id in payment.Reference
-	// as "EXP_ACC:<id>,CB:<id>" when creating draft. Let's parse it.
-	var expenseAccountID, cashBankID uint
-	refStr := payment.Reference
-	// Try to parse embedded IDs (set by createExpensePaymentDraft below)
-	n, _ := fmt.Sscanf(refStr, "__EXP_ACC:%d,CB:%d__", &expenseAccountID, &cashBankID)
-	if n != 2 || expenseAccountID == 0 || cashBankID == 0 {
-		return nil, fmt.Errorf("cannot find expense account or cash bank info in draft payment (ref: %s); please delete and re-submit", payment.Reference)
+	if err := CheckClosedPeriod(eps.db, payment.Date); err != nil {
+		return nil, err
+	}
+
+	expenseAccountID := uint(0)
+	cashBankID := uint(0)
+	if payment.ExpenseAccountID != nil {
+		expenseAccountID = *payment.ExpenseAccountID
+	}
+	if payment.CashBankID != nil {
+		cashBankID = *payment.CashBankID
+	}
+	if expenseAccountID == 0 || cashBankID == 0 {
+		legacyExpenseAccountID, legacyCashBankID := models.ExtractExpenseDraftRoutingFromReference(payment.Reference)
+		if expenseAccountID == 0 {
+			expenseAccountID = legacyExpenseAccountID
+		}
+		if cashBankID == 0 {
+			cashBankID = legacyCashBankID
+		}
+	}
+	if expenseAccountID == 0 || cashBankID == 0 {
+		return nil, fmt.Errorf("cannot find expense account or cash bank info in draft payment %s; please update and re-submit", payment.Code)
 	}
 
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
@@ -446,13 +503,30 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		if err := tx.First(&expenseAccount, expenseAccountID).Error; err != nil {
 			return fmt.Errorf("expense account not found: %w", err)
 		}
+		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
+			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		}
+
+		calculation, err := eps.calculateExpensePaymentAmounts(cashBank, payment.Amount, payment.PPHAmount, payment.ExchangeRate)
+		if err != nil {
+			return err
+		}
+		payment.Currency = calculation.NormalizedCurrency
+		payment.ExchangeRate = calculation.AppliedExchangeRate
+		payment.NativeAmount = calculation.NativeCashOut
+		payment.BookAmountIDR = calculation.BankBookOutIDR
+		payment.ForexGainLossAmount = calculation.ForexGainLossAmount
+		payment.ForexGainLossType = calculation.ForexGainLossType
+		payment.Reference = models.StripInternalPaymentReference(payment.Reference)
+		payment.ExpenseAccountID = &expenseAccountID
+		payment.CashBankID = &cashBankID
 
 		grossAmount := decimal.NewFromFloat(payment.Amount)
+		bankCreditAmount := decimal.NewFromFloat(calculation.BankBookOutIDR)
 		var journalLines []JournalLineRequest
 
 		if payment.PPHAmount > 0 && payment.PPHType != "" {
 			pphAmount := decimal.NewFromFloat(payment.PPHAmount)
-			netAmount := grossAmount.Sub(pphAmount)
 
 			pphAccountID, err := eps.resolvePPHAccountID(tx, payment.PPHType)
 			if err != nil {
@@ -469,7 +543,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
-					CreditAmount: netAmount,
+					CreditAmount: bankCreditAmount,
 					Description:  fmt.Sprintf("Pembayaran neto via %s - %s", cashBank.Name, payment.Code),
 				},
 				{
@@ -479,9 +553,6 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 					Description:  fmt.Sprintf("Hutang %s dipotong - %s (%.1f%%)", payment.PPHType, payment.Code, payment.PPHRate),
 				},
 			}
-
-			// CashBank moves net amount
-			payment.Amount = netAmount.InexactFloat64()
 		} else {
 			journalLines = []JournalLineRequest{
 				{
@@ -493,10 +564,15 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
-					CreditAmount: grossAmount,
+					CreditAmount: bankCreditAmount,
 					Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
 				},
 			}
+		}
+		if fxLine, err := eps.buildRealizedFXJournalLine(tx, calculation.ForexDiff, true, payment.Code); err != nil {
+			return err
+		} else if fxLine != nil {
+			journalLines = append(journalLines, *fxLine)
 		}
 
 		journalRequest := &JournalEntryRequest{
@@ -524,7 +600,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 			return fmt.Errorf("failed to update payment after approval: %w", err)
 		}
 
-		if err := eps.applyCashBankMovement(tx, cashBank, "VENDOR", payment.Amount, &payment, payment.Date); err != nil {
+		if err := eps.applyCashBankMovement(tx, cashBank, "VENDOR", calculation.NetCashPaymentIDR, &payment, payment.Date); err != nil {
 			return fmt.Errorf("failed to update cash/bank balances: %w", err)
 		}
 
@@ -537,6 +613,63 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		return nil, err
 	}
 	return &payment, nil
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) calculateExpensePaymentAmounts(cashBank *models.CashBank, grossAmount, pphAmount, exchangeRate float64) (*expensePaymentCalculation, error) {
+	if cashBank == nil {
+		return nil, fmt.Errorf("cash/bank account is required")
+	}
+	if grossAmount <= 0 {
+		return nil, fmt.Errorf("payment amount must be positive")
+	}
+	if pphAmount < 0 {
+		return nil, fmt.Errorf("pph amount cannot be negative")
+	}
+	if pphAmount >= grossAmount {
+		return nil, fmt.Errorf("pph amount must be smaller than gross expense amount")
+	}
+
+	netCashPaymentIDR := grossAmount - pphAmount
+	normalizedCurrency := normalizeCashBankCurrency(cashBank.Currency)
+	if normalizedCurrency == "" {
+		normalizedCurrency = "IDR"
+	}
+
+	calculation := &expensePaymentCalculation{
+		NormalizedCurrency:  normalizedCurrency,
+		AppliedExchangeRate: 1,
+		NetCashPaymentIDR:   netCashPaymentIDR,
+		NativeCashOut:       netCashPaymentIDR,
+		BankBookOutIDR:      netCashPaymentIDR,
+	}
+
+	switch normalizedCurrency {
+	case "IDR":
+		return calculation, nil
+	case "USD":
+		if exchangeRate <= 0 {
+			return nil, fmt.Errorf("exchange rate is required when paying expense from USD cash/bank account")
+		}
+		nativeCashOut := netCashPaymentIDR / exchangeRate
+		bookAmountIDR, _, err := calculatePaymentReductionBookAmount(cashBank, nativeCashOut)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate USD carrying book amount: %w", err)
+		}
+		calculation.AppliedExchangeRate = exchangeRate
+		calculation.NativeCashOut = nativeCashOut
+		calculation.BankBookOutIDR = bookAmountIDR
+		calculation.ForexDiff = bookAmountIDR - netCashPaymentIDR
+		if calculation.ForexDiff > 0.005 {
+			calculation.ForexGainLossAmount = calculation.ForexDiff
+			calculation.ForexGainLossType = "LOSS"
+		} else if calculation.ForexDiff < -0.005 {
+			calculation.ForexGainLossAmount = -calculation.ForexDiff
+			calculation.ForexGainLossType = "GAIN"
+		}
+		return calculation, nil
+	default:
+		return nil, fmt.Errorf("expense payment currently only supports IDR and USD cash/bank accounts")
+	}
 }
 
 // ApproveStandardPayment approves a DRAFT receivable/payable payment: creates the SSOT journal and updates status to COMPLETED.
@@ -554,11 +687,19 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		return nil, fmt.Errorf("only receivable/payable payments can be approved via this endpoint")
 	}
 
-	var cashBankID uint
-	refStr := payment.Reference
-	n, _ := fmt.Sscanf(refStr, "__CB:%d__", &cashBankID)
-	if n != 1 || cashBankID == 0 {
-		return nil, fmt.Errorf("cannot find cash bank info in draft payment (ref: %s); please delete and re-submit", payment.Reference)
+	if err := CheckClosedPeriod(eps.db, payment.Date); err != nil {
+		return nil, err
+	}
+
+	cashBankID := uint(0)
+	if payment.CashBankID != nil {
+		cashBankID = *payment.CashBankID
+	}
+	if cashBankID == 0 {
+		cashBankID = models.ExtractCashBankDraftRoutingFromReference(payment.Reference)
+	}
+	if cashBankID == 0 {
+		return nil, fmt.Errorf("cannot find cash bank info in draft payment %s; please update and re-submit", payment.Code)
 	}
 
 	var journalResult *PaymentJournalResult
@@ -577,6 +718,30 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 
 		var journalLines []JournalLineRequest
 		var journalDescription string
+		if strings.ToUpper(payment.Contact.Type) == "VENDOR" && normalizeCashBankCurrency(payment.Currency) == "USD" && payment.NativeAmount > 0 {
+			bookAmountIDR, _, err := calculatePaymentReductionBookAmount(cashBank, payment.NativeAmount)
+			if err != nil {
+				return fmt.Errorf("failed to calculate USD carrying book amount during approval: %w", err)
+			}
+			payment.BookAmountIDR = bookAmountIDR
+			payment.ForexGainLossAmount = 0
+			payment.ForexGainLossType = ""
+			forexDiff := payment.BookAmountIDR - payment.Amount
+			if forexDiff > 0.005 {
+				payment.ForexGainLossAmount = forexDiff
+				payment.ForexGainLossType = "LOSS"
+			} else if forexDiff < -0.005 {
+				payment.ForexGainLossAmount = -forexDiff
+				payment.ForexGainLossType = "GAIN"
+			}
+		}
+		payment.Reference = models.StripInternalPaymentReference(payment.Reference)
+		payment.CashBankID = &cashBankID
+		bankBookAmount := payment.BookAmountIDR
+		if bankBookAmount == 0 {
+			bankBookAmount = payment.Amount
+		}
+		receivableSettlementBookAmount := deriveReceivableSettlementBookAmount(&payment)
 
 		if payment.Contact.Type == "CUSTOMER" {
 			// Receivable Payment Journal: Debit Cash/Bank, Credit Piutang Usaha
@@ -587,16 +752,21 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 			journalLines = []JournalLineRequest{
 				{
 					AccountID:    uint64(cashBank.AccountID),
-					DebitAmount:  decimal.NewFromFloat(payment.Amount),
+					DebitAmount:  decimal.NewFromFloat(bankBookAmount),
 					CreditAmount: decimal.Zero,
 					Description:  fmt.Sprintf("Payment received from %s - %s", payment.Contact.Name, payment.Code),
 				},
 				{
 					AccountID:    arAccountID,
 					DebitAmount:  decimal.Zero,
-					CreditAmount: decimal.NewFromFloat(payment.Amount),
+					CreditAmount: decimal.NewFromFloat(receivableSettlementBookAmount),
 					Description:  fmt.Sprintf("AR reduction - %s", payment.Code),
 				},
+			}
+			if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-receivableSettlementBookAmount, false, payment.Code); err != nil {
+				return err
+			} else if fxLine != nil {
+				journalLines = append(journalLines, *fxLine)
 			}
 			journalDescription = fmt.Sprintf("Customer Payment approved %s - %s", payment.Code, payment.Contact.Name)
 
@@ -616,9 +786,14 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
-					CreditAmount: decimal.NewFromFloat(payment.Amount),
+					CreditAmount: decimal.NewFromFloat(bankBookAmount),
 					Description:  fmt.Sprintf("Payment made to %s - %s", payment.Contact.Name, payment.Code),
 				},
+			}
+			if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-payment.Amount, true, payment.Code); err != nil {
+				return err
+			} else if fxLine != nil {
+				journalLines = append(journalLines, *fxLine)
 			}
 			journalDescription = fmt.Sprintf("Vendor Payment approved %s - %s", payment.Code, payment.Contact.Name)
 
@@ -730,6 +905,11 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 	if err := eps.validatePaymentRequest(req); err != nil {
 		return nil, fmt.Errorf("payment validation failed: %w", err)
 	}
+	if !req.SaveAsDraft {
+		if err := CheckClosedPeriod(eps.db, req.Date); err != nil {
+			return nil, err
+		}
+	}
 
 	var (
 		payment       *models.Payment
@@ -752,29 +932,87 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		if err != nil {
 			return fmt.Errorf("cash/bank account not found: %w", err)
 		}
+		normalizedCurrency := normalizeCashBankCurrency(cashBank.Currency)
 
 		// Step 3: Auto-detect payment method if needed
 		if req.Method == "" {
 			req.Method = eps.autoDetectPaymentMethod(contact.Type)
 		}
 
-		// Step 4: Create payment record
-		status := models.PaymentStatusCompleted
-		ref := req.Reference
-		if req.SaveAsDraft {
-			status = models.PaymentStatusDraft
-			ref = fmt.Sprintf("__CB:%d__%s", req.CashBankID, req.Reference)
+		nativeAmount := req.Amount
+		bookAmountIDR := req.Amount
+		exchangeRate := 1.0
+		receivableSettlementBookIDR := req.Amount
+		forexGainLossAmount := 0.0
+		forexGainLossType := ""
+		if req.ExchangeRate > 0 {
+			exchangeRate = req.ExchangeRate
+		}
+		if strings.ToUpper(contact.Type) == "CUSTOMER" {
+			calculatedSettlementBookIDR, err := eps.calculateReceivableSettlementBookAmount(tx, req)
+			if err != nil {
+				return err
+			}
+			receivableSettlementBookIDR = calculatedSettlementBookIDR
+			if normalizedCurrency == "USD" {
+				if req.ExchangeRate <= 0 {
+					return fmt.Errorf("exchange rate is required when receiving payment into USD cash/bank account")
+				}
+				nativeAmount = req.Amount / req.ExchangeRate
+				bookAmountIDR = req.Amount
+			}
+			forexDiff := bookAmountIDR - receivableSettlementBookIDR
+			if forexDiff > 0.005 {
+				forexGainLossAmount = forexDiff
+				forexGainLossType = "GAIN"
+			} else if forexDiff < -0.005 {
+				forexGainLossAmount = -forexDiff
+				forexGainLossType = "LOSS"
+			}
+		} else if strings.ToUpper(contact.Type) == "VENDOR" && normalizedCurrency == "USD" {
+			if req.ExchangeRate <= 0 {
+				return fmt.Errorf("exchange rate is required when paying from USD cash/bank account")
+			}
+			exchangeRate = req.ExchangeRate
+			nativeAmount = req.Amount / req.ExchangeRate
+			calculatedBookAmountIDR, _, err := calculatePaymentReductionBookAmount(cashBank, nativeAmount)
+			if err != nil {
+				return fmt.Errorf("failed to calculate USD carrying book amount: %w", err)
+			}
+			bookAmountIDR = calculatedBookAmountIDR
+			forexDiff := bookAmountIDR - req.Amount
+			if forexDiff > 0.005 {
+				forexGainLossAmount = forexDiff
+				forexGainLossType = "LOSS"
+			} else if forexDiff < -0.005 {
+				forexGainLossAmount = -forexDiff
+				forexGainLossType = "GAIN"
+			}
 		}
 
+		// Step 4: Create payment record
+		status := models.PaymentStatusCompleted
+		if req.SaveAsDraft {
+			status = models.PaymentStatusDraft
+		}
+		cashBankID := req.CashBankID
+
 		payment = &models.Payment{
-			ContactID: req.ContactID,
-			UserID:    req.UserID,
-			Date:      req.Date,
-			Amount:    req.Amount,
-			Method:    req.Method,
-			Reference: ref,
-			Notes:     req.Notes,
-			Status:    status,
+			ContactID:           req.ContactID,
+			UserID:              req.UserID,
+			Date:                req.Date,
+			Amount:              req.Amount,
+			NativeAmount:        nativeAmount,
+			Currency:            normalizedCurrency,
+			ExchangeRate:        exchangeRate,
+			BookAmountIDR:       bookAmountIDR,
+			ForexGainLossAmount: forexGainLossAmount,
+			ForexGainLossType:   forexGainLossType,
+			Method:              req.Method,
+			CashBankID:          &cashBankID,
+			Reference:           req.Reference,
+			Notes:               req.Notes,
+			Status:              status,
 		}
 
 		// Generate payment code
@@ -796,6 +1034,10 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		if req.AutoCreateJournal && !req.SaveAsDraft {
 			var journalLines []JournalLineRequest
 			var journalDescription string
+			bankBookAmount := payment.BookAmountIDR
+			if bankBookAmount == 0 {
+				bankBookAmount = req.Amount
+			}
 
 			if contact.Type == "CUSTOMER" {
 				// Receivable Payment Journal: Debit Cash/Bank, Credit Piutang Usaha
@@ -806,16 +1048,21 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 				journalLines = []JournalLineRequest{
 					{
 						AccountID:    uint64(cashBank.AccountID),
-						DebitAmount:  decimal.NewFromFloat(req.Amount),
+						DebitAmount:  decimal.NewFromFloat(bankBookAmount),
 						CreditAmount: decimal.Zero,
 						Description:  fmt.Sprintf("Payment received from %s - %s", contact.Name, payment.Code),
 					},
 					{
 						AccountID:    arAccountID,
 						DebitAmount:  decimal.Zero,
-						CreditAmount: decimal.NewFromFloat(req.Amount),
+						CreditAmount: decimal.NewFromFloat(receivableSettlementBookIDR),
 						Description:  fmt.Sprintf("AR reduction - %s", payment.Code),
 					},
+				}
+				if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-receivableSettlementBookIDR, false, payment.Code); err != nil {
+					return err
+				} else if fxLine != nil {
+					journalLines = append(journalLines, *fxLine)
 				}
 				journalDescription = fmt.Sprintf("Customer Payment %s - %s", payment.Code, contact.Name)
 
@@ -835,9 +1082,14 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 					{
 						AccountID:    uint64(cashBank.AccountID),
 						DebitAmount:  decimal.Zero,
-						CreditAmount: decimal.NewFromFloat(req.Amount),
+						CreditAmount: decimal.NewFromFloat(bankBookAmount),
 						Description:  fmt.Sprintf("Payment made to %s - %s", contact.Name, payment.Code),
 					},
+				}
+				if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-req.Amount, true, payment.Code); err != nil {
+					return err
+				} else if fxLine != nil {
+					journalLines = append(journalLines, *fxLine)
 				}
 				journalDescription = fmt.Sprintf("Vendor Payment %s - %s", payment.Code, contact.Name)
 
@@ -1015,7 +1267,7 @@ func (eps *EnhancedPaymentServiceWithJournal) GetPaymentWithJournal(paymentID ui
 }
 
 // ReversePayment reverses a payment and its journal entry
-func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, reason string, userID uint) (*PaymentWithJournalResponse, error) {
+func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, reason string, reversalDate time.Time, userID uint) (*PaymentWithJournalResponse, error) {
 	var response *PaymentWithJournalResponse
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
 		// Get payment
@@ -1028,8 +1280,12 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 			return fmt.Errorf("only completed payments can be reversed")
 		}
 
-		// Guard: check if payment date is in a closed accounting period
-		if err := CheckClosedPeriod(eps.db, payment.Date); err != nil {
+		if reversalDate.IsZero() {
+			reversalDate = time.Now()
+		}
+
+		// Guard: reversal must land in an open accounting period
+		if err := CheckClosedPeriod(eps.db, reversalDate); err != nil {
 			return err
 		}
 
@@ -1057,7 +1313,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 						SourceType:  models.SSOTSourceTypePayment,
 						SourceID:    uint64(payment.ID),
 						Reference:   fmt.Sprintf("REV-%s", payment.Code),
-						EntryDate:   time.Now(),
+						EntryDate:   reversalDate,
 						Description: fmt.Sprintf("Reversal of %s - %s", payment.Code, reason),
 						Lines:       reversalLines,
 						AutoPost:    true,
@@ -1085,6 +1341,39 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 		payment.Notes = fmt.Sprintf("%s [REVERSED: %s]", payment.Notes, reason)
 		if err := tx.Save(&payment).Error; err != nil {
 			return fmt.Errorf("failed to update payment status: %w", err)
+		}
+
+		var allocations []models.PaymentAllocation
+		if err := tx.Where("payment_id = ?", payment.ID).Find(&allocations).Error; err == nil {
+			for _, allocation := range allocations {
+				if allocation.InvoiceID == nil || *allocation.InvoiceID == 0 {
+					continue
+				}
+
+				var sale models.Sale
+				if err := tx.First(&sale, *allocation.InvoiceID).Error; err != nil {
+					return fmt.Errorf("failed to load sale %d during payment reversal: %w", *allocation.InvoiceID, err)
+				}
+
+				sale.PaidAmount -= allocation.AllocatedAmount
+				if sale.PaidAmount < 0 {
+					sale.PaidAmount = 0
+				}
+				sale.OutstandingAmount += allocation.AllocatedAmount
+				if sale.OutstandingAmount < 0 {
+					sale.OutstandingAmount = 0
+				}
+				if sale.OutstandingAmount > 0 && sale.Status == models.SaleStatusPaid {
+					sale.Status = models.SaleStatusInvoiced
+				}
+
+				if err := tx.Save(&sale).Error; err != nil {
+					return fmt.Errorf("failed to reverse sale outstanding for sale %d: %w", sale.ID, err)
+				}
+				if err := syncSalePaymentScheduleProgress(tx, &sale); err != nil {
+					return fmt.Errorf("failed to sync sale payment schedules during payment reversal: %w", err)
+				}
+			}
 		}
 
 		// Reverse Cash & Bank movement to keep balances in sync.
@@ -1129,7 +1418,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 					ReferenceID:     payment.ID,
 					Amount:          reverseMovement,
 					BalanceAfter:    newBalance,
-					TransactionDate: time.Now(),
+					TransactionDate: reversalDate,
 					Notes:           fmt.Sprintf("%s %s - Reversal: %s", refType, payment.Code, reason),
 				}
 				if err := tx.Create(txRow).Error; err != nil {
@@ -1261,21 +1550,61 @@ func (eps *EnhancedPaymentServiceWithJournal) applyCashBankMovement(
 	payment *models.Payment,
 	date time.Time,
 ) error {
-	movement := amount
+	guard := NewCashBankCurrencyGuard(eps.db)
+	normalizedCurrency := normalizeCashBankCurrency(cashBank.Currency)
+	nativeDelta := amount
+	bookDeltaIDR := amount
+	exchangeRate := 1.0
 	refType := "PAYMENT"
 	if strings.ToUpper(contactType) == "CUSTOMER" {
-		// Incoming money
-		movement = amount
 		refType = "PAYMENT_RECEIVED"
 	} else if strings.ToUpper(contactType) == "VENDOR" {
-		// Outgoing money
-		movement = -amount
+		nativeDelta = -amount
+		bookDeltaIDR = -amount
 		refType = "PAYMENT_MADE"
 	}
 
-	// Update balance
-	newBalance := cashBank.Balance + movement
+	if payment != nil {
+		if payment.NativeAmount > 0 {
+			nativeDelta = payment.NativeAmount
+			if strings.ToUpper(contactType) == "VENDOR" {
+				nativeDelta = -payment.NativeAmount
+			}
+		}
+		if payment.BookAmountIDR > 0 {
+			bookDeltaIDR = payment.BookAmountIDR
+			if strings.ToUpper(contactType) == "VENDOR" {
+				bookDeltaIDR = -payment.BookAmountIDR
+			}
+		}
+		if payment.ExchangeRate > 0 {
+			exchangeRate = payment.ExchangeRate
+		}
+	}
+
+	if nativeDelta < 0 && cashBank.Balance < math.Abs(nativeDelta) {
+		return fmt.Errorf("insufficient balance. Available: %.6f, Required: %.6f", cashBank.Balance, math.Abs(nativeDelta))
+	}
+
+	newBalance := cashBank.Balance + nativeDelta
+	if newBalance < 0 {
+		return fmt.Errorf("cash/bank movement would result in negative native balance")
+	}
+	newBookBalanceIDR := cashBank.BookBalanceIDR + bookDeltaIDR
+	if !cashBank.IsForeignCurrency() {
+		newBookBalanceIDR = newBalance
+	}
+	if newBookBalanceIDR < 0 {
+		return fmt.Errorf("cash/bank movement would result in negative book balance")
+	}
+
 	cashBank.Balance = newBalance
+	if cashBank.IsForeignCurrency() {
+		cashBank.BookBalanceIDR = newBookBalanceIDR
+		if exchangeRate > 0 {
+			cashBank.LastExchangeRate = exchangeRate
+		}
+	}
 	if err := tx.Save(cashBank).Error; err != nil {
 		return fmt.Errorf("save cash bank: %w", err)
 	}
@@ -1283,10 +1612,10 @@ func (eps *EnhancedPaymentServiceWithJournal) applyCashBankMovement(
 	// ✅ CRITICAL: Sync linked COA account balance to maintain COA <> CashBank consistency
 	if cashBank.AccountID > 0 {
 		if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
-			newBalance, cashBank.AccountID).Error; err != nil {
+			cashBank.EffectiveBookBalanceIDR(), cashBank.AccountID).Error; err != nil {
 			log.Printf("⚠️ Warning: Failed to sync COA balance for GL account %d: %v", cashBank.AccountID, err)
 		} else {
-			log.Printf("🔄 Synced COA balance for GL account %d to %.2f", cashBank.AccountID, newBalance)
+			log.Printf("🔄 Synced COA balance for GL account %d to %.2f", cashBank.AccountID, cashBank.EffectiveBookBalanceIDR())
 		}
 	}
 
@@ -1295,7 +1624,10 @@ func (eps *EnhancedPaymentServiceWithJournal) applyCashBankMovement(
 		CashBankID:      cashBank.ID,
 		ReferenceType:   refType,
 		ReferenceID:     payment.ID,
-		Amount:          movement,
+		Amount:          nativeDelta,
+		Currency:        normalizedCurrency,
+		ExchangeRate:    exchangeRate,
+		BookAmountIDR:   bookDeltaIDR,
 		BalanceAfter:    newBalance,
 		TransactionDate: date,
 		Notes:           fmt.Sprintf("%s %s", refType, payment.Code),
@@ -1304,7 +1636,98 @@ func (eps *EnhancedPaymentServiceWithJournal) applyCashBankMovement(
 		return fmt.Errorf("create cashbank transaction: %w", err)
 	}
 
-	return nil
+	return guard.EnforceAfterTransaction(tx, cashBank.ID)
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) buildRealizedFXJournalLine(tx *gorm.DB, forexDiff float64, isPayable bool, paymentCode string) (*JournalLineRequest, error) {
+	if math.Abs(forexDiff) <= 0.005 {
+		return nil, nil
+	}
+
+	if isPayable {
+		if forexDiff > 0.005 {
+			accountID, err := eps.resolveForexAccountID(tx, false)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve forex loss account: %w", err)
+			}
+			return &JournalLineRequest{
+				AccountID:    accountID,
+				DebitAmount:  decimal.NewFromFloat(forexDiff),
+				CreditAmount: decimal.Zero,
+				Description:  fmt.Sprintf("Rugi selisih kurs terealisasi - %s", paymentCode),
+			}, nil
+		}
+
+		accountID, err := eps.resolveForexAccountID(tx, true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve forex gain account: %w", err)
+		}
+		return &JournalLineRequest{
+			AccountID:    accountID,
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(-forexDiff),
+			Description:  fmt.Sprintf("Laba selisih kurs terealisasi - %s", paymentCode),
+		}, nil
+	}
+
+	if forexDiff > 0.005 {
+		accountID, err := eps.resolveForexAccountID(tx, true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve forex gain account: %w", err)
+		}
+		return &JournalLineRequest{
+			AccountID:    accountID,
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(forexDiff),
+			Description:  fmt.Sprintf("Laba selisih kurs terealisasi - %s", paymentCode),
+		}, nil
+	}
+
+	accountID, err := eps.resolveForexAccountID(tx, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve forex loss account: %w", err)
+	}
+	return &JournalLineRequest{
+		AccountID:    accountID,
+		DebitAmount:  decimal.NewFromFloat(-forexDiff),
+		CreditAmount: decimal.Zero,
+		Description:  fmt.Sprintf("Rugi selisih kurs terealisasi - %s", paymentCode),
+	}, nil
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) resolveForexAccountID(tx *gorm.DB, isGain bool) (uint64, error) {
+	type candidate struct {
+		Code        string
+		NamePattern string
+	}
+
+	var candidates []candidate
+	if isGain {
+		candidates = []candidate{
+			{Code: "7103", NamePattern: "LABA SELISIH KURS"},
+			{Code: "7102", NamePattern: "PENDAPATAN LAIN"},
+		}
+	} else {
+		candidates = []candidate{
+			{Code: "8103", NamePattern: "RUGI SELISIH KURS"},
+			{Code: "8102", NamePattern: "BEBAN LAIN"},
+		}
+	}
+
+	for _, candidate := range candidates {
+		var account models.Account
+		if err := tx.Where("code = ?", candidate.Code).First(&account).Error; err == nil {
+			return uint64(account.ID), nil
+		}
+		if err := tx.Where("UPPER(name) LIKE ?", "%"+candidate.NamePattern+"%").Order("id ASC").First(&account).Error; err == nil {
+			return uint64(account.ID), nil
+		}
+	}
+
+	if isGain {
+		return 0, fmt.Errorf("forex gain account not found")
+	}
+	return 0, fmt.Errorf("forex loss account not found")
 }
 
 // autoDetectPaymentMethod determines payment method based on contact type
@@ -1338,6 +1761,72 @@ func (eps *EnhancedPaymentServiceWithJournal) generatePaymentCode(tx *gorm.DB, m
 
 	// Generate code
 	return fmt.Sprintf("%s-%s-%04d", prefix, datePrefix, count+1), nil
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) calculateReceivableSettlementBookAmount(tx *gorm.DB, req *PaymentWithJournalRequest) (float64, error) {
+	totalSettlementBookIDR := 0.0
+	remainingAmount := req.Amount
+	hasAllocation := false
+
+	applySaleSettlement := func(sale *models.Sale, requestedAmount float64) error {
+		if sale == nil || requestedAmount <= 0 || remainingAmount <= 0 {
+			return nil
+		}
+
+		allocatedAmount := requestedAmount
+		if allocatedAmount > remainingAmount {
+			allocatedAmount = remainingAmount
+		}
+		if allocatedAmount > sale.OutstandingAmount {
+			allocatedAmount = sale.OutstandingAmount
+		}
+		if allocatedAmount <= 0 {
+			return nil
+		}
+
+		settlementBookIDR, _, err := calculateSaleReceivableSettlementBookAmount(sale, allocatedAmount, req.ExchangeRate)
+		if err != nil {
+			return fmt.Errorf("failed to calculate receivable settlement for sale %d: %w", sale.ID, err)
+		}
+
+		totalSettlementBookIDR += settlementBookIDR
+		remainingAmount -= allocatedAmount
+		hasAllocation = true
+		return nil
+	}
+
+	if len(req.InvoiceAllocations) > 0 {
+		for _, alloc := range req.InvoiceAllocations {
+			if alloc.InvoiceID == nil {
+				continue
+			}
+
+			var sale models.Sale
+			if err := tx.First(&sale, *alloc.InvoiceID).Error; err != nil {
+				return 0, fmt.Errorf("invoice %d not found: %w", *alloc.InvoiceID, err)
+			}
+			if err := applySaleSettlement(&sale, alloc.Amount); err != nil {
+				return 0, err
+			}
+		}
+	} else if req.TargetInvoiceID != nil {
+		var sale models.Sale
+		if err := tx.First(&sale, *req.TargetInvoiceID).Error; err != nil {
+			return 0, fmt.Errorf("invoice %d not found: %w", *req.TargetInvoiceID, err)
+		}
+		if err := applySaleSettlement(&sale, req.Amount); err != nil {
+			return 0, err
+		}
+	}
+
+	if !hasAllocation {
+		return req.Amount, nil
+	}
+	if remainingAmount > 0 {
+		totalSettlementBookIDR += remainingAmount
+	}
+
+	return totalSettlementBookIDR, nil
 }
 
 // createPaymentAllocations creates payment allocations to invoices/bills
@@ -1544,7 +2033,11 @@ func (eps *EnhancedPaymentServiceWithJournal) updateSaleOutstanding(tx *gorm.DB,
 		sale.OutstandingAmount = 0 // Ensure exact zero
 	}
 
-	return tx.Save(&sale).Error
+	if err := tx.Save(&sale).Error; err != nil {
+		return err
+	}
+
+	return syncSalePaymentScheduleProgress(tx, &sale)
 }
 
 // updatePurchaseOutstanding updates purchase outstanding amount after payment allocation

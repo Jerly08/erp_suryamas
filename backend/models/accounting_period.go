@@ -3,47 +3,54 @@ package models
 import (
 	"database/sql/driver"
 	"encoding/json"
-	"time"
 	"gorm.io/gorm"
+	"time"
 )
 
 // AccountingPeriod represents a closed accounting period with snapshots
 type AccountingPeriod struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	StartDate   time.Time      `json:"start_date" gorm:"not null;index"`
-	EndDate     time.Time      `json:"end_date" gorm:"not null;index"`
-	Description string         `json:"description" gorm:"type:text"`
-	IsClosed    bool           `json:"is_closed" gorm:"default:false"`
-	IsLocked    bool           `json:"is_locked" gorm:"default:false"` // Hard lock - cannot be reopened easily
-	ClosedBy    *uint          `json:"closed_by" gorm:"index"`
-	ClosedAt    *time.Time     `json:"closed_at"`
-	
+	ID          uint       `json:"id" gorm:"primaryKey"`
+	StartDate   time.Time  `json:"start_date" gorm:"not null;index"`
+	EndDate     time.Time  `json:"end_date" gorm:"not null;index"`
+	Description string     `json:"description" gorm:"type:text"`
+	IsClosed    bool       `json:"is_closed" gorm:"default:false"`
+	IsLocked    bool       `json:"is_locked" gorm:"default:false"` // Hard lock - cannot be reopened easily
+	ClosedBy    *uint      `json:"closed_by" gorm:"index"`
+	ClosedAt    *time.Time `json:"closed_at"`
+
 	// Closing summary
-	TotalRevenue      float64 `json:"total_revenue" gorm:"type:decimal(20,2);default:0"`
-	TotalExpense      float64 `json:"total_expense" gorm:"type:decimal(20,2);default:0"`
-	NetIncome         float64 `json:"net_income" gorm:"type:decimal(20,2);default:0"`
-	ClosingJournalID  *uint   `json:"closing_journal_id" gorm:"index"` // Reference to closing journal entry
-	
+	TotalRevenue     float64 `json:"total_revenue" gorm:"type:decimal(20,2);default:0"`
+	TotalExpense     float64 `json:"total_expense" gorm:"type:decimal(20,2);default:0"`
+	NetIncome        float64 `json:"net_income" gorm:"type:decimal(20,2);default:0"`
+	ClosingJournalID *uint   `json:"closing_journal_id" gorm:"index"` // Reference to closing journal entry
+
 	// Archive snapshots (stored as JSONB in PostgreSQL)
 	BalanceSheetSnapshot *JSONMap   `json:"balance_sheet_snapshot,omitempty" gorm:"type:jsonb"`
 	ProfitLossSnapshot   *JSONMap   `json:"profit_loss_snapshot,omitempty" gorm:"type:jsonb"`
 	FinancialMetrics     *JSONMap   `json:"financial_metrics,omitempty" gorm:"type:jsonb"`
 	SnapshotGeneratedAt  *time.Time `json:"snapshot_generated_at,omitempty"`
-	
+
 	// Period categorization
 	PeriodType       string `json:"period_type" gorm:"type:varchar(20);default:'CUSTOM'"` // MONTHLY, QUARTERLY, SEMESTER, ANNUAL, CUSTOM
 	FiscalYear       *int   `json:"fiscal_year,omitempty" gorm:"index"`
 	AccountCount     int    `json:"account_count" gorm:"default:0"`
 	TransactionCount int    `json:"transaction_count" gorm:"default:0"`
-	
+
+	ReopenedBy         *uint      `json:"reopened_by,omitempty" gorm:"index"`
+	ReopenedAt         *time.Time `json:"reopened_at,omitempty"`
+	ReopenReason       string     `json:"reopen_reason" gorm:"type:text"`
+	ReopeningJournalID *uint      `json:"reopening_journal_id,omitempty" gorm:"index"`
+	ReopenCount        int        `json:"reopen_count" gorm:"default:0"`
+
 	Notes     string         `json:"notes" gorm:"type:text"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
-	
+
 	// Relations
-	ClosedByUser    *User         `json:"closed_by_user,omitempty" gorm:"foreignKey:ClosedBy"`
-	ClosingJournal  *JournalEntry `json:"closing_journal,omitempty" gorm:"foreignKey:ClosingJournalID"`
+	ClosedByUser   *User         `json:"closed_by_user,omitempty" gorm:"foreignKey:ClosedBy"`
+	ReopenedByUser *User         `json:"reopened_by_user,omitempty" gorm:"foreignKey:ReopenedBy"`
+	ClosingJournal *JournalEntry `json:"closing_journal,omitempty" gorm:"foreignKey:ClosingJournalID"`
 }
 
 // JSONMap is a type for storing JSON data in JSONB columns
@@ -77,22 +84,22 @@ func (AccountingPeriod) TableName() string {
 
 // PeriodClosingPreview contains preview data for period closing
 type PeriodClosingPreview struct {
-	StartDate          time.Time                `json:"start_date"`
-	EndDate            time.Time                `json:"end_date"`
-	TotalRevenue       float64                  `json:"total_revenue"`
-	TotalExpense       float64                  `json:"total_expense"`
-	NetIncome          float64                  `json:"net_income"`
-	RetainedEarningsID uint                     `json:"retained_earnings_id"`
-	RevenueAccounts    []PeriodAccountBalance   `json:"revenue_accounts"`
-	ExpenseAccounts    []PeriodAccountBalance   `json:"expense_accounts"`
-	ClosingEntries     []ClosingEntryPreview    `json:"closing_entries"`
-	CanClose           bool                     `json:"can_close"`
-	ValidationMessages []string                 `json:"validation_messages"`
-	
+	StartDate          time.Time              `json:"start_date"`
+	EndDate            time.Time              `json:"end_date"`
+	TotalRevenue       float64                `json:"total_revenue"`
+	TotalExpense       float64                `json:"total_expense"`
+	NetIncome          float64                `json:"net_income"`
+	RetainedEarningsID uint                   `json:"retained_earnings_id"`
+	RevenueAccounts    []PeriodAccountBalance `json:"revenue_accounts"`
+	ExpenseAccounts    []PeriodAccountBalance `json:"expense_accounts"`
+	ClosingEntries     []ClosingEntryPreview  `json:"closing_entries"`
+	CanClose           bool                   `json:"can_close"`
+	ValidationMessages []string               `json:"validation_messages"`
+
 	// Additional info
-	TransactionCount   int64     `json:"transaction_count"`
-	LastClosingDate    *time.Time `json:"last_closing_date,omitempty"`
-	PeriodDays         int        `json:"period_days"`
+	TransactionCount int64      `json:"transaction_count"`
+	LastClosingDate  *time.Time `json:"last_closing_date,omitempty"`
+	PeriodDays       int        `json:"period_days"`
 }
 
 // PeriodAccountBalance represents account balance for period closing

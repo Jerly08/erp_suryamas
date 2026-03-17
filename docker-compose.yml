@@ -27,6 +27,7 @@ services:
       - SERVER_PORT=8080
       - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-your-very-secure-access-secret-minimum-32-chars-long!}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-very-secure-refresh-secret-minimum-32-chars-long!}
+      - SESSION_SECRET=${SESSION_SECRET:-your-very-secure-session-secret-minimum-32-chars-long!}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3003,http://erp_frontend:3000,http://frontend:3000,http://frontend:3003}
     ports:

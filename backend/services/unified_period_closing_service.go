@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
+
+var ErrNoBalancesToClose = errors.New("no revenue or expense balances to close")
 
 // UnifiedPeriodClosingService handles period closing using unified journal system (SSOT)
 type UnifiedPeriodClosingService struct {
@@ -30,11 +33,305 @@ func NewUnifiedPeriodClosingService(db *gorm.DB) *UnifiedPeriodClosingService {
 	}
 }
 
+func normalizeClosingDayStart(date time.Time) time.Time {
+	location := date.Location()
+	if location == nil {
+		location = time.Local
+	}
+	return time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location)
+}
+
+func normalizeClosingDayEnd(date time.Time) time.Time {
+	start := normalizeClosingDayStart(date)
+	return start.AddDate(0, 0, 1).Add(-time.Nanosecond)
+}
+
+func parseDateOnlyInLocation(dateStr string, location *time.Location) (time.Time, error) {
+	if location == nil {
+		location = time.Local
+	}
+	return time.ParseInLocation("2006-01-02", dateStr, location)
+}
+
+func mustParseDateOnlyInLocation(dateStr string, location *time.Location) time.Time {
+	date, err := parseDateOnlyInLocation(dateStr, location)
+	if err != nil {
+		panic(err)
+	}
+	return date
+}
+
+func isStartOfDay(date time.Time) bool {
+	return date.Hour() == 0 && date.Minute() == 0 && date.Second() == 0 && date.Nanosecond() == 0
+}
+
+func isEndOfDay(date time.Time) bool {
+	return date.Hour() == 23 && date.Minute() == 59 && date.Second() == 59
+}
+
+func periodBoundaryDateString(date time.Time, boundary string) string {
+	local := date.In(time.Local)
+	utc := date.UTC()
+
+	switch boundary {
+	case "start":
+		if !isStartOfDay(local) && isStartOfDay(utc) {
+			return utc.Format("2006-01-02")
+		}
+	case "end":
+		if !isEndOfDay(local) && isEndOfDay(utc) {
+			return utc.Format("2006-01-02")
+		}
+	}
+
+	return local.Format("2006-01-02")
+}
+
+func canonicalPeriodStartDate(date time.Time) time.Time {
+	return mustParseDateOnlyInLocation(periodBoundaryDateString(date, "start"), time.Local)
+}
+
+func canonicalPeriodEndDate(date time.Time) time.Time {
+	return mustParseDateOnlyInLocation(periodBoundaryDateString(date, "end"), time.Local)
+}
+
+func dateOnlyRangeOverlaps(startA, endA, startB, endB time.Time) bool {
+	return !endA.Before(startB) && !endB.Before(startA)
+}
+
+func nextClosingStartDate(date time.Time) time.Time {
+	return canonicalPeriodEndDate(date).AddDate(0, 0, 1)
+}
+
+func sameClosingDay(left, right time.Time) bool {
+	return canonicalPeriodStartDate(left).Equal(canonicalPeriodStartDate(right))
+}
+
+func buildClosingPeriodSourceCode(startDate, endDate time.Time) string {
+	return fmt.Sprintf("CLOSING-%s-%s", normalizeClosingDayStart(startDate).Format("20060102"), normalizeClosingDayStart(endDate).Format("20060102"))
+}
+
+func appendPeriodNote(existing, addition string) string {
+	existing = strings.TrimSpace(existing)
+	addition = strings.TrimSpace(addition)
+
+	if existing == "" {
+		return addition
+	}
+	if addition == "" {
+		return existing
+	}
+
+	return existing + "\n" + addition
+}
+
+func findAccountingPeriodByCanonicalRange(tx *gorm.DB, startDate, endDate time.Time, onlyClosed bool) (*models.AccountingPeriod, error) {
+	var periods []models.AccountingPeriod
+	query := tx.Where("deleted_at IS NULL")
+	if onlyClosed {
+		query = query.Where("is_closed = ?", true)
+	}
+
+	if err := query.Order("end_date DESC").Find(&periods).Error; err != nil {
+		return nil, err
+	}
+
+	inputStart := normalizeClosingDayStart(startDate)
+	inputEnd := normalizeClosingDayStart(endDate)
+
+	for _, period := range periods {
+		periodStart := canonicalPeriodStartDate(period.StartDate)
+		periodEnd := canonicalPeriodEndDate(period.EndDate)
+		if periodStart.Equal(inputStart) && periodEnd.Equal(inputEnd) {
+			matched := period
+			return &matched, nil
+		}
+	}
+
+	return nil, gorm.ErrRecordNotFound
+}
+
+func syncCurrentAccountBalances(tx *gorm.DB, accountIDs []uint64) error {
+	if len(accountIDs) == 0 {
+		return nil
+	}
+
+	type balanceRow struct {
+		AccountID uint64
+		Correct   float64
+	}
+
+	var rows []balanceRow
+	if err := tx.Raw(`
+		SELECT
+			a.id AS account_id,
+			CASE
+				WHEN UPPER(TRIM(a.type)) IN ('ASSET', 'EXPENSE') THEN
+					COALESCE(SUM(ujl.debit_amount), 0) - COALESCE(SUM(ujl.credit_amount), 0)
+				ELSE
+					COALESCE(SUM(ujl.credit_amount), 0) - COALESCE(SUM(ujl.debit_amount), 0)
+			END AS correct
+		FROM accounts a
+		LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
+		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
+		WHERE a.id IN ? AND a.deleted_at IS NULL
+			AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL))
+		GROUP BY a.id, a.type
+	`, accountIDs).Scan(&rows).Error; err != nil {
+		return fmt.Errorf("failed to sync current balances from posted journals: %w", err)
+	}
+
+	for _, row := range rows {
+		if err := tx.Model(&models.Account{}).
+			Where("id = ?", row.AccountID).
+			Update("balance", row.Correct).Error; err != nil {
+			return fmt.Errorf("failed to update current balance for account %d: %w", row.AccountID, err)
+		}
+	}
+
+	return nil
+}
+
+func syncAllHeaderAccountBalances(tx *gorm.DB) error {
+	for pass := 0; pass < 5; pass++ {
+		if err := tx.Exec(`
+			UPDATE accounts
+			SET balance = (
+				SELECT COALESCE(SUM(child.balance), 0)
+				FROM accounts child
+				WHERE child.parent_id = accounts.id AND child.deleted_at IS NULL
+			)
+			WHERE is_header = true AND deleted_at IS NULL
+		`).Error; err != nil {
+			return fmt.Errorf("failed to sync header account balances on pass %d: %w", pass+1, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *UnifiedPeriodClosingService) createClosingReversalEntry(
+	tx *gorm.DB,
+	original models.SSOTJournalEntry,
+	lines []models.SSOTJournalLine,
+	period models.AccountingPeriod,
+	reason string,
+	reversalDate time.Time,
+	userID uint64,
+) (*models.SSOTJournalEntry, error) {
+	reversalLines := make([]models.SSOTJournalLine, 0, len(lines))
+	for _, line := range lines {
+		reversalLines = append(reversalLines, models.SSOTJournalLine{
+			AccountID:    line.AccountID,
+			LineNumber:   line.LineNumber,
+			Description:  fmt.Sprintf("Reverse closing line: %s", line.Description),
+			DebitAmount:  line.CreditAmount,
+			CreditAmount: line.DebitAmount,
+		})
+	}
+
+	reversalSourceID := original.ID
+	reversalEntry := &models.SSOTJournalEntry{
+		SourceType:      models.SSOTSourceTypeReversal,
+		SourceID:        &reversalSourceID,
+		SourceCode:      fmt.Sprintf("REOPEN-%d", original.ID),
+		EntryDate:       reversalDate,
+		Description:     fmt.Sprintf("Reopen period reversal: %s", original.Description),
+		Reference:       fmt.Sprintf("REOPEN-%s", original.EntryNumber),
+		Notes:           fmt.Sprintf("Auto reversal for reopened period %s - %s. Original closing journal ID: %d. Reason: %s", normalizeClosingDayStart(period.StartDate).Format("2006-01-02"), normalizeClosingDayStart(period.EndDate).Format("2006-01-02"), original.ID, reason),
+		TotalDebit:      original.TotalCredit,
+		TotalCredit:     original.TotalDebit,
+		Status:          models.SSOTStatusPosted,
+		IsBalanced:      true,
+		IsAutoGenerated: true,
+		CreatedBy:       userID,
+		ReversedFrom:    &original.ID,
+		Lines:           reversalLines,
+	}
+
+	now := time.Now()
+	reversalEntry.PostedAt = &now
+	reversalEntry.PostedBy = &userID
+
+	if err := tx.Create(reversalEntry).Error; err != nil {
+		return nil, fmt.Errorf("failed to create closing reversal journal: %w", err)
+	}
+
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where("id = ?", original.ID).
+		Updates(map[string]interface{}{
+			"reversed_by":     reversalEntry.ID,
+			"reversal_reason": reason,
+			"updated_at":      now,
+		}).Error; err != nil {
+		return nil, fmt.Errorf("failed to update original closing journal reversal metadata: %w", err)
+	}
+
+	return reversalEntry, nil
+}
+
+func (s *UnifiedPeriodClosingService) validateClosingWindow(tx *gorm.DB, startDate, endDate time.Time) ([]string, []string, *models.AccountingPeriod, error) {
+	var validationMessages []string
+	var blockingMessages []string
+
+	startDate = normalizeClosingDayStart(startDate)
+	endDate = normalizeClosingDayEnd(endDate)
+
+	if endDate.Before(startDate) {
+		return nil, nil, nil, fmt.Errorf("end_date must be on or after start_date")
+	}
+
+	var closedPeriods []models.AccountingPeriod
+	if err := tx.Where("is_closed = ? AND deleted_at IS NULL", true).Order("end_date DESC").Find(&closedPeriods).Error; err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to query closed periods: %v", err)
+	}
+	if len(closedPeriods) == 0 {
+		validationMessages = append(validationMessages, "First period closing - no previous closed period found.")
+		return validationMessages, blockingMessages, nil, nil
+	}
+
+	lastPeriod := closedPeriods[0]
+	expectedStart := nextClosingStartDate(lastPeriod.EndDate)
+	if !sameClosingDay(startDate, expectedStart) {
+		blockingMessages = append(blockingMessages,
+			fmt.Sprintf("Start date must be %s based on the latest closed period, but got %s.",
+				expectedStart.Format("2006-01-02"), startDate.Format("2006-01-02")))
+	}
+
+	if !normalizeClosingDayStart(endDate).After(canonicalPeriodEndDate(lastPeriod.EndDate)) {
+		blockingMessages = append(blockingMessages, "End date must be after last closing date.")
+	}
+
+	inputStart := normalizeClosingDayStart(startDate)
+	inputEnd := normalizeClosingDayStart(endDate)
+	for _, period := range closedPeriods {
+		periodStart := canonicalPeriodStartDate(period.StartDate)
+		periodEnd := canonicalPeriodEndDate(period.EndDate)
+		if dateOnlyRangeOverlaps(inputStart, inputEnd, periodStart, periodEnd) {
+			blockingMessages = append(blockingMessages, "Selected period overlaps an already closed period.")
+			break
+		}
+	}
+
+	validationMessages = append(validationMessages, blockingMessages...)
+	return validationMessages, blockingMessages, &lastPeriod, nil
+}
+
 // ExecutePeriodClosing performs period closing using unified journal system
 func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, startDate, endDate time.Time, description string, userID uint64) error {
+	startDate = normalizeClosingDayStart(startDate)
+	endDate = normalizeClosingDayEnd(endDate)
 	log.Printf("[UNIFIED CLOSING] Starting period closing: %s to %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		validationMessages, blockingMessages, lastClosedPeriod, err := s.validateClosingWindow(tx, startDate, endDate)
+		if err != nil {
+			return err
+		}
+		if len(blockingMessages) > 0 {
+			return fmt.Errorf("period closing validation failed: %s", strings.Join(blockingMessages, " "))
+		}
+
 		// 1. Get retained earnings account
 		var retainedEarnings models.Account
 		if err := tx.Where("code = ? AND type = ?", "3102", "EQUITY").First(&retainedEarnings).Error; err != nil {
@@ -44,21 +341,19 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 		// 2. Get the last closed period (for logging & validation only)
 		//    Saldo yang ditutup tetap dihitung dari SSOT sampai endDate, sehingga tidak tergantung startDate,
 		//    dan tidak akan terjadi double-closing untuk periode sebelumnya.
-		var lastClosedPeriod models.AccountingPeriod
-		err := tx.Where("is_closed = ?", true).Order("end_date DESC").First(&lastClosedPeriod).Error
 		var periodStartDate time.Time
-		if err != nil {
+		if lastClosedPeriod == nil {
 			// No previous closed periods, use the start_date provided
 			periodStartDate = startDate
 			log.Printf("[UNIFIED CLOSING] No previous closed periods found, using provided start date: %s", startDate.Format("2006-01-02"))
 		} else {
 			// Start from the day after last closed period
-			periodStartDate = lastClosedPeriod.EndDate.AddDate(0, 0, 1)
+			periodStartDate = nextClosingStartDate(lastClosedPeriod.EndDate)
 			log.Printf("[UNIFIED CLOSING] Last closed period end: %s, starting from: %s",
 				lastClosedPeriod.EndDate.Format("2006-01-02"), periodStartDate.Format("2006-01-02"))
 
 			// Validate that startDate matches periodStartDate
-			if !startDate.Equal(periodStartDate) {
+			if !sameClosingDay(startDate, periodStartDate) {
 				log.Printf("[UNIFIED CLOSING] ⚠️ WARNING: Provided startDate (%s) doesn't match expected (%s)",
 					startDate.Format("2006-01-02"), periodStartDate.Format("2006-01-02"))
 			}
@@ -157,7 +452,7 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 
 		if totalRevenue.Abs().LessThan(threshold) && totalExpense.Abs().LessThan(threshold) {
 			log.Println("[UNIFIED CLOSING] No revenue or expense balances to close")
-			return nil
+			return ErrNoBalancesToClose
 		}
 
 		netIncome := totalRevenue.Sub(totalExpense)
@@ -248,11 +543,17 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 			lineNum++
 		}
 
+		closingSourceCode := buildClosingPeriodSourceCode(startDate, endDate)
+		validationNote := strings.Join(validationMessages, " | ")
+
 		// 8. Create unified journal entry
 		closingEntry := &models.SSOTJournalEntry{
 			SourceType:      "CLOSING",
+			SourceCode:      closingSourceCode,
 			EntryDate:       endDate,
 			Description:     description,
+			Reference:       closingSourceCode,
+			Notes:           validationNote,
 			TotalDebit:      totalRevenue.Add(totalExpense),
 			TotalCredit:     totalRevenue.Add(totalExpense),
 			Status:          "POSTED",
@@ -273,9 +574,8 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 
 		log.Printf("[UNIFIED CLOSING] Created unified journal entry ID: %d with %d lines", closingEntry.ID, len(journalLines))
 
-		// 7. Robust balance update: recalculate exact balances for affected accounts from SSOT lines
-		// Rationale: DB triggers are disabled to avoid double-posting; manual per-line +/- is error-prone due to sign conventions.
-		// We recalc the true balance for each affected account and set it explicitly.
+		// 7. Sync current account balances from all POSTED journals.
+		// This keeps `accounts.balance` as current balance even if newer open-period transactions already exist.
 		affectedIDsMap := make(map[uint64]struct{})
 		for _, line := range journalLines {
 			affectedIDsMap[line.AccountID] = struct{}{}
@@ -286,105 +586,135 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 		}
 
 		if len(affectedIDs) > 0 {
-			// Query correct balances from unified journals (POSTED only)
-			// IMPORTANT: gunakan konvensi saldo yang sama dengan updateAccountBalance()
-			// - ASSET / EXPENSE  : saldo = Debit - Credit  (debit menambah)
-			// - LIABILITY/EQUITY/REVENUE : saldo = Credit - Debit (kredit menambah)
-			type BalanceRow struct {
-				AccountID uint64
-				AccType   string
-				Correct   float64
+			if err := syncCurrentAccountBalances(tx, affectedIDs); err != nil {
+				return err
 			}
-			var rows []BalanceRow
-			if err := tx.Raw(`
-				SELECT a.id as account_id, a.type as acc_type,
-					CASE
-						WHEN a.type IN ('ASSET', 'EXPENSE') THEN
-							COALESCE(SUM(ujl.debit_amount),0) - COALESCE(SUM(ujl.credit_amount),0)
-						ELSE
-							COALESCE(SUM(ujl.credit_amount),0) - COALESCE(SUM(ujl.debit_amount),0)
-					END AS correct
-				FROM accounts a
-				LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
-				LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
-				WHERE a.id IN ? AND a.deleted_at IS NULL
-					AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL AND uje.entry_date <= ?))
-				GROUP BY a.id, a.type
-			`, affectedIDs, endDate).Scan(&rows).Error; err != nil {
-				return fmt.Errorf("failed to recalc balances for affected accounts: %v", err)
+			if err := syncAllHeaderAccountBalances(tx); err != nil {
+				return err
 			}
 
-			for _, r := range rows {
-				if err := tx.Model(&models.Account{}).
-					Where("id = ?", r.AccountID).
-					Update("balance", r.Correct).Error; err != nil {
-					return fmt.Errorf("failed to set recalculated balance for account %d: %v", r.AccountID, err)
-				}
-				log.Printf("[UNIFIED CLOSING] Recalculated balance set: account_id=%d type=%s new_balance=%.2f", r.AccountID, r.AccType, r.Correct)
-			}
-
-			// Also zero out parent/header revenue and expense accounts that don't have SSOT journal lines
-			// These accounts have stale cached balances from child account aggregation
-			// The closing only creates journal lines for leaf accounts (those in SSOT),
-			// so parent accounts need explicit zeroing.
-			var parentAccounts []models.Account
-			if err := tx.Where(
-				"type IN (?) AND ABS(balance) > 0.01 AND id NOT IN (?)",
-				[]string{"REVENUE", "EXPENSE"},
-				affectedIDs,
-			).Find(&parentAccounts).Error; err != nil {
-				return fmt.Errorf("failed to find parent accounts to zero: %v", err)
-			}
-			for _, acc := range parentAccounts {
-				if err := tx.Model(&models.Account{}).
-					Where("id = ?", acc.ID).
-					Update("balance", 0).Error; err != nil {
-					return fmt.Errorf("failed to zero parent account %s: %v", acc.Code, err)
-				}
-				log.Printf("[UNIFIED CLOSING] Zeroed parent/header account: %s (%s) old_balance=%.2f → 0",
-					acc.Code, acc.Name, acc.Balance)
-			}
-
-			// VALIDATION: Verify that all Revenue and Expense accounts are now ZERO
+			// VALIDATION: Verify that all Revenue and Expense balances are zero as of the closed period end date.
 			var nonZeroCount int64
-			if err := tx.Model(&models.Account{}).
-				Where("type IN (?) AND ABS(balance) > 0.01", []string{"REVENUE", "EXPENSE"}).
-				Count(&nonZeroCount).Error; err != nil {
-				return fmt.Errorf("failed to validate zero balances: %v", err)
+			if err := tx.Raw(`
+				SELECT COUNT(*)
+				FROM (
+					SELECT a.id
+					FROM accounts a
+					LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
+					LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
+					WHERE (
+						TRIM(a.type) ILIKE 'REVENUE' OR TRIM(a.type) ILIKE 'PENDAPATAN%' OR
+						TRIM(a.type) ILIKE 'EXPENSE' OR TRIM(a.type) ILIKE 'BEBAN%'
+					)
+						AND a.deleted_at IS NULL
+						AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL AND uje.entry_date <= ?))
+					GROUP BY a.id
+					HAVING ABS(COALESCE(SUM(ujl.debit_amount), 0) - COALESCE(SUM(ujl.credit_amount), 0)) > 0.01
+				) AS non_zero_accounts
+			`, endDate).Scan(&nonZeroCount).Error; err != nil {
+				return fmt.Errorf("failed to validate zero balances at period end: %v", err)
 			}
 
 			if nonZeroCount > 0 {
-				// Log which accounts are not zero for debugging
-				var problemAccounts []models.Account
-				tx.Where("type IN (?) AND ABS(balance) > 0.01", []string{"REVENUE", "EXPENSE"}).
-					Find(&problemAccounts)
-				for _, acc := range problemAccounts {
-					log.Printf("[UNIFIED CLOSING] ⚠️ WARNING: Account %s (%s) still has balance: %.2f",
-						acc.Code, acc.Name, acc.Balance)
+				type problemAccount struct {
+					Code    string
+					Name    string
+					Balance float64
 				}
-				return fmt.Errorf("closing validation failed: %d revenue/expense accounts still have non-zero balance", nonZeroCount)
+
+				var problemAccounts []problemAccount
+				if err := tx.Raw(`
+					SELECT
+						a.code,
+						a.name,
+						COALESCE(SUM(ujl.debit_amount), 0) - COALESCE(SUM(ujl.credit_amount), 0) AS balance
+					FROM accounts a
+					LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
+					LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
+					WHERE (
+						TRIM(a.type) ILIKE 'REVENUE' OR TRIM(a.type) ILIKE 'PENDAPATAN%' OR
+						TRIM(a.type) ILIKE 'EXPENSE' OR TRIM(a.type) ILIKE 'BEBAN%'
+					)
+						AND a.deleted_at IS NULL
+						AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL AND uje.entry_date <= ?))
+					GROUP BY a.id, a.code, a.name
+					HAVING ABS(COALESCE(SUM(ujl.debit_amount), 0) - COALESCE(SUM(ujl.credit_amount), 0)) > 0.01
+				`, endDate).Scan(&problemAccounts).Error; err == nil {
+					for _, acc := range problemAccounts {
+						log.Printf("[UNIFIED CLOSING] WARNING: Account %s (%s) still has historical balance at close date: %.2f",
+							acc.Code, acc.Name, acc.Balance)
+					}
+				}
+				return fmt.Errorf("closing validation failed: %d revenue/expense accounts still have non-zero balance at closing date", nonZeroCount)
 			}
 
-			log.Printf("[UNIFIED CLOSING] ✅ Validation passed: All Revenue and Expense accounts are ZERO")
+			log.Printf("[UNIFIED CLOSING] Validation passed: All Revenue and Expense balances are zero at closing date")
 		}
 
-		// 8. Create accounting period record
+		var transactionCount int64
+		if err := tx.Model(&models.SSOTJournalEntry{}).
+			Where("entry_date BETWEEN ? AND ? AND status = ? AND source_type != ? AND deleted_at IS NULL",
+				startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
+			Count(&transactionCount).Error; err != nil {
+			return fmt.Errorf("failed to count transactions for accounting period: %v", err)
+		}
+
+		closingJournalID := uint(closingEntry.ID)
+
+		// 9. Create or refresh accounting period record
 		userIDUint := uint(userID)
-		accountingPeriod := models.AccountingPeriod{
-			StartDate:    startDate,
-			EndDate:      endDate,
-			Description:  description,
-			IsClosed:     true,
-			IsLocked:     true,
-			ClosedBy:     &userIDUint,
-			ClosedAt:     &now,
-			TotalRevenue: totalRevenue.InexactFloat64(),
-			TotalExpense: totalExpense.InexactFloat64(),
-			NetIncome:    netIncome.InexactFloat64(),
+		accountingPeriodValues := map[string]interface{}{
+			"description":          description,
+			"is_closed":            true,
+			"is_locked":            false,
+			"closed_by":            &userIDUint,
+			"closed_at":            &now,
+			"total_revenue":        totalRevenue.InexactFloat64(),
+			"total_expense":        totalExpense.InexactFloat64(),
+			"net_income":           netIncome.InexactFloat64(),
+			"closing_journal_id":   &closingJournalID,
+			"account_count":        len(closingDeltaMap),
+			"transaction_count":    int(transactionCount),
+			"reopened_by":          nil,
+			"reopened_at":          nil,
+			"reopen_reason":        "",
+			"reopening_journal_id": nil,
+			"notes":                validationNote,
+			"updated_at":           now,
 		}
 
-		if err := tx.Create(&accountingPeriod).Error; err != nil {
-			return fmt.Errorf("failed to create accounting period: %v", err)
+		existingPeriod, err := findAccountingPeriodByCanonicalRange(tx, startDate, normalizeClosingDayStart(endDate), false)
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			accountingPeriod := models.AccountingPeriod{
+				StartDate:        startDate,
+				EndDate:          endDate,
+				Description:      description,
+				IsClosed:         true,
+				IsLocked:         false,
+				ClosedBy:         &userIDUint,
+				ClosedAt:         &now,
+				TotalRevenue:     totalRevenue.InexactFloat64(),
+				TotalExpense:     totalExpense.InexactFloat64(),
+				NetIncome:        netIncome.InexactFloat64(),
+				ClosingJournalID: &closingJournalID,
+				AccountCount:     len(closingDeltaMap),
+				TransactionCount: int(transactionCount),
+				Notes:            validationNote,
+			}
+
+			if err := tx.Create(&accountingPeriod).Error; err != nil {
+				return fmt.Errorf("failed to create accounting period: %v", err)
+			}
+		case err != nil:
+			return fmt.Errorf("failed to query existing accounting period: %v", err)
+		default:
+			accountingPeriodValues["notes"] = appendPeriodNote(existingPeriod.Notes, validationNote)
+			accountingPeriodValues["start_date"] = startDate
+			accountingPeriodValues["end_date"] = endDate
+			if err := tx.Model(existingPeriod).Updates(accountingPeriodValues).Error; err != nil {
+				return fmt.Errorf("failed to update accounting period: %v", err)
+			}
 		}
 
 		log.Printf("[UNIFIED CLOSING] ✅ Period closing completed successfully")
@@ -397,6 +727,9 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 // PreviewPeriodClosing generates preview of period closing
 // IMPORTANT: Logika perhitungan HARUS sama dengan ExecutePeriodClosing agar angka preview = angka real
 func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, startDate, endDate time.Time) (map[string]interface{}, error) {
+	startDate = normalizeClosingDayStart(startDate)
+	endDate = normalizeClosingDayEnd(endDate)
+
 	if endDate.Before(startDate) {
 		return nil, fmt.Errorf("end_date must be on or after start_date")
 	}
@@ -410,34 +743,17 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 	}
 
 	// 2. Info last closed period (untuk warning & auto-detection di UI)
-	var validationMessages []string
+	validationMessages, blockingMessages, _, err := s.validateClosingWindow(tx, startDate, endDate)
+	if err != nil {
+		return nil, err
+	}
+
 	var transactionCount int64
 	var periodDays int
 
-	var lastPeriod models.AccountingPeriod
-	if err := tx.Where("is_closed = ?", true).Order("end_date DESC").First(&lastPeriod).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			validationMessages = append(validationMessages, "First period closing - no previous closed period found.")
-		} else {
-			return nil, fmt.Errorf("failed to query last closed period: %v", err)
-		}
-	} else {
-		// Expected start date = last end date + 1 hari
-		expectedStart := lastPeriod.EndDate.AddDate(0, 0, 1)
-		if !startDate.Equal(expectedStart) {
-			validationMessages = append(validationMessages,
-				fmt.Sprintf("Warning: expected start date %s based on last closing, but got %s",
-					expectedStart.Format("2006-01-02"), startDate.Format("2006-01-02")))
-		}
-
-		if !endDate.After(lastPeriod.EndDate) {
-			validationMessages = append(validationMessages, "End date must be after last closing date.")
-		}
-	}
-
 	// 3. Hitung jumlah transaksi non-closing dalam periode untuk informasi tambahan
 	if err := tx.Model(&models.SSOTJournalEntry{}).
-		Where("entry_date BETWEEN ? AND ? AND status = ? AND source_type != ?",
+		Where("entry_date BETWEEN ? AND ? AND status = ? AND source_type != ? AND deleted_at IS NULL",
 			startDate, endDate, models.SSOTStatusPosted, models.SSOTSourceTypeClosing).
 		Count(&transactionCount).Error; err != nil {
 		return nil, fmt.Errorf("failed to count transactions for preview: %v", err)
@@ -560,9 +876,11 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 		}
 	}
 
-	canClose := len(revenuePreview) > 0 || len(expensePreview) > 0
+	canClose := len(blockingMessages) == 0 && (len(revenuePreview) > 0 || len(expensePreview) > 0)
 	if !canClose {
-		validationMessages = append(validationMessages, "No revenue or expense balances to close.")
+		if len(blockingMessages) == 0 {
+			validationMessages = append(validationMessages, "No revenue or expense balances to close.")
+		}
 	}
 
 	totalRevenue := totalRevenueDec.InexactFloat64()
@@ -603,6 +921,8 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 		"expense_accounts":     expensePreview,
 		"closing_entries":      closingEntries,
 		"can_close":            canClose,
+		"has_blocking_issues":  len(blockingMessages) > 0,
+		"blocking_messages":    blockingMessages,
 		"validation_messages":  validationMessages,
 		"transaction_count":    transactionCount,
 		"period_days":          periodDays,
@@ -651,45 +971,68 @@ func (s *UnifiedPeriodClosingService) GetLastClosingInfo(ctx context.Context) (m
 		return nil, fmt.Errorf("failed to query last closing period: %v", err)
 	}
 
-	nextStart := lastPeriod.EndDate.AddDate(0, 0, 1)
+	nextStart := nextClosingStartDate(lastPeriod.EndDate)
 
 	return map[string]interface{}{
 		"has_previous_closing":   true,
-		"last_closing_date":      lastPeriod.EndDate.Format("2006-01-02"),
+		"last_closing_date":      periodBoundaryDateString(lastPeriod.EndDate, "end"),
 		"next_start_date":        nextStart.Format("2006-01-02"),
 		"last_net_income":        lastPeriod.NetIncome,
-		"last_period_start_date": lastPeriod.StartDate.Format("2006-01-02"),
-		"last_period_end_date":   lastPeriod.EndDate.Format("2006-01-02"),
+		"last_period_start_date": periodBoundaryDateString(lastPeriod.StartDate, "start"),
+		"last_period_end_date":   periodBoundaryDateString(lastPeriod.EndDate, "end"),
 	}, nil
 }
 
 // IsDateInClosedPeriod checks if a given date falls within a closed period
 func (s *UnifiedPeriodClosingService) IsDateInClosedPeriod(ctx context.Context, date time.Time) (bool, error) {
-	var count int64
-	err := s.db.Model(&models.AccountingPeriod{}).
-		Where("is_closed = ? AND ? BETWEEN start_date AND end_date", true, date).
-		Count(&count).Error
-
-	if err != nil {
+	var periods []models.AccountingPeriod
+	if err := s.db.WithContext(ctx).
+		Where("is_closed = ? AND deleted_at IS NULL", true).
+		Find(&periods).Error; err != nil {
 		return false, fmt.Errorf("failed to check closed period: %v", err)
 	}
 
-	return count > 0, nil
+	targetDate := normalizeClosingDayStart(date)
+	for _, period := range periods {
+		start := canonicalPeriodStartDate(period.StartDate)
+		end := canonicalPeriodEndDate(period.EndDate)
+		if !targetDate.Before(start) && !targetDate.After(end) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // GetPeriodInfoForDate returns period information for a specific date
 func (s *UnifiedPeriodClosingService) GetPeriodInfoForDate(ctx context.Context, date time.Time) map[string]interface{} {
-	var period models.AccountingPeriod
-	err := s.db.Preload("ClosedByUser").Where("? BETWEEN start_date AND end_date AND is_closed = ?", date, true).
-		First(&period).Error
-
+	var periods []models.AccountingPeriod
+	err := s.db.WithContext(ctx).
+		Preload("ClosedByUser").
+		Where("is_closed = ? AND deleted_at IS NULL", true).
+		Order("end_date DESC").
+		Find(&periods).Error
 	if err != nil {
 		return nil
 	}
 
+	targetDate := normalizeClosingDayStart(date)
+	var period *models.AccountingPeriod
+	for i := range periods {
+		start := canonicalPeriodStartDate(periods[i].StartDate)
+		end := canonicalPeriodEndDate(periods[i].EndDate)
+		if !targetDate.Before(start) && !targetDate.After(end) {
+			period = &periods[i]
+			break
+		}
+	}
+	if period == nil {
+		return nil
+	}
+
 	info := map[string]interface{}{
-		"start_date":  period.StartDate,
-		"end_date":    period.EndDate,
+		"start_date":  periodBoundaryDateString(period.StartDate, "start"),
+		"end_date":    periodBoundaryDateString(period.EndDate, "end"),
 		"description": period.Description,
 		"is_locked":   period.IsLocked,
 	}
@@ -708,16 +1051,14 @@ func (s *UnifiedPeriodClosingService) GetPeriodInfoForDate(ctx context.Context, 
 // ReopenPeriod reopens a previously closed accounting period
 // This will reverse the closing journal entry and mark the period as open
 func (s *UnifiedPeriodClosingService) ReopenPeriod(ctx context.Context, startDate, endDate time.Time, reason string, userID uint64) error {
+	startDate = normalizeClosingDayStart(startDate)
+	endDate = normalizeClosingDayEnd(endDate)
 	log.Printf("[UNIFIED CLOSING] Reopening period: %s to %s, reason: %s",
 		startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), reason)
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// 1. Find the matching closed period
-		var period models.AccountingPeriod
-		err := tx.Where(
-			"is_closed = ? AND start_date = ? AND end_date = ?",
-			true, startDate, endDate,
-		).First(&period).Error
+		period, err := findAccountingPeriodByCanonicalRange(tx, startDate, normalizeClosingDayStart(endDate), true)
 
 		if err != nil {
 			if err == gorm.ErrRecordNotFound {
@@ -729,103 +1070,116 @@ func (s *UnifiedPeriodClosingService) ReopenPeriod(ctx context.Context, startDat
 
 		// 2. Check if it's locked (hard lock — cannot be reopened)
 		if period.IsLocked {
-			// Allow admin to unlock — just warn
-			log.Printf("[UNIFIED CLOSING] ⚠️ Period is locked, but proceeding with reopen as requested")
+			return fmt.Errorf("periode %s sampai %s sedang hard locked dan tidak dapat dibuka kembali",
+				periodBoundaryDateString(period.StartDate, "start"), periodBoundaryDateString(period.EndDate, "end"))
 		}
 
-		// 3. Ensure this is the MOST RECENT closed period (can only reopen from newest)
-		var newerPeriod models.AccountingPeriod
-		err = tx.Where("is_closed = ? AND end_date > ?", true, endDate).
-			Order("end_date DESC").First(&newerPeriod).Error
-		if err == nil {
-			return fmt.Errorf("tidak dapat membuka periode ini karena ada periode yang lebih baru sudah ditutup (%s - %s). Buka periode terbaru terlebih dahulu",
-				newerPeriod.StartDate.Format("02 Jan 2006"), newerPeriod.EndDate.Format("02 Jan 2006"))
+		// 3. Ensure this is the most recent closed period.
+		var closedPeriods []models.AccountingPeriod
+		if err := tx.Where("is_closed = ? AND deleted_at IS NULL", true).Order("end_date DESC").Find(&closedPeriods).Error; err != nil {
+			return fmt.Errorf("gagal memuat daftar periode tertutup: %v", err)
+		}
+		selectedEnd := canonicalPeriodEndDate(period.EndDate)
+		for _, candidate := range closedPeriods {
+			if candidate.ID == period.ID {
+				continue
+			}
+			if canonicalPeriodEndDate(candidate.EndDate).After(selectedEnd) {
+				return fmt.Errorf("tidak dapat membuka periode ini karena ada periode yang lebih baru sudah ditutup (%s - %s). Buka periode terbaru terlebih dahulu",
+					periodBoundaryDateString(candidate.StartDate, "start"), periodBoundaryDateString(candidate.EndDate, "end"))
+			}
 		}
 
-		// 4. Find and delete/reverse the closing journal entry
+		// 4. Find and reverse the closing journal entry
 		var closingJournals []models.SSOTJournalEntry
-		err = tx.Where(
-			"source_type = ? AND entry_date = ? AND status = ?",
-			"CLOSING", endDate, "POSTED",
-		).Find(&closingJournals).Error
+		switch {
+		case period.ClosingJournalID != nil:
+			err = tx.Where(
+				"id = ? AND source_type = ? AND status = ? AND deleted_at IS NULL",
+				uint64(*period.ClosingJournalID), models.SSOTSourceTypeClosing, models.SSOTStatusPosted,
+			).Find(&closingJournals).Error
+		default:
+			closingSourceCode := buildClosingPeriodSourceCode(period.StartDate, period.EndDate)
+			err = tx.Where(
+				"source_type = ? AND source_code = ? AND status = ? AND deleted_at IS NULL",
+				models.SSOTSourceTypeClosing, closingSourceCode, models.SSOTStatusPosted,
+			).Find(&closingJournals).Error
+			if err == nil && len(closingJournals) == 0 {
+				err = tx.Where(
+					"source_type = ? AND entry_date >= ? AND entry_date <= ? AND status = ? AND deleted_at IS NULL",
+					models.SSOTSourceTypeClosing,
+					normalizeClosingDayStart(period.EndDate),
+					normalizeClosingDayEnd(period.EndDate),
+					models.SSOTStatusPosted,
+				).Find(&closingJournals).Error
+			}
+		}
 
 		if err != nil {
 			return fmt.Errorf("gagal mencari jurnal closing: %v", err)
 		}
+		if len(closingJournals) == 0 {
+			return fmt.Errorf("gagal mencari jurnal closing untuk periode %s sampai %s",
+				periodBoundaryDateString(period.StartDate, "start"), periodBoundaryDateString(period.EndDate, "end"))
+		}
 
 		// Collect affected account IDs for balance recalculation
 		affectedAccountIDs := make(map[uint64]struct{})
+		var reopeningJournalID *uint
+		reopenAt := normalizeClosingDayEnd(period.EndDate)
 
 		for _, journal := range closingJournals {
 			// Get journal lines to know which accounts to recalculate
 			var lines []models.SSOTJournalLine
-			tx.Where("journal_id = ?", journal.ID).Find(&lines)
+			if err := tx.Where("journal_id = ?", journal.ID).Order("line_number ASC").Find(&lines).Error; err != nil {
+				return fmt.Errorf("gagal mengambil baris jurnal closing: %v", err)
+			}
 			for _, line := range lines {
 				affectedAccountIDs[line.AccountID] = struct{}{}
 			}
 
-			// Delete journal lines first
-			if err := tx.Where("journal_id = ?", journal.ID).Delete(&models.SSOTJournalLine{}).Error; err != nil {
-				return fmt.Errorf("gagal menghapus baris jurnal closing: %v", err)
+			reversalEntry, err := s.createClosingReversalEntry(tx, journal, lines, *period, reason, reopenAt, userID)
+			if err != nil {
+				return fmt.Errorf("gagal membuat jurnal pembalik closing: %v", err)
+			}
+			if reopeningJournalID == nil {
+				reversalID := uint(reversalEntry.ID)
+				reopeningJournalID = &reversalID
 			}
 
-			// Delete the journal entry
-			if err := tx.Unscoped().Delete(&journal).Error; err != nil {
-				return fmt.Errorf("gagal menghapus jurnal closing: %v", err)
-			}
-
-			log.Printf("[UNIFIED CLOSING] Deleted closing journal ID: %d", journal.ID)
+			log.Printf("[UNIFIED CLOSING] Reversed closing journal ID: %d with reversal journal ID: %d", journal.ID, reversalEntry.ID)
 		}
 
-		// 5. Recalculate balances for all affected accounts
+		// 5. Recalculate current balances for all affected accounts and header chains
 		if len(affectedAccountIDs) > 0 {
 			var accountIDs []uint64
 			for id := range affectedAccountIDs {
 				accountIDs = append(accountIDs, id)
 			}
 
-			type BalanceRow struct {
-				AccountID uint64
-				AccType   string
-				Correct   float64
+			if err := syncCurrentAccountBalances(tx, accountIDs); err != nil {
+				return fmt.Errorf("gagal sinkron saldo akun current: %v", err)
 			}
-
-			var rows []BalanceRow
-			if err := tx.Raw(`
-				SELECT a.id as account_id, a.type as acc_type,
-					CASE
-						WHEN a.type IN ('ASSET', 'EXPENSE') THEN
-							COALESCE(SUM(ujl.debit_amount),0) - COALESCE(SUM(ujl.credit_amount),0)
-						ELSE
-							COALESCE(SUM(ujl.credit_amount),0) - COALESCE(SUM(ujl.debit_amount),0)
-					END AS correct
-				FROM accounts a
-				LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
-				LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
-				WHERE a.id IN ? AND a.deleted_at IS NULL
-					AND (uje.id IS NULL OR (uje.status = 'POSTED' AND uje.deleted_at IS NULL))
-				GROUP BY a.id, a.type
-			`, accountIDs).Scan(&rows).Error; err != nil {
-				return fmt.Errorf("gagal menghitung ulang saldo: %v", err)
-			}
-
-			for _, r := range rows {
-				if err := tx.Model(&models.Account{}).
-					Where("id = ?", r.AccountID).
-					Update("balance", r.Correct).Error; err != nil {
-					return fmt.Errorf("gagal update saldo akun %d: %v", r.AccountID, err)
-				}
-				log.Printf("[UNIFIED CLOSING] Recalculated account %d balance: %.2f", r.AccountID, r.Correct)
+			if err := syncAllHeaderAccountBalances(tx); err != nil {
+				return fmt.Errorf("gagal sinkron saldo akun header: %v", err)
 			}
 		}
 
 		// 6. Mark period as open
 		now := time.Now()
-		if err := tx.Model(&period).Updates(map[string]interface{}{
-			"is_closed":  false,
-			"is_locked":  false,
-			"notes":      fmt.Sprintf("Dibuka kembali pada %s. Alasan: %s", now.Format("02 Jan 2006 15:04"), reason),
-			"updated_at": now,
+		reopenedBy := uint(userID)
+		reopenNote := fmt.Sprintf("Dibuka kembali pada %s oleh user #%d. Alasan: %s", now.Format("02 Jan 2006 15:04"), userID, reason)
+		if err := tx.Model(period).Updates(map[string]interface{}{
+			"is_closed":            false,
+			"is_locked":            false,
+			"closing_journal_id":   nil,
+			"reopened_by":          &reopenedBy,
+			"reopened_at":          &now,
+			"reopen_reason":        reason,
+			"reopening_journal_id": reopeningJournalID,
+			"reopen_count":         gorm.Expr("reopen_count + ?", 1),
+			"notes":                appendPeriodNote(period.Notes, reopenNote),
+			"updated_at":           now,
 		}).Error; err != nil {
 			return fmt.Errorf("gagal membuka periode: %v", err)
 		}
@@ -845,8 +1199,9 @@ func (s *UnifiedPeriodClosingService) GetClosingHistory(ctx context.Context, lim
 
 	var periods []models.AccountingPeriod
 	err := s.db.WithContext(ctx).
-		Where("is_closed = ?", true).
+		Where("deleted_at IS NULL AND (is_closed = ? OR reopen_count > 0 OR reopened_at IS NOT NULL)", true).
 		Preload("ClosedByUser").
+		Preload("ReopenedByUser").
 		Order("end_date DESC").
 		Limit(limit).
 		Find(&periods).Error
@@ -859,10 +1214,11 @@ func (s *UnifiedPeriodClosingService) GetClosingHistory(ctx context.Context, lim
 	for _, p := range periods {
 		item := map[string]interface{}{
 			"id":                p.ID,
-			"start_date":        p.StartDate.Format("2006-01-02"),
-			"end_date":          p.EndDate.Format("2006-01-02"),
+			"start_date":        periodBoundaryDateString(p.StartDate, "start"),
+			"end_date":          periodBoundaryDateString(p.EndDate, "end"),
 			"description":       p.Description,
 			"is_closed":         p.IsClosed,
+			"status":            "CLOSED",
 			"is_locked":         p.IsLocked,
 			"total_revenue":     p.TotalRevenue,
 			"total_expense":     p.TotalExpense,
@@ -870,7 +1226,11 @@ func (s *UnifiedPeriodClosingService) GetClosingHistory(ctx context.Context, lim
 			"period_type":       p.PeriodType,
 			"account_count":     p.AccountCount,
 			"transaction_count": p.TransactionCount,
+			"reopen_count":      p.ReopenCount,
 			"notes":             p.Notes,
+		}
+		if !p.IsClosed {
+			item["status"] = "REOPENED"
 		}
 
 		if p.ClosedAt != nil {
@@ -879,6 +1239,18 @@ func (s *UnifiedPeriodClosingService) GetClosingHistory(ctx context.Context, lim
 
 		if p.ClosedByUser != nil && p.ClosedByUser.ID != 0 {
 			item["closed_by_name"] = p.ClosedByUser.GetDisplayName()
+		}
+		if p.ReopenedAt != nil {
+			item["reopened_at"] = p.ReopenedAt.Format("2006-01-02T15:04:05Z")
+		}
+		if p.ReopenReason != "" {
+			item["reopen_reason"] = p.ReopenReason
+		}
+		if p.ReopenedByUser != nil && p.ReopenedByUser.ID != 0 {
+			item["reopened_by_name"] = p.ReopenedByUser.GetDisplayName()
+		}
+		if p.ReopeningJournalID != nil {
+			item["reopening_journal_id"] = *p.ReopeningJournalID
 		}
 
 		result = append(result, item)

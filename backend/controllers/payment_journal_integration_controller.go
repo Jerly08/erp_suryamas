@@ -3,6 +3,7 @@ package controllers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"app-sistem-akuntansi/models"
@@ -196,6 +197,17 @@ func (ctrl *PaymentJournalIntegrationController) ReversePayment(c *gin.Context) 
 		return
 	}
 
+	var reversalDate time.Time
+	if strings.TrimSpace(req.ReversalDate) != "" {
+		reversalDate, err = time.Parse("2006-01-02", req.ReversalDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid reversal_date format. Use YYYY-MM-DD",
+			})
+			return
+		}
+	}
+
 	// Get user ID from context
 	userID := getUserIDFromContext(c)
 	if userID == 0 {
@@ -206,7 +218,7 @@ func (ctrl *PaymentJournalIntegrationController) ReversePayment(c *gin.Context) 
 	}
 
 	// Reverse payment
-	response, err := ctrl.enhancedPaymentService.ReversePayment(uint(id), req.Reason, userID)
+	response, err := ctrl.enhancedPaymentService.ReversePayment(uint(id), req.Reason, reversalDate, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Failed to reverse payment",
@@ -332,9 +344,9 @@ func (ctrl *PaymentJournalIntegrationController) GetPaymentJournalEntries(c *gin
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Payment journal entries retrieved successfully",
-		"data":    paymentEntries,
-		"count":   len(paymentEntries),
+		"message":    "Payment journal entries retrieved successfully",
+		"data":       paymentEntries,
+		"count":      len(paymentEntries),
 		"payment_id": paymentID,
 	})
 }
@@ -389,15 +401,16 @@ func (ctrl *PaymentJournalIntegrationController) GetIntegrationMetrics(c *gin.Co
 
 // ReversePaymentRequest represents request to reverse a payment
 type ReversePaymentRequest struct {
-	Reason string `json:"reason" binding:"required"`
+	Reason       string `json:"reason" binding:"required"`
+	ReversalDate string `json:"reversal_date"`
 }
 
 // PaymentIntegrationMetrics represents integration metrics
 type PaymentIntegrationMetrics struct {
-	TotalPayments        int     `json:"total_payments"`
-	PaymentsWithJournal  int     `json:"payments_with_journal"`
-	TotalAmount          float64 `json:"total_amount"`
-	SuccessRate          float64 `json:"success_rate"`
+	TotalPayments       int     `json:"total_payments"`
+	PaymentsWithJournal int     `json:"payments_with_journal"`
+	TotalAmount         float64 `json:"total_amount"`
+	SuccessRate         float64 `json:"success_rate"`
 }
 
 // Legacy PaymentJournalMetrics (deprecated, use PaymentIntegrationMetrics)
@@ -416,14 +429,14 @@ func (ctrl *PaymentJournalIntegrationController) calculateIntegrationMetrics() (
 	// This would need a database connection to query actual metrics
 	// For now, providing a working implementation with hardcoded values
 	// TODO: Implement actual database queries when database connection is available
-	
+
 	metrics := &PaymentIntegrationMetrics{
 		TotalPayments:       1250,
 		PaymentsWithJournal: 1234,
-		TotalAmount:         125000000.0,  // 125M IDR
-		SuccessRate:         0.992,        // 99.2%
+		TotalAmount:         125000000.0, // 125M IDR
+		SuccessRate:         0.992,       // 99.2%
 	}
-	
+
 	return metrics, nil
 }
 
@@ -449,4 +462,3 @@ func (ctrl *PaymentJournalIntegrationController) RegisterRoutes(router *gin.Engi
 	// Metrics and monitoring
 	payments.GET("/integration-metrics", ctrl.GetIntegrationMetrics)
 }
-

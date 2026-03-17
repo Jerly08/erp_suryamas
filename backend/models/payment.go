@@ -1,24 +1,34 @@
 package models
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
 
 type Payment struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	Code           string    `json:"code" gorm:"unique;not null;size:30"`
-	ContactID      uint      `json:"contact_id" gorm:"not null;index"`
-	UserID         uint      `json:"user_id" gorm:"not null;index"`
-	Date           time.Time `json:"date"`
-	Amount         float64   `json:"amount" gorm:"type:decimal(15,2);default:0"`
-	Method         string    `json:"method" gorm:"size:20"` // CASH, BANK_TRANSFER, CHECK, etc.
-	Reference      string    `json:"reference" gorm:"size:50"`
-	Status         string    `json:"status" gorm:"size:20"`             // PENDING, COMPLETED, FAILED, REVERSED
-	PaymentType    string    `json:"payment_type" gorm:"size:30;index"` // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
-	Notes          string    `json:"notes" gorm:"type:text"`
-	JournalEntryID *uint     `json:"journal_entry_id" gorm:"index"` // Link to SSOT journal entry
+	ID                  uint      `json:"id" gorm:"primaryKey"`
+	Code                string    `json:"code" gorm:"unique;not null;size:30"`
+	ContactID           uint      `json:"contact_id" gorm:"not null;index"`
+	UserID              uint      `json:"user_id" gorm:"not null;index"`
+	Date                time.Time `json:"date"`
+	Amount              float64   `json:"amount" gorm:"type:decimal(15,2);default:0"`
+	NativeAmount        float64   `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
+	Currency            string    `json:"currency" gorm:"size:5;default:'IDR';not null"`
+	ExchangeRate        float64   `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
+	BookAmountIDR       float64   `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
+	ForexGainLossAmount float64   `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
+	ForexGainLossType   string    `json:"forex_gain_loss_type" gorm:"size:10"`
+	Method              string    `json:"method" gorm:"size:20"` // CASH, BANK_TRANSFER, CHECK, etc.
+	Reference           string    `json:"reference" gorm:"size:50"`
+	Status              string    `json:"status" gorm:"size:20"`             // PENDING, COMPLETED, FAILED, REVERSED
+	PaymentType         string    `json:"payment_type" gorm:"size:30;index"` // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
+	ExpenseAccountID    *uint     `json:"expense_account_id" gorm:"index"`
+	CashBankID          *uint     `json:"cash_bank_id" gorm:"index"`
+	Notes               string    `json:"notes" gorm:"type:text"`
+	JournalEntryID      *uint     `json:"journal_entry_id" gorm:"index"` // Link to SSOT journal entry
 	// PPh withholding tax fields (optional, only for expense payments with PPh)
 	PPHType   string         `json:"pph_type" gorm:"size:20"`                        // PPH_21, PPH_23, PPH_4_2, PPH_22
 	PPHRate   float64        `json:"pph_rate" gorm:"type:decimal(5,2);default:0"`    // e.g. 5.0 for 5%
@@ -49,7 +59,7 @@ type PaymentAllocation struct {
 
 // Payment Status Constants
 const (
-	PaymentStatusDraft     = "DRAFT"     // Submitted by employee, waiting finance approval
+	PaymentStatusDraft     = "DRAFT" // Submitted by employee, waiting finance approval
 	PaymentStatusPending   = "PENDING"
 	PaymentStatusCompleted = "COMPLETED"
 	PaymentStatusFailed    = "FAILED"
@@ -101,4 +111,38 @@ func (p *Payment) GetPayeeName() string {
 	}
 
 	return "Unknown"
+}
+
+func ExtractExpenseDraftRoutingFromReference(reference string) (uint, uint) {
+	var expenseAccountID, cashBankID uint
+	n, _ := fmt.Sscanf(reference, "__EXP_ACC:%d,CB:%d__", &expenseAccountID, &cashBankID)
+	if n != 2 {
+		return 0, 0
+	}
+
+	return expenseAccountID, cashBankID
+}
+
+func ExtractCashBankDraftRoutingFromReference(reference string) uint {
+	var cashBankID uint
+	n, _ := fmt.Sscanf(reference, "__CB:%d__", &cashBankID)
+	if n != 1 {
+		return 0
+	}
+
+	return cashBankID
+}
+
+func StripInternalPaymentReference(reference string) string {
+	expenseAccountID, cashBankID := ExtractExpenseDraftRoutingFromReference(reference)
+	if expenseAccountID != 0 && cashBankID != 0 {
+		return strings.TrimSpace(strings.Replace(reference, fmt.Sprintf("__EXP_ACC:%d,CB:%d__", expenseAccountID, cashBankID), "", 1))
+	}
+
+	cashBankID = ExtractCashBankDraftRoutingFromReference(reference)
+	if cashBankID != 0 {
+		return strings.TrimSpace(strings.Replace(reference, fmt.Sprintf("__CB:%d__", cashBankID), "", 1))
+	}
+
+	return reference
 }

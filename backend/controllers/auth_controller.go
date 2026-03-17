@@ -90,9 +90,10 @@ func (ac *AuthController) Register(c *gin.Context) {
 		return
 	}
 
-	// Set default role if not provided
-	if req.Role == "" {
-		req.Role = "employee"
+	assignedRole := "employee"
+	if req.Role != "" && convertRoleToLowercase(req.Role) != assignedRole {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Public registration cannot assign privileged roles"})
+		return
 	}
 
 	// Create user
@@ -102,7 +103,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 		Password:  string(hashedPassword),
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
-		Role:      req.Role,
+		Role:      assignedRole,
 		IsActive:  true,
 	}
 

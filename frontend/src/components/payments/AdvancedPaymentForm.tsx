@@ -59,15 +59,17 @@ import { FiCreditCard, FiDollarSign, FiCalendar, FiUser, FiFileText, FiInfo } fr
 import paymentService, {
   PaymentCreateRequest,
   PaymentAllocation,
-  BillAllocation
+  BillAllocation,
+  stripInternalPaymentReference,
 } from '@/services/paymentService';
 import { searchableSelectService } from '@/services/searchableSelectService';
-import cashbankService, { CashBank } from '@/services/cashbankService';
+import cashbankService, { CashBank, ReferenceExchangeRate, getBookBalanceInIDR } from '@/services/cashbankService';
 import periodClosingService from '@/services/periodClosingService';
 import AuthExpiredModal from '@/components/auth/AuthExpiredModal';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import { useAuth } from '@/contexts/AuthContext';
 import { normalizeRole } from '@/utils/roles';
+import { roundUsdIdrRate } from '@/utils/exchangeRate';
 
 interface AdvancedPaymentFormProps {
   isOpen: boolean;
@@ -83,6 +85,7 @@ interface PaymentFormData {
   cash_bank_id: number;
   date: string;
   amount: number;
+  exchange_rate?: number;
   method: string;
   reference: string;
   notes: string;
@@ -95,6 +98,8 @@ interface OutstandingItem {
   date: string;
   total_amount: number;
   outstanding_amount: number;
+  currency?: string;
+  exchange_rate?: number;
   due_date?: string;
 }
 
@@ -118,6 +123,48 @@ const PAYMENT_TOOLTIPS = {
   notes: 'Catatan tambahan untuk pembayaran ini',
   autoAllocate: 'Aktifkan untuk mengalokasikan pembayaran secara otomatis ke invoice/bill tertua',
   allocation: 'Alokasi pembayaran ke invoice atau bill yang terkait. Pastikan total alokasi sesuai dengan jumlah pembayaran',
+};
+
+const formatCashBankBalance = (amount: number, currency?: string) => {
+  const normalizedCurrency = (currency || 'IDR').toUpperCase();
+
+  if (normalizedCurrency === 'USD') {
+    return `USD ${(amount || 0).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  return paymentService.formatCurrency(amount || 0, normalizedCurrency);
+};
+
+const getAvailableBookBalance = (account: CashBank) => {
+  const nativeAvailable = Math.max(0, (account.balance || 0) - (account.frozen_amount || 0));
+  const normalizedCurrency = (account.currency || 'IDR').toUpperCase();
+
+  if (normalizedCurrency === 'IDR') {
+    return nativeAvailable;
+  }
+
+  if ((account.balance || 0) <= 0) {
+    return 0;
+  }
+
+  return getBookBalanceInIDR(account) * (nativeAvailable / account.balance);
+};
+
+const formatCashBankAvailability = (account: CashBank, nativeAmount: number) => {
+  const nativeLabel = formatCashBankBalance(nativeAmount, account.currency);
+
+  if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+    return nativeLabel;
+  }
+
+  const proportionalBookAmount = (account.balance || 0) > 0
+    ? getBookBalanceInIDR(account) * (nativeAmount / account.balance)
+    : 0;
+
+  return `${nativeLabel} | Nilai buku: ${paymentService.formatCurrency(proportionalBookAmount)}`;
 };
 
 const PaymentAllocationTable: React.FC<{
@@ -335,6 +382,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const [loadingItems, setLoadingItems] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   const [showAuthExpired, setShowAuthExpired] = useState(false);
+  const [referenceRate, setReferenceRate] = useState<ReferenceExchangeRate | null>(null);
+  const [exchangeRateEdited, setExchangeRateEdited] = useState(false);
   const { user } = useAuth();
 
   // Color mode values
@@ -391,6 +440,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       date: new Date().toISOString().split('T')[0],
       method: 'BANK_TRANSFER',
       auto_allocate: false,
+      exchange_rate: undefined,
     }
   });
 
@@ -399,6 +449,20 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const watchedMethod = useWatch({ control, name: 'method' });
   const watchedAutoAllocate = useWatch({ control, name: 'auto_allocate' });
   const watchedCashBankId = useWatch({ control, name: 'cash_bank_id' });
+  const watchedExchangeRate = useWatch({ control, name: 'exchange_rate' });
+  const selectedCashBank = cashBankAccounts.find(account => account.id === watchedCashBankId);
+  const selectedCashBankCurrency = (selectedCashBank?.currency || 'IDR').toUpperCase();
+  const isUsdPayableAccount = type === 'payable' && selectedCashBankCurrency === 'USD';
+  const selectedAllocationItems = outstandingItems.filter(item => allocations.some(allocation => {
+    if (type === 'receivable') {
+      return (allocation as PaymentAllocation).invoice_id === item.id;
+    }
+    return (allocation as BillAllocation).bill_id === item.id;
+  }));
+  const hasUsdReceivableSelection = type === 'receivable' && selectedAllocationItems.some(item => (item.currency || 'IDR').toUpperCase() === 'USD');
+  const requiresFxRate = type === 'payable'
+    ? selectedCashBankCurrency === 'USD'
+    : selectedCashBankCurrency === 'USD' || hasUsdReceivableSelection;
 
   // Load initial data and force refresh on modal open
   useEffect(() => {
@@ -419,8 +483,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
           cash_bank_id: initialData.cash_bank_id || 0,
           date: initialData.date?.split('T')[0] || new Date().toISOString().split('T')[0],
           amount: initialData.amount || 0,
+          exchange_rate: initialData.exchange_rate ? roundUsdIdrRate(initialData.exchange_rate) : undefined,
           method: initialData.method || 'BANK_TRANSFER',
-          reference: initialData.reference || '',
+          reference: stripInternalPaymentReference(initialData.reference),
           notes: initialData.notes || '',
           auto_allocate: false,
         });
@@ -452,6 +517,33 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       loadOutstandingItems(watchedContactId);
     }
   }, [watchedContactId, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !requiresFxRate) {
+      setReferenceRate(null);
+      setExchangeRateEdited(false);
+      setValue('exchange_rate', undefined);
+      return;
+    }
+
+    let cancelled = false;
+    const loadReferenceRate = async () => {
+      const rate = await cashbankService.getReferenceExchangeRate('USD', 'IDR');
+      if (cancelled) {
+        return;
+      }
+
+      setReferenceRate(rate);
+      if (!exchangeRateEdited && rate?.exchange_rate) {
+        setValue('exchange_rate', roundUsdIdrRate(rate.exchange_rate), { shouldValidate: true });
+      }
+    };
+
+    loadReferenceRate();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, requiresFxRate, watchedCashBankId, exchangeRateEdited, setValue]);
 
   // Auto allocate when amount changes (always enabled)
   useEffect(() => {
@@ -517,6 +609,78 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       setLoadingItems(false);
     }
   };
+
+  const formatExchangeRate = (value?: number) => {
+    if (!value || value <= 0) {
+      return '-';
+    }
+
+    return `Rp ${value.toLocaleString('id-ID', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    })}`;
+  };
+
+  const getUsdNativeOutAmount = () => {
+    if (!isUsdPayableAccount || !watchedAmount || !watchedExchangeRate || watchedExchangeRate <= 0) {
+      return 0;
+    }
+
+    return watchedAmount / watchedExchangeRate;
+  };
+
+  const getReceivableHistoricalSettlementBookAmount = () => {
+    if (type !== 'receivable' || !watchedAmount) {
+      return watchedAmount || 0;
+    }
+    if (!hasUsdReceivableSelection || !watchedExchangeRate || watchedExchangeRate <= 0) {
+      return watchedAmount || 0;
+    }
+
+    let totalSettlementBook = 0;
+    let totalAllocated = 0;
+
+    allocations.forEach((allocation) => {
+      const invoiceId = (allocation as PaymentAllocation).invoice_id;
+      const allocatedAmount = allocation.amount || 0;
+      const item = outstandingItems.find(outstanding => outstanding.id === invoiceId);
+      totalAllocated += allocatedAmount;
+
+      if (!item || (item.currency || 'IDR').toUpperCase() !== 'USD') {
+        totalSettlementBook += allocatedAmount;
+        return;
+      }
+
+      const historicalRate = item.exchange_rate && item.exchange_rate > 0 ? item.exchange_rate : 1;
+      totalSettlementBook += (allocatedAmount / watchedExchangeRate) * historicalRate;
+    });
+
+    const unappliedAmount = Math.max(0, (watchedAmount || 0) - totalAllocated);
+    return totalSettlementBook + unappliedAmount;
+  };
+
+  const usdNativeOutAmount = getUsdNativeOutAmount();
+  const receivableNativeAmount = requiresFxRate && watchedAmount && watchedExchangeRate && watchedExchangeRate > 0
+    ? watchedAmount / watchedExchangeRate
+    : 0;
+  const availableNativeBalance = selectedCashBank
+    ? Math.max(0, (selectedCashBank.balance || 0) - (selectedCashBank.frozen_amount || 0))
+    : 0;
+  const availableBookBalance = selectedCashBank ? getAvailableBookBalance(selectedCashBank) : 0;
+  const currentCarryRate = isUsdPayableAccount && availableNativeBalance > 0
+    ? availableBookBalance / availableNativeBalance
+    : 0;
+  const bankBookOutAmount = isUsdPayableAccount && availableNativeBalance > 0
+    ? availableBookBalance * (usdNativeOutAmount / availableNativeBalance)
+    : watchedAmount || 0;
+  const receivableSettlementBookAmount = getReceivableHistoricalSettlementBookAmount();
+  const endingNativeBalance = Math.max(0, availableNativeBalance - usdNativeOutAmount);
+  const endingBookBalance = Math.max(0, availableBookBalance - bankBookOutAmount);
+  const estimatedForexDiff = type === 'payable'
+    ? bankBookOutAmount - (watchedAmount || 0)
+    : (watchedAmount || 0) - receivableSettlementBookAmount;
+  const estimatedForexType = estimatedForexDiff > 0.005 ? 'RUGI KURS' : estimatedForexDiff < -0.005 ? 'LABA KURS' : 'NETRAL';
+  const estimatedForexAmount = Math.abs(estimatedForexDiff);
 
   const autoAllocatePayment = () => {
     if (!watchedAmount || outstandingItems.length === 0) return;
@@ -586,11 +750,25 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 
       setLoading(true);
 
+      if (requiresFxRate && (!data.exchange_rate || data.exchange_rate <= 0)) {
+        toast({
+          title: 'Kurs transaksi wajib diisi',
+          description: type === 'receivable'
+            ? 'Untuk pelunasan piutang multi-currency, isi kurs settlement IDR per USD agar realized FX dihitung dari kurs historis invoice ke kurs pembayaran saat ini.'
+            : 'Untuk pembayaran dari rekening USD, isi kurs IDR per USD agar native balance dan jurnal buku dihitung dengan benar.',
+          status: 'error',
+          duration: 6000,
+          isClosable: true,
+        });
+        return;
+      }
+
       const paymentData: PaymentCreateRequest = {
         contact_id: data.contact_id,
         cash_bank_id: data.cash_bank_id,
         date: data.date,
         amount: data.amount,
+        exchange_rate: requiresFxRate ? roundUsdIdrRate(data.exchange_rate) || undefined : undefined,
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
@@ -609,7 +787,22 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       if (type === 'payable') {
         const selectedAccount = cashBankAccounts.find(account => account.id === data.cash_bank_id);
         if (selectedAccount) {
-          if (selectedAccount.balance <= 0) {
+          const availableBookBalance = getAvailableBookBalance(selectedAccount);
+          const availableNativeBalance = Math.max(0, selectedAccount.balance - (selectedAccount.frozen_amount || 0));
+          const isUsdAccount = (selectedAccount.currency || 'IDR').toUpperCase() === 'USD';
+
+          if (isUsdAccount && (!data.exchange_rate || data.exchange_rate <= 0)) {
+            toast({
+              title: 'Kurs transaksi wajib diisi',
+              description: 'Untuk pembayaran dari rekening USD, isi kurs IDR per USD agar native balance dan jurnal buku dihitung dengan benar.',
+              status: 'error',
+              duration: 6000,
+              isClosable: true,
+            });
+            return;
+          }
+
+          if (availableBookBalance <= 0) {
             toast({
               title: 'Insufficient Balance ⚠️',
               description: `Cannot process payment. The selected account "${selectedAccount.name}" has zero or negative balance.`,
@@ -620,12 +813,12 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
             return;
           }
 
-          if (data.amount > selectedAccount.balance) {
+          if (data.amount > availableBookBalance) {
             toast({
               title: 'Insufficient Balance ⚠️',
               description: (
                 `Payment amount ${paymentService.formatCurrency(data.amount)} exceeds available balance ` +
-                `${paymentService.formatCurrency(selectedAccount.balance)} in account "${selectedAccount.name}". ` +
+                `${formatCashBankAvailability(selectedAccount, availableNativeBalance)} in account "${selectedAccount.name}". ` +
                 `Please reduce the payment amount or select a different account.`
               ),
               status: 'error',
@@ -949,7 +1142,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                     const currentAmount = watchedAmount || 0;
                                     const frozen = account.frozen_amount || 0;
                                     const availableBalance = Math.max(0, account.balance - frozen);
-                                    const isInsufficientBalance = availableBalance < currentAmount;
+                                    const availableBookBalance = getAvailableBookBalance(account);
+                                    const isInsufficientBalance = availableBookBalance < currentAmount;
                                     const isZeroBalance = availableBalance <= 0;
                                     const balanceStatus = isZeroBalance ? ' ❌ NO BALANCE' :
                                       isInsufficientBalance ? ' ⚠️ INSUFFICIENT' :
@@ -967,9 +1161,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                         }}
                                       >
                                         {account.type === 'BANK' && account.bank_name
-                                          ? `${account.code} - ${account.name} (${account.bank_name}) - Tersedia: ${paymentService.formatCurrency(availableBalance)}`
-                                          : `${account.code} - ${account.name} (${account.type}) - Tersedia: ${paymentService.formatCurrency(availableBalance)}`
-                                        }{frozen > 0 ? ` [Terblokir: ${paymentService.formatCurrency(frozen)}]` : ''}{balanceStatus}
+                                          ? `${account.code} - ${account.name} (${account.bank_name}) - Tersedia: ${formatCashBankAvailability(account, availableBalance)}`
+                                          : `${account.code} - ${account.name} (${account.type}) - Tersedia: ${formatCashBankAvailability(account, availableBalance)}`
+                                        }{frozen > 0 ? ` [Terblokir: ${formatCashBankBalance(frozen, account.currency)}]` : ''}{balanceStatus}
                                       </option>
                                     );
                                   })}
@@ -997,15 +1191,17 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 
                                 const frozen = selectedAccount.frozen_amount || 0;
                                 const availableBalance = Math.max(0, selectedAccount.balance - frozen);
+                                const availableBookBalance = getAvailableBookBalance(selectedAccount);
                                 const isZeroBalance = availableBalance <= 0;
-                                const isInsufficientBalance = watchedAmount > availableBalance;
-                                const remainingBalance = availableBalance - (watchedAmount || 0);
+                                const isInsufficientBalance = watchedAmount > availableBookBalance;
+                                const remainingBalance = availableBookBalance - (watchedAmount || 0);
+                                const isForeignCurrency = (selectedAccount.currency || 'IDR').toUpperCase() !== 'IDR';
 
                                 if (isZeroBalance) {
                                   return (
                                     <Text fontSize="sm" color="red.500" mt={2} fontWeight="medium">
                                       <strong>No Balance Available</strong><br />
-                                      Account "{selectedAccount.name}" has no available balance.{frozen > 0 ? ` (Total: ${paymentService.formatCurrency(selectedAccount.balance)}, Terblokir: ${paymentService.formatCurrency(frozen)})` : ' Cannot process any payments.'}
+                                      Account {selectedAccount.name} has no available balance.{frozen > 0 ? ` (Total: ${formatCashBankBalance(selectedAccount.balance, selectedAccount.currency)}, Terblokir: ${formatCashBankBalance(frozen, selectedAccount.currency)})` : ' Cannot process any payments.'}
                                     </Text>
                                   );
                                 }
@@ -1014,8 +1210,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                   return (
                                     <Text fontSize="sm" color="orange.500" mt={2} fontWeight="medium">
                                       <strong>Insufficient Balance</strong><br />
-                                      Tersedia: {paymentService.formatCurrency(availableBalance)} | Dibutuhkan: {paymentService.formatCurrency(watchedAmount)} |
-                                      Kurang: {paymentService.formatCurrency(watchedAmount - availableBalance)}{frozen > 0 ? ` | Terblokir: ${paymentService.formatCurrency(frozen)}` : ''}
+                                      Tersedia: {formatCashBankAvailability(selectedAccount, availableBalance)} | Dibutuhkan: {paymentService.formatCurrency(watchedAmount)} |
+                                      Kurang: {paymentService.formatCurrency(watchedAmount - availableBookBalance)}{frozen > 0 ? ` | Terblokir: ${formatCashBankBalance(frozen, selectedAccount.currency)}` : ''}
                                     </Text>
                                   );
                                 }
@@ -1024,14 +1220,16 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                   return (
                                     <Text fontSize="sm" color="green.600" mt={2}>
                                       ✅ <strong>Sufficient Balance</strong><br />
-                                      Available: {paymentService.formatCurrency(selectedAccount.balance)} | After payment: {paymentService.formatCurrency(remainingBalance)}
+                                      {isForeignCurrency
+                                        ? `Saldo native: ${formatCashBankBalance(selectedAccount.balance, selectedAccount.currency)} | Sisa nilai buku: ${paymentService.formatCurrency(remainingBalance)}`
+                                        : `Available: ${paymentService.formatCurrency(selectedAccount.balance)} | After payment: ${paymentService.formatCurrency(remainingBalance)}`}
                                     </Text>
                                   );
                                 }
 
                                 return (
                                   <Text fontSize="sm" color="blue.600" mt={2}>
-                                    <strong>Saldo Tersedia:</strong> {paymentService.formatCurrency(availableBalance)}{frozen > 0 ? ` (Total: ${paymentService.formatCurrency(selectedAccount.balance)}, Terblokir: ${paymentService.formatCurrency(frozen)})` : ''}
+                                    <strong>Saldo Tersedia:</strong> {formatCashBankAvailability(selectedAccount, availableBalance)}{frozen > 0 ? ` (Total: ${formatCashBankBalance(selectedAccount.balance, selectedAccount.currency)}, Terblokir: ${formatCashBankBalance(frozen, selectedAccount.currency)})` : ''}
                                   </Text>
                                 );
                               })()}
@@ -1045,6 +1243,78 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                 )}
                             </FormControl>
                           </SimpleGrid>
+
+                          {requiresFxRate && (
+                            <Box mt={4} borderWidth="1px" borderRadius="md" p={4} bg="blue.50">
+                              <Input type="hidden" {...register('exchange_rate', { valueAsNumber: true })} />
+                              <FormControl isRequired>
+                                <FormLabel>Kurs transaksi (IDR per USD)</FormLabel>
+                                <Input
+                                  type="number"
+                                  step="1"
+                                  min="0"
+                                  value={watchedExchangeRate || ''}
+                                  onChange={(event) => {
+                                    setExchangeRateEdited(true);
+                                    setValue('exchange_rate', roundUsdIdrRate(parseFloat(event.target.value), 0) || undefined, { shouldValidate: true });
+                                  }}
+                                  placeholder="Contoh: 16880"
+                                />
+                              </FormControl>
+
+                              <Text fontSize="sm" color={textColor} mt={2}>
+                                {type === 'payable'
+                                  ? 'Pembayaran hutang tetap melunasi AP dalam buku IDR, sedangkan rekening USD akan berkurang sebesar amount / kurs dan nilai buku bank dilepas memakai carry rate historis rekening.'
+                                  : 'Pelunasan piutang multi-currency menutup AR pada nilai buku historis invoice, lalu selisih antara nilai buku kas/bank yang diterima dan nilai buku AR tersebut diakui sebagai realized FX.'}
+                              </Text>
+
+                              {referenceRate?.exchange_rate ? (
+                                <Alert status="info" mt={3} borderRadius="md">
+                                  <AlertIcon />
+                                  <AlertDescription fontSize="sm">
+                                    Kurs referensi API: 1 USD = {formatExchangeRate(referenceRate.exchange_rate)} dari {referenceRate.provider || referenceRate.source}. Anda tetap bisa override manual.
+                                  </AlertDescription>
+                                </Alert>
+                              ) : (
+                                <Alert status="warning" mt={3} borderRadius="md">
+                                  <AlertIcon />
+                                  <AlertDescription fontSize="sm">
+                                    Kurs referensi API tidak tersedia. Isi kurs manual sesuai kurs deal/bank yang dipakai pembayaran.
+                                  </AlertDescription>
+                                </Alert>
+                              )}
+
+                              {watchedExchangeRate && watchedExchangeRate > 0 && selectedCashBank && (
+                                <Box mt={3}>
+                                  <Text fontSize="sm" fontWeight="bold">Preview pembayaran valas</Text>
+                                  {type === 'payable' ? (
+                                    <>
+                                      <Text fontSize="sm" mt={1}>Hutang dilunasi: {paymentService.formatCurrency(watchedAmount || 0)}</Text>
+                                      <Text fontSize="sm">USD keluar dari rekening: {formatCashBankBalance(usdNativeOutAmount, 'USD')}</Text>
+                                      <Text fontSize="sm">Carry rate buku saat ini: 1 USD = {formatExchangeRate(currentCarryRate)}</Text>
+                                      <Text fontSize="sm">Nilai buku bank yang dikredit jurnal: {paymentService.formatCurrency(bankBookOutAmount)}</Text>
+                                      <Text fontSize="sm">Saldo native tersedia setelah pembayaran: {formatCashBankBalance(endingNativeBalance, 'USD')}</Text>
+                                      <Text fontSize="sm">Nilai buku tersedia setelah pembayaran: {paymentService.formatCurrency(endingBookBalance)}</Text>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Text fontSize="sm" mt={1}>Piutang dilunasi: {paymentService.formatCurrency(watchedAmount || 0)}</Text>
+                                      <Text fontSize="sm">USD settlement ekuivalen: {formatCashBankBalance(receivableNativeAmount, 'USD')}</Text>
+                                      <Text fontSize="sm">Nilai buku kas/bank yang didebit jurnal: {paymentService.formatCurrency(watchedAmount || 0)}</Text>
+                                      <Text fontSize="sm">Nilai buku piutang historis yang ditutup: {paymentService.formatCurrency(receivableSettlementBookAmount)}</Text>
+                                      {hasUsdReceivableSelection && (
+                                        <Text fontSize="sm">Kurs historis invoice USD diambil dari masing-masing invoice yang dialokasikan.</Text>
+                                      )}
+                                    </>
+                                  )}
+                                  <Text fontSize="sm" color={estimatedForexType === 'RUGI KURS' ? 'red.600' : estimatedForexType === 'LABA KURS' ? 'green.600' : textColor}>
+                                    Estimasi {estimatedForexType}: {paymentService.formatCurrency(estimatedForexAmount)}
+                                  </Text>
+                                </Box>
+                              )}
+                            </Box>
+                          )}
+
 
                           <FormControl mt={4}>
                             <FormLabel>Reference Number</FormLabel>
@@ -1196,7 +1466,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                     const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
                     if (selectedAccount) {
                       // Disable if zero balance or insufficient balance
-                      if (selectedAccount.balance <= 0 || watchedAmount > selectedAccount.balance) {
+                      if (getAvailableBookBalance(selectedAccount) <= 0 || watchedAmount > getAvailableBookBalance(selectedAccount)) {
                         return true;
                       }
                     }
@@ -1214,10 +1484,10 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                     if (type === 'payable') {
                       const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
                       if (selectedAccount && watchedCashBankId && watchedAmount > 0) {
-                        if (selectedAccount.balance <= 0) {
+                        if (getAvailableBookBalance(selectedAccount) <= 0) {
                           return 'No Balance Available';
                         }
-                        if (watchedAmount > selectedAccount.balance) {
+                        if (watchedAmount > getAvailableBookBalance(selectedAccount)) {
                           return 'Insufficient Balance';
                         }
                       }
@@ -1236,3 +1506,10 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 };
 
 export default AdvancedPaymentForm;
+
+
+
+
+
+
+

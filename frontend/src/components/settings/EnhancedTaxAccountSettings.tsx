@@ -98,7 +98,7 @@ const EnhancedTaxAccountSettings: React.FC<EnhancedTaxAccountSettingsProps> = ({
   const fetchStatus = useCallback(async () => {
     try {
       setRefreshing(true);
-      const response = await fetch('/api/v1/settings/tax-accounts/status');
+      const response = await fetch('/api/v1/tax-accounts/status');
       const data = await response.json();
       
       if (data.success) {
@@ -142,7 +142,7 @@ const EnhancedTaxAccountSettings: React.FC<EnhancedTaxAccountSettingsProps> = ({
   const validateAccountSelection = async (accountId: number, role: string) => {
     try {
       const response = await fetch(
-        `/api/v1/settings/tax-accounts/validate?account_id=${accountId}&role=${role}`
+        `/api/v1/tax-accounts/validate?account_id=${accountId}&role=${role}`
       );
       const data = await response.json();
       

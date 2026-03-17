@@ -30,10 +30,11 @@ func NewAssetJournalServiceSSOT(db *gorm.DB) *AssetJournalServiceSSOT {
 
 // assetCategoryToAccounts maps asset category names to COA account codes.
 // Based on the standard Indonesian COA template in account_templates.go:
-//   1201-xxx = Aset Tetap, 1202-xxx = Akumulasi Penyusutan
+//
+//	1201-xxx = Aset Tetap, 1202-xxx = Akumulasi Penyusutan
 var assetCategoryAccountMap = map[string]struct {
-	FixedAssetCode         string
-	AccumulatedDeprecCode  string
+	FixedAssetCode        string
+	AccumulatedDeprecCode string
 }{
 	"bangunan":           {"1201-002", "1202-002"},
 	"building":           {"1201-002", "1202-002"},
@@ -48,7 +49,7 @@ var assetCategoryAccountMap = map[string]struct {
 	"furniture":          {"1201-004", "1202-004"},
 	"mesin":              {"1201-005", "1202-005"},
 	"machinery":          {"1201-005", "1202-005"},
-	"tanah":              {"1201-001", ""},        // Tanah tidak disusutkan
+	"tanah":              {"1201-001", ""}, // Tanah tidak disusutkan
 	"land":               {"1201-001", ""},
 }
 
@@ -281,6 +282,33 @@ func (s *AssetJournalServiceSSOT) CreateAssetWithAcquisitionJournal(
 	if asset.PurchasePrice <= 0 {
 		return fmt.Errorf("asset purchase price must be greater than 0")
 	}
+	if err := CheckClosedPeriod(s.db, asset.PurchaseDate); err != nil {
+		return err
+	}
+
+	methodUpper := strings.ToUpper(strings.TrimSpace(paymentMethod))
+	isOpeningEntry := methodUpper == "SALDO_AWAL" || methodUpper == "OPENING"
+	openingAccumulated := asset.OpeningAccumulatedDepreciation
+	if openingAccumulated < 0 {
+		return fmt.Errorf("opening accumulated depreciation cannot be negative")
+	}
+	maxOpeningAccumulated := asset.PurchasePrice - asset.SalvageValue
+	if maxOpeningAccumulated < 0 {
+		maxOpeningAccumulated = 0
+	}
+	if openingAccumulated > maxOpeningAccumulated {
+		return fmt.Errorf("opening accumulated depreciation cannot exceed depreciable amount")
+	}
+	categoryLower := strings.ToLower(strings.TrimSpace(asset.Category))
+	if (categoryLower == "tanah" || categoryLower == "land") && openingAccumulated > 0 {
+		return fmt.Errorf("land assets cannot have accumulated depreciation")
+	}
+	if !isOpeningEntry && openingAccumulated > 0 {
+		return fmt.Errorf("opening accumulated depreciation can only be used for opening balance assets")
+	}
+	if asset.AccumulatedDepreciation < openingAccumulated {
+		asset.AccumulatedDepreciation = openingAccumulated
+	}
 
 	// Generate asset code OUTSIDE transaction to avoid transaction abort issues
 	if asset.Code == "" {
@@ -291,11 +319,17 @@ func (s *AssetJournalServiceSSOT) CreateAssetWithAcquisitionJournal(
 		asset.Code = code
 	}
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	intendedIsActive := asset.IsActive
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Step 1: Create asset record
-		if err := tx.Create(asset).Error; err != nil {
+		if err := tx.Select("*").Create(asset).Error; err != nil {
 			return fmt.Errorf("failed to create asset: %v", err)
 		}
+		if err := tx.Exec("UPDATE assets SET is_active = ? WHERE id = ?", intendedIsActive, asset.ID).Error; err != nil {
+			return fmt.Errorf("failed to persist asset active flag: %v", err)
+		}
+		asset.IsActive = intendedIsActive
 
 		// Step 2: Resolve accounts for journal
 		fixedAssetAccount, err := s.resolveFixedAssetAccount(tx, asset)
@@ -318,8 +352,7 @@ func (s *AssetJournalServiceSSOT) CreateAssetWithAcquisitionJournal(
 		description := fmt.Sprintf("Pembelian Aset Tetap - %s (%s)", asset.Name, asset.Code)
 		entryPrefix := "ASSET-ACQ"
 
-		methodUpper := strings.ToUpper(strings.TrimSpace(paymentMethod))
-		if methodUpper == "SALDO_AWAL" || methodUpper == "OPENING" {
+		if isOpeningEntry {
 			sourceType = models.SSOTSourceTypeOpening
 			description = fmt.Sprintf("Saldo Awal Aset Tetap - %s (%s)", asset.Name, asset.Code)
 			entryPrefix = "ASSET-OB"
@@ -360,21 +393,45 @@ func (s *AssetJournalServiceSSOT) CreateAssetWithAcquisitionJournal(
 				CreatedAt:    now,
 				UpdatedAt:    now,
 			},
-			{
+		}
+
+		equityOrPaymentCredit := amount
+		if isOpeningEntry && openingAccumulated > 0 {
+			accumDepreciationAccount, err := s.resolveAccumulatedDepreciationAccount(tx, asset)
+			if err != nil {
+				return fmt.Errorf("failed to resolve accumulated depreciation account for opening balance: %v", err)
+			}
+
+			openingAccumulatedAmount := decimal.NewFromFloat(openingAccumulated)
+			equityOrPaymentCredit = equityOrPaymentCredit.Sub(openingAccumulatedAmount)
+			lines = append(lines, models.SSOTJournalLine{
 				JournalID:    entry.ID,
-				AccountID:    uint64(creditAccount.ID),
-				LineNumber:   2,
-				Description:  func() string {
-					if methodUpper == "SALDO_AWAL" || methodUpper == "OPENING" {
-						return fmt.Sprintf("Saldo Awal Modal - %s", asset.Name)
+				AccountID:    uint64(accumDepreciationAccount.ID),
+				LineNumber:   len(lines) + 1,
+				Description:  fmt.Sprintf("Akumulasi Penyusutan Awal - %s", asset.Name),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: openingAccumulatedAmount,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			})
+		}
+
+		if !equityOrPaymentCredit.IsZero() || !isOpeningEntry {
+			lines = append(lines, models.SSOTJournalLine{
+				JournalID:  entry.ID,
+				AccountID:  uint64(creditAccount.ID),
+				LineNumber: len(lines) + 1,
+				Description: func() string {
+					if isOpeningEntry {
+						return fmt.Sprintf("Saldo Awal Ekuitas - %s", asset.Name)
 					}
 					return fmt.Sprintf("Pembayaran Aset - %s (%s)", asset.Name, paymentMethod)
 				}(),
 				DebitAmount:  decimal.Zero,
-				CreditAmount: amount,
+				CreditAmount: equityOrPaymentCredit,
 				CreatedAt:    now,
 				UpdatedAt:    now,
-			},
+			})
 		}
 
 		for _, line := range lines {
@@ -400,6 +457,16 @@ func (s *AssetJournalServiceSSOT) CreateAssetWithAcquisitionJournal(
 
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	if err := s.db.Exec("UPDATE assets SET is_active = ? WHERE id = ?", intendedIsActive, asset.ID).Error; err != nil {
+		return fmt.Errorf("failed to finalize asset active flag: %v", err)
+	}
+	asset.IsActive = intendedIsActive
+	return nil
 }
 
 // CreateAssetAcquisitionJournal creates a SSOT journal entry for a standalone asset purchase.
@@ -722,8 +789,8 @@ func (s *AssetJournalServiceSSOT) ReverseAssetJournals(assetID uint) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// Find all journal entries for this asset
 		var entries []models.SSOTJournalEntry
-		if err := tx.Where("(source_type = ? OR source_type = ?) AND source_id = ? AND deleted_at IS NULL",
-			models.SSOTSourceTypeAsset, models.SSOTSourceTypeDepreciation, assetID).
+		if err := tx.Where("source_type IN ? AND source_id = ? AND deleted_at IS NULL",
+			[]string{models.SSOTSourceTypeAsset, models.SSOTSourceTypeOpening, models.SSOTSourceTypeDepreciation}, assetID).
 			Find(&entries).Error; err != nil {
 			return fmt.Errorf("failed to find asset journals: %v", err)
 		}
@@ -770,12 +837,12 @@ func (s *AssetJournalServiceSSOT) ReverseAssetJournals(assetID uint) error {
 
 // DepreciationRunResult holds the result of a monthly depreciation run
 type DepreciationRunResult struct {
-	Period           string  `json:"period"`
-	TotalAssets      int     `json:"total_assets"`
-	ProcessedAssets  int     `json:"processed_assets"`
-	SkippedAssets    int     `json:"skipped_assets"`
-	TotalDepreciation float64 `json:"total_depreciation"`
-	Errors           []string `json:"errors,omitempty"`
+	Period            string   `json:"period"`
+	TotalAssets       int      `json:"total_assets"`
+	ProcessedAssets   int      `json:"processed_assets"`
+	SkippedAssets     int      `json:"skipped_assets"`
+	TotalDepreciation float64  `json:"total_depreciation"`
+	Errors            []string `json:"errors,omitempty"`
 }
 
 // RunMonthlyDepreciation runs depreciation for all active assets for a given month.
@@ -795,7 +862,8 @@ func (s *AssetJournalServiceSSOT) RunMonthlyDepreciation(year int, month int, us
 
 	// Get all active, depreciable assets
 	var assets []models.Asset
-	if err := s.db.Where("is_active = true AND depreciation_method != '' AND depreciation_method IS NOT NULL").
+	if err := s.db.Where("is_active = true AND status = ? AND purchase_date <= ? AND depreciation_method != '' AND depreciation_method IS NOT NULL",
+		models.AssetStatusActive, entryDate).
 		Find(&assets).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch active assets: %v", err)
 	}

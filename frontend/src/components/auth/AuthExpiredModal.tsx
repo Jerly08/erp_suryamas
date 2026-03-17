@@ -2,6 +2,7 @@
 
 import React from 'react';
 import {
+  Box,
   Modal,
   ModalOverlay,
   ModalContent,
@@ -11,13 +12,16 @@ import {
   Button,
   Text,
   VStack,
+  HStack,
   Alert,
   AlertIcon,
   AlertTitle,
   AlertDescription,
+  Icon,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { FiClock, FiLogIn } from 'react-icons/fi';
+import { FiClock, FiLogIn, FiShield } from 'react-icons/fi';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface AuthExpiredModalProps {
   isOpen: boolean;
@@ -28,8 +32,16 @@ const AuthExpiredModal: React.FC<AuthExpiredModalProps> = ({
   isOpen,
   onLoginRedirect,
 }) => {
+  const { t } = useTranslation();
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
+  const headerBg = useColorModeValue('blue.500', 'blue.400');
+  const iconBadgeBg = useColorModeValue('whiteAlpha.300', 'whiteAlpha.200');
+  const infoBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const infoBorderColor = useColorModeValue('blue.200', 'blue.300');
+  const mutedTextColor = useColorModeValue('gray.600', 'gray.300');
+  const causesBg = useColorModeValue('gray.50', 'whiteAlpha.50');
+  const emphasisTextColor = useColorModeValue('gray.700', 'gray.100');
   const [isRedirecting, setIsRedirecting] = React.useState(false);
   
   // Debug effect to track modal state
@@ -82,56 +94,106 @@ const AuthExpiredModal: React.FC<AuthExpiredModalProps> = ({
         mx={4}
       >
         <ModalHeader
-          bg="orange.500"
+          bg={headerBg}
           color="white"
           borderTopRadius="xl"
           textAlign="center"
-          py={4}
+          py={5}
         >
           <VStack spacing={2}>
-            <FiClock size={24} />
+            <Box
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="12"
+              h="12"
+              borderRadius="full"
+              bg={iconBadgeBg}
+            >
+              <Icon as={FiClock} boxSize={5} />
+            </Box>
             <Text fontSize="lg" fontWeight="bold">
-              Session Expired
+              {t('auth.session.expiredTitle')}
             </Text>
           </VStack>
         </ModalHeader>
 
         <ModalBody py={6}>
-          <VStack spacing={4} align="stretch">
+          <VStack spacing={5} align="stretch">
             <Alert
-              status="warning"
+              status="info"
               variant="left-accent"
-              borderRadius="md"
-              bg="orange.50"
+              borderRadius="lg"
+              bg={infoBg}
+              border="1px solid"
+              borderColor={infoBorderColor}
+              alignItems="flex-start"
             >
               <AlertIcon />
               <VStack align="start" spacing={1} flex={1}>
-                <AlertTitle fontSize="sm">Authentication Required</AlertTitle>
+                <AlertTitle fontSize="sm">
+                  {t('auth.session.authRequired')}
+                </AlertTitle>
                 <AlertDescription fontSize="sm">
-                  Your session has expired for security reasons. Please login again to continue.
+                  {t('auth.session.expiredMessage')}
                 </AlertDescription>
               </VStack>
             </Alert>
 
-            <Text fontSize="sm" color="gray.600" textAlign="center">
-              This helps protect your account and sensitive financial data.
+            <HStack
+              align="start"
+              spacing={3}
+              p={4}
+              borderRadius="lg"
+              bg={causesBg}
+            >
+              <Box
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="9"
+                h="9"
+                borderRadius="full"
+                bg={infoBg}
+                color="blue.500"
+                flexShrink={0}
+              >
+                <Icon as={FiShield} boxSize={4} />
+              </Box>
+              <VStack align="start" spacing={2} flex={1}>
+                <Text fontSize="sm" fontWeight="semibold" color={emphasisTextColor}>
+                  {t('auth.session.securityNote')}
+                </Text>
+                <Text fontSize="xs" color={mutedTextColor}>
+                  {t('auth.session.possibleCauses')}
+                </Text>
+                <VStack align="start" spacing={1} fontSize="sm" color={mutedTextColor}>
+                  <Text>{t('auth.session.tokenExpired')}</Text>
+                  <Text>{t('auth.session.otherDevice')}</Text>
+                  <Text>{t('auth.session.timeout')}</Text>
+                </VStack>
+              </VStack>
+            </HStack>
+
+            <Text fontSize="sm" color={mutedTextColor} textAlign="center">
+              {t('auth.session.protectionNote')}
             </Text>
           </VStack>
         </ModalBody>
 
         <ModalFooter justifyContent="center" pb={6}>
           <Button
-            colorScheme="orange"
+            colorScheme="blue"
             leftIcon={isRedirecting ? undefined : <FiLogIn />}
             onClick={handleLoginRedirect}
             size="lg"
             minW="200px"
             borderRadius="lg"
             isLoading={isRedirecting}
-            loadingText="Redirecting..."
+            loadingText={t('auth.session.redirecting')}
             disabled={isRedirecting}
           >
-            {isRedirecting ? 'Redirecting...' : 'Login Again'}
+            {isRedirecting ? t('auth.session.redirecting') : t('auth.session.relogin')}
           </Button>
         </ModalFooter>
       </ModalContent>

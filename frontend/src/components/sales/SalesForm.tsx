@@ -59,7 +59,8 @@ import salesService, {
   SaleCreateRequest,
   SaleUpdateRequest,
   SaleItemRequest,
-  SaleItemUpdateRequest
+  SaleItemUpdateRequest,
+  SalePaymentScheduleRequest
 } from '@/services/salesService';
 import invoiceTypeService, { InvoiceType } from '@/services/invoiceTypeService';
 import ErrorHandler, { ParsedValidationError } from '@/utils/errorHandler';
@@ -100,6 +101,12 @@ interface FormData {
   pph23_rate: number;
   other_tax_deductions: number;
   payment_terms: string;
+  payment_schedules: Array<{
+    sequence?: number;
+    percentage: number;
+    due_date: string;
+    description?: string;
+  }>;
   payment_method?: string;
   shipping_method?: string;
   shipping_cost: number;
@@ -111,6 +118,7 @@ interface FormData {
   items: Array<{
     id?: number;
     product_id: number;
+    product_name?: string;
     description: string;
     location?: string;
     quantity: number;
@@ -159,9 +167,25 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const shadowColor = useColorModeValue('rgba(0, 0, 0, 0.1)', 'rgba(0, 0, 0, 0.3)');
   const alertBg = useColorModeValue('blue.50', 'blue.900');
   const alertBorderColor = useColorModeValue('blue.200', 'blue.700');
+  const readOnlyBg = useColorModeValue('gray.100', 'whiteAlpha.100');
+  const successTextColor = useColorModeValue('green.600', 'green.200');
+  const manualEntryBg = useColorModeValue('orange.50', 'rgba(221, 107, 32, 0.16)');
+  const manualEntryFocusBg = useColorModeValue('orange.100', 'rgba(221, 107, 32, 0.24)');
+  const manualEntryBorderColor = useColorModeValue('orange.200', 'orange.400');
   const scrollTrackBg = useColorModeValue('#f7fafc', '#2d3748');
   const scrollThumbBg = useColorModeValue('#cbd5e0', '#4a5568');
   const scrollThumbHoverBg = useColorModeValue('#a0aec0', '#718096');
+  const fieldFocusStyles = {
+    borderColor: 'blue.400',
+    boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
+  };
+  const baseFieldStyles = {
+    bg: inputBg,
+    borderColor,
+    color: useColorModeValue('gray.800', 'whiteAlpha.900'),
+    _hover: { borderColor },
+    _focusVisible: fieldFocusStyles,
+  };
 
   // Check if user has permission to create/edit sales - using lowercase for consistency
   const userRole = user?.role?.toLowerCase();
@@ -199,7 +223,9 @@ const SalesForm: React.FC<SalesFormProps> = ({
     reset,
     watch,
     setValue,
+    setError,
     control,
+    clearErrors,
     formState: { errors }
   } = useForm<FormData>({
     defaultValues: {
@@ -218,11 +244,13 @@ const SalesForm: React.FC<SalesFormProps> = ({
       pph23_rate: 0,
       other_tax_deductions: 0,
       payment_terms: 'NET_30',
+      payment_schedules: [],
       payment_method_type: 'CREDIT' as 'CASH' | 'BANK' | 'CREDIT',
       shipping_cost: 0,
       items: [
         {
           product_id: 0,
+          product_name: '',
           description: '',
           location: '',
           quantity: 1,
@@ -239,6 +267,15 @@ const SalesForm: React.FC<SalesFormProps> = ({
     name: 'items'
   });
 
+  const {
+    fields: scheduleFields,
+    append: appendSchedule,
+    remove: removeSchedule
+  } = useFieldArray({
+    control,
+    name: 'payment_schedules'
+  });
+
   const watchItems = watch('items');
   const watchDiscountPercent = watch('discount_percent');
   // Legacy tax fields
@@ -252,6 +289,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const watchOtherTaxDeductions = watch('other_tax_deductions');
   const watchShippingCost = watch('shipping_cost');
   const watchPaymentTerms = watch('payment_terms');
+  const watchPaymentSchedules = watch('payment_schedules');
   const watchPaymentMethodType = watch('payment_method_type');
   const watchCashBankId = watch('cash_bank_id');
   const watchDate = watch('date');
@@ -310,6 +348,34 @@ const SalesForm: React.FC<SalesFormProps> = ({
       }
     }
   }, [watchPaymentTerms, watchDate, setValue]);
+
+  useEffect(() => {
+    if (watchPaymentTerms !== 'CUSTOM') {
+      return;
+    }
+
+    if ((watchPaymentSchedules || []).length === 0) {
+      appendSchedule({
+        sequence: 1,
+        percentage: 100,
+        due_date: watchDate || '',
+        description: 'Pelunasan invoice'
+      });
+      return;
+    }
+
+    const lastScheduleDueDate = getLastCustomScheduleDueDate();
+    if (lastScheduleDueDate) {
+      setValue('due_date', lastScheduleDueDate);
+    }
+  }, [watchPaymentTerms, watchPaymentSchedules, watchDate, appendSchedule, setValue]);
+
+  useEffect(() => {
+    if (watchPaymentMethodType !== 'CREDIT' && watchPaymentTerms === 'CUSTOM') {
+      setValue('payment_terms', 'COD');
+      setValue('payment_schedules', []);
+    }
+  }, [watchPaymentMethodType, watchPaymentTerms, setValue]);
 
   // Ensure modal body is scrollable when content overflows
   useEffect(() => {
@@ -544,6 +610,14 @@ const SalesForm: React.FC<SalesFormProps> = ({
       pph23_rate: saleData.pph23_rate || 0,
       other_tax_deductions: saleData.other_tax_deductions || 0,
       payment_terms: saleData.payment_terms || 'NET_30',
+      payment_schedules: saleData.payment_schedules && saleData.payment_schedules.length > 0
+        ? saleData.payment_schedules.map(schedule => ({
+          sequence: schedule.sequence,
+          percentage: schedule.percentage || 0,
+          due_date: schedule.due_date ? schedule.due_date.split('T')[0] : '',
+          description: schedule.description || ''
+        }))
+        : [],
       payment_method: saleData.payment_method || undefined,
       payment_method_type: saleData.payment_method_type || 'CREDIT',
       cash_bank_id: saleData.cash_bank_id || undefined,
@@ -558,6 +632,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         ? saleData.sale_items.map(item => ({
           id: item.id,
           product_id: item.product_id || 0,
+          product_name: item.product_name || item.product?.name || '',
           description: item.description || '',
           location: item.location || '',
           quantity: item.quantity || 1,
@@ -568,6 +643,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         }))
         : [{
           product_id: 0,
+          product_name: '',
           description: '',
           location: '',
           quantity: 1,
@@ -598,11 +674,13 @@ const SalesForm: React.FC<SalesFormProps> = ({
       pph23_rate: 0,
       other_tax_deductions: 0,
       payment_terms: 'NET_30',
+      payment_schedules: [],
       payment_method_type: 'CREDIT' as 'CASH' | 'BANK' | 'CREDIT',
       shipping_cost: 0,
       items: [
         {
           product_id: 0,
+          product_name: '',
           description: '',
           location: '',
           quantity: 1,
@@ -615,9 +693,17 @@ const SalesForm: React.FC<SalesFormProps> = ({
   };
 
   const handleProductChange = async (index: number, productId: number) => {
+    clearErrors([
+      `items.${index}.product_id`,
+      `items.${index}.product_name`,
+      `items.${index}.description`,
+      `items.${index}.unit_price`,
+      `items.${index}.revenue_account_id`
+    ]);
     const product = products.find(p => p.id === parseInt(productId.toString()));
     if (product) {
       setValue(`items.${index}.product_id`, product.id);
+      setValue(`items.${index}.product_name`, product.name);
       setValue(`items.${index}.description`, product.name);
       setValue(`items.${index}.unit_price`, product.price);
 
@@ -669,6 +755,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
     } else {
       // When manual entry is selected (productId = 0), clear the fields
       setValue(`items.${index}.product_id`, 0);
+      setValue(`items.${index}.product_name`, '');
       setValue(`items.${index}.description`, '');
       setValue(`items.${index}.unit_price`, 0);
     }
@@ -677,6 +764,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
   // Helper function to check if item is manual entry
   const isManualEntry = (index: number) => {
     return !watchItems[index]?.product_id || watchItems[index]?.product_id === 0;
+  };
+
+  const getItemProductName = (index: number) => {
+    return watchItems[index]?.product_name?.trim() || '';
   };
 
   const calculateLineTotal = (item: any) => {
@@ -736,6 +827,39 @@ const SalesForm: React.FC<SalesFormProps> = ({
     return finalTotal;
   };
 
+  const getPaymentSchedulePercentageTotal = () => {
+    return (watchPaymentSchedules || []).reduce((sum, schedule) => {
+      return sum + (Number(schedule?.percentage) || 0);
+    }, 0);
+  };
+
+  const getScheduleAmount = (percentage: number, index: number) => {
+    const total = calculateTotal();
+    const schedules = watchPaymentSchedules || [];
+    const sanitizedPercentage = Number(percentage) || 0;
+
+    if (index === schedules.length - 1) {
+      const previousAmount = schedules.slice(0, index).reduce((sum, schedule) => {
+        return sum + (total * ((Number(schedule?.percentage) || 0) / 100));
+      }, 0);
+      return Math.max(0, total - previousAmount);
+    }
+
+    return total * (sanitizedPercentage / 100);
+  };
+
+  const getLastCustomScheduleDueDate = () => {
+    const schedules = (watchPaymentSchedules || []).filter(schedule => !!schedule?.due_date);
+    if (schedules.length === 0) {
+      return null;
+    }
+
+    return schedules
+      .map(schedule => schedule.due_date)
+      .sort()
+      .slice(-1)[0];
+  };
+
   // Helper function to get global discount amount for display
   const getGlobalDiscountAmount = () => {
     const subtotal = calculateSubtotal();
@@ -777,6 +901,8 @@ const SalesForm: React.FC<SalesFormProps> = ({
         return 'Customer has 60 days from invoice date to pay';
       case 'NET_90':
         return 'Customer has 90 days from invoice date to pay';
+      case 'CUSTOM':
+        return 'Customer pays based on the custom payment schedule shown below';
       default:
         return '';
     }
@@ -803,6 +929,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const addItem = () => {
     append({
       product_id: 0,
+      product_name: '',
       description: '',
       location: '',
       quantity: 1,
@@ -818,6 +945,19 @@ const SalesForm: React.FC<SalesFormProps> = ({
     }
   };
 
+  const addPaymentSchedule = () => {
+    appendSchedule({
+      sequence: scheduleFields.length + 1,
+      percentage: 0,
+      due_date: watchDate || '',
+      description: ''
+    });
+  };
+
+  const removePaymentSchedule = (index: number) => {
+    removeSchedule(index);
+  };
+
   const onSubmit = async (data: FormData) => {
     try {
       setLoading(true);
@@ -825,14 +965,68 @@ const SalesForm: React.FC<SalesFormProps> = ({
       // For invoiced sales, skip item validation (items are locked)
       let validItems: typeof data.items = [];
       if (!isInvoiced) {
-        // Validate items - allow items without product_id if products are not available
-        validItems = data.items.filter(item => {
-          // If products are available, require product_id
-          if (products.length > 0) {
-            return item.product_id > 0;
+        clearErrors('items');
+
+        let hasItemFieldError = false;
+        (data.items || []).forEach((item, index) => {
+          const manualName = item.product_name?.trim() || '';
+          const description = item.description?.trim() || '';
+          const hasSelectedProduct = item.product_id > 0;
+          const rowStarted =
+            hasSelectedProduct ||
+            manualName !== '' ||
+            description !== '' ||
+            (item.unit_price || 0) > 0 ||
+            (item.revenue_account_id || 0) > 0;
+
+          if (!rowStarted) {
+            return;
           }
-          // If no products available, just check for description and price
-          return item.description && item.description.trim() !== '' && item.unit_price > 0;
+
+          if (!hasSelectedProduct && !manualName && !description) {
+            setError(`items.${index}.product_id`, {
+              type: 'manual',
+              message: 'Pilih product atau isi nama/deskripsi item manual'
+            });
+            hasItemFieldError = true;
+          }
+
+          if (!item.quantity || item.quantity <= 0) {
+            setError(`items.${index}.quantity`, {
+              type: 'manual',
+              message: 'Quantity minimal 1'
+            });
+            hasItemFieldError = true;
+          }
+
+          if (!item.unit_price || item.unit_price <= 0) {
+            setError(`items.${index}.unit_price`, {
+              type: 'manual',
+              message: 'Unit price harus lebih besar dari 0'
+            });
+            hasItemFieldError = true;
+          }
+
+          if (!item.revenue_account_id || item.revenue_account_id <= 0) {
+            setError(`items.${index}.revenue_account_id`, {
+              type: 'manual',
+              message: 'Pilih COA / Revenue Account untuk item ini'
+            });
+            hasItemFieldError = true;
+          }
+        });
+
+        if (hasItemFieldError) {
+          ErrorHandler.handleValidationError(['Lengkapi field item yang masih kosong sebelum menyimpan sales'], toast, 'sales form');
+          return;
+        }
+
+        // Validate items - allow either catalog products or manual product names
+        validItems = data.items.filter(item => {
+          const hasSelectedProduct = item.product_id > 0;
+          const hasManualProductName = !!item.product_name?.trim();
+          const hasDescription = !!item.description?.trim();
+          return (hasSelectedProduct || hasManualProductName || hasDescription) && item.unit_price >= 0;
         });
 
         if (validItems.length === 0) {
@@ -848,6 +1042,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           ...data,
           items: validItems.map(item => ({
             product_id: item.product_id,
+            product_name: item.product_name?.trim() || '',
             description: item.description || '',
             quantity: Math.max(1, Math.floor(item.quantity || 1)),
             unit_price: Math.min(999999999999.99, Math.max(0, item.unit_price || 0)),
@@ -865,6 +1060,43 @@ const SalesForm: React.FC<SalesFormProps> = ({
         }
       }
 
+      const validPaymentSchedules: SalePaymentScheduleRequest[] | undefined = data.payment_terms === 'CUSTOM'
+        ? (data.payment_schedules || [])
+          .filter(schedule => (Number(schedule.percentage) || 0) > 0 || !!schedule.due_date || !!schedule.description?.trim())
+          .map((schedule, index) => ({
+            sequence: index + 1,
+            percentage: Number(schedule.percentage) || 0,
+            due_date: schedule.due_date ? `${schedule.due_date}T00:00:00Z` : '',
+            description: schedule.description?.trim() || ''
+          }))
+        : [];
+
+      if (data.payment_terms === 'CUSTOM') {
+        if (data.payment_method_type !== 'CREDIT') {
+          ErrorHandler.handleValidationError(['Termin custom hanya boleh dipakai untuk penjualan kredit/piutang'], toast, 'sales form');
+          return;
+        }
+
+        if (!validPaymentSchedules || validPaymentSchedules.length === 0) {
+          ErrorHandler.handleValidationError(['Minimal satu termin pembayaran wajib diisi untuk payment terms custom'], toast, 'sales form');
+          return;
+        }
+
+        const invalidSchedule = validPaymentSchedules.find((schedule, index) => {
+          return schedule.percentage <= 0 || !schedule.due_date;
+        });
+        if (invalidSchedule) {
+          ErrorHandler.handleValidationError(['Setiap termin custom wajib memiliki persentase lebih dari 0 dan tanggal jatuh tempo'], toast, 'sales form');
+          return;
+        }
+
+        const percentageTotal = validPaymentSchedules.reduce((sum, schedule) => sum + schedule.percentage, 0);
+        if (Math.abs(percentageTotal - 100) > 0.01) {
+          ErrorHandler.handleValidationError([`Total persentase termin harus 100%. Saat ini ${percentageTotal.toFixed(2)}%`], toast, 'sales form');
+          return;
+        }
+      }
+
       if (sale) {
         // Update existing sale
         let updateData: SaleUpdateRequest;
@@ -876,6 +1108,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             project_id: data.project_id || 0,
             due_date: data.due_date ? `${data.due_date}T00:00:00Z` : undefined,
             payment_terms: data.payment_terms,
+            payment_schedules: validPaymentSchedules,
             payment_method: data.payment_method,
             payment_method_type: data.payment_method_type,
             cash_bank_id: data.cash_bank_id,
@@ -905,6 +1138,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             pph23_rate: data.pph23_rate,
             other_tax_deductions: data.other_tax_deductions,
             payment_terms: data.payment_terms,
+            payment_schedules: validPaymentSchedules,
             payment_method: data.payment_method,
             payment_method_type: data.payment_method_type,
             cash_bank_id: data.cash_bank_id,
@@ -918,6 +1152,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             items: validItems.map(item => ({
               id: item.id,
               product_id: item.product_id,
+              product_name: item.product_name?.trim() || '',
               description: item.description,
               location: item.location || '',
               quantity: item.quantity,
@@ -956,10 +1191,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
           other_tax_additions: data.other_tax_additions,
           pph21_rate: data.pph21_rate,
           pph23_rate: data.pph23_rate,
-          other_tax_deductions: data.other_tax_deductions,
-          payment_terms: data.payment_terms,
-          payment_method: data.payment_method,
-          payment_method_type: data.payment_method_type,
+            other_tax_deductions: data.other_tax_deductions,
+            payment_terms: data.payment_terms,
+            payment_schedules: validPaymentSchedules,
+            payment_method: data.payment_method,
+            payment_method_type: data.payment_method_type,
           cash_bank_id: data.cash_bank_id,
           shipping_method: data.shipping_method,
           shipping_cost: data.shipping_cost,
@@ -970,6 +1206,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           reference: data.reference,
           items: validItems.map(item => ({
             product_id: item.product_id,
+            product_name: item.product_name?.trim() || '',
             description: item.description || '',
             location: item.location || '',
             quantity: Math.max(1, Math.floor(item.quantity || 1)), // Ensure positive integer
@@ -1362,11 +1599,15 @@ const SalesForm: React.FC<SalesFormProps> = ({
                         <Input
                           type="date"
                           {...register('due_date')}
-                          bg={isDueDateAutoCalculated ? 'gray.100' : inputBg}
-                          _focus={{ bg: isDueDateAutoCalculated ? 'gray.100' : inputFocusBg }}
+                          bg={isDueDateAutoCalculated ? readOnlyBg : inputBg}
+                          color={baseFieldStyles.color}
+                          borderColor={borderColor}
+                          _hover={{ borderColor }}
+                          _focusVisible={fieldFocusStyles}
+                          _focus={{ bg: isDueDateAutoCalculated ? readOnlyBg : inputFocusBg }}
                           isReadOnly={isDueDateAutoCalculated}
                         />
-                        <FormHelperText color={isDueDateAutoCalculated ? 'green.600' : textColor}>
+                        <FormHelperText color={isDueDateAutoCalculated ? successTextColor : textColor}>
                           {isDueDateAutoCalculated
                             ? t('sales.form.dueDateAutoCalculated')
                             : t('sales.tooltips.dueDate')}
@@ -1447,7 +1688,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                         <Tr>
                           <Th>{t('sales.form.product')}</Th>
                           <Th>{t('sales.form.description')}</Th>
-                          <Th>{t('sales.form.location', 'Lokasi Pengiriman')}</Th>
+                          <Th>{t('sales.form.location')}</Th>
                           <Th>{t('sales.form.quantity')}</Th>
                           <Th>{t('sales.form.unitPrice')}</Th>
                           <Th>{t('sales.form.itemDiscount')}</Th>
@@ -1461,15 +1702,26 @@ const SalesForm: React.FC<SalesFormProps> = ({
                         {fields.map((field, index) => (
                           <Tr key={field.id}>
                             <Td>
-                              <VStack spacing={1}>
+                              <FormControl isInvalid={!!errors.items?.[index]?.product_id || !!errors.items?.[index]?.product_name}>
+                                <VStack spacing={1} align="stretch">
+                                {!isManualEntry(index) && (
+                                  <Input
+                                    type="hidden"
+                                    {...register(`items.${index}.product_name`)}
+                                  />
+                                )}
                                 <Select
                                   size="sm"
                                   {...register(`items.${index}.product_id`, {
-                                    setValueAs: value => parseInt(value) || 0
+                                    setValueAs: value => parseInt(value) || 0,
+                                    validate: value => {
+                                      const manualName = getItemProductName(index);
+                                      const description = watchItems?.[index]?.description?.trim() || '';
+                                      return value > 0 || !!manualName || !!description || 'Pilih product atau isi item manual';
+                                    }
                                   })}
                                   onChange={(e) => handleProductChange(index, parseInt(e.target.value))}
-                                  bg={inputBg}
-                                  _focus={{ bg: inputFocusBg }}
+                                  {...baseFieldStyles}
                                   placeholder={t('common.placeholders.selectProduct')}
                                   isDisabled={isInvoiced}
                                 >
@@ -1481,9 +1733,29 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   ))}
                                 </Select>
                                 {isManualEntry(index) && (
-                                  <Badge colorScheme="orange" size="xs">
-                                    {t('sales.form.manualEntry')}
-                                  </Badge>
+                                  <>
+                                    <Badge colorScheme="orange" size="xs">
+                                      {t('sales.form.manualEntry')}
+                                    </Badge>
+                                    <Input
+                                      size="sm"
+                                      {...register(`items.${index}.product_name`, {
+                                        validate: value => {
+                                          if (!isManualEntry(index)) return true;
+                                          return !!value?.trim() || t('validation.required');
+                                        },
+                                        onChange: () => clearErrors([`items.${index}.product_id`, `items.${index}.product_name`])
+                                      })}
+                                      placeholder={t('products.form.enterProductName')}
+                                      bg={manualEntryBg}
+                                      color={baseFieldStyles.color}
+                                      _hover={{ borderColor: manualEntryBorderColor }}
+                                      _focus={{ bg: manualEntryFocusBg }}
+                                      _focusVisible={fieldFocusStyles}
+                                      borderColor={manualEntryBorderColor}
+                                      isDisabled={isInvoiced}
+                                    />
+                                  </>
                                 )}
                                 {(() => {
                                   const itemValue = watchItems?.[index];
@@ -1500,57 +1772,88 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   }
                                   return null;
                                 })()}
-                              </VStack>
+                                </VStack>
+                                <FormErrorMessage fontSize="xs">
+                                  {errors.items?.[index]?.product_id?.message || errors.items?.[index]?.product_name?.message}
+                                </FormErrorMessage>
+                              </FormControl>
                             </Td>
                             <Td>
-                              <Input
-                                size="sm"
-                                {...register(`items.${index}.description`, {
-                                  required: t('validation.required')
-                                })}
-                                placeholder={isManualEntry(index)
-                                  ? t('common.placeholders.itemDescription')
-                                  : t('common.placeholders.itemDescription')}
-                                bg={isManualEntry(index) ? 'orange.50' : inputBg}
-                                _focus={{ bg: isManualEntry(index) ? 'orange.100' : inputFocusBg }}
-                                borderColor={isManualEntry(index) ? 'orange.200' : 'gray.200'}
-                                isDisabled={isInvoiced}
-                              />
+                              <FormControl isInvalid={!!errors.items?.[index]?.description}>
+                                <Input
+                                  size="sm"
+                                  {...register(`items.${index}.description`, {
+                                    validate: value => {
+                                      if (isManualEntry(index) && !getItemProductName(index)) {
+                                        return true;
+                                      }
+                                      return !!value?.trim() || t('validation.required');
+                                    },
+                                    onChange: () => clearErrors([`items.${index}.product_id`, `items.${index}.description`])
+                                  })}
+                                  placeholder={isManualEntry(index)
+                                    ? t('common.placeholders.itemDescription')
+                                    : t('common.placeholders.itemDescription')}
+                                  bg={isManualEntry(index) ? manualEntryBg : inputBg}
+                                  color={baseFieldStyles.color}
+                                  _hover={{ borderColor: isManualEntry(index) ? manualEntryBorderColor : borderColor }}
+                                  _focus={{ bg: isManualEntry(index) ? manualEntryFocusBg : inputFocusBg }}
+                                  _focusVisible={fieldFocusStyles}
+                                  borderColor={isManualEntry(index) ? manualEntryBorderColor : borderColor}
+                                  isDisabled={isInvoiced}
+                                />
+                                <FormErrorMessage fontSize="xs">
+                                  {errors.items?.[index]?.description?.message}
+                                </FormErrorMessage>
+                              </FormControl>
                             </Td>
                             <Td>
                               <Input
                                 size="sm"
                                 {...register(`items.${index}.location`)}
                                 placeholder="Gedung A, dll"
-                                bg={inputBg}
-                                _focus={{ bg: inputFocusBg }}
-                                borderColor="gray.200"
+                                {...baseFieldStyles}
                               />
                             </Td>
                             <Td>
-                              <NumberInput size="sm" min={1} isDisabled={isInvoiced}>
-                                <NumberInputField
-                                  {...register(`items.${index}.quantity`, {
-                                    required: 'Quantity is required',
-                                    min: 1,
-                                    setValueAs: value => parseInt(value) || 1
-                                  })}
-                                />
-                                <NumberInputStepper>
-                                  <NumberIncrementStepper />
-                                  <NumberDecrementStepper />
-                                </NumberInputStepper>
-                              </NumberInput>
+                              <FormControl isInvalid={!!errors.items?.[index]?.quantity}>
+                                <NumberInput size="sm" min={1} isDisabled={isInvoiced}>
+                                  <NumberInputField
+                                    {...register(`items.${index}.quantity`, {
+                                      required: 'Quantity is required',
+                                      min: {
+                                        value: 1,
+                                        message: 'Quantity minimal 1'
+                                      },
+                                      setValueAs: value => parseInt(value) || 1,
+                                      onChange: () => clearErrors(`items.${index}.quantity`)
+                                    })}
+                                    {...baseFieldStyles}
+                                  />
+                                  <NumberInputStepper>
+                                    <NumberIncrementStepper />
+                                    <NumberDecrementStepper />
+                                  </NumberInputStepper>
+                                </NumberInput>
+                                <FormErrorMessage fontSize="xs">
+                                  {errors.items?.[index]?.quantity?.message}
+                                </FormErrorMessage>
+                              </FormControl>
                             </Td>
                             <Td>
                               <CurrencyInput
                                 value={watchItems[index]?.unit_price || 0}
-                                onChange={(value) => setValue(`items.${index}.unit_price`, value)}
+                                onChange={(value) => {
+                                  setValue(`items.${index}.unit_price`, value);
+                                  clearErrors(`items.${index}.unit_price`);
+                                }}
                                 placeholder="Rp 10.000"
                                 size="sm"
                                 min={0}
                                 showLabel={false}
                                 isDisabled={isInvoiced}
+                                isInvalid={!!errors.items?.[index]?.unit_price}
+                                errorMessage={errors.items?.[index]?.unit_price?.message}
                               />
                             </Td>
                             <Td>
@@ -1559,6 +1862,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   {...register(`items.${index}.discount_percent`, {
                                     setValueAs: value => parseFloat(value) || 0
                                   })}
+                                  {...baseFieldStyles}
                                 />
                               </NumberInput>
                             </Td>
@@ -1570,32 +1874,40 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   colorScheme="green"
                                   isDisabled={isInvoiced}
                                 />
-                                <Text fontSize="xs" color={watchItems[index]?.taxable !== false ? 'green.600' : 'gray.500'}>
+                                <Text fontSize="xs" color={watchItems[index]?.taxable !== false ? successTextColor : textColor}>
                                   {watchItems[index]?.taxable !== false ? 'Tax' : 'No Tax'}
                                 </Text>
                               </VStack>
                             </Td>
                             <Td>
-                              <Select
-                                size="sm"
-                                {...register(`items.${index}.revenue_account_id`, {
-                                  setValueAs: value => parseInt(value) || 0
-                                })}
-                                bg={inputBg}
-                                _focus={{ bg: inputFocusBg }}
-                                placeholder={t('common.placeholders.selectAccount')}
-                                isDisabled={isInvoiced}
-                              >
-                                <option value="">{t('sales.form.revenueAccount')}</option>
-                                {accounts.map(account => (
-                                  <option key={account.id} value={account.id}>
-                                    {account.code} - {account.name}
-                                  </option>
-                                ))}
-                              </Select>
+                              <FormControl isInvalid={!!errors.items?.[index]?.revenue_account_id}>
+                                <Select
+                                  size="sm"
+                                  {...register(`items.${index}.revenue_account_id`, {
+                                    setValueAs: value => parseInt(value) || 0,
+                                    validate: value => {
+                                      return value > 0 || 'Pilih COA / Revenue Account untuk item ini';
+                                    },
+                                    onChange: () => clearErrors(`items.${index}.revenue_account_id`)
+                                  })}
+                                  {...baseFieldStyles}
+                                  placeholder={t('common.placeholders.selectAccount')}
+                                  isDisabled={isInvoiced}
+                                >
+                                  <option value="">Pilih COA Pendapatan</option>
+                                  {accounts.map(account => (
+                                    <option key={account.id} value={account.id}>
+                                      {account.code} - {account.name}
+                                    </option>
+                                  ))}
+                                </Select>
+                                <FormErrorMessage fontSize="xs">
+                                  {errors.items?.[index]?.revenue_account_id?.message}
+                                </FormErrorMessage>
+                              </FormControl>
                             </Td>
                             <Td>
-                              <Text fontSize="sm" fontWeight="medium" color="green.600">
+                              <Text fontSize="sm" fontWeight="medium" color={successTextColor}>
                                 {salesService.formatCurrency(calculateLineTotal(watchItems[index] || {}))}
                               </Text>
                             </Td>
@@ -1643,8 +1955,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               {...register('discount_percent', {
                                 setValueAs: value => parseFloat(value) || 0
                               })}
-                              bg={inputBg}
-                              _focus={{ bg: inputFocusBg }}
+                              {...baseFieldStyles}
                               placeholder="0"
                             />
                           </NumberInput>
@@ -1670,7 +1981,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
 
                       {/* Tax Additions (Penambahan) */}
                       <Box>
-                        <Text fontSize="sm" fontWeight="medium" color="green.600" mb={3}>
+                        <Text fontSize="sm" fontWeight="medium" color={successTextColor} mb={3}>
                           ➕ {t('sales.form.otherTaxAdditions')}
                         </Text>
                         <HStack w="full" spacing={4}>
@@ -1687,6 +1998,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 {...register('ppn_rate', {
                                   setValueAs: value => parseFloat(value) || 0
                                 })}
+                                {...baseFieldStyles}
                                 placeholder="11"
                               />
                               <NumberInputStepper>
@@ -1748,6 +2060,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 {...register('pph21_rate', {
                                   setValueAs: value => parseFloat(value) || 0
                                 })}
+                                {...baseFieldStyles}
                                 placeholder="2"
                               />
                               <NumberInputStepper>
@@ -1771,6 +2084,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 {...register('pph23_rate', {
                                   setValueAs: value => parseFloat(value) || 0
                                 })}
+                                {...baseFieldStyles}
                                 placeholder="2"
                               />
                               <NumberInputStepper>
@@ -1843,13 +2157,13 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   <Divider />
 
                                   <HStack justify="space-between" w="full">
-                                    <Text color="green.600">+ PPN ({ppnRate}%):</Text>
-                                    <Text color="green.600">{salesService.formatCurrency(ppnAmount)}</Text>
+                                  <Text color={successTextColor}>+ PPN ({ppnRate}%):</Text>
+                                  <Text color={successTextColor}>{salesService.formatCurrency(ppnAmount)}</Text>
                                   </HStack>
                                   {otherAdditions > 0 && (
                                     <HStack justify="space-between" w="full">
-                                      <Text color="green.600">+ Other Additions:</Text>
-                                      <Text color="green.600">{salesService.formatCurrency(otherAdditions)}</Text>
+                                      <Text color={successTextColor}>+ Other Additions:</Text>
+                                      <Text color={successTextColor}>{salesService.formatCurrency(otherAdditions)}</Text>
                                     </HStack>
                                   )}
                                   {pph21Amount > 0 && (
@@ -1903,24 +2217,43 @@ const SalesForm: React.FC<SalesFormProps> = ({
                   </Heading>
                   <VStack spacing={4}>
                     <HStack w="full" spacing={4}>
-                      <FormControl>
-                        <FormLabel>{t('sales.form.paymentTerms')}</FormLabel>
-                        <Select
-                          {...register('payment_terms')}
-                          bg={inputBg}
+                        <FormControl>
+                          <FormLabel>{t('sales.form.paymentTerms')}</FormLabel>
+                          <Select
+                            {...register('payment_terms')}
+                            bg={inputBg}
                           _focus={{ bg: inputFocusBg }}
                         >
                           <option value="COD">{t('sales.form.paymentTermsOptions.cod')}</option>
-                          <option value="NET_15">{t('sales.form.paymentTermsOptions.net15')}</option>
-                          <option value="NET_30">{t('sales.form.paymentTermsOptions.net30')}</option>
-                          <option value="NET_60">{t('sales.form.paymentTermsOptions.net60')}</option>
-                          <option value="NET_90">{t('sales.form.paymentTermsOptions.net90')}</option>
-                          <option value="CUSTOM">{t('sales.form.paymentTermsOptions.custom')}</option>
-                        </Select>
-                        <FormHelperText color={textColor}>
-                          {t('sales.tooltips.paymentMethod')}
-                        </FormHelperText>
-                      </FormControl>
+                            <option value="NET_15">{t('sales.form.paymentTermsOptions.net15')}</option>
+                            <option value="NET_30">{t('sales.form.paymentTermsOptions.net30')}</option>
+                            <option value="NET_60">{t('sales.form.paymentTermsOptions.net60')}</option>
+                            <option value="NET_90">{t('sales.form.paymentTermsOptions.net90')}</option>
+                            <option value="CUSTOM" disabled={watchPaymentMethodType !== 'CREDIT'}>
+                              Custom Termin / Installment Schedule
+                            </option>
+                          </Select>
+                          <FormHelperText color={textColor}>
+                            {watchPaymentMethodType === 'CREDIT'
+                              ? 'Untuk cicilan atau termin 30%-40%-30%, pilih "Custom Termin / Installment Schedule".'
+                              : 'Termin custom hanya tersedia untuk penjualan kredit/piutang.'}
+                          </FormHelperText>
+                          {watchPaymentMethodType === 'CREDIT' && watchPaymentTerms !== 'CUSTOM' && (
+                            <HStack mt={2} spacing={3} align="center">
+                              <Text fontSize="sm" color="orange.600">
+                                Blok jadwal termin baru muncul jika payment terms diubah ke custom.
+                              </Text>
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                colorScheme="blue"
+                                onClick={() => setValue('payment_terms', 'CUSTOM')}
+                              >
+                                Gunakan Termin Custom
+                              </Button>
+                            </HStack>
+                          )}
+                        </FormControl>
 
                       <FormControl>
                         <FormLabel>{t('sales.form.reference')}</FormLabel>
@@ -2066,12 +2399,122 @@ const SalesForm: React.FC<SalesFormProps> = ({
                         <AlertDescription fontSize="sm">
                           <Text><strong>Payment Terms:</strong> {getPaymentTermsExplanation(watchPaymentTerms)}</Text>
                           {watchDate && isDueDateAutoCalculated && (
-                            <Text mt={1} color="green.600">
+                            <Text mt={1} color={successTextColor}>
                               <strong>Due Date:</strong> {salesService.formatDate(calculateDueDateFromPaymentTerms(watchDate, watchPaymentTerms) || '')}
                             </Text>
                           )}
                         </AlertDescription>
                       </Alert>
+                    )}
+
+                    {watchPaymentTerms === 'CUSTOM' && (
+                      <Box p={4} border="1px solid" borderColor={borderColor} borderRadius="md" bg={tableBg}>
+                        <HStack justify="space-between" align="center" mb={4}>
+                          <Box>
+                            <Text fontWeight="semibold" color={subHeadingColor}>Payment Schedule</Text>
+                            <Text fontSize="sm" color={textColor}>
+                              Tetap 1 invoice, tetapi customer membayar sesuai termin yang Anda tentukan di bawah.
+                            </Text>
+                          </Box>
+                          <Button size="sm" leftIcon={<FiPlus />} onClick={addPaymentSchedule} colorScheme="blue" variant="outline">
+                            Tambah Termin
+                          </Button>
+                        </HStack>
+
+                        <VStack spacing={3} align="stretch">
+                          {scheduleFields.length === 0 && (
+                            <Alert status="warning" borderRadius="md">
+                              <AlertIcon />
+                              <AlertDescription fontSize="sm">
+                                Tambahkan minimal satu termin. Untuk kasus 30%-40%-30%, buat 3 termin sampai total persentasenya 100%.
+                              </AlertDescription>
+                            </Alert>
+                          )}
+
+                          {scheduleFields.map((field, index) => {
+                            const schedulePercentage = Number(watchPaymentSchedules?.[index]?.percentage) || 0;
+                            const scheduleDueDate = watchPaymentSchedules?.[index]?.due_date;
+                            const scheduleDescription = watchPaymentSchedules?.[index]?.description;
+                            const scheduleAmount = getScheduleAmount(schedulePercentage, index);
+
+                            return (
+                              <Box key={field.id} p={3} border="1px solid" borderColor={borderColor} borderRadius="md">
+                                <HStack justify="space-between" align="start" mb={3}>
+                                  <Box>
+                                    <Text fontWeight="medium">Termin {index + 1}</Text>
+                                    <Text fontSize="xs" color={textColor}>
+                                      Nilai termin otomatis dihitung dari total invoice saat ini.
+                                    </Text>
+                                  </Box>
+                                  <IconButton
+                                    aria-label={`Hapus termin ${index + 1}`}
+                                    icon={<FiTrash2 />}
+                                    size="sm"
+                                    variant="ghost"
+                                    colorScheme="red"
+                                    onClick={() => removePaymentSchedule(index)}
+                                  />
+                                </HStack>
+
+                                <HStack align="start" spacing={3}>
+                                  <FormControl isRequired>
+                                    <FormLabel fontSize="sm">Persentase (%)</FormLabel>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      max="100"
+                                      {...register(`payment_schedules.${index}.percentage` as const, {
+                                        setValueAs: value => Number(value) || 0
+                                      })}
+                                      bg={inputBg}
+                                      _focus={{ bg: inputFocusBg }}
+                                    />
+                                  </FormControl>
+
+                                  <FormControl isRequired>
+                                    <FormLabel fontSize="sm">Jatuh Tempo</FormLabel>
+                                    <Input
+                                      type="date"
+                                      {...register(`payment_schedules.${index}.due_date` as const)}
+                                      bg={inputBg}
+                                      _focus={{ bg: inputFocusBg }}
+                                    />
+                                  </FormControl>
+
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">Deskripsi</FormLabel>
+                                    <Input
+                                      placeholder={`Mis. DP ${index + 1}`}
+                                      {...register(`payment_schedules.${index}.description` as const)}
+                                      bg={inputBg}
+                                      _focus={{ bg: inputFocusBg }}
+                                    />
+                                  </FormControl>
+                                </HStack>
+
+                                <HStack justify="space-between" mt={3} p={3} bg={alertBg} borderRadius="md">
+                                  <Text fontSize="sm" color={textColor}>
+                                    {scheduleDueDate ? `Termin jatuh tempo ${salesService.formatDate(scheduleDueDate)}` : 'Isi jatuh tempo untuk termin ini'}
+                                  </Text>
+                                  <Text fontSize="sm" fontWeight="semibold" color="blue.600">
+                                    {schedulePercentage.toFixed(2)}% = {salesService.formatCurrency(scheduleAmount)}
+                                  </Text>
+                                </HStack>
+                              </Box>
+                            );
+                          })}
+                        </VStack>
+
+                        <HStack justify="space-between" mt={4} p={3} bg={alertBg} borderRadius="md">
+                          <Text fontSize="sm" color={textColor}>
+                            Total invoice {salesService.formatCurrency(calculateTotal())} akan tetap menjadi 1 piutang usaha.
+                          </Text>
+                          <Text fontSize="sm" fontWeight="bold" color={Math.abs(getPaymentSchedulePercentageTotal() - 100) < 0.01 ? 'green.600' : 'red.600'}>
+                            Total termin: {getPaymentSchedulePercentageTotal().toFixed(2)}%
+                          </Text>
+                        </HStack>
+                      </Box>
                     )}
 
                     <FormControl>

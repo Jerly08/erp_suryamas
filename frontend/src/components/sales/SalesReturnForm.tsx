@@ -420,7 +420,7 @@ const SalesReturnForm: React.FC<SalesReturnFormProps> = ({
                                 </Td>
                                 <Td>
                                   <Text fontWeight="medium">
-                                    {saleItem.product?.name || 'Unknown Product'}
+                                    {saleItem.product_name || saleItem.product?.name || 'Unknown Product'}
                                   </Text>
                                   <Text fontSize="xs" color="gray.500">
                                     {saleItem.description || ''}

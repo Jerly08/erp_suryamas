@@ -23,6 +23,20 @@ func NewJWTManager(db *gorm.DB) *JWTManager {
 	return &JWTManager{DB: db}
 }
 
+func parseEnhancedToken(tokenString, secret string) (*jwt.Token, *EnhancedClaims, error) {
+	claims := &EnhancedClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(secret), nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return token, claims, nil
+}
+
 // Enhanced Claims with additional security fields
 type EnhancedClaims struct {
 	UserID      uint   `json:"user_id"`
@@ -91,7 +105,7 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 	}
 
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessTokenString, err := accessToken.SignedString([]byte(cfg.JWTSecret))
+	accessTokenString, err := accessToken.SignedString([]byte(cfg.JWTAccessSecret))
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +132,7 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 	}
 
 	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
-	refreshTokenString, err := refreshToken.SignedString([]byte(cfg.JWTSecret))
+	refreshTokenString, err := refreshToken.SignedString([]byte(cfg.JWTRefreshSecret))
 	if err != nil {
 		return nil, err
 	}
@@ -170,10 +184,7 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 	cfg := config.LoadConfig()
 
 	// Parse refresh token
-	claims := &EnhancedClaims{}
-	token, err := jwt.ParseWithClaims(refreshTokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return []byte(cfg.JWTSecret), nil
-	})
+	token, claims, err := parseEnhancedToken(refreshTokenString, cfg.JWTRefreshSecret)
 
 	if err != nil || !token.Valid || claims.TokenType != "refresh" {
 		return nil, fmt.Errorf("invalid refresh token")
@@ -232,7 +243,7 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 	}
 
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessTokenString, err := accessToken.SignedString([]byte(cfg.JWTSecret))
+	accessTokenString, err := accessToken.SignedString([]byte(cfg.JWTAccessSecret))
 	if err != nil {
 		return nil, err
 	}
@@ -330,13 +341,10 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 		cfg := config.LoadConfig()
 		claims := &EnhancedClaims{}
 
-		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-			// Validate signing method
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return []byte(cfg.JWTSecret), nil
-		})
+		token, parsedClaims, err := parseEnhancedToken(tokenString, cfg.JWTAccessSecret)
+		if err == nil && parsedClaims != nil {
+			claims = parsedClaims
+		}
 
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
@@ -425,14 +433,14 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 // BlacklistToken adds token to blacklist
 func (jm *JWTManager) BlacklistToken(tokenString string, userID uint, reason string) error {
 	// Parse token to get expiry
-	claims := &EnhancedClaims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		cfg := config.LoadConfig()
-		return []byte(cfg.JWTSecret), nil
-	})
+	cfg := config.LoadConfig()
+	token, claims, err := parseEnhancedToken(tokenString, cfg.JWTAccessSecret)
+	if err != nil {
+		token, claims, err = parseEnhancedToken(tokenString, cfg.JWTRefreshSecret)
+	}
 
 	var expiresAt time.Time
-	if err == nil && token != nil {
+	if err == nil && token != nil && claims != nil && claims.ExpiresAt != nil {
 		expiresAt = time.Unix(claims.ExpiresAt.Unix(), 0)
 	} else {
 		// Default to 24 hours if we can't parse

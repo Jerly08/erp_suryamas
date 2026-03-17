@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -236,17 +235,21 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 	}
 
 	var reqData struct {
-		ContactID          uint    `json:"contact_id"`
-		ExpenseAccountID   *uint   `json:"expense_account_id"`
-		CashBankID         uint    `json:"cash_bank_id"`
-		Date               string  `json:"date"`
-		Amount             float64 `json:"amount"`
-		Method             string  `json:"method"`
-		Reference          string  `json:"reference"`
-		Notes              string  `json:"notes"`
-		Description        string  `json:"description"`
-		TargetBillID       *uint   `json:"target_bill_id"`
-		TargetInvoiceID    *uint   `json:"target_invoice_id"`
+		ContactID        uint    `json:"contact_id"`
+		ExpenseAccountID *uint   `json:"expense_account_id"`
+		CashBankID       uint    `json:"cash_bank_id"`
+		Date             string  `json:"date"`
+		Amount           float64 `json:"amount"`
+		ExchangeRate     float64 `json:"exchange_rate"`
+		Method           string  `json:"method"`
+		Reference        string  `json:"reference"`
+		Notes            string  `json:"notes"`
+		Description      string  `json:"description"`
+		PPHType          string  `json:"pph_type"`
+		PPHRate          float64 `json:"pph_rate"`
+		PPHAmount        float64 `json:"pph_amount"`
+		TargetBillID     *uint   `json:"target_bill_id"`
+		TargetInvoiceID  *uint   `json:"target_invoice_id"`
 	}
 
 	if err := c.ShouldBindJSON(&reqData); err != nil {
@@ -272,8 +275,28 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		if reqData.Amount > 0 {
 			p.Amount = reqData.Amount
 		}
+		if reqData.ExchangeRate > 0 {
+			p.ExchangeRate = reqData.ExchangeRate
+		} else if p.PaymentType == models.PaymentTypeExpense {
+			p.ExchangeRate = 1
+		}
+		if reqData.CashBankID != 0 {
+			p.CashBankID = &reqData.CashBankID
+		}
 		if reqData.Method != "" {
 			p.Method = reqData.Method
+		}
+		if p.PaymentType == models.PaymentTypeExpense {
+			if reqData.ExpenseAccountID != nil {
+				p.ExpenseAccountID = reqData.ExpenseAccountID
+			}
+			p.PPHType = reqData.PPHType
+			p.PPHRate = reqData.PPHRate
+			p.PPHAmount = reqData.PPHAmount
+			p.NativeAmount = 0
+			p.BookAmountIDR = 0
+			p.ForexGainLossAmount = 0
+			p.ForexGainLossType = ""
 		}
 		// Combine notes and description
 		if reqData.Notes != "" {
@@ -286,45 +309,10 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 				p.Notes = reqData.Description
 			}
 		}
-		
-		// Parse and reconstruct reference for DRAFT approval mappings
-		var existingExpID, existingCBID uint
-		n, _ := fmt.Sscanf(p.Reference, "__EXP_ACC:%d,CB:%d__", &existingExpID, &existingCBID)
-		if n != 2 {
-			existingExpID = 0
-			n, _ = fmt.Sscanf(p.Reference, "__CB:%d__", &existingCBID)
-			if n != 1 {
-				existingCBID = 0
-			}
-		}
-		
-		cleanRef := p.Reference
-		if existingExpID != 0 && existingCBID != 0 {
-			cleanRef = strings.Replace(cleanRef, fmt.Sprintf("__EXP_ACC:%d,CB:%d__", existingExpID, existingCBID), "", 1)
-		} else if existingCBID != 0 {
-			cleanRef = strings.Replace(cleanRef, fmt.Sprintf("__CB:%d__", existingCBID), "", 1)
-		}
-
-		newCBID := existingCBID
-		if reqData.CashBankID != 0 {
-			newCBID = reqData.CashBankID
-		}
-		newExpID := existingExpID
-		if reqData.ExpenseAccountID != nil {
-			newExpID = *reqData.ExpenseAccountID
-		}
-		
-		userRef := cleanRef
 		if reqData.Reference != "" {
-			userRef = reqData.Reference
-		}
-
-		if newExpID != 0 {
-			p.Reference = fmt.Sprintf("__EXP_ACC:%d,CB:%d__%s", newExpID, newCBID, userRef)
-		} else if newCBID != 0 {
-			p.Reference = fmt.Sprintf("__CB:%d__%s", newCBID, userRef)
+			p.Reference = reqData.Reference
 		} else {
-			p.Reference = userRef
+			p.Reference = models.StripInternalPaymentReference(p.Reference)
 		}
 
 		return nil
@@ -381,7 +369,8 @@ func (ctrl *SSOTPaymentController) ReversePayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Reason string `json:"reason" binding:"required"`
+		Reason       string `json:"reason" binding:"required"`
+		ReversalDate string `json:"reversal_date"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -391,9 +380,20 @@ func (ctrl *SSOTPaymentController) ReversePayment(c *gin.Context) {
 		return
 	}
 
+	var reversalDate time.Time
+	if strings.TrimSpace(request.ReversalDate) != "" {
+		reversalDate, err = time.Parse("2006-01-02", request.ReversalDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid reversal_date format. Use YYYY-MM-DD",
+			})
+			return
+		}
+	}
+
 	userID := getSSOTUserIDFromContext(c)
 
-	response, err := ctrl.enhancedPaymentService.ReversePayment(uint(paymentID), request.Reason, userID)
+	response, err := ctrl.enhancedPaymentService.ReversePayment(uint(paymentID), request.Reason, reversalDate, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to reverse payment",

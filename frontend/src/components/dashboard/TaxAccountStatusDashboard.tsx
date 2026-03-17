@@ -60,7 +60,7 @@ const TaxAccountStatusDashboard: React.FC = () => {
 
   const fetchDashboard = async () => {
     try {
-      const response = await fetch('/api/v1/settings/tax-accounts/status');
+      const response = await fetch('/api/v1/tax-accounts/status');
       const data = await response.json();
       
       if (data.success) {

@@ -18,7 +18,6 @@ import {
   AlertIcon,
   AlertTitle,
   AlertDescription,
-  useDisclosure,
   Modal,
   ModalOverlay,
   ModalContent,
@@ -35,6 +34,8 @@ import {
   Switch,
   VStack,
   HStack,
+  Text,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { FiPlus, FiEdit, FiTrash2, FiEye } from 'react-icons/fi';
 
@@ -77,11 +78,11 @@ interface ContactAddress {
 }
 
 const ContactsPage = () => {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const { t } = useTranslation();
 
   // Permission-based access control
-  const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('contacts');
+  const { canEdit } = useModulePermissions('contacts');
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -132,11 +133,10 @@ const ContactsPage = () => {
     setError(null);
 
     try {
-      let response;
       if (formData.id) {
-        response = await api.put(`${API_ENDPOINTS.CONTACTS}/${formData.id}`, formData);
+        await api.put(`${API_ENDPOINTS.CONTACTS}/${formData.id}`, formData);
       } else {
-        response = await api.post(API_ENDPOINTS.CONTACTS, formData);
+        await api.post(API_ENDPOINTS.CONTACTS, formData);
       }
 
       // Refresh contacts list
@@ -305,10 +305,23 @@ const ContactsPage = () => {
     return baseColumns;
   };
 
-  // Default columns (for backward compatibility)
-  const columns = getColumnsForType();
-
   const toast = useToast();
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const modalBg = useColorModeValue('white', 'gray.800');
+  const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const modalBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const fieldBg = useColorModeValue('white', 'whiteAlpha.50');
+  const fieldBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const fieldTextColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const labelColor = useColorModeValue('gray.700', 'whiteAlpha.800');
+  const placeholderColor = useColorModeValue('gray.400', 'whiteAlpha.500');
+  const detailCardBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const detailMutedText = useColorModeValue('gray.600', 'whiteAlpha.700');
+  const selectOptionBg = useColorModeValue('white', 'gray.800');
+  const fieldFocusStyles = {
+    borderColor: 'blue.400',
+    boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
+  };
 
   // New state for view modal
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
@@ -367,7 +380,9 @@ const ContactsPage = () => {
       <Layout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
         <Box>
           <Flex justify="space-between" align="center" mb={6}>
-            <Heading size="lg">{t('contacts.contactMaster')}</Heading>
+            <Heading size="lg" color={headingColor}>
+              {t('contacts.contactMaster')}
+            </Heading>
             {canEdit && (
               <Button
                 colorScheme="brand"
@@ -404,28 +419,40 @@ const ContactsPage = () => {
 
           <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} size="lg">
             <ModalOverlay />
-            <ModalContent>
+            <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor} color={fieldTextColor}>
               <form onSubmit={handleSubmit}>
-                <ModalHeader>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
                   {selectedContact?.id ? t('contacts.editContact') : t('contacts.createContact')}
                 </ModalHeader>
-                <ModalCloseButton />
+                <ModalCloseButton color={fieldTextColor} />
                 <ModalBody>
                   <VStack spacing={4}>
                     <FormControl isRequired>
-                      <FormLabel>{t('common.name')}</FormLabel>
+                      <FormLabel color={labelColor}>{t('common.name')}</FormLabel>
                       <Input
                         value={formData.name || ''}
                         onChange={(e) => handleInputChange('name', e.target.value)}
                         placeholder={t('contacts.form.enterContactName')}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        _placeholder={{ color: placeholderColor }}
                       />
                     </FormControl>
 
                     <FormControl isRequired>
-                      <FormLabel>{t('common.type')}</FormLabel>
+                      <FormLabel color={labelColor}>{t('common.type')}</FormLabel>
                       <Select
                         value={formData.type || 'CUSTOMER'}
                         onChange={(e) => handleInputChange('type', e.target.value as 'CUSTOMER' | 'VENDOR' | 'EMPLOYEE')}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        sx={{ option: { background: selectOptionBg, color: fieldTextColor } }}
                       >
                         <option value="CUSTOMER">{t('contacts.customer')}</option>
                         <option value="VENDOR">{t('contacts.vendor')}</option>
@@ -434,7 +461,7 @@ const ContactsPage = () => {
                     </FormControl>
 
                     <FormControl>
-                      <FormLabel>
+                      <FormLabel color={labelColor}>
                         {formData.type === 'CUSTOMER' ? t('contacts.customerId') :
                           formData.type === 'VENDOR' ? t('contacts.vendorId') :
                             formData.type === 'EMPLOYEE' ? t('contacts.employeeId') : t('contacts.externalId')}
@@ -443,72 +470,114 @@ const ContactsPage = () => {
                         value={formData.external_id || ''}
                         onChange={(e) => handleInputChange('external_id', e.target.value)}
                         placeholder={t('contacts.form.enterExternalId')}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        _placeholder={{ color: placeholderColor }}
                       />
                     </FormControl>
 
                     {/* PIC Name - only show for Customer/Vendor */}
                     {(formData.type === 'CUSTOMER' || formData.type === 'VENDOR') && (
                       <FormControl>
-                        <FormLabel>{t('contacts.picName')}</FormLabel>
+                        <FormLabel color={labelColor}>{t('contacts.picName')}</FormLabel>
                         <Input
                           value={formData.pic_name || ''}
                           onChange={(e) => handleInputChange('pic_name', e.target.value)}
                           placeholder={t('contacts.form.enterPicName')}
+                          bg={fieldBg}
+                          borderColor={fieldBorderColor}
+                          color={fieldTextColor}
+                          _hover={{ borderColor: fieldBorderColor }}
+                          _focusVisible={fieldFocusStyles}
+                          _placeholder={{ color: placeholderColor }}
                         />
                       </FormControl>
                     )}
 
                     <FormControl isRequired>
-                      <FormLabel>{t('contacts.email')}</FormLabel>
+                      <FormLabel color={labelColor}>{t('contacts.email')}</FormLabel>
                       <Input
                         type="email"
                         value={formData.email || ''}
                         onChange={(e) => handleInputChange('email', e.target.value)}
                         placeholder={t('contacts.form.enterEmail')}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        _placeholder={{ color: placeholderColor }}
                       />
                     </FormControl>
 
                     <FormControl isRequired>
-                      <FormLabel>{t('contacts.phone')}</FormLabel>
+                      <FormLabel color={labelColor}>{t('contacts.phone')}</FormLabel>
                       <Input
                         value={formData.phone || ''}
                         onChange={(e) => handleInputChange('phone', e.target.value)}
                         placeholder={t('contacts.form.enterPhone')}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        _placeholder={{ color: placeholderColor }}
                       />
                     </FormControl>
 
                     <FormControl>
-                      <FormLabel>{t('contacts.mobile')}</FormLabel>
+                      <FormLabel color={labelColor}>{t('contacts.mobile')}</FormLabel>
                       <Input
                         value={formData.mobile || ''}
                         onChange={(e) => handleInputChange('mobile', e.target.value)}
                         placeholder={t('contacts.form.enterMobile')}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        _placeholder={{ color: placeholderColor }}
                       />
                     </FormControl>
 
                     <FormControl>
-                      <FormLabel>{t('contacts.address')}</FormLabel>
+                      <FormLabel color={labelColor}>{t('contacts.address')}</FormLabel>
                       <Textarea
                         value={formData.address || ''}
                         onChange={(e) => handleInputChange('address', e.target.value)}
                         placeholder={t('contacts.form.enterAddress')}
                         rows={3}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        _placeholder={{ color: placeholderColor }}
                       />
                     </FormControl>
 
                     <FormControl>
-                      <FormLabel>{t('common.notes')}</FormLabel>
+                      <FormLabel color={labelColor}>{t('common.notes')}</FormLabel>
                       <Textarea
                         value={formData.notes || ''}
                         onChange={(e) => handleInputChange('notes', e.target.value)}
                         placeholder={t('contacts.form.enterNotes')}
                         rows={3}
+                        bg={fieldBg}
+                        borderColor={fieldBorderColor}
+                        color={fieldTextColor}
+                        _hover={{ borderColor: fieldBorderColor }}
+                        _focusVisible={fieldFocusStyles}
+                        _placeholder={{ color: placeholderColor }}
                       />
                     </FormControl>
 
                     <FormControl>
                       <HStack>
-                        <FormLabel mb={0}>{t('common.active')}</FormLabel>
+                        <FormLabel mb={0} color={labelColor}>{t('common.active')}</FormLabel>
                         <Switch
                           isChecked={formData.is_active !== false}
                           onChange={(e) => handleInputChange('is_active', e.target.checked)}
@@ -517,7 +586,7 @@ const ContactsPage = () => {
                     </FormControl>
                   </VStack>
                 </ModalBody>
-                <ModalFooter>
+                <ModalFooter borderTopWidth="1px" borderColor={modalBorderColor}>
                   <Button variant="ghost" mr={3} onClick={() => setIsModalOpen(false)}>
                     {t('common.cancel')}
                   </Button>
@@ -537,57 +606,72 @@ const ContactsPage = () => {
           {/* View Modal */}
           <Modal isOpen={isViewModalOpen} onClose={() => setIsViewModalOpen(false)} size="lg">
             <ModalOverlay />
-            <ModalContent>
-              <ModalHeader>{t('contacts.contactDetails')}</ModalHeader>
-              <ModalCloseButton />
+            <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor} color={fieldTextColor}>
+              <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
+                {t('contacts.contactDetails')}
+              </ModalHeader>
+              <ModalCloseButton color={fieldTextColor} />
               <ModalBody>
                 {viewContact && (
                   <VStack spacing={3} align="stretch">
-                    <Box>
-                      <strong>{t('common.name')}:</strong> {viewContact.name}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('common.name')}</Text>
+                      <Text color={fieldTextColor} fontWeight="semibold">{viewContact.name}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('common.type')}:</strong> {viewContact.type === 'CUSTOMER' ? t('contacts.customer') : viewContact.type === 'VENDOR' ? t('contacts.vendor') : t('contacts.employee')}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('common.type')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.type === 'CUSTOMER' ? t('contacts.customer') : viewContact.type === 'VENDOR' ? t('contacts.vendor') : t('contacts.employee')}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('contacts.table.code')}:</strong> {viewContact.code || '-'}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.table.code')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.code || '-'}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('contacts.externalId')}:</strong> {viewContact.external_id || '-'}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.externalId')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.external_id || '-'}</Text>
                     </Box>
                     {(viewContact.type === 'CUSTOMER' || viewContact.type === 'VENDOR') && (
-                      <Box>
-                        <strong>{t('contacts.picName')}:</strong> {viewContact.pic_name || '-'}
+                      <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                        <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.picName')}</Text>
+                        <Text color={fieldTextColor}>{viewContact.pic_name || '-'}</Text>
                       </Box>
                     )}
-                    <Box>
-                      <strong>{t('contacts.email')}:</strong> {viewContact.email}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.email')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.email}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('contacts.phone')}:</strong> {viewContact.phone}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.phone')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.phone}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('contacts.mobile')}:</strong> {viewContact.mobile || '-'}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.mobile')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.mobile || '-'}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('contacts.address')}:</strong> {viewContact.address || '-'}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.address')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.address || '-'}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('common.status')}:</strong> {viewContact.is_active ? t('contacts.status.active') : t('contacts.status.inactive')}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('common.status')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.is_active ? t('contacts.status.active') : t('contacts.status.inactive')}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('common.notes')}:</strong> {viewContact.notes || '-'}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('common.notes')}</Text>
+                      <Text color={fieldTextColor}>{viewContact.notes || '-'}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('contacts.table.created')}:</strong> {new Date(viewContact.created_at).toLocaleDateString()}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.table.created')}</Text>
+                      <Text color={fieldTextColor}>{new Date(viewContact.created_at).toLocaleDateString()}</Text>
                     </Box>
-                    <Box>
-                      <strong>{t('contacts.table.updated')}:</strong> {new Date(viewContact.updated_at).toLocaleDateString()}
+                    <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
+                      <Text color={detailMutedText} fontSize="sm" mb={1}>{t('contacts.table.updated')}</Text>
+                      <Text color={fieldTextColor}>{new Date(viewContact.updated_at).toLocaleDateString()}</Text>
                     </Box>
                   </VStack>
                 )}
               </ModalBody>
-              <ModalFooter>
+              <ModalFooter borderTopWidth="1px" borderColor={modalBorderColor}>
                 <Button onClick={() => setIsViewModalOpen(false)}>{t('common.close')}</Button>
               </ModalFooter>
             </ModalContent>

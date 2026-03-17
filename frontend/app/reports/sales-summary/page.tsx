@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/hooks/useTranslation';
 import UnifiedLayout from '@/components/layout/UnifiedLayout';
 import { ssotSalesSummaryService, SSOTSalesSummaryData, SalesSummaryItem, SaleItemDetail } from '@/services/ssotSalesSummaryService';
+import { projectService, Project } from '@/services/projectService';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
 import {
@@ -75,6 +76,47 @@ const SalesSummaryPage: React.FC = () => {
     const textColor = useColorModeValue('gray.800', 'white');
     const descriptionColor = useColorModeValue('gray.600', 'gray.300');
     const summaryBg = useColorModeValue('gray.50', 'gray.700');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.100');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const inputHoverBorderColor = useColorModeValue('purple.400', 'purple.300');
+    const inputFocusBorderColor = useColorModeValue('purple.500', 'purple.200');
+    const infoIconColor = useColorModeValue('gray.500', 'gray.400');
+    const errorBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.32)');
+    const errorBorderColor = useColorModeValue('red.200', 'rgba(252, 129, 129, 0.32)');
+    const companyHeaderBg = useColorModeValue('purple.50', 'rgba(159, 122, 234, 0.18)');
+    const companyHeaderTextColor = useColorModeValue('purple.800', 'purple.100');
+    const companyHeaderSubtextColor = useColorModeValue('purple.600', 'purple.200');
+    const positiveStatBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.16)');
+    const positiveStatTextColor = useColorModeValue('green.800', 'green.100');
+    const primaryStatBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.16)');
+    const primaryStatTextColor = useColorModeValue('blue.800', 'blue.100');
+    const accentStatBg = useColorModeValue('purple.50', 'rgba(159, 122, 234, 0.18)');
+    const accentStatTextColor = useColorModeValue('purple.800', 'purple.100');
+    const warningStatBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.18)');
+    const warningStatTextColor = useColorModeValue('orange.800', 'orange.100');
+    const summaryPanelBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.14)');
+    const summaryPanelBorder = useColorModeValue('green.200', 'rgba(154, 230, 180, 0.24)');
+    const summaryPanelTextColor = useColorModeValue('green.700', 'green.100');
+    const tableHeaderBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.18)');
+    const rowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const rowAccentHoverBg = useColorModeValue('orange.50', 'rgba(237, 137, 54, 0.12)');
+    const modalBg = useColorModeValue('white', 'gray.800');
+    const modalBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const modalHeaderBg = useColorModeValue('linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 'linear-gradient(135deg, rgba(102, 126, 234, 0.78) 0%, rgba(118, 75, 162, 0.78) 100%)');
+    const detailCardBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const detailCardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const emptyPanelBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const subtleTextColor = useColorModeValue('gray.500', 'gray.400');
+    const mutedTextColor = useColorModeValue('gray.600', 'gray.300');
+    const fieldStyles = {
+        bg: inputBg,
+        borderColor: inputBorderColor,
+        _hover: { borderColor: inputHoverBorderColor },
+        _focus: {
+            borderColor: inputFocusBorderColor,
+            boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+        },
+    };
 
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
@@ -85,6 +127,9 @@ const SalesSummaryPage: React.FC = () => {
     const [loadingClosedPeriods, setLoadingClosedPeriods] = useState(false);
     const [companyInfo, setCompanyInfo] = useState<{ name?: string; address?: string; city?: string } | null>(null);
     const [selectedItem, setSelectedItem] = useState<SalesSummaryItem | null>(null);
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [loadingProjects, setLoadingProjects] = useState(false);
+    const [selectedProjectId, setSelectedProjectId] = useState('');
     const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
 
     useEffect(() => {
@@ -106,6 +151,7 @@ const SalesSummaryPage: React.FC = () => {
         };
         loadSettings();
         loadClosedPeriods();
+        loadProjects();
     }, []);
 
     const loadClosedPeriods = async () => {
@@ -118,12 +164,28 @@ const SalesSummaryPage: React.FC = () => {
         } catch { /* ignore */ } finally { setLoadingClosedPeriods(false); }
     };
 
+    const loadProjects = async () => {
+        setLoadingProjects(true);
+        try {
+            const result = await projectService.getAll();
+            setProjects(Array.isArray(result) ? result : []);
+        } catch (err) {
+            console.warn('Failed to load projects for sales summary filter:', err);
+            setProjects([]);
+        } finally {
+            setLoadingProjects(false);
+        }
+    };
+
     const fetchReport = async () => {
         setLoading(true);
         setError(null);
         try {
             const result = await ssotSalesSummaryService.generateSSOTSalesSummary({
-                start_date: startDate, end_date: endDate, format: 'json'
+                start_date: startDate,
+                end_date: endDate,
+                format: 'json',
+                project_id: selectedProjectId ? Number(selectedProjectId) : undefined,
             });
             setData(result);
             if (result.company) {
@@ -150,6 +212,9 @@ const SalesSummaryPage: React.FC = () => {
                     end_date: endDate,
                     format: 'pdf'
                 });
+                if (selectedProjectId) {
+                    queryParams.set('project_id', selectedProjectId);
+                }
                 const url = `${API_ENDPOINTS.SSOT_REPORTS.SALES_SUMMARY}?${queryParams.toString()}`;
 
                 const response = await fetch(url, {
@@ -267,13 +332,14 @@ const SalesSummaryPage: React.FC = () => {
                                             <Icon as={FiCalendar} />
                                             <Text>{t('reports.closedPeriod') || 'Periode tutup'}</Text>
                                             <Tooltip label="Pilih periode tutup untuk memuat laporan berdasarkan periode fiskal yang telah ditutup" placement="top">
-                                                <Box><Icon as={FiInfo} color="gray.500" /></Box>
+                                                <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                             </Tooltip>
                                         </HStack>
                                     </FormLabel>
                                     <Select
                                         placeholder={t('reports.selectClosedPeriod') || 'Pilih periode tutup'}
                                         size="md"
+                                        {...fieldStyles}
                                         onChange={(e) => {
                                             if (e.target.value) {
                                                 const sel = closedPeriods.find(p => p.date === e.target.value);
@@ -301,11 +367,27 @@ const SalesSummaryPage: React.FC = () => {
                             <HStack spacing={4} flexWrap="wrap">
                                 <FormControl flex="1" minW="200px">
                                     <FormLabel>{t('reports.modal.startDate') || 'Tanggal Mulai'}</FormLabel>
-                                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} {...fieldStyles} />
                                 </FormControl>
                                 <FormControl flex="1" minW="200px">
                                     <FormLabel>{t('reports.modal.endDate') || 'Tanggal Akhir'}</FormLabel>
-                                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} {...fieldStyles} />
+                                </FormControl>
+                                <FormControl flex="1" minW="260px">
+                                    <FormLabel>{t('projects.title') || 'Project'}</FormLabel>
+                                    <Select
+                                        value={selectedProjectId}
+                                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                                        isDisabled={loadingProjects}
+                                        {...fieldStyles}
+                                    >
+                                        <option value="">{loadingProjects ? 'Memuat project...' : 'Semua Project'}</option>
+                                        {projects.map((project) => (
+                                            <option key={project.id} value={project.id}>
+                                                {project.code} - {project.name}
+                                            </option>
+                                        ))}
+                                    </Select>
                                 </FormControl>
                                 <Button colorScheme="blue" onClick={fetchReport} isLoading={loading} leftIcon={<FiShoppingCart />} size="md" mt={8}>
                                     {t('reports.modal.generateReport') || 'Buat Laporan'}
@@ -328,8 +410,8 @@ const SalesSummaryPage: React.FC = () => {
 
                 {/* Error */}
                 {error && (
-                    <Box bg="red.50" p={4} borderRadius="md">
-                        <Text color="red.600" fontWeight="medium">Error: {error}</Text>
+                    <Box bg={errorBg} p={4} borderRadius="md" border="1px" borderColor={errorBorderColor}>
+                        <Text color="red.300" fontWeight="medium">Error: {error}</Text>
                         <Button mt={2} size="sm" colorScheme="red" variant="outline" onClick={fetchReport}>Coba Lagi</Button>
                     </Box>
                 )}
@@ -338,17 +420,17 @@ const SalesSummaryPage: React.FC = () => {
                 {data && !loading && (
                     <VStack spacing={6} align="stretch">
                         {/* Company Header */}
-                        <Box bg="purple.50" p={4} borderRadius="md">
+                        <Box bg={companyHeaderBg} p={4} borderRadius="md" border="1px" borderColor={modalBorderColor}>
                             <HStack justify="space-between" align="start">
                                 <VStack align="start" spacing={1}>
-                                    <Text fontSize="lg" fontWeight="bold" color="purple.800">
+                                    <Text fontSize="lg" fontWeight="bold" color={companyHeaderTextColor}>
                                         {companyInfo?.name || data.company?.name || 'Perusahaan'}
                                     </Text>
-                                    <Text fontSize="sm" color="purple.600">
+                                    <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                         {companyInfo?.address || data.company?.address || ''}{companyInfo?.city ? `, ${companyInfo.city}` : data.company?.city ? `, ${data.company.city}` : ''}
                                     </Text>
                                 </VStack>
-                                <Text fontSize="sm" color="purple.600">
+                                <Text fontSize="sm" color={companyHeaderSubtextColor}>
                                     {t('reports.modal.currency') || 'Mata Uang'}: {data.currency || 'IDR'}
                                 </Text>
                             </HStack>
@@ -360,23 +442,29 @@ const SalesSummaryPage: React.FC = () => {
                             <Text fontSize="sm" color={descriptionColor}>Periode: {startDate} — {endDate}</Text>
                         </Box>
 
+                        {selectedProjectId && (
+                            <Text fontSize="sm" color={descriptionColor} textAlign="center" mt={-2}>
+                                Project: {projects.find((project) => project.id === Number(selectedProjectId))?.name || `#${selectedProjectId}`}
+                            </Text>
+                        )}
+
                         {/* Summary Statistics */}
                         <SimpleGrid columns={[1, 2, 4]} spacing={4}>
-                            <Box bg="green.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={positiveStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="green.600">{formatCurrency(totalSales)}</Text>
-                                <Text fontSize="sm" color="green.800">{t('reports.salesSummary.totalSales') || 'Total Penjualan'}</Text>
+                                <Text fontSize="sm" color={positiveStatTextColor}>{t('reports.salesSummary.totalSales') || 'Total Penjualan'}</Text>
                             </Box>
-                            <Box bg="blue.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={primaryStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="blue.600">{data.total_transactions || 0}</Text>
-                                <Text fontSize="sm" color="blue.800">{t('reports.salesSummary.totalTransactions') || 'Total Transaksi'}</Text>
+                                <Text fontSize="sm" color={primaryStatTextColor}>{t('reports.salesSummary.totalTransactions') || 'Total Transaksi'}</Text>
                             </Box>
-                            <Box bg="purple.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={accentStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="purple.600">{formatCurrency(data.total_tax)}</Text>
-                                <Text fontSize="sm" color="purple.800">{t('reports.salesSummary.totalTax') || 'Total Pajak'}</Text>
+                                <Text fontSize="sm" color={accentStatTextColor}>{t('reports.salesSummary.totalTax') || 'Total Pajak'}</Text>
                             </Box>
-                            <Box bg="orange.50" p={4} borderRadius="md" textAlign="center">
+                            <Box bg={warningStatBg} p={4} borderRadius="md" textAlign="center">
                                 <Text fontSize="2xl" fontWeight="bold" color="orange.600">{formatCurrency(data.net_revenue || totalSales)}</Text>
-                                <Text fontSize="sm" color="orange.800">Pendapatan Bersih</Text>
+                                <Text fontSize="sm" color={warningStatTextColor}>Pendapatan Bersih</Text>
                             </Box>
                         </SimpleGrid>
 
@@ -393,7 +481,7 @@ const SalesSummaryPage: React.FC = () => {
                                 </HStack>
                                 <VStack spacing={0} align="stretch">
                                     {data.sales_by_customer.map((cust, i) => (
-                                        <Box key={`cust-${i}`} py={2} px={4} _hover={{ bg: 'gray.50' }} borderRadius="md">
+                                        <Box key={`cust-${i}`} py={2} px={4} _hover={{ bg: rowHoverBg }} borderRadius="md">
                                             <HStack justify="space-between" mb={1}>
                                                 <HStack>
                                                     <Text fontSize="sm" fontWeight="medium" color={textColor}>{cust.customer_name || 'Pelanggan Umum'}</Text>
@@ -420,9 +508,9 @@ const SalesSummaryPage: React.FC = () => {
                                                     {cust.items.map((item, j) => (
                                                         <HStack key={`ci-${j}`} justify="space-between" py={1}>
                                                             <HStack>
-                                                                <Text fontSize="xs" color="gray.500" fontFamily="mono">{item.product_code || '-'}</Text>
+                                                                <Text fontSize="xs" color={subtleTextColor} fontFamily="mono">{item.product_code || '-'}</Text>
                                                                 <Text fontSize="xs" color={descriptionColor}>{item.product_name}</Text>
-                                                                <Text fontSize="xs" color="gray.400">x{item.quantity} {item.unit || ''}</Text>
+                                                                <Text fontSize="xs" color={subtleTextColor}>x{item.quantity} {item.unit || ''}</Text>
                                                             </HStack>
                                                             <Text fontSize="xs" fontWeight="medium">{formatCurrency(item.total_price)}</Text>
                                                         </HStack>
@@ -448,7 +536,7 @@ const SalesSummaryPage: React.FC = () => {
                                 </HStack>
                                 <TableContainer>
                                     <Table size="sm" variant="simple">
-                                        <Thead bg="purple.50">
+                                        <Thead bg={accentStatBg}>
                                             <Tr>
                                                 <Th>Produk/Jasa</Th>
                                                 <Th isNumeric>Qty Terjual</Th>
@@ -459,7 +547,7 @@ const SalesSummaryPage: React.FC = () => {
                                         </Thead>
                                         <Tbody>
                                             {data.sales_by_product.map((prod, i) => (
-                                                <Tr key={`prod-${i}`} _hover={{ bg: 'gray.50' }}>
+                                                <Tr key={`prod-${i}`} _hover={{ bg: rowHoverBg }}>
                                                     <Td><Text fontSize="sm" fontWeight="medium">{prod.product_name}</Text></Td>
                                                     <Td isNumeric><Badge colorScheme="blue">{prod.quantity_sold}</Badge></Td>
                                                     <Td isNumeric fontSize="sm">{formatCurrency(prod.average_price)}</Td>
@@ -485,7 +573,7 @@ const SalesSummaryPage: React.FC = () => {
                                 </HStack>
                                 <VStack spacing={0} align="stretch">
                                     {data.sales_by_period.map((period, i) => (
-                                        <HStack key={`period-${i}`} justify="space-between" py={2} px={4} _hover={{ bg: 'gray.50' }} borderRadius="md">
+                                    <HStack key={`period-${i}`} justify="space-between" py={2} px={4} _hover={{ bg: rowHoverBg }} borderRadius="md">
                                             <HStack>
                                                 <Text fontSize="sm" fontWeight="medium" color={textColor}>{period.period}</Text>
                                                 <Badge colorScheme="blue" size="sm">{period.transaction_count} transaksi</Badge>
@@ -514,14 +602,14 @@ const SalesSummaryPage: React.FC = () => {
                                         <Badge colorScheme="orange" px={2} py={1} fontSize="sm">D</Badge>
                                         <Text fontSize="md" fontWeight="bold" color={headingColor}>Daftar Transaksi Penjualan</Text>
                                         <Tooltip label="Daftar lengkap semua transaksi penjualan pada periode">
-                                            <Box><Icon as={FiInfo} color="gray.400" /></Box>
+                                            <Box><Icon as={FiInfo} color={infoIconColor} /></Box>
                                         </Tooltip>
                                     </HStack>
                                     <Badge colorScheme="blue">{data.items.length} transaksi</Badge>
                                 </HStack>
                                 <TableContainer>
                                     <Table size="sm" variant="simple">
-                                        <Thead bg="orange.50">
+                                        <Thead bg={tableHeaderBg}>
                                             <Tr>
                                                 <Th>{t('reports.salesSummary.date') || 'Tanggal'}</Th>
                                                 <Th>{t('reports.salesSummary.code') || 'No. Faktur'}</Th>
@@ -533,7 +621,7 @@ const SalesSummaryPage: React.FC = () => {
                                         </Thead>
                                         <Tbody>
                                             {data.items.map((item: any, idx: number) => (
-                                                <Tr key={idx} _hover={{ bg: 'orange.50', cursor: 'pointer' }} onClick={() => { setSelectedItem(item); onDetailOpen(); }}>
+                                                <Tr key={idx} _hover={{ bg: rowAccentHoverBg, cursor: 'pointer' }} onClick={() => { setSelectedItem(item); onDetailOpen(); }}>
                                                     <Td fontSize="sm">{item.date ? new Date(item.date).toLocaleDateString('id-ID') : '-'}</Td>
                                                     <Td><Badge colorScheme="blue" fontSize="xs" cursor="pointer">{item.code || '-'}</Badge></Td>
                                                     <Td fontSize="sm">{item.customer_name || '-'}</Td>
@@ -566,37 +654,37 @@ const SalesSummaryPage: React.FC = () => {
                         )}
 
                         {/* ═══ SUMMARY BOX ═══ */}
-                        <Box bg="green.50" p={4} borderRadius="md" border="1px" borderColor="green.200">
-                            <Text fontSize="md" fontWeight="bold" color="green.800" mb={3}>
+                        <Box bg={summaryPanelBg} p={4} borderRadius="md" border="1px" borderColor={summaryPanelBorder}>
+                            <Text fontSize="md" fontWeight="bold" color={summaryPanelTextColor} mb={3}>
                                 Ringkasan Penjualan
                             </Text>
                             <SimpleGrid columns={[1, 2]} spacing={3}>
                                 <VStack spacing={2}>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Total Penjualan (Bruto):</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Penjualan (Bruto):</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{formatCurrency(totalSales)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Total Diskon:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Diskon:</Text>
                                         <Text fontSize="sm" fontWeight="semibold" color="red.500">-{formatCurrency(data.total_discount || data.total_discounts || 0)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Total Retur:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Retur:</Text>
                                         <Text fontSize="sm" fontWeight="semibold" color="red.500">-{formatCurrency(data.total_returns || 0)}</Text>
                                     </HStack>
                                 </VStack>
                                 <VStack spacing={2}>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Total Pajak (PPN):</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Pajak (PPN):</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{formatCurrency(data.total_tax || 0)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700">Jumlah Transaksi:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Jumlah Transaksi:</Text>
                                         <Text fontSize="sm" fontWeight="semibold">{data.total_transactions || 0} transaksi</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color="green.700" fontWeight="bold">Pendapatan Bersih:</Text>
-                                        <Text fontSize="md" fontWeight="bold" color="green.700">{formatCurrency(data.net_revenue || totalSales)}</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor} fontWeight="bold">Pendapatan Bersih:</Text>
+                                        <Text fontSize="md" fontWeight="bold" color={summaryPanelTextColor}>{formatCurrency(data.net_revenue || totalSales)}</Text>
                                     </HStack>
                                 </VStack>
                             </SimpleGrid>
@@ -618,9 +706,9 @@ const SalesSummaryPage: React.FC = () => {
             {/* ═══ DETAIL MODAL ═══ */}
             <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="4xl" scrollBehavior="inside">
                 <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
-                <ModalContent borderRadius="xl" overflow="hidden">
+                <ModalContent borderRadius="xl" overflow="hidden" bg={modalBg} borderWidth="1px" borderColor={modalBorderColor}>
                     <ModalHeader
-                        bg="linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                        bg={modalHeaderBg}
                         color="white"
                         py={4}
                     >
@@ -641,10 +729,10 @@ const SalesSummaryPage: React.FC = () => {
                         {selectedItem && (
                             <VStack spacing={5} align="stretch">
                                 {/* Header Info Card */}
-                                <Box bg="gray.50" p={4} borderRadius="lg" borderWidth="1px" borderColor="gray.200">
+                                <Box bg={detailCardBg} p={4} borderRadius="lg" borderWidth="1px" borderColor={detailCardBorderColor}>
                                     <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                                         <GridItem>
-                                            <Text fontSize="xs" color="gray.500" mb={0.5}>Tanggal</Text>
+                                            <Text fontSize="xs" color={subtleTextColor} mb={0.5}>Tanggal</Text>
                                             <Text fontWeight="bold">
                                                 {selectedItem.date
                                                     ? new Date(selectedItem.date).toLocaleDateString('id-ID', {
@@ -654,21 +742,21 @@ const SalesSummaryPage: React.FC = () => {
                                             </Text>
                                         </GridItem>
                                         <GridItem>
-                                            <Text fontSize="xs" color="gray.500" mb={0.5}>No. Faktur</Text>
+                                            <Text fontSize="xs" color={subtleTextColor} mb={0.5}>No. Faktur</Text>
                                             <HStack>
                                                 <Icon as={FiHash} color="blue.400" />
                                                 <Badge colorScheme="blue" fontSize="sm" px={2} py={0.5}>{selectedItem.code || '-'}</Badge>
                                             </HStack>
                                         </GridItem>
                                         <GridItem>
-                                            <Text fontSize="xs" color="gray.500" mb={0.5}>Pelanggan</Text>
+                                            <Text fontSize="xs" color={subtleTextColor} mb={0.5}>Pelanggan</Text>
                                             <HStack>
                                                 <Icon as={FiUsers} color="purple.400" />
                                                 <Text fontWeight="medium">{selectedItem.customer_name || '-'}</Text>
                                             </HStack>
                                         </GridItem>
                                         <GridItem>
-                                            <Text fontSize="xs" color="gray.500" mb={0.5}>Status</Text>
+                                            <Text fontSize="xs" color={subtleTextColor} mb={0.5}>Status</Text>
                                             <Badge
                                                 colorScheme={
                                                     selectedItem.status === 'PAID' ? 'green' :
@@ -683,7 +771,7 @@ const SalesSummaryPage: React.FC = () => {
                                         <GridItem colSpan={2}>
                                             <Divider my={1} />
                                             <HStack justify="space-between" mt={2}>
-                                                <Text fontSize="sm" color="gray.600" fontWeight="medium">Total Transaksi</Text>
+                                                <Text fontSize="sm" color={mutedTextColor} fontWeight="medium">Total Transaksi</Text>
                                                 <Text fontSize="xl" fontWeight="bold" color="green.600">
                                                     {formatCurrency(selectedItem.total_amount)}
                                                 </Text>
@@ -713,12 +801,12 @@ const SalesSummaryPage: React.FC = () => {
                                             <Box>
                                                 <HStack mb={3}>
                                                     <Icon as={FiPackage} color="orange.500" />
-                                                    <Text fontWeight="bold" color="gray.700">Detail Produk</Text>
+                                                    <Text fontWeight="bold" color={headingColor}>Detail Produk</Text>
                                                     <Badge colorScheme="orange">{matchedItems.length} item</Badge>
                                                 </HStack>
                                                 <Box borderWidth="1px" borderRadius="lg" overflow="hidden">
                                                     <Table size="sm" variant="simple">
-                                                        <Thead bg="orange.50">
+                                                        <Thead bg={tableHeaderBg}>
                                                             <Tr>
                                                                 <Th>#</Th>
                                                                 <Th>Produk</Th>
@@ -729,13 +817,13 @@ const SalesSummaryPage: React.FC = () => {
                                                         </Thead>
                                                         <Tbody>
                                                             {matchedItems.map((prod, i) => (
-                                                                <Tr key={i} _hover={{ bg: 'gray.50' }}>
-                                                                    <Td color="gray.500" fontSize="xs">{i + 1}</Td>
+                                                                <Tr key={i} _hover={{ bg: rowHoverBg }}>
+                                                                    <Td color={subtleTextColor} fontSize="xs">{i + 1}</Td>
                                                                     <Td>
                                                                         <VStack align="start" spacing={0}>
                                                                             <Text fontWeight="medium" fontSize="sm">{prod.product_name}</Text>
                                                                             {prod.product_code && (
-                                                                                <Text fontSize="xs" color="gray.400">{prod.product_code}</Text>
+                                                                                <Text fontSize="xs" color={subtleTextColor}>{prod.product_code}</Text>
                                                                             )}
                                                                         </VStack>
                                                                     </Td>
@@ -745,9 +833,9 @@ const SalesSummaryPage: React.FC = () => {
                                                                 </Tr>
                                                             ))}
                                                             {/* Total Row */}
-                                                            <Tr bg="green.50" fontWeight="bold">
+                                                            <Tr bg={summaryPanelBg} fontWeight="bold">
                                                                 <Td colSpan={4} textAlign="right" fontSize="sm">Total</Td>
-                                                                <Td isNumeric color="green.700" fontSize="sm">
+                                                                <Td isNumeric color={summaryPanelTextColor} fontSize="sm">
                                                                     {formatCurrency(matchedItems.reduce((sum, p) => sum + p.total_price, 0))}
                                                                 </Td>
                                                             </Tr>
@@ -759,9 +847,9 @@ const SalesSummaryPage: React.FC = () => {
                                     }
 
                                     return (
-                                        <Box bg="gray.50" p={6} borderRadius="lg" textAlign="center">
-                                            <Icon as={FiPackage} boxSize={8} color="gray.300" mb={2} />
-                                            <Text color="gray.500" fontSize="sm">Detail produk tidak tersedia untuk transaksi ini</Text>
+                                        <Box bg={emptyPanelBg} p={6} borderRadius="lg" textAlign="center" border="1px" borderColor={detailCardBorderColor}>
+                                            <Icon as={FiPackage} boxSize={8} color={subtleTextColor} mb={2} />
+                                            <Text color={subtleTextColor} fontSize="sm">Detail produk tidak tersedia untuk transaksi ini</Text>
                                         </Box>
                                     );
                                 })()}

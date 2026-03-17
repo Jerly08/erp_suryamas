@@ -1,6 +1,6 @@
-import api from './api';
-import { formatDateWithIndonesianMonth } from '../utils/dataFormatters';
-import { API_ENDPOINTS } from '@/config/api';
+import api from "./api";
+import { formatDateWithIndonesianMonth } from "../utils/dataFormatters";
+import { API_ENDPOINTS } from "@/config/api";
 
 export interface Sale {
   id: number;
@@ -17,8 +17,15 @@ export interface Sale {
     name: string;
     code?: string;
   };
-  type: 'QUOTATION' | 'ORDER' | 'INVOICE' | 'SALE';
-  status: 'DRAFT' | 'PENDING' | 'CONFIRMED' | 'INVOICED' | 'PAID' | 'OVERDUE' | 'CANCELLED';
+  type: "QUOTATION" | "ORDER" | "INVOICE" | "SALE";
+  status:
+    | "DRAFT"
+    | "PENDING"
+    | "CONFIRMED"
+    | "INVOICED"
+    | "PAID"
+    | "OVERDUE"
+    | "CANCELLED";
   date: string;
   due_date?: string;
   valid_until?: string;
@@ -50,6 +57,7 @@ export interface Sale {
   paid_amount: number;
   outstanding_amount: number;
   payment_terms: string;
+  payment_schedules?: SalePaymentSchedule[];
   payment_method?: string;
   payment_method_type?: string; // CASH, BANK, CREDIT
   cash_bank_id?: number;
@@ -73,13 +81,13 @@ export interface Sale {
 
   // Backward compatibility
   items?: SaleItem[];
-
 }
 
 export interface SaleItem {
   id?: number;
   sale_id?: number;
   product_id: number;
+  product_name?: string;
   description?: string;
   location?: string;
   quantity: number;
@@ -97,11 +105,24 @@ export interface SaleItem {
 
   // Legacy fields for backward compatibility
   total_price: number; // Same as line_total
-  discount: number;    // Legacy discount field
-  tax: number;         // Legacy tax field
+  discount: number; // Legacy discount field
+  tax: number; // Legacy tax field
 
   // Relations
   product?: any;
+}
+
+export interface SalePaymentSchedule {
+  id?: number;
+  sale_id?: number;
+  sequence: number;
+  percentage: number;
+  amount: number;
+  paid_amount?: number;
+  outstanding_amount?: number;
+  due_date: string;
+  description?: string;
+  status?: string;
 }
 
 export interface SalePayment {
@@ -110,6 +131,12 @@ export interface SalePayment {
   payment_number: string;
   date: string;
   amount: number;
+  native_amount?: number;
+  currency?: string;
+  exchange_rate?: number;
+  book_amount_idr?: number;
+  forex_gain_loss_amount?: number;
+  forex_gain_loss_type?: string;
   method: string;
   reference?: string;
   cash_bank_id?: number;
@@ -129,10 +156,10 @@ export interface SaleReturn {
   return_number: string;
   credit_note_number?: string;
   date: string;
-  type: 'RETURN' | 'CREDIT_NOTE';
+  type: "RETURN" | "CREDIT_NOTE";
   reason: string;
   total_amount: number;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  status: "PENDING" | "APPROVED" | "REJECTED";
   notes?: string;
   user_id: number;
   approved_by?: number;
@@ -184,11 +211,13 @@ export interface SaleCreateRequest {
   notes?: string;
   internal_notes?: string;
   reference?: string;
+  payment_schedules?: SalePaymentScheduleRequest[];
   items: SaleItemRequest[]; // Use consistent interface
 }
 
 export interface SaleItemRequest {
   product_id: number;
+  product_name?: string;
   description?: string;
   location?: string;
   quantity: number;
@@ -229,12 +258,14 @@ export interface SaleUpdateRequest {
   notes?: string;
   internal_notes?: string;
   reference?: string;
+  payment_schedules?: SalePaymentScheduleRequest[];
   items?: SaleItemUpdateRequest[];
 }
 
 export interface SaleItemUpdateRequest {
   id?: number;
   product_id: number;
+  product_name?: string;
   description?: string;
   location?: string;
   quantity: number;
@@ -247,10 +278,18 @@ export interface SaleItemUpdateRequest {
   delete?: boolean;
 }
 
+export interface SalePaymentScheduleRequest {
+  sequence?: number;
+  percentage: number;
+  due_date: string;
+  description?: string;
+}
+
 export interface SalePaymentRequest {
   payment_date: string; // Align with backend field name
   amount: number;
   payment_method: string; // Align with backend field name
+  exchange_rate?: number;
   reference?: string;
   cash_bank_id?: number;
   account_id?: number; // Make optional to match backend
@@ -344,7 +383,7 @@ class SalesService {
   async getSales(filter: SalesFilter = {}): Promise<SalesResult> {
     const params = new URLSearchParams();
     Object.entries(filter).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') {
+      if (value !== undefined && value !== null && value !== "") {
         params.append(key, value.toString());
       }
     });
@@ -356,7 +395,9 @@ class SalesService {
   async getSale(id: number): Promise<Sale> {
     const response = await api.get(API_ENDPOINTS.SALES_BY_ID(id));
     // Backend commonly wraps responses as { status, message, data }
-    return (response.data && response.data.data) ? response.data.data : response.data;
+    return response.data && response.data.data
+      ? response.data.data
+      : response.data;
   }
 
   async createSale(data: SaleCreateRequest): Promise<Sale> {
@@ -395,72 +436,109 @@ class SalesService {
     return response.data;
   }
 
-  async createSalePayment(saleId: number, data: SalePaymentRequest): Promise<SalePayment> {
+  async createSalePayment(
+    saleId: number,
+    data: SalePaymentRequest,
+  ): Promise<SalePayment> {
     // Transform frontend format to backend format
     const backendData = {
       sale_id: saleId,
       amount: data.amount,
       payment_date: data.payment_date,
       payment_method: data.payment_method,
+      exchange_rate: data.exchange_rate,
       reference: data.reference,
       notes: data.notes,
       cash_bank_id: data.cash_bank_id,
-      account_id: data.account_id
+      account_id: data.account_id,
     };
-    const response = await api.post(API_ENDPOINTS.SALES_PAYMENTS(saleId), backendData);
+    const response = await api.post(
+      API_ENDPOINTS.SALES_PAYMENTS(saleId),
+      backendData,
+    );
     return response.data;
   }
 
   // NEW: Integrated Payment Management endpoint
-  async createIntegratedPayment(saleId: number, data: SalePaymentRequest): Promise<any> {
+  async createIntegratedPayment(
+    saleId: number,
+    data: SalePaymentRequest,
+  ): Promise<any> {
     // This endpoint creates payment records in both Sales and Payment Management
     // Map frontend field names to backend expected field names
     const backendData = {
-      amount: data.amount,                    // ✅ Correct
-      date: data.payment_date,               // ✅ Fixed: backend expects "date" not "payment_date"
-      method: data.payment_method,           // ✅ Fixed: backend expects "method" not "payment_method"
-      cash_bank_id: data.cash_bank_id,      // ✅ Correct
-      reference: data.reference || '',       // ✅ Correct
-      notes: data.notes || ''               // ✅ Correct
+      amount: data.amount, // ✅ Correct
+      date: data.payment_date, // ✅ Fixed: backend expects "date" not "payment_date"
+      method: data.payment_method, // ✅ Fixed: backend expects "method" not "payment_method"
+      cash_bank_id: data.cash_bank_id, // ✅ Correct
+      reference: data.reference || "", // ✅ Correct
+      notes: data.notes || "", // ✅ Correct
     };
-    const response = await api.post(API_ENDPOINTS.SALES_INTEGRATED_PAYMENT(saleId), backendData);
+    const response = await api.post(
+      API_ENDPOINTS.SALES_INTEGRATED_PAYMENT(saleId),
+      {
+        ...backendData,
+        exchange_rate: data.exchange_rate || 1,
+      },
+    );
     return response.data;
   }
 
   // Returns and Credit Notes
 
-  async createSaleReturn(saleId: number, data: SaleReturnRequest): Promise<SaleReturn> {
+  async createSaleReturn(
+    saleId: number,
+    data: SaleReturnRequest,
+  ): Promise<SaleReturn> {
     // Transform frontend format to backend format
     const backendData = {
       sale_id: saleId,
       return_date: data.return_date || data.date || new Date().toISOString(),
       reason: data.reason,
       notes: data.notes,
-      return_items: data.return_items || data.items || []
+      return_items: data.return_items || data.items || [],
     };
-    const response = await api.post(API_ENDPOINTS.SALES_RETURNS(saleId), backendData);
+    const response = await api.post(
+      API_ENDPOINTS.SALES_RETURNS(saleId),
+      backendData,
+    );
     return response.data;
   }
 
-  async getSaleReturns(page: number = 1, limit: number = 10): Promise<SaleReturn[]> {
-    const response = await api.get(`${API_ENDPOINTS.SALES_ALL_RETURNS}?page=${page}&limit=${limit}`);
+  async getSaleReturns(
+    page: number = 1,
+    limit: number = 10,
+  ): Promise<SaleReturn[]> {
+    const response = await api.get(
+      `${API_ENDPOINTS.SALES_ALL_RETURNS}?page=${page}&limit=${limit}`,
+    );
     return response.data;
   }
 
   // Reporting and Analytics
 
-  async getSalesSummary(startDate?: string, endDate?: string): Promise<SalesSummary> {
+  async getSalesSummary(
+    startDate?: string,
+    endDate?: string,
+  ): Promise<SalesSummary> {
     const params = new URLSearchParams();
-    if (startDate) params.append('start_date', startDate);
-    if (endDate) params.append('end_date', endDate);
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
 
     const response = await api.get(`${API_ENDPOINTS.SALES_SUMMARY}?${params}`);
     // Backend wraps responses as { status, message, data }
-    return (response.data && response.data.data) ? response.data.data : response.data;
+    return response.data && response.data.data
+      ? response.data.data
+      : response.data;
   }
 
-  async getSalesAnalytics(period: string = 'monthly', year: string = '2024'): Promise<SalesAnalytics> {
-    const response = await api.get(`${API_ENDPOINTS.SALES_ANALYTICS}?period=${period}&year=${year}`);
+  async getSalesAnalytics(
+    period: string = "monthly",
+    year: string = "2024",
+  ): Promise<SalesAnalytics> {
+    const response = await api.get(
+      `${API_ENDPOINTS.SALES_ANALYTICS}?period=${period}&year=${year}`,
+    );
     return response.data;
   }
 
@@ -471,13 +549,21 @@ class SalesService {
 
   // Customer Portal
 
-  async getCustomerSales(customerId: number, page: number = 1, limit: number = 10): Promise<Sale[]> {
-    const response = await api.get(`${API_ENDPOINTS.SALES_CUSTOMER(customerId)}?page=${page}&limit=${limit}`);
+  async getCustomerSales(
+    customerId: number,
+    page: number = 1,
+    limit: number = 10,
+  ): Promise<Sale[]> {
+    const response = await api.get(
+      `${API_ENDPOINTS.SALES_CUSTOMER(customerId)}?page=${page}&limit=${limit}`,
+    );
     return response.data;
   }
 
   async getCustomerInvoices(customerId: number): Promise<Sale[]> {
-    const response = await api.get(API_ENDPOINTS.SALES_CUSTOMER_INVOICES(customerId));
+    const response = await api.get(
+      API_ENDPOINTS.SALES_CUSTOMER_INVOICES(customerId),
+    );
     return response.data;
   }
 
@@ -486,12 +572,12 @@ class SalesService {
   async exportInvoicePDF(saleId: number): Promise<Blob> {
     try {
       const response = await api.get(API_ENDPOINTS.SALES_INVOICE_PDF(saleId), {
-        responseType: 'blob',
+        responseType: "blob",
         headers: {
-          Accept: 'application/pdf'
+          Accept: "application/pdf",
         },
         // Add timestamp to avoid any caching issues in dev
-        params: { t: Date.now() }
+        params: { t: Date.now() },
       });
       return response.data;
     } catch (err: any) {
@@ -507,44 +593,60 @@ class SalesService {
           } catch {
             err.message = text || err.message;
           }
-        } catch { }
+        } catch {}
       }
       throw err;
     }
   }
 
-  async exportSalesReportPDF(startDate?: string, endDate?: string, status?: string, search?: string): Promise<Blob> {
+  async exportSalesReportPDF(
+    startDate?: string,
+    endDate?: string,
+    status?: string,
+    search?: string,
+  ): Promise<Blob> {
     const params = new URLSearchParams();
-    if (startDate) params.append('start_date', startDate);
-    if (endDate) params.append('end_date', endDate);
-    if (status) params.append('status', status);
-    if (search) params.append('search', search);
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    if (status) params.append("status", status);
+    if (search) params.append("search", search);
 
-    const response = await api.get(`${API_ENDPOINTS.SALES_REPORT_PDF}?${params}`, {
-      responseType: 'blob'
-    });
+    const response = await api.get(
+      `${API_ENDPOINTS.SALES_REPORT_PDF}?${params}`,
+      {
+        responseType: "blob",
+      },
+    );
     return response.data;
   }
 
-  async exportSalesReportCSV(startDate?: string, endDate?: string, status?: string, search?: string): Promise<Blob> {
+  async exportSalesReportCSV(
+    startDate?: string,
+    endDate?: string,
+    status?: string,
+    search?: string,
+  ): Promise<Blob> {
     const params = new URLSearchParams();
-    if (startDate) params.append('start_date', startDate);
-    if (endDate) params.append('end_date', endDate);
-    if (status) params.append('status', status);
-    if (search) params.append('search', search);
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    if (status) params.append("status", status);
+    if (search) params.append("search", search);
 
-    const response = await api.get(`${API_ENDPOINTS.SALES_REPORT_CSV}?${params}`, {
-      responseType: 'blob',
-      headers: { Accept: 'text/csv' }
-    });
+    const response = await api.get(
+      `${API_ENDPOINTS.SALES_REPORT_CSV}?${params}`,
+      {
+        responseType: "blob",
+        headers: { Accept: "text/csv" },
+      },
+    );
     return response.data;
   }
 
   async exportReceiptPDF(saleId: number): Promise<Blob> {
     try {
       const response = await api.get(API_ENDPOINTS.SALES_RECEIPT_PDF(saleId), {
-        responseType: 'blob',
-        headers: { Accept: 'application/pdf' },
+        responseType: "blob",
+        headers: { Accept: "application/pdf" },
         params: { t: Date.now() },
       });
       return response.data;
@@ -560,7 +662,7 @@ class SalesService {
           } catch {
             err.message = text || err.message;
           }
-        } catch { }
+        } catch {}
       }
       throw err;
     }
@@ -570,41 +672,45 @@ class SalesService {
 
   getStatusColor(status: string): string {
     const colors: { [key: string]: string } = {
-      'DRAFT': 'gray',
-      'PENDING': 'yellow',
-      'CONFIRMED': 'blue',
-      'INVOICED': 'purple',
-      'PAID': 'green',
-      'OVERDUE': 'red',
-      'CANCELLED': 'red'
+      DRAFT: "gray",
+      PENDING: "yellow",
+      CONFIRMED: "blue",
+      INVOICED: "purple",
+      PAID: "green",
+      OVERDUE: "red",
+      CANCELLED: "red",
     };
-    return colors[status] || 'gray';
+    return colors[status] || "gray";
   }
 
   getStatusLabel(status: string): string {
     const labels: { [key: string]: string } = {
-      'DRAFT': 'Draft',
-      'PENDING': 'Pending',
-      'CONFIRMED': 'Confirmed',
-      'INVOICED': 'Invoiced',
-      'PAID': 'Paid',
-      'OVERDUE': 'Overdue',
-      'CANCELLED': 'Cancelled'
+      DRAFT: "Draft",
+      PENDING: "Pending",
+      CONFIRMED: "Confirmed",
+      INVOICED: "Invoiced",
+      PAID: "Paid",
+      OVERDUE: "Overdue",
+      CANCELLED: "Cancelled",
     };
     return labels[status] || status;
   }
 
   getTypeLabel(type: string): string {
     const labels: { [key: string]: string } = {
-      'QUOTATION': 'Quotation',
-      'ORDER': 'Order',
-      'INVOICE': 'Invoice',
-      'SALE': 'Sale'
+      QUOTATION: "Quotation",
+      ORDER: "Order",
+      INVOICE: "Invoice",
+      SALE: "Sale",
     };
     return labels[type] || type;
   }
 
-  calculateLineTotal(quantity: number, unitPrice: number, discountPercent: number = 0): number {
+  calculateLineTotal(
+    quantity: number,
+    unitPrice: number,
+    discountPercent: number = 0,
+  ): number {
     const subtotal = quantity * unitPrice;
     const discountAmount = subtotal * (discountPercent / 100);
     return subtotal - discountAmount;
@@ -614,24 +720,29 @@ class SalesService {
     return amount * (taxPercent / 100);
   }
 
-  formatCurrency(amount: number, currency: string = 'IDR'): string {
+  formatCurrency(amount: number, currency: string = "IDR"): string {
     // Handle null, undefined, NaN or invalid values
-    if (amount === null || amount === undefined || isNaN(amount) || !isFinite(amount)) {
+    if (
+      amount === null ||
+      amount === undefined ||
+      isNaN(amount) ||
+      !isFinite(amount)
+    ) {
       amount = 0;
     }
 
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
       currency: currency,
       minimumFractionDigits: 0,
-      maximumFractionDigits: 0
+      maximumFractionDigits: 0,
     }).format(amount);
   }
 
   formatDate(date: string): string {
     // Check for empty date or default Go zero date
-    if (!date || date === '0001-01-01T00:00:00Z' || date === '0001-01-01') {
-      return '-';
+    if (!date || date === "0001-01-01T00:00:00Z" || date === "0001-01-01") {
+      return "-";
     }
     // Use Indonesian month names for better clarity (e.g., "9 Juni 2025" instead of "9/6/2025")
     return formatDateWithIndonesianMonth(date);
@@ -643,43 +754,55 @@ class SalesService {
     const errors: string[] = [];
 
     if (!data.customer_id) {
-      errors.push('Customer is required');
+      errors.push("Customer is required");
     }
 
     if (!data.type) {
-      errors.push('Sale type is required');
+      errors.push("Sale type is required");
     }
 
     if (!data.date) {
-      errors.push('Date is required');
+      errors.push("Date is required");
     }
 
     if (!data.items || data.items.length === 0) {
-      errors.push('At least one item is required');
+      errors.push("At least one item is required");
     }
 
-    data.items?.forEach((item, index) => {
-      if (!item.product_id && (!item.description || item.description.trim() === '')) {
-        errors.push(`Product or description is required for item ${index + 1}`);
+      data.items?.forEach((item, index) => {
+        const hasManualName =
+          !!item.product_name && item.product_name.trim() !== "";
+      if (
+        !item.product_id &&
+        !hasManualName &&
+        (!item.description || item.description.trim() === "")
+      ) {
+        errors.push(`Product, manual product name, or description is required for item ${index + 1}`);
       }
       if (!item.quantity || item.quantity <= 0) {
         errors.push(`Valid quantity is required for item ${index + 1}`);
       }
-      if (!item.unit_price || item.unit_price < 0) {
-        errors.push(`Valid unit price is required for item ${index + 1}`);
-      }
-    });
+        if (!item.unit_price || item.unit_price < 0) {
+          errors.push(`Valid unit price is required for item ${index + 1}`);
+        }
+        if (!item.revenue_account_id || item.revenue_account_id <= 0) {
+          errors.push(`Revenue account / COA is required for item ${index + 1}`);
+        }
+      });
 
     return errors;
   }
 
   // Generate PDF download
 
-  async downloadInvoicePDF(saleId: number, invoiceNumber: string): Promise<void> {
+  async downloadInvoicePDF(
+    saleId: number,
+    invoiceNumber: string,
+  ): Promise<void> {
     try {
       const blob = await this.exportInvoicePDF(saleId);
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
       link.download = `Invoice_${invoiceNumber}.pdf`;
       document.body.appendChild(link);
@@ -687,43 +810,63 @@ class SalesService {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error downloading invoice PDF:', error);
+      console.error("Error downloading invoice PDF:", error);
       throw error;
     }
   }
 
-  async downloadSalesReportPDF(startDate?: string, endDate?: string, status?: string, search?: string): Promise<void> {
+  async downloadSalesReportPDF(
+    startDate?: string,
+    endDate?: string,
+    status?: string,
+    search?: string,
+  ): Promise<void> {
     try {
-      const blob = await this.exportSalesReportPDF(startDate, endDate, status, search);
+      const blob = await this.exportSalesReportPDF(
+        startDate,
+        endDate,
+        status,
+        search,
+      );
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
-      const filename = `Sales_Report_${startDate || 'all'}_to_${endDate || 'all'}.pdf`;
+      const filename = `Sales_Report_${startDate || "all"}_to_${endDate || "all"}.pdf`;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error downloading sales report PDF:', error);
+      console.error("Error downloading sales report PDF:", error);
       throw error;
     }
   }
 
-  async downloadSalesReportCSV(startDate?: string, endDate?: string, status?: string, search?: string): Promise<void> {
+  async downloadSalesReportCSV(
+    startDate?: string,
+    endDate?: string,
+    status?: string,
+    search?: string,
+  ): Promise<void> {
     try {
-      const blob = await this.exportSalesReportCSV(startDate, endDate, status, search);
+      const blob = await this.exportSalesReportCSV(
+        startDate,
+        endDate,
+        status,
+        search,
+      );
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
-      const filename = `Sales_Report_${startDate || 'all'}_to_${endDate || 'all'}.csv`;
+      const filename = `Sales_Report_${startDate || "all"}_to_${endDate || "all"}.csv`;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error downloading sales report CSV:', error);
+      console.error("Error downloading sales report CSV:", error);
       throw error;
     }
   }
@@ -732,7 +875,7 @@ class SalesService {
     try {
       const blob = await this.exportReceiptPDF(saleId);
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
       const safeName = receiptName || `SALE_${saleId}`;
       link.download = `Receipt_${safeName}.pdf`;
@@ -741,7 +884,7 @@ class SalesService {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error downloading receipt PDF:', error);
+      console.error("Error downloading receipt PDF:", error);
       throw error;
     }
   }

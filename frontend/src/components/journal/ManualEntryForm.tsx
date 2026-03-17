@@ -26,6 +26,7 @@ import {
     Divider,
     InputGroup,
     InputLeftAddon,
+    useColorModeValue,
 } from '@chakra-ui/react';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { FiPlus, FiTrash2, FiSave } from 'react-icons/fi';
@@ -62,6 +63,12 @@ interface CurrencyInputProps {
 
 const CurrencyInput: React.FC<CurrencyInputProps> = ({ value, onChange, placeholder = '0', size = 'sm' }) => {
     const [displayValue, setDisplayValue] = useState<string>('');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+    const inputTextColor = useColorModeValue('gray.800', 'gray.100');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const inputHoverBorderColor = useColorModeValue('gray.400', 'whiteAlpha.400');
+    const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.300');
+    const placeholderColor = useColorModeValue('gray.500', 'gray.500');
 
     // Update display value when external value changes
     useEffect(() => {
@@ -107,6 +114,15 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({ value, onChange, placehol
             placeholder={placeholder}
             size={size}
             textAlign="right"
+            bg={inputBg}
+            color={inputTextColor}
+            borderColor={inputBorderColor}
+            _hover={{ borderColor: inputHoverBorderColor }}
+            _focusVisible={{
+                borderColor: inputFocusBorderColor,
+                boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+            }}
+            _placeholder={{ color: placeholderColor }}
         />
     );
 };
@@ -143,6 +159,29 @@ export default function ManualEntryForm({ onSuccess, onCancel, initialData }: Ma
     const { t } = useTranslation();
     const toast = useToast();
     const { user } = useAuth();
+    const textColor = useColorModeValue('gray.800', 'gray.100');
+    const mutedTextColor = useColorModeValue('gray.500', 'gray.400');
+    const cardBg = useColorModeValue('white', 'gray.800');
+    const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+    const tableHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const tableRowHoverBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const summaryBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+    const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+    const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+    const inputHoverBorderColor = useColorModeValue('gray.400', 'whiteAlpha.400');
+    const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.300');
+    const placeholderColor = useColorModeValue('gray.500', 'gray.500');
+    const fieldStyles = {
+        bg: inputBg,
+        color: textColor,
+        borderColor: inputBorderColor,
+        _hover: { borderColor: inputHoverBorderColor },
+        _focusVisible: {
+            borderColor: inputFocusBorderColor,
+            boxShadow: `0 0 0 1px ${inputFocusBorderColor}`,
+        },
+        _placeholder: { color: placeholderColor },
+    };
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [loading, setLoading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
@@ -315,56 +354,56 @@ export default function ManualEntryForm({ onSuccess, onCancel, initialData }: Ma
     return (
         <Box as="form" onSubmit={handleSubmit(onSubmit)}>
             <VStack spacing={6} align="stretch">
-                <Card variant="outline">
+                <Card variant="outline" bg={cardBg} borderColor={borderColor}>
                     <CardBody>
                         <VStack spacing={4}>
                             <HStack w="full" spacing={4}>
                                 <FormControl isRequired isInvalid={!!errors.entry_date}>
                                     <FormLabel>Date</FormLabel>
-                                    <Input type="date" {...register('entry_date', { required: true })} />
+                                    <Input type="date" {...register('entry_date', { required: true })} {...fieldStyles} />
                                     <FormErrorMessage>{t('journal.validation.date_required')}</FormErrorMessage>
                                 </FormControl>
                                 <FormControl isRequired isInvalid={!!errors.reference}>
                                     <FormLabel>Reference</FormLabel>
-                                    <Input placeholder="e.g. JE-001" {...register('reference', { required: true })} />
+                                    <Input placeholder="e.g. JE-001" {...register('reference', { required: true })} {...fieldStyles} />
                                     <FormErrorMessage>{t('journal.validation.reference_required')}</FormErrorMessage>
                                 </FormControl>
                             </HStack>
                             <FormControl isRequired isInvalid={!!errors.description}>
                                 <FormLabel>Description</FormLabel>
-                                <Input placeholder="Journal description" {...register('description', { required: true })} />
+                                <Input placeholder="Journal description" {...register('description', { required: true })} {...fieldStyles} />
                                 <FormErrorMessage>{t('journal.validation.description_required')}</FormErrorMessage>
                             </FormControl>
                             <FormControl>
                                 <FormLabel>Notes</FormLabel>
-                                <Textarea placeholder="Optional notes" {...register('notes')} />
+                                <Textarea placeholder="Optional notes" {...register('notes')} {...fieldStyles} />
                             </FormControl>
                         </VStack>
                     </CardBody>
                 </Card>
 
-                <Card variant="outline">
+                <Card variant="outline" bg={cardBg} borderColor={borderColor}>
                     <CardBody>
-                        <Table size="sm">
-                            <Thead>
+                        <Table size="sm" color={textColor}>
+                            <Thead bg={tableHeaderBg}>
                                 <Tr>
-                                    <Th width="30%">Account</Th>
-                                    <Th width="25%">Description (Optional)</Th>
-                                    <Th width="20%">Debit</Th>
-                                    <Th width="20%">Credit</Th>
-                                    <Th width="5%"></Th>
+                                    <Th width="30%" color={mutedTextColor}>Account</Th>
+                                    <Th width="25%" color={mutedTextColor}>Description (Optional)</Th>
+                                    <Th width="20%" color={mutedTextColor}>Debit</Th>
+                                    <Th width="20%" color={mutedTextColor}>Credit</Th>
+                                    <Th width="5%" color={mutedTextColor}></Th>
                                 </Tr>
                             </Thead>
                             <Tbody>
                                 {fields.map((field, index) => (
-                                    <Tr key={field.id}>
+                                    <Tr key={field.id} _hover={{ bg: tableRowHoverBg }}>
                                         <Td>
                                             <Controller
                                                 control={control}
                                                 name={`lines.${index}.account_id`}
                                                 rules={{ required: true }}
                                                 render={({ field }) => (
-                                                    <Select {...field} placeholder="Select Account" size="sm">
+                                                    <Select {...field} placeholder="Select Account" size="sm" {...fieldStyles}>
                                                         {accounts.map(acc => (
                                                             <option key={acc.id} value={acc.id}>
                                                                 {acc.code} - {acc.name}
@@ -379,6 +418,7 @@ export default function ManualEntryForm({ onSuccess, onCancel, initialData }: Ma
                                                 size="sm"
                                                 {...register(`lines.${index}.description`)}
                                                 placeholder="Line description"
+                                                {...fieldStyles}
                                             />
                                         </Td>
                                         <Td>
@@ -436,20 +476,20 @@ export default function ManualEntryForm({ onSuccess, onCancel, initialData }: Ma
                 </Card>
 
                 {/* Totals Section */}
-                <Box p={4} bg="gray.50" borderRadius="md" borderWidth="1px">
+                <Box p={4} bg={summaryBg} borderRadius="md" borderWidth="1px" borderColor={borderColor}>
                     <HStack justify="space-between" align="center">
-                        <Text fontWeight="bold">Total</Text>
+                        <Text fontWeight="bold" color={textColor}>Total</Text>
                         <HStack spacing={8}>
                             <VStack align="end" spacing={0}>
-                                <Text fontSize="xs" color="gray.500">Total Debit</Text>
+                                <Text fontSize="xs" color={mutedTextColor}>Total Debit</Text>
                                 <Text fontWeight="bold" color="green.600">{formatCurrency(totalDebit)}</Text>
                             </VStack>
                             <VStack align="end" spacing={0}>
-                                <Text fontSize="xs" color="gray.500">Total Credit</Text>
+                                <Text fontSize="xs" color={mutedTextColor}>Total Credit</Text>
                                 <Text fontWeight="bold" color="red.600">{formatCurrency(totalCredit)}</Text>
                             </VStack>
                             <VStack align="end" spacing={0}>
-                                <Text fontSize="xs" color="gray.500">Difference</Text>
+                                <Text fontSize="xs" color={mutedTextColor}>Difference</Text>
                                 <Text
                                     fontWeight="bold"
                                     color={isBalanced ? "green.500" : "red.500"}

@@ -65,18 +65,18 @@ func NewEnhancedReportService(
 
 // BalanceSheetData represents a comprehensive balance sheet structure
 type BalanceSheetData struct {
-	Company                    CompanyInfo         `json:"company"`
-	AsOfDate                   time.Time           `json:"as_of_date"`
-	Currency                   string              `json:"currency"`
-	Assets                     BalanceSheetSection `json:"assets"`
-	Liabilities                BalanceSheetSection `json:"liabilities"`
-	Equity                     BalanceSheetSection `json:"equity"`
-	TotalAssets                float64             `json:"total_assets"`
-	TotalEquity                float64             `json:"total_equity"`
-	TotalLiabilitiesAndEquity  float64             `json:"total_liabilities_and_equity"`
-	IsBalanced                 bool                `json:"is_balanced"`
-	Difference                 float64             `json:"difference"`
-	GeneratedAt                time.Time           `json:"generated_at"`
+	Company                   CompanyInfo         `json:"company"`
+	AsOfDate                  time.Time           `json:"as_of_date"`
+	Currency                  string              `json:"currency"`
+	Assets                    BalanceSheetSection `json:"assets"`
+	Liabilities               BalanceSheetSection `json:"liabilities"`
+	Equity                    BalanceSheetSection `json:"equity"`
+	TotalAssets               float64             `json:"total_assets"`
+	TotalEquity               float64             `json:"total_equity"`
+	TotalLiabilitiesAndEquity float64             `json:"total_liabilities_and_equity"`
+	IsBalanced                bool                `json:"is_balanced"`
+	Difference                float64             `json:"difference"`
+	GeneratedAt               time.Time           `json:"generated_at"`
 }
 
 // ProfitLossData represents a comprehensive P&L statement structure
@@ -1029,7 +1029,7 @@ func (ers *EnhancedReportService) GenerateCashFlow(startDate, endDate time.Time)
 }
 
 // GenerateSalesSummary creates a comprehensive sales summary report with enhanced analytics and growth analysis
-func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.Time, groupBy string) (*SalesSummaryData, error) {
+func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.Time, groupBy string, projectID *uint) (*SalesSummaryData, error) {
 	// Enhanced date handling with timezone awareness
 	dateUtils := utils.NewDateUtils()
 
@@ -1040,6 +1040,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		"start_date": startDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 		"end_date":   endDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 		"group_by":   groupBy,
+		"project_id": projectID,
 	}).Info("Starting sales summary generation with timezone awareness")
 
 	// Log input parameters for debugging
@@ -1049,6 +1050,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		"input_start_date_jkt": startDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 		"input_end_date_jkt":   endDate.In(utils.JakartaTZ).Format("2006-01-02 15:04:05 MST"),
 		"formatted_range":      dateUtils.FormatDateRange(startDate, endDate),
+		"project_id":           projectID,
 	}).Debug("Sales summary date parameter details")
 
 	// Validate date range
@@ -1080,9 +1082,12 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 
 	// Use timezone-aware date range for better accuracy
 	// Only include APPROVED/COMPLETED sales - exclude DRAFT/CANCELLED
-	queryResult := query.Where("date >= ? AND date <= ?", startDate, endDate).
-		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"}).
-		Find(&sales)
+	query = query.Where("date >= ? AND date <= ?", startDate, endDate).
+		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"})
+	if projectID != nil {
+		query = query.Where("project_id = ?", *projectID)
+	}
+	queryResult := query.Find(&sales)
 
 	queryDuration := time.Since(queryStartTime)
 	utils.ReportLog.LogQueryPerformance("SalesQuery", queryDuration, len(sales))
@@ -1093,6 +1098,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			"end_date":       endDate.In(utils.JakartaTZ).Format("2006-01-02"),
 			"group_by":       groupBy,
 			"query_duration": queryDuration.String(),
+			"project_id":     projectID,
 		})
 		return nil, fmt.Errorf("failed to fetch sales data: %v", queryResult.Error)
 	}
@@ -1124,6 +1130,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			"start_date": startDate.Format("2006-01-02"),
 			"end_date":   endDate.Format("2006-01-02"),
 			"group_by":   groupBy,
+			"project_id": projectID,
 		}).Warn("No sales data found for the specified period")
 
 		// Return empty but valid response with helpful message
@@ -1173,6 +1180,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			"start_date":    startDate.Format("2006-01-02"),
 			"end_date":      endDate.Format("2006-01-02"),
 			"group_by":      groupBy,
+			"project_id":    projectID,
 			"records_found": 0,
 			"has_data":      false,
 		}, processingTime, true)
@@ -1345,7 +1353,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 
 	// Fetch items for each customer
 	for i := range summary.SalesByCustomer {
-		items, err := ers.getSaleItemsForCustomer(summary.SalesByCustomer[i].CustomerID, startDate, endDate)
+		items, err := ers.getSaleItemsForCustomer(summary.SalesByCustomer[i].CustomerID, startDate, endDate, projectID)
 		if err != nil {
 			utils.ReportLog.WithFields(utils.Fields{
 				"customer_id":   summary.SalesByCustomer[i].CustomerID,
@@ -1441,6 +1449,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		"start_date":         startDate.Format("2006-01-02"),
 		"end_date":           endDate.Format("2006-01-02"),
 		"group_by":           groupBy,
+		"project_id":         projectID,
 		"records_found":      len(sales),
 		"total_revenue":      summary.TotalRevenue,
 		"total_customers":    summary.TotalCustomers,

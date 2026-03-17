@@ -24,19 +24,21 @@ import {
   Box,
   useToast,
   Spinner,
-  Tooltip,
-  Icon,
 } from '@chakra-ui/react';
-import { FiInfo } from 'react-icons/fi';
 import { Purchase, PurchasePaymentRequest } from '@/services/purchaseService';
 import purchaseService from '@/services/purchaseService';
+import cashbankService, { ReferenceExchangeRate } from '@/services/cashbankService';
 import { useTranslation } from '@/hooks/useTranslation';
+import { roundUsdIdrRate } from '@/utils/exchangeRate';
 
 interface CashBank {
   id: number;
   name: string;
   account_code: string;
   balance: number;
+  currency?: string;
+  book_balance_idr?: number;
+  last_exchange_rate?: number;
 }
 
 interface PurchasePaymentFormProps {
@@ -54,13 +56,16 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
   onSuccess,
   cashBanks = [],
 }) => {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [loadingPurchase, setLoadingPurchase] = useState(false);
   const [freshPurchase, setFreshPurchase] = useState<Purchase | null>(null);
+  const [referenceRate, setReferenceRate] = useState<ReferenceExchangeRate | null>(null);
+  const [exchangeRateEdited, setExchangeRateEdited] = useState(false);
   const [formData, setFormData] = useState<PurchasePaymentRequest>({
     amount: 0,
+    exchange_rate: undefined,
     payment_date: new Date().toISOString().split('T')[0],
     payment_method: 'Bank Transfer',
     cash_bank_id: undefined,
@@ -68,16 +73,6 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     notes: '',
   });
   const [displayAmount, setDisplayAmount] = useState('0');
-
-  // Tooltip descriptions for payment form
-  const tooltips = {
-    amount: 'Jumlah pembayaran yang akan dibayarkan. Maksimal sesuai sisa outstanding purchase',
-    paymentDate: 'Tanggal pembayaran dilakukan',
-    paymentMethod: 'Metode pembayaran: Bank Transfer (transfer bank), Cash (tunai), Check (cek)',
-    cashBank: 'Pilih akun kas/bank yang akan digunakan untuk pembayaran',
-    reference: 'Nomor referensi pembayaran (contoh: nomor transfer, nomor cek, receipt number)',
-    notes: 'Catatan tambahan untuk pembayaran ini',
-  };
 
   // Format number to Rupiah display
   const formatRupiah = (value: number | string): string => {
@@ -108,18 +103,19 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
           const defaultAmount = latestPurchase.outstanding_amount || 0;
           setFormData({
             amount: defaultAmount,
+            exchange_rate: undefined,
             payment_date: new Date().toISOString().split('T')[0],
             payment_method: 'Bank Transfer',
             cash_bank_id: cashBanks.length > 0 ? cashBanks[0].id : undefined,
             reference: '',
-            notes: `Payment for purchase ${latestPurchase.code}`,
+            notes: `${t('purchases.payment.defaultNotesPrefix')} ${latestPurchase.code}`,
           });
           setDisplayAmount(formatRupiah(defaultAmount));
         } catch (error) {
           console.error('Error fetching fresh purchase data:', error);
           toast({
-            title: 'Warning',
-            description: 'Could not load latest purchase data. Please close and try again.',
+            title: t('messages.warning'),
+            description: t('purchases.payment.latestPurchaseLoadWarning'),
             status: 'warning',
             duration: 4000,
             isClosable: true,
@@ -129,11 +125,12 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
           const defaultAmount = purchase.outstanding_amount || 0;
           setFormData({
             amount: defaultAmount,
+            exchange_rate: undefined,
             payment_date: new Date().toISOString().split('T')[0],
             payment_method: 'Bank Transfer',
             cash_bank_id: cashBanks.length > 0 ? cashBanks[0].id : undefined,
             reference: '',
-            notes: `Payment for purchase ${purchase.code}`,
+            notes: `${t('purchases.payment.defaultNotesPrefix')} ${purchase.code}`,
           });
           setDisplayAmount(formatRupiah(defaultAmount));
         } finally {
@@ -146,7 +143,40 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     };
 
     fetchFreshPurchase();
-  }, [isOpen, purchase?.id, cashBanks]);
+  }, [isOpen, purchase?.id, cashBanks, t]);
+
+  const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
+  const selectedAccountCurrency = (selectedAccount?.currency || 'IDR').toUpperCase();
+  const isUsdAccount = selectedAccountCurrency === 'USD';
+
+  useEffect(() => {
+    if (!isOpen || !isUsdAccount) {
+      setReferenceRate(null);
+      setExchangeRateEdited(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadReferenceRate = async () => {
+      const rate = await cashbankService.getReferenceExchangeRate('USD', 'IDR');
+      if (cancelled) {
+        return;
+      }
+
+      setReferenceRate(rate);
+      if (!exchangeRateEdited && rate?.exchange_rate) {
+        setFormData(prev => ({
+          ...prev,
+          exchange_rate: prev.exchange_rate && prev.exchange_rate > 0 ? prev.exchange_rate : roundUsdIdrRate(rate.exchange_rate, 1),
+        }));
+      }
+    };
+
+    loadReferenceRate();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, isUsdAccount, selectedAccount?.id, exchangeRateEdited]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,7 +185,11 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
     // Round amount to ensure it's an integer (no decimals for IDR)
     const roundedAmount = Math.round(formData.amount);
-    const dataToSubmit = { ...formData, amount: roundedAmount };
+    const dataToSubmit = {
+      ...formData,
+      amount: roundedAmount,
+      exchange_rate: formData.exchange_rate ? roundUsdIdrRate(formData.exchange_rate, 1) : undefined,
+    };
 
     // Enhanced Validation
     if (!roundedAmount || roundedAmount <= 0) {
@@ -208,8 +242,20 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
     // Balance validation - prevent payments when insufficient balance
     const selectedAccount = cashBanks.find(account => account.id === dataToSubmit.cash_bank_id);
+    const isUsdAccount = (selectedAccount?.currency || 'IDR').toUpperCase() === 'USD';
+    if (isUsdAccount && (!dataToSubmit.exchange_rate || dataToSubmit.exchange_rate <= 0)) {
+      toast({
+        title: t('purchases.payment.exchangeRateRequiredTitle'),
+        description: t('purchases.payment.exchangeRateRequiredDesc'),
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
     if (selectedAccount) {
-      if (selectedAccount.balance <= 0) {
+      if (getAccountBookBalance(selectedAccount) <= 0) {
         toast({
           title: t('purchases.payment.insufficientBalance') + ' ⚠️',
           description: t('purchases.payment.insufficientBalanceDesc'),
@@ -220,7 +266,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         return;
       }
 
-      if (roundedAmount > selectedAccount.balance) {
+      if (roundedAmount > getAccountBookBalance(selectedAccount)) {
         toast({
           title: t('purchases.payment.insufficientBalance') + ' ⚠️',
           description: t('purchases.payment.insufficientBalanceDesc'),
@@ -259,8 +305,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       if (error?.response?.status === 400 && error?.response?.data?.code === 'PERIOD_CLOSED') {
         const errorData = error.response.data;
         toast({
-          title: errorData.error || 'Periode Sudah Ditutup',
-          description: errorData.message || 'Tidak dapat membuat transaksi pada periode yang sudah ditutup.',
+          title: errorData.error || t('purchases.payment.closedPeriodTitle'),
+          description: errorData.message || t('purchases.payment.closedPeriodDesc'),
           status: 'error',
           duration: 8000,
           isClosable: true,
@@ -279,8 +325,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
       if (isTimeoutError) {
         toast({
-          title: 'Request Timeout ⏱️',
-          description: 'The payment is taking longer than expected to process. This might be due to system load. Please check the payment status in a few moments or try again.',
+          title: t('purchases.payment.requestTimeoutTitle'),
+          description: t('purchases.payment.requestTimeoutDesc'),
           status: 'warning',
           duration: 10000,
           isClosable: true,
@@ -288,14 +334,18 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       } else if (isInsufficientBalance) {
         const availableBalance = error.response?.data?.details?.match(/Available: ([\d\.]+)/);
         const requestedAmount = error.response?.data?.requested_amount || formData.amount;
+        const account = cashBanks.find(item => item.id === formData.cash_bank_id);
+        const isUsdAccount = (account?.currency || 'IDR').toUpperCase() === 'USD';
 
-        let errorMessage = 'Saldo rekening bank yang dipilih tidak mencukupi untuk melakukan pembayaran ini.';
+        let errorMessage = t('purchases.payment.insufficientBalanceDetailed');
         if (availableBalance) {
-          errorMessage += ` Saldo tersedia: ${formatCurrency(parseFloat(availableBalance[1]))}, yang dibutuhkan: ${formatCurrency(requestedAmount)}.`;
+          errorMessage += isUsdAccount
+            ? ` ${t('purchases.payment.nativeAvailableBalance')}: ${formatAccountBalance(parseFloat(availableBalance[1]), 'USD')}. ${t('purchases.payment.bookPaymentAmount')}: ${formatCurrency(requestedAmount)}.`
+            : ` ${t('purchases.payment.availableBalanceLabel')}: ${formatCurrency(parseFloat(availableBalance[1]))}, ${t('purchases.payment.requiredBalanceLabel')}: ${formatCurrency(requestedAmount)}.`;
         }
 
         toast({
-          title: 'Saldo Tidak Mencukupi ⚠️',
+          title: `${t('purchases.payment.insufficientBalance')} ${t('purchases.payment.warningIndicator')}`,
           description: errorMessage,
           status: 'error',
           duration: 8000,
@@ -303,8 +353,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         });
       } else {
         // Generic error handling
-        let errorTitle = 'Payment Failed';
-        let errorDescription = 'Failed to record payment. Please try again.';
+        let errorTitle = t('purchases.payment.paymentFailed');
+        let errorDescription = t('purchases.payment.paymentFailedDesc');
 
         if (error.response?.data?.message) {
           errorDescription = error.response.data.message;
@@ -316,14 +366,14 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
         // Add specific guidance based on error type
         if (error.response?.status === 401) {
-          errorTitle = 'Authentication Error';
-          errorDescription = 'Your session has expired. Please login again.';
+          errorTitle = t('purchases.payment.authenticationErrorTitle');
+          errorDescription = t('purchases.payment.authenticationErrorDesc');
         } else if (error.response?.status === 403) {
-          errorTitle = 'Permission Error';
-          errorDescription = 'You do not have permission to record payments.';
+          errorTitle = t('purchases.payment.permissionErrorTitle');
+          errorDescription = t('purchases.payment.permissionErrorDesc');
         } else if (error.response?.status === 500) {
-          errorTitle = 'Server Error';
-          errorDescription = 'A server error occurred. Please try again later or contact support.';
+          errorTitle = t('purchases.payment.serverErrorTitle');
+          errorDescription = t('purchases.payment.serverErrorDesc');
         }
 
         toast({
@@ -356,8 +406,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     const maxAmount = currentPurchase?.outstanding_amount || 0;
     if (numericValue > maxAmount) {
       toast({
-        title: 'Amount Exceeds Outstanding Balance',
-        description: `Maximum payment amount is ${formatCurrency(maxAmount)}`,
+        title: t('purchases.payment.amountTooHigh'),
+        description: t('purchases.payment.maxPaymentAmount', { amount: formatCurrency(maxAmount) }),
         status: 'warning',
         duration: 3000,
         isClosable: true,
@@ -380,12 +430,28 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     // Special handling for cash_bank_id field
     if (field === 'cash_bank_id') {
       value = parseFloat(e.target.value) || 0;
+      setExchangeRateEdited(false);
+    }
+    if (field === 'exchange_rate') {
+      value = roundUsdIdrRate(parseFloat(e.target.value), 0);
+      setExchangeRateEdited(true);
     }
 
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-    }));
+    setFormData(prev => {
+      const next = {
+        ...prev,
+        [field]: value,
+      };
+
+      if (field === 'cash_bank_id') {
+        const nextAccount = cashBanks.find(account => account.id === Number(value));
+        if ((nextAccount?.currency || 'IDR').toUpperCase() !== 'USD') {
+          next.exchange_rate = undefined;
+        }
+      }
+
+      return next;
+    });
   };
 
   const formatCurrency = (amount: number): string => {
@@ -397,8 +463,71 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     }).format(amount);
   };
 
+  const formatAccountBalance = (amount: number, currency?: string): string => {
+    const normalizedCurrency = (currency || 'IDR').toUpperCase();
+
+    if (normalizedCurrency === 'USD') {
+      return `USD ${(amount || 0).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    }
+
+    return formatCurrency(amount || 0);
+  };
+
+  const getAccountBookBalance = (account?: CashBank): number => {
+    if (!account) return 0;
+
+    if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+      return account.balance || 0;
+    }
+
+    if (typeof account.book_balance_idr === 'number') {
+      return account.book_balance_idr;
+    }
+
+    const fallbackRate = account.last_exchange_rate && account.last_exchange_rate > 0
+      ? roundUsdIdrRate(account.last_exchange_rate, 1)
+      : 1;
+
+    return (account.balance || 0) * fallbackRate;
+  };
+
+  const formatAccountSummary = (account?: CashBank): string => {
+    if (!account) {
+      return formatCurrency(0);
+    }
+
+    const nativeLabel = formatAccountBalance(account.balance || 0, account.currency);
+    if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+      return nativeLabel;
+    }
+
+    return `${nativeLabel} | Nilai buku: ${formatCurrency(getAccountBookBalance(account))}`;
+  };
+
+  const formatExchangeRate = (value?: number): string => {
+    if (!value || value <= 0) {
+      return '-';
+    }
+
+    return `Rp ${value.toLocaleString('id-ID', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    })}`;
+  };
+
+  const getUsdNativeOutAmount = (): number => {
+    if (!isUsdAccount || !formData.amount || !formData.exchange_rate || formData.exchange_rate <= 0) {
+      return 0;
+    }
+
+    return formData.amount / formData.exchange_rate;
+  };
+
   const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('id-ID', {
+    return new Date(dateString).toLocaleDateString(language === 'en' ? 'en-US' : 'id-ID', {
       day: '2-digit',
       month: 'long',
       year: 'numeric',
@@ -407,6 +536,25 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
   // Use fresh purchase data if available, fallback to prop
   const currentPurchase = freshPurchase || purchase;
+  const usdNativeOutAmount = getUsdNativeOutAmount();
+  const currentAccountBookBalance = getAccountBookBalance(selectedAccount);
+  const currentCarryRate = isUsdAccount && selectedAccount && (selectedAccount.balance || 0) > 0
+    ? currentAccountBookBalance / (selectedAccount.balance || 0)
+    : 0;
+  const bankBookOutAmount = isUsdAccount && selectedAccount && usdNativeOutAmount > 0 && (selectedAccount.balance || 0) > 0
+    ? currentAccountBookBalance * (usdNativeOutAmount / selectedAccount.balance)
+    : formData.amount;
+  const endingBookBalance = Math.max(0, currentAccountBookBalance - bankBookOutAmount);
+  const endingNativeBalance = isUsdAccount && selectedAccount
+    ? Math.max(0, (selectedAccount.balance || 0) - usdNativeOutAmount)
+    : 0;
+  const estimatedForexDiff = bankBookOutAmount - formData.amount;
+  const estimatedForexType = estimatedForexDiff > 0.005
+    ? t('purchases.payment.forexLoss')
+    : estimatedForexDiff < -0.005
+      ? t('purchases.payment.forexGain')
+      : t('purchases.payment.forexNeutral');
+  const estimatedForexAmount = Math.abs(estimatedForexDiff);
 
   if (!purchase) return null;
 
@@ -476,7 +624,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                   <Text fontSize="sm">
                     {t('purchases.payment.paymentSuccessDesc')}
                     {loading && (
-                      <><br />⏳ <strong>{t('purchases.payment.processing')}</strong></>
+                      <><br />{t('purchases.payment.processingIndicator')} <strong>{t('purchases.payment.processing')}</strong></>
                     )}
                   </Text>
                 </Alert>
@@ -485,7 +633,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                 <FormControl isRequired>
                   <FormLabel>{t('purchases.payment.amount')} *</FormLabel>
                   <Input
-                    placeholder="Rp 0"
+                    placeholder={t('purchases.payment.amountPlaceholder')}
                     value={`Rp ${displayAmount}`}
                     onChange={handleAmountChange}
                     textAlign="right"
@@ -496,7 +644,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
                   {/* Quick Payment Amount Buttons */}
                   <HStack spacing={2} mt={3} flexWrap="wrap">
-                    <Text fontSize="sm" color="gray.600" minW="fit-content">Quick Select:</Text>
+                    <Text fontSize="sm" color="gray.600" minW="fit-content">{t('purchases.payment.quickSelect')}</Text>
                     <Button
                       size="xs"
                       variant="outline"
@@ -550,24 +698,24 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                       }}
                       disabled={!currentPurchase?.outstanding_amount}
                     >
-                      100% Full Pay
+                      {t('purchases.payment.fullPayButton')}
                     </Button>
                   </HStack>
 
                   {/* Payment Amount Info */}
                   {formData.amount > 0 && (
                     <Text fontSize="sm" color="gray.600" mt={2}>
-                      💰 Payment: <Text as="span" fontWeight="bold" color="green.600">
+                      {t('purchases.payment.paymentIndicator')} <Text as="span" fontWeight="bold" color="green.600">
                         {formatCurrency(formData.amount)}
                       </Text>
                       {formData.amount < (currentPurchase?.outstanding_amount || 0) && (
                         <Text as="span" color="orange.500">
-                          {' • '} Remaining: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
+                          {` ${t('purchases.payment.separator')} `}{t('purchases.payment.remaining')}: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
                         </Text>
                       )}
                       {formData.amount === (currentPurchase?.outstanding_amount || 0) && (
                         <Text as="span" color="green.500">
-                          {' • '} ✅ Full Payment
+                          {` ${t('purchases.payment.separator')} `}{t('purchases.payment.fullPaymentStatus')}
                         </Text>
                       )}
                     </Text>
@@ -576,17 +724,17 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                   {/* Validation Messages */}
                   {formData.amount > (currentPurchase?.outstanding_amount || 0) && (
                     <Text fontSize="sm" color="red.500" mt={1}>
-                      ⚠️ Amount exceeds outstanding balance of {formatCurrency(currentPurchase?.outstanding_amount || 0)}
+                      {t('purchases.payment.warningIndicator')} {t('purchases.payment.amountExceedsBalance', { amount: formatCurrency(currentPurchase?.outstanding_amount || 0) })}
                     </Text>
                   )}
                   {formData.amount > 0 && formData.amount <= (currentPurchase?.outstanding_amount || 0) && formData.amount < (currentPurchase?.outstanding_amount || 0) && (
                     <Text fontSize="sm" color="blue.600" mt={1}>
-                      ✓ Partial payment - Remaining balance: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
+                      {t('purchases.payment.partialPayment')} - {t('purchases.payment.remainingBalance')}: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
                     </Text>
                   )}
                   {formData.amount === (currentPurchase?.outstanding_amount || 0) && formData.amount > 0 && (
                     <Text fontSize="sm" color="green.600" mt={1} fontWeight="medium">
-                      🎉 This will fully pay the purchase!
+                      {t('purchases.payment.willFullyPay')}
                     </Text>
                   )}
                 </FormControl>
@@ -638,11 +786,14 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                         }
                       })
                       .map((account) => {
-                        const isInsufficientBalance = account.balance < formData.amount;
-                        const isZeroBalance = account.balance <= 0;
-                        const balanceStatus = isZeroBalance ? ' ❌ NO BALANCE' :
-                          isInsufficientBalance ? ' ⚠️ INSUFFICIENT' :
-                            ' ✅';
+                        const accountBookBalance = getAccountBookBalance(account);
+                        const isInsufficientBalance = accountBookBalance < formData.amount;
+                        const isZeroBalance = accountBookBalance <= 0;
+                        const balanceStatus = isZeroBalance
+                          ? ` ${t('purchases.payment.noBalanceOption')}`
+                          : isInsufficientBalance
+                            ? ` ${t('purchases.payment.insufficientOption')}`
+                            : ` ${t('purchases.payment.availableOption')}`;
 
                         return (
                           <option
@@ -657,7 +808,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                                   '#f0fff4'
                             }}
                           >
-                            {account.name} ({account.account_code}) - {formatCurrency(account.balance)}{balanceStatus}
+                            {account.name} ({account.account_code}) - {formatAccountSummary(account)}{balanceStatus}
                           </option>
                         );
                       })}
@@ -676,7 +827,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                       }
                     }).length === 0 && cashBanks.map((account) => (
                       <option key={account.id} value={account.id}>
-                        {account.name} ({account.account_code}) - {formatCurrency(account.balance)}
+                        {account.name} ({account.account_code}) - {formatAccountSummary(account)}
                       </option>
                     ))}
                   </Select>
@@ -686,15 +837,19 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
                     if (!selectedAccount) return null;
 
-                    const isZeroBalance = selectedAccount.balance <= 0;
-                    const isInsufficientBalance = formData.amount > selectedAccount.balance;
-                    const remainingBalance = selectedAccount.balance - formData.amount;
+                    const accountBookBalance = getAccountBookBalance(selectedAccount);
+                    const isZeroBalance = accountBookBalance <= 0;
+                    const isInsufficientBalance = formData.amount > accountBookBalance;
+                    const remainingBalance = accountBookBalance - formData.amount;
 
                     if (isZeroBalance) {
                       return (
                         <Text fontSize="sm" color="red.500" mt={2} fontWeight="medium">
-                          ❌ <strong>No Balance Available</strong><br />
-                          Account "{selectedAccount.name}" has {formatCurrency(selectedAccount.balance)} balance. Cannot process any payments.
+                          {t('purchases.payment.noBalanceAvailable')}<br />
+                          {t('purchases.payment.accountHasBalance', {
+                            account: selectedAccount.name,
+                            balance: formatAccountSummary(selectedAccount),
+                          })}
                         </Text>
                       );
                     }
@@ -702,9 +857,9 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     if (isInsufficientBalance && formData.amount > 0) {
                       return (
                         <Text fontSize="sm" color="orange.500" mt={2} fontWeight="medium">
-                          ⚠️ <strong>Insufficient Balance</strong><br />
-                          Available: {formatCurrency(selectedAccount.balance)} | Required: {formatCurrency(formData.amount)} |
-                          Short by: {formatCurrency(formData.amount - selectedAccount.balance)}
+                          {t('purchases.payment.insufficientBalance')}<br />
+                          {t('purchases.payment.availableBalanceLabel')}: {formatAccountSummary(selectedAccount)} | {t('purchases.payment.requiredBalanceLabel')}: {formatCurrency(formData.amount)} |
+                          {t('purchases.payment.shortByLabel')}: {formatCurrency(formData.amount - accountBookBalance)}
                         </Text>
                       );
                     }
@@ -712,19 +867,100 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     if (formData.amount > 0 && remainingBalance >= 0) {
                       return (
                         <Text fontSize="sm" color="green.600" mt={2}>
-                          ✅ <strong>Sufficient Balance</strong><br />
-                          Available: {formatCurrency(selectedAccount.balance)} | After payment: {formatCurrency(remainingBalance)}
+                          {t('purchases.payment.sufficientBalance')}<br />
+                          {t('purchases.payment.availableBalanceLabel')}: {formatAccountSummary(selectedAccount)} | {t('purchases.payment.afterPayment')}: {formatCurrency(remainingBalance)}
                         </Text>
                       );
                     }
 
                     return (
-                      <Text fontSize="sm" color="blue.600" mt={2}>
-                        💰 <strong>Account Balance:</strong> {formatCurrency(selectedAccount.balance)}
-                      </Text>
-                    );
+                        <Text fontSize="sm" color="blue.600" mt={2}>
+                          {t('purchases.payment.accountBalanceLabel')}: {formatAccountSummary(selectedAccount)}
+                        </Text>
+                      );
                   })()}
                 </FormControl>
+
+                {isUsdAccount && (
+                  <Box borderWidth="1px" borderRadius="md" p={4} bg="blue.50">
+                    <FormControl isRequired>
+                      <FormLabel>{t('purchases.payment.transactionExchangeRate')}</FormLabel>
+                      <Input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={formData.exchange_rate ?? ''}
+                        onChange={handleChange('exchange_rate')}
+                        placeholder={t('purchases.payment.transactionExchangeRatePlaceholder')}
+                      />
+                    </FormControl>
+
+                    <Text fontSize="sm" color="gray.600" mt={2}>
+                      {t('purchases.payment.transactionExchangeRateHelp')}
+                    </Text>
+
+                    {referenceRate?.exchange_rate ? (
+                      <Alert status="info" mt={3} borderRadius="md">
+                        <AlertIcon />
+                        <Text fontSize="sm">
+                          {t('purchases.payment.apiReferenceRate', {
+                            rate: formatExchangeRate(referenceRate.exchange_rate),
+                            provider: referenceRate.provider || referenceRate.source || '-',
+                          })} {t('purchases.payment.apiReferenceRateDesc')}
+                        </Text>
+                      </Alert>
+                    ) : (
+                      <Alert status="warning" mt={3} borderRadius="md">
+                        <AlertIcon />
+                        <Text fontSize="sm">
+                          {t('purchases.payment.apiReferenceRateUnavailable')}
+                        </Text>
+                      </Alert>
+                    )}
+
+                    {formData.exchange_rate && formData.exchange_rate > 0 && (
+                      <Box mt={3}>
+                        <Text fontSize="sm" fontWeight="bold" color="gray.700">
+                          {t('purchases.payment.foreignPaymentPreview')}
+                        </Text>
+                        <Text fontSize="sm" color="gray.700" mt={1}>
+                          {t('purchases.payment.purchaseSettled')}: {formatCurrency(formData.amount)}
+                        </Text>
+                        <Text fontSize="sm" color="gray.700">
+                          {t('purchases.payment.usdOutflow')}: {formatAccountBalance(usdNativeOutAmount, 'USD')}
+                        </Text>
+                        <Text fontSize="sm" color="gray.700">
+                          {t('purchases.payment.currentCarryRate')}: 1 USD = {formatExchangeRate(currentCarryRate)}
+                        </Text>
+                        {selectedAccount && (
+                          <>
+                            <Text fontSize="sm" color="gray.700">
+                              {t('purchases.payment.bankBookCredit')}: {formatCurrency(bankBookOutAmount)}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700">
+                              {t('purchases.payment.nativeBalanceAfterPayment')}: {formatAccountBalance(endingNativeBalance, 'USD')}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700">
+                              {t('purchases.payment.bookValueAfterPayment')}: {formatCurrency(endingBookBalance)}
+                            </Text>
+                            <Text
+                              fontSize="sm"
+                              color={
+                                estimatedForexType === t('purchases.payment.forexLoss')
+                                  ? 'red.600'
+                                  : estimatedForexType === t('purchases.payment.forexGain')
+                                    ? 'green.600'
+                                    : 'gray.700'
+                              }
+                            >
+                              {t('purchases.payment.estimatedForex')}: {formatCurrency(estimatedForexAmount)} ({estimatedForexType})
+                            </Text>
+                          </>
+                        )}
+                      </Box>
+                    )}
+                  </Box>
+                )}
 
                 <FormControl>
                   <FormLabel>{t('purchases.payment.reference')}</FormLabel>
@@ -765,8 +1001,11 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                 // Check balance availability
                 const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
                 if (selectedAccount) {
+                  if ((selectedAccount.currency || 'IDR').toUpperCase() === 'USD' && (!formData.exchange_rate || formData.exchange_rate <= 0)) {
+                    return true;
+                  }
                   // Disable if zero balance or insufficient balance
-                  if (selectedAccount.balance <= 0 || formData.amount > selectedAccount.balance) {
+                  if (getAccountBookBalance(selectedAccount) <= 0 || formData.amount > getAccountBookBalance(selectedAccount)) {
                     return true;
                   }
                 }
@@ -783,10 +1022,13 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                 // Check for balance issues
                 const selectedAccount = cashBanks.find(account => account.id === formData.cash_bank_id);
                 if (selectedAccount && formData.cash_bank_id) {
-                  if (selectedAccount.balance <= 0) {
+                  if ((selectedAccount.currency || 'IDR').toUpperCase() === 'USD' && (!formData.exchange_rate || formData.exchange_rate <= 0)) {
+                    return t('purchases.payment.fillUsdRate');
+                  }
+                  if (getAccountBookBalance(selectedAccount) <= 0) {
                     return t('purchases.payment.insufficientBalance');
                   }
-                  if (formData.amount > selectedAccount.balance) {
+                  if (formData.amount > getAccountBookBalance(selectedAccount)) {
                     return t('purchases.payment.insufficientBalance');
                   }
                 }

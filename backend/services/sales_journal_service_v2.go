@@ -32,6 +32,37 @@ func NewSalesJournalServiceV2(
 	}
 }
 
+func (s *SalesJournalServiceV2) resolveForexAccountID(db *gorm.DB, isGain bool) (uint64, error) {
+	preferredCodes := []string{"8103", "8102"}
+	accountKind := "loss"
+	categoryLike := "%expense%"
+	typeLike := "%beban%"
+	if isGain {
+		preferredCodes = []string{"7103", "7102"}
+		accountKind = "gain"
+		categoryLike = "%income%"
+		typeLike = "%pendapatan%"
+	}
+
+	var account models.Account
+	for _, code := range preferredCodes {
+		if err := db.Where("code = ? AND deleted_at IS NULL", code).First(&account).Error; err == nil {
+			return uint64(account.ID), nil
+		}
+	}
+
+	if err := db.
+		Where("deleted_at IS NULL").
+		Where("(LOWER(category) LIKE ? OR LOWER(account_type) LIKE ?)", categoryLike, typeLike).
+		Where("is_group = ? OR level >= ?", false, 3).
+		Order("level DESC, code ASC").
+		First(&account).Error; err == nil {
+		return uint64(account.ID), nil
+	}
+
+	return 0, fmt.Errorf("no forex %s account found in COA", accountKind)
+}
+
 // ShouldPostToJournal checks if a status should create journal entries
 // KRITERIA POSTING JURNAL - HANYA STATUS INVOICED ATAU PAID
 func (s *SalesJournalServiceV2) ShouldPostToJournal(status string) bool {
@@ -513,7 +544,18 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 		return nil, fmt.Errorf("no suitable accounts receivable (Piutang Usaha) account found")
 	}
 
-	amount := decimal.NewFromFloat(payment.Amount)
+	bankBookAmountValue := payment.BookAmountIDR
+	if bankBookAmountValue == 0 {
+		bankBookAmountValue = payment.Amount
+	}
+	receivableSettlementValue, _, err := calculateSaleReceivableSettlementBookAmount(sale, payment.Amount, payment.ExchangeRate)
+	if err != nil {
+		return fmt.Errorf("failed to calculate receivable settlement historical book amount: %v", err)
+	}
+	forexGainLossValue := bankBookAmountValue - receivableSettlementValue
+
+	bankBookAmount := decimal.NewFromFloat(bankBookAmountValue)
+	receivableSettlement := decimal.NewFromFloat(receivableSettlementValue)
 	now := time.Now()
 	createdBy := uint64(payment.UserID)
 
@@ -576,7 +618,7 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 			AccountID:    uint64(debitAcc.ID),
 			LineNumber:   lineCount,
 			Description:  fmt.Sprintf("Payment received for Invoice #%s", sale.InvoiceNumber),
-			DebitAmount:  amount,
+			DebitAmount:  bankBookAmount,
 			CreditAmount: decimal.Zero,
 			CreatedAt:    now,
 			UpdatedAt:    now,
@@ -592,7 +634,41 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 			LineNumber:   lineCount,
 			Description:  fmt.Sprintf("Reduce receivable for Invoice #%s", sale.InvoiceNumber),
 			DebitAmount:  decimal.Zero,
-			CreditAmount: amount,
+			CreditAmount: receivableSettlement,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+		lineCount++
+	}
+
+	if forexGainLossValue > 0.005 {
+		gainAccountID, err := s.resolveForexAccountID(dbToUse, true)
+		if err != nil {
+			return fmt.Errorf("failed to resolve forex gain account: %v", err)
+		}
+		journalItems = append(journalItems, models.SSOTJournalLine{
+			JournalID:    ssotEntry.ID,
+			AccountID:    gainAccountID,
+			LineNumber:   lineCount,
+			Description:  fmt.Sprintf("Realized forex gain for payment Invoice #%s", sale.InvoiceNumber),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(forexGainLossValue),
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+		lineCount++
+	} else if forexGainLossValue < -0.005 {
+		lossAccountID, err := s.resolveForexAccountID(dbToUse, false)
+		if err != nil {
+			return fmt.Errorf("failed to resolve forex loss account: %v", err)
+		}
+		journalItems = append(journalItems, models.SSOTJournalLine{
+			JournalID:    ssotEntry.ID,
+			AccountID:    lossAccountID,
+			LineNumber:   lineCount,
+			Description:  fmt.Sprintf("Realized forex loss for payment Invoice #%s", sale.InvoiceNumber),
+			DebitAmount:  decimal.NewFromFloat(-forexGainLossValue),
+			CreditAmount: decimal.Zero,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		})

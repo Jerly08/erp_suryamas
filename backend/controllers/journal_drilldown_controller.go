@@ -40,10 +40,10 @@ func (c *JournalDrilldownController) GetJournalDrilldown(ctx *gin.Context) {
 	// Debug: Log raw request body
 	body, _ := ctx.GetRawData()
 	log.Printf("🔍 Raw request body: %s", string(body))
-	
+
 	// Reset body for binding
 	ctx.Request.Body = io.NopCloser(bytes.NewBuffer(body))
-	
+
 	var req services.JournalDrilldownRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		log.Printf("❌ JSON binding error: %v", err)
@@ -52,7 +52,7 @@ func (c *JournalDrilldownController) GetJournalDrilldown(ctx *gin.Context) {
 		ctx.JSON(appError.StatusCode, appError.ToErrorResponse(""))
 		return
 	}
-	
+
 	log.Printf("✅ Successfully parsed request: %+v", req)
 
 	// Validate required fields
@@ -171,6 +171,9 @@ func (c *JournalDrilldownController) GetJournalDrilldownByParams(ctx *gin.Contex
 	if transactionTypes := ctx.Query("transaction_types"); transactionTypes != "" {
 		req.TransactionTypes = parseCommaSeparatedString(transactionTypes)
 	}
+	if transactionType := ctx.Query("transaction_type"); transactionType != "" {
+		req.TransactionType = transactionType
+	}
 
 	// Parse pagination
 	if page := ctx.Query("page"); page != "" {
@@ -213,20 +216,20 @@ func (c *JournalDrilldownController) GetJournalDrilldownByParams(ctx *gin.Contex
 // @Tags journal-drilldown
 // @Produce json
 // @Param id path int true "Journal Entry ID"
-// @Success 200 {object} models.JournalEntry
+// @Success 200 {object} services.JournalDrilldownEntry
 // @Failure 400 {object} utils.ErrorResponse
 // @Failure 404 {object} utils.ErrorResponse
 // @Router /journal-drilldown/entries/{id} [get]
 func (c *JournalDrilldownController) GetJournalEntryDetail(ctx *gin.Context) {
 	idStr := ctx.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		appError := utils.NewBadRequestError("Invalid journal entry ID")
 		ctx.JSON(appError.StatusCode, appError.ToErrorResponse(""))
 		return
 	}
 
-	entry, err := c.drilldownService.GetJournalEntryDetail(ctx.Request.Context(), uint(id))
+	entry, err := c.drilldownService.GetJournalEntryDetail(ctx.Request.Context(), id)
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
 			ctx.JSON(appErr.StatusCode, appErr.ToErrorResponse(""))
@@ -293,7 +296,7 @@ func parseCommaSeparatedString(input string) []string {
 	if input == "" {
 		return []string{}
 	}
-	
+
 	var result []string
 	for _, item := range strings.Split(input, ",") {
 		if trimmed := strings.TrimSpace(item); trimmed != "" {
@@ -307,7 +310,7 @@ func parseCommaSeparatedUints(input string) []uint {
 	if input == "" {
 		return []uint{}
 	}
-	
+
 	var result []uint
 	for _, item := range strings.Split(input, ",") {
 		if trimmed := strings.TrimSpace(item); trimmed != "" {

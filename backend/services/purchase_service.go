@@ -14,6 +14,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PurchaseService struct {
@@ -392,8 +393,8 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending {
 		fmt.Printf("🔄 Purchase %d has status %s, performing full accounting reversal via OnPurchaseRejected\n", id, purchase.Status)
 		if err := s.OnPurchaseRejected(id); err != nil {
-			fmt.Printf("⚠️ Warning: Post-rejection cleanup had issues for purchase %d: %v\n", id, err)
-			// Continue with cancellation even if cleanup has partial issues
+			fmt.Printf("❌ Post-rejection cleanup failed for purchase %d: %v\n", id, err)
+			return fmt.Errorf("failed to reverse approved purchase %d before cancellation: %v", id, err)
 		} else {
 			fmt.Printf("✅ Full accounting reversal completed for purchase %d\n", id)
 		}
@@ -1188,6 +1189,10 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 
 	fmt.Printf("💰 Processing approved purchase %s (method: %s, amount: %.2f)\n", purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
 
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return err
+	}
+
 	// 1. Update product stock
 	fmt.Printf("🔄 Updating product stock for approved purchase %d\n", purchaseID)
 	err = s.updateProductStockOnApproval(purchase)
@@ -1217,7 +1222,7 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	// 3. Update cash/bank balance for immediate payment methods
 	if isImmediatePayment(purchase.PaymentMethod) {
 		fmt.Printf("💰 Updating cash/bank balance for immediate payment purchase\n")
-		err = s.updateCashBankBalanceForPurchase(purchase)
+		err = s.updateCashBankBalanceForPurchaseAtomic(purchase)
 		if err != nil {
 			fmt.Printf("⚠️ Warning: Failed to update cash/bank balance: %v\n", err)
 		} else {
@@ -1277,7 +1282,11 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 
 // processPrepaidExpensesInPurchase extracts and schedules PREPAID items into prepaid_expenses and schedules
 func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purchase) error {
-	now := time.Now()
+	baseDate := purchase.Date
+	if baseDate.IsZero() {
+		baseDate = time.Now()
+	}
+	baseDate = time.Date(baseDate.Year(), baseDate.Month(), baseDate.Day(), 0, 0, 0, 0, baseDate.Location())
 
 	for _, item := range purchase.PurchaseItems {
 		if item.ItemType == models.PurchaseItemTypePrepaid {
@@ -1290,7 +1299,7 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 			// Hitung Biaya Per Bulan flat
 			monthlyAmt := item.TotalPrice / float64(months)
 
-			endDate := now.AddDate(0, months, 0)
+			endDate := baseDate.AddDate(0, months, 0)
 
 			// Penamaan Prepaid Expense
 			prepaidName := item.Description
@@ -1307,7 +1316,7 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 				TotalAmount:       item.TotalPrice,
 				AmortizationMonth: months,
 				MonthlyAmount:     monthlyAmt,
-				StartDate:         now,
+				StartDate:         baseDate,
 				EndDate:           endDate,
 				Status:            "ACTIVE",
 				PrepaidAccountID:  item.ExpenseAccountID, // Akun sumber Aset Lancar
@@ -1321,7 +1330,7 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 
 			// Buat Jadwal Cicilannya sejumlah bulan
 			for i := 1; i <= months; i++ {
-				scheduleDate := now.AddDate(0, i, 0) // Jatuh tempo bulan ke-i
+				scheduleDate := baseDate.AddDate(0, i, 0) // Jatuh tempo bulan ke-i
 
 				schedule := models.PrepaidSchedule{
 					PrepaidID:     prepaid.ID,
@@ -1349,12 +1358,10 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 
 	assetRepo := repositories.NewAssetRepository(s.db)
 	assetService := NewAssetService(assetRepo, s.db)
-	assetJournalSvc := NewAssetJournalServiceSSOT(s.db)
-
 	for _, item := range purchase.PurchaseItems {
 		// Determine if this item should create an asset
 		isAssetFromFlag := item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset
-		
+
 		if !isAssetFromFlag {
 			continue // Not an asset item, skip
 		}
@@ -1387,6 +1394,7 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 
 		// Determine category from AssetCategoryID (user-selected)
 		category := "Peralatan" // Default
+		categoryCode := ""
 		var assetCategoryID *uint
 		var assetAccountID *uint
 
@@ -1396,6 +1404,7 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 			var assetCat models.AssetCategory
 			if err := s.db.First(&assetCat, *item.AssetCategoryID).Error; err == nil {
 				category = assetCat.Name
+				categoryCode = assetCat.Code
 			}
 		}
 
@@ -1427,27 +1436,7 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 		}
 
 		// Set default useful life and depreciation method based on category
-		usefulLife := 5 // Default 5 years
-		depMethod := models.DepreciationMethodStraightLine
-		salvageValue := 0.0
-
-		switch category {
-		case "Tanah":
-			usefulLife = 0 // Tanah tidak disusutkan
-			depMethod = ""
-		case "Bangunan":
-			usefulLife = 20 // 20 tahun
-			salvageValue = item.TotalPrice * 0.10
-		case "Kendaraan":
-			usefulLife = 5 // 5 tahun
-			salvageValue = item.TotalPrice * 0.10
-		case "Peralatan":
-			usefulLife = 4 // 4 tahun
-			salvageValue = item.TotalPrice * 0.05
-		case "Inventaris Kantor":
-			usefulLife = 4 // 4 tahun
-			salvageValue = item.TotalPrice * 0.05
-		}
+		usefulLife, depMethod, salvageValue := deriveAutoCreatedAssetDefaults(category, categoryCode, item.TotalPrice)
 
 		// Ensure Quantity is at least 1 (Prevents zero-loop bug & division by zero panic)
 		qty := item.Quantity
@@ -1499,11 +1488,91 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 			fmt.Printf("✅ [AUTO-ASSET] Created asset %s (%s) from purchase %s - Rp %.2f, useful life: %d years\n",
 				asset.Code, asset.Name, purchase.Code, asset.PurchasePrice, asset.UsefulLife)
 		}
-
-		// NOTE: SSOT journal for this asset is NOT created here because the purchase
-		// journal (step 2) already handles: Dr 1201-xxx / Cr Hutang/Kas/Bank
-		_ = assetJournalSvc // Available if needed for future use
 	}
+}
+
+func deriveAutoCreatedAssetDefaults(categoryName string, categoryCode string, totalPrice float64) (int, string, float64) {
+	normalizedName := strings.ToLower(strings.TrimSpace(categoryName))
+	normalizedCode := strings.ToUpper(strings.TrimSpace(categoryCode))
+
+	switch {
+	case normalizedCode == "LAND" || normalizedName == "tanah" || normalizedName == "land":
+		return 0, "", 0
+	case normalizedCode == "REAL" || normalizedName == "bangunan" || normalizedName == "building" || normalizedName == "real estate":
+		return 20, models.DepreciationMethodStraightLine, totalPrice * 0.10
+	case normalizedCode == "VEHICLE" || normalizedName == "kendaraan" || normalizedName == "vehicle":
+		return 5, models.DepreciationMethodStraightLine, totalPrice * 0.10
+	case normalizedCode == "OFFICE" ||
+		normalizedCode == "COMP" ||
+		normalizedCode == "IT" ||
+		normalizedCode == "FURNITURE" ||
+		normalizedName == "peralatan" ||
+		normalizedName == "office equipment" ||
+		normalizedName == "computer equipment" ||
+		normalizedName == "it infrastructure" ||
+		normalizedName == "inventaris kantor" ||
+		normalizedName == "furniture":
+		return 4, models.DepreciationMethodStraightLine, totalPrice * 0.05
+	default:
+		return 5, models.DepreciationMethodStraightLine, 0
+	}
+}
+
+func (s *PurchaseService) cleanupAutoCreatedAssetsFromPurchase(purchase *models.Purchase) error {
+	if len(purchase.PurchaseItems) == 0 {
+		return nil
+	}
+
+	assetRepo := repositories.NewAssetRepository(s.db)
+	assetService := NewAssetService(assetRepo, s.db)
+	assetJournalSvc := NewAssetJournalServiceSSOT(s.db)
+	assetSourceTypes := []string{
+		models.SSOTSourceTypeAsset,
+		models.SSOTSourceTypeOpening,
+		models.SSOTSourceTypeDepreciation,
+	}
+
+	cleanedAssets := 0
+
+	for _, item := range purchase.PurchaseItems {
+		if !item.IsFixedAsset && item.ItemType != models.PurchaseItemTypeAsset {
+			continue
+		}
+
+		var assets []models.Asset
+		if err := s.db.Where("notes LIKE ? AND deleted_at IS NULL", fmt.Sprintf("%%PurchaseItem:%d%%", item.ID)).Find(&assets).Error; err != nil {
+			return fmt.Errorf("failed to find auto-created assets for purchase item %d: %v", item.ID, err)
+		}
+
+		for _, asset := range assets {
+			var entries []models.SSOTJournalEntry
+			if err := s.db.Where("source_type IN ? AND source_id = ? AND deleted_at IS NULL", assetSourceTypes, asset.ID).Find(&entries).Error; err != nil {
+				return fmt.Errorf("failed to load journal entries for asset %s: %v", asset.Code, err)
+			}
+
+			for _, entry := range entries {
+				if err := CheckClosedPeriod(s.db, entry.EntryDate); err != nil {
+					return fmt.Errorf("cannot remove asset %s from purchase %s because journal %s is in a closed period: %w", asset.Code, purchase.Code, entry.EntryNumber, err)
+				}
+			}
+
+			if err := assetJournalSvc.ReverseAssetJournals(asset.ID); err != nil {
+				return fmt.Errorf("failed to reverse asset journals for %s: %v", asset.Code, err)
+			}
+			if err := assetService.DeleteAsset(asset.ID); err != nil {
+				return fmt.Errorf("failed to delete auto-created asset %s: %v", asset.Code, err)
+			}
+
+			cleanedAssets++
+			fmt.Printf("âœ… Auto-created asset %s cleaned up for purchase %s\n", asset.Code, purchase.Code)
+		}
+	}
+
+	if cleanedAssets > 0 {
+		fmt.Printf("âœ… Cleaned up %d auto-created assets for purchase %s\n", cleanedAssets, purchase.Code)
+	}
+
+	return nil
 }
 
 // OnPurchaseRejected reverses all accounting effects when a purchase is rejected.
@@ -1568,7 +1637,13 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		fmt.Printf("⚠️ Warning: Failed to soft-delete remaining SSOT journal lines: %v\n", err)
 	}
 
-	// 3. Reverse product stock (subtract the quantities that were added on approval)
+	// 3. Remove any asset register records auto-created from this purchase
+	fmt.Printf("🏷️ Cleaning auto-created assets for rejected purchase %s\n", purchase.Code)
+	if err := s.cleanupAutoCreatedAssetsFromPurchase(purchase); err != nil {
+		return err
+	}
+
+	// 4. Reverse product stock (subtract the quantities that were added on approval)
 	fmt.Printf("📦 Reversing product stock for rejected purchase %s\n", purchase.Code)
 	for _, item := range purchase.PurchaseItems {
 		// Skip ASSET items - they don't have inventory/stock
@@ -1602,7 +1677,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		}
 	}
 
-	// 4. Reverse cash/bank balance for immediate payment purchases
+	// 5. Reverse cash/bank balance for immediate payment purchases
 	if isImmediatePayment(purchase.PaymentMethod) && purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
 		fmt.Printf("💰 Restoring cash/bank balance for rejected immediate payment purchase\n")
 
@@ -1648,7 +1723,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		}
 	}
 
-	// 5. Reverse project actual cost (if linked to a project)
+	// 6. Reverse project actual cost (if linked to a project)
 	if purchase.ProjectID != nil {
 		fmt.Printf("📉 Decreasing project actual cost for rejected purchase %d\n", purchaseID)
 		err = s.updateProjectCostForPurchase(purchase, false) // false = decrease
@@ -1733,6 +1808,9 @@ func (s *PurchaseService) validateReceiptItems(receiptItems []models.PurchaseRec
 		found := false
 		for _, purchaseItem := range purchaseItems {
 			if purchaseItem.ID == receiptItem.PurchaseItemID {
+				if strings.EqualFold(strings.TrimSpace(purchaseItem.ItemType), models.PurchaseItemTypePrepaid) {
+					return fmt.Errorf("purchase item %d is PREPAID and does not require a receipt", receiptItem.PurchaseItemID)
+				}
 				if receiptItem.QuantityReceived > purchaseItem.Quantity {
 					return fmt.Errorf("received quantity cannot exceed ordered quantity for item %d", receiptItem.PurchaseItemID)
 				}
@@ -2052,6 +2130,7 @@ func (s *PurchaseService) CreateIntegratedPayment(
 
 	// Update cash/bank balance (decrease for payment OUT)
 	if cashBankID != nil {
+		guard := NewCashBankCurrencyGuard(s.db)
 		var cashBank models.CashBank
 		if err := tx.First(&cashBank, *cashBankID).Error; err != nil {
 			tx.Rollback()
@@ -2085,6 +2164,11 @@ func (s *PurchaseService) CreateIntegratedPayment(
 		if err := tx.Create(cashBankTransaction).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to create cash/bank transaction: %v", err)
+		}
+
+		if err := guard.EnforceAfterTransaction(tx, *cashBankID); err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after vendor payment: %v", err)
 		}
 	}
 
@@ -2591,4 +2675,120 @@ func (s *PurchaseService) GetDB() *gorm.DB {
 // CreateAndPostLegacyForCLI exposes legacy posting for CLI scripts (backfill)
 func (s *PurchaseService) CreateAndPostLegacyForCLI(purchase *models.Purchase) error {
 	return s.createAndPostPurchaseJournalEntries(purchase, purchase.UserID)
+}
+
+func (s *PurchaseService) updateCashBankBalanceForPurchaseAtomic(purchase *models.Purchase) error {
+	fmt.Printf("Updating cash/bank balance atomically for immediate payment purchase %s (method: %s, amount: %.2f)\n",
+		purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
+
+	if !isImmediatePayment(purchase.PaymentMethod) {
+		fmt.Printf("Skipping atomic cash/bank balance update for %s payment method\n", purchase.PaymentMethod)
+		return nil
+	}
+
+	cashBankID, err := s.resolveCashBankIDForPurchaseAtomic(purchase)
+	if err != nil {
+		return err
+	}
+	purchase.BankAccountID = &cashBankID
+
+	guard := NewCashBankCurrencyGuard(s.db)
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var cashBank models.CashBank
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cashBank, cashBankID).Error; err != nil {
+			return fmt.Errorf("bank account not found: %v", err)
+		}
+
+		var existingTx models.CashBankTransaction
+		err := tx.
+			Where("cash_bank_id = ? AND reference_type = ? AND reference_id = ? AND deleted_at IS NULL", cashBankID, "PURCHASE", purchase.ID).
+			Order("id DESC").
+			First(&existingTx).Error
+		if err == nil {
+			fmt.Printf("Purchase %s already has cash/bank transaction ID %d, skipping duplicate posting\n", purchase.Code, existingTx.ID)
+			return guard.EnforceAfterTransaction(tx, cashBankID)
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to check existing cash/bank transaction: %v", err)
+		}
+
+		var txSums struct {
+			NativeAmount float64 `gorm:"column:native_amount"`
+		}
+		if err := tx.Table("cash_bank_transactions").
+			Where("cash_bank_id = ? AND deleted_at IS NULL", cashBankID).
+			Select("COALESCE(SUM(amount), 0) AS native_amount").
+			Scan(&txSums).Error; err != nil {
+			return fmt.Errorf("failed to sum existing cash/bank transactions: %v", err)
+		}
+
+		repairHistoryOnly := math.Abs(cashBank.Balance-(txSums.NativeAmount-purchase.TotalAmount)) <= 0.01
+		expectedBalanceAfter := cashBank.Balance - purchase.TotalAmount
+		if repairHistoryOnly {
+			expectedBalanceAfter = cashBank.Balance
+			fmt.Printf("Detected partial purchase posting for %s: balance already reduced, backfilling history only\n", purchase.Code)
+		} else if cashBank.Balance < purchase.TotalAmount {
+			return fmt.Errorf("insufficient balance in %s. Available: %.2f, Required: %.2f",
+				cashBank.Name, cashBank.Balance, purchase.TotalAmount)
+		}
+
+		currency := normalizeCashBankCurrency(cashBank.Currency)
+		exchangeRate := cashBank.EffectiveExchangeRate()
+		bookAmountIDR := purchase.TotalAmount
+		if cashBank.IsForeignCurrency() {
+			bookAmountIDR = purchase.TotalAmount * exchangeRate
+		} else {
+			exchangeRate = 1
+		}
+
+		cashBankTransaction := &models.CashBankTransaction{
+			CashBankID:      cashBankID,
+			ReferenceType:   "PURCHASE",
+			ReferenceID:     purchase.ID,
+			Amount:          -purchase.TotalAmount,
+			Currency:        currency,
+			ExchangeRate:    exchangeRate,
+			BookAmountIDR:   -bookAmountIDR,
+			BalanceAfter:    expectedBalanceAfter,
+			TransactionDate: purchase.Date,
+			Notes:           fmt.Sprintf("Payment for purchase %s - %s", purchase.Code, purchase.PaymentMethod),
+		}
+
+		if err := tx.Create(cashBankTransaction).Error; err != nil {
+			return fmt.Errorf("failed to create cash/bank transaction record: %v", err)
+		}
+
+		if err := guard.EnforceAfterTransaction(tx, cashBankID); err != nil {
+			return fmt.Errorf("failed to enforce cash/bank invariant for purchase: %v", err)
+		}
+
+		fmt.Printf("Cash/bank transaction record created atomically: ID %d\n", cashBankTransaction.ID)
+		return nil
+	})
+}
+
+func (s *PurchaseService) resolveCashBankIDForPurchaseAtomic(purchase *models.Purchase) (uint, error) {
+	if purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
+		fmt.Printf("Using specified bank account ID %d for atomic balance update\n", *purchase.BankAccountID)
+		return *purchase.BankAccountID, nil
+	}
+
+	defaultAccountCode := "1101"
+	method := strings.ToUpper(strings.TrimSpace(purchase.PaymentMethod))
+	if method == "CASH" || method == "TUNAI" {
+		defaultAccountCode = "1101"
+	}
+
+	var account models.Account
+	if err := s.db.Where("code = ? AND deleted_at IS NULL", defaultAccountCode).First(&account).Error; err != nil {
+		return 0, fmt.Errorf("default account %s not found: %v", defaultAccountCode, err)
+	}
+
+	var cashBank models.CashBank
+	if err := s.db.Where("account_id = ? AND deleted_at IS NULL", account.ID).First(&cashBank).Error; err != nil {
+		return 0, fmt.Errorf("cash_bank record for account %s not found: %v", defaultAccountCode, err)
+	}
+
+	fmt.Printf("Using fallback cash/bank: %s (ID: %d, Code: %s)\n", cashBank.Name, cashBank.ID, defaultAccountCode)
+	return cashBank.ID, nil
 }

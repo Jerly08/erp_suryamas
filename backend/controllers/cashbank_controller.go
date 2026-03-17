@@ -38,6 +38,8 @@ func determineStatusCode(err error) int {
 		strings.Contains(errMsg, "cannot be empty") ||
 		strings.Contains(errMsg, "must be") ||
 		strings.Contains(errMsg, "cannot be negative") ||
+		strings.Contains(errMsg, "closed_period:") ||
+		strings.Contains(errMsg, "closed period") ||
 		strings.Contains(errMsg, "validation failed") {
 		return http.StatusBadRequest
 	}

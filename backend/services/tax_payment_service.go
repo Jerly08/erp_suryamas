@@ -254,6 +254,8 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 		log.Printf("⚠️ Warning: Failed to update payment with journal reference: %v", err)
 	}
 
+	guard := NewCashBankCurrencyGuard(s.db)
+
 	// Update CashBank balance (must sync with Account balance updated by journal)
 	oldCashBankBalance := cashBank.Balance
 	cashBank.Balance -= paymentAmount
@@ -278,6 +280,11 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 		return nil, fmt.Errorf("failed to create cash/bank transaction: %v", err)
 	}
 	log.Printf("✅ CashBankTransaction recorded: Amount=%.2f, BalanceAfter=%.2f", -paymentAmount, cashBank.Balance)
+
+	if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after tax payment: %v", err)
+	}
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
