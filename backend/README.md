@@ -137,6 +137,21 @@ Setelah backend running, akses dokumentasi lengkap di:
 - **API Endpoints**: 400+ endpoint tersedia
 - **Authentication**: JWT-based dengan role permission
 
+### Regenerate OpenAPI Spec
+
+Spec OpenAPI yang diserve runtime berada di `backend/openapi/openapi.json`.
+Untuk regenerate dari route aktif dan anotasi controller:
+
+```bash
+node backend/scripts/generate_openapi_from_routes.js
+node backend/scripts/verify_openapi_routes.js
+```
+
+Pipeline ini:
+- membangun spec dari route Gin yang aktif
+- mengambil metadata dari anotasi Swagger controller bila tersedia
+- mendeteksi drift jika route aktif belum masuk spec atau spec memuat route stale
+
 ## 🛡️ Features
 
 - ✅ **Balance Protection System** - **NEW!** Auto-prevent balance mismatch issues
