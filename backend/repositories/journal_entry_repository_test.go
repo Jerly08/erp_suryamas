@@ -59,11 +59,19 @@ func setupJournalTestDB() *gorm.DB {
 	return db
 }
 
-func TestJournalEntryRepo_Create(t *testing.T) {
+func requireJournalTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
 	db := setupJournalTestDB()
 	if db == nil {
-		t.Skip("Test database not available, skipping test")
+		t.Skip("test database not available, skipping test")
 	}
+
+	return db
+}
+
+func TestJournalEntryRepo_Create(t *testing.T) {
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()
@@ -134,7 +142,7 @@ func TestJournalEntryRepo_Create(t *testing.T) {
 }
 
 func TestJournalEntryRepo_Update(t *testing.T) {
-	db := setupJournalTestDB()
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()
@@ -186,7 +194,7 @@ func TestJournalEntryRepo_Update(t *testing.T) {
 }
 
 func TestJournalEntryRepo_PostJournalEntry(t *testing.T) {
-	db := setupJournalTestDB()
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()
@@ -229,7 +237,7 @@ func TestJournalEntryRepo_PostJournalEntry(t *testing.T) {
 }
 
 func TestJournalEntryRepo_ReverseJournalEntry(t *testing.T) {
-	db := setupJournalTestDB()
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()
@@ -297,7 +305,7 @@ func TestJournalEntryRepo_ReverseJournalEntry(t *testing.T) {
 }
 
 func TestJournalEntryRepo_GetSummary(t *testing.T) {
-	db := setupJournalTestDB()
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()
@@ -357,7 +365,7 @@ func TestJournalEntryRepo_GetSummary(t *testing.T) {
 }
 
 func TestJournalEntryRepo_FindByReferenceID(t *testing.T) {
-	db := setupJournalTestDB()
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()
@@ -392,7 +400,7 @@ func TestJournalEntryRepo_FindByReferenceID(t *testing.T) {
 }
 
 func TestJournalEntryRepo_Delete(t *testing.T) {
-	db := setupJournalTestDB()
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()
@@ -420,7 +428,7 @@ func TestJournalEntryRepo_Delete(t *testing.T) {
 }
 
 func TestJournalEntryRepo_FindAll(t *testing.T) {
-	db := setupJournalTestDB()
+	db := requireJournalTestDB(t)
 	repo := repositories.NewJournalEntryRepository(db)
 
 	ctx := context.Background()

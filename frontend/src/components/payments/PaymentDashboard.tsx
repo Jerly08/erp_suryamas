@@ -56,7 +56,7 @@ import {
   FiRefreshCw,
   FiCalendar,
   FiActivity,
-  FiBarChart3,
+  FiBarChart,
   FiPlus,
   FiFileText,
   FiEye,
@@ -64,36 +64,10 @@ import {
   FiArrowDown,
   FiArrowRight
 } from 'react-icons/fi';
-import { Line, Bar, Doughnut } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  ArcElement,
-} from 'chart.js';
-import { paymentService } from '@/services/paymentService';
-import type { PaymentAnalytics, Payment, PaymentIntegrationMetrics, PaymentWithJournalInfo } from '@/services/paymentService';
+import paymentService from '@/services/paymentService';
+import type { PaymentAnalytics, Payment, PaymentIntegrationMetrics } from '@/services/paymentService';
 import PaymentWithJournalForm from './PaymentWithJournalForm';
 import PaymentDetailsView from './PaymentDetailsView';
-
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  ArcElement
-);
 
 interface StatCardProps {
   title: string;
@@ -167,55 +141,6 @@ interface PaymentTrendChartProps {
 }
 
 const PaymentTrendChart: React.FC<PaymentTrendChartProps> = ({ data, isLoading }) => {
-  const chartData = {
-    labels: data.map(item => new Date(item.date).toLocaleDateString('id-ID')),
-    datasets: [
-      {
-        label: 'Received',
-        data: data.map(item => item.received),
-        borderColor: 'rgb(34, 197, 94)',
-        backgroundColor: 'rgba(34, 197, 94, 0.1)',
-        tension: 0.4,
-      },
-      {
-        label: 'Paid',
-        data: data.map(item => item.paid),
-        borderColor: 'rgb(239, 68, 68)',
-        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-        tension: 0.4,
-      },
-    ],
-  };
-
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: true,
-        text: 'Payment Trend (Last 30 Days)',
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        ticks: {
-          callback: function(value: any) {
-            return new Intl.NumberFormat('id-ID', {
-              style: 'currency',
-              currency: 'IDR',
-              notation: 'compact',
-              maximumFractionDigits: 0,
-            }).format(value);
-          },
-        },
-      },
-    },
-  };
-
   return (
     <Card>
       <CardHeader>
@@ -229,10 +154,27 @@ const PaymentTrendChart: React.FC<PaymentTrendChartProps> = ({ data, isLoading }
           <Flex justify="center" align="center" height="300px">
             <Spinner size="lg" />
           </Flex>
+        ) : data.length > 0 ? (
+          <VStack align="stretch" spacing={3}>
+            {data.slice(-7).map((item) => (
+              <Box key={item.date} p={3} borderWidth="1px" borderRadius="md">
+                <Flex justify="space-between" mb={2}>
+                  <Text fontWeight="medium">{new Date(item.date).toLocaleDateString('id-ID')}</Text>
+                  <Badge colorScheme={item.received >= item.paid ? 'green' : 'red'}>
+                    {item.received >= item.paid ? 'Positive' : 'Negative'}
+                  </Badge>
+                </Flex>
+                <HStack justify="space-between">
+                  <Text color="green.500">In: {paymentService.formatCurrency(item.received)}</Text>
+                  <Text color="red.500">Out: {paymentService.formatCurrency(item.paid)}</Text>
+                </HStack>
+              </Box>
+            ))}
+          </VStack>
         ) : (
-          <Box height="300px">
-            <Line data={chartData} options={options} />
-          </Box>
+          <Flex justify="center" align="center" height="300px">
+            <Text color="gray.500">No trend data available</Text>
+          </Flex>
         )}
       </CardBody>
     </Card>
@@ -247,55 +189,13 @@ interface PaymentMethodChartProps {
 const PaymentMethodChart: React.FC<PaymentMethodChartProps> = ({ data, isLoading }) => {
   const methods = Object.keys(data);
   const values = Object.values(data);
-
-  const chartData = {
-    labels: methods.map(method => paymentService.getMethodDisplayName(method)),
-    datasets: [
-      {
-        label: 'Amount',
-        data: values,
-        backgroundColor: [
-          'rgba(59, 130, 246, 0.8)', // blue
-          'rgba(34, 197, 94, 0.8)',  // green
-          'rgba(251, 191, 36, 0.8)', // yellow
-          'rgba(239, 68, 68, 0.8)',  // red
-          'rgba(168, 85, 247, 0.8)', // purple
-          'rgba(236, 72, 153, 0.8)', // pink
-        ],
-        borderWidth: 0,
-      },
-    ],
-  };
-
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'right' as const,
-      },
-      title: {
-        display: true,
-        text: 'Payment Methods Distribution',
-      },
-      tooltip: {
-        callbacks: {
-          label: function(context: any) {
-            const value = context.parsed;
-            const total = values.reduce((sum, val) => sum + val, 0);
-            const percentage = ((value / total) * 100).toFixed(1);
-            return `${context.label}: ${paymentService.formatCurrency(value)} (${percentage}%)`;
-          },
-        },
-      },
-    },
-  };
+  const total = values.reduce((sum, value) => sum + value, 0);
 
   return (
     <Card>
       <CardHeader>
         <Heading size="md" display="flex" alignItems="center">
-          <FiBarChart3 style={{ marginRight: '8px' }} />
+          <FiBarChart style={{ marginRight: '8px' }} />
           Payment Methods
         </Heading>
       </CardHeader>
@@ -305,9 +205,26 @@ const PaymentMethodChart: React.FC<PaymentMethodChartProps> = ({ data, isLoading
             <Spinner size="lg" />
           </Flex>
         ) : values.length > 0 ? (
-          <Box height="300px">
-            <Doughnut data={chartData} options={options} />
-          </Box>
+          <VStack align="stretch" spacing={3}>
+            {methods.map((method) => {
+              const value = data[method];
+              const percentage = total > 0 ? (value / total) * 100 : 0;
+
+              return (
+                <Box key={method}>
+                  <Flex justify="space-between" mb={1}>
+                    <Text>{paymentService.getMethodDisplayName(method)}</Text>
+                    <Text fontWeight="medium">
+                      {paymentService.formatCurrency(value)} ({percentage.toFixed(1)}%)
+                    </Text>
+                  </Flex>
+                  <Box bg="gray.100" borderRadius="full" h="8px" overflow="hidden">
+                    <Box bg="blue.400" h="8px" w={`${Math.min(percentage, 100)}%`} />
+                  </Box>
+                </Box>
+              );
+            })}
+          </VStack>
         ) : (
           <Flex justify="center" align="center" height="300px">
             <Text color="gray.500">No data available</Text>

@@ -3,7 +3,7 @@ export interface Asset {
   code: string;
   name: string;
   category: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'SOLD';
+  status: 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'SOLD';
   purchase_date: string;
   purchase_price: number;
   salvage_value: number;
@@ -21,6 +21,7 @@ export interface Asset {
   image_path?: string;          // Path to asset image
   asset_account_id?: number;
   depreciation_account_id?: number;
+  accumulated_depreciation_account_id?: number;
   created_at: string;
   updated_at: string;
   
@@ -31,6 +32,11 @@ export interface Asset {
     name: string;
   };
   depreciation_account?: {
+    id: number;
+    code: string;
+    name: string;
+  };
+  accumulated_depreciation_account?: {
     id: number;
     code: string;
     name: string;

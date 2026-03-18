@@ -81,6 +81,7 @@ const EnhancedProfitLossModal: React.FC<EnhancedProfitLossModalProps> = ({
   const secondaryTextColor = useColorModeValue('gray.600', 'gray.300');
   const positiveColor = useColorModeValue('green.600', 'green.300');
   const negativeColor = useColorModeValue('red.600', 'red.300');
+  const subsectionHoverBg = useColorModeValue('blue.100', 'blue.800');
 
   if (!data) return null;
 
@@ -256,7 +257,7 @@ const EnhancedProfitLossModal: React.FC<EnhancedProfitLossModalProps> = ({
 
     const key = sectionKeys[normalizedName];
     // If no exact match, try uppercase keys directly just in case provided name matches key structure
-    return key ? t(key) : (sectionKeys[sectionName] ? t(sectionKeys[sectionName]) : t(sectionName, sectionName));
+    return key ? t(key) : (sectionKeys[sectionName] ? t(sectionKeys[sectionName]) : sectionName);
   };
 
 // Helper function to translate item names
@@ -334,7 +335,7 @@ const renderSection = (section: any, index: number) => {
               <AccordionItem key={subIndex} border="none">
                 <AccordionButton
                   bg={subsectionBg}
-                  _hover={{ bg: useColorModeValue('blue.100', 'blue.800') }}
+                  _hover={{ bg: subsectionHoverBg }}
                   borderRadius="md"
                   mb={2}
                 >
@@ -504,7 +505,7 @@ return (
           <HStack justify="space-between">
             <VStack align="start" spacing={0}>
               <Text fontSize="xl" fontWeight="bold">
-                {t('reports.profitLoss.enhancedTitle', 'Laporan Laba Rugi Ditingkatkan')}
+                {t('reports.profitLoss.enhancedTitle')}
               </Text>
               <Text fontSize="sm" color={secondaryTextColor}>
                 {data.period}

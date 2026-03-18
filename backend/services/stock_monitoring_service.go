@@ -3,6 +3,7 @@ package services
 import (
 	"app-sistem-akuntansi/models"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -189,7 +190,7 @@ func (s *StockMonitoringService) createMinimumStockNotification(product *models.
 	}
 
 	// Only log if it's a real error (not "record not found")
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		log.Printf("[STOCK-ALERT-ERROR] Error checking existing stock alert for product %d: %v", product.ID, err)
 		return err
 	}
@@ -259,7 +260,7 @@ func (s *StockMonitoringService) createMinimumStockNotification(product *models.
 		}
 
 		// Skip if it's not a "record not found" error
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("[STOCK-NOTIFICATION-ERROR] Error checking existing notification for user %d, product %d: %v",
 				userID, product.ID, err)
 			continue
@@ -303,7 +304,7 @@ func (s *StockMonitoringService) createOutOfStockNotification(product *models.Pr
 	}
 
 	// Only log if it's a real error (not "record not found")
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		log.Printf("[STOCK-ALERT-ERROR] Error checking existing stock alert for product %d: %v", product.ID, err)
 		return err
 	}
@@ -372,7 +373,7 @@ func (s *StockMonitoringService) createOutOfStockNotification(product *models.Pr
 		}
 
 		// Skip if it's not a "record not found" error
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("[STOCK-NOTIFICATION-ERROR] Error checking existing notification for user %d, product %d: %v",
 				userID, product.ID, err)
 			continue
@@ -448,7 +449,7 @@ func (s *StockMonitoringService) createReorderNotification(product *models.Produ
 		}
 
 		// Skip if it's not a "record not found" error
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("[REORDER-NOTIFICATION-ERROR] Error checking existing notification for user %d, product %d: %v",
 				userID, product.ID, err)
 			continue

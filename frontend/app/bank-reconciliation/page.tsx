@@ -224,7 +224,7 @@ const BankReconciliationPage: React.FC = () => {
 
   const handleViewReconciliation = async (reconciliation: BankReconciliation) => {
     try {
-      const detail = await bankReconciliationService.getReconciliationByID(reconciliation.id);
+      const detail = await bankReconciliationService.getReconciliationById(reconciliation.id);
       setSelectedReconciliation(detail);
       onDetailModalOpen();
     } catch (error) {

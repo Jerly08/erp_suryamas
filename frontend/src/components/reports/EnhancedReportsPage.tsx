@@ -24,7 +24,6 @@ import {
 import {
   FiFileText,
   FiBarChart,
-  FiBarChart3,
   FiTrendingUp,
   FiDollarSign,
   FiEye
@@ -55,7 +54,7 @@ const EnhancedReportsPage: React.FC = () => {
       id: 'trial-balance',
       title: t('reports.trialBalance.title'),
       description: t('reports.description.trialBalance'),
-      icon: FiBarChart3,
+      icon: FiBarChart,
       color: 'purple',
       onOpen: onTrialBalanceOpen
     },

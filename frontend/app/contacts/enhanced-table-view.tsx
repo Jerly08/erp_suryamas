@@ -28,7 +28,6 @@ import {
   StatLabel,
   StatNumber,
   Icon,
-  useColorMode,
   useColorModeValue,
   Input,
   Select,
@@ -45,7 +44,6 @@ import {
   ModalBody,
   ModalCloseButton,
   useDisclosure,
-  Pagination,
   Menu,
   MenuButton,
   MenuList,
@@ -73,10 +71,8 @@ import {
   FiUsers
 } from 'react-icons/fi';
 
-interface ContactsPageProps {}
-
 export default function EnhancedTableContactsPage() {
-  const { user, token } = useAuth();
+  const { token } = useAuth();
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
   

@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Box, Flex, Text, VStack, keyframes } from '@chakra-ui/react';
-import { useTheme } from '@/contexts/ThemeContext';
+import { Box, Flex, Text, VStack, useColorModeValue } from '@chakra-ui/react';
+import { keyframes } from '@emotion/react';
 
 interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -21,14 +21,18 @@ const pulse = keyframes`
   50% { opacity: 0.5; }
 `;
 
+const shimmer = keyframes`
+  0% { opacity: 0.45; }
+  50% { opacity: 1; }
+  100% { opacity: 0.45; }
+`;
+
 const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   size = 'md',
   message = 'Loading...',
   showMessage = true,
   color,
 }) => {
-  const { theme } = useTheme();
-
   const getSizeProps = () => {
     switch (size) {
       case 'sm':
@@ -45,7 +49,9 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   };
 
   const { boxSize, borderWidth, textSize } = getSizeProps();
-  const spinnerColor = color || (theme === 'dark' ? '#4493f8' : '#2196f3');
+  const defaultSpinnerColor = useColorModeValue('#2196f3', '#4493f8');
+  const messageColor = useColorModeValue('gray.600', '#8d96a0');
+  const spinnerColor = color || defaultSpinnerColor;
 
   return (
     <Flex
@@ -73,7 +79,7 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
         {showMessage && (
           <Text
             fontSize={textSize}
-            color={theme === 'dark' ? '#8d96a0' : 'gray.600'}
+            color={messageColor}
             animation={`${pulse} 2s ease-in-out infinite`}
             fontWeight="medium"
             letterSpacing="wide"
@@ -91,7 +97,7 @@ export const LoadingSkeleton: React.FC<{ height?: string; count?: number }> = ({
   height = '20px', 
   count = 3 
 }) => {
-  const { theme } = useTheme();
+  const skeletonBg = useColorModeValue('gray.200', 'gray.700');
   
   return (
     <VStack spacing={3} align="stretch">
@@ -99,11 +105,10 @@ export const LoadingSkeleton: React.FC<{ height?: string; count?: number }> = ({
         <Box
           key={index}
           height={height}
-          bg={theme === 'dark' ? 'gray.700' : 'gray.200'}
+          bg={skeletonBg}
           borderRadius="md"
-          className="loading-shimmer"
-          animation={`shimmer 2s ease-in-out infinite`}
-          animationDelay={`${index * 0.1}s`}
+          animation={`${shimmer} 2s ease-in-out infinite`}
+          style={{ animationDelay: `${index * 0.1}s` }}
         />
       ))}
     </VStack>

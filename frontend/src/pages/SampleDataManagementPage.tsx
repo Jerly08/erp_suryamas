@@ -123,7 +123,7 @@ const SampleDataManagementPage: React.FC = () => {
 
       <Grid container spacing={3}>
         {/* Status Card */}
-        <Grid item xs={12} md={6}>
+        <Grid size={{ xs: 12, md: 6 }}>
           <Card>
             <CardContent>
               <Box display="flex" alignItems="center" mb={2}>
@@ -189,7 +189,7 @@ const SampleDataManagementPage: React.FC = () => {
         </Grid>
 
         {/* Sample Data Details Card */}
-        <Grid item xs={12} md={6}>
+        <Grid size={{ xs: 12, md: 6 }}>
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -243,7 +243,7 @@ const SampleDataManagementPage: React.FC = () => {
 
         {/* Result Alert */}
         {result && (
-          <Grid item xs={12}>
+          <Grid size={{ xs: 12 }}>
             <Alert 
               severity={result.success ? "success" : "error"}
               sx={{ whiteSpace: 'pre-line' }}
@@ -254,7 +254,7 @@ const SampleDataManagementPage: React.FC = () => {
         )}
 
         {/* Usage Instructions */}
-        <Grid item xs={12}>
+        <Grid size={{ xs: 12 }}>
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>

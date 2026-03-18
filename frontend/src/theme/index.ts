@@ -1,4 +1,4 @@
-import { extendTheme, type ThemeConfig } from '@chakra-ui/react';
+import { extendTheme, type ThemeConfig, type StyleFunctionProps } from '@chakra-ui/react';
 
 const config: ThemeConfig = {
   initialColorMode: 'light',
@@ -27,7 +27,7 @@ const theme = extendTheme({
     body: 'Inter, system-ui, sans-serif',
   },
   styles: {
-    global: (props) => ({
+    global: (props: StyleFunctionProps) => ({
       body: {
         bg: props.colorMode === 'dark' ? 'var(--bg-primary)' : 'var(--bg-secondary)',
         color: props.colorMode === 'dark' ? 'var(--text-primary)' : 'var(--text-primary)',
@@ -57,7 +57,7 @@ const theme = extendTheme({
       },
     },
     Card: {
-      baseStyle: (props) => ({
+      baseStyle: (props: StyleFunctionProps) => ({
         container: {
           borderRadius: 'lg',
           overflow: 'hidden',
@@ -71,7 +71,7 @@ const theme = extendTheme({
     },
     Table: {
       variants: {
-        simple: (props) => ({
+        simple: (props: StyleFunctionProps) => ({
           th: {
             fontWeight: '500',
             fontSize: 'sm',
@@ -108,7 +108,7 @@ const theme = extendTheme({
     },
     Alert: {
       variants: {
-        subtle: (props) => {
+        subtle: (props: StyleFunctionProps) => {
           const isLightMode = props.colorMode === 'light';
           const isSuccess = props.status === 'success' || props.colorScheme === 'green';
 

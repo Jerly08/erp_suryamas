@@ -39,24 +39,20 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import { useAuth } from '@/contexts/AuthContext';
-import cashbankService, { CashBank, DepositRequest, getBookBalanceInIDR, ReferenceExchangeRate } from '@/services/cashbankService';
+import cashbankService, {
+  CashBank,
+  CashBankCounterpartyAccount,
+  DepositRequest,
+  getBookBalanceInIDR,
+  ReferenceExchangeRate,
+} from '@/services/cashbankService';
 import { ErrorHandler } from '@/utils/errorHandler';
 import { roundUsdIdrRate } from '@/utils/exchangeRate';
 
-interface Account {
-  id: number;
-  code: string;
-  name: string;
-  type: string;
-  category: string;
-  is_active: boolean;
-  balance: number;
-}
-
 interface DepositSourceAccounts {
-  revenue: Account[];
-  equity: Account[];
-  liability: Account[];
+  revenue: CashBankCounterpartyAccount[];
+  equity: CashBankCounterpartyAccount[];
+  liability: CashBankCounterpartyAccount[];
 }
 
 type DepositSourceType = 'OWNER_EQUITY' | 'LOAN_LIABILITY' | 'NON_OPERATING_INCOME';
@@ -376,7 +372,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
     setError(errorMessage);
   };
 
-  const getSelectedSourceAccounts = (): Account[] => {
+  const getSelectedSourceAccounts = (): CashBankCounterpartyAccount[] => {
     switch (formData.source_type) {
       case 'LOAN_LIABILITY':
         return sourceAccounts.liability;

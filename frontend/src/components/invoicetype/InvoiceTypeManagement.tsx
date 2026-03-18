@@ -244,7 +244,6 @@ const InvoiceTypeManagement: React.FC = () => {
         const createData: InvoiceTypeCreateRequest = {
           name: data.name,
           code: data.code,
-          is_active: data.is_active
         };
         await invoiceTypeService.createInvoiceType(createData);
         toast({
@@ -263,7 +262,7 @@ const InvoiceTypeManagement: React.FC = () => {
       
       if (error.response?.status === 422 && error.response?.data?.errors) {
         // Handle validation errors
-        const parsedError = ErrorHandler.parseValidationErrors(error.response.data);
+        const parsedError = ErrorHandler.parseValidationError(error);
         setValidationError(parsedError);
       } else {
         toast({

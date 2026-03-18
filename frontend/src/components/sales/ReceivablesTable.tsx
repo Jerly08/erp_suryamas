@@ -52,6 +52,14 @@ interface ReceivablesTableProps {
   showExportButton?: boolean;
 }
 
+interface AgingSummary {
+  current: number;
+  days1to30: number;
+  days31to60: number;
+  days61to90: number;
+  days90plus: number;
+}
+
 const ReceivablesTable: React.FC<ReceivablesTableProps> = ({
   customerId,
   showExportButton = true
@@ -141,8 +149,16 @@ const ReceivablesTable: React.FC<ReceivablesTableProps> = ({
     return matchesSearch && matchesStatus && matchesOverdue;
   }) || [];
 
-  const calculateAgingSummary = () => {
-    if (!receivablesData?.receivables) return {};
+  const calculateAgingSummary = (): AgingSummary => {
+    if (!receivablesData?.receivables) {
+      return {
+        current: 0,
+        days1to30: 0,
+        days31to60: 0,
+        days61to90: 0,
+        days90plus: 0,
+      };
+    }
     
     const aging = {
       current: 0,

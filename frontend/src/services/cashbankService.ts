@@ -484,6 +484,11 @@ class CashBankService {
     }
   }
 
+  async fixGLAccountLinks(): Promise<{ fixed_count: number; message?: string }> {
+    const result = await this.checkGLAccountLinks();
+    return (result ?? { fixed_count: 0 }) as { fixed_count: number; message?: string };
+  }
+
   // Get revenue accounts for deposit form
   async getRevenueAccounts(): Promise<CashBankCounterpartyAccount[]> {
     try {

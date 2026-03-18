@@ -11,6 +11,7 @@ export interface Contact {
   id: number;
   code?: string;
   name: string;
+  company_name?: string;
   type: 'CUSTOMER' | 'VENDOR' | 'EMPLOYEE';
   category?: string;
   email?: string;
@@ -25,6 +26,7 @@ export interface Contact {
   pic_name?: string;        // Person In Charge (for Customer/Vendor)
   external_id?: string;     // Employee ID, Vendor ID, Customer ID
   address?: string;         // Simple address field
+  description?: string;
   default_expense_account_id?: number;
   notes?: string;
   created_at: string;

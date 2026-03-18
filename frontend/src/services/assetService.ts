@@ -1,17 +1,18 @@
 import api from './api';
 import { API_ENDPOINTS } from '../config/api';
+import type { Asset as AssetModel } from '@/types/asset';
 
-export interface Asset {
+export interface Asset extends AssetModel {
   id: number;
   code: string;
   name: string;
   category: string;
-  status: string;
+  status: 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'SOLD';
   purchase_date: string;
   purchase_price: number;
   salvage_value: number;
   useful_life: number;
-  depreciation_method: string;
+  depreciation_method: 'STRAIGHT_LINE' | 'DECLINING_BALANCE';
   accumulated_depreciation: number;
   opening_accumulated_depreciation?: number;
   is_active: boolean;

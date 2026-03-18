@@ -139,6 +139,9 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
     const sidebarBg = useColorModeValue('white', 'var(--bg-primary)');
     const sidebarBorder = useColorModeValue('gray.200', 'var(--border-color)');
     const sidebarShadow = useColorModeValue('sm', 'var(--shadow)');
+    const closeButtonColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+    const closeButtonHoverBg = useColorModeValue('gray.100', 'var(--bg-tertiary)');
+    const groupLabelColor = useColorModeValue('gray.500', 'var(--text-secondary)');
 
     return (
       <Box
@@ -167,8 +170,8 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
           <CloseButton
             display={{ base: 'flex', md: 'none' }}
             onClick={onClose}
-            color={useColorModeValue('gray.600', 'var(--text-secondary)')}
-            _hover={{ bg: useColorModeValue('gray.100', 'var(--bg-tertiary)') }}
+            color={closeButtonColor}
+            _hover={{ bg: closeButtonHoverBg }}
             aria-label={t('navigation.navbar.closeMenu')}
           />
         </Flex>
@@ -178,7 +181,7 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
             <Text
               fontSize="xs"
               fontWeight="semibold"
-              color={useColorModeValue('gray.500', 'var(--text-secondary)')}
+              color={groupLabelColor}
               textTransform="uppercase"
               mx="4"
               mb="3"

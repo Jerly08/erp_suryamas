@@ -96,7 +96,7 @@ class ContactService {
       headers: this.getHeaders(token),
     });
     
-    const result = await this.handleResponse(response);
+    const result = await this.handleResponse<Contact[] | ApiResponse<Contact[]>>(response);
     return Array.isArray(result) ? result : result.data || [];
   }
 
@@ -127,7 +127,7 @@ class ContactService {
     
     console.log('ContactService: Response status:', response.status, response.statusText);
     
-    const result = await this.handleResponse(response);
+    const result = await this.handleResponse<Contact | ApiResponse<Contact>>(response);
     console.log('ContactService: Parsed result:', result);
     
     // Handle different response structures
@@ -161,8 +161,8 @@ class ContactService {
       body: JSON.stringify(contactData),
     });
     
-    const result = await this.handleResponse(response);
-    return result.data || result;
+    const result = await this.handleResponse<Contact | ApiResponse<Contact>>(response);
+    return 'data' in result ? result.data : result;
   }
 
   // Delete contact
@@ -190,7 +190,7 @@ class ContactService {
       headers: this.getHeaders(token),
     });
     
-    const result = await this.handleResponse(response);
+    const result = await this.handleResponse<Contact[] | ApiResponse<Contact[]>>(response);
     return Array.isArray(result) ? result : result.data || [];
   }
 
@@ -212,7 +212,7 @@ class ContactService {
       headers: this.getHeaders(token),
     });
     
-    const result = await this.handleResponse(response);
+    const result = await this.handleResponse<Contact[] | ApiResponse<Contact[]>>(response);
     return Array.isArray(result) ? result : result.data || [];
   }
 

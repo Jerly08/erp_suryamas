@@ -157,7 +157,7 @@ const AccountsTable: React.FC<AccountsTableProps> = ({ accounts, onEdit, onDelet
               </Td>
               <Td px={6} py={4} borderColor={borderColor}>
                 <Flex align="center">
-                  <Box w={`${(account.hierarchyLevel || 0) * 20}px`} />
+                  <Box w={`${(account.level || 0) * 20}px`} />
                   <Text 
                     fontWeight={account.is_header ? '600' : '400'}
                     color={account.is_header ? primaryTextColor : textColor}

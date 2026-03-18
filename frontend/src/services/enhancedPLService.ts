@@ -217,7 +217,7 @@ class EnhancedPLService {
         });
       }
       
-      const account = entry.account || accountMap.get(entry.account?.id);
+      const account = entry.account;
       if (!account) {
         if (index < 5) console.log(`⚠️ No account found for entry ${entry.id}`);
         return;

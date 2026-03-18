@@ -396,15 +396,9 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	}
 
 	if ppnValue > 0 {
-		// Try standard template code first (2102-001 PPN Keluaran)
-		ppnAccount, err := resolveByCode("2102-001")
+		ppnAccount, err := s.taxAccountHelper.GetSalesOutputVATAccount(dbToUse)
 		if err != nil {
-			// Fallback to legacy code (2103 PPN Keluaran)
-			ppnAccount, err = resolveByCode("2103")
-		}
-
-		if err != nil {
-			log.Printf("⚠️ PPN account not found, skipping PPN entry: %v", err)
+			log.Printf("⚠️ PPN Keluaran account from tax settings not found, skipping PPN entry: %v", err)
 		} else {
 			lines = append(lines, SalesJournalLineRequest{
 				AccountID:    uint64(ppnAccount.ID),

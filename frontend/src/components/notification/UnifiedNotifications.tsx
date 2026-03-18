@@ -88,7 +88,7 @@ const STOCK_NOTIFICATION_TYPES = [
 
 const UnifiedNotifications: React.FC = () => {
   const { t, language } = useTranslation();
-  const { user, logout } = useAuth();
+  const { user, token, isLoading, logout } = useAuth();
   const router = useRouter();
   const [approvalNotifications, setApprovalNotifications] = useState<NotificationItem[]>([]);
   const [stockNotifications, setStockNotifications] = useState<NotificationItem[]>([]);
@@ -107,6 +107,8 @@ const UnifiedNotifications: React.FC = () => {
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isEmployeeRole = normalizedRole === 'employee';
   const isFinanceRole = normalizedRole === 'finance';
+  const isAuthReady = !isLoading;
+  const hasActiveSession = isAuthReady && !!user && !!token;
 
   const menuBg = useColorModeValue('white', 'var(--bg-secondary)');
   const menuBorderColor = useColorModeValue('gray.200', 'var(--border-color)');
@@ -141,6 +143,15 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   const fetchAllNotifications = async () => {
+    if (!hasActiveSession) {
+      setApprovalNotifications([]);
+      setStockNotifications([]);
+      setStockAlerts([]);
+      setApprovalUnreadCount(0);
+      setStockUnreadCount(0);
+      return;
+    }
+
     await Promise.all([
       fetchNotificationSummary(),
       fetchApprovalNotifications(),
@@ -150,6 +161,10 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!hasActiveSession) {
+      return;
+    }
+
     void fetchAllNotifications();
     const interval = setInterval(() => {
       void fetchAllNotifications();
@@ -157,11 +172,12 @@ const UnifiedNotifications: React.FC = () => {
     return () => clearInterval(interval);
     // Notification refresh intentionally follows user/role changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, canViewStockNotifications]);
+  }, [hasActiveSession, user, canViewStockNotifications]);
 
   const fetchNotificationSummary = async () => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_SUMMARY}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -182,8 +198,9 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   const fetchNotificationSummaryFallback = async () => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       const requests = [
         axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_UNREAD_COUNT}`, {
           params: { types: APPROVAL_NOTIFICATION_TYPES.join(',') },
@@ -213,8 +230,9 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   const fetchApprovalNotifications = async () => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       const listResponse = await axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_APPROVALS}`, {
         params: { limit: 10 },
         headers: { Authorization: `Bearer ${token}` }
@@ -230,8 +248,9 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   const fetchStockNotifications = async () => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       const [lowStockResponse, reorderResponse, stockOutResponse] = await Promise.all([
         axios.get(`${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_BY_TYPE('LOW_STOCK')}`, {
           params: { limit: 5 },
@@ -264,8 +283,9 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   const fetchStockAlerts = async () => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.get(`${API_BASE_URL}${API_ENDPOINTS.DASHBOARD_STOCK_ALERTS}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -310,8 +330,9 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   const handleMarkStockAsRead = async (notificationId: number) => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       await axios.put(
         `${API_BASE_URL}${API_ENDPOINTS.NOTIFICATIONS_MARK_READ(notificationId)}`,
         {},
@@ -332,8 +353,9 @@ const UnifiedNotifications: React.FC = () => {
   };
 
   const dismissStockAlert = async (alertId: number) => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       await axios.post(
         `${API_BASE_URL}${API_ENDPOINTS.DASHBOARD_STOCK_ALERTS_DISMISS(alertId)}`,
         {},

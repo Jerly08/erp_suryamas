@@ -197,7 +197,7 @@ func (adapter *PurchaseSSOTJournalAdapter) resolveCashBankAccountID(bankAccountI
 		}
 	}
 	// Fallback to default Cash account 1101
-	acc, err := adapter.accountRepo.FindByCode(nil, "1101")
+	acc, err := adapter.accountRepo.FindByCode(context.TODO(), "1101")
 	if err != nil {
 		return 0, fmt.Errorf("default Kas account (1101) not found: %v", err)
 	}
@@ -334,7 +334,7 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 
 	// Fallback by standard codes when settings not available
 	if ids.InventoryAccountID == 0 {
-		inv, err := adapter.accountRepo.FindByCode(nil, "1103-001")
+		inv, err := adapter.accountRepo.FindByCode(context.TODO(), "1103-001")
 		if err != nil {
 			return nil, fmt.Errorf("inventory account 1103-001 not found: %v", err)
 		}
@@ -342,14 +342,17 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 		ids.PrimaryAccountID = uint64(inv.ID)
 	}
 	if ids.PPNInputAccountID == 0 {
-		ppn, err := adapter.accountRepo.FindByCode(nil, "2102-002")
+		ppn, err := adapter.accountRepo.FindByCode(context.TODO(), "1240")
 		if err != nil {
-			return nil, fmt.Errorf("PPN input account 2102-002 not found: %v", err)
+			ppn, err = adapter.accountRepo.FindByCode(context.TODO(), "2102-002")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("PPN input account from settings fallback (1240/2102-002) not found: %v", err)
 		}
 		ids.PPNInputAccountID = uint64(ppn.ID)
 	}
 	if ids.AccountsPayableID == 0 {
-		ap, err := adapter.accountRepo.FindByCode(nil, "2101")
+		ap, err := adapter.accountRepo.FindByCode(context.TODO(), "2101")
 		if err != nil {
 			return nil, fmt.Errorf("accounts payable account 2101 not found: %v", err)
 		}
@@ -357,12 +360,12 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 	}
 	// Optional withholdings fallback
 	if ids.PPh21PayableID == 0 {
-		if p21, err := adapter.accountRepo.FindByCode(nil, "2102-003"); err == nil {
+		if p21, err := adapter.accountRepo.FindByCode(context.TODO(), "2102-003"); err == nil {
 			ids.PPh21PayableID = uint64(p21.ID)
 		}
 	}
 	if ids.PPh23PayableID == 0 {
-		if p23, err := adapter.accountRepo.FindByCode(nil, "2102-004"); err == nil {
+		if p23, err := adapter.accountRepo.FindByCode(context.TODO(), "2102-004"); err == nil {
 			ids.PPh23PayableID = uint64(p23.ID)
 		}
 	}
@@ -373,7 +376,7 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 type SSOTPurchaseAccountIDs struct {
 	PrimaryAccountID   uint64
 	InventoryAccountID uint64 // 1103-001 (from settings or COA template)
-	PPNInputAccountID  uint64 // 2102-002 PPN MASUKAN (from settings or COA template)
+	PPNInputAccountID  uint64 // PPN MASUKAN (from settings or COA template)
 	AccountsPayableID  uint64 // 2101-001 (from settings or COA template)
 	PPh21PayableID     uint64 // 2102-003 PPH PASAL 21 (optional, from settings)
 	PPh23PayableID     uint64 // 2102-004 PPH PASAL 23 (optional, from settings)

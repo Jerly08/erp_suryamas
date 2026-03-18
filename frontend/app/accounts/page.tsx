@@ -811,7 +811,7 @@ const AccountsPage = () => {
             onClose={() => setIsAdminDeleteOpen(false)}
             account={accountToDelete}
             parentAccounts={flatAccounts.filter(a => a.is_header)}
-            children={accountToDelete ? getAccountChildren(accountToDelete.id) : []}
+            childAccounts={accountToDelete ? getAccountChildren(accountToDelete.id) : []}
             onConfirm={performAdminDelete}
             isSubmitting={isSubmitting}
           />

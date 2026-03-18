@@ -51,6 +51,8 @@ const SalesChart: React.FC<SalesChartProps> = ({ analytics }) => {
   const secondaryColor = useColorModeValue('#38a169', '#68d391');
   const gridColor = useColorModeValue('#e2e8f0', '#4a5568');
   const textColor = useColorModeValue('#2d3748', '#e2e8f0');
+  const tooltipBg = useColorModeValue('white', 'gray.700');
+  const trendItemBg = useColorModeValue('gray.50', 'gray.700');
 
   const pieColors = ['#3182ce', '#38a169', '#ed8936', '#e53e3e', '#805ad5', '#d69e2e'];
 
@@ -125,7 +127,7 @@ const SalesChart: React.FC<SalesChartProps> = ({ analytics }) => {
               <YAxis tick={{ fill: textColor, fontSize: 12 }} tickFormatter={yAxisTickFormatter} />
               <Tooltip 
                 contentStyle={{ 
-                  backgroundColor: useColorModeValue('white', 'gray.700'),
+                  backgroundColor: tooltipBg,
                   border: `1px solid ${gridColor}`,
                   borderRadius: '8px'
                 }}
@@ -154,7 +156,7 @@ const SalesChart: React.FC<SalesChartProps> = ({ analytics }) => {
               <YAxis tick={{ fill: textColor, fontSize: 12 }} tickFormatter={yAxisTickFormatter} />
               <Tooltip 
                 contentStyle={{ 
-                  backgroundColor: useColorModeValue('white', 'gray.700'),
+                  backgroundColor: tooltipBg,
                   border: `1px solid ${gridColor}`,
                   borderRadius: '8px'
                 }}
@@ -184,7 +186,7 @@ const SalesChart: React.FC<SalesChartProps> = ({ analytics }) => {
               <YAxis tick={{ fill: textColor, fontSize: 12 }} tickFormatter={yAxisTickFormatter} />
               <Tooltip 
                 contentStyle={{ 
-                  backgroundColor: useColorModeValue('white', 'gray.700'),
+                  backgroundColor: tooltipBg,
                   border: `1px solid ${gridColor}`,
                   borderRadius: '8px'
                 }}
@@ -354,7 +356,7 @@ const SalesChart: React.FC<SalesChartProps> = ({ analytics }) => {
               {analytics.data.slice(-5).map((item, index) => {
                 const isPositive = item.growth_rate >= 0;
                 return (
-                  <Box key={item.period} p={4} borderRadius="md" bg={useColorModeValue('gray.50', 'gray.700')}>
+                  <Box key={item.period} p={4} borderRadius="md" bg={trendItemBg}>
                     <Flex justify="space-between" align="center">
                       <VStack align="start" spacing={1}>
                         <Text fontWeight="medium">{item.period}</Text>

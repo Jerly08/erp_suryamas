@@ -106,7 +106,7 @@ const JournalEntryPreview: React.FC<JournalEntryPreviewProps> = ({
         </Flex>
       </CardHeader>
 
-      <Collapse in={!onToggleExpand || isExpanded}>
+      {!onToggleExpand || isExpanded ? (
         <CardBody>
           <VStack spacing={4} align="stretch">
             {/* Success/Error Message */}
@@ -248,7 +248,7 @@ const JournalEntryPreview: React.FC<JournalEntryPreviewProps> = ({
             )}
           </VStack>
         </CardBody>
-      </Collapse>
+      ) : null}
     </Card>
   );
 };

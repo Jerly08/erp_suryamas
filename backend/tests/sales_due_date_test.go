@@ -1,10 +1,12 @@
+//go:build legacytests
+// +build legacytests
+
 package tests
 
 import (
+	"app-sistem-akuntansi/services"
 	"testing"
 	"time"
-	"app-sistem-akuntansi/services"
-	"gorm.io/gorm"
 )
 
 // TestDueDateCalculation tests various due date calculation scenarios

@@ -420,11 +420,6 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     }
   }, [isOpen, user, userRole, toast, onClose]);
 
-  // Don't render the form if user role is not determined
-  if (!userRole && user) {
-    return null;
-  }
-
   const { t } = useTranslation();
 
   const {
@@ -463,6 +458,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const requiresFxRate = type === 'payable'
     ? selectedCashBankCurrency === 'USD'
     : selectedCashBankCurrency === 'USD' || hasUsdReceivableSelection;
+  const shouldHideForm = !userRole && !!user;
 
   // Load initial data and force refresh on modal open
   useEffect(() => {
@@ -940,6 +936,10 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     // Redirect to login
     window.location.href = '/login';
   };
+
+  if (shouldHideForm) {
+    return null;
+  }
 
   return (
     <>

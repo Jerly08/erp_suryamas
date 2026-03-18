@@ -24,8 +24,8 @@ import {
   NumberInput,
   NumberInputField,
   NumberInputStepper,
-  NumberInputIncrementStepper,
-  NumberInputDecrementStepper,
+  NumberIncrementStepper,
+  NumberDecrementStepper,
   Icon,
   Badge,
   Flex,
@@ -33,12 +33,12 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { FiSave, FiEye, FiRefreshCw } from 'react-icons/fi';
-import { paymentService } from '@/services/paymentService';
+import paymentService from '@/services/paymentService';
 import JournalEntryPreview from './JournalEntryPreview';
 import type {
+  PaymentWithJournalRequest,
   CreatePaymentWithJournalRequest,
   PaymentJournalResult,
-  JournalPreviewRequest
 } from '@/services/paymentService';
 
 interface PaymentWithJournalFormProps {
@@ -203,14 +203,14 @@ const PaymentWithJournalForm: React.FC<PaymentWithJournalFormProps> = ({
       
       toast({
         title: 'Payment Created',
-        description: `Payment ${result.payment.payment_code} created successfully with journal entry`,
+        description: `Payment ${result.payment.code} created successfully with journal entry`,
         status: 'success',
         duration: 5000,
         isClosable: true
       });
 
       if (onSubmit) {
-        onSubmit(result.payment.id);
+        onSubmit(result.payment.id.toString());
       }
     } catch (error: any) {
       toast({
@@ -277,8 +277,8 @@ const PaymentWithJournalForm: React.FC<PaymentWithJournalFormProps> = ({
                     >
                       <NumberInputField />
                       <NumberInputStepper>
-                        <NumberInputIncrementStepper />
-                        <NumberInputDecrementStepper />
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
                       </NumberInputStepper>
                     </NumberInput>
                   </FormControl>

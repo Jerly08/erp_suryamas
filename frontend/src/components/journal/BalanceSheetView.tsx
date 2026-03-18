@@ -33,7 +33,7 @@ import {
     SSOTBalanceSheetData,
     ssotBalanceSheetReportService,
 } from '@/services/ssotBalanceSheetReportService';
-import { PeriodFilterOption, periodClosingService } from '@/services/periodClosingService';
+import { PeriodFilterOption, formatDateOnly, periodClosingService } from '@/services/periodClosingService';
 import { exportBalanceSheetToCSV, exportBalanceSheetToPDF } from '@/utils/journalExport';
 
 type ReportMode = 'live' | 'archive';
@@ -46,12 +46,6 @@ const getLocalDateInputValue = () => {
     const now = new Date();
     const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
     return localTime.toISOString().split('T')[0];
-};
-
-const parseDateOnly = (value?: string) => {
-    if (!value) return null;
-    const [year, month, day] = value.split('-').map(Number);
-    return new Date(year, (month || 1) - 1, day || 1);
 };
 
 export default function BalanceSheetView() {
@@ -123,9 +117,7 @@ export default function BalanceSheetView() {
     };
 
     const formatLongDate = (value?: string) => {
-        const parsed = parseDateOnly(value);
-        if (!parsed) return '-';
-        return parsed.toLocaleDateString('id-ID', { dateStyle: 'long' });
+        return formatDateOnly(value, 'id-ID', { dateStyle: 'long' });
     };
 
     const loadClosedPeriods = useCallback(async () => {

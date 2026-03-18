@@ -23,9 +23,9 @@ export interface JournalEntryLine {
   line_number: number;
 }
 
-export interface JournalEntryWithDetails extends SSOTJournalEntry {
+export type JournalEntryWithDetails = Omit<SSOTJournalEntry, 'lines'> & {
   lines?: JournalEntryLine[];
-}
+};
 
 class PurchaseJournalService {
   private getAuthHeaders() {

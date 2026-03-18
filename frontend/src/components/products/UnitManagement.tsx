@@ -31,8 +31,8 @@ import {
   Text,
 } from '@chakra-ui/react';
 import { FiEdit, FiTrash2, FiPlus, FiSearch } from 'react-icons/fi';
-import ProductService from '@/services/productService';
-import UnitForm, { ProductUnit } from './UnitForm';
+import ProductService, { ProductUnit } from '@/services/productService';
+import UnitForm from './UnitForm';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const UnitManagement: React.FC = () => {

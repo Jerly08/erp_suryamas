@@ -266,9 +266,9 @@ const AccountForm: React.FC<AccountFormProps> = ({
 
       // If is_header is checked, reset opening balance to 0
       if (name === 'is_header' && checked) {
-        setFormData((prev) => ({ ...prev, [name]: checked, opening_balance: 0 }));
+        setFormData((prev: typeof formData) => ({ ...prev, [name]: checked, opening_balance: 0 }));
       } else {
-        setFormData((prev) => ({ ...prev, [name]: checked }));
+        setFormData((prev: typeof formData) => ({ ...prev, [name]: checked }));
       }
     } else {
       // Handle special field mappings
@@ -283,7 +283,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
         // Force account names to uppercase for uniformity
         fieldValue = value.toUpperCase();
       }
-      setFormData((prev) => ({ ...prev, [name]: fieldValue }));
+      setFormData((prev: typeof formData) => ({ ...prev, [name]: fieldValue }));
     }
 
     // Clear error when field is edited

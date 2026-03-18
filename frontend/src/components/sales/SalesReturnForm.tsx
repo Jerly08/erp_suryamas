@@ -154,7 +154,7 @@ const SalesReturnForm: React.FC<SalesReturnFormProps> = ({
     return watchReturnItems.reduce((total, returnItem, index) => {
       if (!returnItem.selected || !returnItem.quantity) return total;
       
-      const saleItem = sale.sale_items[index];
+      const saleItem = sale.sale_items?.[index];
       if (!saleItem) return total;
       
       const itemTotal = saleItem.unit_price * returnItem.quantity;

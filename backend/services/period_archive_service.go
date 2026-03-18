@@ -12,9 +12,9 @@ import (
 
 // PeriodArchiveService handles period archive and snapshot management
 type PeriodArchiveService struct {
-	db                    *gorm.DB
-	balanceSheetService   *SSOTBalanceSheetService
-	profitLossService     *SSOTProfitLossService
+	db                  *gorm.DB
+	balanceSheetService *SSOTBalanceSheetService
+	profitLossService   *SSOTProfitLossService
 }
 
 // NewPeriodArchiveService creates a new period archive service
@@ -50,31 +50,33 @@ type PeriodArchiveListItem struct {
 
 // PeriodArchiveDetail represents full details of archived period with snapshots
 type PeriodArchiveDetail struct {
-	Period           models.AccountingPeriod   `json:"period"`
-	BalanceSheet     *SSOTBalanceSheetData     `json:"balance_sheet,omitempty"`
-	ProfitLoss       *SSOTProfitLossData       `json:"profit_loss,omitempty"`
-	FinancialMetrics map[string]interface{}    `json:"financial_metrics,omitempty"`
-	CanRegenerate    bool                      `json:"can_regenerate"`
+	Period           models.AccountingPeriod `json:"period"`
+	BalanceSheet     *SSOTBalanceSheetData   `json:"balance_sheet,omitempty"`
+	ProfitLoss       *SSOTProfitLossData     `json:"profit_loss,omitempty"`
+	FinancialMetrics map[string]interface{}  `json:"financial_metrics,omitempty"`
+	CanRegenerate    bool                    `json:"can_regenerate"`
 }
 
 // PeriodComparisonResult represents comparison between two periods
 type PeriodComparisonResult struct {
-	FromPeriod       *PeriodArchiveListItem    `json:"from_period"`
-	ToPeriod         *PeriodArchiveListItem    `json:"to_period"`
-	RevenueChange    float64                   `json:"revenue_change"`
-	RevenueChangeP   float64                   `json:"revenue_change_percent"`
-	ExpenseChange    float64                   `json:"expense_change"`
-	ExpenseChangeP   float64                   `json:"expense_change_percent"`
-	NetIncomeChange  float64                   `json:"net_income_change"`
-	NetIncomeChangeP float64                   `json:"net_income_change_percent"`
-	ComparisonDate   time.Time                 `json:"comparison_date"`
+	FromPeriod       *PeriodArchiveListItem `json:"from_period"`
+	ToPeriod         *PeriodArchiveListItem `json:"to_period"`
+	RevenueChange    float64                `json:"revenue_change"`
+	RevenueChangeP   float64                `json:"revenue_change_percent"`
+	ExpenseChange    float64                `json:"expense_change"`
+	ExpenseChangeP   float64                `json:"expense_change_percent"`
+	NetIncomeChange  float64                `json:"net_income_change"`
+	NetIncomeChangeP float64                `json:"net_income_change_percent"`
+	ComparisonDate   time.Time              `json:"comparison_date"`
 }
 
 // CreatePeriodSnapshot generates and saves snapshots for a closed period
 func (s *PeriodArchiveService) CreatePeriodSnapshot(ctx context.Context, periodID uint) error {
+	db := s.db.WithContext(ctx)
+
 	// Get the period
 	var period models.AccountingPeriod
-	if err := s.db.First(&period, periodID).Error; err != nil {
+	if err := db.First(&period, periodID).Error; err != nil {
 		return fmt.Errorf("period not found: %v", err)
 	}
 
@@ -119,12 +121,9 @@ func (s *PeriodArchiveService) CreatePeriodSnapshot(ctx context.Context, periodI
 		"profit_loss_snapshot":   plJSON,
 		"financial_metrics":      metricsJSON,
 		"snapshot_generated_at":  now,
-		"total_revenue":          plData.Revenue.TotalRevenue,
-		"total_expense":          plData.COGS.TotalCOGS + plData.OperatingExpenses.TotalOpEx,
-		"net_income":             plData.NetIncome,
 	}
 
-	if err := s.db.Model(&period).Updates(updates).Error; err != nil {
+	if err := db.Model(&period).Updates(updates).Error; err != nil {
 		return fmt.Errorf("failed to save snapshot: %v", err)
 	}
 
@@ -223,7 +222,7 @@ func (s *PeriodArchiveService) GetPeriodArchiveDetail(ctx context.Context, perio
 func (s *PeriodArchiveService) ComparePeriods(ctx context.Context, fromPeriodID, toPeriodID uint) (*PeriodComparisonResult, error) {
 	// Get both periods
 	var fromPeriod, toPeriod models.AccountingPeriod
-	
+
 	if err := s.db.First(&fromPeriod, fromPeriodID).Error; err != nil {
 		return nil, fmt.Errorf("from period not found: %v", err)
 	}
@@ -256,12 +255,12 @@ func (s *PeriodArchiveService) ComparePeriods(ctx context.Context, fromPeriodID,
 
 	// Calculate changes
 	result := &PeriodComparisonResult{
-		FromPeriod:       fromItem,
-		ToPeriod:         toItem,
-		RevenueChange:    toPeriod.TotalRevenue - fromPeriod.TotalRevenue,
-		ExpenseChange:    toPeriod.TotalExpense - fromPeriod.TotalExpense,
-		NetIncomeChange:  toPeriod.NetIncome - fromPeriod.NetIncome,
-		ComparisonDate:   time.Now(),
+		FromPeriod:      fromItem,
+		ToPeriod:        toItem,
+		RevenueChange:   toPeriod.TotalRevenue - fromPeriod.TotalRevenue,
+		ExpenseChange:   toPeriod.TotalExpense - fromPeriod.TotalExpense,
+		NetIncomeChange: toPeriod.NetIncome - fromPeriod.NetIncome,
+		ComparisonDate:  time.Now(),
 	}
 
 	// Calculate percentage changes
@@ -301,29 +300,29 @@ func (s *PeriodArchiveService) DeletePeriodArchive(ctx context.Context, periodID
 func (s *PeriodArchiveService) calculateFinancialMetrics(pl *SSOTProfitLossData, bs *SSOTBalanceSheetData) map[string]interface{} {
 	metrics := map[string]interface{}{
 		// Profitability Ratios
-		"gross_profit_margin":  pl.GrossProfitMargin,
-		"operating_margin":     pl.OperatingMargin,
-		"net_profit_margin":    pl.NetIncomeMargin,
-		
+		"gross_profit_margin": pl.GrossProfitMargin,
+		"operating_margin":    pl.OperatingMargin,
+		"net_profit_margin":   pl.NetIncomeMargin,
+
 		// Amounts
-		"gross_profit":         pl.GrossProfit,
-		"operating_income":     pl.OperatingIncome,
-		"net_income":           pl.NetIncome,
-		"total_revenue":        pl.Revenue.TotalRevenue,
-		"total_cogs":           pl.COGS.TotalCOGS,
-		"total_opex":           pl.OperatingExpenses.TotalOpEx,
-		
+		"gross_profit":     pl.GrossProfit,
+		"operating_income": pl.OperatingIncome,
+		"net_income":       pl.NetIncome,
+		"total_revenue":    pl.Revenue.TotalRevenue,
+		"total_cogs":       pl.COGS.TotalCOGS,
+		"total_opex":       pl.OperatingExpenses.TotalOpEx,
+
 		// Balance Sheet Ratios
 		"current_ratio":        0.0,
 		"quick_ratio":          0.0,
 		"debt_to_equity_ratio": 0.0,
-		
+
 		// Balance Sheet Amounts
-		"total_assets":         bs.Assets.TotalAssets,
-		"total_liabilities":    bs.Liabilities.TotalLiabilities,
-		"total_equity":         bs.Equity.TotalEquity,
-		"current_assets":       bs.Assets.CurrentAssets.TotalCurrentAssets,
-		"current_liabilities":  bs.Liabilities.CurrentLiabilities.TotalCurrentLiabilities,
+		"total_assets":        bs.Assets.TotalAssets,
+		"total_liabilities":   bs.Liabilities.TotalLiabilities,
+		"total_equity":        bs.Equity.TotalEquity,
+		"current_assets":      bs.Assets.CurrentAssets.TotalCurrentAssets,
+		"current_liabilities": bs.Liabilities.CurrentLiabilities.TotalCurrentLiabilities,
 	}
 
 	// Calculate Current Ratio = Current Assets / Current Liabilities
@@ -361,12 +360,12 @@ func structToJSONMap(v interface{}) (*models.JSONMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var m models.JSONMap
 	if err := json.Unmarshal(bytes, &m); err != nil {
 		return nil, err
 	}
-	
+
 	return &m, nil
 }
 

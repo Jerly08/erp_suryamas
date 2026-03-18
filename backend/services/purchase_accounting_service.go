@@ -455,7 +455,7 @@ func (s *PurchaseService) createPurchaseAccountingEntriesWithLines(purchase *mod
 // Adapted to match database schema that expects account_id in journal_entries table
 func (s *PurchaseService) createPurchaseAccountingEntries(purchase *models.Purchase, userID uint) (*models.JournalEntry, error) {
 	// Get the correct inventory account ID (Persediaan Barang Dagangan - 1301)
-	inventoryAccount, err := s.accountRepo.FindByCode(nil, "1103-001")
+	inventoryAccount, err := s.accountRepo.FindByCode(context.TODO(), "1103-001")
 	inventoryAccountID := uint(4) // Fallback default
 	if err != nil {
 		fmt.Printf("⚠️ Warning: Could not find inventory account 1301, using fallback ID 4: %v\n", err)
@@ -960,7 +960,7 @@ func (s *PurchaseService) getPurchaseAccountIDs() (*PurchaseAccountIDs, error) {
 	purchaseAccountCode := validator.GetPurchaseDebitAccountCode()
 
 	// Get primary purchase account (inventory or expense based on company type)
-	if primaryAccount, err := s.accountRepo.FindByCode(nil, purchaseAccountCode); err == nil {
+	if primaryAccount, err := s.accountRepo.FindByCode(context.TODO(), purchaseAccountCode); err == nil {
 		accountIDs.PrimaryAccountID = primaryAccount.ID
 		if validator.IsInventoryAllowed() {
 			accountIDs.InventoryAccountID = primaryAccount.ID
@@ -968,7 +968,7 @@ func (s *PurchaseService) getPurchaseAccountIDs() (*PurchaseAccountIDs, error) {
 		log.Printf("📊 Purchase primary account: %s (%s) [company type: %s]", primaryAccount.Name, primaryAccount.Code, validator.GetCompanyType())
 	} else {
 		// Fallback: try inventory account anyway (might exist from manual creation)
-		if inventoryAccount, err := s.accountRepo.FindByCode(nil, "1103-001"); err == nil {
+		if inventoryAccount, err := s.accountRepo.FindByCode(context.TODO(), "1103-001"); err == nil {
 			accountIDs.InventoryAccountID = inventoryAccount.ID
 			accountIDs.PrimaryAccountID = inventoryAccount.ID
 			log.Printf("⚠️ Using fallback inventory account 1103-001 (primary %s not found)", purchaseAccountCode)
@@ -977,27 +977,28 @@ func (s *PurchaseService) getPurchaseAccountIDs() (*PurchaseAccountIDs, error) {
 		}
 	}
 
-	// Get PPN Input account (2102-002)
-	if ppnAccount, err := s.accountRepo.FindByCode(nil, "2102-002"); err == nil {
+	// Get PPN Input account from tax settings first
+	taxAccountHelper := NewTaxAccountHelper(s.db)
+	if ppnAccount, err := taxAccountHelper.GetPurchaseInputVATAccount(s.db); err == nil {
 		accountIDs.PPNInputAccountID = ppnAccount.ID
 	} else {
-		return nil, fmt.Errorf("PPN input account 2102-002 not found: %v", err)
+		return nil, fmt.Errorf("PPN input account from tax settings not found: %v", err)
 	}
 
 	// Get Accounts Payable (2101)
-	if apAccount, err := s.accountRepo.FindByCode(nil, "2101"); err == nil {
+	if apAccount, err := s.accountRepo.FindByCode(context.TODO(), "2101"); err == nil {
 		accountIDs.AccountsPayableID = apAccount.ID
 	} else {
 		return nil, fmt.Errorf("accounts payable account 2101 not found: %v", err)
 	}
 
 	// Get PPh 21 Payable (2111) - optional
-	if pph21Account, err := s.accountRepo.FindByCode(nil, "2102-003"); err == nil {
+	if pph21Account, err := s.accountRepo.FindByCode(context.TODO(), "2102-003"); err == nil {
 		accountIDs.PPh21PayableID = pph21Account.ID
 	}
 
 	// Get PPh 23 Payable (2112) - optional
-	if pph23Account, err := s.accountRepo.FindByCode(nil, "2102-004"); err == nil {
+	if pph23Account, err := s.accountRepo.FindByCode(context.TODO(), "2102-004"); err == nil {
 		accountIDs.PPh23PayableID = pph23Account.ID
 	}
 
@@ -1062,7 +1063,7 @@ func (s *PurchaseService) createPurchaseJournalLines(purchase *models.Purchase, 
 		}
 		// Fallback to default cash account 1101
 		if cashAccountID == 0 {
-			if acc, err := s.accountRepo.FindByCode(nil, "1101"); err == nil {
+			if acc, err := s.accountRepo.FindByCode(context.TODO(), "1101"); err == nil {
 				cashAccountID = acc.ID
 			}
 		}

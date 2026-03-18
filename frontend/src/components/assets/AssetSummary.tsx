@@ -48,7 +48,6 @@ const AssetSummaryComponent: React.FC<AssetSummaryProps> = ({ summary, isLoading
                   rounded="md"
                   bg="gray.100"
                   mr={4}
-                  animate={{ opacity: [1, 0.5, 1] }}
                 >
                   <Icon as={FiPackage} boxSize={6} color="gray.400" />
                 </Box>

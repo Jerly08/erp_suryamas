@@ -148,10 +148,9 @@ const TaxAccountStatusDashboard: React.FC = () => {
               <Progress 
                 value={dashboard.health_score} 
                 className="h-3"
-                // @ts-ignore - custom color class
                 style={{
-                  '--progress-background': getHealthScoreColor(dashboard.health_score)
-                } as any}
+                  ['--progress-background' as string]: getHealthScoreColor(dashboard.health_score)
+                } as React.CSSProperties}
               />
               <div className="mt-2 text-xs text-gray-500">
                 {dashboard.is_fully_configured ? 'All required accounts configured' : 'Some accounts need configuration'}

@@ -18,14 +18,9 @@ import {
   Card,
   CardHeader,
   CardBody,
-  Stat,
-  StatLabel,
-  StatNumber,
   Icon,
-  useColorMode,
   useColorModeValue,
   Input,
-  Select,
   InputGroup,
   InputLeftElement,
   Spinner,
@@ -44,12 +39,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
   Menu,
   MenuButton,
   MenuList,
@@ -73,26 +62,19 @@ import {
   FiUpload, 
   FiSearch, 
   FiBarChart,
-  FiFilter,
   FiRefreshCw,
   FiMoreVertical,
   FiPhone,
   FiMail,
-  FiMapPin,
   FiUser,
   FiHome,
   FiUsers,
-  FiTrendingUp,
   FiActivity,
-  FiPieChart,
-  FiCalendar,
-  FiStar
+  FiPieChart
 } from 'react-icons/fi';
 
-interface ContactsPageProps {}
-
 export default function DashboardTabsContactsPage() {
-  const { user, token } = useAuth();
+  const { token } = useAuth();
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
   
@@ -109,9 +91,6 @@ export default function DashboardTabsContactsPage() {
   const borderColor = useColorModeValue('gray.200', 'var(--border-color)');
   const textColor = useColorModeValue('gray.600', 'var(--text-secondary)');
   const primaryTextColor = useColorModeValue('gray.800', 'var(--text-primary)');
-  const hoverBg = useColorModeValue('gray.50', 'var(--bg-tertiary)');
-  const theadBg = useColorModeValue('gray.50', 'var(--bg-tertiary)');
-
   // Load contacts from backend
   const loadContacts = async () => {
     try {
@@ -176,25 +155,6 @@ export default function DashboardTabsContactsPage() {
       case 'EMPLOYEE': return 'purple';
       default: return 'gray';
     }
-  };
-
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'CUSTOMER': return FiUser;
-      case 'VENDOR': return FiHome;
-      case 'EMPLOYEE': return FiUsers;
-      default: return FiUser;
-    }
-  };
-
-  // Generate avatar initials
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map(word => word[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
   };
 
   // Render contact list for each tab
@@ -506,7 +466,7 @@ export default function DashboardTabsContactsPage() {
                   Customers ({stats.customers.length})
                 </Tab>
                 <Tab>
-                  <Icon as={FiBuilding} mr={2} />
+                  <Icon as={FiHome} mr={2} />
                   Vendors ({stats.vendors.length})
                 </Tab>
                 <Tab>

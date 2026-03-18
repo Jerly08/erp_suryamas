@@ -64,6 +64,7 @@ export default function PurchaseRequestsPage() {
     };
     const toast = useToast();
     const { user } = useAuth();
+    const userDepartment = (user as { department?: string } | null)?.department || '';
 
     const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
     const { isOpen: isViewOpen, onOpen: onViewOpen, onClose: onViewClose } = useDisclosure();
@@ -122,7 +123,7 @@ export default function PurchaseRequestsPage() {
     };
 
     const handleOpenCreate = () => {
-        setDepartment(user?.department || '');
+        setDepartment(userDepartment);
         setProjectId('');
         setNotes('');
         setItems([{ product_id: '', quantity: 1, estimated_price: 0, notes: '' }]);
@@ -230,7 +231,7 @@ export default function PurchaseRequestsPage() {
     };
 
     useEffect(() => {
-        const notificationRequestId = searchParams.get('notificationRequestId');
+        const notificationRequestId = searchParams?.get('notificationRequestId');
 
         if (!notificationRequestId || handledNotificationRequestId.current === notificationRequestId) {
             return;
@@ -239,7 +240,7 @@ export default function PurchaseRequestsPage() {
         handledNotificationRequestId.current = notificationRequestId;
 
         const clearNotificationRequestParam = () => {
-            const nextParams = new URLSearchParams(searchParams.toString());
+            const nextParams = new URLSearchParams(searchParams?.toString() || '');
             nextParams.delete('notificationRequestId');
             const nextUrl = nextParams.toString() ? `/purchase-requests?${nextParams.toString()}` : '/purchase-requests';
             router.replace(nextUrl);
@@ -436,7 +437,7 @@ export default function PurchaseRequestsPage() {
                                                 </Td>
                                                 <Td p={1}>
                                                     <CurrencyInput
-                                                        value={parseFloat(item.estimated_price) || 0}
+                                                        value={Number(item.estimated_price) || 0}
                                                         onChange={val => handleItemChange(index, 'estimated_price', val.toString())}
                                                     />
                                                 </Td>

@@ -97,14 +97,14 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 		return nil, fmt.Errorf("PPN Keluaran account not configured in tax settings")
 	}
 
-	// Get PPN Masukan account (2102-002 - under UTANG PAJAK)
+	// Get PPN Masukan account from active tax settings
 	var ppnMasukanAccount models.Account
 	if err := tx.First(&ppnMasukanAccount, settings.PurchaseInputVATAccountID).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("PPN Masukan account not found: %v", err)
 	}
 
-	// Get PPN Keluaran account (2102-001 - under UTANG PAJAK)
+	// Get PPN Keluaran account from active tax settings
 	var ppnKeluaranAccount models.Account
 	if err := tx.First(&ppnKeluaranAccount, settings.SalesOutputVATAccountID).Error; err != nil {
 		tx.Rollback()
@@ -117,10 +117,10 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 	// Calculate PPN Terutang (PPN yang harus dibayar) using decimal for precision
 	// PPN Terutang = PPN Keluaran - PPN Masukan
 	//
-	// ⚠️ IMPORTANT: PPN Masukan (2102-002) is classified as LIABILITY in the COA.
-	// Liability accounts store balance as Credit - Debit, so PPN Masukan (which is
-	// debited on purchases) will have a NEGATIVE balance (e.g., -1,100,000).
-	// We MUST use .Abs() to get the correct magnitude.
+	// ⚠️ IMPORTANT: PPN Masukan can be configured either as a standard asset account
+	// or an older contra-liability account in legacy data. We use Abs() so the
+	// remittance calculation follows the configured account without depending on
+	// legacy account-type sign conventions.
 	//
 	// ⚠️ CRITICAL: All amounts use decimal.Decimal to avoid floating-point rounding
 	// errors that cause unbalanced journal entries (e.g., 0.04 difference).
@@ -443,9 +443,9 @@ func (s *TaxPaymentService) GetPPNBalance(ppnType string) (float64, error) {
 	}
 
 	// ⚠️ IMPORTANT: Always return absolute value of balance.
-	// PPN Masukan (2102-002) is classified as LIABILITY, so its balance
-	// may be stored as negative. Consumers (frontend) expect a positive number.
-	// Using decimal.Abs future-proofs against account type changes.
+	// PPN Masukan can be asset-based in the current configuration or negative in
+	// older contra-liability setups. Consumers expect the recoverable/owed amount
+	// as a positive number.
 	absBalance := decimal.NewFromFloat(account.Balance).Abs().InexactFloat64()
 	log.Printf("📊 PPN %s Balance: %.2f (raw: %.2f, Account: %s - %s, Type: %s)",
 		ppnType, absBalance, account.Balance, account.Code, account.Name, account.Type)

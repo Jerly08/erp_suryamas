@@ -1,77 +1,77 @@
 package services
 
 import (
-	"fmt"
-	"log"
-	"time"
-	"sync"
 	"app-sistem-akuntansi/models"
+	"fmt"
 	"gorm.io/gorm"
+	"log"
+	"sync"
+	"time"
 )
 
 type BalanceMonitoringService struct {
-	db *gorm.DB
+	db                 *gorm.DB
 	integrityValidator *BalanceIntegrityValidator
 	monitoringEnabled  bool
-	mutex             sync.RWMutex
-	lastCheck         time.Time
-	alertThresholds   AlertThresholds
+	mutex              sync.RWMutex
+	lastCheck          time.Time
+	alertThresholds    AlertThresholds
 }
 
 // AlertThresholds defines when to trigger alerts
 type AlertThresholds struct {
-	CriticalBalanceDifference float64 // IDR amount
-	HighBalanceDifference     float64
+	CriticalBalanceDifference   float64 // IDR amount
+	HighBalanceDifference       float64
 	MaxTolerableInconsistencies int
-	ValidationFrequency       time.Duration
+	ValidationFrequency         time.Duration
 }
 
 func NewBalanceMonitoringService(db *gorm.DB) *BalanceMonitoringService {
 	return &BalanceMonitoringService{
-		db: db,
+		db:                 db,
 		integrityValidator: NewBalanceIntegrityValidator(db),
-		monitoringEnabled: true,
+		monitoringEnabled:  true,
 		alertThresholds: AlertThresholds{
 			CriticalBalanceDifference:   1000000, // 1M IDR
-			HighBalanceDifference:      100000,  // 100K IDR
+			HighBalanceDifference:       100000,  // 100K IDR
 			MaxTolerableInconsistencies: 5,
-			ValidationFrequency:        time.Minute * 15,
+			ValidationFrequency:         time.Minute * 15,
 		},
 	}
 }
 
 // BalanceDiscrepancy represents a balance mismatch between cash/bank and GL accounts
 type BalanceDiscrepancy struct {
-	CashBankID      uint    `json:"cash_bank_id"`
-	CashBankCode    string  `json:"cash_bank_code"`
-	CashBankName    string  `json:"cash_bank_name"`
-	CashBankBalance float64 `json:"cash_bank_balance"`
-	GLAccountID     uint    `json:"gl_account_id"`
-	GLCode          string  `json:"gl_code"`
-	GLName          string  `json:"gl_name"`
-	GLBalance       float64 `json:"gl_balance"`
-	Difference      float64 `json:"difference"`
+	CashBankID      uint      `json:"cash_bank_id"`
+	CashBankCode    string    `json:"cash_bank_code"`
+	CashBankName    string    `json:"cash_bank_name"`
+	CashBankBalance float64   `json:"cash_bank_balance"`
+	GLAccountID     uint      `json:"gl_account_id"`
+	GLCode          string    `json:"gl_code"`
+	GLName          string    `json:"gl_name"`
+	GLBalance       float64   `json:"gl_balance"`
+	Difference      float64   `json:"difference"`
 	DetectedAt      time.Time `json:"detected_at"`
 }
 
 // DoublePostingReport represents the result of double posting detection
 type DoublePostingReport struct {
-	CheckTime                    time.Time `json:"check_time"`
-	TotalAccountsChecked         int       `json:"total_accounts_checked"`
-	DoublePostingPatternsFound   int       `json:"double_posting_patterns_found"`
+	CheckTime                    time.Time              `json:"check_time"`
+	TotalAccountsChecked         int                    `json:"total_accounts_checked"`
+	DoublePostingPatternsFound   int                    `json:"double_posting_patterns_found"`
 	DoublePostingInconsistencies []BalanceInconsistency `json:"double_posting_inconsistencies"`
-	OverallHealthScore          float64   `json:"overall_health_score"`
-	Status                      string    `json:"status"` // "CLEAN", "WARNING", "CRITICAL"
+	OverallHealthScore           float64                `json:"overall_health_score"`
+	Status                       string                 `json:"status"` // "CLEAN", "WARNING", "CRITICAL"
 }
 
 // BalanceMonitoringResult represents the result of balance monitoring check
 type BalanceMonitoringResult struct {
-	CheckTime              time.Time             `json:"check_time"`
-	TotalAccountsChecked   int                   `json:"total_accounts_checked"`
-	SynchronizedAccounts   int                   `json:"synchronized_accounts"`
-	UnsynchronizedAccounts int                   `json:"unsynchronized_accounts"`
-	Discrepancies          []BalanceDiscrepancy  `json:"discrepancies"`
-	Status                 string                `json:"status"` // "OK", "WARNING", "ERROR"
+	CheckTime              time.Time            `json:"check_time"`
+	TotalAccountsChecked   int                  `json:"total_accounts_checked"`
+	SynchronizedAccounts   int                  `json:"synchronized_accounts"`
+	UnsynchronizedAccounts int                  `json:"unsynchronized_accounts"`
+	Discrepancies          []BalanceDiscrepancy `json:"discrepancies"`
+	Status                 string               `json:"status"` // "OK", "WARNING", "ERROR"
 }
 
 // CheckBalanceSynchronization performs a comprehensive balance sync check
@@ -155,8 +155,8 @@ func (s *BalanceMonitoringService) AutoFixDiscrepancies(result *BalanceMonitorin
 	errorCount := 0
 
 	for _, discrepancy := range result.Discrepancies {
-		log.Printf("Fixing %s (%s): GL %.2f -> CB %.2f", 
-			discrepancy.CashBankCode, 
+		log.Printf("Fixing %s (%s): GL %.2f -> CB %.2f",
+			discrepancy.CashBankCode,
 			discrepancy.CashBankName,
 			discrepancy.GLBalance,
 			discrepancy.CashBankBalance)
@@ -218,27 +218,24 @@ func (s *BalanceMonitoringService) RunPeriodicCheck(intervalMinutes int, autoFix
 
 	log.Printf("🔄 Starting periodic balance monitoring (every %d minutes, autoFix: %v)", intervalMinutes, autoFix)
 
-	for {
-		select {
-		case <-ticker.C:
-			result, err := s.CheckBalanceSynchronization()
-			if err != nil {
-				log.Printf("❌ Periodic check failed: %v", err)
-				continue
-			}
+	for range ticker.C {
+		result, err := s.CheckBalanceSynchronization()
+		if err != nil {
+			log.Printf("❌ Periodic check failed: %v", err)
+			continue
+		}
 
-			s.LogDiscrepancies(result)
+		s.LogDiscrepancies(result)
 
-			if autoFix && len(result.Discrepancies) > 0 {
-				if err := s.AutoFixDiscrepancies(result); err != nil {
-					log.Printf("❌ Auto-fix failed: %v", err)
-				}
+		if autoFix && len(result.Discrepancies) > 0 {
+			if err := s.AutoFixDiscrepancies(result); err != nil {
+				log.Printf("❌ Auto-fix failed: %v", err)
 			}
+		}
 
-			// Send alert if status is not OK
-			if result.Status != "OK" {
-				s.SendAlert(result)
-			}
+		// Send alert if status is not OK
+		if result.Status != "OK" {
+			s.SendAlert(result)
 		}
 	}
 }
@@ -248,7 +245,7 @@ func (s *BalanceMonitoringService) SendAlert(result *BalanceMonitoringResult) {
 	// In a real implementation, this could send email, Slack notification, etc.
 	log.Printf("🚨 ALERT: Balance sync issues detected!")
 	log.Printf("Status: %s, Discrepancies: %d", result.Status, len(result.Discrepancies))
-	
+
 	// For now, just log the alert
 	// TODO: Implement actual alerting mechanism (email, webhook, etc.)
 }
@@ -270,14 +267,14 @@ func (s *BalanceMonitoringService) GetBalanceHealth() (map[string]interface{}, e
 	}
 
 	health := map[string]interface{}{
-		"status":                   result.Status,
-		"total_accounts":           result.TotalAccountsChecked,
-		"synchronized_accounts":    result.SynchronizedAccounts,
-		"unsynchronized_accounts":  result.UnsynchronizedAccounts,
-		"sync_percentage":          float64(result.SynchronizedAccounts) / float64(result.TotalAccountsChecked) * 100,
-		"total_difference_amount":  totalDifference,
-		"max_difference_amount":    maxDifference,
-		"last_check_time":          result.CheckTime,
+		"status":                  result.Status,
+		"total_accounts":          result.TotalAccountsChecked,
+		"synchronized_accounts":   result.SynchronizedAccounts,
+		"unsynchronized_accounts": result.UnsynchronizedAccounts,
+		"sync_percentage":         float64(result.SynchronizedAccounts) / float64(result.TotalAccountsChecked) * 100,
+		"total_difference_amount": totalDifference,
+		"max_difference_amount":   maxDifference,
+		"last_check_time":         result.CheckTime,
 	}
 
 	return health, nil
@@ -287,15 +284,15 @@ func (s *BalanceMonitoringService) GetBalanceHealth() (map[string]interface{}, e
 func (s *BalanceMonitoringService) DetectDoublePosting() (*DoublePostingReport, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	log.Println("🔍 Detecting double posting patterns...")
-	
+
 	// Run integrity validation to detect double posting patterns
 	validationResult, err := s.integrityValidator.ValidateAllBalances()
 	if err != nil {
 		return nil, fmt.Errorf("validation failed: %v", err)
 	}
-	
+
 	// Convert BalanceInconsistency to BalanceDiscrepancy for compatibility
 	doublePostingInconsistencies := []BalanceInconsistency{}
 	for _, inconsistency := range validationResult.Inconsistencies {
@@ -303,15 +300,15 @@ func (s *BalanceMonitoringService) DetectDoublePosting() (*DoublePostingReport, 
 			doublePostingInconsistencies = append(doublePostingInconsistencies, inconsistency)
 		}
 	}
-	
+
 	report := &DoublePostingReport{
 		CheckTime:                    time.Now(),
 		TotalAccountsChecked:         validationResult.TotalChecks,
 		DoublePostingPatternsFound:   len(doublePostingInconsistencies),
 		DoublePostingInconsistencies: doublePostingInconsistencies,
-		OverallHealthScore:          float64(validationResult.TotalChecks-validationResult.FailedChecks) / float64(validationResult.TotalChecks) * 100,
+		OverallHealthScore:           float64(validationResult.TotalChecks-validationResult.FailedChecks) / float64(validationResult.TotalChecks) * 100,
 	}
-	
+
 	// Determine severity
 	if len(doublePostingInconsistencies) == 0 {
 		report.Status = "CLEAN"
@@ -323,7 +320,7 @@ func (s *BalanceMonitoringService) DetectDoublePosting() (*DoublePostingReport, 
 		report.Status = "CRITICAL"
 		log.Printf("🚨 Found %d double posting patterns (CRITICAL)", len(doublePostingInconsistencies))
 	}
-	
+
 	return report, nil
 }
 
@@ -332,40 +329,40 @@ func (s *BalanceMonitoringService) MonitorPaymentPosting(paymentID uint, cashBan
 	if !s.monitoringEnabled {
 		return
 	}
-	
+
 	log.Printf("👁️ Monitoring payment %d for double posting (Amount: %.2f)", paymentID, expectedAmount)
-	
+
 	// Wait for posting operations to complete
 	time.Sleep(time.Second * 2)
-	
+
 	// Check cash bank transactions for this payment
 	var transactions []models.CashBankTransaction
-	err := s.db.Where("reference_type IN (?, ?) AND reference_id = ?", 
+	err := s.db.Where("reference_type IN (?, ?) AND reference_id = ?",
 		"PAYMENT", "SINGLE_SOURCE_POST", paymentID).Find(&transactions).Error
-	
+
 	if err != nil {
 		log.Printf("❌ Failed to check transactions for payment %d: %v", paymentID, err)
 		return
 	}
-	
+
 	var totalAmount float64
 	for _, tx := range transactions {
 		if tx.CashBankID == cashBankID {
 			totalAmount += tx.Amount
 		}
 	}
-	
+
 	// Check for double posting indicators
 	if len(transactions) > 1 {
-		log.Printf("🚨 ALERT: Payment %d created %d transactions - potential double posting!", 
+		log.Printf("🚨 ALERT: Payment %d created %d transactions - potential double posting!",
 			paymentID, len(transactions))
 	}
-	
-	if abs(totalAmount - expectedAmount) > 0.01 {
-		log.Printf("🚨 ALERT: Payment %d amount mismatch - Expected: %.2f, Actual: %.2f", 
+
+	if abs(totalAmount-expectedAmount) > 0.01 {
+		log.Printf("🚨 ALERT: Payment %d amount mismatch - Expected: %.2f, Actual: %.2f",
 			paymentID, expectedAmount, totalAmount)
 	}
-	
+
 	// Check if balance is exactly double (classic double posting pattern)
 	var cashBank models.CashBank
 	if err := s.db.First(&cashBank, cashBankID).Error; err == nil {
@@ -374,8 +371,8 @@ func (s *BalanceMonitoringService) MonitorPaymentPosting(paymentID uint, cashBan
 			Where("cash_bank_id = ?", cashBankID).
 			Select("COALESCE(SUM(amount), 0)").
 			Scan(&transactionSum)
-		
-		if abs(cashBank.Balance - transactionSum*2) < 0.01 {
+
+		if abs(cashBank.Balance-transactionSum*2) < 0.01 {
 			log.Printf("🚨 CRITICAL: Double posting pattern detected in CashBank %d - Balance is exactly 2x transaction sum!", cashBankID)
 		}
 	}
@@ -387,9 +384,9 @@ func (s *BalanceMonitoringService) StartContinuousMonitoring() {
 		log.Println("📊 Balance monitoring is disabled")
 		return
 	}
-	
+
 	log.Printf("🚀 Starting continuous balance monitoring (every %v)", s.alertThresholds.ValidationFrequency)
-	
+
 	ticker := time.NewTicker(s.alertThresholds.ValidationFrequency)
 	go func() {
 		for range ticker.C {
@@ -404,33 +401,33 @@ func (s *BalanceMonitoringService) StartContinuousMonitoring() {
 func (s *BalanceMonitoringService) runFullIntegrityCheck() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	s.lastCheck = time.Now()
 	log.Println("🔍 Running full integrity check...")
-	
+
 	// Run balance synchronization check
 	syncResult, err := s.CheckBalanceSynchronization()
 	if err != nil {
 		log.Printf("❌ Sync check failed: %v", err)
 		return
 	}
-	
+
 	// Run double posting detection
 	doublePostingReport, err := s.DetectDoublePosting()
 	if err != nil {
 		log.Printf("❌ Double posting detection failed: %v", err)
 		return
 	}
-	
+
 	// Log results
 	if syncResult.Status == "OK" && doublePostingReport.Status == "CLEAN" {
 		log.Println("✅ Full integrity check passed - all systems healthy")
 	} else {
-		log.Printf("⚠️ Integrity issues detected - Sync: %s, DoublePosting: %s", 
+		log.Printf("⚠️ Integrity issues detected - Sync: %s, DoublePosting: %s",
 			syncResult.Status, doublePostingReport.Status)
-		
+
 		if doublePostingReport.Status == "CRITICAL" {
-			log.Printf("🚨 CRITICAL: %d double posting patterns detected - immediate action required!", 
+			log.Printf("🚨 CRITICAL: %d double posting patterns detected - immediate action required!",
 				doublePostingReport.DoublePostingPatternsFound)
 		}
 	}
@@ -440,15 +437,14 @@ func (s *BalanceMonitoringService) runFullIntegrityCheck() {
 func (s *BalanceMonitoringService) GetMonitoringStatus() map[string]interface{} {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	
+
 	return map[string]interface{}{
-		"monitoring_enabled":      s.monitoringEnabled,
-		"last_check":              s.lastCheck.Format(time.RFC3339),
-		"validation_frequency":    s.alertThresholds.ValidationFrequency.String(),
-		"critical_threshold_idr":  s.alertThresholds.CriticalBalanceDifference,
-		"high_threshold_idr":      s.alertThresholds.HighBalanceDifference,
-		"max_inconsistencies":     s.alertThresholds.MaxTolerableInconsistencies,
-		"system_status":           "OPERATIONAL",
+		"monitoring_enabled":     s.monitoringEnabled,
+		"last_check":             s.lastCheck.Format(time.RFC3339),
+		"validation_frequency":   s.alertThresholds.ValidationFrequency.String(),
+		"critical_threshold_idr": s.alertThresholds.CriticalBalanceDifference,
+		"high_threshold_idr":     s.alertThresholds.HighBalanceDifference,
+		"max_inconsistencies":    s.alertThresholds.MaxTolerableInconsistencies,
+		"system_status":          "OPERATIONAL",
 	}
 }
-

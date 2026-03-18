@@ -95,6 +95,14 @@ interface JournalDataVisualizationProps {
   title?: string;
 }
 
+interface CreatorStat {
+  name: string;
+  entries: number;
+  total_amount: number;
+  balanced_entries: number;
+  accuracy: number;
+}
+
 export const JournalDataVisualization: React.FC<JournalDataVisualizationProps> = ({
   data,
   title = 'Journal Entry Analysis',
@@ -177,7 +185,7 @@ export const JournalDataVisualization: React.FC<JournalDataVisualizationProps> =
     });
 
     // Creator statistics
-    const creatorStats = entries.reduce((acc: any, entry) => {
+    const creatorStats = entries.reduce<Record<string, CreatorStat>>((acc, entry) => {
       const creatorName = entry.creator?.name || 'Unknown';
       if (!acc[creatorName]) {
         acc[creatorName] = {
@@ -194,7 +202,7 @@ export const JournalDataVisualization: React.FC<JournalDataVisualizationProps> =
       return acc;
     }, {});
 
-    Object.values(creatorStats).forEach((creator: any) => {
+    Object.values(creatorStats).forEach((creator) => {
       creator.accuracy = creator.entries > 0 ? (creator.balanced_entries / creator.entries) * 100 : 0;
     });
 
@@ -209,7 +217,7 @@ export const JournalDataVisualization: React.FC<JournalDataVisualizationProps> =
     const averageAmount = entries.length > 0 ? totalAmount / entries.length : 0;
 
     // Find largest entry
-    const largestEntry = entries.reduce((largest, entry) => {
+    const largestEntry = entries.reduce<JournalEntry | null>((largest, entry) => {
       const entryAmount = Math.max(entry.total_debit, entry.total_credit);
       const largestAmount = largest ? Math.max(largest.total_debit, largest.total_credit) : 0;
       return entryAmount > largestAmount ? entry : largest;
@@ -227,7 +235,7 @@ export const JournalDataVisualization: React.FC<JournalDataVisualizationProps> =
       dailyTrends: sortedDailyTrends,
       typeDistribution: Object.values(typeDistribution),
       statusBreakdown: Object.values(statusBreakdown),
-      creatorStats: Object.values(creatorStats).sort((a: any, b: any) => b.entries - a.entries),
+      creatorStats: Object.values(creatorStats).sort((a, b) => b.entries - a.entries),
       balanceAccuracy,
       averageAmount,
       largestEntry,

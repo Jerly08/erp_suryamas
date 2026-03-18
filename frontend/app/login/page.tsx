@@ -14,7 +14,6 @@ import {
   Text,
   Heading,
   useToast,
-  Stack,
   InputGroup,
   InputRightElement,
   IconButton,
@@ -28,10 +27,8 @@ import {
   useColorModeValue,
   Card,
   CardBody,
-  Image,
   Container,
   SimpleGrid,
-  ScaleFade,
   Badge,
   Center
 } from '@chakra-ui/react';
@@ -156,7 +153,7 @@ const LoginContent = () => {
       <Container maxW="7xl" py={8}>
         <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={8} alignItems="center" minH="80vh">
           {/* Left side - Branding and Features */}
-          <ScaleFade initialScale={0.9} in={true}>
+          <Box>
             <VStack spacing={8} align="stretch">
               {/* Company Branding */}
               <Box textAlign={{ base: 'center', lg: 'left' }}>
@@ -366,11 +363,11 @@ const LoginContent = () => {
                 </Box>
               </VStack>
             </VStack>
-          </ScaleFade>
+          </Box>
           
           {/* Right side - Login Form */}
           <Flex align="center" justify="center" py={8}>
-            <ScaleFade initialScale={0.9} in={true}>
+            <Box>
               <Card 
                 maxW="md"
                 w="full"
@@ -686,7 +683,7 @@ const LoginContent = () => {
                   </Box>
                 </CardBody>
               </Card>
-            </ScaleFade>
+            </Box>
           </Flex>
         </SimpleGrid>
       </Container>

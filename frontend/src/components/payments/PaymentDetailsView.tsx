@@ -44,8 +44,6 @@ import {
 } from '@chakra-ui/react';
 import {
   FiDollarSign,
-  FiCalendar,
-  FiUser,
   FiFileText,
   FiRefreshCw,
   FiArrowRight,
@@ -53,10 +51,10 @@ import {
   FiExternalLink,
   FiRotateCcw,
 } from 'react-icons/fi';
-import { paymentService } from '@/services/paymentService';
+import paymentService from '@/services/paymentService';
 import JournalEntryPreview from './JournalEntryPreview';
 import type {
-  PaymentWithJournalInfo,
+  PaymentWithJournalResponse,
   AccountBalanceUpdate,
   JournalEntry,
   PaymentJournalResult,
@@ -83,7 +81,7 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
   onEdit,
   onReverse
 }) => {
-  const [paymentInfo, setPaymentInfo] = useState<PaymentWithJournalInfo | null>(null);
+  const [paymentInfo, setPaymentInfo] = useState<PaymentWithJournalResponse | null>(null);
   const [accountBalances, setAccountBalances] = useState<AccountBalanceUpdate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isReversing, setIsReversing] = useState(false);
@@ -97,6 +95,7 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
   const headerBg = useColorModeValue('gray.50', 'gray.700');
   const textSecondary = useColorModeValue('gray.600', 'gray.400');
   const textPrimary = useColorModeValue('gray.700', 'gray.200');
+  const numericPaymentId = Number(paymentId);
 
   useEffect(() => {
     loadPaymentDetails();
@@ -105,13 +104,14 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
   const loadPaymentDetails = async () => {
     setIsLoading(true);
     try {
-      const details = await paymentService.getPaymentWithJournal(paymentId);
+      const details = await paymentService.getPaymentWithJournal(numericPaymentId);
       setPaymentInfo(details);
       
-      // Load account balance updates if available
-      if (details.journal_info?.journal_entry_id) {
+      if (details.journal_result?.account_updates?.length) {
+        setAccountBalances(details.journal_result.account_updates);
+      } else if (details.journal_result?.journal_entry?.id) {
         try {
-          const balances = await paymentService.getAccountBalanceUpdates(paymentId);
+          const balances = await paymentService.getAccountBalanceUpdates(numericPaymentId);
           setAccountBalances(balances);
         } catch (error) {
           console.warn('Failed to load account balances:', error);
@@ -133,9 +133,9 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
   const handleReversePayment = async () => {
     setIsReversing(true);
     try {
-      const result = await paymentService.reversePayment(paymentId, 'Manual reversal from UI');
+      const result = await paymentService.reversePayment(numericPaymentId, 'Manual reversal from UI');
       
-      setReverseResult(result);
+      setReverseResult(result.journal_result ?? null);
       
       toast({
         title: 'Payment Reversed',
@@ -168,7 +168,7 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
   const refreshBalances = async () => {
     try {
       await paymentService.refreshAccountBalances();
-      const balances = await paymentService.getAccountBalanceUpdates(paymentId);
+      const balances = await paymentService.getAccountBalanceUpdates(numericPaymentId);
       setAccountBalances(balances);
       
       toast({
@@ -215,7 +215,12 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
     );
   }
 
-  const { payment, journal_info: journalInfo } = paymentInfo;
+  const { payment, journal_result: journalResult, contact, cash_bank: cashBank } = paymentInfo;
+  const paymentType = payment.payment_type ?? 'SEND';
+  const paymentCode = payment.code || `#${payment.id}`;
+  const paymentMethod = payment.method || '-';
+  const paymentNotes = payment.notes?.trim();
+  const paymentReference = payment.reference?.trim();
 
   const StatusBadge = ({ status }: { status: string }) => {
     const colorScheme = status === 'COMPLETED' ? 'green' : 
@@ -244,10 +249,10 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
           <CardHeader bg={headerBg}>
             <Flex align="center">
               <HStack spacing={3}>
-                <PaymentTypeIcon type={payment.payment_type} />
+                <PaymentTypeIcon type={paymentType} />
                 <VStack align="start" spacing={0}>
                   <Heading size="md" color={textPrimary}>
-                    Payment {payment.payment_code}
+                    Payment {paymentCode}
                   </Heading>
                   <Text fontSize="sm" color={textSecondary}>
                     Created {new Date(payment.created_at).toLocaleString()}
@@ -303,13 +308,13 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
                       <Stat>
                         <StatLabel>Payment Method</StatLabel>
                         <StatNumber fontSize="lg">
-                          {payment.payment_method.replace('_', ' ')}
+                          {paymentMethod.replace(/_/g, ' ')}
                         </StatNumber>
                       </Stat>
                       <Stat>
                         <StatLabel>Type</StatLabel>
-                        <StatNumber fontSize="lg" color={payment.payment_type === 'RECEIVE' ? 'green.500' : 'blue.500'}>
-                          {payment.payment_type}
+                        <StatNumber fontSize="lg" color={paymentType === 'RECEIVE' ? 'green.500' : 'blue.500'}>
+                          {paymentType}
                         </StatNumber>
                       </Stat>
                     </HStack>
@@ -318,41 +323,41 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
 
                     {/* Payment Details Grid */}
                     <VStack spacing={4} align="stretch">
-                      {payment.description && (
+                      {paymentNotes ? (
                         <Box>
-                          <Text fontWeight="medium" color={textPrimary}>Description</Text>
-                          <Text color={textSecondary}>{payment.description}</Text>
+                          <Text fontWeight="medium" color={textPrimary}>Notes</Text>
+                          <Text color={textSecondary}>{paymentNotes}</Text>
                         </Box>
-                      )}
+                      ) : null}
 
                       <HStack spacing={8} align="start">
-                        {payment.reference_id && (
+                        {paymentReference ? (
                           <Box>
-                            <Text fontWeight="medium" color={textPrimary}>Reference ID</Text>
-                            <Text color={textSecondary}>{payment.reference_id}</Text>
+                            <Text fontWeight="medium" color={textPrimary}>Reference</Text>
+                            <Text color={textSecondary}>{paymentReference}</Text>
                           </Box>
-                        )}
-                        
-                        {payment.customer_id && (
-                          <Box>
-                            <Text fontWeight="medium" color={textPrimary}>Customer ID</Text>
-                            <Text color={textSecondary}>{payment.customer_id}</Text>
-                          </Box>
-                        )}
+                        ) : null}
 
-                        {payment.vendor_id && (
-                          <Box>
-                            <Text fontWeight="medium" color={textPrimary}>Vendor ID</Text>
-                            <Text color={textSecondary}>{payment.vendor_id}</Text>
-                          </Box>
-                        )}
+                        <Box>
+                          <Text fontWeight="medium" color={textPrimary}>Contact</Text>
+                          <Text color={textSecondary}>
+                            {contact?.name || payment.contact?.name || '-'}
+                          </Text>
+                        </Box>
 
-                        {payment.invoice_id && (
+                        <Box>
+                          <Text fontWeight="medium" color={textPrimary}>Contact ID</Text>
+                          <Text color={textSecondary}>{payment.contact_id}</Text>
+                        </Box>
+
+                        {cashBank ? (
                           <Box>
-                            <Text fontWeight="medium" color={textPrimary}>Invoice ID</Text>
-                            <Text color={textSecondary}>{payment.invoice_id}</Text>
+                            <Text fontWeight="medium" color={textPrimary}>Cash / Bank</Text>
+                            <Text color={textSecondary}>
+                              {cashBank.account_code} - {cashBank.name}
+                            </Text>
                           </Box>
-                        )}
+                        ) : null}
                       </HStack>
 
                       <HStack spacing={8}>
@@ -378,7 +383,7 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
 
             {/* Journal Entry Tab */}
             <TabPanel px={0}>
-              {journalInfo ? (
+              {journalResult ? (
                 <VStack spacing={4} align="stretch">
                   {/* Journal Info Summary */}
                   <Card bg={bgColor} borderWidth="1px" borderColor={borderColor}>
@@ -388,13 +393,13 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
                           <Text fontWeight="medium" color={textPrimary}>Journal Entry</Text>
                           <Tag size="md" colorScheme="blue">
                             <TagLeftIcon as={FiFileText} />
-                            <TagLabel>{journalInfo.journal_entry_number}</TagLabel>
+                            <TagLabel>{journalResult.journal_entry.entry_number}</TagLabel>
                           </Tag>
                         </VStack>
                         
                         <VStack align="end" spacing={1}>
                           <Text fontWeight="medium" color={textPrimary}>Status</Text>
-                          <StatusBadge status={journalInfo.status} />
+                          <StatusBadge status={journalResult.journal_entry.status} />
                         </VStack>
 
                         <Button
@@ -411,21 +416,14 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
                   {/* Journal Entry Details */}
                   <JournalEntryPreview
                     journalResult={{
-                      success: true,
-                      message: '',
+                      ...journalResult,
                       journal_entry: {
-                        id: journalInfo.journal_entry_id,
-                        entry_number: journalInfo.journal_entry_number,
-                        description: `Payment ${payment.payment_code}`,
-                        status: journalInfo.status,
-                        total_debit: journalInfo.total_debit || 0,
-                        total_credit: journalInfo.total_credit || 0,
-                        is_balanced: (journalInfo.total_debit || 0) === (journalInfo.total_credit || 0),
-                        lines: [],
-                        created_at: payment.created_at,
-                        updated_at: payment.updated_at,
+                        ...journalResult.journal_entry,
+                        lines: journalResult.journal_entry.lines || [],
+                        created_at: journalResult.journal_entry.created_at || payment.created_at,
+                        updated_at: journalResult.journal_entry.updated_at || payment.updated_at,
                       } as JournalEntry,
-                      account_updates: accountBalances
+                      account_updates: accountBalances.length > 0 ? accountBalances : journalResult.account_updates,
                     }}
                     title="Journal Entry Details"
                     isPreview={false}
@@ -517,7 +515,7 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
                 </Text>
               </Alert>
               <Text>
-                Are you sure you want to reverse payment <strong>{payment.payment_code}</strong> for{' '}
+                Are you sure you want to reverse payment <strong>{paymentCode}</strong> for{' '}
                 <strong>{formatCurrency(payment.amount)}</strong>?
               </Text>
             </VStack>

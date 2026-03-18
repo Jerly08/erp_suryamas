@@ -220,8 +220,8 @@ export const useParallelDataLoader = () => {
         const { data } = result.value as { key: string; data: any; status: string };
         successfulResults[key] = data;
       } else {
-        const { error } = result.value as { key: string; error: any; status: string };
-        errorResults[key] = error.message || 'Failed to load data';
+        const error = result.reason as { message?: string };
+        errorResults[key] = error?.message || 'Failed to load data';
       }
     });
 

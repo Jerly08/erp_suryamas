@@ -48,7 +48,6 @@ import { enhancedPLService } from '@/services/enhancedPLService';
 import { ssotProfitLossService } from '@/services/ssotProfitLossService';
 import { ssotJournalService } from '@/services/ssotJournalService';
 import { cogsService } from '@/services/cogsService';
-import { BalanceWebSocketClient } from '@/services/balanceWebSocketService';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import EnhancedProfitLossModal from './EnhancedProfitLossModal';
@@ -126,7 +125,6 @@ const EnhancedPLReportPage: React.FC = () => {
   const [realTimeUpdates, setRealTimeUpdates] = useState(false);
   const [isConnectedToBalanceService, setIsConnectedToBalanceService] = useState(false);
   const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
-  const balanceClientRef = useRef<BalanceWebSocketClient | null>(null);
 
   // COGS Health Check States
   const [cogsHealth, setCogsHealth] = useState<any>(null);
@@ -151,70 +149,11 @@ const EnhancedPLReportPage: React.FC = () => {
   // Real-time WebSocket connection effect
   useEffect(() => {
     if (realTimeUpdates && token) {
-      initializeBalanceConnection();
+      setIsConnectedToBalanceService(false);
     } else {
-      disconnectBalanceService();
+      setIsConnectedToBalanceService(false);
     }
-
-    return () => {
-      disconnectBalanceService();
-    };
   }, [realTimeUpdates, token]);
-
-  const initializeBalanceConnection = async () => {
-    if (!token) return;
-
-    try {
-      balanceClientRef.current = new BalanceWebSocketClient();
-      await balanceClientRef.current.connect(token);
-
-      balanceClientRef.current.onBalanceUpdate((data) => {
-        setLastUpdateTime(new Date());
-
-        // Auto-refresh P&L data if we have current data and dates are set
-        if (plData && reportParams.start_date && reportParams.end_date) {
-          toast({
-            title: 'Balance Updated',
-            description: `Account ${data.account_code} updated. Refreshing P&L data...`,
-            status: 'info',
-            duration: 2000,
-            isClosable: true,
-            position: 'bottom-right',
-            size: 'sm'
-          });
-
-          // Auto-regenerate P&L with updated data
-          generateEnhancedPL();
-        }
-      });
-
-      setIsConnectedToBalanceService(true);
-      toast({
-        title: 'Real-time Updates Enabled',
-        description: 'P&L report will refresh automatically when balances change',
-        status: 'success',
-        duration: 3000,
-        isClosable: true,
-      });
-    } catch (error) {
-      console.warn('Failed to connect to balance service:', error);
-      setIsConnectedToBalanceService(false);
-      toast({
-        title: 'Real-time Connection Failed',
-        description: 'Manual refresh is still available',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-    }
-  };
-
-  const disconnectBalanceService = () => {
-    if (balanceClientRef.current) {
-      balanceClientRef.current.disconnect();
-      setIsConnectedToBalanceService(false);
-    }
-  };
 
   // Check COGS Health before generating P&L
   const checkCOGSHealth = async () => {
@@ -255,7 +194,7 @@ const EnhancedPLReportPage: React.FC = () => {
 
       toast({
         title: t('reports.profitLoss.page.cogsWarning.backfillComplete'),
-        description: t('reports.profitLoss.page.cogsWarning.backfillCompleteDesc', { count: result.sales_processed }),
+        description: t('reports.profitLoss.page.cogsWarning.backfillCompleteDesc', { count: result.sales_processed ?? 0 }),
         status: 'success',
         duration: 5000,
         isClosable: true,

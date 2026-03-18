@@ -10,22 +10,26 @@ import salesService from '@/services/salesService';
  */
 export const useAuthService = () => {
   const authContext = useContext(AuthContext);
-  
-  // Add null check for context
-  if (!authContext) {
-    console.warn('useAuthService: AuthContext not found');
-    return;
-  }
-  
-  const { handleUnauthorized } = authContext;
+  const handleUnauthorized = authContext?.handleUnauthorized;
+  const accountServiceWithHandler = accountService as {
+    setUnauthorizedHandler?: (handler: NonNullable<typeof handleUnauthorized>) => void;
+  };
+  const contactServiceWithHandler = contactService as {
+    setUnauthorizedHandler?: (handler: NonNullable<typeof handleUnauthorized>) => void;
+  };
 
   useEffect(() => {
-    // Set up the unauthorized handler for all services
-    if (typeof accountService.setUnauthorizedHandler === 'function') {
-      accountService.setUnauthorizedHandler(handleUnauthorized);
+    if (!handleUnauthorized) {
+      console.warn('useAuthService: AuthContext not found');
+      return;
     }
-    if (typeof contactService.setUnauthorizedHandler === 'function') {
-      contactService.setUnauthorizedHandler(handleUnauthorized);
+
+    // Set up the unauthorized handler for all services
+    if (typeof accountServiceWithHandler.setUnauthorizedHandler === 'function') {
+      accountServiceWithHandler.setUnauthorizedHandler(handleUnauthorized);
+    }
+    if (typeof contactServiceWithHandler.setUnauthorizedHandler === 'function') {
+      contactServiceWithHandler.setUnauthorizedHandler(handleUnauthorized);
     }
     
     // Note: salesService uses the shared api.ts with interceptors,
@@ -35,5 +39,5 @@ export const useAuthService = () => {
     return () => {
       // Could clear handlers here if needed
     };
-  }, [handleUnauthorized]);
+  }, [accountServiceWithHandler, contactServiceWithHandler, handleUnauthorized]);
 };

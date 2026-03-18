@@ -64,6 +64,12 @@ interface AccountOption {
   balance: number;
 }
 
+interface CashBankErrorPayload {
+  details?: string;
+  message?: string;
+  error?: string;
+}
+
 interface CashBankFormData {
   name: string;
   type: 'CASH' | 'BANK';
@@ -560,7 +566,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
         console.error('Backend error payload:', error.response.data);
       }
 
-      const resp = error?.response?.data;
+      const resp = error?.response?.data as CashBankErrorPayload | undefined;
       const statusCode = error?.response?.status;
 
       // Extract error message with fallback handling

@@ -1,13 +1,18 @@
-'use client';
+﻿'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from '@/hooks/useTranslation';
-import { useModulePermissions } from '@/hooks/usePermissions';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import api from '@/services/api';
 import { ReopenPeriodDialog } from '@/components/periods/ReopenPeriodDialog';
+import {
+  ClosedPeriod,
+  formatDateOnly,
+  formatDateTime,
+  formatPeriodRange,
+  periodClosingService,
+} from '@/services/periodClosingService';
 import { API_ENDPOINTS } from '@/config/api';
 import { getImageUrl } from '@/utils/imageUrl';
 import {
@@ -38,14 +43,11 @@ import {
   NumberDecrementStepper,
   FormControl,
   FormLabel,
-  FormErrorMessage,
   useToast,
   Button,
   ButtonGroup,
   Image,
   Stack,
-  InputGroup,
-  InputLeftElement,
   FormHelperText,
   Modal,
   ModalOverlay,
@@ -57,106 +59,12 @@ import {
   Tooltip,
   Badge
 } from '@chakra-ui/react';
-import { FiHome, FiSettings, FiGlobe, FiCalendar, FiDollarSign, FiSave, FiX, FiCreditCard, FiTrendingUp, FiCheckCircle, FiInfo, FiAlertTriangle, FiPackage, FiUnlock, FiClock } from 'react-icons/fi';
+import { FiHome, FiSettings, FiGlobe, FiDollarSign, FiSave, FiX, FiCreditCard, FiCheckCircle, FiInfo, FiAlertTriangle, FiPackage, FiUnlock, FiClock } from 'react-icons/fi';
 import Link from 'next/link';
-
-// Helper for converting fiscal year formats between backend and date input
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'
-];
-
-function monthDayStringToISO(src: string, useNextYear?: boolean): string {
-  if (!src) return '';
-  const lower = src.trim().toLowerCase();
-  // Month name + day (e.g., "january 1")
-  const monthIdx = MONTHS.findIndex(m => lower.startsWith(m.toLowerCase()));
-  if (monthIdx >= 0) {
-    const dayMatch = lower.match(/(\d{1,2})/);
-    const day = Math.min(Math.max(parseInt(dayMatch?.[1] || '1', 10), 1), 31);
-
-    // Smart year selection: use next year if specified OR if date is in the past
-    let year = new Date().getFullYear();
-    if (useNextYear) {
-      year += 1;
-    } else {
-      // If the date would be in the past (before today), use next year
-      const testDate = new Date(year, monthIdx, day);
-      if (testDate < new Date()) {
-        year += 1;
-      }
-    }
-
-    const mm = String(monthIdx + 1).padStart(2, '0');
-    const dd = String(day).padStart(2, '0');
-    return `${year}-${mm}-${dd}`;
-  }
-  // Fallback: try parsing any other date-like string
-  const d = new Date(src);
-  if (!isNaN(d.getTime())) {
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  }
-  return '';
-}
-
-function isoToMonthDayString(iso: string): string {
-  if (!iso) return '';
-  const parts = iso.split('-');
-  if (parts.length < 3) return '';
-  const m = parseInt(parts[1], 10);
-  const d = parseInt(parts[2], 10);
-  if (!m || !d || m < 1 || m > 12) return '';
-  return `${MONTHS[m - 1]} ${d}`;
-}
 
 function normalizeApiDate(value?: string | null): string {
   if (!value) return '';
   return value.split('T')[0];
-}
-
-// Format an ISO date string to a selected display format
-function formatDateISO(iso: string, format: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  switch (format) {
-    case 'DD/MM/YYYY':
-      return `${dd}/${mm}/${yyyy}`;
-    case 'MM/DD/YYYY':
-      return `${mm}/${dd}/${yyyy}`;
-    case 'DD-MM-YYYY':
-      return `${dd}-${mm}-${yyyy}`;
-    default:
-      return `${yyyy}-${mm}-${dd}`; // 'YYYY-MM-DD'
-  }
-}
-
-// Compute current fiscal year range from a selected month-day (ISO)
-function computeFiscalRange(currentISO: string): { startISO: string; endISO: string } | null {
-  if (!currentISO) return null;
-  const base = new Date(currentISO);
-  if (isNaN(base.getTime())) return null;
-  const month = base.getMonth();
-  const day = base.getDate();
-
-  const today = new Date();
-  const thisYearStart = new Date(Date.UTC(today.getFullYear(), month, day));
-  let start = thisYearStart;
-  if (today.getTime() < thisYearStart.getTime()) {
-    // fiscal year started last year
-    start = new Date(Date.UTC(today.getFullYear() - 1, month, day));
-  }
-  // End date: day before next year's start
-  const nextStart = new Date(Date.UTC(start.getUTCFullYear() + 1, month, day));
-  const end = new Date(nextStart.getTime() - 24 * 60 * 60 * 1000);
-
-  const toISO = (dt: Date) => `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-  return { startISO: toISO(start), endISO: toISO(end) };
 }
 
 interface TaxAccountSettings {
@@ -172,18 +80,58 @@ interface TaxAccountSettings {
   updated_at?: string;
 }
 
+interface PeriodClosingAccount {
+  id: number;
+  code: string;
+  name: string;
+  balance: number;
+}
 
-interface FiscalClosingPreview {
-  fiscal_year_end: string;
+interface PeriodClosingEntry {
+  description: string;
+  debit_account: string;
+  credit_account: string;
+  amount: number;
+}
+
+interface PeriodClosingPreview {
+  start_date: string;
+  end_date: string;
   total_revenue: number;
   total_expense: number;
   net_income: number;
   retained_earnings_id: number;
   can_close: boolean;
   validation_messages: string[];
-  revenue_accounts: Array<{ id: number; code: string; name: string; balance: number }>;
-  expense_accounts: Array<{ id: number; code: string; name: string; balance: number }>;
-  closing_entries: Array<{ description: string; debit_account: string; credit_account: string; amount: number }>;
+  revenue_accounts: PeriodClosingAccount[];
+  expense_accounts: PeriodClosingAccount[];
+  closing_entries: PeriodClosingEntry[];
+  transaction_count: number;
+  period_days: number;
+}
+
+interface PeriodClosingLastInfo {
+  has_previous_closing: boolean;
+  last_closing_date?: string | null;
+  next_start_date?: string | null;
+  period_start_date?: string | null;
+  last_period_start_date?: string | null;
+  last_period_end_date?: string | null;
+}
+
+interface ApiErrorLike {
+  message?: string;
+  response?: {
+    data?: {
+      error?: string;
+      details?: string;
+    };
+  };
+}
+
+const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  const apiError = error as ApiErrorLike;
+  return apiError.response?.data?.details || apiError.response?.data?.error || apiError.message || fallback;
 }
 
 interface SystemSettings {
@@ -206,11 +154,11 @@ interface SystemSettings {
   decimal_separator: string;
   decimal_places: number;
   invoice_prefix: string;
-  invoice_next_number?: number; // removed from API – keep optional for backward compatibility
+  invoice_next_number?: number; // removed from API - keep optional for backward compatibility
   quote_prefix: string;
-  quote_next_number?: number; // removed from API – keep optional for backward compatibility
+  quote_next_number?: number; // removed from API - keep optional for backward compatibility
   purchase_prefix: string;
-  purchase_next_number?: number; // removed from API – keep optional for backward compatibility
+  purchase_next_number?: number; // removed from API - keep optional for backward compatibility
   // New: Payment prefixes
   payment_receivable_prefix?: string;
   payment_payable_prefix?: string;
@@ -222,7 +170,6 @@ interface SystemSettings {
 }
 
 const SettingsPage: React.FC = () => {
-  const { user } = useAuth();
   const { t, language, setLanguage } = useTranslation();
   const toast = useToast();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
@@ -232,8 +179,6 @@ const SettingsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
-  // Local UI state for date input binding (ISO format required by <input type="date">)
-  const [fiscalStartISO, setFiscalStartISO] = useState<string>('');
   // Tax account settings
   const [taxAccountSettings, setTaxAccountSettings] = useState<TaxAccountSettings | null>(null);
   const [loadingTaxAccounts, setLoadingTaxAccounts] = useState(false);
@@ -241,11 +186,11 @@ const SettingsPage: React.FC = () => {
   // Period closing (flexible period closing)
   const [periodStartDate, setPeriodStartDate] = useState('');
   const [periodEndDate, setPeriodEndDate] = useState('');
-  const [periodClosingPreview, setPeriodClosingPreview] = useState<any | null>(null);
+  const [periodClosingPreview, setPeriodClosingPreview] = useState<PeriodClosingPreview | null>(null);
   const [loadingPeriodPreview, setLoadingPeriodPreview] = useState(false);
   const [showPeriodClosingModal, setShowPeriodClosingModal] = useState(false);
   const [executingPeriodClosing, setExecutingPeriodClosing] = useState(false);
-  const [lastClosingInfo, setLastClosingInfo] = useState<any | null>(null);
+  const [lastClosingInfo, setLastClosingInfo] = useState<PeriodClosingLastInfo | null>(null);
 
   // Reopen period
   const [showReopenDialog, setShowReopenDialog] = useState(false);
@@ -253,7 +198,7 @@ const SettingsPage: React.FC = () => {
   const [reopenEndDate, setReopenEndDate] = useState('');
 
   // Closing history
-  const [closingHistory, setClosingHistory] = useState<any[]>([]);
+  const [closingHistory, setClosingHistory] = useState<ClosedPeriod[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Move useColorModeValue to top level to fix hooks order
@@ -302,28 +247,34 @@ const SettingsPage: React.FC = () => {
       borderColor: inputFocusBorderColor,
     },
   };
+  const locale = language === 'id' ? 'id-ID' : 'en-US';
+  const formatPeriodDate = (value?: string | null) =>
+    formatDateOnly(value, locale, { day: 'numeric', month: 'short', year: 'numeric' });
+  const formatPeriodDateTime = (value?: string | null) => formatDateTime(value, locale);
+  const formatClosingRange = (startDate?: string | null, endDate?: string | null) =>
+    formatPeriodRange(startDate, endDate, locale);
 
-  const fetchTaxAccountSettings = async () => {
+  const fetchTaxAccountSettings = useCallback(async () => {
     setLoadingTaxAccounts(true);
     try {
       const response = await api.get('/api/v1/tax-accounts/current');
       if (response.data.success) {
         setTaxAccountSettings(response.data.data);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error fetching tax account settings:', err);
       // Don't show error if tax accounts are not configured yet
     } finally {
       setLoadingTaxAccounts(false);
     }
-  };
+  }, []);
 
   // Fetch last closing info to auto-populate start date
-  const fetchLastClosingInfo = async () => {
+  const fetchLastClosingInfo = useCallback(async () => {
     try {
       const response = await api.get('/api/v1/period-closing/last-info');
       if (response.data.success && response.data.data) {
-        const info = response.data.data;
+        const info = response.data.data as PeriodClosingLastInfo;
         setLastClosingInfo(info);
 
         // Auto-populate start date based on last closing
@@ -331,37 +282,35 @@ const SettingsPage: React.FC = () => {
           // Has previous closing - MUST use next start date (day after last closing)
           const nextStart = info.next_start_date.split('T')[0];
           setPeriodStartDate(nextStart);
-          console.log('✅ Period start date set from last closing:', nextStart);
+          console.log('Period start date set from last closing:', nextStart);
         } else if (!info.has_previous_closing && info.period_start_date) {
           // First closing - use earliest transaction date
           const firstDate = info.period_start_date.split('T')[0];
           setPeriodStartDate(firstDate);
-          console.log('✅ Period start date set from earliest transaction:', firstDate);
+          console.log('Period start date set from earliest transaction:', firstDate);
         } else {
           // No data available - let user input manually
-          console.log('⚠️ No closing info available, user must input start date manually');
+          console.log('No closing info available, user must input start date manually');
         }
       }
     } catch (err) {
-      console.error('❌ Failed to fetch last closing info:', err);
+      console.error('Failed to fetch last closing info:', err);
       // On error, just let user input dates manually
     }
-  };
+  }, []);
 
   // Fetch closing history
-  const fetchClosingHistory = async () => {
+  const fetchClosingHistory = useCallback(async () => {
     setLoadingHistory(true);
     try {
-      const response = await api.get('/api/v1/period-closing/history?limit=10');
-      if (response.data.success) {
-        setClosingHistory(response.data.data || []);
-      }
+      const history = await periodClosingService.getClosingHistory(10);
+      setClosingHistory(history);
     } catch (err) {
       console.error('Failed to fetch closing history:', err);
     } finally {
       setLoadingHistory(false);
     }
-  };
+  }, []);
 
   const handlePreviewPeriodClosing = async () => {
     if (!periodStartDate || !periodEndDate) {
@@ -383,10 +332,10 @@ const SettingsPage: React.FC = () => {
         setPeriodClosingPreview(response.data.data);
         setShowPeriodClosingModal(true);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         title: 'Failed to preview closing',
-        description: err.response?.data?.details || err.message,
+        description: getApiErrorMessage(err, 'Failed to preview closing'),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -419,19 +368,19 @@ const SettingsPage: React.FC = () => {
         setPeriodClosingPreview(null);
 
         // Refresh settings to update fiscal year start (auto-updated by backend)
-        console.log('🔄 Refreshing settings to get updated fiscal_year_start...');
+        console.log('Refreshing settings to get updated fiscal_year_start...');
         await fetchSettings();
 
         // Refresh last closing info
         await fetchLastClosingInfo();
         await fetchClosingHistory();
 
-        console.log('✅ Settings and closing info refreshed');
+        console.log('Settings and closing info refreshed');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         title: 'Failed to close period',
-        description: err.response?.data?.details || err.message,
+        description: getApiErrorMessage(err, 'Failed to close period'),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -441,79 +390,46 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  const fetchSettings = async () => {
+  const fetchSettings = useCallback(async () => {
     setLoading(true);
     try {
       const response = await api.get(API_ENDPOINTS.SETTINGS);
       if (response.data.success) {
         const fiscalYearStart = response.data.data?.fiscal_year_start;
-        const fiscalISO = monthDayStringToISO(fiscalYearStart);
 
-        console.log('📅 Settings loaded:');
+        console.log('Settings loaded:');
         console.log('  - fiscal_year_start (DB):', fiscalYearStart);
-        console.log('  - fiscalStartISO (UI):', fiscalISO);
 
         setSettings(response.data.data);
         setFormData(response.data.data);
-        // derive ISO date for UI
-        setFiscalStartISO(fiscalISO);
         setHasChanges(false);
         // Sync language from settings
         if (response.data.data.language && response.data.data.language !== language) {
           setLanguage(response.data.data.language);
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error fetching settings:', err);
-      setError(err.response?.data?.error || err.message);
+      setError(getApiErrorMessage(err, 'Failed to fetch settings'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [language, setLanguage]);
 
   useEffect(() => {
-    fetchSettings();
-    fetchTaxAccountSettings();
-    fetchLastClosingInfo();
-    fetchClosingHistory();
-  }, []);
+    void fetchSettings();
+    void fetchTaxAccountSettings();
+    void fetchLastClosingInfo();
+    void fetchClosingHistory();
+  }, [fetchSettings, fetchTaxAccountSettings, fetchLastClosingInfo, fetchClosingHistory]);
 
-  // Keep ISO date in sync when settings are populated later
-  useEffect(() => {
-    if (settings) {
-      setFiscalStartISO(prev => prev || monthDayStringToISO(settings.fiscal_year_start));
-    }
-  }, [settings]);
-
-  const handleLanguageChange = async (newLanguage: string) => {
-    if (newLanguage === 'id' || newLanguage === 'en') {
-      setLanguage(newLanguage);
-      // Update language in backend
-      try {
-        await api.put(API_ENDPOINTS.SETTINGS_UPDATE, { language: newLanguage });
-        toast({
-          title: t('settings.languageChanged'),
-          status: 'success',
-          duration: 3000,
-          isClosable: true,
-        });
-      } catch (error) {
-        console.error('Error updating language:', error);
-      }
-    }
-  };
-
-  const handleFormChange = (field: keyof SystemSettings, value: any) => {
+  const handleFormChange = (field: keyof SystemSettings, value: SystemSettings[keyof SystemSettings]) => {
     setFormData(prev => {
-      if (!prev) {
-        // If formData is null, create new object with current value
-        return {
-          ...settings,
-          [field]: value
-        } as SystemSettings;
-      }
+      const baseSettings = prev ?? settings;
+      if (!baseSettings) return prev;
+
       return {
-        ...prev,
+        ...baseSettings,
         [field]: value
       };
     });
@@ -543,10 +459,10 @@ const SettingsPage: React.FC = () => {
           isClosable: true,
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('settings.updateError') || 'Failed to update settings',
-        description: error.response?.data?.details || error.message,
+        description: getApiErrorMessage(error, 'Failed to update settings'),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -578,8 +494,8 @@ const SettingsPage: React.FC = () => {
       } else {
         toast({ title: t('settings.taxAccounts.messages.uploadSuccessNoPath') || 'Upload succeeded but no path returned', status: 'warning', duration: 3000, isClosable: true });
       }
-    } catch (err: any) {
-      toast({ title: t('settings.taxAccounts.messages.logoUploadFailed') || 'Failed to upload logo', description: err.response?.data?.error || err.message, status: 'error', duration: 5000, isClosable: true });
+    } catch (err: unknown) {
+      toast({ title: t('settings.taxAccounts.messages.logoUploadFailed') || 'Failed to upload logo', description: getApiErrorMessage(err, 'Failed to upload logo'), status: 'error', duration: 5000, isClosable: true });
     } finally {
       setUploadingLogo(false);
     }
@@ -859,7 +775,6 @@ const SettingsPage: React.FC = () => {
                       >
                         <NumberInputField
                           placeholder="11.00"
-                          variant="filled"
                           {...fieldStyles}
                         />
                         <NumberInputStepper>
@@ -911,16 +826,16 @@ const SettingsPage: React.FC = () => {
                       label={
                         <Box p={2}>
                           <Text fontSize="xs" fontWeight="bold" mb={1}>
-                            📘 {t('settings.periodClosingDesc')}
+                            {t('settings.periodClosingDesc')}
                           </Text>
                           <Text fontSize="xs" fontWeight="semibold" mb={1}>
                             {t('settings.periodClosingFeatures')}
                           </Text>
-                          <Text fontSize="xs" color="green.200">• {t('settings.periodClosingResetRev')}</Text>
-                          <Text fontSize="xs" color="red.200">• {t('settings.periodClosingResetExp')}</Text>
-                          <Text fontSize="xs" color="blue.200">• {t('settings.periodClosingRetained')}</Text>
-                          <Text fontSize="xs">• {t('settings.periodClosingJournal')}</Text>
-                          <Text fontSize="xs">• {t('settings.periodClosingLock')}</Text>
+                          <Text fontSize="xs" color="green.200">- {t('settings.periodClosingResetRev')}</Text>
+                          <Text fontSize="xs" color="red.200">- {t('settings.periodClosingResetExp')}</Text>
+                          <Text fontSize="xs" color="blue.200">- {t('settings.periodClosingRetained')}</Text>
+                          <Text fontSize="xs">- {t('settings.periodClosingJournal')}</Text>
+                          <Text fontSize="xs">- {t('settings.periodClosingLock')}</Text>
                           <Text fontSize="xs" mt={2} fontWeight="semibold" color="orange.200">
                             {t('settings.permanentAction')}
                           </Text>
@@ -941,7 +856,7 @@ const SettingsPage: React.FC = () => {
                     <Alert status="error" borderRadius="md" size="sm">
                       <AlertIcon />
                       <Box>
-                        <AlertTitle fontSize="sm">⚠️ {t('settings.permanentAction')}</AlertTitle>
+                        <AlertTitle fontSize="sm">{t('settings.permanentAction')}</AlertTitle>
                         <AlertDescription fontSize="xs">
                           {t('settings.periodClosingWarnings.permanentActionDesc')}
                         </AlertDescription>
@@ -952,9 +867,9 @@ const SettingsPage: React.FC = () => {
                       <Alert status="info" borderRadius="md" size="sm">
                         <AlertIcon />
                         <Box flex="1">
-                          <AlertTitle fontSize="sm">📅 {t('settings.periodClosingLabels.lastClosingTitle')}</AlertTitle>
+                          <AlertTitle fontSize="sm">{t('settings.periodClosingLabels.lastClosingTitle')}</AlertTitle>
                           <AlertDescription fontSize="xs">
-                            {t('settings.periodClosingLabels.lastClosed')}: {new Date(lastClosingInfo.last_closing_date).toLocaleDateString()}
+                            {t('settings.periodClosingLabels.lastClosed')}: {formatPeriodDate(normalizeApiDate(lastClosingInfo.last_closing_date))}
                           </AlertDescription>
                         </Box>
                         <Button
@@ -978,7 +893,7 @@ const SettingsPage: React.FC = () => {
                       <Alert status="warning" borderRadius="md" size="sm">
                         <AlertIcon />
                         <Box>
-                          <AlertTitle fontSize="sm">⚠️ {t('settings.periodClosingWarnings.firstTimeTitle')}</AlertTitle>
+                          <AlertTitle fontSize="sm">{t('settings.periodClosingWarnings.firstTimeTitle')}</AlertTitle>
                           <AlertDescription fontSize="xs">
                             {t('settings.periodClosingWarnings.firstTimeDesc')}
                           </AlertDescription>
@@ -989,7 +904,7 @@ const SettingsPage: React.FC = () => {
                     <Alert status="success" borderRadius="md" size="sm" variant="left-accent">
                       <AlertIcon />
                       <Box>
-                        <AlertTitle fontSize="sm">🔄 {t('settings.periodClosingWarnings.autoUpdateTitle')}</AlertTitle>
+                        <AlertTitle fontSize="sm">{t('settings.periodClosingWarnings.autoUpdateTitle')}</AlertTitle>
                         <AlertDescription fontSize="xs">
                           <Box dangerouslySetInnerHTML={{ __html: t('settings.periodClosingWarnings.autoUpdateDesc') }} />
                         </AlertDescription>
@@ -1024,11 +939,11 @@ const SettingsPage: React.FC = () => {
                         cursor={lastClosingInfo?.has_previous_closing ? 'not-allowed' : 'text'}
                         placeholder="Select start date"
                       />
-                      <FormHelperText fontSize="xs" color={lastClosingInfo?.has_previous_closing ? lockedHelperColor : mutedTextColor}>
-                        {lastClosingInfo?.has_previous_closing
-                          ? `🔒 ${t('settings.periodClosingHelper.autoStart')} (${lastClosingInfo.last_closing_date ? new Date(lastClosingInfo.last_closing_date).toLocaleDateString(language === 'id' ? 'id-ID' : 'en-US') : 'N/A'})`
-                          : `📅 ${t('settings.periodClosingHelper.manualStart')}`}
-                      </FormHelperText>
+                        <FormHelperText fontSize="xs" color={lastClosingInfo?.has_previous_closing ? lockedHelperColor : mutedTextColor}>
+                          {lastClosingInfo?.has_previous_closing
+                            ? `${t('settings.periodClosingHelper.autoStart')} (${lastClosingInfo.last_closing_date ? formatPeriodDate(normalizeApiDate(lastClosingInfo.last_closing_date)) : 'N/A'})`
+                            : t('settings.periodClosingHelper.manualStart')}
+                        </FormHelperText>
                     </FormControl>
 
                     <FormControl>
@@ -1087,7 +1002,7 @@ const SettingsPage: React.FC = () => {
                       </Text>
                     ) : (
                       <VStack spacing={2} width="full" alignItems="stretch">
-                        {closingHistory.map((item: any) => (
+                        {closingHistory.map((item) => (
                           <Box
                             key={item.id}
                             p={3}
@@ -1102,19 +1017,27 @@ const SettingsPage: React.FC = () => {
                                   colorScheme={item.is_closed ? 'green' : 'orange'}
                                   fontSize="2xs"
                                 >
-                                  {item.is_closed ? '🔒 Tertutup' : '🔓 Terbuka'}
+                                  {item.is_closed ? 'Tertutup' : 'Terbuka'}
                                 </Badge>
+                                {item.can_reopen ? (
+                                  <Badge colorScheme="blue" variant="subtle" fontSize="2xs">
+                                    Periode Terbaru
+                                  </Badge>
+                                ) : null}
                                 <Text fontSize="xs" fontWeight="semibold">
                                   {item.start_date && !item.start_date.startsWith('0001')
-                                    ? new Date(item.start_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
-                                    : '—'}
-                                  {' — '}
+                                    ? formatPeriodDate(item.start_date)
+                                    : '-'}
+                                  {' - '}
                                   {item.end_date && !item.end_date.startsWith('0001')
-                                    ? new Date(item.end_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
-                                    : '—'}
+                                    ? formatPeriodDate(item.end_date)
+                                    : '-'}
+                                </Text>
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  {item.description}
                                 </Text>
                               </HStack>
-                              {item.is_closed && (
+                              {item.can_reopen && (
                                 <Button
                                   size="xs"
                                   variant="outline"
@@ -1130,20 +1053,51 @@ const SettingsPage: React.FC = () => {
                                 </Button>
                               )}
                             </HStack>
-                            <HStack spacing={4} fontSize="xs" color={mutedTextColor}>
+                            <HStack spacing={4} fontSize="xs" color={mutedTextColor} flexWrap="wrap">
                               <Text>Revenue: Rp {(item.total_revenue || 0).toLocaleString('id-ID')}</Text>
                               <Text>Expense: Rp {(item.total_expense || 0).toLocaleString('id-ID')}</Text>
                               <Text fontWeight="semibold" color={item.net_income >= 0 ? 'green.600' : 'red.600'}>
                                 Net: Rp {(item.net_income || 0).toLocaleString('id-ID')}
                               </Text>
+                              <Text>Transaksi: {(item.transaction_count || 0).toLocaleString('id-ID')}</Text>
+                              <Text>Reopen: {(item.reopen_count || 0).toLocaleString('id-ID')}x</Text>
                             </HStack>
-                            {
-                              item.notes && (
-                                <Text fontSize="xs" color={mutedTextColor} mt={1} fontStyle="italic">
-                                  {item.notes}
-                                </Text>
-                              )
-                            }
+                            {item.closed_at || item.snapshot_generated_at ? (
+                              <HStack spacing={4} fontSize="xs" color={mutedTextColor} mt={2} flexWrap="wrap">
+                                {item.closed_at ? <Text>Ditutup: {formatPeriodDateTime(item.closed_at)}</Text> : null}
+                                {item.snapshot_generated_at ? <Text>Snapshot: {formatPeriodDateTime(item.snapshot_generated_at)}</Text> : null}
+                              </HStack>
+                            ) : null}
+                            {item.history_events && item.history_events.length > 0 ? (
+                              <VStack spacing={1} alignItems="stretch" mt={2}>
+                                {item.history_events.slice(0, 4).map((event, index) => (
+                                  <Box
+                                    key={`${item.id}-${event.type}-${index}`}
+                                    p={2}
+                                    bg={itemBg}
+                                    borderRadius="md"
+                                  >
+                                    <HStack justify="space-between" align="start">
+                                      <Text fontSize="xs" fontWeight="semibold" color={textColor}>
+                                        {event.title}
+                                      </Text>
+                                      {event.at ? (
+                                        <Text fontSize="2xs" color={mutedTextColor}>
+                                          {formatPeriodDateTime(event.at)}
+                                        </Text>
+                                      ) : null}
+                                    </HStack>
+                                    <Text fontSize="xs" color={mutedTextColor}>
+                                      {event.description}
+                                    </Text>
+                                  </Box>
+                                ))}
+                              </VStack>
+                            ) : item.notes ? (
+                              <Text fontSize="xs" color={mutedTextColor} mt={2} fontStyle="italic">
+                                {item.notes}
+                              </Text>
+                            ) : null}
                           </Box>
                         ))}
                       </VStack>
@@ -1199,36 +1153,36 @@ const SettingsPage: React.FC = () => {
 
                     {/* Company-type-specific recommendation */}
                     {settings?.company_type === 'SERVICE' && (
-                      <Alert status="info" variant="left-accent" size="sm" borderRadius="md">
-                        <AlertIcon />
-                        <AlertDescription fontSize="xs">
-                          💡 {t('settings.taxRecommendations.service')}
-                        </AlertDescription>
-                      </Alert>
+                        <Alert status="info" variant="left-accent" size="sm" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription fontSize="xs">
+                            {t('settings.taxRecommendations.service')}
+                          </AlertDescription>
+                        </Alert>
                     )}
                     {settings?.company_type === 'TRADING' && (
-                      <Alert status="warning" variant="left-accent" size="sm" borderRadius="md">
-                        <AlertIcon />
-                        <AlertDescription fontSize="xs">
-                          <Box dangerouslySetInnerHTML={{ __html: `📦 ${t('settings.taxRecommendations.trading')}` }} />
-                        </AlertDescription>
-                      </Alert>
+                        <Alert status="warning" variant="left-accent" size="sm" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription fontSize="xs">
+                            <Box dangerouslySetInnerHTML={{ __html: t('settings.taxRecommendations.trading') }} />
+                          </AlertDescription>
+                        </Alert>
                     )}
                     {settings?.company_type === 'MANUFACTURING' && (
-                      <Alert status="warning" variant="left-accent" size="sm" borderRadius="md">
-                        <AlertIcon />
-                        <AlertDescription fontSize="xs">
-                          <Box dangerouslySetInnerHTML={{ __html: `🏭 ${t('settings.taxRecommendations.manufacturing')}` }} />
-                        </AlertDescription>
-                      </Alert>
+                        <Alert status="warning" variant="left-accent" size="sm" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription fontSize="xs">
+                            <Box dangerouslySetInnerHTML={{ __html: t('settings.taxRecommendations.manufacturing') }} />
+                          </AlertDescription>
+                        </Alert>
                     )}
                     {!settings?.company_type && (
-                      <Alert status="error" variant="left-accent" size="sm" borderRadius="md">
-                        <AlertIcon />
-                        <AlertDescription fontSize="xs">
-                          ⚠️ {t('settings.taxRecommendations.noType')}
-                        </AlertDescription>
-                      </Alert>
+                        <Alert status="error" variant="left-accent" size="sm" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription fontSize="xs">
+                            {t('settings.taxRecommendations.noType')}
+                          </AlertDescription>
+                        </Alert>
                     )}
 
                     {loadingTaxAccounts ? (
@@ -1316,7 +1270,7 @@ const SettingsPage: React.FC = () => {
                                   ) : (
                                     <HStack spacing={1}>
                                       <Icon as={FiAlertTriangle} color="red.400" boxSize={3} />
-                                      <Text fontSize="xs" color={redColor} fontWeight="medium">Inventory: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
+                                      <Text fontSize="xs" color={redColor} fontWeight="medium">Inventory: {t('settings.taxAccountStatus.notConfigured')}</Text>
                                     </HStack>
                                   )}
                                   {taxAccountSettings.cogs_account ? (
@@ -1329,7 +1283,7 @@ const SettingsPage: React.FC = () => {
                                   ) : (
                                     <HStack spacing={1}>
                                       <Icon as={FiAlertTriangle} color="red.400" boxSize={3} />
-                                      <Text fontSize="xs" color={redColor} fontWeight="medium">COGS: {t('settings.taxAccountStatus.notConfigured')} ⚠️</Text>
+                                      <Text fontSize="xs" color={redColor} fontWeight="medium">COGS: {t('settings.taxAccountStatus.notConfigured')}</Text>
                                     </HStack>
                                   )}
                                 </VStack>
@@ -1375,7 +1329,7 @@ const SettingsPage: React.FC = () => {
           <ModalOverlay />
           <ModalContent maxW="800px" bg={modalBg} borderWidth="1px" borderColor={cardBorderColor}>
             <ModalHeader bg={modalHeaderBg} color="white">
-              📅 {t('settings.periodClosing') || "Period Closing Preview"}
+              {t('settings.periodClosing') || "Period Closing Preview"}
             </ModalHeader>
             <ModalCloseButton color="white" />
             <ModalBody py={6}>
@@ -1384,7 +1338,7 @@ const SettingsPage: React.FC = () => {
                   {/* Period Info */}
                   <Box width="full" p={3} bg={panelBg} borderRadius="md" borderWidth="1px" borderColor={cardBorderColor}>
                     <Text fontSize="sm" fontWeight="bold" mb={1}>
-                      {t('settings.periodClosingLabels.period')}: {new Date(periodClosingPreview.start_date).toLocaleDateString()} - {new Date(periodClosingPreview.end_date).toLocaleDateString()}
+                      {t('settings.periodClosingLabels.period')}: {formatClosingRange(normalizeApiDate(periodClosingPreview.start_date), normalizeApiDate(periodClosingPreview.end_date))}
                     </Text>
                     <Text fontSize="xs" color={mutedTextColor}>
                       {periodClosingPreview.period_days} {t('settings.periodClosingLabels.days')} | {periodClosingPreview.transaction_count} {t('settings.periodClosingLabels.transactions')}
@@ -1438,17 +1392,17 @@ const SettingsPage: React.FC = () => {
                     <Alert status="warning" borderRadius="md">
                       <AlertIcon />
                       <Box>
-                        <AlertTitle fontSize="sm">⚠️ {t('settings.periodClosingFeatures') || "What will happen:"}</AlertTitle>
+                        <AlertTitle fontSize="sm">{t('settings.periodClosingFeatures') || "What will happen:"}</AlertTitle>
                         <AlertDescription fontSize="xs">
-                          • {periodClosingPreview.revenue_accounts?.length || 0} {t('settings.periodClosingLabels.featureRevenue')}
+                          - {periodClosingPreview.revenue_accounts?.length || 0} {t('settings.periodClosingLabels.featureRevenue')}
                           <br />
-                          • {periodClosingPreview.expense_accounts?.length || 0} {t('settings.periodClosingLabels.featureExpense')}
+                          - {periodClosingPreview.expense_accounts?.length || 0} {t('settings.periodClosingLabels.featureExpense')}
                           <br />
-                          • {t('settings.periodClosingLabels.featureRetained')} Rp {periodClosingPreview.net_income.toLocaleString('id-ID')}
+                          - {t('settings.periodClosingLabels.featureRetained')} Rp {periodClosingPreview.net_income.toLocaleString('id-ID')}
                           <br />
-                          • {t('settings.periodClosingLabels.featureJournal')}
+                          - {t('settings.periodClosingLabels.featureJournal')}
                           <br />
-                          • {t('settings.periodClosingLabels.featureLocked')}
+                          - {t('settings.periodClosingLabels.featureLocked')}
                         </AlertDescription>
                       </Box>
                     </Alert>
@@ -1461,7 +1415,7 @@ const SettingsPage: React.FC = () => {
                         {t('settings.periodClosingLabels.closingEntries')}
                       </Text>
                       <VStack spacing={2} width="full" alignItems="start">
-                        {periodClosingPreview.closing_entries.map((entry: any, i: number) => (
+                        {periodClosingPreview.closing_entries.map((entry, i: number) => (
                           <Box
                             key={i}
                             width="full"
@@ -1476,7 +1430,7 @@ const SettingsPage: React.FC = () => {
                             </Text>
                             <HStack spacing={2} fontSize="xs">
                               <Text>Dr: {entry.debit_account}</Text>
-                              <Text>→</Text>
+                              <Text>{'->'}</Text>
                               <Text>Cr: {entry.credit_account}</Text>
                               <Text fontWeight="bold">
                                 Rp {entry.amount.toLocaleString('id-ID')}

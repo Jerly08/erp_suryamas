@@ -9,6 +9,12 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SSOTBalanceSheetData } from '../services/ssotBalanceSheetReportService';
 
+const getBalanceSheetTotals = (data: SSOTBalanceSheetData) => ({
+  totalAssets: data.assets?.total_assets || 0,
+  totalLiabilities: data.liabilities?.total_liabilities || 0,
+  totalEquity: data.equity?.total_equity || 0,
+});
+
 
 /**
  * Enhanced CSV Export for Balance Sheet
@@ -51,11 +57,12 @@ export function exportBalanceSheetToCSV(
   csvLines.push(''); // Empty line
   
   // Summary section
+  const totals = getBalanceSheetTotals(data);
   csvLines.push('FINANCIAL SUMMARY');
   csvLines.push('Category,Amount');
-  csvLines.push(`Total Assets,${formatCurrencyForCSV(data.assets?.total_assets || data.total_assets || 0)}`);
-  csvLines.push(`Total Liabilities,${formatCurrencyForCSV(data.liabilities?.total_liabilities || data.total_liabilities || 0)}`);
-  csvLines.push(`Total Equity,${formatCurrencyForCSV(data.equity?.total_equity || data.total_equity || 0)}`);
+  csvLines.push(`Total Assets,${formatCurrencyForCSV(totals.totalAssets)}`);
+  csvLines.push(`Total Liabilities,${formatCurrencyForCSV(totals.totalLiabilities)}`);
+  csvLines.push(`Total Equity,${formatCurrencyForCSV(totals.totalEquity)}`);
   csvLines.push(`Total Liabilities + Equity,${formatCurrencyForCSV(data.total_liabilities_and_equity || 0)}`);
   csvLines.push(`Balanced,${data.is_balanced ? 'Yes' : 'No'}`);
   if (!data.is_balanced && data.balance_difference) {
@@ -231,7 +238,7 @@ export function exportBalanceSheetToPDF(
     // Balance status
     const balanceStatus = data.is_balanced ? '✓ Balanced' : '✗ Not Balanced';
     const statusColor = data.is_balanced ? [0, 128, 0] : [255, 0, 0];
-    doc.setTextColor(...statusColor as any);
+    doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
     doc.text(balanceStatus, pageWidth / 2, yPosition, { align: 'center' });
     doc.setTextColor(0, 0, 0); // Reset to black
     
@@ -243,10 +250,11 @@ export function exportBalanceSheetToPDF(
     doc.text('FINANCIAL SUMMARY', 20, yPosition);
     yPosition += 5;
     
+    const totals = getBalanceSheetTotals(data);
     const summaryData = [
-      ['Total Assets', formatCurrencyForPDF(data.assets?.total_assets || data.total_assets || 0)],
-      ['Total Liabilities', formatCurrencyForPDF(data.liabilities?.total_liabilities || data.total_liabilities || 0)],
-      ['Total Equity', formatCurrencyForPDF(data.equity?.total_equity || data.total_equity || 0)],
+      ['Total Assets', formatCurrencyForPDF(totals.totalAssets)],
+      ['Total Liabilities', formatCurrencyForPDF(totals.totalLiabilities)],
+      ['Total Equity', formatCurrencyForPDF(totals.totalEquity)],
       ['Total Liabilities + Equity', formatCurrencyForPDF(data.total_liabilities_and_equity || 0)]
     ];
     
@@ -479,7 +487,7 @@ export function exportBalanceSheetToPDF(
     doc.text(`Data Source: ${data.enhanced ? 'SSOT Enhanced' : 'SSOT Standard'}`, pageWidth / 2, footerY, { align: 'center' });
     
     // Add page numbers if multiple pages
-    const pageCount = doc.getNumberOfPages();
+    const pageCount = doc.internal.pages.length - 1;
     if (pageCount > 1) {
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);

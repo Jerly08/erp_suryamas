@@ -109,7 +109,7 @@ const JournalEntryForm: React.FC<JournalEntryFormProps> = ({
       description: initialData?.description || '',
       reference: initialData?.reference || '',
       notes: initialData?.notes || '',
-      lines: initialData?.journal_lines?.map(line => ({
+      lines: initialData?.lines?.map((line) => ({
         account_id: line.account_id,
         description: line.description,
         debit_amount: line.debit_amount || undefined,
@@ -135,6 +135,9 @@ const JournalEntryForm: React.FC<JournalEntryFormProps> = ({
   const [savedEntry, setSavedEntry] = useState<SSOTJournalEntry | null>(null);
   const [balanceChanges, setBalanceChanges] = useState<Map<number, number>>(new Map());
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [isConnected] = useState(false);
+  const [updateCount] = useState(0);
+  const [lastUpdateTime] = useState<Date | null>(null);
 
   // Color mode values
   const cardBg = useColorModeValue('white', 'gray.800');
@@ -216,9 +219,10 @@ const JournalEntryForm: React.FC<JournalEntryFormProps> = ({
 
   // Get current balance for account
   const getCurrentBalance = (accountId: number) => {
-    const balanceUpdate = getAccountBalance(accountId);
-    return balanceUpdate ? balanceUpdate.balance : balanceChanges.get(accountId) || 0;
+    return balanceChanges.get(accountId) || 0;
   };
+
+  const toggleConnection = () => {};
 
   // Submit journal entry
   const onSubmit = async (data: JournalEntryFormData) => {

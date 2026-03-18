@@ -169,8 +169,10 @@ const ProfitLossView: React.FC<{ data: ProfitLossStatement }> = ({ data }) => {
           </StatNumber>
           {data.comparative && (
             <StatHelpText>
-              <Icon as={data.revenueGrowth >= 0 ? FiTrendingUp : FiTrendingDown} />
-              {financialReportService.formatPercentage(data.revenueGrowth || 0)} vs previous
+              <Icon
+                as={(data.comparative.variance.revenueVariance || 0) >= 0 ? FiTrendingUp : FiTrendingDown}
+              />
+              {financialReportService.formatPercentage(data.comparative.variance.revenueVariance || 0)} vs previous
             </StatHelpText>
           )}
         </Stat>

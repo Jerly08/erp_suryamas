@@ -3,8 +3,10 @@
  * Provides specific business error handling for sales operations
  */
 
-import { toast } from '@chakra-ui/react';
+import { createStandaloneToast } from '@chakra-ui/react';
 import { shouldSuppressAuthErrorToast } from './authErrorHandler';
+
+const { toast } = createStandaloneToast();
 
 // Error types enum
 export enum ErrorTypes {

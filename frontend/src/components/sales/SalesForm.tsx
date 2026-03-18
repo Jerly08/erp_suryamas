@@ -212,11 +212,6 @@ const SalesForm: React.FC<SalesFormProps> = ({
     }
   }, [isOpen, user, hasPermission, sale, toast, onClose]);
 
-  // Don't render the form if user doesn't have permission
-  if (!hasPermission && user) {
-    return null;
-  }
-
   const {
     register,
     handleSubmit,
@@ -296,6 +291,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const watchType = watch('type');
   const watchDueDate = watch('due_date');
   const [discountType, setDiscountType] = useState<'percentage' | 'amount'>('percentage');
+  const shouldHideForm = !hasPermission && !!user;
 
   useEffect(() => {
     if (isOpen) {
@@ -587,7 +583,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const populateFormWithSale = (saleData: Sale) => {
     console.log('📝 Populating form with sale data:', saleData);
 
-    reset({
+    const formValues: FormData = {
       customer_id: saleData.customer_id,
       sales_person_id: saleData.sales_person_id || undefined,
       project_id: saleData.project_id || undefined,
@@ -619,7 +615,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         }))
         : [],
       payment_method: saleData.payment_method || undefined,
-      payment_method_type: saleData.payment_method_type || 'CREDIT',
+      payment_method_type: (saleData.payment_method_type as FormData['payment_method_type']) || 'CREDIT',
       cash_bank_id: saleData.cash_bank_id || undefined,
       shipping_method: saleData.shipping_method || undefined,
       shipping_cost: saleData.shipping_cost || 0,
@@ -651,7 +647,9 @@ const SalesForm: React.FC<SalesFormProps> = ({
           discount_percent: 0,
           taxable: true
         }]
-    });
+    };
+
+    reset(formValues);
 
     console.log('✅ Form populated successfully');
   };
@@ -1157,7 +1155,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
               location: item.location || '',
               quantity: item.quantity,
               unit_price: item.unit_price,
-              discount: item.discount_percent || item.discount || 0,
+              discount: item.discount_percent || 0,
               tax: 0,
               revenue_account_id: item.revenue_account_id,
               delete: item.delete || false
@@ -1272,7 +1270,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       }
 
       // Parse the error for display
-      let parsedError;
+      let parsedError: ParsedValidationError;
       try {
         parsedError = ErrorHandler.parseValidationError(errorObj);
       } catch (parseError) {
@@ -1313,6 +1311,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
     reset();
     onClose();
   };
+
+  if (shouldHideForm) {
+    return null;
+  }
 
   return (
     <>
@@ -1605,7 +1607,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           _hover={{ borderColor }}
                           _focusVisible={fieldFocusStyles}
                           _focus={{ bg: isDueDateAutoCalculated ? readOnlyBg : inputFocusBg }}
-                          isReadOnly={isDueDateAutoCalculated}
+                          isReadOnly={Boolean(isDueDateAutoCalculated)}
                         />
                         <FormHelperText color={isDueDateAutoCalculated ? successTextColor : textColor}>
                           {isDueDateAutoCalculated
@@ -1885,9 +1887,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   size="sm"
                                   {...register(`items.${index}.revenue_account_id`, {
                                     setValueAs: value => parseInt(value) || 0,
-                                    validate: value => {
-                                      return value > 0 || 'Pilih COA / Revenue Account untuk item ini';
-                                    },
+                                    validate: value => Number(value ?? 0) > 0 || 'Pilih COA / Revenue Account untuk item ini',
                                     onChange: () => clearErrors(`items.${index}.revenue_account_id`)
                                   })}
                                   {...baseFieldStyles}
@@ -1966,8 +1966,6 @@ const SalesForm: React.FC<SalesFormProps> = ({
                             placeholder="Rp 0"
                             min={0}
                             showLabel={false}
-                            bg={inputBg}
-                            _focus={{ bg: inputFocusBg }}
                             size="sm"
                             isDisabled={isInvoiced}
                           />

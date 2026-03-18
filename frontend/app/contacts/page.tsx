@@ -241,7 +241,12 @@ const ContactsPage = () => {
   // Table columns definition (removed Type column since we're grouping by type)
   // Dynamic columns based on contact type
   const getColumnsForType = (contactType?: string) => {
-    const baseColumns = [
+    const baseColumns: Array<{
+      header: string;
+      accessor: string | ((contact: Contact) => string);
+      headerStyle: React.CSSProperties;
+      cellStyle: React.CSSProperties;
+    }> = [
       {
         header: t('contacts.table.name'),
         accessor: 'name',
@@ -272,7 +277,7 @@ const ContactsPage = () => {
         header: t('contacts.table.email'),
         accessor: 'email',
         headerStyle: { padding: '12px 8px', fontSize: '14px', fontWeight: 'semibold' },
-        cellStyle: { padding: '12px 8px', fontSize: '14px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+        cellStyle: { padding: '12px 8px', fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
       },
       {
         header: t('contacts.table.phone'),

@@ -1,10 +1,10 @@
 package services
 
 import (
-	"fmt"
-	"time"
 	"app-sistem-akuntansi/models"
+	"fmt"
 	"gorm.io/gorm"
+	"time"
 )
 
 type EscalationService struct {
@@ -23,12 +23,12 @@ func NewEscalationService(db *gorm.DB, approvalService *ApprovalService) *Escala
 func (s *EscalationService) CheckAndEscalateOverdueApprovals() error {
 	// Find all pending approval actions that are overdue
 	var overdueActions []models.ApprovalAction
-	
+
 	err := s.db.Preload("Request").Preload("Step").
 		Where("is_active = ? AND status = ? AND created_at < ?",
 			true, models.ApprovalStatusPending, time.Now().Add(-24*time.Hour)).
 		Find(&overdueActions).Error
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to fetch overdue actions: %v", err)
 	}
@@ -106,7 +106,7 @@ func (s *EscalationService) escalateApproval(action *models.ApprovalAction) erro
 		request.Status = models.ApprovalStatusApproved
 		now := time.Now()
 		request.CompletedAt = &now
-		
+
 		if err := tx.Save(&request).Error; err != nil {
 			tx.Rollback()
 			return err
@@ -157,12 +157,9 @@ func (s *EscalationService) SetupEscalationScheduler() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				if err := s.CheckAndEscalateOverdueApprovals(); err != nil {
-					fmt.Printf("Escalation check failed: %v\n", err)
-				}
+		for range ticker.C {
+			if err := s.CheckAndEscalateOverdueApprovals(); err != nil {
+				fmt.Printf("Escalation check failed: %v\n", err)
 			}
 		}
 	}()

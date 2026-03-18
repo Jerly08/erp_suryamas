@@ -57,7 +57,7 @@ import {
 } from '@chakra-ui/react';
 import { FiPlus, FiEdit, FiTrash2, FiEye, FiDownload, FiMapPin, FiExternalLink, FiX, FiUpload, FiSettings, FiInfo, FiPlay } from 'react-icons/fi';
 import { assetService, Asset as BackendAsset, MonthlyDepreciationRunResult, DepreciationHistoryItem, DepreciationHistoryDetailItem } from '@/services/assetService';
-import { ASSET_CATEGORIES, DEPRECIATION_METHOD_LABELS, AssetsSummary } from '@/types/asset';
+import { ASSET_CATEGORIES, DEPRECIATION_METHOD_LABELS, AssetsSummary, Asset as AssetModel } from '@/types/asset';
 import AssetSummaryComponent from '@/components/assets/AssetSummary';
 import InteractiveMapPicker from '@/components/common/InteractiveMapPicker';
 import AssetImageUpload from '@/components/assets/AssetImageUpload';
@@ -1003,11 +1003,13 @@ const AssetsPage = () => {
         isClosable: true,
       });
     } catch (error: any) {
-      const parsedPeriodError = parseClosedPeriodError(error);
+      const parsedPeriodError = parseClosedPeriodError(
+        error?.response?.data?.details || error?.response?.data?.error || error?.message || ''
+      );
       toast({
         title: 'Gagal menjalankan depresiasi',
         description: parsedPeriodError
-          ? `Periode tutup buku: ${formatClosedPeriodDate(parsedPeriodError.startDate)} - ${formatClosedPeriodDate(parsedPeriodError.endDate)}`
+          ? `Periode tutup buku: ${formatClosedPeriodDate(parsedPeriodError.date, language)}`
           : (error.response?.data?.details || error.response?.data?.error || error.message || 'Terjadi kesalahan saat menjalankan depresiasi bulanan.'),
         status: 'error',
         duration: 7000,
@@ -2063,7 +2065,7 @@ const AssetsPage = () => {
                                     isDisabled={isLoadingAccounts}
                                     {...themedFieldStyles}
                                   >
-                                    {(liabilityAccounts?.data || liabilityAccounts || []).filter((acc: any) => !acc.is_header && acc.is_active !== false).map((account: any) => (
+                                    {(liabilityAccounts || []).filter((acc: any) => !acc.is_header && acc.is_active !== false).map((account: any) => (
                                       <option key={account.id} value={String(account.id)}>
                                         {account.code} - {account.name}
                                       </option>
@@ -2164,7 +2166,7 @@ const AssetsPage = () => {
                         {selectedAsset && selectedAsset.id ? (
                           /* Edit Mode - Full upload functionality */
                           <AssetImageUpload
-                            asset={selectedAsset}
+                            asset={selectedAsset as AssetModel}
                             onImageUpload={handleImageUpload}
                             size="lg"
                             showLabel={false}

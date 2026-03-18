@@ -35,7 +35,7 @@ func (s *PurchaseJournalServiceSSOT) ShouldPostToJournal(status string) bool {
 	// Purchase posting criteria: APPROVED, COMPLETED, or PAID
 	allowedStatuses := []string{"APPROVED", "COMPLETED", "PAID"}
 	for _, allowed := range allowedStatuses {
-		if strings.ToUpper(status) == strings.ToUpper(allowed) {
+		if strings.EqualFold(status, allowed) {
 			return true
 		}
 	}
@@ -105,7 +105,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 		if item.ExpenseAccountID != 0 {
 			var configuredAcc models.Account
 			if err := dbToUse.First(&configuredAcc, item.ExpenseAccountID).Error; err == nil {
-				if strings.ToUpper(configuredAcc.Category) == strings.ToUpper(models.CategoryFixedAsset) {
+				if strings.EqualFold(configuredAcc.Category, models.CategoryFixedAsset) {
 					debitAccount = &configuredAcc
 					itemName := "Aset"
 					if item.Product != nil {
@@ -228,15 +228,9 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 
 	// 2. DEBIT SIDE - PPN Masukan (Input VAT) if exists
 	if purchase.PPNAmount > 0 {
-		// Try standard template code first (2102-002 PPN Masukan)
-		ppnMasukanAccount, err := resolveByCode("2102-002")
+		ppnMasukanAccount, err := s.taxAccountHelper.GetPurchaseInputVATAccount(dbToUse)
 		if err != nil {
-			// Fallback to legacy code (1240 PPN Masukan)
-			ppnMasukanAccount, err = resolveByCode("2102-002")
-		}
-
-		if err != nil {
-			log.Printf("⚠️ PPN Masukan account (2102-002/1240) not found, skipping PPN entry: %v", err)
+			log.Printf("⚠️ PPN Masukan account from tax settings not found, skipping PPN entry: %v", err)
 		} else {
 			lines = append(lines, PurchaseJournalLineRequest{
 				AccountID:    uint64(ppnMasukanAccount.ID),

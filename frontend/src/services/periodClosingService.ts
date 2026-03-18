@@ -1,6 +1,13 @@
 import { API_ENDPOINTS } from '@/config/api';
 import { getAuthHeaders } from '@/utils/authTokenUtils';
 
+export interface PeriodHistoryEvent {
+  type: 'CLOSED' | 'REOPENED' | 'SNAPSHOT' | 'NOTE' | string;
+  title: string;
+  description: string;
+  at?: string;
+}
+
 export interface ClosedPeriod {
   id: number;
   start_date: string;
@@ -8,12 +15,27 @@ export interface ClosedPeriod {
   description: string;
   period_type: string;
   fiscal_year?: number;
-  closed_at: string;
+  closed_at?: string;
   is_closed: boolean;
   is_locked: boolean;
   total_revenue: number;
   total_expense: number;
   net_income: number;
+  account_count?: number;
+  transaction_count?: number;
+  reopen_count?: number;
+  notes?: string;
+  note_lines?: string[];
+  status?: string;
+  closed_by_name?: string;
+  reopened_at?: string;
+  reopened_by_name?: string;
+  reopen_reason?: string;
+  closing_journal_id?: number;
+  reopening_journal_id?: number;
+  snapshot_generated_at?: string;
+  can_reopen?: boolean;
+  history_events?: PeriodHistoryEvent[];
 }
 
 export interface PeriodFilterOption {
@@ -23,14 +45,53 @@ export interface PeriodFilterOption {
   group: string;
 }
 
+export const parseDateOnly = (value?: string | null): Date | null => {
+  if (!value) return null;
+
+  const normalized = value.split('T')[0];
+  const [year, month, day] = normalized.split('-').map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day);
+};
+
+export const formatDateOnly = (
+  value?: string | null,
+  locale = 'id-ID',
+  options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: 'numeric' },
+): string => {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return '-';
+  return parsed.toLocaleDateString(locale, options);
+};
+
+export const formatDateTime = (
+  value?: string | null,
+  locale = 'id-ID',
+  options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' },
+): string => {
+  if (!value) return '-';
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return formatDateOnly(value, locale, { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '-';
+  return parsed.toLocaleString(locale, options);
+};
+
+export const formatPeriodRange = (startDate?: string | null, endDate?: string | null, locale = 'id-ID'): string => {
+  const startLabel = formatDateOnly(startDate, locale, { day: 'numeric', month: 'short', year: 'numeric' });
+  const endLabel = formatDateOnly(endDate, locale, { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${startLabel} - ${endLabel}`;
+};
+
 class PeriodClosingService {
   private getAuthHeaders() {
     return getAuthHeaders();
-  }
-
-  private parseDateOnly(value: string): Date {
-    const [year, month, day] = value.split('-').map(Number);
-    return new Date(year, (month || 1) - 1, day || 1);
   }
 
   /**
@@ -47,8 +108,6 @@ class PeriodClosingService {
 
       if (!response.ok) {
         console.warn('PeriodClosingService.isDateInClosedPeriod - non OK response', response.status);
-        // Jangan mem‑block transaksi hanya karena service pengecekan gagal;
-        // backend masih punya middleware ValidateTransactionPeriod sebagai pengaman terakhir.
         return false;
       }
 
@@ -61,8 +120,29 @@ class PeriodClosingService {
       return Boolean(result.is_closed);
     } catch (error) {
       console.error('PeriodClosingService.isDateInClosedPeriod - error', error);
-      // Fail-open: biarkan backend yang menolak jika memang tertutup.
       return false;
+    }
+  }
+
+  async getClosingHistory(limit = 20): Promise<ClosedPeriod[]> {
+    try {
+      const response = await fetch(`${API_ENDPOINTS.PERIOD_CLOSING.HISTORY}?limit=${limit}`, {
+        headers: this.getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch period closing history');
+      }
+
+      const result = await response.json();
+      if (!result.success || !Array.isArray(result.data)) {
+        return [];
+      }
+
+      return result.data.filter((period: unknown) => this.validatePeriod(period));
+    } catch (error) {
+      console.error('Error fetching period closing history:', error);
+      return [];
     }
   }
 
@@ -71,21 +151,9 @@ class PeriodClosingService {
    */
   async getClosedPeriodsForFilter(): Promise<PeriodFilterOption[]> {
     try {
-      const response = await fetch(API_ENDPOINTS.PERIOD_CLOSING.HISTORY, {
-        headers: this.getAuthHeaders(),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch closed periods');
-      }
-
-      const result = await response.json();
-      
-      if (!result.success || !result.data) {
-        return [];
-      }
-
-      return this.mapToFilterOptions(result.data);
+      const periods = await this.getClosingHistory(100);
+      const closedPeriods = periods.filter((period) => period.is_closed === true);
+      return this.mapToFilterOptions(closedPeriods);
     } catch (error) {
       console.error('Error fetching closed periods:', error);
       return [];
@@ -97,12 +165,16 @@ class PeriodClosingService {
    */
   private mapToFilterOptions(periods: ClosedPeriod[]): PeriodFilterOption[] {
     return periods
-      .sort((a, b) => this.parseDateOnly(b.end_date).getTime() - this.parseDateOnly(a.end_date).getTime())
-      .map(period => ({
+      .sort((a, b) => {
+        const left = parseDateOnly(b.end_date)?.getTime() ?? 0;
+        const right = parseDateOnly(a.end_date)?.getTime() ?? 0;
+        return left - right;
+      })
+      .map((period) => ({
         value: period.end_date,
         label: this.formatPeriodLabel(period),
-        period: period,
-        group: this.getPeriodGroup(period)
+        period,
+        group: this.getPeriodGroup(period),
       }));
   }
 
@@ -111,13 +183,7 @@ class PeriodClosingService {
    * Example: "31 Des 2026 - Fiscal Year-End Closing 2026"
    */
   private formatPeriodLabel(period: ClosedPeriod): string {
-    const endDate = this.parseDateOnly(period.end_date).toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric'
-    });
-
-    return `${endDate} - ${period.description}`;
+    return `${formatDateOnly(period.end_date)} - ${period.description}`;
   }
 
   /**
@@ -125,15 +191,15 @@ class PeriodClosingService {
    */
   private getPeriodGroup(period: ClosedPeriod): string {
     const currentYear = new Date().getFullYear();
-    const periodYear = this.parseDateOnly(period.end_date).getFullYear();
+    const periodYear = parseDateOnly(period.end_date)?.getFullYear() ?? currentYear;
 
     if (periodYear === currentYear) {
       return 'Current Year';
-    } else if (periodYear === currentYear - 1) {
-      return 'Last Year';
-    } else {
-      return `Year ${periodYear}`;
     }
+    if (periodYear === currentYear - 1) {
+      return 'Last Year';
+    }
+    return `Year ${periodYear}`;
   }
 
   /**
@@ -150,12 +216,10 @@ class PeriodClosingService {
       }
 
       const result = await response.json();
-      
+
       if (result.success && result.data?.has_previous_closing) {
-        // Return the last closed period info
         return {
           end_date: result.data.last_closing_date,
-          // Minimal info - will be enriched by full list
         } as ClosedPeriod;
       }
 
@@ -177,8 +241,10 @@ class PeriodClosingService {
     const candidate = period as Partial<ClosedPeriod>;
     return (
       typeof candidate.id === 'number' &&
+      typeof candidate.start_date === 'string' &&
       typeof candidate.end_date === 'string' &&
       typeof candidate.description === 'string' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(candidate.start_date) &&
       /^\d{4}-\d{2}-\d{2}$/.test(candidate.end_date)
     );
   }
@@ -191,7 +257,7 @@ class PeriodClosingService {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0,
-      maximumFractionDigits: 0
+      maximumFractionDigits: 0,
     }).format(amount);
   }
 }

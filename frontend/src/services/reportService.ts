@@ -24,6 +24,8 @@ export interface ReportData {
 export interface ReportParameters {
   start_date?: string;
   end_date?: string;
+  previous_start_date?: string;
+  previous_end_date?: string;
   as_of_date?: string;
   group_by?: 'month' | 'quarter' | 'year';
   customer_id?: string;
@@ -31,7 +33,7 @@ export interface ReportParameters {
   account_id?: string; // Updated to match backend parameter
   include_valuation?: boolean;
   period?: 'current' | 'ytd' | 'comparative';
-  format?: 'json' | 'pdf' | 'csv';
+  format?: 'json' | 'pdf' | 'csv' | 'excel';
   status?: string; // For journal entry filtering
   reference_type?: string; // For journal entry filtering
 }
@@ -240,7 +242,7 @@ class ReportService {
 
   // Generate P&L Period Comparison
   async generateProfitLossComparison(currentPeriod: {start: string, end: string}, previousPeriod: {start: string, end: string}): Promise<any> {
-    const params = {
+    const params: ReportParameters = {
       start_date: currentPeriod.start,
       end_date: currentPeriod.end,
       previous_start_date: previousPeriod.start,
@@ -583,7 +585,7 @@ class ReportService {
   // Generate preview data (JSON format only) - Updated with unified handler
   async generateReportPreview(reportType: string, params: ReportParameters): Promise<ReportData> {
     // Force JSON format for preview and use the unified generateReport method
-    const previewParams = { ...params, format: 'json' };
+    const previewParams: ReportParameters = { ...params, format: 'json' };
     const result = await this.generateReport(reportType, previewParams);
     return result as ReportData;
   }

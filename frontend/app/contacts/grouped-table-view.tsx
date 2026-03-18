@@ -30,10 +30,8 @@ import {
   StatLabel,
   StatNumber,
   Icon,
-  useColorMode,
   useColorModeValue,
   Input,
-  Select,
   InputGroup,
   InputLeftElement,
   Spinner,
@@ -47,14 +45,8 @@ import {
   ModalBody,
   ModalCloseButton,
   useDisclosure,
-  Menu,
-  MenuButton,
-  MenuList,
-  MenuItem,
   IconButton,
   Tooltip,
-  Avatar,
-  Collapse,
   Divider,
 } from '@chakra-ui/react';
 import { 
@@ -65,7 +57,6 @@ import {
   FiSearch, 
   FiFilter,
   FiRefreshCw,
-  FiMoreVertical,
   FiPhone,
   FiMail,
   FiMapPin,
@@ -77,7 +68,7 @@ import {
 } from 'react-icons/fi';
 
 export default function GroupedTableContactsPage() {
-  const { user, token, isAuthenticated } = useAuth();
+  const { token } = useAuth();
   const { canCreate, canEdit, canDelete } = useModulePermissions('contacts');
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -414,7 +405,7 @@ export default function GroupedTableContactsPage() {
         </CardHeader>
 
         {/* Group Content */}
-        <Collapse in={isExpanded}>
+        {isExpanded && (
           <CardBody p={0}>
             {contactList.length === 0 ? (
               <Box p={8} textAlign="center">
@@ -545,7 +536,7 @@ export default function GroupedTableContactsPage() {
               </Table>
             )}
           </CardBody>
-        </Collapse>
+        )}
       </Card>
     );
   };

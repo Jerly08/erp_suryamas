@@ -82,7 +82,6 @@ const AuthExpiredModal: React.FC<AuthExpiredModalProps> = ({
       closeOnEsc={false}
       size="md"
       isCentered
-      zIndex={9999} // Higher than other modals
     >
       <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(5px)" />
       <ModalContent

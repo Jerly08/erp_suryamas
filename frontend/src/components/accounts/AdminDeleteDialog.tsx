@@ -32,7 +32,7 @@ interface AdminDeleteDialogProps {
   onClose: () => void;
   account: Account | null;
   parentAccounts: Account[];
-  children: Account[];
+  childAccounts: Account[];
   onConfirm: (options: { cascade_delete: boolean; new_parent_id?: number }) => void;
   isSubmitting?: boolean;
 }
@@ -42,7 +42,7 @@ const AdminDeleteDialog: React.FC<AdminDeleteDialogProps> = ({
   onClose,
   account,
   parentAccounts,
-  children,
+  childAccounts,
   onConfirm,
   isSubmitting = false,
 }) => {
@@ -69,7 +69,7 @@ const AdminDeleteDialog: React.FC<AdminDeleteDialogProps> = ({
 
   if (!account) return null;
 
-  const hasChildren = children && children.length > 0;
+  const hasChildren = childAccounts && childAccounts.length > 0;
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} size="lg" closeOnOverlayClick={!isSubmitting}>
@@ -111,7 +111,7 @@ const AdminDeleteDialog: React.FC<AdminDeleteDialogProps> = ({
               <>
                 <Box>
                   <Text fontWeight="medium" fontSize="sm" mb={2}>
-                    Child Accounts ({children.length}):
+                    Child Accounts ({childAccounts.length}):
                   </Text>
                   <Box 
                     maxH="150px" 
@@ -123,7 +123,7 @@ const AdminDeleteDialog: React.FC<AdminDeleteDialogProps> = ({
                     borderColor="gray.200"
                   >
                     <VStack spacing={1} align="stretch">
-                      {children.map((child) => (
+                      {childAccounts.map((child) => (
                         <Box key={child.id} fontSize="xs">
                           <Text fontWeight="medium">{child.code} - {child.name}</Text>
                           <Text color="gray.600">Balance: {child.balance}</Text>
@@ -139,7 +139,10 @@ const AdminDeleteDialog: React.FC<AdminDeleteDialogProps> = ({
                   <Text fontWeight="medium" fontSize="sm" mb={3}>
                     What should happen to child accounts?
                   </Text>
-                  <RadioGroup value={deleteOption} onChange={(value) => setDeleteOption(value as any)}>
+                  <RadioGroup
+                    value={deleteOption}
+                    onChange={(value) => setDeleteOption(value as 'cascade' | 'transfer' | 'root')}
+                  >
                     <VStack spacing={3} align="stretch">
                       <Radio value="root">
                         <VStack align="start" spacing={1}>
@@ -212,7 +215,7 @@ const AdminDeleteDialog: React.FC<AdminDeleteDialogProps> = ({
                     <Box>
                       <AlertTitle fontSize="sm">Cascade Delete Warning</AlertTitle>
                       <AlertDescription fontSize="xs">
-                        This will permanently delete {children.length + 1} accounts. 
+                        This will permanently delete {childAccounts.length + 1} accounts.
                         This action cannot be undone.
                       </AlertDescription>
                     </Box>
@@ -248,7 +251,7 @@ const AdminDeleteDialog: React.FC<AdminDeleteDialogProps> = ({
               isDisabled={deleteOption === 'transfer' && !selectedParentId}
             >
               {deleteOption === 'cascade' 
-                ? `Delete All (${hasChildren ? children.length + 1 : 1})` 
+                ? `Delete All (${hasChildren ? childAccounts.length + 1 : 1})`
                 : 'Delete Account'
               }
             </Button>

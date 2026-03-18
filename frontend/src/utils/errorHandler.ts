@@ -51,7 +51,13 @@ export interface ErrorHandlerOptions {
 }
 
 interface APIErrorPayload {
-  error?: APIError['response'] extends { data?: infer T } ? T extends { error?: infer E } ? E : never : never;
+  error?: string | {
+    code?: string;
+    message?: string;
+    details?: unknown;
+    validation?: Record<string, string>;
+    context?: Record<string, unknown>;
+  };
   message?: string;
   details?: unknown;
   errors?: ValidationErrorResponse[];
@@ -59,7 +65,9 @@ interface APIErrorPayload {
   validation_errors?: ValidationErrorResponse[];
 }
 
-const isErrorObject = (value: APIErrorPayload['error']): value is NonNullable<Exclude<APIErrorPayload['error'], string>> => {
+type APIErrorObject = NonNullable<Exclude<APIErrorPayload['error'], string>>;
+
+const isErrorObject = (value: APIErrorPayload['error']): value is APIErrorObject => {
   return typeof value === 'object' && value !== null;
 };
 
@@ -122,7 +130,7 @@ export class ErrorHandler {
       parsed.type = 'business';
       parsed.title = 'Business Rule Violation';
       parsed.canRetry = true;
-    } else if (status >= 500) {
+    } else if (typeof status === 'number' && status >= 500) {
       parsed.type = 'server';
       parsed.title = 'Server Error';
       parsed.canRetry = true;
@@ -135,17 +143,20 @@ export class ErrorHandler {
     }
 
     // Parse structured validation errors from different possible locations
-    const rawValidationErrors = errorData?.errors ||
-      errorData?.validationErrors ||
-      errorData?.validation_errors ||
-      [];
+    const rawValidationErrors: ValidationErrorResponse[] = Array.isArray(errorData?.errors)
+      ? errorData.errors
+      : Array.isArray(errorData?.validationErrors)
+        ? errorData.validationErrors
+        : Array.isArray(errorData?.validation_errors)
+          ? errorData.validation_errors
+          : [];
     const nestedValidationErrors = isErrorObject(errorData?.error) ? errorData.error.validation : undefined;
-    const validationErrors = rawValidationErrors.length > 0
+    const validationErrors: ValidationErrorResponse[] = rawValidationErrors.length > 0
       ? rawValidationErrors
       : nestedValidationErrors
         ? Object.entries(nestedValidationErrors).map(([field, message]) => ({
             field,
-            message,
+            message: String(message),
           }))
         : [];
 
@@ -184,10 +195,15 @@ export class ErrorHandler {
         : typeof errorData.error.message === 'string'
           ? errorData.error.message
           : undefined;
+      const field = typeof context?.field === 'string'
+        ? context.field
+        : typeof context?.code === 'string'
+          ? context.code
+          : undefined;
 
       if (detailMessage || context) {
         parsed.errors = [{
-          field: context?.field || context?.code,
+          field,
           message: detailMessage || 'Please review the request and try again.',
           context,
         }];
@@ -274,9 +290,9 @@ export class ErrorHandler {
   static getErrorSeverity(error: APIError): 'error' | 'warning' | 'info' {
     const status = error?.response?.status;
     
-    if (status >= 500) return 'error';     // Server errors
-    if (status >= 400) return 'warning';   // Client errors
-    if (status >= 300) return 'info';      // Redirects
+    if (typeof status === 'number' && status >= 500) return 'error';     // Server errors
+    if (typeof status === 'number' && status >= 400) return 'warning';   // Client errors
+    if (typeof status === 'number' && status >= 300) return 'info';      // Redirects
     
     return 'error'; // Default to error for unknown cases
   }

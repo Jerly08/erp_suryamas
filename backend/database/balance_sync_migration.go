@@ -1,8 +1,8 @@
 package database
 
 import (
-	"log"
 	"gorm.io/gorm"
+	"log"
 )
 
 // RunBalanceSyncMigration - COMPLETELY DISABLED FOR PRODUCTION SAFETY
@@ -12,5 +12,4 @@ func RunBalanceSyncMigration(db *gorm.DB) {
 	log.Println("✅ All account balances are protected from automatic modification")
 	log.Println("⚠️  If balance sync is needed, it must be done manually by administrator")
 	log.Println("🚫 No balance operations will ever be performed automatically")
-	return // Exit immediately - no balance operations will be performed
 }

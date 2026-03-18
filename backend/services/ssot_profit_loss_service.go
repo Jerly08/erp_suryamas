@@ -190,8 +190,8 @@ func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endDate st
 	var balances []SSOTAccountBalance
 	source := "SSOT"
 
-	// CRITICAL: Exclude CLOSING entries to show historical data for closed periods
-	// Similar to Balance Sheet logic - we want to see data BEFORE closing
+	// CRITICAL: Exclude system closing/reversal entries so reopened periods
+	// still reflect only operational activity.
 	query := `
 		SELECT 
 			MIN(a.id) as account_id,
@@ -212,18 +212,18 @@ func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endDate st
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id 
 			AND uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
-			AND UPPER(uje.source_type) != 'CLOSING'
+			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('CLOSING', 'REVERSAL')
 		WHERE uje.entry_date >= ? AND uje.entry_date <= ? AND a.deleted_at IS NULL
 		GROUP BY a.code
 		HAVING (COALESCE(SUM(ujl.debit_amount), 0) <> 0 OR COALESCE(SUM(ujl.credit_amount), 0) <> 0)
 		ORDER BY a.code
 	`
 
-	fmt.Printf("[P&L DEBUG] Executing SSOT query for period %s to %s (EXCLUDING CLOSING entries)\n", startDate, endDate)
+	fmt.Printf("[P&L DEBUG] Executing SSOT query for period %s to %s (excluding closing/reversal entries)\n", startDate, endDate)
 	if err := s.db.Raw(query, startDate, endDate).Scan(&balances).Error; err != nil {
 		return nil, source, fmt.Errorf("error executing account balances query: %v", err)
 	}
-	fmt.Printf("[P&L DEBUG] Retrieved %d accounts from SSOT (excluding closing)\n", len(balances))
+	fmt.Printf("[P&L DEBUG] Retrieved %d accounts from SSOT (excluding closing/reversal)\n", len(balances))
 
 	// Debug: Log Revenue and Expense accounts
 	for _, balance := range balances {

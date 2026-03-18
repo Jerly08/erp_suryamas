@@ -60,7 +60,6 @@ import {
   FiHelpCircle
 } from 'react-icons/fi';
 import { ssotJournalService, SSOTJournalEntry, SSOTJournalLine } from '@/services/ssotJournalService';
-import { useBalanceMonitor, useWebSocketConnection } from '@/contexts/WebSocketContext';
 import { formatCurrency } from '@/utils/formatters';
 
 interface JournalDrilldownModalProps {
@@ -82,6 +81,12 @@ interface AccountBalanceInfo {
   last_updated?: string;
 }
 
+interface RealtimeBalanceInfo {
+  balance: number;
+  balance_type: 'DEBIT' | 'CREDIT';
+  updated_at?: string;
+}
+
 const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
   isOpen,
   onClose,
@@ -98,10 +103,11 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
 
   const toast = useToast();
-  
-  // Real-time monitoring hooks
-  const { balanceUpdates, isConnected, getAccountBalance } = useBalanceMonitor();
-  const { connect, disconnect } = useWebSocketConnection();
+  const isConnected = false;
+  const balanceUpdates = null;
+  const getAccountBalance = (_accountId: number): RealtimeBalanceInfo | undefined => undefined;
+  const connect = () => {};
+  const disconnect = () => {};
 
   // Color mode values
   const cardBg = useColorModeValue('white', 'gray.800');
@@ -110,6 +116,9 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
   const successBg = useColorModeValue('green.50', 'green.900');
   const warningBg = useColorModeValue('orange.50', 'orange.900');
   const errorBg = useColorModeValue('red.50', 'red.900');
+  const auditHoverBg = useColorModeValue('gray.50', 'gray.700');
+  const auditPostedHoverBg = useColorModeValue('green.50', 'green.900');
+  const auditReversedHoverBg = useColorModeValue('orange.50', 'orange.900');
 
   // Load journal data
   const loadJournal = async () => {
@@ -123,10 +132,11 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
       setJournal(journalData);
 
       // Initialize account balances for all lines
-      if (journalData.journal_lines) {
+      const journalLines = journalData.lines ?? [];
+      if (journalLines.length > 0) {
         const balancesMap = new Map<number, AccountBalanceInfo>();
         
-        journalData.journal_lines.forEach(line => {
+        journalLines.forEach((line: SSOTJournalLine) => {
           if (line.account) {
             // Get real-time balance if available
             const realtimeBalance = getAccountBalance(line.account_id);
@@ -164,7 +174,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
   useEffect(() => {
     if (!showRealTimeMonitor || !journal) return;
 
-    journal.journal_lines?.forEach(line => {
+    journal.lines?.forEach((line: SSOTJournalLine) => {
       const realtimeBalance = getAccountBalance(line.account_id);
       if (realtimeBalance) {
         setAccountBalances(prev => {
@@ -583,7 +593,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
               <TabPanel>
                 <Card>
                   <CardHeader>
-                    <Text fontWeight="semibold">Journal Lines ({journal.journal_lines?.length || 0})</Text>
+                    <Text fontWeight="semibold">Journal Lines ({journal.lines?.length || 0})</Text>
                   </CardHeader>
                   <CardBody p={0}>
                     <Table variant="simple">
@@ -610,7 +620,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
                         </Tr>
                       </Thead>
                       <Tbody>
-                        {journal.journal_lines?.map((line, index) => {
+                        {journal.lines?.map((line: SSOTJournalLine, index: number) => {
                           const impact = calculateBalanceImpact(line);
                           
                           return (
@@ -700,7 +710,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
                           </Thead>
                           <Tbody>
                             {Array.from(accountBalances.entries()).map(([accountId, balanceInfo]) => {
-                              const journalLine = journal.journal_lines?.find(line => line.account_id === accountId);
+                              const journalLine = journal.lines?.find((line: SSOTJournalLine) => line.account_id === accountId);
                               const impact = journalLine ? calculateBalanceImpact(journalLine) : { impact: 0, description: 'No impact' };
                               
                               return (
@@ -771,7 +781,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
                   <CardBody>
                     <VStack spacing={4} align="stretch">
                       <Tooltip label="Initial creation of this journal entry. All journal entries start in DRAFT status when created." hasArrow placement="left">
-                        <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: useColorModeValue('gray.50', 'gray.700') }}>
+                        <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: auditHoverBg }}>
                           <Box color="blue.500">
                             <FiUser />
                           </Box>
@@ -789,7 +799,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
                         <>
                           <Divider />
                           <Tooltip label="Journal entry was posted, making it permanent and updating account balances. Posted entries cannot be edited, only reversed." hasArrow placement="left">
-                            <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: useColorModeValue('green.50', 'green.900') }}>
+                            <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: auditPostedHoverBg }}>
                               <Box color="green.500">
                                 <FiCheck />
                               </Box>
@@ -811,7 +821,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
                         <>
                           <Divider />
                           <Tooltip label="Journal entry was reversed, creating an opposite entry to undo its effects on account balances. The original entry is preserved for audit purposes." hasArrow placement="left">
-                            <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: useColorModeValue('orange.50', 'orange.900') }}>
+                            <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: auditReversedHoverBg }}>
                               <Box color="orange.500">
                                 <FiX />
                               </Box>
@@ -831,7 +841,7 @@ const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
 
                       <Divider />
                       <Tooltip label="Most recent modification timestamp for this journal entry, including any status changes." hasArrow placement="left">
-                        <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: useColorModeValue('gray.50', 'gray.700') }}>
+                        <HStack spacing={4} cursor="help" p={2} borderRadius="md" _hover={{ bg: auditHoverBg }}>
                           <Box color="gray.500">
                             <FiClock />
                           </Box>

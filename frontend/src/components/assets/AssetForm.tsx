@@ -133,10 +133,11 @@ const AssetForm: React.FC<AssetFormProps> = ({
   };
 
   // Handle location selection from map picker
-  const handleLocationSelect = (coordinates: string, address?: string) => {
+  const handleLocationSelect = (locationData: { coordinates: string; address: string }) => {
+    const { coordinates, address } = locationData;
     setFormData(prev => ({
       ...prev,
-      coordinates: coordinates,
+      coordinates,
       location: address || coordinates,
     }));
     

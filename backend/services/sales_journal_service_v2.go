@@ -340,7 +340,8 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 
 	// PPN Keluaran (2102-001) - Credit jika ada
 	if sale.PPN > 0 {
-		if acc, err := resolveByCode("2102-001"); err == nil {
+		taxAccountHelper := NewTaxAccountHelper(dbToUse)
+		if acc, err := taxAccountHelper.GetSalesOutputVATAccount(dbToUse); err == nil {
 			journalItems = append(journalItems, models.SSOTJournalLine{
 				JournalID:    ssotEntry.ID,
 				AccountID:    uint64(acc.ID),
@@ -354,7 +355,7 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 			lineCount++
 			log.Printf("📊 PPN: Credit to %s (%s) = %.2f", acc.Name, acc.Code, sale.PPN)
 		} else {
-			log.Printf("⚠️ Missing PPN Keluaran account 2102-001: %v", err)
+			log.Printf("⚠️ Missing PPN Keluaran account from tax settings: %v", err)
 		}
 	}
 

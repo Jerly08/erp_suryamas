@@ -289,7 +289,12 @@ export async function getApplicationHealth(): Promise<{
   timestamp: string;
 }> {
   const startTime = Date.now();
-  const checks = [];
+  const checks: Array<{
+    name: string;
+    status: 'pass' | 'fail';
+    message: string;
+    responseTime?: number;
+  }> = [];
   
   // Environment check
   const envValidation = validateEnvironmentVariables();

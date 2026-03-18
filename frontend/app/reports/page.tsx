@@ -11,7 +11,6 @@ import {
   Heading,
   Text,
   SimpleGrid,
-  Grid,
   Button,
   VStack,
   HStack,
@@ -34,12 +33,6 @@ import {
   Select,
   Spinner,
   useColorModeValue,
-  useDisclosure,
-  Menu,
-  MenuButton,
-  MenuList,
-  MenuItem,
-  MenuDivider,
   Table,
   Thead,
   Tbody,
@@ -57,14 +50,10 @@ import {
   FiTrendingUp,
   FiShoppingCart,
   FiActivity,
-  FiDownload,
   FiEye,
   FiList,
   FiBook,
-  FiDatabase,
   FiFilePlus,
-  FiChevronDown,
-  FiDollarSign,
   FiUsers,
   FiTruck,
   FiCalendar,
@@ -79,7 +68,7 @@ import { ssotSalesSummaryService, SSOTSalesSummaryData } from '../../src/service
 // Vendor Analysis removed - replaced with Purchase Report
 import { ssotTrialBalanceService, SSOTTrialBalanceData } from '../../src/services/ssotTrialBalanceService';
 import { ssotGeneralLedgerService, SSOTGeneralLedgerData } from '../../src/services/ssotGeneralLedgerService';
-import { reportService, ReportParameters } from '../../src/services/reportService';
+import { reportService } from '../../src/services/reportService';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
 import { ssotPurchaseReportService, SSOTPurchaseReportData } from '../../src/services/ssotPurchaseReportService';
@@ -89,7 +78,9 @@ import cashFlowExportService from '../../src/services/cashFlowExportService';
 import ClosingHistoryModal from '../../src/components/reports/ClosingHistoryModal';
 
 // Define reports data matching the UI design
-const getAvailableReports = (t: any) => [
+type TranslateFn = (key: string, options?: Record<string, string | number>) => string;
+
+const getAvailableReports = (t: TranslateFn) => [
   {
     id: 'profit-loss',
     name: t('reports.profitLossStatement'),
@@ -155,6 +146,112 @@ const getAvailableReports = (t: any) => [
   }
 ];
 
+interface ClosedPeriodHistoryEntry {
+  id?: number | string;
+  code?: string;
+  description?: string;
+  entry_date?: string;
+  end_date?: string;
+  start_date?: string;
+  fiscal_year?: number | string;
+  source?: string;
+  created_at?: string;
+}
+
+interface ClosedPeriodOption {
+  value: string;
+  label: string;
+  date: string;
+  start_date?: string;
+  fiscal_year: number;
+  entry_id?: number | string;
+  code?: string;
+  source?: string;
+  created_at?: string;
+}
+
+interface ContactOption {
+  id: number | string;
+  name: string;
+  code?: string;
+}
+
+interface ContactHistoryEntity {
+  name?: string;
+  code?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+}
+
+interface ContactHistorySummary {
+  total_transactions?: number;
+  total_amount?: number;
+  total_paid?: number;
+  total_outstanding?: number;
+}
+
+interface ContactHistoryTransaction {
+  date?: string;
+  transaction_type?: string;
+  transaction_code?: string;
+  reference?: string;
+  description?: string;
+  amount?: number;
+  paid_amount?: number;
+  outstanding?: number;
+  status?: string;
+}
+
+interface CustomerHistoryData {
+  customer?: ContactHistoryEntity;
+  summary?: ContactHistorySummary;
+  transactions?: ContactHistoryTransaction[];
+}
+
+interface VendorHistoryData {
+  vendor?: ContactHistoryEntity;
+  summary?: ContactHistorySummary;
+  transactions?: ContactHistoryTransaction[];
+}
+
+interface ApiErrorLike {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+      error?: string;
+    };
+  };
+}
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object') {
+    const apiError = error as ApiErrorLike;
+    return apiError.response?.data?.message || apiError.response?.data?.error || apiError.message || fallback;
+  }
+
+  return fallback;
+};
+
+const toContactOptions = (value: unknown): ContactOption[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && 'id' in item)
+    .map((item) => ({
+      id: item.id as number | string,
+      name: String(item.name || item.company_name || item.code || 'Unnamed Contact'),
+      code: typeof item.code === 'string' ? item.code : undefined,
+    }));
+};
+
 // Helpers to compute fiscal year range from Settings.fiscal_year_start
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -207,7 +304,6 @@ const ReportsPage: React.FC = () => {
   const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
   const inputHoverBorderColor = useColorModeValue('blue.400', 'blue.300');
   const inputFocusBorderColor = useColorModeValue('blue.500', 'blue.200');
-  const infoIconColor = useColorModeValue('gray.500', 'gray.400');
   const errorBg = useColorModeValue('red.50', 'rgba(127, 29, 29, 0.32)');
   const errorBorderColor = useColorModeValue('red.200', 'rgba(252, 129, 129, 0.32)');
   const bluePanelBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.14)');
@@ -242,7 +338,7 @@ const ReportsPage: React.FC = () => {
   const [ssotPLError, setSSOTPLError] = useState<string | null>(null);
   const [ssotStartDate, setSSOTStartDate] = useState('');
   const [ssotEndDate, setSSOTEndDate] = useState('');
-  const [ssotPLClosedPeriods, setSSOTPLClosedPeriods] = useState<any[]>([]);
+  const [ssotPLClosedPeriods, setSSOTPLClosedPeriods] = useState<ClosedPeriodOption[]>([]);
   const [loadingSSOTPLClosedPeriods, setLoadingSSOTPLClosedPeriods] = useState(false);
 
   // State untuk SSOT Balance Sheet
@@ -251,7 +347,7 @@ const ReportsPage: React.FC = () => {
   const [ssotBSLoading, setSSOTBSLoading] = useState(false);
   const [ssotBSError, setSSOTBSError] = useState<string | null>(null);
   const [ssotAsOfDate, setSSOTAsOfDate] = useState('');
-  const [closedPeriods, setClosedPeriods] = useState<any[]>([]);
+  const [closedPeriods, setClosedPeriods] = useState<ClosedPeriodOption[]>([]);
   const [loadingClosedPeriods, setLoadingClosedPeriods] = useState(false);
 
   // State untuk SSOT Cash Flow
@@ -261,7 +357,7 @@ const ReportsPage: React.FC = () => {
   const [ssotCFError, setSSOTCFError] = useState<string | null>(null);
   const [ssotCFStartDate, setSSOTCFStartDate] = useState('');
   const [ssotCFEndDate, setSSOTCFEndDate] = useState('');
-  const [ssotCFClosedPeriods, setSSOTCFClosedPeriods] = useState<any[]>([]);
+  const [ssotCFClosedPeriods, setSSOTCFClosedPeriods] = useState<ClosedPeriodOption[]>([]);
   const [loadingSSOTCFClosedPeriods, setLoadingSSOTCFClosedPeriods] = useState(false);
 
   // State untuk SSOT Sales Summary
@@ -286,7 +382,7 @@ const ReportsPage: React.FC = () => {
   const [ssotTBLoading, setSSOTTBLoading] = useState(false);
   const [ssotTBError, setSSOTTBError] = useState<string | null>(null);
   const [ssotTBAsOfDate, setSSOTTBAsOfDate] = useState('');
-  const [ssotTBClosedPeriods, setSSOTTBClosedPeriods] = useState<any[]>([]);
+  const [ssotTBClosedPeriods, setSSOTTBClosedPeriods] = useState<ClosedPeriodOption[]>([]);
   const [loadingSSOTTBClosedPeriods, setLoadingSSOTTBClosedPeriods] = useState(false);
 
   // State untuk SSOT General Ledger
@@ -297,42 +393,32 @@ const ReportsPage: React.FC = () => {
   const [ssotGLStartDate, setSSOTGLStartDate] = useState('');
   const [ssotGLEndDate, setSSOTGLEndDate] = useState('');
   const [ssotGLAccountId, setSSOTGLAccountId] = useState<string>('');
-  const [ssotGLClosedPeriods, setSSOTGLClosedPeriods] = useState<any[]>([]);
+  const [ssotGLClosedPeriods, setSSOTGLClosedPeriods] = useState<ClosedPeriodOption[]>([]);
   const [loadingSSOTGLClosedPeriods, setLoadingSSOTGLClosedPeriods] = useState(false);
 
   // State untuk Customer History
   const [customerHistoryOpen, setCustomerHistoryOpen] = useState(false);
-  const [customerHistoryData, setCustomerHistoryData] = useState<any>(null);
+  const [customerHistoryData, setCustomerHistoryData] = useState<CustomerHistoryData | null>(null);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
   const [customerHistoryError, setCustomerHistoryError] = useState<string | null>(null);
   const [customerHistoryStartDate, setCustomerHistoryStartDate] = useState('');
   const [customerHistoryEndDate, setCustomerHistoryEndDate] = useState('');
   const [customerHistoryCustomerId, setCustomerHistoryCustomerId] = useState<string>('');
-  const [customers, setCustomers] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<ContactOption[]>([]);
 
   // State untuk Vendor History
   const [vendorHistoryOpen, setVendorHistoryOpen] = useState(false);
-  const [vendorHistoryData, setVendorHistoryData] = useState<any>(null);
+  const [vendorHistoryData, setVendorHistoryData] = useState<VendorHistoryData | null>(null);
   const [vendorHistoryLoading, setVendorHistoryLoading] = useState(false);
   const [vendorHistoryError, setVendorHistoryError] = useState<string | null>(null);
   const [vendorHistoryStartDate, setVendorHistoryStartDate] = useState('');
   const [vendorHistoryEndDate, setVendorHistoryEndDate] = useState('');
   const [vendorHistoryVendorId, setVendorHistoryVendorId] = useState<string>('');
-  const [vendors, setVendors] = useState<any[]>([]);
+  const [vendors, setVendors] = useState<ContactOption[]>([]);
 
   // State untuk Closing History Modal
   const [closingHistoryOpen, setClosingHistoryOpen] = useState(false);
-  const [closingHistoryReportType, setClosingHistoryReportType] = useState<string>('');
-
-  // Modal and report generation states
-  const { isOpen, onOpen, onClose } = useDisclosure();
-  const [selectedReport, setSelectedReport] = useState<any>(null);
-  const [reportParams, setReportParams] = useState<ReportParameters>({});
-  const [previewReport, setPreviewReport] = useState<any>(null);
-
-  const resetParams = () => {
-    setReportParams({});
-  };
+  const closingHistoryReportType = '';
 
   // Load settings to default all report ranges to current fiscal year
   useEffect(() => {
@@ -359,7 +445,7 @@ const ReportsPage: React.FC = () => {
         setCustomerHistoryStartDate(range.startISO); setCustomerHistoryEndDate(range.endISO);
         // Vendor History
         setVendorHistoryStartDate(range.startISO); setVendorHistoryEndDate(range.endISO);
-      } catch (e) {
+      } catch {
         // Fallback to current calendar year
         const today = new Date();
         const start = new Date(today.getFullYear(), 0, 1);
@@ -393,11 +479,11 @@ const ReportsPage: React.FC = () => {
 
         if (customersResp.data?.data) {
           console.log('Setting customers:', customersResp.data.data.length, 'items');
-          setCustomers(customersResp.data.data);
+          setCustomers(toContactOptions(customersResp.data.data));
         } else if (Array.isArray(customersResp.data)) {
           // Fallback if data is directly in response
           console.log('Setting customers (direct array):', customersResp.data.length, 'items');
-          setCustomers(customersResp.data);
+          setCustomers(toContactOptions(customersResp.data));
         }
 
         // Load vendors
@@ -408,18 +494,19 @@ const ReportsPage: React.FC = () => {
 
         if (vendorsResp.data?.data) {
           console.log('Setting vendors:', vendorsResp.data.data.length, 'items');
-          setVendors(vendorsResp.data.data);
+          setVendors(toContactOptions(vendorsResp.data.data));
         } else if (Array.isArray(vendorsResp.data)) {
           // Fallback if data is directly in response
           console.log('Setting vendors (direct array):', vendorsResp.data.length, 'items');
-          setVendors(vendorsResp.data);
+          setVendors(toContactOptions(vendorsResp.data));
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const errorMessage = getErrorMessage(error, t('reports.messages.failedToLoadContacts'));
         console.error('Failed to load contacts:', error);
-        console.error('Error details:', error.response?.data || error.message);
+        console.error('Error details:', errorMessage);
         toast({
           title: t('reports.messages.errorLoadingContacts'),
-          description: t('reports.messages.failedToLoadContacts'),
+          description: errorMessage,
           status: 'error',
           duration: 5000,
           isClosable: true,
@@ -427,7 +514,7 @@ const ReportsPage: React.FC = () => {
       }
     };
     loadContacts();
-  }, []);
+  }, [t, toast]);
 
   // Function untuk fetch SSOT Sales Summary Report
   const fetchSSOTSalesSummaryReport = async () => {
@@ -451,11 +538,12 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
-      setSSOTSSError(error.message || t('reports.messages.failedToGenerateSalesSummary'));
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error, t('reports.messages.failedToGenerateSalesSummary'));
+      setSSOTSSError(errorMessage);
       toast({
         title: t('reports.messages.error'),
-        description: error.message || t('reports.messages.failedToGenerateSalesSummary'),
+        description: errorMessage,
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -487,11 +575,12 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
-      setSSOTPRError(error.message || t('reports.messages.failedToGeneratePurchaseReport'));
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error, t('reports.messages.failedToGeneratePurchaseReport'));
+      setSSOTPRError(errorMessage);
       toast({
         title: t('reports.messages.error'),
-        description: error.message || t('reports.messages.failedToGeneratePurchaseReport'),
+        description: errorMessage,
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -522,11 +611,12 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
-      setSSOTTBError(error.message || t('reports.messages.failedToGenerateTrialBalance'));
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error, t('reports.messages.failedToGenerateTrialBalance'));
+      setSSOTTBError(errorMessage);
       toast({
         title: t('reports.messages.error'),
-        description: error.message || t('reports.messages.failedToGenerateTrialBalance'),
+        description: errorMessage,
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -587,7 +677,7 @@ const ReportsPage: React.FC = () => {
       });
 
       console.log('Customer History Data received:', response.data);
-      setCustomerHistoryData(response.data.data || response.data);
+      setCustomerHistoryData((response.data.data || response.data) as CustomerHistoryData);
 
       toast({
         title: t('reports.messages.success'),
@@ -596,8 +686,8 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || error.message || t('reports.messages.failedToGenerateCustomerHistory');
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error, t('reports.messages.failedToGenerateCustomerHistory'));
       setCustomerHistoryError(errorMessage);
       toast({
         title: t('reports.messages.error'),
@@ -662,7 +752,7 @@ const ReportsPage: React.FC = () => {
       });
 
       console.log('Vendor History Data received:', response.data);
-      setVendorHistoryData(response.data.data || response.data);
+      setVendorHistoryData((response.data.data || response.data) as VendorHistoryData);
 
       toast({
         title: t('reports.messages.success'),
@@ -671,8 +761,8 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || error.message || t('reports.messages.failedToGenerateVendorHistory');
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error, t('reports.messages.failedToGenerateVendorHistory'));
       setVendorHistoryError(errorMessage);
       toast({
         title: t('reports.messages.error'),
@@ -733,8 +823,8 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.message || error.message || t('reports.messages.failedToGenerateGeneralLedger');
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error, t('reports.messages.failedToGenerateGeneralLedger'));
       setSSOTGLError(errorMessage);
       toast({
         title: t('reports.messages.error'),
@@ -750,15 +840,15 @@ const ReportsPage: React.FC = () => {
 
   // Helper: normalisasi & deduplikasi closed periods berdasarkan tanggal kalender (YYYY-MM-DD)
   // Sekarang juga menyimpan start_date dari accounting_periods (jika tersedia)
-  const buildUniqueClosedPeriods = (entries: any[]): any[] => {
+  const buildUniqueClosedPeriods = (entries: ClosedPeriodHistoryEntry[]): ClosedPeriodOption[] => {
     if (!Array.isArray(entries)) return [];
 
     // Backend returns (unified):
     // - accounting_periods: { id, code, description, entry_date, start_date, created_at, total_debit, net_income, source }
     // - ssot_journal:       { id, code, description, entry_date, created_at, total_debit, source }
     const mapped = entries
-      .filter((entry: any) => entry && (entry.entry_date || entry.end_date))
-      .map((entry: any) => {
+      .filter((entry) => entry && (entry.entry_date || entry.end_date))
+      .map((entry) => {
         const rawEnd = String(entry.entry_date || entry.end_date);
         // Ambil hanya bagian tanggal 'YYYY-MM-DD' untuk menghindari perbedaan timezone
         const endDateKey = rawEnd.slice(0, 10);
@@ -787,8 +877,8 @@ const ReportsPage: React.FC = () => {
       });
 
     // Deduplikasi berdasarkan tanggal kalender (end_date), prioritaskan source accounting_periods
-    const uniqueMap = new Map<string, any>();
-    mapped.forEach((period: any) => {
+    const uniqueMap = new Map<string, ClosedPeriodOption>();
+    mapped.forEach((period) => {
       const key = period.date;
       const existing = uniqueMap.get(key);
       if (!existing) {
@@ -847,9 +937,10 @@ const ReportsPage: React.FC = () => {
         });
         setClosedPeriods([]);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = getErrorMessage(error, 'Failed to fetch closed periods');
       console.error('[Reports] Error fetching closed periods:', error);
-      console.error('[Reports] Error details:', error.response?.data || error.message);
+      console.error('[Reports] Error details:', errorMessage);
       // Silent fail - tidak menampilkan error untuk ini
       setClosedPeriods([]);
     } finally {
@@ -908,13 +999,17 @@ const ReportsPage: React.FC = () => {
         format: 'json'
       });
 
+      if (cashFlowData instanceof Blob) {
+        throw new Error('Cash Flow API returned file data instead of JSON.');
+      }
+
       // Debug: Log the data structure
       console.log('Cash Flow Data Structure:', JSON.stringify(cashFlowData, null, 2));
       console.log('Operating Activities:', cashFlowData?.operating_activities);
       console.log('Investing Activities:', cashFlowData?.investing_activities);
       console.log('Financing Activities:', cashFlowData?.financing_activities);
 
-      setSSOTCFData(cashFlowData as SSOTCashFlowData);
+      setSSOTCFData(cashFlowData);
 
       toast({
         title: t('reports.messages.success'),
@@ -952,6 +1047,10 @@ const ReportsPage: React.FC = () => {
         end_date: ssotEndDate,
         format: 'json'
       });
+
+      if (result instanceof Blob) {
+        throw new Error('Profit & Loss API returned file data instead of JSON.');
+      }
 
       console.log('SSOT P&L Data received:', result);
       setSSOTPLData(result);
@@ -1077,9 +1176,9 @@ const ReportsPage: React.FC = () => {
       // Summary
       csvLines.push('FINANCIAL SUMMARY');
       csvLines.push('Category,Amount');
-      csvLines.push(`Total Assets,${formatCurrency(balanceSheetData.assets?.total_assets || balanceSheetData.total_assets || 0)}`);
-      csvLines.push(`Total Liabilities,${formatCurrency(balanceSheetData.liabilities?.total_liabilities || balanceSheetData.total_liabilities || 0)}`);
-      csvLines.push(`Total Equity,${formatCurrency(balanceSheetData.equity?.total_equity || balanceSheetData.total_equity || 0)}`);
+      csvLines.push(`Total Assets,${formatCurrency(balanceSheetData.assets?.total_assets || 0)}`);
+      csvLines.push(`Total Liabilities,${formatCurrency(balanceSheetData.liabilities?.total_liabilities || 0)}`);
+      csvLines.push(`Total Equity,${formatCurrency(balanceSheetData.equity?.total_equity || 0)}`);
       csvLines.push(`Total Liabilities + Equity,${formatCurrency(balanceSheetData.total_liabilities_and_equity || 0)}`);
       csvLines.push(`Balanced,${balanceSheetData.is_balanced ? 'Yes' : 'No'}`);
       if (!balanceSheetData.is_balanced && balanceSheetData.balance_difference) {
@@ -1209,10 +1308,10 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.csvExportFailed'),
-        description: error.message || t('reports.messages.csvExportError'),
+        description: getErrorMessage(error, t('reports.messages.csvExportError')),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1220,7 +1319,7 @@ const ReportsPage: React.FC = () => {
     }
   };
 
-  const handleEnhancedPDFExport = async (balanceSheetData: SSOTBalanceSheetData) => {
+  const handleEnhancedPDFExport = async () => {
     try {
       // Use the new PDF generation method from the service
       const { ssotBalanceSheetReportService } = await import('../../src/services/ssotBalanceSheetReportService');
@@ -1245,10 +1344,10 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.pdfExportFailed'),
-        description: error.message || t('reports.messages.pdfExportError'),
+        description: getErrorMessage(error, t('reports.messages.pdfExportError')),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1283,10 +1382,10 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.csvExportFailed'),
-        description: error.message || t('reports.messages.csvExportError'),
+        description: getErrorMessage(error, t('reports.messages.csvExportError')),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1322,10 +1421,10 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.pdfExportFailed'),
-        description: error.message || t('reports.messages.pdfExportError'),
+        description: getErrorMessage(error, t('reports.messages.pdfExportError')),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1367,10 +1466,10 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.exportFailed'),
-        description: error.message || t('reports.messages.exportError', { format: format.toUpperCase() }),
+        description: getErrorMessage(error, t('reports.messages.exportError', { format: format.toUpperCase() })),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1416,10 +1515,10 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.exportFailed'),
-        description: error.message || t('reports.messages.exportError', { format: format.toUpperCase() }),
+        description: getErrorMessage(error, t('reports.messages.exportError', { format: format.toUpperCase() })),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1466,7 +1565,7 @@ const ReportsPage: React.FC = () => {
         window.URL.revokeObjectURL(url);
       } else {
         // CSV export - convert JSON to CSV
-        const data = response.data.data || response.data;
+        const data = (response.data.data || response.data) as CustomerHistoryData;
         const csvLines: string[] = [];
 
         // Header
@@ -1478,7 +1577,7 @@ const ReportsPage: React.FC = () => {
         // Transactions
         csvLines.push(`${t('reports.csv.headers.date')},${t('reports.csv.headers.type')},${t('reports.csv.headers.code')},${t('reports.csv.headers.description')},${t('reports.csv.headers.reference')},${t('reports.csv.headers.amount')},${t('reports.csv.headers.paid')},${t('reports.csv.headers.outstanding')},${t('reports.csv.headers.status')}`);
         if (data.transactions && Array.isArray(data.transactions)) {
-          data.transactions.forEach((tx: any) => {
+          data.transactions.forEach((tx) => {
             csvLines.push([
               tx.date || '',
               tx.transaction_type || '',
@@ -1520,10 +1619,10 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.exportFailed'),
-        description: error.message || t('reports.messages.exportError', { format: format.toUpperCase() }),
+        description: getErrorMessage(error, t('reports.messages.exportError', { format: format.toUpperCase() })),
         status: 'error',
         duration: 5000,
         isClosable: true,
@@ -1570,7 +1669,7 @@ const ReportsPage: React.FC = () => {
         window.URL.revokeObjectURL(url);
       } else {
         // CSV export - convert JSON to CSV
-        const data = response.data.data || response.data;
+        const data = (response.data.data || response.data) as VendorHistoryData;
         const csvLines: string[] = [];
 
         // Header
@@ -1582,7 +1681,7 @@ const ReportsPage: React.FC = () => {
         // Transactions
         csvLines.push(`${t('reports.csv.headers.date')},${t('reports.csv.headers.type')},${t('reports.csv.headers.code')},${t('reports.csv.headers.description')},${t('reports.csv.headers.reference')},${t('reports.csv.headers.amount')},${t('reports.csv.headers.paid')},${t('reports.csv.headers.outstanding')},${t('reports.csv.headers.status')}`);
         if (data.transactions && Array.isArray(data.transactions)) {
-          data.transactions.forEach((tx: any) => {
+          data.transactions.forEach((tx) => {
             csvLines.push([
               tx.date || '',
               tx.transaction_type || '',
@@ -1624,429 +1723,16 @@ const ReportsPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: t('reports.messages.exportFailed'),
-        description: error.message || t('reports.messages.exportError', { format: format.toUpperCase() }),
+        description: getErrorMessage(error, t('reports.messages.exportError', { format: format.toUpperCase() })),
         status: 'error',
         duration: 5000,
         isClosable: true,
       });
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Purchase Report Export Handler
-  const handlePurchaseReportExport = async (format: 'pdf' | 'csv') => {
-    if (!ssotPRData || !ssotPRStartDate || !ssotPREndDate) {
-      toast({
-        title: t('reports.messages.exportFailed'),
-        description: t('reports.messages.noPurchaseReportData'),
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Import the SSOT Purchase Report Service
-      const { ssotPurchaseReportService } = await import('../../src/services/ssotPurchaseReportService');
-
-      const params = {
-        start_date: ssotPRStartDate,
-        end_date: ssotPREndDate,
-        format: format
-      };
-
-      console.log('Exporting Purchase Report with params:', params);
-
-      let result: Blob;
-      if (format === 'pdf') {
-        result = await ssotPurchaseReportService.exportToPDF(params);
-      } else {
-        result = await ssotPurchaseReportService.exportToCSV(params);
-      }
-
-      if (result && result.size > 0) {
-        const fileName = `SSOT_Purchase_Report_${ssotPRStartDate}_to_${ssotPREndDate}.${format}`;
-
-        // Create download link
-        const url = window.URL.createObjectURL(result);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-
-        toast({
-          title: t('reports.messages.exportSuccessful'),
-          description: t('reports.messages.reportDownloaded', { reportName: 'Purchase Report', format: format.toUpperCase() }),
-          status: 'success',
-          duration: 3000,
-          isClosable: true,
-        });
-      } else {
-        throw new Error(t('reports.messages.emptyFileReceived'));
-      }
-
-    } catch (error: any) {
-      console.error('Purchase Report export error:', error);
-
-      toast({
-        title: t('reports.messages.exportFailed'),
-        description: error.message || t('reports.messages.exportError', { format: format.toUpperCase() }),
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleViewReport = async (report: any) => {
-    setLoading(true);
-
-    try {
-      if (report.id === 'balance-sheet') {
-        setSSOTBSOpen(true);
-        await fetchSSOTBalanceSheetReport();
-      } else if (report.id === 'profit-loss') {
-        setSSOTPLOpen(true);
-        await fetchSSOTPLReport();
-      } else if (report.id === 'cash-flow') {
-        setSSOTCFOpen(true);
-        await fetchSSOTCashFlowReport();
-      } else if (report.id === 'sales-summary') {
-        setSSOTSSOpen(true);
-        await fetchSSOTSalesSummaryReport();
-      } else if (report.id === 'purchase-report') {
-        setSSOTPROpen(true);
-        await fetchSSOTPurchaseReport();
-      } else if (report.id === 'trial-balance') {
-        setSSOTTBOpen(true);
-        await fetchSSOTTrialBalanceReport();
-      } else if (report.id === 'general-ledger') {
-        setSSOTGLOpen(true);
-        await fetchSSOTGeneralLedgerReport();
-      }
-
-    } catch (error) {
-      console.error('Failed to load SSOT report:', error);
-
-      toast({
-        title: t('reports.messages.reportLoadError'),
-        description: error instanceof Error ? error.message : t('reports.messages.failedToLoadReport'),
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Quick download function for PDF and CSV — uses SSOT services directly
-  const handleQuickDownload = async (report: any, format: 'pdf' | 'csv') => {
-    setLoading(true);
-
-    try {
-      // For customer-history and vendor-history, show message to use View Report first
-      if (report.id === 'customer-history' || report.id === 'vendor-history') {
-        toast({
-          title: t('reports.messages.actionRequired'),
-          description: t('reports.messages.useViewReportFirst', { entity: report.id === 'customer-history' ? t('reports.modal.customer') : t('reports.modal.vendor') }),
-          status: 'info',
-          duration: 6000,
-          isClosable: true,
-        });
-        setLoading(false);
-        return;
-      }
-
-      console.log('Quick downloading report:', report.id, 'format:', format);
-
-      // Helper to trigger blob download
-      const downloadBlob = (blob: Blob, fileName: string) => {
-        if (blob.size === 0) throw new Error('Empty file received from server');
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-      };
-
-      const dateStr = new Date().toISOString().split('T')[0];
-
-      // Dispatch to the correct SSOT service for each report type
-      switch (report.id) {
-        case 'profit-loss': {
-          const blob = format === 'pdf'
-            ? await ssotProfitLossService.generateSSOTProfitLossPDF({ start_date: ssotStartDate, end_date: ssotEndDate, format: 'pdf' })
-            : await ssotProfitLossService.generateSSOTProfitLossCSV({ start_date: ssotStartDate, end_date: ssotEndDate, format: 'csv' });
-          downloadBlob(blob, `Profit_Loss_${ssotStartDate}_to_${ssotEndDate}.${format}`);
-          break;
-        }
-
-        case 'cash-flow': {
-          if (format === 'pdf') {
-            await cashFlowExportService.exportToPDF({ start_date: ssotCFStartDate, end_date: ssotCFEndDate });
-          } else {
-            await cashFlowExportService.exportToCSV({ start_date: ssotCFStartDate, end_date: ssotCFEndDate });
-          }
-          // cashFlowExportService handles its own download
-          break;
-        }
-
-        case 'trial-balance': {
-          if (format === 'pdf') {
-            await ssotTrialBalanceService.exportToPDF({ as_of_date: ssotTBAsOfDate });
-          } else {
-            await ssotTrialBalanceService.exportToCSV({ as_of_date: ssotTBAsOfDate });
-          }
-          // ssotTrialBalanceService handles its own download
-          break;
-        }
-
-        case 'sales-summary': {
-          // Use SSOT sales summary endpoint with format param
-          const queryParams = new URLSearchParams({
-            start_date: ssotSSStartDate,
-            end_date: ssotSSEndDate,
-            format
-          });
-          const response = await api.get(
-            API_ENDPOINTS.SSOT_REPORTS.SALES_SUMMARY + `?${queryParams}`,
-            { responseType: 'blob' }
-          );
-          const blob = response.data as Blob;
-          downloadBlob(blob, `Sales_Summary_${ssotSSStartDate}_to_${ssotSSEndDate}.${format}`);
-          break;
-        }
-
-        case 'purchase-report': {
-          const blob = format === 'pdf'
-            ? await ssotPurchaseReportService.exportToPDF({ start_date: ssotPRStartDate, end_date: ssotPREndDate, format: 'pdf' })
-            : await ssotPurchaseReportService.exportToCSV({ start_date: ssotPRStartDate, end_date: ssotPREndDate, format: 'csv' });
-          downloadBlob(blob, `Purchase_Report_${ssotPRStartDate}_to_${ssotPREndDate}.${format}`);
-          break;
-        }
-
-        default: {
-          // Fallback to old reportService for any unlisted report types
-          let params: any = { format };
-          if (report.id === 'balance-sheet') {
-            params.as_of_date = dateStr;
-          } else {
-            params.start_date = ssotStartDate;
-            params.end_date = ssotEndDate;
-          }
-          const result = await reportService.generateReport(report.id, params);
-          if (result instanceof Blob) {
-            downloadBlob(result, `${report.id}_${dateStr}.${format}`);
-          } else if (format === 'csv' && typeof result === 'object') {
-            const csvContent = convertJSONToCSV(result, report.id);
-            const blob = new Blob([csvContent], { type: 'text/csv' });
-            downloadBlob(blob, `${report.id}_${dateStr}.csv`);
-          } else {
-            throw new Error(`${format.toUpperCase()} export is not available for ${report.name}. Please use "Lihat Laporan" for export options.`);
-          }
-          break;
-        }
-      }
-
-      toast({
-        title: t('reports.messages.downloadSuccessful'),
-        description: t('reports.messages.reportDownloaded', { reportName: report.name, format: format.toUpperCase() }),
-        status: 'success',
-        duration: 3000,
-        isClosable: true,
-      });
-
-    } catch (error) {
-      console.error('Quick download failed:', error);
-
-      let errorMessage = 'Failed to download report';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-
-      toast({
-        title: t('reports.messages.exportFailed'),
-        description: errorMessage,
-        status: 'error',
-        duration: 8000,
-        isClosable: true,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Helper function to convert JSON to CSV with professional formatting
-  const convertJSONToCSV = (data: any, reportType: string): string => {
-    try {
-      if (!data) return 'No data available';
-
-      // Unwrap common backend CSV wrappers
-      const root = (data && (data as any).data) ? (data as any).data : data;
-      const payload = (root && (root as any).data) ? (root as any).data : root;
-
-      // Helpers
-      const formatCurrencyForCSV = (amount: number | null | undefined): string => {
-        if (amount === null || amount === undefined || isNaN(Number(amount))) return '0';
-        return Number(amount).toLocaleString('id-ID');
-      };
-      const escapeCSV = (value: string): string => {
-        if (!value) return '';
-        if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-          return `"${value.replace(/"/g, '""')}"`;
-        }
-        return value;
-      };
-
-      const csvLines: string[] = [];
-
-      // Profit & Loss
-      if (reportType === 'profit-loss') {
-        const companyName = payload.company?.name || 'PT. Sistem Akuntansi';
-        const period = payload.period || `${payload.start_date || ''} to ${payload.end_date || ''}`;
-        csvLines.push(companyName);
-        csvLines.push('PROFIT & LOSS STATEMENT');
-        csvLines.push(`Period: ${period}`);
-        csvLines.push('');
-        csvLines.push('Account,Amount');
-        if (payload.sections && Array.isArray(payload.sections)) {
-          payload.sections.forEach((section: any) => {
-            csvLines.push(`${escapeCSV(section.name || 'Unknown Section')},`);
-            if (section.items && Array.isArray(section.items)) {
-              section.items.forEach((item: any) => {
-                const accountName = item.account_code ? `${item.account_code} - ${item.name}` : item.name;
-                const amount = item.is_percentage ? `${item.amount}%` : formatCurrencyForCSV(item.amount);
-                csvLines.push(`  ${escapeCSV(accountName)},${amount}`);
-              });
-            }
-            const totalAmount = formatCurrencyForCSV(section.total);
-            csvLines.push(`Total ${escapeCSV(section.name)},${totalAmount}`);
-            csvLines.push('');
-          });
-        }
-        if ((payload as any).financialMetrics) {
-          csvLines.push('FINANCIAL METRICS,');
-          csvLines.push(`Gross Profit,${formatCurrencyForCSV(payload.financialMetrics.grossProfit)}`);
-          csvLines.push(`Gross Margin,${(payload.financialMetrics.grossProfitMargin || 0).toFixed(1)}%`);
-          csvLines.push(`Operating Income,${formatCurrencyForCSV(payload.financialMetrics.operatingIncome)}`);
-          csvLines.push(`Operating Margin,${(payload.financialMetrics.operatingMargin || 0).toFixed(1)}%`);
-          csvLines.push(`Net Income,${formatCurrencyForCSV(payload.financialMetrics.netIncome)}`);
-          csvLines.push(`Net Margin,${(payload.financialMetrics.netIncomeMargin || 0).toFixed(1)}%`);
-        }
-      }
-      // Balance Sheet
-      else if (reportType === 'balance-sheet') {
-        const companyName = payload.company?.name || 'PT. Sistem Akuntansi';
-        const asOfDate = payload.as_of_date || new Date().toISOString().split('T')[0];
-        csvLines.push(companyName);
-        csvLines.push('BALANCE SHEET');
-        csvLines.push(`As of: ${asOfDate}`);
-        csvLines.push('');
-        csvLines.push('Account,Amount');
-        csvLines.push('SUMMARY,');
-        const totalAssets = (payload.assets && payload.assets.total_assets !== undefined) ? payload.assets.total_assets : (payload.total_assets || 0);
-        const totalLiabilities = (payload.liabilities && payload.liabilities.total_liabilities !== undefined) ? payload.liabilities.total_liabilities : (payload.total_liabilities || 0);
-        const totalEquity = (payload.equity && payload.equity.total_equity !== undefined) ? payload.equity.total_equity : (payload.total_equity || 0);
-        csvLines.push(`Total Assets,${formatCurrencyForCSV(totalAssets)}`);
-        csvLines.push(`Total Liabilities,${formatCurrencyForCSV(totalLiabilities)}`);
-        csvLines.push(`Total Equity,${formatCurrencyForCSV(totalEquity)}`);
-        csvLines.push(`Balanced,${payload.is_balanced ? 'Yes' : 'No'}`);
-        if (payload.assets) {
-          csvLines.push('');
-          csvLines.push('ASSETS,');
-          if (payload.assets.current_assets?.items) {
-            csvLines.push('Current Assets,');
-            payload.assets.current_assets.items.forEach((item: any) => {
-              csvLines.push(`  ${item.account_code} - ${escapeCSV(item.account_name)},${formatCurrencyForCSV(item.amount)}`);
-            });
-          }
-          if (payload.assets.non_current_assets?.items) {
-            csvLines.push('Non-Current Assets,');
-            payload.assets.non_current_assets.items.forEach((item: any) => {
-              csvLines.push(`  ${item.account_code} - ${escapeCSV(item.account_name)},${formatCurrencyForCSV(item.amount)}`);
-            });
-          }
-        }
-        if (payload.liabilities?.current_liabilities?.items) {
-          csvLines.push('');
-          csvLines.push('LIABILITIES,');
-          payload.liabilities.current_liabilities.items.forEach((item: any) => {
-            csvLines.push(`  ${item.account_code} - ${escapeCSV(item.account_name)},${formatCurrencyForCSV(item.amount)}`);
-          });
-        }
-        if (payload.equity?.items) {
-          csvLines.push('');
-          csvLines.push('EQUITY,');
-          payload.equity.items.forEach((item: any) => {
-            csvLines.push(`  ${item.account_code} - ${escapeCSV(item.account_name)},${formatCurrencyForCSV(item.amount)}`);
-          });
-        }
-      }
-      // Trial Balance
-      else if (reportType === 'trial-balance') {
-        const companyName = payload.company?.name || 'PT. Sistem Akuntansi';
-        const reportDate = payload.report_date || new Date().toISOString().split('T')[0];
-        csvLines.push(companyName);
-        csvLines.push('TRIAL BALANCE');
-        csvLines.push(`As of: ${reportDate}`);
-        csvLines.push('');
-        csvLines.push('Account Code,Account Name,Account Type,Debit Balance,Credit Balance');
-        if (payload.accounts && Array.isArray(payload.accounts)) {
-          payload.accounts.forEach((account: any) => {
-            csvLines.push([
-              escapeCSV(account.account_code || ''),
-              escapeCSV(account.account_name || account.name || ''),
-              escapeCSV(account.account_type || ''),
-              formatCurrencyForCSV(account.debit_balance),
-              formatCurrencyForCSV(account.credit_balance)
-            ].join(','));
-          });
-          csvLines.push('');
-          csvLines.push('TOTALS,,,' + formatCurrencyForCSV(payload.total_debits) + ',' + formatCurrencyForCSV(payload.total_credits));
-          csvLines.push(`Balanced: ${payload.is_balanced ? 'Yes' : 'No'}`);
-        }
-      }
-      // Generic fallback
-      else {
-        csvLines.push('FINANCIAL REPORT');
-        csvLines.push(`Report Type: ${reportType}`);
-        csvLines.push('');
-        csvLines.push('Property,Value');
-        if (typeof payload === 'object') {
-          Object.entries(payload).forEach(([key, value]) => {
-            let displayValue = '';
-            if (typeof value === 'object' && value !== null) {
-              displayValue = JSON.stringify(value);
-            } else {
-              displayValue = String(value || '');
-            }
-            csvLines.push(`${escapeCSV(key)},${escapeCSV(displayValue)}`);
-          });
-        }
-      }
-
-      // Footer
-      csvLines.push('');
-      csvLines.push(`Generated on: ${new Date().toLocaleString('id-ID')}`);
-      return csvLines.join('\n');
-    } catch (error) {
-      console.error('Error converting to CSV:', error);
-      return `Error converting data to CSV format: ${error instanceof Error ? error.message : 'Unknown error'}`;
     }
   };
 
@@ -2067,145 +1753,6 @@ const ReportsPage: React.FC = () => {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
     }).format(numericAmount);
-  };
-
-  // Get badge color for entry type
-  const getEntryTypeBadgeColor = (entryType: string) => {
-    switch (entryType?.toUpperCase()) {
-      case 'SALE':
-        return 'green';
-      case 'PURCHASE':
-        return 'orange';
-      case 'PAYMENT':
-        return 'blue';
-      case 'CASH_BANK':
-        return 'teal';
-      case 'JOURNAL':
-        return 'purple';
-      default:
-        return 'gray';
-    }
-  };
-
-  const handleGenerateReport = (report: any) => {
-    setSelectedReport(report);
-    resetParams();
-
-    // Set default parameters based on report type
-    if (report.id === 'balance-sheet') {
-      setReportParams({ as_of_date: new Date().toISOString().split('T')[0], format: 'pdf' });
-    } else if (report.id === 'profit-loss' || report.id === 'cash-flow') {
-      const today = new Date();
-      const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      setReportParams({
-        start_date: firstDayOfMonth.toISOString().split('T')[0],
-        end_date: today.toISOString().split('T')[0],
-        format: 'pdf'
-      });
-    } else if (report.id === 'sales-summary' || report.id === 'purchase-summary' || report.id === 'purchase-report') {
-      const today = new Date();
-      const thirtyDaysAgo = new Date(today);
-      thirtyDaysAgo.setDate(today.getDate() - 30);
-      setReportParams({
-        start_date: thirtyDaysAgo.toISOString().split('T')[0],
-        end_date: today.toISOString().split('T')[0],
-        group_by: 'month',
-        format: 'pdf'
-      });
-    } else if (report.id === 'trial-balance') {
-      setReportParams({ as_of_date: new Date().toISOString().split('T')[0], format: 'pdf' });
-    } else if (report.id === 'general-ledger') {
-      const today = new Date();
-      const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      setReportParams({
-        account_id: 'all',
-        start_date: firstDayOfMonth.toISOString().split('T')[0],
-        end_date: today.toISOString().split('T')[0],
-        format: 'pdf'
-      });
-    }
-
-    onOpen();
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setReportParams(prev => ({ ...prev, [name]: value }));
-  };
-
-  const executeReport = async () => {
-    if (!selectedReport) return;
-
-    setLoading(true);
-    try {
-      // Validate required parameters
-      if (['profit-loss', 'cash-flow', 'sales-summary', 'purchase-summary', 'purchase-report', 'general-ledger'].includes(selectedReport.id)) {
-        if (!reportParams.start_date || !reportParams.end_date) {
-          throw new Error(t('reports.messages.startDateEndDateRequired'));
-        }
-      }
-
-      if (['balance-sheet', 'trial-balance'].includes(selectedReport.id)) {
-        if (!reportParams.as_of_date) {
-          throw new Error(t('reports.messages.asOfDateRequired'));
-        }
-      }
-
-      if (selectedReport.id === 'general-ledger') {
-        if (!reportParams.account_id) {
-          throw new Error(t('reports.messages.accountIdRequired'));
-        }
-      }
-
-      // Use unified report generation for all report types
-      const result = await reportService.generateReport(selectedReport.id, reportParams);
-
-      if (!result) {
-        throw new Error(t('reports.messages.noDataReceived'));
-      }
-
-      // Check if result is a Blob (for file downloads)
-      if (result instanceof Blob) {
-        if (result.size === 0) {
-          throw new Error(t('reports.messages.emptyFileReceived'));
-        }
-
-        // Handle the result - Download file
-        const fileName = `${selectedReport.id}_report_${new Date().toISOString().split('T')[0]}.${reportParams.format}`;
-        await reportService.downloadReport(result, fileName);
-        toast({
-          title: t('reports.messages.downloadSuccessful'),
-          description: t('reports.messages.reportDownloadedSuccess', { reportName: selectedReport.name }),
-          status: 'success',
-          duration: 5000,
-          isClosable: true,
-        });
-      } else {
-        console.error('Unexpected result format:', typeof result, result);
-        throw new Error(t('reports.messages.invalidResponseFormat'));
-      }
-
-      onClose();
-    } catch (error) {
-      console.error('Failed to generate report:', error);
-
-      let errorMessage = t('reports.messages.unknownError');
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === 'string') {
-        errorMessage = error;
-      }
-
-      toast({
-        title: t('reports.messages.reportGenerationFailed'),
-        description: errorMessage,
-        status: 'error',
-        duration: 8000,
-        isClosable: true,
-      });
-    } finally {
-      setLoading(false);
-    }
   };
 
   return (
@@ -2286,229 +1833,6 @@ const ReportsPage: React.FC = () => {
           </SimpleGrid>
         </VStack>
       </Box>
-
-      {/* Report Parameters Modal */}
-      <Modal isOpen={isOpen} onClose={onClose} size="md">
-        <ModalOverlay />
-        <ModalContent bg={modalContentBg}>
-          <ModalHeader>{selectedReport?.name}</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {selectedReport && (
-              <VStack spacing={4} align="stretch">
-                {/* Balance Sheet Parameters */}
-                {selectedReport.id === 'balance-sheet' && (
-                  <>
-                    <FormControl isRequired>
-                      <FormLabel>{t('reports.modal.asOfDate')}</FormLabel>
-                      <Input
-                        type="date"
-                        name="as_of_date"
-                        value={reportParams.as_of_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                  </>
-                )}
-
-                {/* Profit & Loss and Cash Flow Parameters */}
-                {(selectedReport.id === 'profit-loss' || selectedReport.id === 'cash-flow') && (
-                  <>
-                    <FormControl isRequired>
-                      <FormLabel>{t('reports.modal.startDate')}</FormLabel>
-                      <Input
-                        type="date"
-                        name="start_date"
-                        value={reportParams.start_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel>{t('reports.modal.endDate')}</FormLabel>
-                      <Input
-                        type="date"
-                        name="end_date"
-                        value={reportParams.end_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                  </>
-                )}
-
-                {/* Sales Summary Parameters */}
-                {selectedReport.id === 'sales-summary' && (
-                  <>
-                    <FormControl isRequired>
-                      <FormLabel>Start Date</FormLabel>
-                      <Input
-                        type="date"
-                        name="start_date"
-                        value={reportParams.start_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel>End Date</FormLabel>
-                      <Input
-                        type="date"
-                        name="end_date"
-                        value={reportParams.end_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                  </>
-                )}
-
-                {/* Purchase Summary and Purchase Report Parameters */}
-                {(selectedReport.id === 'purchase-summary' || selectedReport.id === 'purchase-report') && (
-                  <>
-                    <FormControl isRequired>
-                      <FormLabel>Start Date</FormLabel>
-                      <Input
-                        type="date"
-                        name="start_date"
-                        value={reportParams.start_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel>End Date</FormLabel>
-                      <Input
-                        type="date"
-                        name="end_date"
-                        value={reportParams.end_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                    <FormControl>
-                      <FormLabel>Group By</FormLabel>
-                      <Select
-                        name="group_by"
-                        value={reportParams.group_by || 'month'}
-                        onChange={handleInputChange}
-                      >
-                        <option value="month">Month</option>
-                        <option value="quarter">Quarter</option>
-                        <option value="year">Year</option>
-                      </Select>
-                    </FormControl>
-                  </>
-                )}
-
-                {/* Trial Balance Parameters */}
-                {selectedReport.id === 'trial-balance' && (
-                  <>
-                    <FormControl isRequired>
-                      <FormLabel>As of Date</FormLabel>
-                      <Input
-                        type="date"
-                        name="as_of_date"
-                        value={reportParams.as_of_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                  </>
-                )}
-
-                {/* General Ledger Parameters */}
-                {selectedReport.id === 'general-ledger' && (
-                  <>
-                    <FormControl isRequired>
-                      <FormLabel>Account Selection</FormLabel>
-                      <Select
-                        name="account_id"
-                        value={reportParams.account_id || 'all'}
-                        onChange={handleInputChange}
-                      >
-                        <option value="all">All Accounts</option>
-                        <option value="1101">Cash (KAS DAN SETARA KAS)</option>
-                        <option value="1101-001">Petty Cash (KAS KECIL)</option>
-                        <option value="1101-003">Bank Giro (BANK-GIRO)</option>
-                        <option value="1101-004">Bank Tabungan (BANK-TABUNGAN)</option>
-                        <option value="1102">Accounts Receivable (PIUTANG USAHA)</option>
-                        <option value="2101">Accounts Payable</option>
-                        <option value="4101">Sales Revenue</option>
-                        <option value="5101">Cost of Goods Sold</option>
-                        <option value="6101">Administrative Expenses</option>
-                      </Select>
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel>Start Date</FormLabel>
-                      <Input
-                        type="date"
-                        name="start_date"
-                        value={reportParams.start_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel>End Date</FormLabel>
-                      <Input
-                        type="date"
-                        name="end_date"
-                        value={reportParams.end_date || ''}
-                        onChange={handleInputChange}
-                      />
-                    </FormControl>
-                  </>
-                )}
-
-                {/* Format Selection - Common for all reports */}
-                <FormControl>
-                  <FormLabel>Output Format</FormLabel>
-                  <Select
-                    name="format"
-                    value={reportParams.format || 'pdf'}
-                    onChange={handleInputChange}
-                  >
-                    {/* For SSOT P&L, only allow PDF and CSV as per requirements */}
-                    {selectedReport?.id === 'profit-loss' ? (
-                      <>
-                        <option value="pdf">PDF</option>
-                        <option value="csv">CSV</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="pdf">PDF</option>
-                        <option value="csv">CSV</option>
-                        <option value="excel">Excel</option>
-                        <option value="json">JSON</option>
-                      </>
-                    )}
-                  </Select>
-                </FormControl>
-              </VStack>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              onClick={() => {
-                if (selectedReport?.id === 'sales-summary') {
-                  // For sales summary, open SSOT modal with date parameters
-                  setSSOTSSStartDate(reportParams.start_date || ssotSSStartDate);
-                  setSSOTSSEndDate(reportParams.end_date || ssotSSEndDate);
-                  setSSOTSSOpen(true);
-                  // Auto-fetch the report
-                  if (reportParams.start_date && reportParams.end_date) {
-                    fetchSSOTSalesSummaryReport();
-                  }
-                  onClose();
-                } else {
-                  executeReport();
-                }
-              }}
-              isLoading={loading}
-              leftIcon={<FiDownload />}
-            >
-              Generate Report
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
 
       {/* SSOT P&L Modal */}
       <Modal isOpen={ssotPLOpen} onClose={() => setSSOTPLOpen(false)} size="6xl">
@@ -2768,7 +2092,7 @@ const ReportsPage: React.FC = () => {
                       {t('reports.modal.revenueDetails')}
                     </Text>
                     <SimpleGrid columns={[1, 2, 3]} spacing={4}>
-                      {ssotPLData.revenue_details.map((revenue: any) => (
+                      {ssotPLData.revenue_details.map((revenue) => (
                         <Box key={revenue.account_id} bg="white" p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                           <VStack align="start" spacing={0}>
                             <Text fontSize="sm" color="gray.700">
@@ -2794,7 +2118,7 @@ const ReportsPage: React.FC = () => {
                       {t('reports.modal.expenseDetails')}
                     </Text>
                     <SimpleGrid columns={[1, 2, 3]} spacing={4}>
-                      {ssotPLData.expense_details.map((expense: any) => (
+                      {ssotPLData.expense_details.map((expense) => (
                         <Box key={expense.account_id} bg="white" p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                           <VStack align="start" spacing={0}>
                             <Text fontSize="sm" color="gray.700">
@@ -2870,7 +2194,7 @@ const ReportsPage: React.FC = () => {
                     <Text fontSize="lg" fontWeight="bold" color={headingColor}>
                       {t('reports.modal.detailedBreakdown')}
                     </Text>
-                    {ssotPLData.sections.map((section: any, index: number) => (
+                    {ssotPLData.sections.map((section, index: number) => (
                       <Box key={index} bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                         <VStack spacing={3} align="stretch">
                           <HStack justify="space-between">
@@ -2884,7 +2208,7 @@ const ReportsPage: React.FC = () => {
 
                           {section.items && section.items.length > 0 && (
                             <VStack spacing={1} align="stretch">
-                              {section.items.map((item: any, itemIndex: number) => (
+                              {section.items.map((item, itemIndex: number) => (
                                 <HStack key={itemIndex} justify="space-between" pl={4}>
                                   <Text fontSize="sm" color={descriptionColor}>
                                     {item.account_code ? `${item.account_code} - ${item.name}` : item.name}
@@ -3201,21 +2525,21 @@ const ReportsPage: React.FC = () => {
                   <Box bg="green.50" p={4} borderRadius="md" textAlign="center">
                     <Text fontSize="sm" color="green.600">{t('reports.balanceSheet.totalAssets')}</Text>
                     <Text fontSize="xl" fontWeight="bold" color="green.700">
-                      {formatCurrency(ssotBSData.assets?.total_assets || ssotBSData.total_assets || 0)}
+                      {formatCurrency(ssotBSData.assets?.total_assets || 0)}
                     </Text>
                   </Box>
 
                   <Box bg="orange.50" p={4} borderRadius="md" textAlign="center">
                     <Text fontSize="sm" color="orange.600">{t('reports.balanceSheet.totalLiabilities')}</Text>
                     <Text fontSize="xl" fontWeight="bold" color="orange.700">
-                      {formatCurrency(ssotBSData.liabilities?.total_liabilities || ssotBSData.total_liabilities || 0)}
+                      {formatCurrency(ssotBSData.liabilities?.total_liabilities || 0)}
                     </Text>
                   </Box>
 
                   <Box bg="blue.50" p={4} borderRadius="md" textAlign="center">
                     <Text fontSize="sm" color="blue.600">{t('reports.balanceSheet.totalEquity')}</Text>
                     <Text fontSize="xl" fontWeight="bold" color="blue.700">
-                      {formatCurrency(ssotBSData.equity?.total_equity || ssotBSData.total_equity || 0)}
+                      {formatCurrency(ssotBSData.equity?.total_equity || 0)}
                     </Text>
                   </Box>
                 </SimpleGrid>
@@ -3240,7 +2564,7 @@ const ReportsPage: React.FC = () => {
                         {ssotBSData.assets?.current_assets?.items && (
                           <VStack spacing={1} align="stretch" pl={4}>
                             <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>{t('reports.balanceSheet.currentAssets')}</Text>
-                            {ssotBSData.assets.current_assets.items.map((item: any, index: number) => (
+                            {ssotBSData.assets.current_assets.items.map((item, index: number) => (
                               <HStack key={index} justify="space-between" pl={4}>
                                 <Text fontSize="sm" color={descriptionColor}>
                                   {item.account_code} - {item.account_name}
@@ -3256,7 +2580,7 @@ const ReportsPage: React.FC = () => {
                         {ssotBSData.assets?.non_current_assets?.items && (
                           <VStack spacing={1} align="stretch" pl={4}>
                             <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>{t('reports.balanceSheet.nonCurrentAssets')}</Text>
-                            {ssotBSData.assets.non_current_assets.items.map((item: any, index: number) => (
+                            {ssotBSData.assets.non_current_assets.items.map((item, index: number) => (
                               <HStack key={index} justify="space-between" pl={4}>
                                 <Text fontSize="sm" color={descriptionColor}>
                                   {item.account_code} - {item.account_name}
@@ -3285,7 +2609,7 @@ const ReportsPage: React.FC = () => {
                           {ssotBSData.liabilities?.current_liabilities?.items && (
                             <VStack spacing={1} align="stretch" pl={4}>
                               <Text fontSize="sm" fontWeight="semibold" color={descriptionColor}>{t('reports.balanceSheet.currentLiabilities')}</Text>
-                              {ssotBSData.liabilities.current_liabilities.items.map((item: any, index: number) => (
+                              {ssotBSData.liabilities.current_liabilities.items.map((item, index: number) => (
                                 <HStack key={index} justify="space-between" pl={4}>
                                   <Text fontSize="sm" color={descriptionColor}>
                                     {item.account_code} - {item.account_name}
@@ -3313,7 +2637,7 @@ const ReportsPage: React.FC = () => {
                           </HStack>
 
                           <VStack spacing={1} align="stretch" pl={4}>
-                            {ssotBSData.equity.items.map((item: any, index: number) => (
+                            {ssotBSData.equity.items.map((item, index: number) => (
                               <HStack key={index} justify="space-between" pl={4}>
                                 <Text fontSize="sm" color={descriptionColor}>
                                   {item.account_code} - {item.account_name}
@@ -3341,7 +2665,7 @@ const ReportsPage: React.FC = () => {
                     variant="outline"
                     size="sm"
                     leftIcon={<FiFilePlus />}
-                    onClick={() => handleEnhancedPDFExport(ssotBSData)}
+                    onClick={handleEnhancedPDFExport}
                   >
                     {t('reports.exportPDF')}
                   </Button>
@@ -3632,7 +2956,7 @@ const ReportsPage: React.FC = () => {
                               {t('reports.cashFlow.workingCapitalChanges')} ℹ️:
                             </Text>
                           </Tooltip>
-                          {ssotCFData.operating_activities.working_capital_changes.items.map((item: any, idx: number) => (
+                          {ssotCFData.operating_activities.working_capital_changes.items.map((item, idx: number) => (
                             <HStack key={idx} justify="space-between" pl={4} py={1}>
                               <Text fontSize="sm" color="gray.700">{item.account_name} ({item.account_code})</Text>
                               <Text fontSize="sm" fontWeight="medium" color={(item.amount || 0) >= 0 ? 'green.600' : 'red.600'}>
@@ -3683,7 +3007,7 @@ const ReportsPage: React.FC = () => {
                       📊 {t('reports.cashFlow.investingActivities')}
                     </Text>
                     <VStack align="stretch" spacing={2}>
-                      {ssotCFData.investing_activities.items.map((item: any, idx: number) => (
+                      {ssotCFData.investing_activities.items.map((item, idx: number) => (
                         <HStack key={idx} justify="space-between">
                           <Text fontSize="sm" color="gray.700">{item.account_name} ({item.account_code})</Text>
                           <Text fontSize="sm" fontWeight="medium" color={(item.amount || 0) >= 0 ? 'green.600' : 'red.600'}>
@@ -3714,7 +3038,7 @@ const ReportsPage: React.FC = () => {
                       🏦 {t('reports.cashFlow.financingActivities')}
                     </Text>
                     <VStack align="stretch" spacing={2}>
-                      {ssotCFData.financing_activities.items.map((item: any, idx: number) => (
+                      {ssotCFData.financing_activities.items.map((item, idx: number) => (
                         <HStack key={idx} justify="space-between">
                           <Text fontSize="sm" color="gray.700">{item.account_name} ({item.account_code})</Text>
                           <Text fontSize="sm" fontWeight="medium" color={(item.amount || 0) >= 0 ? 'green.600' : 'red.600'}>
@@ -3757,8 +3081,8 @@ const ReportsPage: React.FC = () => {
                         </Thead>
                         <Tbody>
                           {ssotCFData.account_details
-                            .filter((acc: any) => acc?.account_code?.startsWith('1101') || acc?.account_code?.startsWith('1102'))
-                            .map((account: any, idx: number) => (
+                            .filter((acc) => acc?.account_code?.startsWith('1101') || acc?.account_code?.startsWith('1102'))
+                            .map((account, idx: number) => (
                               <Tr key={idx} _hover={{ bg: 'gray.50' }}>
                                 <Td fontFamily="mono" fontWeight="medium">{account.account_code || 'N/A'}</Td>
                                 <Td>{account.account_name || 'Unknown Account'}</Td>
@@ -3985,7 +3309,7 @@ const ReportsPage: React.FC = () => {
                 // Generate CSV content
                 const vendors = ssotPRData.purchases_by_vendor || [];
                 const csvHeaders = 'Vendor Name,Total Amount,Total Purchases,Outstanding\n';
-                const csvRows = vendors.map((vendor: any) =>
+                const csvRows = vendors.map((vendor) =>
                   `"${vendor.vendor_name || 'Unnamed Vendor'}",` +
                   `${vendor.total_amount || 0},` +
                   `${vendor.total_purchases || 0},` +
@@ -4289,7 +3613,7 @@ const ReportsPage: React.FC = () => {
                       </Thead>
                       <Tbody>
                         {ssotTBData.accounts && ssotTBData.accounts.length > 0 ? (
-                          ssotTBData.accounts.map((account: any, index: number) => (
+                          ssotTBData.accounts.map((account, index: number) => (
                             <Tr key={account.account_id || index} _hover={{ bg: 'gray.50' }}>
                               <Td fontFamily="mono" fontWeight="medium">{account.account_code || 'N/A'}</Td>
                               <Td>{account.account_name || 'Unnamed Account'}</Td>
@@ -4557,7 +3881,7 @@ const ReportsPage: React.FC = () => {
                       </Thead>
                       <Tbody>
                         {customerHistoryData.transactions && customerHistoryData.transactions.length > 0 ? (
-                          customerHistoryData.transactions.map((tx: any, index: number) => (
+                          customerHistoryData.transactions.map((tx, index: number) => (
                             <Tr key={index} _hover={{ bg: tableHoverBlueBg }}>
                               <Td fontSize="sm">
                                 {tx.date ? new Date(tx.date).toLocaleDateString('id-ID') : 'N/A'}
@@ -4724,9 +4048,10 @@ const ReportsPage: React.FC = () => {
                   <Spinner size="xl" thickness="4px" speed="0.65s" color="orange.500" />
                   <VStack spacing={2}>
                     <Text fontSize="lg" fontWeight="medium" color={loadingTextColor}>
-                      onClose={() => setVendorHistoryOpen(false)}
-                      title={t('reports.vendorHistoryReport.loading')}
-                      message={t('reports.vendorHistoryReport.fetching')}
+                      {t('reports.vendorHistoryReport.loading')}
+                    </Text>
+                    <Text fontSize="sm" color={loadingTextColor}>
+                      {t('reports.vendorHistoryReport.fetching')}
                     </Text>
                   </VStack>
                 </VStack>
@@ -4823,7 +4148,7 @@ const ReportsPage: React.FC = () => {
                       </Thead>
                       <Tbody>
                         {vendorHistoryData.transactions && vendorHistoryData.transactions.length > 0 ? (
-                          vendorHistoryData.transactions.map((tx: any, index: number) => (
+                          vendorHistoryData.transactions.map((tx, index: number) => (
                             <Tr key={index} _hover={{ bg: tableHoverOrangeBg }}>
                               <Td fontSize="sm">
                                 {tx.date ? new Date(tx.date).toLocaleDateString('id-ID') : 'N/A'}
@@ -5247,7 +4572,7 @@ const ReportsPage: React.FC = () => {
                       </Thead>
                       <Tbody>
                         {ssotGLData.transactions && ssotGLData.transactions.length > 0 ? (
-                          ssotGLData.transactions.map((entry: any, index: number) => (
+                          ssotGLData.transactions.map((entry, index: number) => (
                             <Tr key={index} _hover={{ bg: 'blue.50' }}>
                               <Td fontSize="sm" whiteSpace="nowrap">
                                 {entry.date ? new Date(entry.date).toLocaleDateString('id-ID') : 'N/A'}

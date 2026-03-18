@@ -25,7 +25,6 @@ import {
   AlertTitle,
   AlertDescription,
   Button,
-  Collapse,
   Icon,
   useDisclosure,
   useToast,
@@ -159,7 +158,7 @@ const JournalEntryItem: React.FC<JournalEntryItemProps> = ({ entry, onViewDetail
         </Flex>
 
         {/* Expandable Details */}
-        <Collapse in={isOpen} animateOpacity>
+        {isOpen ? (
           <Box pt={3} borderTop="1px solid" borderColor="gray.200">
             {loadingDetails ? (
               <Flex justify="center" py={4}>
@@ -224,7 +223,7 @@ const JournalEntryItem: React.FC<JournalEntryItemProps> = ({ entry, onViewDetail
               </SimpleGrid>
             )}
           </Box>
-        </Collapse>
+        ) : null}
       </CardBody>
     </Card>
   );
@@ -419,7 +418,7 @@ const PurchaseJournalEntriesModal: React.FC<PurchaseJournalEntriesModalProps> = 
             </VStack>
           )}
 
-          {journalData?.count > 0 && (
+          {(journalData?.count ?? 0) > 0 && (
             <Box mt={6} pt={4} borderTop="1px solid" borderColor="gray.200">
               <Text fontSize="sm" color="gray.600">
                 <Icon as={FiInfo} mr={2} />

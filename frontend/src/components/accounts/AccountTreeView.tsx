@@ -7,7 +7,6 @@ import {
   Text,
   Icon,
   Badge,
-  Collapse,
   useDisclosure,
   Button,
   HStack,
@@ -59,6 +58,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const isAdmin = user?.role?.toLowerCase() === 'admin';
   const { isOpen, onToggle } = useDisclosure();
   const hasChildren = account.children && account.children.length > 0;
+  const childCount = account.child_count ?? account.children?.length ?? 0;
   const indentWidth = level * 20;
 
   const handleEdit = (e: React.MouseEvent) => {
@@ -130,9 +130,9 @@ const TreeNode: React.FC<TreeNodeProps> = ({
             )}
             
             {/* Show child count for parent accounts */}
-            {account.is_header && account.child_count > 0 && (
+            {account.is_header && childCount > 0 && (
               <Badge colorScheme="blue" size="sm" variant="solid">
-                {account.child_count} {account.child_count !== 1 ? t('accounts.children') : t('accounts.child')}
+                {childCount} {childCount !== 1 ? t('accounts.children') : t('accounts.child')}
               </Badge>
             )}
           </HStack>
@@ -194,8 +194,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
       </Flex>
 
       {/* Children */}
-      {hasChildren && (
-        <Collapse in={isOpen}>
+      {hasChildren && isOpen ? (
           <Box>
             {account.children?.map((child) => (
               <TreeNode
@@ -210,8 +209,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               />
             ))}
           </Box>
-        </Collapse>
-      )}
+        ) : null}
     </Box>
   );
 };

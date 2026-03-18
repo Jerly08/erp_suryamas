@@ -410,9 +410,6 @@ func (sc *SalesController) ConfirmSale(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Sale confirmed successfully", "data": sale})
-	return
-
-	c.JSON(http.StatusOK, gin.H{"message": "Sale confirmed successfully"})
 }
 
 // InvoiceSale godoc

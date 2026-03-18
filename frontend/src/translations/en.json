@@ -1135,7 +1135,7 @@
       "recreate5": "Do not check \"Is Header\" (except for large categories)",
       "proTip": "Pro Tip: Use \"Add Header Account\" button to create large categories, then \"Add Account\" for detailed accounts within them.",
       "headerTooltip": "Create large categories (Header) like ASSETS, CURRENT ASSETS, LIABILITIES, etc. Headers cannot be used for direct transactions, only for grouping accounts.",
-      "accountTooltip": "Create detailed accounts like PETTY CASH (1101-001), ACCOUNTS RECEIVABLE (1102-001) that can be used to record transactions. REQUIRED: CASH (1101-001), VAT INPUT (2102-002), VAT OUTPUT (2102-001) are hardcoded in backend!",
+      "accountTooltip": "Create detailed accounts like PETTY CASH (1101-001) and ACCOUNTS RECEIVABLE (1102-001) that can be used to record transactions. VAT Input and VAT Output now follow the active Tax Configuration instead of a single hardcoded backend code.",
       "warningTitle": "Required Accounts (Hardcoded in Backend)",
       "warningDesc": "The following accounts MUST EXIST and are hardcoded in backend: PETTY CASH (1101-001), ACCOUNTS RECEIVABLE (1102-001), VAT INPUT (2102-002), VAT OUTPUT (2102-001), ACCOUNTS PAYABLE (2101-001), REVENUE (4101), COGS (5000). If deleted, MUST be recreated with the EXACT same code, UPPERCASE name, and type! Click the 📚 icon for complete guide."
     }

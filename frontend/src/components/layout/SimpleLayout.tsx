@@ -12,6 +12,7 @@ import { Box, useDisclosure, useBreakpointValue, useColorModeValue } from '@chak
 
 interface SimpleLayoutProps {
   children: React.ReactNode;
+  title?: string;
   allowedRoles?: (UserRole | string)[];
   showSidebar?: boolean;
   requireAuth?: boolean;
@@ -19,6 +20,7 @@ interface SimpleLayoutProps {
 
 const SimpleLayout: React.FC<SimpleLayoutProps> = ({ 
   children, 
+  title: _title,
   allowedRoles = [], 
   showSidebar = true,
   requireAuth = true 
@@ -47,9 +49,13 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
         {/* Sidebar for desktop */}
         {showSidebar && !isMobile && user && (
           <Sidebar 
+            isOpen
             onClose={onClose} 
             display={{ base: 'none', md: 'block' }}
             width={60}
+            collapsed={false}
+            onToggleCollapse={() => {}}
+            variant="fixed"
           />
         )}
 
@@ -58,6 +64,10 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
           <Sidebar
             isOpen={isOpen}
             onClose={onClose}
+            display={{ base: 'block', md: 'none' }}
+            width={60}
+            collapsed={false}
+            onToggleCollapse={() => {}}
             variant="drawer"
           />
         )}

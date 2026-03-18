@@ -229,51 +229,51 @@ interface StepCardProps {
 const StepCard: React.FC<StepCardProps> = ({ step, actions }) => {
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
-  
-  const status = getStepStatus(step);
-  const action = actions.find(a => a.step_id === step.id);
-  const statusColor = getStatusColor(status);
-  const StatusIcon = getStatusIcon(status);
-  const RoleIcon = getRoleIcon(step.approver_role);
 
-  const getStepStatus = (step: ApprovalStep) => {
-    const action = actions.find(a => a.step_id === step.id);
-    if (!action) return 'pending';
-    
-    if (action.is_active && action.status === 'PENDING') return 'active';
-    if (action.status === 'APPROVED') return 'approved';
-    if (action.status === 'REJECTED') return 'rejected';
-    if (action.status === 'SKIPPED') return 'skipped';
+  function getStepStatus(stepData: ApprovalStep) {
+    const actionItem = actions.find(a => a.step_id === stepData.id);
+    if (!actionItem) return 'pending';
+
+    if (actionItem.is_active && actionItem.status === 'PENDING') return 'active';
+    if (actionItem.status === 'APPROVED') return 'approved';
+    if (actionItem.status === 'REJECTED') return 'rejected';
+    if (actionItem.status === 'SKIPPED') return 'skipped';
     return 'pending';
-  };
+  }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
+  function getStatusColor(statusValue: string) {
+    switch (statusValue) {
       case 'approved': return 'green';
       case 'rejected': return 'red';
       case 'active': return 'blue';
       case 'skipped': return 'orange';
       default: return 'gray';
     }
-  };
+  }
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
+  function getStatusIcon(statusValue: string) {
+    switch (statusValue) {
       case 'approved': return FiCheckCircle;
       case 'rejected': return FiXCircle;
       case 'active': return FiClock;
       case 'skipped': return FiArrowRight;
       default: return FiUser;
     }
-  };
+  }
 
-  const getRoleIcon = (role: string) => {
+  function getRoleIcon(role: string) {
     switch (role.toLowerCase()) {
       case 'finance': return FiDollarSign;
       case 'director': return FiUsers;
       default: return FiUser;
     }
-  };
+  }
+
+  const status = getStepStatus(step);
+  const action = actions.find(a => a.step_id === step.id);
+  const statusColor = getStatusColor(status);
+  const StatusIcon = getStatusIcon(status);
+  const RoleIcon = getRoleIcon(step.approver_role);
 
   return (
     <Tooltip

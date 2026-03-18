@@ -6,6 +6,7 @@ import { Flex, Spinner, VStack, Text } from '@chakra-ui/react';
 
 interface CompanyTypeGuardProps {
     children: React.ReactNode;
+    moduleName?: string;
 }
 
 const CompanyTypeGuard: React.FC<CompanyTypeGuardProps> = ({ children }) => {

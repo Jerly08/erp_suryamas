@@ -39,10 +39,10 @@ func TestRenderSSOTFinancialSections_RendersNonOperatingDetailsOnce(t *testing.T
 	require.NoError(t, err)
 
 	content := buf.String()
-	require.Contains(t, content, "Section Mapping")
+	require.Contains(t, content, "OTHER INCOME/EXPENSES")
 	require.Contains(t, content, "NON-OPERATING")
-	require.Equal(t, 1, strings.Count(content, "Other Income Accounts"))
-	require.Equal(t, 1, strings.Count(content, "Other Expense Accounts"))
+	require.Equal(t, 1, strings.Count(content, "Other Income Accounts:"))
+	require.Equal(t, 1, strings.Count(content, "Other Expense Accounts:"))
 	require.Contains(t, content, "NET OTHER INCOME/EXPENSES")
 	require.Contains(t, content, "LABA SELISIH KURS")
 	require.Contains(t, content, "BEBAN BUNGA")

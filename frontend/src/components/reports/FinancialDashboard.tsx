@@ -33,7 +33,7 @@ import {
   FiAlertTriangle,
   FiRefreshCw,
   FiPieChart,
-  FiBarChart3,
+  FiBarChart,
 } from 'react-icons/fi';
 import financialReportService, {
   FinancialDashboard as FinancialDashboardData,
@@ -198,7 +198,7 @@ const FinancialDashboard: React.FC = () => {
         <Card>
           <CardHeader>
             <Heading size="md" display="flex" alignItems="center">
-              <Icon as={FiBarChart3} mr={2} />
+              <Icon as={FiBarChart} mr={2} />
               Financial Health Score
             </Heading>
           </CardHeader>

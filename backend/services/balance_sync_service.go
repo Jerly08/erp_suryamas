@@ -254,25 +254,22 @@ func (s *BalanceSyncService) SchedulePeriodicSync(intervalMinutes int) {
 	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			log.Printf("🔄 Running periodic balance sync (every %d minutes)...", intervalMinutes)
+	for range ticker.C {
+		log.Printf("🔄 Running periodic balance sync (every %d minutes)...", intervalMinutes)
 
-			// Verify integrity first
-			isConsistent, err := s.VerifyBalanceIntegrity()
+		// Verify integrity first
+		isConsistent, err := s.VerifyBalanceIntegrity()
+		if err != nil {
+			log.Printf("Error during periodic integrity check: %v", err)
+			continue
+		}
+
+		// If inconsistent, run full sync
+		if !isConsistent {
+			log.Println("⚠️ Inconsistencies detected, running full balance sync...")
+			err = s.SyncAccountBalancesFromSSOT()
 			if err != nil {
-				log.Printf("Error during periodic integrity check: %v", err)
-				continue
-			}
-
-			// If inconsistent, run full sync
-			if !isConsistent {
-				log.Println("⚠️ Inconsistencies detected, running full balance sync...")
-				err = s.SyncAccountBalancesFromSSOT()
-				if err != nil {
-					log.Printf("Error during periodic sync: %v", err)
-				}
+				log.Printf("Error during periodic sync: %v", err)
 			}
 		}
 	}

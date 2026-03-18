@@ -56,7 +56,6 @@ import ProductForm from './ProductForm';
 import CategoryManagement from './CategoryManagement';
 import UnitManagement from './UnitManagement';
 import WarehouseLocationManagement from './WarehouseLocationManagement';
-import { ProductUnit } from './UnitForm';
 import { formatIDR, formatCurrencyDetailed } from '@/utils/currency';
 import { getProductImageUrl, debugImageUrl } from '@/utils/imageUrl';
 import ProductImportModal from './ProductImportModal';
@@ -162,7 +161,7 @@ const ProductCatalog: React.FC = () => {
   }, [searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, currentPage, tabIndex]);
 
   useEffect(() => {
-    const notificationProductId = searchParams.get('notificationProductId');
+    const notificationProductId = searchParams?.get('notificationProductId');
 
     if (!notificationProductId || handledNotificationProductId.current === notificationProductId) {
       return;
@@ -171,7 +170,7 @@ const ProductCatalog: React.FC = () => {
     handledNotificationProductId.current = notificationProductId;
 
     const clearNotificationProductParam = () => {
-      const nextParams = new URLSearchParams(searchParams.toString());
+      const nextParams = new URLSearchParams(searchParams?.toString() || '');
       nextParams.delete('notificationProductId');
       const nextUrl = nextParams.toString() ? `/products?${nextParams.toString()}` : '/products';
       router.replace(nextUrl);

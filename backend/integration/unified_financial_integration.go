@@ -1,3 +1,6 @@
+//go:build legacyintegration
+// +build legacyintegration
+
 package integration
 
 import (

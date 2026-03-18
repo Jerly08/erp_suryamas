@@ -68,7 +68,7 @@ const BalanceSheetEmptyState: React.FC<BalanceSheetEmptyStateProps> = ({ onRefre
       </Typography>
 
       <Grid container spacing={3} sx={{ mb: 4, mt: 2 }}>
-        <Grid item xs={12} md={4}>
+        <Grid size={{ xs: 12, md: 4 }}>
           <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
               <AddIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
@@ -82,7 +82,7 @@ const BalanceSheetEmptyState: React.FC<BalanceSheetEmptyStateProps> = ({ onRefre
           </Card>
         </Grid>
         
-        <Grid item xs={12} md={4}>
+        <Grid size={{ xs: 12, md: 4 }}>
           <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
               <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
@@ -96,7 +96,7 @@ const BalanceSheetEmptyState: React.FC<BalanceSheetEmptyStateProps> = ({ onRefre
           </Card>
         </Grid>
         
-        <Grid item xs={12} md={4}>
+        <Grid size={{ xs: 12, md: 4 }}>
           <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
               <DataArrayIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />

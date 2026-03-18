@@ -87,6 +87,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
   const primaryTextColor = useColorModeValue('gray.800', 'gray.100');
   const hoverBg = useColorModeValue('gray.50', 'gray.700');
   const theadBg = useColorModeValue('gray.50', 'gray.700');
+  const spinnerColor = useColorModeValue('blue.500', 'blue.400');
 
   // Status color mapping for purchases
   const getStatusColor = (status: string) => {
@@ -157,7 +158,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
       <CardBody p={0}>
         {loading ? (
           <Flex justify="center" align="center" py={10}>
-            <Spinner size="lg" color={useColorModeValue('blue.500', 'blue.400')} />
+            <Spinner size="lg" color={spinnerColor} />
             <Text ml={4} color={textColor}>{t('purchases.loadingTransactions')}</Text>
           </Flex>
         ) : purchases.length === 0 ? (

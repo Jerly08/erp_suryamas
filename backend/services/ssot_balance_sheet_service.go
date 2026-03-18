@@ -1,6 +1,7 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
 	"log"
 	"strings"
@@ -19,6 +20,51 @@ func NewSSOTBalanceSheetService(db *gorm.DB) *SSOTBalanceSheetService {
 	return &SSOTBalanceSheetService{
 		db: db,
 	}
+}
+
+func (s *SSOTBalanceSheetService) loadConfiguredVATAccountIDs() (uint, uint) {
+	settings, err := NewTaxAccountService(s.db).GetSettings()
+	if err != nil || settings == nil {
+		if err != nil {
+			log.Printf("⚠️ Failed to load tax settings for balance sheet VAT netting: %v", err)
+		}
+		return 0, 0
+	}
+
+	return settings.PurchaseInputVATAccountID, settings.SalesOutputVATAccountID
+}
+
+func isPurchaseInputVATAccount(accountID uint, code, name string, configuredID uint) bool {
+	lowerName := strings.ToLower(name)
+	return (configuredID != 0 && accountID == configuredID) ||
+		strings.Contains(lowerName, "ppn masukan") ||
+		code == "1240" ||
+		strings.HasPrefix(code, "2102-002")
+}
+
+func isSalesOutputVATAccount(accountID uint, code, name string, configuredID uint) bool {
+	lowerName := strings.ToLower(name)
+	return (configuredID != 0 && accountID == configuredID) ||
+		strings.Contains(lowerName, "ppn keluaran") ||
+		code == "2103" ||
+		strings.HasPrefix(code, "2102-001")
+}
+
+func (s *SSOTBalanceSheetService) currentEarningsStartDate(asOf time.Time) *time.Time {
+	var lastClosed models.AccountingPeriod
+	err := s.db.
+		Where("deleted_at IS NULL AND is_closed = ? AND end_date <= ?", true, normalizeClosingDayEnd(asOf)).
+		Order("end_date DESC").
+		First(&lastClosed).Error
+	if err != nil {
+		if err != gorm.ErrRecordNotFound {
+			log.Printf("failed to load last closed period for current earnings window: %v", err)
+		}
+		return nil
+	}
+
+	start := nextClosingStartDate(lastClosed.EndDate)
+	return &start
 }
 
 // SSOTBalanceSheetData represents the comprehensive Balance Sheet structure for SSOT
@@ -325,6 +371,23 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 
 	log.Printf("calculateNetIncome START - AsOfDate: %s", asOfDate)
 
+	asOf, err := time.Parse("2006-01-02", asOfDate)
+	if err != nil {
+		log.Printf("Failed to parse asOfDate for net income window: %v", err)
+		return 0
+	}
+
+	currentWindowStart := s.currentEarningsStartDate(asOf)
+	queryArgs := []interface{}{asOfDate}
+	windowFilter := ""
+	if currentWindowStart != nil {
+		windowFilter = "AND DATE(uje.entry_date) >= ?"
+		queryArgs = append(queryArgs, currentWindowStart.Format("2006-01-02"))
+		log.Printf("calculateNetIncome current earnings window: %s to %s", currentWindowStart.Format("2006-01-02"), asOfDate)
+	} else {
+		log.Printf("calculateNetIncome current earnings window: beginning to %s", asOfDate)
+	}
+
 	// Helper to check for account types including localized names
 	// Revenue: REVENUE, PENDAPATAN%
 	// Expense: EXPENSE, BEBAN%
@@ -339,7 +402,7 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 	// Both use (credit - debit), so we can simplify:
 	//   Revenue accounts contribute positive (credit > debit)
 	//   Expense accounts contribute negative (debit > credit, so credit - debit is negative)
-	query := `
+	query := strings.Replace(`
 		SELECT 
 			COALESCE(SUM(
 				CASE 
@@ -355,15 +418,17 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 		INNER JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
 		WHERE uje.status = 'POSTED' AND uje.deleted_at IS NULL
 		AND DATE(uje.entry_date) <= ?
+		__WINDOW_FILTER__
+		AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('CLOSING', 'REVERSAL')
 	AND COALESCE(a.is_header, false) = false
 	AND (
 		TRIM(a.type) ILIKE 'REVENUE' OR TRIM(a.type) ILIKE 'PENDAPATAN%' OR 
 		TRIM(a.type) ILIKE 'EXPENSE' OR TRIM(a.type) ILIKE 'BEBAN%'
 	)
 	AND a.deleted_at IS NULL
-	`
+	`, "__WINDOW_FILTER__", windowFilter, 1)
 
-	if err := s.db.Raw(query, asOfDate).Scan(&row).Error; err == nil {
+	if err := s.db.Raw(query, queryArgs...).Scan(&row).Error; err == nil {
 		netIncome = row.NetIncome
 		log.Printf("Net Income calculated from SSOT: %.2f", netIncome)
 	} else {
@@ -373,7 +438,7 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 	// If SSOT returned zero and tables might be empty, try legacy journals fallback
 	if netIncome == 0 {
 		var legacy niRow
-		legacyQuery := `
+		legacyQuery := strings.Replace(`
 			SELECT 
 				COALESCE(SUM(
 					CASE 
@@ -389,13 +454,14 @@ func (s *SSOTBalanceSheetService) calculateNetIncome(asOfDate string) float64 {
 			INNER JOIN journal_entries je ON je.id = jl.journal_entry_id
 			WHERE je.status = 'POSTED' AND je.deleted_at IS NULL
 			AND je.entry_date <= ?
+			__WINDOW_FILTER__
 			AND COALESCE(a.is_header, false) = false
 			AND (
 				TRIM(a.type) ILIKE 'REVENUE' OR TRIM(a.type) ILIKE 'PENDAPATAN%' OR 
 				TRIM(a.type) ILIKE 'EXPENSE' OR TRIM(a.type) ILIKE 'BEBAN%'
 			)
-			AND a.deleted_at IS NULL`
-		if err := s.db.Raw(legacyQuery, asOfDate).Scan(&legacy).Error; err == nil {
+			AND a.deleted_at IS NULL`, "__WINDOW_FILTER__", strings.ReplaceAll(windowFilter, "DATE(uje.entry_date)", "DATE(je.entry_date)"), 1)
+		if err := s.db.Raw(legacyQuery, queryArgs...).Scan(&legacy).Error; err == nil {
 			netIncome = legacy.NetIncome
 			log.Printf("Net Income from legacy journals: %.2f", netIncome)
 		} else {
@@ -464,6 +530,8 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 	log.Printf("Net income calculated up to %s: %.2f", asOf.Format("2006-01-02"), netIncome)
 
 	// Process each account balance
+	purchaseInputVATAccountID, salesOutputVATAccountID := s.loadConfiguredVATAccountIDs()
+
 	for _, balance := range balances {
 		code := balance.AccountCode
 		amount := balance.NetBalance
@@ -495,8 +563,8 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 
 		// Check if this is a PPN account — skip from categorization entirely
 		// PPN accounts will be handled by the PPN netting logic below
-		isPPNMasukan := strings.Contains(strings.ToLower(item.AccountName), "ppn masukan") || strings.HasPrefix(code, "2102-002")
-		isPPNKeluaran := strings.Contains(strings.ToLower(item.AccountName), "ppn keluaran") || strings.HasPrefix(code, "2102-001")
+		isPPNMasukan := isPurchaseInputVATAccount(balance.AccountID, code, item.AccountName, purchaseInputVATAccountID)
+		isPPNKeluaran := isSalesOutputVATAccount(balance.AccountID, code, item.AccountName, salesOutputVATAccountID)
 		if isPPNMasukan || isPPNKeluaran {
 			log.Printf("Skipping PPN account from categorization: %s - %s (%.2f)", code, item.AccountName, amount)
 			continue // Don't categorize PPN accounts — handled below
@@ -528,30 +596,34 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 	var rawPPNKeluaran, rawPPNMasukan float64
 	for _, balance := range balances {
 		code := balance.AccountCode
-		name := strings.ToLower(balance.AccountName)
-		if strings.Contains(name, "ppn keluaran") || strings.HasPrefix(code, "2102-001") {
+		if isSalesOutputVATAccount(balance.AccountID, code, balance.AccountName, salesOutputVATAccountID) {
 			// PPN Keluaran: LIABILITY type, net_balance = credit - debit (positive means credit balance)
 			rawPPNKeluaran += balance.NetBalance
-		} else if strings.Contains(name, "ppn masukan") || strings.HasPrefix(code, "2102-002") {
-			// PPN Masukan: LIABILITY type, net_balance = credit - debit (negative means debit balance)
+		} else if isPurchaseInputVATAccount(balance.AccountID, code, balance.AccountName, purchaseInputVATAccountID) {
+			// PPN Masukan may be configured as ASSET or legacy contra-liability; use its signed net balance as-is.
 			rawPPNMasukan += balance.NetBalance
 		}
 	}
 
-	// Net PPN = PPN Keluaran - |PPN Masukan|
-	// PPN Keluaran is positive (credit balance), PPN Masukan is negative (debit balance)
-	// So: netPPN = rawPPNKeluaran + rawPPNMasukan (adding a negative)
-	netPPNValue := rawPPNKeluaran + rawPPNMasukan
+	// Net PPN = PPN Keluaran - PPN Masukan
+	// PPN Keluaran normally has credit balance (+), while PPN Masukan can be:
+	// - ASSET: positive debit balance
+	// - legacy contra-liability: negative debit balance
+	ppnMasukanForNetting := rawPPNMasukan
+	if rawPPNMasukan < 0 {
+		ppnMasukanForNetting = -rawPPNMasukan
+	}
+	netPPNValue := rawPPNKeluaran - ppnMasukanForNetting
 
 	log.Printf("PPN Netting - Keluaran: %.2f, Masukan: %.2f, Net: %.2f",
-		rawPPNKeluaran, rawPPNMasukan, netPPNValue)
+		rawPPNKeluaran, ppnMasukanForNetting, netPPNValue)
 
 	if netPPNValue > 0 {
 		// PPN Kurang Bayar (owe more) → show as Liability
 		ppnItem := BSAccountItem{
 			AccountCode: "PPN_NET",
 			AccountName: fmt.Sprintf("PPN Terutang (Keluaran %.0f - Masukan %.0f)",
-				rawPPNKeluaran, -rawPPNMasukan), // Display absolute values
+				rawPPNKeluaran, ppnMasukanForNetting),
 			Amount: netPPNValue,
 		}
 		bsData.Liabilities.CurrentLiabilities.Items = append(bsData.Liabilities.CurrentLiabilities.Items, ppnItem)
@@ -563,7 +635,7 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 		ppnItem := BSAccountItem{
 			AccountCode: "PPN_NET",
 			AccountName: fmt.Sprintf("PPN Lebih Bayar (Masukan %.0f - Keluaran %.0f)",
-				-rawPPNMasukan, rawPPNKeluaran), // Display absolute values
+				ppnMasukanForNetting, rawPPNKeluaran),
 			Amount: ppnAmount,
 		}
 		bsData.Assets.CurrentAssets.Items = append(bsData.Assets.CurrentAssets.Items, ppnItem)

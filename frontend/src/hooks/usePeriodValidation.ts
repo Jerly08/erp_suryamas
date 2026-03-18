@@ -106,7 +106,10 @@ export function usePeriodValidation(options: UsePeriodValidationOptions = {}) {
       return false; // Not a period error, let caller handle it
     }
 
-    const errorData = error.response.data;
+    const errorData = error.response?.data;
+    if (!errorData) {
+      return false;
+    }
     const errorMessage = getErrorMessage(errorData);
     const actionMessage = getActionMessage(errorData);
 

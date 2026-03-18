@@ -71,6 +71,7 @@ temp/
 
 # Go workspace
 go.work
+.gocache/
 
 # Database files
 *.db

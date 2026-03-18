@@ -17,7 +17,6 @@ import {
   Text,
   Badge,
   Box,
-  Collapse,
   IconButton,
   useColorModeValue,
 } from '@chakra-ui/react';
@@ -237,7 +236,7 @@ function GroupedTable<T>({
                   </Flex>
 
                   {/* Group Content */}
-                  <Collapse in={group.isOpen} animateOpacity>
+                  {group.isOpen && (
                     <Box overflowX="auto">
                       <ChakraTable variant="simple" size="sm">
                         <Thead bg={tableHeaderBg}>
@@ -304,7 +303,7 @@ function GroupedTable<T>({
                         </Tbody>
                       </ChakraTable>
                     </Box>
-                  </Collapse>
+                  )}
                 </Box>
               );
             })}

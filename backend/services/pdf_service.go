@@ -3163,7 +3163,7 @@ func (p *PDFService) GeneratePaymentDetailPDF(data interface{}) ([]byte, error) 
 
 			// Line 1: Beban (Bruto)
 			pdf.CellFormat(numW, 6, "1", "1", 0, "C", false, 0, "")
-			pdf.CellFormat(descW, 6, fmt.Sprintf("Beban / Expense (Bruto)"), "1", 0, "L", false, 0, "")
+			pdf.CellFormat(descW, 6, "Beban / Expense (Bruto)", "1", 0, "L", false, 0, "")
 			pdf.CellFormat(amtW, 6, p.formatRupiah(grossAmount), "1", 0, "R", false, 0, "")
 			pdf.Ln(6)
 
@@ -5394,7 +5394,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 		p.addSSOTSection(pdf, utils.T("revenue", language), revenue, utils.T("revenue_description", language), utils.T("operating_tag", language))
 
 		// Add revenue account details
-		if revenueItems := getArray([]string{"revenue", "items"}); revenueItems != nil && len(revenueItems) > 0 {
+		if revenueItems := getArray([]string{"revenue", "items"}); len(revenueItems) > 0 {
 			p.addAccountDetails(pdf, utils.T("revenue_accounts", language), revenueItems)
 		}
 	}
@@ -5405,7 +5405,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 		p.addSSOTSection(pdf, utils.T("cost_of_goods_sold", language), cogs, utils.T("cogs_description", language), utils.T("operating_tag", language))
 
 		// Add COGS account details
-		if cogsItems := getArray([]string{"cost_of_goods_sold", "items"}); cogsItems != nil && len(cogsItems) > 0 {
+		if cogsItems := getArray([]string{"cost_of_goods_sold", "items"}); len(cogsItems) > 0 {
 			p.addAccountDetails(pdf, utils.T("cogs_accounts", language), cogsItems)
 		}
 	}
@@ -5428,15 +5428,15 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 		p.addSSOTSection(pdf, utils.T("operating_expenses", language), opex, utils.T("opex_description", language), utils.T("operating_tag", language))
 
 		// Add operating expenses account details
-		if adminItems := getArray([]string{"operating_expenses", "administrative", "items"}); adminItems != nil && len(adminItems) > 0 {
+		if adminItems := getArray([]string{"operating_expenses", "administrative", "items"}); len(adminItems) > 0 {
 			p.addAccountDetails(pdf, utils.T("administrative_expenses", language), adminItems)
 		}
 
-		if sellItems := getArray([]string{"operating_expenses", "selling_marketing", "items"}); sellItems != nil && len(sellItems) > 0 {
+		if sellItems := getArray([]string{"operating_expenses", "selling_marketing", "items"}); len(sellItems) > 0 {
 			p.addAccountDetails(pdf, utils.T("selling_marketing", language), sellItems)
 		}
 
-		if genItems := getArray([]string{"operating_expenses", "general", "items"}); genItems != nil && len(genItems) > 0 {
+		if genItems := getArray([]string{"operating_expenses", "general", "items"}); len(genItems) > 0 {
 			p.addAccountDetails(pdf, utils.T("general_expenses", language), genItems)
 		}
 	}
@@ -5530,7 +5530,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 }
 
 // renderSSOTPlaceholder renders placeholder content when data extraction fails
-func (p *PDFService) renderSSOTPlaceholder(pdf *gofpdf.Fpdf, ssotData interface{}) {
+func (p *PDFService) renderSSOTPlaceholder(pdf *gofpdf.Fpdf, _ interface{}) {
 	pdf.SetFont("Arial", "B", 12)
 	pdf.Cell(190, 8, "SSOT PROFIT & LOSS REPORT")
 	pdf.Ln(8)

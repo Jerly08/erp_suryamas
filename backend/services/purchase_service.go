@@ -93,7 +93,7 @@ func NewPurchaseService(
 // Purchase CRUD Operations
 
 func (s *PurchaseService) GetPurchases(filter models.PurchaseFilter) (*PurchaseResult, error) {
-	fmt.Printf("ℹ Retrieving purchases with filter: Status=%s, VendorID=%d, Page=%d, Limit=%d\n",
+	fmt.Printf("ℹ Retrieving purchases with filter: Status=%s, VendorID=%v, Page=%d, Limit=%d\n",
 		filter.Status, filter.VendorID, filter.Page, filter.Limit)
 	purchases, total, err := s.purchaseRepo.FindWithFilter(filter)
 	if err != nil {
@@ -899,11 +899,11 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 	if s.assetCapitalizationSvc != nil {
 		// Load default accounts
 		var inventoryAccountID uint
-		if inv, err := s.accountRepo.FindByCode(nil, "1103-001"); err == nil {
+		if inv, err := s.accountRepo.FindByCode(context.TODO(), "1103-001"); err == nil {
 			inventoryAccountID = inv.ID
 		}
 		var defaultFAAccountID uint
-		if fa, err := s.accountRepo.FindByCode(nil, "1201-004"); err == nil {
+		if fa, err := s.accountRepo.FindByCode(context.TODO(), "1201-004"); err == nil {
 			defaultFAAccountID = fa.ID
 		}
 		// Map request items by PurchaseItemID for quick lookup of flags
@@ -2078,6 +2078,7 @@ func (s *PurchaseService) CreateIntegratedPayment(
 		tx.Rollback()
 		return nil, errors.New("cash/bank account is required for payment")
 	}
+	cashBankAccountID := *cashBankID
 
 	// Create payment record directly in Payment Management
 	// Generate payment code
@@ -2150,62 +2151,53 @@ func (s *PurchaseService) CreateIntegratedPayment(
 	}
 
 	// Update cash/bank balance (decrease for payment OUT)
-	if cashBankID != nil {
-		guard := NewCashBankCurrencyGuard(s.db)
-		var cashBank models.CashBank
-		if err := tx.First(&cashBank, *cashBankID).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("cash/bank account not found: %v", err)
-		}
+	guard := NewCashBankCurrencyGuard(s.db)
+	var cashBank models.CashBank
+	if err := tx.First(&cashBank, cashBankAccountID).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("cash/bank account not found: %v", err)
+	}
 
-		// Check sufficient balance for outgoing payment
-		if cashBank.Balance < amount {
-			tx.Rollback()
-			return nil, fmt.Errorf("insufficient balance. Available: %.2f, Required: %.2f", cashBank.Balance, amount)
-		}
+	// Check sufficient balance for outgoing payment
+	if cashBank.Balance < amount {
+		tx.Rollback()
+		return nil, fmt.Errorf("insufficient balance. Available: %.2f, Required: %.2f", cashBank.Balance, amount)
+	}
 
-		// Decrease cash/bank balance for payment OUT
-		cashBank.Balance -= amount
-		if err := tx.Save(&cashBank).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to update cash/bank balance: %v", err)
-		}
+	// Decrease cash/bank balance for payment OUT
+	cashBank.Balance -= amount
+	if err := tx.Save(&cashBank).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to update cash/bank balance: %v", err)
+	}
 
-		// Create cash/bank transaction record
-		cashBankTransaction := &models.CashBankTransaction{
-			CashBankID:      *cashBankID,
-			ReferenceType:   "PAYMENT",
-			ReferenceID:     payment.ID,
-			Amount:          -amount, // Negative for outgoing payment
-			BalanceAfter:    cashBank.Balance,
-			TransactionDate: date,
-			Notes:           fmt.Sprintf("Vendor payment - %s", purchase.Code),
-		}
+	// Create cash/bank transaction record
+	cashBankTransaction := &models.CashBankTransaction{
+		CashBankID:      cashBankAccountID,
+		ReferenceType:   "PAYMENT",
+		ReferenceID:     payment.ID,
+		Amount:          -amount, // Negative for outgoing payment
+		BalanceAfter:    cashBank.Balance,
+		TransactionDate: date,
+		Notes:           fmt.Sprintf("Vendor payment - %s", purchase.Code),
+	}
 
-		if err := tx.Create(cashBankTransaction).Error; err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to create cash/bank transaction: %v", err)
-		}
+	if err := tx.Create(cashBankTransaction).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create cash/bank transaction: %v", err)
+	}
 
-		if err := guard.EnforceAfterTransaction(tx, *cashBankID); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after vendor payment: %v", err)
-		}
+	if err := guard.EnforceAfterTransaction(tx, cashBankAccountID); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after vendor payment: %v", err)
 	}
 
 	// Create journal entries for vendor payment
 	// Debit: Accounts Payable (reduce liability)
 	// Credit: Cash/Bank (reduce asset)
-	if cashBankID != nil {
-		if err := s.createVendorPaymentJournalEntries(tx, payment, purchase, *cashBankID, userID); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to create journal entries: %v", err)
-		}
-	} else {
-		// Handle case where no cash/bank account specified
-		// This shouldn't happen in normal flow but we need to handle it gracefully
+	if err := s.createVendorPaymentJournalEntries(tx, payment, purchase, cashBankAccountID, userID); err != nil {
 		tx.Rollback()
-		return nil, errors.New("cash/bank account is required for payment")
+		return nil, fmt.Errorf("failed to create journal entries: %v", err)
 	}
 
 	// Commit transaction
@@ -2781,7 +2773,7 @@ func (s *PurchaseService) updateCashBankBalanceForPurchaseAtomic(purchase *model
 			fmt.Printf("Purchase %s already has cash/bank transaction ID %d, skipping duplicate posting\n", purchase.Code, existingTx.ID)
 			return guard.EnforceAfterTransaction(tx, cashBankID)
 		}
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("failed to check existing cash/bank transaction: %v", err)
 		}
 

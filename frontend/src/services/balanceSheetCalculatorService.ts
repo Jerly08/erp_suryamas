@@ -221,8 +221,7 @@ class BalanceSheetCalculatorService {
    */
   private async getAccounts(): Promise<Account[]> {
     try {
-      const accounts = await accountService.getAccounts();
-      return accounts.data || [];
+      return await accountService.getAccounts('');
     } catch (error) {
       console.error('Error fetching accounts:', error);
       return []; // Return empty array if accounts cannot be fetched

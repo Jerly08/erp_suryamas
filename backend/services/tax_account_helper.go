@@ -179,6 +179,52 @@ func (h *TaxAccountHelper) GetCOGSAccount(tx *gorm.DB) (*models.Account, error) 
 	return h.getAccountByCode(tx, "5101")
 }
 
+// GetPurchaseInputVATAccount returns the configured PPN Masukan account or a safe legacy fallback.
+func (h *TaxAccountHelper) GetPurchaseInputVATAccount(tx *gorm.DB) (*models.Account, error) {
+	if h.cachedSettings == nil {
+		if err := h.LoadSettings(); err != nil {
+			log.Printf("⚠️ [TaxAccountHelper] Failed to load tax settings for PPN Masukan, using fallback: %v", err)
+			return h.getFirstAvailableAccountByCode(tx, "1240", "2102-002")
+		}
+	}
+
+	if h.cachedSettings.PurchaseInputVATAccountID > 0 {
+		var account models.Account
+		if err := tx.First(&account, h.cachedSettings.PurchaseInputVATAccountID).Error; err == nil {
+			log.Printf("✅ [TaxAccountHelper] Using configured PPN Masukan account: %s (%s)", account.Code, account.Name)
+			return &account, nil
+		}
+		log.Printf("⚠️ [TaxAccountHelper] Configured PPN Masukan account ID %d could not be loaded, trying fallback codes",
+			h.cachedSettings.PurchaseInputVATAccountID)
+	}
+
+	log.Printf("⚠️ [TaxAccountHelper] PPN Masukan account not configured, using fallback (1240/2102-002)")
+	return h.getFirstAvailableAccountByCode(tx, "1240", "2102-002")
+}
+
+// GetSalesOutputVATAccount returns the configured PPN Keluaran account or a safe legacy fallback.
+func (h *TaxAccountHelper) GetSalesOutputVATAccount(tx *gorm.DB) (*models.Account, error) {
+	if h.cachedSettings == nil {
+		if err := h.LoadSettings(); err != nil {
+			log.Printf("⚠️ [TaxAccountHelper] Failed to load tax settings for PPN Keluaran, using fallback: %v", err)
+			return h.getFirstAvailableAccountByCode(tx, "2103", "2102-001")
+		}
+	}
+
+	if h.cachedSettings.SalesOutputVATAccountID > 0 {
+		var account models.Account
+		if err := tx.First(&account, h.cachedSettings.SalesOutputVATAccountID).Error; err == nil {
+			log.Printf("✅ [TaxAccountHelper] Using configured PPN Keluaran account: %s (%s)", account.Code, account.Name)
+			return &account, nil
+		}
+		log.Printf("⚠️ [TaxAccountHelper] Configured PPN Keluaran account ID %d could not be loaded, trying fallback codes",
+			h.cachedSettings.SalesOutputVATAccountID)
+	}
+
+	log.Printf("⚠️ [TaxAccountHelper] PPN Keluaran account not configured, using fallback (2103/2102-001)")
+	return h.getFirstAvailableAccountByCode(tx, "2103", "2102-001")
+}
+
 // getAccountByCode is a helper to fetch account by code
 func (h *TaxAccountHelper) getAccountByCode(tx *gorm.DB, code string) (*models.Account, error) {
 	var account models.Account
@@ -186,6 +232,23 @@ func (h *TaxAccountHelper) getAccountByCode(tx *gorm.DB, code string) (*models.A
 		return nil, fmt.Errorf("account with code %s not found: %v", code, err)
 	}
 	return &account, nil
+}
+
+func (h *TaxAccountHelper) getFirstAvailableAccountByCode(tx *gorm.DB, codes ...string) (*models.Account, error) {
+	var lastErr error
+	for _, code := range codes {
+		account, err := h.getAccountByCode(tx, code)
+		if err == nil {
+			return account, nil
+		}
+		lastErr = err
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no account code candidates provided")
+	}
+
+	return nil, lastErr
 }
 
 // RefreshSettings forces a reload of settings from database

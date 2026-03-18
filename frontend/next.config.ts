@@ -5,9 +5,14 @@ const nextConfig: NextConfig = {
 		NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
 	},
 	typescript: {
+		// Next validator menghasilkan referensi .next/types yang salah arah
+		// pada repo ini karena struktur campuran app/ dan src/app/.
+		// Gate type dijalankan eksplisit lewat npm prebuild.
 		ignoreBuildErrors: true,
 	},
 	eslint: {
+		// Lint dijalankan eksplisit lewat npm prebuild agar build tetap stabil
+		// dan tidak bergantung pada checker internal Next.
 		ignoreDuringBuilds: true,
 	},
 	output: 'standalone',

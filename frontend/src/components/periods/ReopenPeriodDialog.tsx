@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   ModalOverlay,
@@ -23,6 +23,7 @@ import {
 import { FiCalendar, FiUnlock, FiAlertCircle } from 'react-icons/fi';
 import api from '@/services/api';
 import { useToast } from '@chakra-ui/react';
+import { formatPeriodRange } from '@/services/periodClosingService';
 
 interface ReopenPeriodDialogProps {
   isOpen: boolean;
@@ -42,6 +43,12 @@ export const ReopenPeriodDialog: React.FC<ReopenPeriodDialogProps> = ({
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const toast = useToast();
+
+  useEffect(() => {
+    if (!isOpen) {
+      setReason('');
+    }
+  }, [isOpen]);
 
   const handleReopen = async () => {
     if (!reason.trim()) {
@@ -76,10 +83,13 @@ export const ReopenPeriodDialog: React.FC<ReopenPeriodDialogProps> = ({
         
         onClose();
       }
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.details || 
-                          error.response?.data?.error || 
-                          'Failed to reopen period';
+    } catch (error: unknown) {
+      const apiError = error as {
+        response?: { data?: { details?: string; error?: string } };
+      };
+      const errorMessage = apiError.response?.data?.details ||
+        apiError.response?.data?.error ||
+        'Failed to reopen period';
       
       toast({
         title: 'Failed to Reopen Period',
@@ -127,7 +137,7 @@ export const ReopenPeriodDialog: React.FC<ReopenPeriodDialogProps> = ({
                 <Text fontWeight="semibold">Period to Reopen:</Text>
               </HStack>
               <Text fontSize="lg" color="blue.600">
-                {new Date(startDate).toLocaleDateString()} - {new Date(endDate).toLocaleDateString()}
+                {formatPeriodRange(startDate, endDate)}
               </Text>
             </Box>
 

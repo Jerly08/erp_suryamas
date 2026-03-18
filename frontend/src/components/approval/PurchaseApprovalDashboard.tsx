@@ -413,6 +413,7 @@ const getPriorityColor = (amount: number) => {
     if (!limitHours || limitHours <= 0) return { label: null, color: 'gray.500' };
 
     const startAtStr: string | undefined = active.activated_at || purchase.date;
+    if (!startAtStr) return { label: null, color: 'gray.500' };
     const startAt = new Date(startAtStr).getTime();
     const dueAt = startAt + limitHours * 60 * 60 * 1000;
     const diffMs = dueAt - now;

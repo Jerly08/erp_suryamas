@@ -43,7 +43,7 @@ interface StockAlert {
 }
 
 const StockNotifications: React.FC = () => {
-  const { user } = useAuth();
+  const { user, token, isLoading } = useAuth();
   const [notifications, setNotifications] = useState<StockNotification[]>([]);
   const [stockAlerts, setStockAlerts] = useState<StockAlert[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -56,9 +56,11 @@ const StockNotifications: React.FC = () => {
   const canDismissStockAlerts =
     user?.role === 'admin' ||
     user?.role === 'inventory_manager';
+  const isAuthReady = !isLoading;
+  const hasActiveSession = isAuthReady && !!user && !!token;
 
   useEffect(() => {
-    if (!canViewStockNotifications) {
+    if (!hasActiveSession || !canViewStockNotifications) {
       return;
     }
 
@@ -74,16 +76,24 @@ const StockNotifications: React.FC = () => {
     return () => clearInterval(interval);
     // Legacy component refresh only follows role visibility changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canViewStockNotifications]);
+  }, [hasActiveSession, canViewStockNotifications]);
 
   const refreshStockData = async () => {
+    if (!hasActiveSession) {
+      setNotifications([]);
+      setStockAlerts([]);
+      setUnreadCount(0);
+      return;
+    }
+
     await Promise.all([fetchStockNotifications(), fetchStockAlerts()]);
   };
 
   const fetchStockNotifications = async () => {
+    if (!token) return;
+
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
       const [listResponse, unreadCountResponse] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/v1/notifications`, {
           params: { types: 'LOW_STOCK,REORDER_ALERT,STOCK_OUT', limit: 20 },
@@ -94,8 +104,8 @@ const StockNotifications: React.FC = () => {
         }),
       ]);
 
-      const allNotifications = (listResponse.data.notifications || [])
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      const allNotifications = ((listResponse.data.notifications || []) as StockNotification[])
+        .sort((a: StockNotification, b: StockNotification) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 10);
 
       const summary = unreadCountResponse.data.summary || {};
@@ -111,8 +121,9 @@ const StockNotifications: React.FC = () => {
   };
 
   const fetchStockAlerts = async () => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.get(`${API_BASE_URL}/api/v1/dashboard/stock-alerts`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -129,8 +140,9 @@ const StockNotifications: React.FC = () => {
   };
 
   const handleMarkAsRead = async (notificationId: number) => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       await axios.put(
         `${API_BASE_URL}/api/v1/notifications/${notificationId}/read`,
         {},
@@ -151,8 +163,9 @@ const StockNotifications: React.FC = () => {
   };
 
   const dismissAlert = async (alertId: number) => {
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
       await axios.post(
         `${API_BASE_URL}/api/v1/dashboard/stock-alerts/${alertId}/dismiss`,
         {},
@@ -351,7 +364,7 @@ const StockNotifications: React.FC = () => {
         {(stockAlerts.length > 0 || notifications.length > 0) && (
           <>
             <Divider />
-            <MenuItem onClick={() => { window.location.href = '/inventory'; }}>
+            <MenuItem onClick={() => { window.location.href = '/products'; }}>
               <Text w="full" textAlign="center" fontSize="sm" color="blue.600">
                 Go to Inventory
               </Text>

@@ -6,9 +6,12 @@
     "dev": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next dev --turbopack",
     "dev:clean": "cross-env NODE_OPTIONS=--no-deprecation next dev --turbopack",
     "dev:verbose": "next dev --turbopack",
+    "prebuild": "npm run lint && npm run typecheck",
     "build": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next build",
+    "build:strict": "npm run lint && npm run typecheck && cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next build",
     "start": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next start",
-    "lint": "next lint"
+    "lint": "eslint app src",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@chakra-ui/icons": "^2.2.4",

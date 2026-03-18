@@ -6,7 +6,7 @@
  */
 
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { SSOTTrialBalanceData } from '../services/ssotTrialBalanceService';
 
 
@@ -169,7 +169,7 @@ export function exportTrialBalanceToPDF(
   // Balance status
   const balanceStatus = data.is_balanced ? '✓ Balanced' : '✗ Not Balanced';
   const statusColor = data.is_balanced ? [0, 128, 0] : [255, 0, 0];
-  doc.setTextColor(...statusColor);
+  doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
   doc.text(balanceStatus, pageWidth / 2, yPosition, { align: 'center' });
   doc.setTextColor(0, 0, 0); // Reset to black
   
@@ -188,7 +188,7 @@ export function exportTrialBalanceToPDF(
     ['Status', data.is_balanced ? 'Balanced' : 'Not Balanced']
   ];
   
-  (doc as any).autoTable({
+  autoTable(doc, {
     startY: yPosition,
     head: [['Category', 'Amount']],
     body: summaryData,
@@ -200,7 +200,7 @@ export function exportTrialBalanceToPDF(
     columnStyles: {
       1: { halign: 'right' }
     }
-  });
+  } as never);
   
   yPosition = (doc as any).lastAutoTable.finalY + 10;
   
@@ -261,7 +261,7 @@ export function exportTrialBalanceToPDF(
           'Other': [108, 117, 125]
         };
         
-        doc.autoTable({
+        autoTable(doc, {
           startY: yPosition,
           head: [['Account Code', 'Account Name', 'Debit', 'Credit']],
           body: typeData,
@@ -283,7 +283,7 @@ export function exportTrialBalanceToPDF(
             2: { halign: 'right', cellWidth: 40 },
             3: { halign: 'right', cellWidth: 40 }
           }
-        });
+        } as never);
         
         yPosition = (doc as any).lastAutoTable.finalY + 8;
       }
@@ -309,7 +309,7 @@ export function exportTrialBalanceToPDF(
       ]
     ];
     
-    doc.autoTable({
+    autoTable(doc, {
       startY: yPosition,
       head: [['', '', 'Total Debits', 'Total Credits']],
       body: grandTotalData,
@@ -321,7 +321,7 @@ export function exportTrialBalanceToPDF(
         2: { halign: 'right', fillColor: [248, 249, 250] },
         3: { halign: 'right', fillColor: [248, 249, 250] }
       }
-    });
+    } as never);
   }
   
   // Footer with safe margins
@@ -333,7 +333,7 @@ export function exportTrialBalanceToPDF(
   doc.text(`Data Source: SSOT Trial Balance`, pageWidth / 2, footerY, { align: 'center' });
   
   // Add page numbers if multiple pages
-  const pageCount = doc.getNumberOfPages();
+  const pageCount = doc.internal.pages.length - 1;
   if (pageCount > 1) {
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);

@@ -849,7 +849,7 @@ const PurchasesPage: React.FC = () => {
       const vendorPayload = {
         ...newVendorData,
         code: vendorCode,
-        type: 'VENDOR',
+        type: 'VENDOR' as const,
         is_active: true
       };
 
@@ -876,10 +876,7 @@ const PurchasesPage: React.FC = () => {
 
       // Validate that the new vendor was created successfully
       // Handle different response structures
-      let vendorData = newVendor;
-      if (newVendor?.data) {
-        vendorData = newVendor.data; // If response is wrapped in data object
-      }
+      const vendorData = newVendor;
 
       // Additional checks for undefined response
       if (!newVendor) {
@@ -887,16 +884,16 @@ const PurchasesPage: React.FC = () => {
         throw new Error('Failed to create vendor: Server returned no response. Please try again.');
       }
 
-      if (!vendorData || (!vendorData.id && !vendorData.ID)) {
+      if (!vendorData || !vendorData.id) {
         console.error('Invalid vendor response:', newVendor);
         console.error('Expected vendor data with id field, got:', vendorData);
         throw new Error('Failed to create vendor: Invalid response structure from server. Please check console for details.');
       }
 
       // Use the validated vendor data
-      const vendorId = vendorData.id || vendorData.ID;
-      const vendorName = vendorData.name || vendorData.Name;
-      const finalVendorCode = vendorData.code || vendorData.Code || `V${vendorId}`;
+      const vendorId = vendorData.id;
+      const vendorName = vendorData.name;
+      const finalVendorCode = vendorData.code || `V${vendorId}`;
 
       // Add the new vendor to the vendors list
       const formattedVendor = {
@@ -975,12 +972,15 @@ const PurchasesPage: React.FC = () => {
     try {
       setSavingProduct(true);
 
-      const productPayload = {
+      const generatedProductCode = newProductData.code.trim() || `PRD-${Date.now()}`;
+
+      const productPayload: Product = {
         name: newProductData.name,
-        code: newProductData.code || undefined,
+        code: generatedProductCode,
         description: newProductData.description || undefined,
         unit: newProductData.unit,
         purchase_price: parseFloat(newProductData.purchase_price) || 0,
+        cost_price: parseFloat(newProductData.purchase_price) || 0,
         sale_price: parseFloat(newProductData.sale_price) || 0,
         stock: 0,
         min_stock: 0,
@@ -988,20 +988,22 @@ const PurchasesPage: React.FC = () => {
         reorder_level: 0,
         is_active: true,
         is_service: false,
+        taxable: false,
       };
 
       const newProduct = await productService.createProduct(productPayload);
+      const createdProduct = ('data' in newProduct ? newProduct.data : newProduct) as Product;
 
       // Add the new product to the products list
-      setProducts(prev => [...prev, newProduct.data]);
+      setProducts(prev => [...prev, createdProduct]);
 
       // Select the new product in the form if we have items
       if (formData.items.length > 0) {
         const items = [...formData.items];
         items[0] = {
           ...items[0],
-          product_id: newProduct.data.id.toString(),
-          unit_price: newProduct.data.purchase_price?.toString() || '0'
+          product_id: createdProduct.id?.toString() || '',
+          unit_price: createdProduct.purchase_price?.toString() || '0'
         };
         setFormData({ ...formData, items });
       } else {
@@ -1009,8 +1011,8 @@ const PurchasesPage: React.FC = () => {
         setFormData({
           ...formData,
           items: [createPurchaseItemFormData({
-            product_id: newProduct.data.id.toString(),
-            unit_price: newProduct.data.purchase_price?.toString() || '0',
+            product_id: createdProduct.id?.toString() || '',
+            unit_price: createdProduct.purchase_price?.toString() || '0',
             expense_account_id: defaultExpenseAccountId ? defaultExpenseAccountId.toString() : ''
           })]
         });
@@ -1358,6 +1360,10 @@ const PurchasesPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!searchParams) {
+      return;
+    }
+
     const notificationPurchaseId = searchParams.get('notificationPurchaseId');
 
     if (!notificationPurchaseId || handledNotificationPurchaseId.current === notificationPurchaseId) {
@@ -3022,9 +3028,10 @@ const PurchasesPage: React.FC = () => {
         const requiresDirectorApproval = purchase.total_amount > 25000000;
 
         // Check if purchase has been escalated to director (look for director-related indicators)
+        const currentStepName = (purchase.approval_request as { current_step_name?: string } | undefined)?.current_step_name;
         const isEscalatedToDirector = purchase.approval_request?.approval_steps?.some(
           step => normalizeRole(step.step.approver_role) === 'director' && step.status === 'PENDING'
-        ) || purchase.approval_request?.current_step_name?.toLowerCase().includes('director');
+        ) || currentStepName?.toLowerCase().includes('director');
 
         if (requiresDirectorApproval || isEscalatedToDirector) {
           return { step_name: 'Director Approval', approver_role: 'director', step_order: 2, is_escalated: true };
@@ -3293,7 +3300,7 @@ const PurchasesPage: React.FC = () => {
                         />
                       </Tooltip>
 
-                      <Menu zIndex={9999} strategy="fixed">
+                      <Menu strategy="fixed">
                         <MenuButton
                           as={Button}
                           leftIcon={<FiDownload />}
@@ -5035,12 +5042,12 @@ const PurchasesPage: React.FC = () => {
                                               value={item.expense_account_id}
                                               onChange={(val) => {
                                                 const items = [...formData.items];
-                                                items[index] = { ...items[index], expense_account_id: val };
+                                                items[index] = { ...items[index], expense_account_id: val.toString() };
                                                 setFormData({ ...formData, items });
                                               }}
                                               placeholder="Pilih Akun Aset Tetap..."
                                               isLoading={loadingExpenseAccounts}
-                                              disabled={item.item_type !== 'ASSET'}
+                                              isDisabled={item.item_type !== 'ASSET'}
                                               displayFormat={(option) => `${option.code} - ${option.name}`}
                                             />
                                           </Box>
@@ -5073,7 +5080,7 @@ const PurchasesPage: React.FC = () => {
                                               value={item.expense_account_id}
                                               onChange={(val) => {
                                                 const items = [...formData.items];
-                                                items[index] = { ...items[index], expense_account_id: val };
+                                                items[index] = { ...items[index], expense_account_id: val.toString() };
                                                 setFormData({ ...formData, items });
                                               }}
                                               placeholder="Pilih Akun Aset Lancar (Prepaid)..."
