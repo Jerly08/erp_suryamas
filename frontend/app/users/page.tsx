@@ -44,10 +44,17 @@ interface User {
   username: string;
   email: string;
   full_name: string;
+  first_name?: string;
+  last_name?: string;
   role: string;
   is_active: boolean;
+  phone?: string;
+  department?: string;
+  position?: string;
   created_at: string;
   updated_at: string;
+  created_at_display?: string;
+  status?: string;
 }
 
 interface CreateUserForm {
@@ -66,8 +73,9 @@ interface CreateUserForm {
 // Columns will be defined dynamically in the component
 
 const UsersPage: React.FC = () => {
-  const { user, token } = useAuth();
+  const { user: authUser } = useAuth();
   const { t } = useTranslation();
+  const userPermissions = useModulePermissions('users');
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,27 +124,32 @@ const UsersPage: React.FC = () => {
     boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)',
   };
 
+  const mapUserForTable = (rawUser: any): User => ({
+    ...rawUser,
+    status: rawUser.is_active ? t('common.active') : t('common.inactive'),
+    created_at_display: rawUser.created_at ? new Date(rawUser.created_at).toLocaleDateString() : '-',
+  });
+
+  const loadUsers = async () => {
+    const res = await fetch('/api/v1/users', {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error('Failed to fetch users data');
+    }
+
+    const response = await res.json();
+    const usersData = response.data || [];
+    setUsers(usersData.map(mapUserForTable));
+  };
+
   useEffect(() => {
     const fetchUsers = async () => {
       try {
-        const res = await fetch(`/api/v1/users`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          },
-        });
-
-        if (!res.ok) {
-          throw new Error('Failed to fetch users data');
-        }
-
-        const response = await res.json();
-        // Backend returns { data: [...], pagination: {...} }
-        const usersData = response.data || [];
-        setUsers(usersData.map((user: any) => ({
-          ...user,
-          status: user.is_active ? t('common.active') : t('common.inactive'),
-          created_at: new Date(user.created_at).toLocaleDateString(),
-        })));
+        await loadUsers();
       } catch (err: any) {
         setError(err.message || 'An error occurred');
       } finally {
@@ -199,12 +212,12 @@ const UsersPage: React.FC = () => {
       email: user.email,
       password: '', // Leave empty for editing
       confirmPassword: '',
-      first_name: user.full_name.split(' ')[0] || '',
-      last_name: user.full_name.split(' ').slice(1).join(' ') || '',
+      first_name: user.first_name || user.full_name.split(' ')[0] || '',
+      last_name: user.last_name || user.full_name.split(' ').slice(1).join(' ') || '',
       role: user.role,
-      department: '',
-      position: '',
-      phone: '',
+      department: user.department || '',
+      position: user.position || '',
+      phone: user.phone || '',
     });
     setIsEditMode(true);
     onOpen();
@@ -212,6 +225,17 @@ const UsersPage: React.FC = () => {
 
   // Handle delete user
   const handleDelete = async (userId: number) => {
+    if (String(authUser?.id) === String(userId)) {
+      toast({
+        title: t('common.error'),
+        description: 'You cannot delete your own account',
+        status: 'error',
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
     if (!window.confirm(t('messages.confirmDelete'))) {
       return;
     }
@@ -225,25 +249,11 @@ const UsersPage: React.FC = () => {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete user');
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || 'Failed to delete user');
       }
 
-      // Refresh users list
-      const res = await fetch('/api/v1/users', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-
-      if (res.ok) {
-        const response = await res.json();
-        const usersData = response.data || [];
-        setUsers(usersData.map((user: any) => ({
-          ...user,
-          status: user.is_active ? 'Active' : 'Inactive',
-          created_at: new Date(user.created_at).toLocaleDateString(),
-        })));
-      }
+      await loadUsers();
 
       toast({
         title: t('messages.success'),
@@ -341,24 +351,9 @@ const UsersPage: React.FC = () => {
         throw new Error(errorData.error || `Failed to ${isEditMode ? 'update' : 'create'} user`);
       }
 
-      const newUser = await response.json();
+      await response.json();
 
-      // Refresh the users list
-      const res = await fetch('/api/v1/users', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-
-      if (res.ok) {
-        const response = await res.json();
-        const usersData = response.data || [];
-        setUsers(usersData.map((user: any) => ({
-          ...user,
-          status: user.is_active ? 'Active' : 'Inactive',
-          created_at: new Date(user.created_at).toLocaleDateString(),
-        })));
-      }
+      await loadUsers();
 
       toast({
         title: t('messages.success'),
@@ -401,11 +396,12 @@ const UsersPage: React.FC = () => {
     { header: t('users.email'), accessor: 'email' },
     { header: t('users.role'), accessor: 'role' },
     { header: t('users.status'), accessor: 'status' },
-    { header: t('users.created'), accessor: 'created_at' },
+    { header: t('users.created'), accessor: 'created_at_display' },
     {
       header: t('users.actions'),
       accessor: (user: User) => (
         <HStack spacing={2}>
+          {userPermissions.canView && (
           <Tooltip label="View Details" placement="top">
             <IconButton
               aria-label="View user"
@@ -416,6 +412,8 @@ const UsersPage: React.FC = () => {
               onClick={() => handleView(user)}
             />
           </Tooltip>
+          )}
+          {userPermissions.canEdit && (
           <Tooltip label="Edit User" placement="top">
             <IconButton
               aria-label="Edit user"
@@ -426,6 +424,8 @@ const UsersPage: React.FC = () => {
               onClick={() => handleEdit(user)}
             />
           </Tooltip>
+          )}
+          {userPermissions.canEdit && (
           <Tooltip label="Manage Permissions" placement="top">
             <IconButton
               aria-label="Manage permissions"
@@ -436,16 +436,20 @@ const UsersPage: React.FC = () => {
               onClick={() => handlePermissions(user)}
             />
           </Tooltip>
-          <Tooltip label="Delete User" placement="top">
+          )}
+          {userPermissions.canDelete && (
+          <Tooltip label={String(authUser?.id) === String(user.id) ? 'You cannot delete your own account' : 'Delete User'} placement="top">
             <IconButton
               aria-label="Delete user"
               icon={<FiTrash2 />}
               size="sm"
               variant="outline"
               colorScheme="red"
+              isDisabled={String(authUser?.id) === String(user.id)}
               onClick={() => handleDelete(user.id)}
             />
           </Tooltip>
+          )}
         </HStack>
       ),
     },
@@ -457,17 +461,19 @@ const UsersPage: React.FC = () => {
         <Box>
           <HStack justify="space-between" align="center" mb={6}>
             <Heading as="h1" size="xl" color={headingColor}>{t('users.management')}</Heading>
-            <Button
-              colorScheme="blue"
-              onClick={() => {
-                setIsEditMode(false);
-                resetForm();
-                onOpen();
-              }}
-              size="md"
-            >
-              {t('common.createAccount') || "Create Account"}
-            </Button>
+            {userPermissions.canCreate && (
+              <Button
+                colorScheme="blue"
+                onClick={() => {
+                  setIsEditMode(false);
+                  resetForm();
+                  onOpen();
+                }}
+                size="md"
+              >
+                {t('common.createAccount') || "Create Account"}
+              </Button>
+            )}
           </HStack>
 
           {error && (
@@ -742,7 +748,6 @@ const UsersPage: React.FC = () => {
               setPermissionsUser(null);
             }}
             user={permissionsUser}
-            token={token || ''}
           />
         </Box>
       </SimpleLayout>

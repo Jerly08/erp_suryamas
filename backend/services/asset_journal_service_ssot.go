@@ -633,6 +633,12 @@ func (s *AssetJournalServiceSSOT) CreateDepreciationJournal(asset *models.Asset,
 		}
 
 		if err := tx.Create(entry).Error; err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "idx_unified_journal_depreciation_reference_unique") ||
+				(strings.Contains(strings.ToLower(err.Error()), "duplicate key") && strings.Contains(strings.ToLower(err.Error()), strings.ToLower(periodRef))) {
+				log.Printf("⚠️ [ASSET-SSOT] Duplicate depreciation journal blocked for %s period %s, skipping",
+					asset.Code, entryDate.Format("2006-01"))
+				return nil
+			}
 			return fmt.Errorf("failed to create depreciation journal entry: %v", err)
 		}
 

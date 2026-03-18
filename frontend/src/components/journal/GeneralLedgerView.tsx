@@ -77,6 +77,7 @@ export default function GeneralLedgerView() {
         new Date().toISOString().split('T')[0]
     );
     const [exporting, setExporting] = useState(false);
+    const isAllAccountsMode = !accountId;
 
     const handleExportPDF = () => {
         if (!data) return;
@@ -199,7 +200,7 @@ export default function GeneralLedgerView() {
                                         value={accountId}
                                         onChange={(e) => setAccountId(e.target.value)}
                                         size="sm"
-                                        placeholder="Select Account"
+                                        placeholder={t('journal.generalLedgerAccountPlaceholder') || 'Pilih akun untuk Buku Besar'}
                                         {...fieldStyles}
                                     >
                                         {accounts.map(acc => (
@@ -209,6 +210,13 @@ export default function GeneralLedgerView() {
                                         ))}
                                     </Select>
                                 </Box>
+                                {!accountId && (
+                                    <Box maxW="360px">
+                                        <Text fontSize="xs" color={mutedTextColor}>
+                                            {t('journal.generalLedgerAllAccountsHelper') || 'Tanpa memilih akun, tampilan ini menjadi aktivitas jurnal periode lintas akun. Untuk buku besar yang menampilkan saldo, pilih satu akun spesifik.'}
+                                        </Text>
+                                    </Box>
+                                )}
                                 <Box>
                                     <Text fontSize="xs" color={mutedTextColor} mb={1}>{t('journal.filters.startDate')}</Text>
                                     <Input
@@ -267,7 +275,14 @@ export default function GeneralLedgerView() {
                                                 <Text fontSize="sm" color={mutedTextColor}>{data.account?.account_code}</Text>
                                             </>
                                         ) : (
-                                            <Heading size="sm" color={textColor}>{t('journal.allAccounts') || 'Semua Akun'}</Heading>
+                                            <VStack align="start" spacing={0}>
+                                                <Heading size="sm" color={textColor}>
+                                                    {t('journal.generalLedgerActivity') || 'Aktivitas Jurnal Periode'}
+                                                </Heading>
+                                                <Text fontSize="sm" color={mutedTextColor}>
+                                                    {t('journal.generalLedgerActivitySubtitle') || 'Ringkasan mutasi debit dan kredit lintas akun untuk periode terpilih.'}
+                                                </Text>
+                                            </VStack>
                                         )}
                                     </Box>
                                     {accountId && (
@@ -288,19 +303,30 @@ export default function GeneralLedgerView() {
                                         </Box>
                                     )}
                                     <Box>
-                                        <Text fontSize="xs" color={mutedTextColor}>{t('journal.table.totalDebit')}</Text>
+                                        <Text fontSize="xs" color={mutedTextColor}>
+                                            {isAllAccountsMode
+                                                ? (t('journal.table.periodDebit') || 'Mutasi Debit Periode')
+                                                : t('journal.table.totalDebit')}
+                                        </Text>
                                         <Text fontWeight="medium" color="green.600">{formatCurrency(data.total_debits)}</Text>
                                     </Box>
                                     <Box>
-                                        <Text fontSize="xs" color={mutedTextColor}>{t('journal.table.totalCredit')}</Text>
+                                        <Text fontSize="xs" color={mutedTextColor}>
+                                            {isAllAccountsMode
+                                                ? (t('journal.table.periodCredit') || 'Mutasi Kredit Periode')
+                                                : t('journal.table.totalCredit')}
+                                        </Text>
                                         <Text fontWeight="medium" color="red.600">{formatCurrency(data.total_credits)}</Text>
                                     </Box>
                                     {!accountId && (
-                                        <Box>
+                                        <VStack align="start" spacing={0}>
                                             <Text fontSize="xs" color={warningTextColor} fontStyle="italic">
                                                 {t('journal.selectAccountForBalance') || 'Pilih akun spesifik untuk melihat saldo awal & akhir'}
                                             </Text>
-                                        </Box>
+                                            <Text fontSize="xs" color={mutedTextColor}>
+                                                {t('journal.allAccountsTurnoverNote') || 'Mode Semua Akun menampilkan total mutasi jurnal periode, bukan total saldo akhir neraca.'}
+                                            </Text>
+                                        </VStack>
                                     )}
                                 </HStack>
 
@@ -313,14 +339,16 @@ export default function GeneralLedgerView() {
                                                 <Th color={mutedTextColor}>{t('journal.table.description')}</Th>
                                                 <Th isNumeric color={mutedTextColor}>{t('journal.table.debit')}</Th>
                                                 <Th isNumeric color={mutedTextColor}>{t('journal.table.credit')}</Th>
-                                                <Th isNumeric color={mutedTextColor}>{t('journal.table.balance')}</Th>
+                                                {!isAllAccountsMode && (
+                                                    <Th isNumeric color={mutedTextColor}>{t('journal.table.balance')}</Th>
+                                                )}
                                                 <Th width="50px" color={mutedTextColor}>{t('journal.table.action')}</Th>
                                             </Tr>
                                         </Thead>
                                         <Tbody>
                                             {(data.transactions || []).length === 0 ? (
                                                 <Tr>
-                                                    <Td colSpan={7} textAlign="center" py={4} color={mutedTextColor}>No transactions found</Td>
+                                                    <Td colSpan={isAllAccountsMode ? 6 : 7} textAlign="center" py={4} color={mutedTextColor}>No transactions found</Td>
                                                 </Tr>
                                             ) : (
                                                 (data.transactions || []).map((entry, idx) => (
@@ -330,7 +358,9 @@ export default function GeneralLedgerView() {
                                                         <Td maxW="300px" whiteSpace="normal">{entry.description}</Td>
                                                         <Td isNumeric>{entry.debit_amount > 0 ? formatCurrency(entry.debit_amount) : '-'}</Td>
                                                         <Td isNumeric>{entry.credit_amount > 0 ? formatCurrency(entry.credit_amount) : '-'}</Td>
-                                                        <Td isNumeric fontWeight="semibold">{formatCurrency(entry.balance)}</Td>
+                                                        {!isAllAccountsMode && (
+                                                            <Td isNumeric fontWeight="semibold">{formatCurrency(entry.balance)}</Td>
+                                                        )}
                                                         <Td>
                                                             {entry.journal_id && (
                                                                 <Tooltip label="View Detail">

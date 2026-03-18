@@ -36,6 +36,16 @@ export interface SSOTProfitLossData {
       amount: number;
       is_percentage?: boolean;
     }>;
+    subsections?: Array<{
+      name: string;
+      total: number;
+      items?: Array<{
+        account_code?: string;
+        name: string;
+        amount: number;
+        is_percentage?: boolean;
+      }>;
+    }>;
   }>;
 
   // Financial metrics
@@ -57,6 +67,18 @@ export interface SSOTProfitLossData {
 
   expense_details?: Array<{
     account_id: number;
+    account_name: string;
+    amount: number;
+  }>;
+
+  other_income_items?: Array<{
+    account_code?: string;
+    account_name: string;
+    amount: number;
+  }>;
+
+  other_expense_items?: Array<{
+    account_code?: string;
     account_name: string;
     amount: number;
   }>;

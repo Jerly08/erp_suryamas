@@ -56,7 +56,10 @@ interface Account {
 interface DepositSourceAccounts {
   revenue: Account[];
   equity: Account[];
+  liability: Account[];
 }
+
+type DepositSourceType = 'OWNER_EQUITY' | 'LOAN_LIABILITY' | 'NON_OPERATING_INCOME';
 
 interface DepositFormImprovedProps {
   isOpen: boolean;
@@ -138,6 +141,28 @@ const getDepositRateSourceMeta = (options: {
   };
 };
 
+const depositSourceOptions: Array<{
+  value: DepositSourceType;
+  label: string;
+  helper: string;
+}> = [
+  {
+    value: 'OWNER_EQUITY',
+    label: 'Setoran Modal / Equity',
+    helper: 'Dipakai untuk setoran pemilik atau modal disetor. Debit cash-bank, credit equity.',
+  },
+  {
+    value: 'LOAN_LIABILITY',
+    label: 'Pinjaman / Liability',
+    helper: 'Dipakai untuk dana masuk yang menambah utang. Debit cash-bank, credit liability.',
+  },
+  {
+    value: 'NON_OPERATING_INCOME',
+    label: 'Pendapatan Non Operasional',
+    helper: 'Dipakai untuk pendapatan bunga, laba selisih kurs, dividen, atau laba penjualan aset. Debit cash-bank, credit 7xxx.',
+  },
+];
+
 const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
   isOpen,
   onClose,
@@ -151,11 +176,12 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
     exchange_rate: 1,
     reference: '',
     notes: '',
+    source_type: 'OWNER_EQUITY' as DepositSourceType,
     source_account_id: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sourceAccounts, setSourceAccounts] = useState<DepositSourceAccounts>({ revenue: [], equity: [] });
+  const [sourceAccounts, setSourceAccounts] = useState<DepositSourceAccounts>({ revenue: [], equity: [], liability: [] });
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [referenceRateInfo, setReferenceRateInfo] = useState<ReferenceExchangeRate | null>(null);
   const [referenceRateError, setReferenceRateError] = useState<string | null>(null);
@@ -274,6 +300,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
       setSourceAccounts({
         revenue: [],
         equity: [{ id: 0, code: '3101', name: 'Modal Pemilik (Default)', type: 'EQUITY', category: 'OWNER_EQUITY', is_active: true, balance: 0 }],
+        liability: [],
       });
     } finally {
       setLoadingAccounts(false);
@@ -284,6 +311,15 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
     setFormData(prev => ({
       ...prev,
       [field]: value,
+    }));
+    setError(null);
+  };
+
+  const handleSourceTypeChange = (value: DepositSourceType) => {
+    setFormData(prev => ({
+      ...prev,
+      source_type: value,
+      source_account_id: '',
     }));
     setError(null);
   };
@@ -340,6 +376,20 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
     setError(errorMessage);
   };
 
+  const getSelectedSourceAccounts = (): Account[] => {
+    switch (formData.source_type) {
+      case 'LOAN_LIABILITY':
+        return sourceAccounts.liability;
+      case 'NON_OPERATING_INCOME':
+        return sourceAccounts.revenue;
+      case 'OWNER_EQUITY':
+      default:
+        return sourceAccounts.equity;
+    }
+  };
+
+  const requiresExplicitSourceAccount = formData.source_type !== 'OWNER_EQUITY';
+
   const handleSubmit = async () => {
     try {
       setLoading(true);
@@ -355,6 +405,10 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
 
       if (isUsdAccount && formData.exchange_rate <= 0) {
         throw new Error('Exchange rate is required for USD deposits');
+      }
+
+      if (requiresExplicitSourceAccount && !formData.source_account_id) {
+        throw new Error('Pilih akun lawan jurnal terlebih dahulu agar deposit diposting ke kelompok yang benar.');
       }
 
       const requestData: DepositRequest = {
@@ -377,8 +431,12 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
 
       await cashbankService.processDeposit(requestData);
 
-      const selectedSource = sourceAccounts.equity.find(entry => entry.id === parseInt(formData.source_account_id || '0', 10));
-      const sourceAccountName = selectedSource ? selectedSource.name : 'Modal Disetor (Default)';
+      const selectedSource = getSelectedSourceAccounts().find(entry => entry.id === parseInt(formData.source_account_id || '0', 10));
+      const sourceAccountName = selectedSource
+        ? selectedSource.name
+        : formData.source_type === 'OWNER_EQUITY'
+          ? 'Modal Disetor (Default)'
+          : 'Akun lawan transaksi';
       const depositBookAmountIDR = isUsdAccount ? formData.amount * formData.exchange_rate : formData.amount;
 
       toast({
@@ -422,6 +480,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
       exchange_rate: isUsdAccount ? roundUsdIdrRate(account?.last_exchange_rate, 1) : 1,
       reference: '',
       notes: '',
+      source_type: 'OWNER_EQUITY',
       source_account_id: '',
     });
     onClose();
@@ -435,8 +494,30 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
   const currentBookBalanceIDR = getBookBalanceInIDR(account);
   const depositBookAmountIDR = isUsdAccount ? formData.amount * formData.exchange_rate : formData.amount;
   const newBookBalanceIDR = currentBookBalanceIDR + depositBookAmountIDR;
-  const selectedAccount = sourceAccounts.equity.find(entry => entry.id === parseInt(formData.source_account_id || '0', 10));
-  const sourceAccountName = selectedAccount ? selectedAccount.name : 'Modal Disetor (Default)';
+  const selectedSourceOption = depositSourceOptions.find(option => option.value === formData.source_type) || depositSourceOptions[0];
+  const selectedSourceAccounts = getSelectedSourceAccounts();
+  const selectedAccount = selectedSourceAccounts.find(entry => entry.id === parseInt(formData.source_account_id || '0', 10));
+  const sourceAccountName = selectedAccount
+    ? selectedAccount.name
+    : formData.source_type === 'OWNER_EQUITY'
+      ? 'Modal Disetor (Default)'
+      : 'Akun lawan transaksi';
+  const sourceAccountCode = selectedAccount?.code || (formData.source_type === 'OWNER_EQUITY' ? '3101' : '-');
+  const sourceAccountLabel = formData.source_type === 'OWNER_EQUITY'
+    ? 'Credit Account (Equity Source)'
+    : formData.source_type === 'LOAN_LIABILITY'
+      ? 'Credit Account (Liability Source)'
+      : 'Credit Account (Non-Operating Income)';
+  const sourceAccountPlaceholder = formData.source_type === 'OWNER_EQUITY'
+    ? 'Use default Modal Disetor account'
+    : formData.source_type === 'LOAN_LIABILITY'
+      ? 'Select liability account to be credited'
+      : 'Select 7xxx non-operating income account';
+  const sourceAccountLoadingText = formData.source_type === 'OWNER_EQUITY'
+    ? 'Loading equity accounts...'
+    : formData.source_type === 'LOAN_LIABILITY'
+      ? 'Loading liability accounts...'
+      : 'Loading non-operating income accounts...';
   const roundedReferenceRate = roundUsdIdrRate(referenceRateInfo?.exchange_rate, 0);
   const exchangeRateOverridden = Boolean(referenceRateInfo && Math.abs((formData.exchange_rate || 0) - roundedReferenceRate) > 0.0001);
   const depositRateSource = getDepositRateSourceMeta({
@@ -663,34 +744,80 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
 
             <Box>
               <Text fontSize="md" fontWeight="semibold" color={sectionTitleColor} mb={3}>
-                Capital / Equity Account Selection
+                Deposit Source Mapping
               </Text>
               <Text fontSize="sm" color={mutedTextColor} mb={3}>
-                Select the equity account to be credited. Leave blank to use the default Modal Disetor account.
+                Tentukan sumber jurnal credit agar deposit langsung masuk ke kelompok akun yang benar.
               </Text>
 
-              <FormControl>
-                <FormLabel>Credit Account (Equity Source)</FormLabel>
-                <Select
-                  value={formData.source_account_id}
-                  onChange={(e) => handleInputChange('source_account_id', e.target.value)}
-                  placeholder="Use default Modal Disetor account"
-                  isDisabled={loadingAccounts}
-                  {...fieldStyles}
-                >
-                  {sourceAccounts.equity.map(entry => (
-                    <option key={`equity-${entry.id}`} value={entry.id}>
-                      {entry.code} - {entry.name}
-                      {entry.balance !== 0 && ` (Balance: ${entry.balance.toLocaleString('id-ID')})`}
-                    </option>
-                  ))}
-                </Select>
-                {loadingAccounts && (
+              <VStack spacing={4} align="stretch">
+                <FormControl isRequired>
+                  <FormLabel>Deposit Purpose / Credit Group</FormLabel>
+                  <Select
+                    value={formData.source_type}
+                    onChange={(e) => handleSourceTypeChange(e.target.value as DepositSourceType)}
+                    {...fieldStyles}
+                  >
+                    {depositSourceOptions.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
                   <Text fontSize="xs" color={helperTextColor} mt={1}>
-                    Loading equity accounts...
+                    {selectedSourceOption.helper}
                   </Text>
+                </FormControl>
+
+                <Alert status="info" borderRadius="md" alignItems="flex-start">
+                  <AlertIcon mt={1} />
+                  <Box>
+                    <AlertTitle fontSize="sm" mb={1}>
+                      Posting mapping
+                    </AlertTitle>
+                    <AlertDescription fontSize="sm">
+                      Debit <strong>{account.name}</strong> dan credit <strong>{selectedSourceOption.label}</strong>. Nilai jurnal lawan selalu diposting dalam book value IDR.
+                    </AlertDescription>
+                  </Box>
+                </Alert>
+
+                <FormControl isRequired={requiresExplicitSourceAccount}>
+                  <FormLabel>{sourceAccountLabel}</FormLabel>
+                  <Select
+                    value={formData.source_account_id}
+                    onChange={(e) => handleInputChange('source_account_id', e.target.value)}
+                    placeholder={sourceAccountPlaceholder}
+                    isDisabled={loadingAccounts}
+                    {...fieldStyles}
+                  >
+                    {selectedSourceAccounts.map(entry => (
+                      <option key={`${formData.source_type}-${entry.id}`} value={entry.id}>
+                        {entry.code} - {entry.name}
+                        {entry.balance !== 0 && ` (Balance: ${entry.balance.toLocaleString('id-ID')})`}
+                      </option>
+                    ))}
+                  </Select>
+                  <Text fontSize="xs" color={helperTextColor} mt={1}>
+                    {requiresExplicitSourceAccount
+                      ? 'Akun lawan wajib dipilih agar deposit tidak salah masuk modal atau akun umum.'
+                      : 'Kosongkan jika ingin memakai akun default Modal Disetor.'}
+                  </Text>
+                  {loadingAccounts && (
+                    <Text fontSize="xs" color={helperTextColor} mt={1}>
+                      {sourceAccountLoadingText}
+                    </Text>
+                  )}
+                </FormControl>
+
+                {!loadingAccounts && requiresExplicitSourceAccount && selectedSourceAccounts.length === 0 && (
+                  <Alert status="warning" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      Belum ada akun aktif yang cocok untuk {selectedSourceOption.label.toLowerCase()}. Tambahkan akun COA terlebih dahulu sebelum memproses deposit ini.
+                    </AlertDescription>
+                  </Alert>
                 )}
-              </FormControl>
+              </VStack>
             </Box>
 
             {formData.amount > 0 && (
@@ -731,9 +858,11 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                         <Box>
                           <Text fontSize="sm" fontWeight="medium" color={bodyTextColor}>{sourceAccountName}</Text>
                           <Text fontSize="xs" color={mutedTextColor} fontFamily="mono">
-                            {selectedAccount?.code || '3101'}
+                            {sourceAccountCode}
                           </Text>
-                          <Text fontSize="xs" color={helperTextColor}>Posting lawan dalam nilai buku IDR</Text>
+                          <Text fontSize="xs" color={helperTextColor}>
+                            {selectedSourceOption.label} diposting dalam nilai buku IDR
+                          </Text>
                         </Box>
                       </HStack>
                       <Text fontSize="sm" fontWeight="bold" fontFamily="mono" color="orange.600">
@@ -809,7 +938,11 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
             onClick={handleSubmit}
             isLoading={loading}
             loadingText="Processing deposit..."
-            isDisabled={formData.amount <= 0 || (isUsdAccount && formData.exchange_rate <= 0)}
+            isDisabled={
+              formData.amount <= 0
+              || (isUsdAccount && formData.exchange_rate <= 0)
+              || (requiresExplicitSourceAccount && !formData.source_account_id)
+            }
           >
             Process Deposit
           </Button>

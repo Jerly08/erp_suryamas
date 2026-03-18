@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -48,6 +47,10 @@ func (dc *DashboardController) GetStockAlertsBanner(c *gin.Context) {
 	// Auto-check out of stock alerts too
 	if err := dc.stockMonitoringService.CheckOutOfStock(); err != nil {
 		fmt.Printf("Warning: CheckOutOfStock failed: %v\n", err)
+	}
+	// Auto-check reorder alerts as well so the stock tab stays consistent
+	if err := dc.stockMonitoringService.CheckReorderLevel(); err != nil {
+		fmt.Printf("Warning: CheckReorderLevel failed: %v\n", err)
 	}
 	// Resolve alerts for items that have recovered above minimum
 	if err := dc.stockMonitoringService.ResolveStockAlerts(); err != nil {
@@ -134,9 +137,9 @@ func (dc *DashboardController) DismissStockAlert(c *gin.Context) {
 func (dc *DashboardController) GetAnalytics(c *gin.Context) {
 	userRole := c.GetString("user_role")
 
-	// Only allow admin, finance, and director roles
+	// Only allow admin, finance-family, and director roles
 	userRoleLower := strings.ToLower(userRole)
-	if userRoleLower != "admin" && userRoleLower != "finance" && userRoleLower != "director" {
+	if userRoleLower != "admin" && userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "director" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to view analytics"})
 		return
 	}
@@ -156,7 +159,7 @@ func (dc *DashboardController) GetAnalytics(c *gin.Context) {
 
 // GetFinanceDashboardData returns finance-specific dashboard data
 // @Summary Get finance dashboard data
-// @Description Retrieve finance-specific dashboard metrics including invoices, journals, and reconciliation status
+// @Description Retrieve finance-specific dashboard metrics including invoices, journals, and working capital signals
 // @Tags Dashboard
 // @Accept json
 // @Produce json
@@ -169,28 +172,28 @@ func (dc *DashboardController) GetAnalytics(c *gin.Context) {
 func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 	userRole := c.GetString("user_role")
 
-	// Only allow finance and admin roles
+	// Only allow finance-family roles and admin
 	userRoleLower := strings.ToLower(userRole)
-	if userRoleLower != "finance" && userRoleLower != "admin" {
+	if userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied - Finance role required"})
 		return
 	}
 
 	financeData := make(map[string]interface{})
 
-	// Invoices pending payment (outstanding sales)
+	// Invoices pending payment (approved/invoiced sales only)
 	var invoicesPendingPayment int64
 	dc.DB.Model(&models.Sale{}).
 		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL",
-			[]string{"INVOICED", "PENDING", "OVERDUE"}).
+			[]string{"INVOICED", "OVERDUE"}).
 		Count(&invoicesPendingPayment)
 	financeData["invoices_pending_payment"] = invoicesPendingPayment
 
-	// Invoices not yet paid (outstanding purchases)
+	// Invoices not yet paid (approved vendor bills only)
 	var invoicesNotPaid int64
 	dc.DB.Model(&models.Purchase{}).
 		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL",
-			[]string{"APPROVED", "COMPLETED", "PENDING"}).
+			[]string{"APPROVED", "COMPLETED", "PAID"}).
 		Count(&invoicesNotPaid)
 	financeData["invoices_not_paid"] = invoicesNotPaid
 
@@ -201,50 +204,18 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 		Count(&journalsNeedPosting)
 	financeData["journals_need_posting"] = journalsNeedPosting
 
-	// Bank reconciliation status
-	type BankReconciliation struct {
-		LastReconciled *time.Time `json:"last_reconciled"`
-		DaysAgo        int        `json:"days_ago"`
-		Status         string     `json:"status"`
-	}
-
-	// Get most recent bank reconciliation from journal entries
-	var lastReconciliation time.Time
-	err := dc.DB.Model(&models.JournalEntry{}).
-		Where("description ILIKE ? AND deleted_at IS NULL", "%reconciliation%").
-		Order("created_at DESC").
-		Select("created_at").
-		Scan(&lastReconciliation).Error
-
-	bankRecon := BankReconciliation{}
-	if err == nil && !lastReconciliation.IsZero() {
-		bankRecon.LastReconciled = &lastReconciliation
-		bankRecon.DaysAgo = int(time.Since(lastReconciliation).Hours() / 24)
-		if bankRecon.DaysAgo <= 1 {
-			bankRecon.Status = "up_to_date"
-		} else if bankRecon.DaysAgo <= 7 {
-			bankRecon.Status = "recent"
-		} else {
-			bankRecon.Status = "needs_attention"
-		}
-	} else {
-		bankRecon.Status = "never_reconciled"
-		bankRecon.DaysAgo = -1
-	}
-	financeData["bank_reconciliation"] = bankRecon
-
-	// Outstanding receivables amount
+	// Outstanding receivables amount from collectible sales only
 	var outstandingReceivables float64
 	dc.DB.Model(&models.Sale{}).
-		Where("status IN (?) AND deleted_at IS NULL", []string{"INVOICED", "PENDING", "OVERDUE"}).
+		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", []string{"INVOICED", "OVERDUE"}).
 		Select("COALESCE(SUM(outstanding_amount), 0)").
 		Scan(&outstandingReceivables)
 	financeData["outstanding_receivables"] = outstandingReceivables
 
-	// Outstanding payables amount
+	// Outstanding payables amount from approved purchases only
 	var outstandingPayables float64
 	dc.DB.Model(&models.Purchase{}).
-		Where("status IN (?) AND deleted_at IS NULL", []string{"APPROVED", "COMPLETED", "PENDING"}).
+		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", []string{"APPROVED", "COMPLETED", "PAID"}).
 		Select("COALESCE(SUM(outstanding_amount), 0)").
 		Scan(&outstandingPayables)
 	financeData["outstanding_payables"] = outstandingPayables
@@ -263,12 +234,11 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 		Count(&salesPendingApproval)
 	financeData["sales_pending_approval"] = salesPendingApproval
 
-	// Cash and bank balance
+	// Cash and bank balance from active cash/bank records using IDR book values
 	var cashBankBalance float64
-	dc.DB.Model(&models.Account{}).
-		Where("type = ? AND is_active = true AND deleted_at IS NULL", "ASSET").
-		Where("name ILIKE ? OR name ILIKE ?", "%kas%", "%bank%").
-		Select("COALESCE(SUM(balance), 0)").
+	dc.DB.Model(&models.CashBank{}).
+		Where("is_active = true AND deleted_at IS NULL").
+		Select(`COALESCE(SUM(CASE WHEN UPPER(currency) = 'IDR' OR currency = '' THEN balance ELSE "book_balance_id_r" END), 0)`).
 		Scan(&cashBankBalance)
 	financeData["cash_bank_balance"] = cashBankBalance
 
@@ -590,6 +560,23 @@ func (dc *DashboardController) getRecentActivities(userID uint, role string) ([]
 }
 
 func (dc *DashboardController) getUrgencyLevel(alert models.StockAlert) string {
+	switch alert.AlertType {
+	case models.StockAlertTypeOutOfStock:
+		return "critical"
+	case models.StockAlertTypeReorderAlert:
+		if alert.ThresholdStock <= 0 {
+			return "medium"
+		}
+	case models.StockAlertTypeLowStock:
+		if alert.ThresholdStock <= 0 {
+			return "high"
+		}
+	default:
+		if alert.ThresholdStock <= 0 {
+			return "low"
+		}
+	}
+
 	percentageOfMin := float64(alert.CurrentStock) / float64(alert.ThresholdStock) * 100
 
 	if percentageOfMin <= 25 {

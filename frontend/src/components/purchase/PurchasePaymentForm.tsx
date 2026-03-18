@@ -24,6 +24,7 @@ import {
   Box,
   useToast,
   Spinner,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { Purchase, PurchasePaymentRequest } from '@/services/purchaseService';
 import purchaseService from '@/services/purchaseService';
@@ -73,6 +74,22 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     notes: '',
   });
   const [displayAmount, setDisplayAmount] = useState('0');
+  const modalBg = useColorModeValue('white', 'gray.800');
+  const modalHeaderBg = useColorModeValue('gray.50', 'gray.700');
+  const modalBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const cardBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const infoPanelBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const previewBg = useColorModeValue('white', 'whiteAlpha.50');
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const textColor = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.600', 'whiteAlpha.700');
+  const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+  const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const inputHoverBorder = useColorModeValue('gray.400', 'whiteAlpha.500');
+  const inputPlaceholderColor = useColorModeValue('gray.400', 'whiteAlpha.500');
+  const dividerColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const infoAlertBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.16)');
+  const infoAlertBorder = useColorModeValue('blue.200', 'blue.800');
 
   // Format number to Rupiah display
   const formatRupiah = (value: number | string): string => {
@@ -561,46 +578,48 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="lg">
       <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>{t('purchases.payment.title')}</ModalHeader>
+      <ModalContent bg={modalBg} border="1px solid" borderColor={modalBorderColor}>
+        <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor} color={headingColor}>
+          {t('purchases.payment.title')}
+        </ModalHeader>
         <ModalCloseButton />
         <form onSubmit={handleSubmit}>
           <ModalBody>
             {loadingPurchase ? (
               <VStack spacing={4} py={8}>
                 <Spinner size="lg" />
-                <Text>{t('common.loading')}</Text>
+                <Text color={textColor}>{t('common.loading')}</Text>
               </VStack>
             ) : (
               <VStack spacing={4} align="stretch">
                 {/* Purchase Information */}
-                <Box p={4} bg="gray.50" borderRadius="md">
-                  <Text fontSize="sm" fontWeight="bold" color="gray.600" mb={2}>
+                <Box p={4} bg={cardBg} borderRadius="md" border="1px solid" borderColor={modalBorderColor}>
+                  <Text fontSize="sm" fontWeight="bold" color={mutedTextColor} mb={2}>
                     {t('purchases.payment.purchaseInfo').toUpperCase()}
                   </Text>
                   <HStack justify="space-between">
                     <Box>
-                      <Text fontSize="sm" color="gray.600">{t('purchases.purchaseNumber')}</Text>
-                      <Text fontWeight="bold">{currentPurchase?.code}</Text>
+                      <Text fontSize="sm" color={mutedTextColor}>{t('purchases.purchaseNumber')}</Text>
+                      <Text fontWeight="bold" color={textColor}>{currentPurchase?.code}</Text>
                     </Box>
                     <Box>
-                      <Text fontSize="sm" color="gray.600">{t('purchases.vendor')}</Text>
-                      <Text fontWeight="bold">{currentPurchase?.vendor?.name}</Text>
+                      <Text fontSize="sm" color={mutedTextColor}>{t('purchases.vendor')}</Text>
+                      <Text fontWeight="bold" color={textColor}>{currentPurchase?.vendor?.name}</Text>
                     </Box>
                     <Box>
-                      <Text fontSize="sm" color="gray.600">{t('purchases.date')}</Text>
-                      <Text fontWeight="bold">{formatDate(currentPurchase?.date || '')}</Text>
+                      <Text fontSize="sm" color={mutedTextColor}>{t('purchases.date')}</Text>
+                      <Text fontWeight="bold" color={textColor}>{formatDate(currentPurchase?.date || '')}</Text>
                     </Box>
                   </HStack>
-                  <Divider my={2} />
+                  <Divider my={2} borderColor={dividerColor} />
                   <HStack justify="space-between">
                     <Box>
-                      <Text fontSize="sm" color="gray.600">{t('purchases.payment.totalAmount')}</Text>
-                      <Text fontWeight="bold">{formatCurrency(currentPurchase?.total_amount || 0)}</Text>
+                      <Text fontSize="sm" color={mutedTextColor}>{t('purchases.payment.totalAmount')}</Text>
+                      <Text fontWeight="bold" color={textColor}>{formatCurrency(currentPurchase?.total_amount || 0)}</Text>
                     </Box>
                     <Box>
-                      <Text fontSize="sm" color="gray.600">{t('purchases.payment.paidAmount')}</Text>
-                      <Text fontWeight="bold">{formatCurrency(currentPurchase?.paid_amount || 0)}</Text>
+                      <Text fontSize="sm" color={mutedTextColor}>{t('purchases.payment.paidAmount')}</Text>
+                      <Text fontWeight="bold" color={textColor}>{formatCurrency(currentPurchase?.paid_amount || 0)}</Text>
                     </Box>
                     <Box>
                       <Text fontSize="sm" color={currentPurchase?.outstanding_amount === 0 ? "green.600" : "red.600"}>
@@ -619,9 +638,9 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                   )}
                 </Box>
 
-                <Alert status="info">
+                <Alert status="info" bg={infoAlertBg} borderWidth="1px" borderColor={infoAlertBorder}>
                   <AlertIcon />
-                  <Text fontSize="sm">
+                  <Text fontSize="sm" color={textColor}>
                     {t('purchases.payment.paymentSuccessDesc')}
                     {loading && (
                       <><br />{t('purchases.payment.processingIndicator')} <strong>{t('purchases.payment.processing')}</strong></>
@@ -631,7 +650,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
                 {/* Payment Form */}
                 <FormControl isRequired>
-                  <FormLabel>{t('purchases.payment.amount')} *</FormLabel>
+                  <FormLabel color={headingColor}>{t('purchases.payment.amount')} *</FormLabel>
                   <Input
                     placeholder={t('purchases.payment.amountPlaceholder')}
                     value={`Rp ${displayAmount}`}
@@ -640,11 +659,16 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     fontWeight="medium"
                     fontSize="md"
                     pl={8}
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
+                    _placeholder={{ color: inputPlaceholderColor }}
                   />
 
                   {/* Quick Payment Amount Buttons */}
                   <HStack spacing={2} mt={3} flexWrap="wrap">
-                    <Text fontSize="sm" color="gray.600" minW="fit-content">{t('purchases.payment.quickSelect')}</Text>
+                    <Text fontSize="sm" color={mutedTextColor} minW="fit-content">{t('purchases.payment.quickSelect')}</Text>
                     <Button
                       size="xs"
                       variant="outline"
@@ -704,7 +728,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
                   {/* Payment Amount Info */}
                   {formData.amount > 0 && (
-                    <Text fontSize="sm" color="gray.600" mt={2}>
+                    <Text fontSize="sm" color={mutedTextColor} mt={2}>
                       {t('purchases.payment.paymentIndicator')} <Text as="span" fontWeight="bold" color="green.600">
                         {formatCurrency(formData.amount)}
                       </Text>
@@ -740,19 +764,27 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                 </FormControl>
 
                 <FormControl isRequired>
-                  <FormLabel>{t('purchases.payment.paymentDate')}</FormLabel>
+                  <FormLabel color={headingColor}>{t('purchases.payment.paymentDate')}</FormLabel>
                   <Input
                     type="date"
                     value={formData.payment_date}
                     onChange={handleChange('payment_date')}
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
                   />
                 </FormControl>
 
                 <FormControl isRequired>
-                  <FormLabel>{t('purchases.payment.paymentMethod')}</FormLabel>
+                  <FormLabel color={headingColor}>{t('purchases.payment.paymentMethod')}</FormLabel>
                   <Select
                     value={formData.payment_method}
                     onChange={handleChange('payment_method')}
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
                   >
                     <option value="Bank Transfer">{t('purchases.payment.bankTransfer')}</option>
                     <option value="Cash">{t('purchases.payment.cash')}</option>
@@ -769,6 +801,10 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     value={formData.cash_bank_id || ''}
                     onChange={handleChange('cash_bank_id')}
                     placeholder={t('purchases.payment.selectAccount')}
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
                   >
                     {cashBanks
                       .filter(account => {
@@ -882,9 +918,9 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                 </FormControl>
 
                 {isUsdAccount && (
-                  <Box borderWidth="1px" borderRadius="md" p={4} bg="blue.50">
+                  <Box borderWidth="1px" borderRadius="md" p={4} bg={infoPanelBg} borderColor={infoAlertBorder}>
                     <FormControl isRequired>
-                      <FormLabel>{t('purchases.payment.transactionExchangeRate')}</FormLabel>
+                      <FormLabel color={headingColor}>{t('purchases.payment.transactionExchangeRate')}</FormLabel>
                       <Input
                         type="number"
                         step="1"
@@ -892,10 +928,15 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                         value={formData.exchange_rate ?? ''}
                         onChange={handleChange('exchange_rate')}
                         placeholder={t('purchases.payment.transactionExchangeRatePlaceholder')}
+                        bg={inputBg}
+                        color={textColor}
+                        borderColor={inputBorderColor}
+                        _hover={{ borderColor: inputHoverBorder }}
+                        _placeholder={{ color: inputPlaceholderColor }}
                       />
                     </FormControl>
 
-                    <Text fontSize="sm" color="gray.600" mt={2}>
+                    <Text fontSize="sm" color={mutedTextColor} mt={2}>
                       {t('purchases.payment.transactionExchangeRateHelp')}
                     </Text>
 
@@ -919,28 +960,28 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     )}
 
                     {formData.exchange_rate && formData.exchange_rate > 0 && (
-                      <Box mt={3}>
-                        <Text fontSize="sm" fontWeight="bold" color="gray.700">
+                      <Box mt={3} p={3} bg={previewBg} borderRadius="md" border="1px solid" borderColor={modalBorderColor}>
+                        <Text fontSize="sm" fontWeight="bold" color={headingColor}>
                           {t('purchases.payment.foreignPaymentPreview')}
                         </Text>
-                        <Text fontSize="sm" color="gray.700" mt={1}>
+                        <Text fontSize="sm" color={textColor} mt={1}>
                           {t('purchases.payment.purchaseSettled')}: {formatCurrency(formData.amount)}
                         </Text>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           {t('purchases.payment.usdOutflow')}: {formatAccountBalance(usdNativeOutAmount, 'USD')}
                         </Text>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           {t('purchases.payment.currentCarryRate')}: 1 USD = {formatExchangeRate(currentCarryRate)}
                         </Text>
                         {selectedAccount && (
                           <>
-                            <Text fontSize="sm" color="gray.700">
+                            <Text fontSize="sm" color={textColor}>
                               {t('purchases.payment.bankBookCredit')}: {formatCurrency(bankBookOutAmount)}
                             </Text>
-                            <Text fontSize="sm" color="gray.700">
+                            <Text fontSize="sm" color={textColor}>
                               {t('purchases.payment.nativeBalanceAfterPayment')}: {formatAccountBalance(endingNativeBalance, 'USD')}
                             </Text>
-                            <Text fontSize="sm" color="gray.700">
+                            <Text fontSize="sm" color={textColor}>
                               {t('purchases.payment.bookValueAfterPayment')}: {formatCurrency(endingBookBalance)}
                             </Text>
                             <Text
@@ -963,28 +1004,38 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                 )}
 
                 <FormControl>
-                  <FormLabel>{t('purchases.payment.reference')}</FormLabel>
+                  <FormLabel color={headingColor}>{t('purchases.payment.reference')}</FormLabel>
                   <Input
                     value={formData.reference}
                     onChange={handleChange('reference')}
                     placeholder={t('common.placeholders.referenceNumber')}
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
+                    _placeholder={{ color: inputPlaceholderColor }}
                   />
                 </FormControl>
 
                 <FormControl>
-                  <FormLabel>{t('purchases.payment.notes')}</FormLabel>
+                  <FormLabel color={headingColor}>{t('purchases.payment.notes')}</FormLabel>
                   <Textarea
                     value={formData.notes}
                     onChange={handleChange('notes')}
                     placeholder={t('common.placeholders.notes')}
                     rows={3}
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
+                    _placeholder={{ color: inputPlaceholderColor }}
                   />
                 </FormControl>
               </VStack>
             )}
           </ModalBody>
 
-          <ModalFooter>
+          <ModalFooter borderTopWidth="1px" borderColor={modalBorderColor}>
             <Button variant="ghost" mr={3} onClick={onClose} disabled={loading}>
               {t('common.cancel')}
             </Button>

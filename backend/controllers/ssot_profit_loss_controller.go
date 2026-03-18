@@ -382,30 +382,47 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		},
 	})
 
-	// 6. OTHER INCOME/EXPENSES Section (if any)
-	if ssotData.OtherIncome != 0 || ssotData.OtherExpenses != 0 {
-		otherItems := []gin.H{}
-		if ssotData.OtherIncome != 0 {
-			otherItems = append(otherItems, gin.H{
-				"name":   utils.T("other_income", language),
-				"amount": ssotData.OtherIncome,
-			})
-		}
-		if ssotData.OtherExpenses != 0 {
-			otherItems = append(otherItems, gin.H{
-				"name":   utils.T("other_expenses", language),
-				"amount": ssotData.OtherExpenses,
-			})
-		}
+	otherIncomeItems := c.deduplicateItems(ssotData.OtherIncomeItems)
+	otherExpenseItems := c.deduplicateItems(ssotData.OtherExpenseItems)
 
+	// 6. OTHER INCOME Section
+	if ssotData.OtherIncome != 0 || len(otherIncomeItems) > 0 {
 		sections = append(sections, gin.H{
-			"name":  utils.T("other_income_expenses", language),
-			"total": ssotData.OtherIncome - ssotData.OtherExpenses,
-			"items": otherItems,
+			"name":  utils.T("other_income", language),
+			"total": ssotData.OtherIncome,
+			"items": otherIncomeItems,
 		})
 	}
 
-	// 7. NET INCOME Section (calculated)
+	// 7. OTHER EXPENSES Section
+	if ssotData.OtherExpenses != 0 || len(otherExpenseItems) > 0 {
+		sections = append(sections, gin.H{
+			"name":  utils.T("other_expenses", language),
+			"total": ssotData.OtherExpenses,
+			"items": otherExpenseItems,
+		})
+	}
+
+	// 8. NET OTHER INCOME/EXPENSES Section (calculated)
+	if ssotData.OtherIncome != 0 || ssotData.OtherExpenses != 0 {
+		sections = append(sections, gin.H{
+			"name":          utils.T("other_income_expenses", language) + " (Net)",
+			"total":         ssotData.OtherIncome - ssotData.OtherExpenses,
+			"is_calculated": true,
+			"items": []gin.H{
+				{
+					"name":   utils.T("other_income", language),
+					"amount": ssotData.OtherIncome,
+				},
+				{
+					"name":   utils.T("other_expenses", language),
+					"amount": ssotData.OtherExpenses,
+				},
+			},
+		})
+	}
+
+	// 9. NET INCOME Section (calculated)
 	sections = append(sections, gin.H{
 		"name":          utils.T("net_income", language),
 		"total":         ssotData.NetIncome,
@@ -416,7 +433,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 				"amount": ssotData.IncomeBeforeTax,
 			},
 			{
-				"name":   utils.T("tax_expense", language) + " (25%)",
+				"name":   utils.T("tax_expense", language),
 				"amount": ssotData.TaxExpense,
 			},
 			{
@@ -432,12 +449,12 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		},
 	})
 
-	// Prepare account details for other income and expenses
-	otherIncomeItems := []gin.H{}
-	otherExpenseItems := []gin.H{}
+	// Prepare account details for API consumers that need explicit other-income/expense lists.
+	otherIncomeAccountDetails := []gin.H{}
+	otherExpenseAccountDetails := []gin.H{}
 
 	for _, item := range ssotData.OtherIncomeItems {
-		otherIncomeItems = append(otherIncomeItems, gin.H{
+		otherIncomeAccountDetails = append(otherIncomeAccountDetails, gin.H{
 			"account_code": item.AccountCode,
 			"account_name": item.AccountName,
 			"amount":       item.Amount,
@@ -445,7 +462,7 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 	}
 
 	for _, item := range ssotData.OtherExpenseItems {
-		otherExpenseItems = append(otherExpenseItems, gin.H{
+		otherExpenseAccountDetails = append(otherExpenseAccountDetails, gin.H{
 			"account_code": item.AccountCode,
 			"account_name": item.AccountName,
 			"amount":       item.Amount,
@@ -511,8 +528,8 @@ func (c *SSOTProfitLossController) TransformToFrontendFormat(ssotData *services.
 		}(),
 		"message": c.generateAnalysisMessage(ssotData),
 		// Add account details for other income and expenses
-		"other_income_items":  otherIncomeItems,
-		"other_expense_items": otherExpenseItems,
+		"other_income_items":  otherIncomeAccountDetails,
+		"other_expense_items": otherExpenseAccountDetails,
 	}
 }
 

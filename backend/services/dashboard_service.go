@@ -49,6 +49,19 @@ type DashboardCashFlowData struct {
 	Balance float64 `json:"balance"`
 }
 
+type monthlyValueQueryResult struct {
+	Period string  `json:"period"`
+	Month  string  `json:"month"`
+	Value  float64 `json:"value"`
+}
+
+type monthlyCashFlowQueryResult struct {
+	Period  string  `json:"period"`
+	Month   string  `json:"month"`
+	Inflow  float64 `json:"inflow"`
+	Outflow float64 `json:"outflow"`
+}
+
 type AccountData struct {
 	Name    string  `json:"name"`
 	Balance float64 `json:"balance"`
@@ -121,8 +134,11 @@ func (ds *DashboardService) GetDashboardAnalyticsForRole(role string) (*Analytic
 		return nil, fmt.Errorf("failed to get monthly purchases data: %v", err)
 	}
 
-	// Calculate cash flow
-	analytics.CashFlow = ds.calculateCashFlow(analytics.MonthlySales, analytics.MonthlyPurchases)
+	// Calculate cash movement from recorded cash/bank transactions.
+	analytics.CashFlow, err = ds.getMonthlyCashMovementData()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get monthly cash movement data: %v", err)
+	}
 
 	// Get top accounts
 	analytics.TopAccounts, err = ds.getTopAccounts()
@@ -143,11 +159,11 @@ func (ds *DashboardService) GetDashboardAnalyticsForRole(role string) (*Analytic
 func (ds *DashboardService) getCurrentPeriodTotals(startDate, endDate string) (map[string]float64, error) {
 	totals := make(map[string]float64)
 
-	// Total sales for the period (exclude DRAFT and CANCELLED)
+	// Total sales for the period from approved/completed commercial documents.
 	var totalSales float64
 	err := ds.DB.Model(&models.Sale{}).
-		Where("date >= ? AND date <= ? AND deleted_at IS NULL AND status NOT IN (?)",
-			startDate, endDate, []string{"DRAFT", "CANCELLED"}).
+		Where("date >= ? AND date <= ? AND deleted_at IS NULL AND status IN (?)",
+			startDate, endDate, []string{"CONFIRMED", "COMPLETED", "INVOICED", "OVERDUE", "PAID"}).
 		Select("COALESCE(SUM(net_before_tax), 0)").
 		Scan(&totalSales).Error
 	if err != nil {
@@ -155,11 +171,11 @@ func (ds *DashboardService) getCurrentPeriodTotals(startDate, endDate string) (m
 	}
 	totals["sales"] = totalSales
 
-	// Total purchases for the period (only approved)
+	// Total purchases for the period from approved/completed purchasing documents.
 	var totalPurchases float64
 	err = ds.DB.Model(&models.Purchase{}).
 		Where("date >= ? AND date <= ? AND deleted_at IS NULL AND status IN (?)",
-			startDate, endDate, []string{"APPROVED", "COMPLETED"}).
+			startDate, endDate, []string{"APPROVED", "COMPLETED", "PAID"}).
 		Select("COALESCE(SUM(net_before_tax), 0)").
 		Scan(&totalPurchases).Error
 	if err != nil {
@@ -167,11 +183,11 @@ func (ds *DashboardService) getCurrentPeriodTotals(startDate, endDate string) (m
 	}
 	totals["purchases"] = totalPurchases
 
-	// Accounts receivable (outstanding amounts from sales within period)
+	// Accounts receivable from collectible sales only.
 	var accountsReceivable float64
 	err = ds.DB.Model(&models.Sale{}).
-		Where("date >= ? AND date <= ? AND status IN (?) AND deleted_at IS NULL",
-			startDate, endDate, []string{"INVOICED", "PENDING", "OVERDUE"}).
+		Where("date >= ? AND date <= ? AND status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL",
+			startDate, endDate, []string{"INVOICED", "OVERDUE"}).
 		Select("COALESCE(SUM(outstanding_amount), 0)").
 		Scan(&accountsReceivable).Error
 	if err != nil {
@@ -179,11 +195,11 @@ func (ds *DashboardService) getCurrentPeriodTotals(startDate, endDate string) (m
 	}
 	totals["receivables"] = accountsReceivable
 
-	// Accounts payable (outstanding amounts from purchases within period)
+	// Accounts payable from approved vendor bills only.
 	var accountsPayable float64
 	err = ds.DB.Model(&models.Purchase{}).
-		Where("date >= ? AND date <= ? AND status IN (?) AND deleted_at IS NULL",
-			startDate, endDate, []string{"APPROVED", "COMPLETED", "PENDING"}).
+		Where("date >= ? AND date <= ? AND status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL",
+			startDate, endDate, []string{"APPROVED", "COMPLETED", "PAID"}).
 		Select("COALESCE(SUM(outstanding_amount), 0)").
 		Scan(&accountsPayable).Error
 	if err != nil {
@@ -206,112 +222,133 @@ func (ds *DashboardService) calculateGrowthPercentage(previous, current float64)
 	return ((current - previous) / previous) * 100
 }
 
-// getMonthlySalesData gets sales data for the last 7 months
+// getMonthlySalesData gets recognized sales data for the last 7 months.
 func (ds *DashboardService) getMonthlySalesData() ([]MonthlyData, error) {
-	type QueryResult struct {
-		Month string  `json:"month"`
-		Value float64 `json:"value"`
-	}
-
-	var results []QueryResult
+	var results []monthlyValueQueryResult
 	err := ds.DB.Raw(`
 		SELECT 
-			TO_CHAR(date, 'Mon') as month,
+			TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') as period,
+			TO_CHAR(DATE_TRUNC('month', date), 'Mon') as month,
 			COALESCE(SUM(net_before_tax), 0) as value
 		FROM sales 
-		WHERE date >= CURRENT_DATE - INTERVAL '7 months'
+		WHERE date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '6 months'
 			AND deleted_at IS NULL
-			AND status NOT IN ('DRAFT', 'CANCELLED')
-		GROUP BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date), TO_CHAR(date, 'Mon')
-		ORDER BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
+			AND status IN ('CONFIRMED', 'COMPLETED', 'INVOICED', 'OVERDUE', 'PAID')
+		GROUP BY DATE_TRUNC('month', date), TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM'), TO_CHAR(DATE_TRUNC('month', date), 'Mon')
+		ORDER BY DATE_TRUNC('month', date)
 	`).Scan(&results).Error
 
 	if err != nil {
 		return nil, err
 	}
 
-	var data []MonthlyData
-	for _, result := range results {
-		data = append(data, MonthlyData{
-			Month: result.Month,
-			Value: result.Value,
-		})
-	}
-
-	return data, nil
+	return fillMonthlyValueWindow(results), nil
 }
 
-// getMonthlyPurchasesData gets purchase data for the last 7 months
+// getMonthlyPurchasesData gets approved purchase data for the last 7 months.
 func (ds *DashboardService) getMonthlyPurchasesData() ([]MonthlyData, error) {
-	type QueryResult struct {
-		Month string  `json:"month"`
-		Value float64 `json:"value"`
-	}
-
-	var results []QueryResult
+	var results []monthlyValueQueryResult
 	err := ds.DB.Raw(`
 		SELECT 
-			TO_CHAR(date, 'Mon') as month,
+			TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') as period,
+			TO_CHAR(DATE_TRUNC('month', date), 'Mon') as month,
 			COALESCE(SUM(net_before_tax), 0) as value
 		FROM purchases 
-		WHERE date >= CURRENT_DATE - INTERVAL '7 months'
+		WHERE date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '6 months'
 			AND deleted_at IS NULL
-			AND status IN ('APPROVED', 'COMPLETED')
-		GROUP BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date), TO_CHAR(date, 'Mon')
-		ORDER BY EXTRACT(YEAR FROM date), EXTRACT(MONTH FROM date)
+			AND status IN ('APPROVED', 'COMPLETED', 'PAID')
+		GROUP BY DATE_TRUNC('month', date), TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM'), TO_CHAR(DATE_TRUNC('month', date), 'Mon')
+		ORDER BY DATE_TRUNC('month', date)
 	`).Scan(&results).Error
 
 	if err != nil {
 		return nil, err
 	}
 
-	var data []MonthlyData
-	for _, result := range results {
-		data = append(data, MonthlyData{
-			Month: result.Month,
-			Value: result.Value,
-		})
-	}
-
-	return data, nil
+	return fillMonthlyValueWindow(results), nil
 }
 
-// calculateCashFlow calculates cash flow from sales and purchases data
-func (ds *DashboardService) calculateCashFlow(sales, purchases []MonthlyData) []DashboardCashFlowData {
-	var cashFlow []DashboardCashFlowData
-
-	maxLen := len(sales)
-	if len(purchases) > maxLen {
-		maxLen = len(purchases)
+// getMonthlyCashMovementData gets enterprise cash movement for the last 7 months.
+// Internal transfers and opening balances are excluded because they do not change total cash.
+func (ds *DashboardService) getMonthlyCashMovementData() ([]DashboardCashFlowData, error) {
+	var results []monthlyCashFlowQueryResult
+	err := ds.DB.Raw(`
+		SELECT
+			TO_CHAR(DATE_TRUNC('month', transaction_date), 'YYYY-MM') as period,
+			TO_CHAR(DATE_TRUNC('month', transaction_date), 'Mon') as month,
+			COALESCE(SUM(CASE WHEN "book_amount_id_r" > 0 THEN "book_amount_id_r" ELSE 0 END), 0) as inflow,
+			COALESCE(SUM(CASE WHEN "book_amount_id_r" < 0 THEN ABS("book_amount_id_r") ELSE 0 END), 0) as outflow
+		FROM cash_bank_transactions
+		WHERE transaction_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '6 months'
+			AND deleted_at IS NULL
+			AND reference_type NOT IN ('TRANSFER', 'OPENING_BALANCE')
+		GROUP BY DATE_TRUNC('month', transaction_date), TO_CHAR(DATE_TRUNC('month', transaction_date), 'YYYY-MM'), TO_CHAR(DATE_TRUNC('month', transaction_date), 'Mon')
+		ORDER BY DATE_TRUNC('month', transaction_date)
+	`).Scan(&results).Error
+	if err != nil {
+		return nil, err
 	}
 
-	for i := 0; i < maxLen; i++ {
-		var month string
-		var salesValue, purchasesValue float64
+	return fillMonthlyCashFlowWindow(results), nil
+}
 
-		if i < len(sales) {
-			month = sales[i].Month
-			salesValue = sales[i].Value
-		}
-
-		if i < len(purchases) {
-			if month == "" {
-				month = purchases[i].Month
-			}
-			purchasesValue = purchases[i].Value
-		}
-
-		balance := salesValue - purchasesValue
-
-		cashFlow = append(cashFlow, DashboardCashFlowData{
-			Month:   month,
-			Inflow:  salesValue,
-			Outflow: purchasesValue,
-			Balance: balance,
-		})
+func fillMonthlyValueWindow(results []monthlyValueQueryResult) []MonthlyData {
+	periodMap := make(map[string]monthlyValueQueryResult, len(results))
+	for _, result := range results {
+		periodMap[result.Period] = result
 	}
 
-	return cashFlow
+	window := buildRecentMonthWindow(7)
+	data := make([]MonthlyData, 0, len(window))
+	for _, monthStart := range window {
+		period := monthStart.Format("2006-01")
+		label := monthStart.Format("Jan")
+		if result, exists := periodMap[period]; exists {
+			label = result.Month
+			data = append(data, MonthlyData{Month: label, Value: result.Value})
+			continue
+		}
+		data = append(data, MonthlyData{Month: label, Value: 0})
+	}
+
+	return data
+}
+
+func fillMonthlyCashFlowWindow(results []monthlyCashFlowQueryResult) []DashboardCashFlowData {
+	periodMap := make(map[string]monthlyCashFlowQueryResult, len(results))
+	for _, result := range results {
+		periodMap[result.Period] = result
+	}
+
+	window := buildRecentMonthWindow(7)
+	data := make([]DashboardCashFlowData, 0, len(window))
+	for _, monthStart := range window {
+		period := monthStart.Format("2006-01")
+		label := monthStart.Format("Jan")
+		if result, exists := periodMap[period]; exists {
+			label = result.Month
+			data = append(data, DashboardCashFlowData{
+				Month:   label,
+				Inflow:  result.Inflow,
+				Outflow: result.Outflow,
+				Balance: result.Inflow - result.Outflow,
+			})
+			continue
+		}
+		data = append(data, DashboardCashFlowData{Month: label})
+	}
+
+	return data
+}
+
+func buildRecentMonthWindow(count int) []time.Time {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).AddDate(0, -(count - 1), 0)
+	window := make([]time.Time, 0, count)
+	for i := 0; i < count; i++ {
+		window = append(window, start.AddDate(0, i, 0))
+	}
+	return window
 }
 
 // getTopAccounts gets the top 5 accounts by balance

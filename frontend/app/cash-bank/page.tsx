@@ -136,6 +136,9 @@ const getDeleteCashBankErrorMessage = (error: any, accountName: string): string 
   return `Gagal menghapus akun "${accountName}". Silakan coba lagi atau hubungi admin jika masalah berlanjut.`;
 };
 
+const canUseDirectTransactions = (account: CashBank): boolean =>
+  account.is_active && !account.is_holding_account && account.allow_direct_transactions !== false;
+
 // Table columns for cash and bank accounts with COA standards
 const getAccountColumns = (
   t: any,
@@ -399,145 +402,153 @@ const getAccountColumns = (
     },
     {
       header: t('cashBank.actions'),
-      accessor: ((row: CashBank) => (
-        <Box>
-          <Menu>
-            <MenuButton
-              as={IconButton}
-              aria-label="Account actions"
-              icon={<FiMoreVertical />}
-              size="sm"
-              variant="ghost"
-              colorScheme="gray"
-            />
-            <MenuList>
-              <MenuItem
-                icon={<FiEye />}
-                onClick={() => onView?.(row)}
-                fontSize="sm"
-              >
-                {t('cashBank.viewDetailsTransactions')}
-              </MenuItem>
-              <MenuItem
-                icon={<FiEdit2 />}
-                onClick={() => onEdit?.(row)}
-                fontSize="sm"
-              >
-                {t('cashBank.editAccountInfo')}
-              </MenuItem>
-              <MenuDivider />
-              <MenuItem
-                icon={<FiTrendingUp />}
-                onClick={() => onDeposit?.(row)}
-                color="green.600"
-                fontSize="sm"
-                isDisabled={!row.is_active}
-              >
-                {t('cashBank.makeDeposit')}
-              </MenuItem>
-              <MenuItem
-                icon={<FiTrendingDown />}
-                onClick={() => onWithdraw?.(row)}
-                color="orange.600"
-                fontSize="sm"
-                isDisabled={!row.is_active || row.balance <= 0}
-              >
-                {t('cashBank.makeWithdrawal')}
-              </MenuItem>
-              <MenuItem
-                icon={<FiArrowRight />}
-                onClick={() => onTransfer?.(row)}
-                color="blue.600"
-                fontSize="sm"
-                isDisabled={!row.is_active || row.balance <= 0}
-              >
-                {t('cashBank.transferFunds')}
-              </MenuItem>
-              <MenuDivider />
-              <MenuItem
-                icon={<FiTrash2 />}
-                onClick={() => onDelete?.(row)}
-                color="red.600"
-                fontSize="sm"
-                isDisabled={row.balance !== 0}
-              >
-                {t('cashBank.deleteAccount')}
-              </MenuItem>
-              <MenuDivider />
-              <MenuItem
-                icon={<FiLock />}
-                onClick={() => onFreeze?.(row)}
-                color="orange.600"
-                fontSize="sm"
-                isDisabled={!row.is_active || row.balance <= 0}
-              >
-                Blokir Dana
-              </MenuItem>
-              {(row.frozen_amount || 0) > 0 && (
-                <MenuItem
-                  icon={<FiUnlock />}
-                  onClick={() => onUnfreeze?.(row)}
-                  color="green.600"
-                  fontSize="sm"
-                >
-                  Buka Blokir Dana
-                </MenuItem>
-              )}
-            </MenuList>
-          </Menu>
+      accessor: ((row: CashBank) => {
+        const directTransactionsAllowed = canUseDirectTransactions(row);
 
-          {/* Quick Action Buttons */}
-          <HStack spacing={1} mt={2} justify="center">
-            <Tooltip label={t('cashBank.viewDetails')} fontSize="xs">
-              <IconButton
-                aria-label="View details"
-                icon={<FiEye />}
-                size="xs"
+        return (
+          <Box>
+            <Menu>
+              <MenuButton
+                as={IconButton}
+                aria-label="Account actions"
+                icon={<FiMoreVertical />}
+                size="sm"
                 variant="ghost"
                 colorScheme="gray"
-                onClick={() => onView?.(row)}
               />
-            </Tooltip>
-
-            <Tooltip label={t('cashBank.editAccount')} fontSize="xs">
-              <IconButton
-                aria-label="Edit account"
-                icon={<FiEdit2 />}
-                size="xs"
-                variant="ghost"
-                colorScheme="blue"
-                onClick={() => onEdit?.(row)}
-              />
-            </Tooltip>
-
-            {row.is_active && (
-              <Tooltip label={t('cashBank.deposit')} fontSize="xs">
-                <IconButton
-                  aria-label="Make deposit"
+              <MenuList>
+                <MenuItem
+                  icon={<FiEye />}
+                  onClick={() => onView?.(row)}
+                  fontSize="sm"
+                >
+                  {t('cashBank.viewDetailsTransactions')}
+                </MenuItem>
+                <MenuItem
+                  icon={<FiEdit2 />}
+                  onClick={() => onEdit?.(row)}
+                  fontSize="sm"
+                >
+                  {t('cashBank.editAccountInfo')}
+                </MenuItem>
+                <MenuDivider />
+                <MenuItem
                   icon={<FiTrendingUp />}
-                  size="xs"
-                  variant="ghost"
-                  colorScheme="green"
                   onClick={() => onDeposit?.(row)}
-                />
-              </Tooltip>
-            )}
-
-            {row.is_active && row.balance > 0 && (
-              <Tooltip label={t('cashBank.transfer')} fontSize="xs">
-                <IconButton
-                  aria-label="Transfer funds"
+                  color="green.600"
+                  fontSize="sm"
+                  isDisabled={!directTransactionsAllowed}
+                >
+                  {t('cashBank.makeDeposit')}
+                </MenuItem>
+                <MenuItem
+                  icon={<FiTrendingDown />}
+                  onClick={() => onWithdraw?.(row)}
+                  color="orange.600"
+                  fontSize="sm"
+                  isDisabled={!directTransactionsAllowed || row.balance <= 0}
+                >
+                  {t('cashBank.makeWithdrawal')}
+                </MenuItem>
+                <MenuItem
                   icon={<FiArrowRight />}
+                  onClick={() => onTransfer?.(row)}
+                  color="blue.600"
+                  fontSize="sm"
+                  isDisabled={!row.is_active || row.balance <= 0}
+                >
+                  {t('cashBank.transferFunds')}
+                </MenuItem>
+                <MenuDivider />
+                <MenuItem
+                  icon={<FiTrash2 />}
+                  onClick={() => onDelete?.(row)}
+                  color="red.600"
+                  fontSize="sm"
+                  isDisabled={row.balance !== 0}
+                >
+                  {t('cashBank.deleteAccount')}
+                </MenuItem>
+                <MenuDivider />
+                <MenuItem
+                  icon={<FiLock />}
+                  onClick={() => onFreeze?.(row)}
+                  color="orange.600"
+                  fontSize="sm"
+                  isDisabled={!row.is_active || row.balance <= 0}
+                >
+                  Blokir Dana
+                </MenuItem>
+                {(row.frozen_amount || 0) > 0 && (
+                  <MenuItem
+                    icon={<FiUnlock />}
+                    onClick={() => onUnfreeze?.(row)}
+                    color="green.600"
+                    fontSize="sm"
+                  >
+                    Buka Blokir Dana
+                  </MenuItem>
+                )}
+              </MenuList>
+            </Menu>
+
+            {/* Quick Action Buttons */}
+            <HStack spacing={1} mt={2} justify="center">
+              <Tooltip label={t('cashBank.viewDetails')} fontSize="xs">
+                <IconButton
+                  aria-label="View details"
+                  icon={<FiEye />}
                   size="xs"
                   variant="ghost"
-                  colorScheme="orange"
-                  onClick={() => onTransfer?.(row)}
+                  colorScheme="gray"
+                  onClick={() => onView?.(row)}
                 />
               </Tooltip>
-            )}
-          </HStack>
-        </Box>
-      )) as (row: CashBank) => React.ReactNode
+
+              <Tooltip label={t('cashBank.editAccount')} fontSize="xs">
+                <IconButton
+                  aria-label="Edit account"
+                  icon={<FiEdit2 />}
+                  size="xs"
+                  variant="ghost"
+                  colorScheme="blue"
+                  onClick={() => onEdit?.(row)}
+                />
+              </Tooltip>
+
+              {row.is_active && (
+                <Tooltip
+                  label={directTransactionsAllowed ? t('cashBank.deposit') : 'Direct deposit disabled for holding/non-operational accounts'}
+                  fontSize="xs"
+                >
+                  <IconButton
+                    aria-label="Make deposit"
+                    icon={<FiTrendingUp />}
+                    size="xs"
+                    variant="ghost"
+                    colorScheme="green"
+                    onClick={() => onDeposit?.(row)}
+                    isDisabled={!directTransactionsAllowed}
+                  />
+                </Tooltip>
+              )}
+
+              {row.is_active && row.balance > 0 && (
+                <Tooltip label={t('cashBank.transfer')} fontSize="xs">
+                  <IconButton
+                    aria-label="Transfer funds"
+                    icon={<FiArrowRight />}
+                    size="xs"
+                    variant="ghost"
+                    colorScheme="orange"
+                    onClick={() => onTransfer?.(row)}
+                  />
+                </Tooltip>
+              )}
+            </HStack>
+          </Box>
+        );
+      }) as (row: CashBank) => React.ReactNode
     }
   ];
 
@@ -748,11 +759,31 @@ const CashBankPage: React.FC = () => {
   };
 
   const handleDeposit = (account: CashBank) => {
+    if (!canUseDirectTransactions(account)) {
+      toast({
+        title: 'Direct deposit disabled',
+        description: 'Akun holding atau non-operasional hanya boleh dipakai lewat transfer atau flow khusus jurnal.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
     setDepositAccount(account);
     onDepositModalOpen();
   };
 
   const handleWithdraw = (account: CashBank) => {
+    if (!canUseDirectTransactions(account)) {
+      toast({
+        title: 'Direct withdrawal disabled',
+        description: 'Akun holding atau non-operasional hanya boleh dipakai lewat transfer atau flow khusus jurnal.',
+        status: 'warning',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
     setTransactionAccount(account);
     setTransactionMode('withdrawal');
     onTransactionModalOpen();

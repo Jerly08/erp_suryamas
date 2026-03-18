@@ -418,17 +418,14 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			}
 		}
 
-		// Public account catalog endpoints for purchase forms (minimal permission required)
-		// These endpoints are needed for dropdown population in purchase forms
-		v1.GET("/accounts/catalog", accountHandler.GetAccountCatalog)
-		v1.GET("/accounts/credit", accountHandler.GetAccountCatalog)
-
 		// Protected routes (auth required)
 		protected := v1.Group("")
 		protected.Use(jwtManager.AuthRequired())
 		{
 			// Profile routes
 			protected.GET("/profile", authController.Profile)
+			protected.GET("/accounts/catalog", accountHandler.GetAccountCatalog)
+			protected.GET("/accounts/credit", accountHandler.GetAccountCatalog)
 
 			// User management routes
 			users := protected.Group("/users")
@@ -459,7 +456,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			dashboard := protected.Group("/dashboard")
 			{
 				dashboard.GET("/analytics", permMiddleware.CanView("reports"), dashboardController.GetAnalytics)
-				dashboard.GET("/finance", middleware.RoleRequired("admin", "finance"), dashboardController.GetFinanceDashboardData)
+				dashboard.GET("/finance", middleware.RoleRequired("admin", "finance", "finance_manager"), dashboardController.GetFinanceDashboardData)
 				dashboard.GET("/stock-alerts", middleware.RoleRequired("admin", "inventory_manager", "director"), dashboardController.GetStockAlertsBanner)
 				dashboard.POST("/stock-alerts/:id/dismiss", middleware.RoleRequired("admin", "inventory_manager"), dashboardController.DismissStockAlert)
 
@@ -693,6 +690,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			{
 				// Notification routes are generally accessible to all authenticated users since they're personal
 				notifs.GET("", notificationHandler.GetNotifications)
+				notifs.GET("/summary", notificationHandler.GetNotificationSummary)
 				notifs.GET("/unread-count", notificationHandler.GetUnreadCount)
 				notifs.PUT("/:id/read", notificationHandler.MarkNotificationAsRead)
 				notifs.PUT("/read-all", notificationHandler.MarkAllNotificationsAsRead)
@@ -953,6 +951,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 				// 📊 Reports and calculations dengan permission checks
 				assets.GET("/summary", permMiddleware.CanView("assets"), assetController.GetAssetsSummary)
+				assets.GET("/depreciation-history", permMiddleware.CanView("assets"), assetController.GetDepreciationHistory)
+				assets.GET("/depreciation-history/:period", permMiddleware.CanView("assets"), assetController.GetDepreciationHistoryDetail)
 				assets.GET("/depreciation-report", permMiddleware.CanView("assets"), assetController.GetDepreciationReport)
 				assets.GET("/:id/depreciation-schedule", permMiddleware.CanView("assets"), assetController.GetDepreciationSchedule)
 				assets.GET("/:id/calculate-depreciation", permMiddleware.CanView("assets"), assetController.CalculateCurrentDepreciation)
@@ -1035,6 +1035,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// /check-date should be accessible to all authenticated users for form validation
 			periodClosing.GET("/check-date", periodClosingController.CheckDateInClosedPeriod)
+			periodClosing.GET("/history", periodClosingController.GetClosingHistory)
 
 			// The rest of the operations require admin/finance roles
 			periodClosingAdmin := periodClosing.Group("")
@@ -1044,7 +1045,6 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				periodClosingAdmin.GET("/preview", periodClosingController.PreviewClosing)       // Preview period closing
 				periodClosingAdmin.POST("/execute", periodClosingController.ExecuteClosing)      // Execute period closing
 				periodClosingAdmin.POST("/reopen", periodClosingController.ReopenPeriod)         // Reopen closed period
-				periodClosingAdmin.GET("/history", periodClosingController.GetClosingHistory)    // Canonical period history for settings UI
 			}
 
 			// ✅ CONSOLIDATED ROUTES: Use only Enhanced Report Routes - UNDER V1

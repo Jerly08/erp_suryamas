@@ -5391,7 +5391,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 	// REVENUE SECTION
 	revenue := get([]string{"revenue", "total_revenue"}, []string{"TotalRevenue"})
 	if revenue > 0 {
-		p.addSSOTSection(pdf, utils.T("revenue", language), revenue, utils.T("revenue_description", language))
+		p.addSSOTSection(pdf, utils.T("revenue", language), revenue, utils.T("revenue_description", language), utils.T("operating_tag", language))
 
 		// Add revenue account details
 		if revenueItems := getArray([]string{"revenue", "items"}); revenueItems != nil && len(revenueItems) > 0 {
@@ -5402,7 +5402,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 	// COST OF GOODS SOLD SECTION
 	cogs := get([]string{"cost_of_goods_sold", "total_cogs"}, []string{"COGS", "TotalCOGS"})
 	if cogs > 0 {
-		p.addSSOTSection(pdf, utils.T("cost_of_goods_sold", language), cogs, utils.T("cogs_description", language))
+		p.addSSOTSection(pdf, utils.T("cost_of_goods_sold", language), cogs, utils.T("cogs_description", language), utils.T("operating_tag", language))
 
 		// Add COGS account details
 		if cogsItems := getArray([]string{"cost_of_goods_sold", "items"}); cogsItems != nil && len(cogsItems) > 0 {
@@ -5412,7 +5412,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 
 	// GROSS PROFIT
 	gp := get([]string{"gross_profit"}, []string{"GrossProfit"})
-	p.addSSOTTotalLine(pdf, utils.T("gross_profit", language), gp)
+	p.addSSOTTotalLine(pdf, utils.T("gross_profit", language), gp, utils.T("operating_tag", language))
 	gpm := get([]string{"gross_profit_margin"}, []string{"GrossProfitMargin"})
 	if gpm > 0 {
 		pdf.SetFont("Arial", "I", 8)
@@ -5425,7 +5425,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 	// OPERATING EXPENSES
 	opex := get([]string{"operating_expenses", "total_opex"}, []string{"OperatingExpenses", "TotalOpEx"})
 	if opex > 0 {
-		p.addSSOTSection(pdf, utils.T("operating_expenses", language), opex, utils.T("opex_description", language))
+		p.addSSOTSection(pdf, utils.T("operating_expenses", language), opex, utils.T("opex_description", language), utils.T("operating_tag", language))
 
 		// Add operating expenses account details
 		if adminItems := getArray([]string{"operating_expenses", "administrative", "items"}); adminItems != nil && len(adminItems) > 0 {
@@ -5443,7 +5443,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 
 	// OPERATING INCOME
 	oi := get([]string{"operating_income"}, []string{"OperatingIncome"})
-	p.addSSOTTotalLine(pdf, utils.T("operating_income", language), oi)
+	p.addSSOTTotalLine(pdf, utils.T("operating_income", language), oi, utils.T("operating_tag", language))
 	om := get([]string{"operating_margin"}, []string{"OperatingMargin"})
 	if om > 0 {
 		pdf.SetFont("Arial", "I", 8)
@@ -5462,18 +5462,9 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 	}
 	p.addOtherIncomeExpenses(pdf, data, language)
 
-	// Add other income/expense account details
-	if otherIncomeItems := getArray([]string{"other_income_items"}); otherIncomeItems != nil && len(otherIncomeItems) > 0 {
-		p.addAccountDetails(pdf, utils.T("other_income_accounts", language), otherIncomeItems)
-	}
-
-	if otherExpenseItems := getArray([]string{"other_expense_items"}); otherExpenseItems != nil && len(otherExpenseItems) > 0 {
-		p.addAccountDetails(pdf, utils.T("other_expense_accounts", language), otherExpenseItems)
-	}
-
 	// INCOME BEFORE TAX
 	ibt := get([]string{"income_before_tax"}, []string{"IncomeBeforeTax"})
-	p.addSSOTTotalLine(pdf, utils.T("income_before_tax", language), ibt)
+	p.addSSOTTotalLine(pdf, utils.T("income_before_tax", language), ibt, utils.T("final_tag", language))
 
 	// TAX EXPENSE
 	tax := get([]string{"tax_expense"}, []string{"TaxExpense"})
@@ -5491,7 +5482,7 @@ func (p *PDFService) renderSSOTFinancialSections(pdf *gofpdf.Fpdf, data map[stri
 	pdf.SetFont("Arial", "B", 13)
 	pdf.SetFillColor(27, 94, 32) // Dark green
 	pdf.SetTextColor(255, 255, 255)
-	pdf.CellFormat(130, 10, "  "+utils.T("net_income", language), "1", 0, "L", true, 0, "")
+	pdf.CellFormat(130, 10, "  "+p.formatSSOTSectionTitle(utils.T("net_income", language), utils.T("final_tag", language)), "1", 0, "L", true, 0, "")
 	pdf.CellFormat(50, 10, p.formatRupiah(ni), "1", 0, "R", true, 0, "")
 	pdf.Ln(10)
 	pdf.SetTextColor(0, 0, 0)
@@ -5561,13 +5552,40 @@ func (p *PDFService) renderSSOTPlaceholder(pdf *gofpdf.Fpdf, ssotData interface{
 	p.addPlaceholderSections(pdf)
 }
 
+func (p *PDFService) formatSSOTSectionTitle(title, classification string) string {
+	if strings.TrimSpace(classification) == "" {
+		return title
+	}
+
+	return fmt.Sprintf("%s  [%s]", title, classification)
+}
+
+func (p *PDFService) addSSOTSectionMappingLegend(pdf *gofpdf.Fpdf, language string) {
+	pdf.SetFont("Arial", "B", 8)
+	pdf.SetFillColor(240, 244, 248)
+	pdf.SetTextColor(41, 65, 122)
+	pdf.CellFormat(180, 5, "  "+utils.T("section_mapping", language), "1", 0, "L", true, 0, "")
+	pdf.Ln(5)
+
+	pdf.SetFont("Arial", "", 7)
+	pdf.SetTextColor(90, 90, 90)
+	pdf.SetFillColor(250, 251, 253)
+	pdf.CellFormat(180, 4, "  "+utils.T("mapping_operating_pdf", language), "LR", 0, "L", true, 0, "")
+	pdf.Ln(4)
+	pdf.CellFormat(180, 4, "  "+utils.T("mapping_non_operating_pdf", language), "LR", 0, "L", true, 0, "")
+	pdf.Ln(4)
+	pdf.CellFormat(180, 4, "  "+utils.T("mapping_final_pdf", language), "LBR", 0, "L", true, 0, "")
+	pdf.Ln(7)
+	pdf.SetTextColor(0, 0, 0)
+}
+
 // addSSOTSection adds a professional section header + total row
-func (p *PDFService) addSSOTSection(pdf *gofpdf.Fpdf, title string, amount float64, description string) {
+func (p *PDFService) addSSOTSection(pdf *gofpdf.Fpdf, title string, amount float64, description string, classification string) {
 	// Dark blue section header
 	pdf.SetFont("Arial", "B", 11)
 	pdf.SetFillColor(41, 65, 122) // Dark navy blue
 	pdf.SetTextColor(255, 255, 255)
-	pdf.CellFormat(130, 7, "  "+title, "1", 0, "L", true, 0, "")
+	pdf.CellFormat(130, 7, "  "+p.formatSSOTSectionTitle(title, classification), "1", 0, "L", true, 0, "")
 	pdf.CellFormat(50, 7, p.formatRupiah(amount), "1", 0, "R", true, 0, "")
 	pdf.Ln(7)
 	pdf.SetTextColor(0, 0, 0)
@@ -5583,11 +5601,11 @@ func (p *PDFService) addSSOTSection(pdf *gofpdf.Fpdf, title string, amount float
 }
 
 // addSSOTTotalLine adds a highlighted total/subtotal row
-func (p *PDFService) addSSOTTotalLine(pdf *gofpdf.Fpdf, title string, amount float64) {
+func (p *PDFService) addSSOTTotalLine(pdf *gofpdf.Fpdf, title string, amount float64, classification string) {
 	pdf.SetFont("Arial", "B", 11)
 	pdf.SetFillColor(232, 240, 254) // Light blue accent
 	pdf.SetTextColor(41, 65, 122)
-	pdf.CellFormat(130, 8, "  "+title, "1", 0, "L", true, 0, "")
+	pdf.CellFormat(130, 8, "  "+p.formatSSOTSectionTitle(title, classification), "1", 0, "L", true, 0, "")
 	pdf.CellFormat(50, 8, p.formatRupiah(amount), "1", 0, "R", true, 0, "")
 	pdf.Ln(8)
 	pdf.SetTextColor(0, 0, 0)
@@ -5595,50 +5613,46 @@ func (p *PDFService) addSSOTTotalLine(pdf *gofpdf.Fpdf, title string, amount flo
 
 // addOtherIncomeExpenses adds other income and expenses section
 func (p *PDFService) addOtherIncomeExpenses(pdf *gofpdf.Fpdf, data map[string]interface{}, language string) {
-	otherIncome, hasIncome := data["OtherIncome"]
-	otherExpenses, hasExpenses := data["OtherExpenses"]
+	otherIncome := getNumFrom(data["OtherIncome"])
+	otherExpenses := getNumFrom(data["OtherExpenses"])
 
-	if hasIncome || hasExpenses {
-		// Section header
-		pdf.SetFont("Arial", "B", 11)
-		pdf.SetFillColor(41, 65, 122)
-		pdf.SetTextColor(255, 255, 255)
-		pdf.CellFormat(180, 7, "  "+utils.T("other_income_expenses", language), "1", 0, "L", true, 0, "")
-		pdf.Ln(7)
-		pdf.SetTextColor(0, 0, 0)
+	otherIncomeItems, _ := data["other_income_items"].([]interface{})
+	otherExpenseItems, _ := data["other_expense_items"].([]interface{})
 
-		pdf.SetFont("Arial", "", 9)
-		if hasIncome {
-			if incomeFloat, ok := otherIncome.(float64); ok && incomeFloat != 0 {
-				pdf.SetFillColor(255, 255, 255)
-				pdf.CellFormat(130, 6, "    "+utils.T("other_income", language), "LB", 0, "L", true, 0, "")
-				pdf.CellFormat(50, 6, p.formatRupiah(incomeFloat), "RB", 0, "R", true, 0, "")
-				pdf.Ln(6)
-			}
-		}
+	if otherIncome == 0 && otherExpenses == 0 && len(otherIncomeItems) == 0 && len(otherExpenseItems) == 0 {
+		return
+	}
 
-		if hasExpenses {
-			if expensesFloat, ok := otherExpenses.(float64); ok && expensesFloat != 0 {
-				pdf.SetFillColor(252, 252, 252)
-				pdf.CellFormat(130, 6, "    "+utils.T("other_expenses", language), "LB", 0, "L", true, 0, "")
-				pdf.CellFormat(50, 6, p.formatRupiah(-expensesFloat), "RB", 0, "R", true, 0, "")
-				pdf.Ln(6)
-			}
-		}
+	// Section header
+	pdf.SetFont("Arial", "B", 11)
+	pdf.SetFillColor(41, 65, 122)
+	pdf.SetTextColor(255, 255, 255)
+	pdf.CellFormat(180, 7, "  "+p.formatSSOTSectionTitle(utils.T("other_income_expenses", language), utils.T("non_operating_tag", language)), "1", 0, "L", true, 0, "")
+	pdf.Ln(7)
+	pdf.SetTextColor(0, 0, 0)
 
-		// Add account details for other income and expenses
-		if otherIncomeItems, exists := data["other_income_items"]; exists {
-			if items, ok := otherIncomeItems.([]interface{}); ok && len(items) > 0 {
-				p.addAccountDetails(pdf, utils.T("other_income_accounts", language), items)
-			}
-		}
-
-		if otherExpenseItems, exists := data["other_expense_items"]; exists {
-			if items, ok := otherExpenseItems.([]interface{}); ok && len(items) > 0 {
-				p.addAccountDetails(pdf, utils.T("other_expense_accounts", language), items)
-			}
+	pdf.SetFont("Arial", "", 9)
+	if otherIncome != 0 || len(otherIncomeItems) > 0 {
+		pdf.SetFillColor(255, 255, 255)
+		pdf.CellFormat(130, 6, "    "+utils.T("other_income", language), "LB", 0, "L", true, 0, "")
+		pdf.CellFormat(50, 6, p.formatRupiah(otherIncome), "RB", 0, "R", true, 0, "")
+		pdf.Ln(6)
+		if len(otherIncomeItems) > 0 {
+			p.addAccountDetails(pdf, utils.T("other_income_accounts", language), otherIncomeItems)
 		}
 	}
+
+	if otherExpenses != 0 || len(otherExpenseItems) > 0 {
+		pdf.SetFillColor(252, 252, 252)
+		pdf.CellFormat(130, 6, "    "+utils.T("other_expenses", language), "LB", 0, "L", true, 0, "")
+		pdf.CellFormat(50, 6, p.formatRupiah(-otherExpenses), "RB", 0, "R", true, 0, "")
+		pdf.Ln(6)
+		if len(otherExpenseItems) > 0 {
+			p.addAccountDetails(pdf, utils.T("other_expense_accounts", language), otherExpenseItems)
+		}
+	}
+
+	p.addSSOTTotalLine(pdf, utils.T("net_other_income_expenses", language), otherIncome-otherExpenses, utils.T("non_operating_tag", language))
 }
 
 // addFinancialRatiosSummary adds a professional financial ratios card
@@ -5816,6 +5830,8 @@ func (p *PDFService) GenerateSSOTProfitLossPDF(ssotData interface{}, language st
 		pdf.Ln(8)
 		pdf.SetTextColor(0, 0, 0)
 	}
+
+	p.addSSOTSectionMappingLegend(pdf, language)
 
 	// Table column headers
 	pdf.SetFont("Arial", "B", 9)

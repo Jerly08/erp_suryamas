@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import SimpleLayout from '@/components/layout/SimpleLayout';
@@ -468,6 +469,8 @@ const columns = [
 ];
 
 const PurchasesPage: React.FC = () => {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { token, user } = useAuth();
   const isServiceCompany = user?.company_type === 'SERVICE';
   const toast = useToast();
@@ -753,6 +756,7 @@ const PurchasesPage: React.FC = () => {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loadingReceipts, setLoadingReceipts] = useState(false);
   const [selectedPurchaseForReceipts, setSelectedPurchaseForReceipts] = useState<Purchase | null>(null);
+  const handledNotificationPurchaseId = useRef<string | null>(null);
 
   // Role-based permissions (kept for approval workflow logic)
   const roleNorm = normalizeRole(user?.role as any);
@@ -1352,6 +1356,49 @@ const PurchasesPage: React.FC = () => {
       });
     }
   };
+
+  useEffect(() => {
+    const notificationPurchaseId = searchParams.get('notificationPurchaseId');
+
+    if (!notificationPurchaseId || handledNotificationPurchaseId.current === notificationPurchaseId) {
+      return;
+    }
+
+    handledNotificationPurchaseId.current = notificationPurchaseId;
+
+    const clearNotificationPurchaseParam = () => {
+      const nextParams = new URLSearchParams(searchParams.toString());
+      nextParams.delete('notificationPurchaseId');
+      const nextUrl = nextParams.toString() ? `/purchases?${nextParams.toString()}` : '/purchases';
+      router.replace(nextUrl);
+    };
+
+    const purchaseId = Number(notificationPurchaseId);
+    if (!Number.isFinite(purchaseId)) {
+      clearNotificationPurchaseParam();
+      return;
+    }
+
+    const openPurchaseFromNotification = async () => {
+      try {
+        const detailResponse = await purchaseService.getById(purchaseId);
+        setSelectedPurchase(detailResponse);
+        onViewOpen();
+      } catch (error) {
+        toast({
+          title: 'Error',
+          description: 'Failed to open purchase from notification',
+          status: 'error',
+          duration: 3000,
+          isClosable: true,
+        });
+      } finally {
+        clearNotificationPurchaseParam();
+      }
+    };
+
+    void openPurchaseFromNotification();
+  }, [onViewOpen, router, searchParams, toast]);
 
   // Handle record payment for approved credit purchases
   const handleRecordPayment = async (purchase: Purchase) => {
@@ -2577,7 +2624,17 @@ const PurchasesPage: React.FC = () => {
   // Check if selected bank/cash account has sufficient balance
   const getSelectedBankAccount = (): BankAccount | undefined => {
     if (!financeTaxForm.bank_account_id) return undefined;
-    return bankAccounts.find(a => a.id.toString() === financeTaxForm.bank_account_id);
+    return getEligibleBankAccounts().find(a => a.id.toString() === financeTaxForm.bank_account_id);
+  };
+
+  const getEligibleBankAccounts = (): BankAccount[] => {
+    if (financeTaxForm.payment_method === 'CASH') {
+      return bankAccounts.filter(a => a.type === 'CASH');
+    }
+    if (financeTaxForm.payment_method === 'BANK_TRANSFER' || financeTaxForm.payment_method === 'CHECK') {
+      return bankAccounts.filter(a => a.type === 'BANK');
+    }
+    return [];
   };
 
   const isBalanceInsufficient = (): boolean => {
@@ -2592,7 +2649,7 @@ const PurchasesPage: React.FC = () => {
   // Get accounts with sufficient balance for recommendations
   const getSufficientAccounts = (): BankAccount[] => {
     const totalPayment = calculateFinanceTaxTotal();
-    return bankAccounts.filter(a => getAccountBookBalance(a) >= totalPayment);
+    return getEligibleBankAccounts().filter(a => getAccountBookBalance(a) >= totalPayment);
   };
 
   // Save Finance Tax/Payment Config (only tax + payment fields, NO items)
@@ -3934,7 +3991,9 @@ const PurchasesPage: React.FC = () => {
                         {selectedPurchase.notes && (
                           <FormControl>
                             <FormLabel>{t('purchases.notes')}</FormLabel>
-                            <Text p={3} bg={notesBoxBg} borderRadius="md">{selectedPurchase.notes}</Text>
+                            <Text p={3} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor} color={textPrimary}>
+                              {selectedPurchase.notes}
+                            </Text>
                           </FormControl>
                         )}
 
@@ -6281,13 +6340,14 @@ const PurchasesPage: React.FC = () => {
                                 _focus={{ borderColor: isBalanceInsufficient() ? 'red.500' : inputFocusBorder, boxShadow: isBalanceInsufficient() ? '0 0 0 1px red' : inputFocusShadow }}
                                 borderColor={isBalanceInsufficient() ? 'red.500' : undefined}
                               >
-                                {bankAccounts.map(account => {
-                                  const balance = account.balance ?? 0;
+                                {getEligibleBankAccounts().map(account => {
+                                  const nativeBalance = account.balance ?? 0;
+                                  const bookBalance = getAccountBookBalance(account);
                                   const totalPayment = calculateFinanceTaxTotal();
-                                  const isSufficient = balance >= totalPayment;
+                                  const isSufficient = bookBalance >= totalPayment;
                                   return (
                                     <option key={account.id} value={account.id.toString()}>
-                                      {account.name} ({account.code}) - {account.currency} | Saldo: {formatAccountBalance(balance, account.currency)}{!isSufficient ? ' [KURANG]' : ''}
+                                      {account.name} ({account.code}) - {account.currency} | Saldo: {formatAccountBalance(nativeBalance, account.currency)}{account.currency?.toUpperCase() !== 'IDR' ? ` | Nilai buku: ${formatCurrency(bookBalance)}` : ''}{!isSufficient ? ' [KURANG]' : ''}
                                     </option>
                                   );
                                 })}

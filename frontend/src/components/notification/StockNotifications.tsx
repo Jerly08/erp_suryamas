@@ -2,124 +2,109 @@
 
 import React, { useEffect, useState } from 'react';
 import {
+  Alert,
+  AlertIcon,
+  Badge,
   Box,
+  Button,
+  Divider,
+  HStack,
   IconButton,
   Menu,
   MenuButton,
-  MenuList,
   MenuItem,
-  Divider,
-  Text,
-  HStack,
-  VStack,
-  Badge,
+  MenuList,
   Spinner,
-  Alert,
-  AlertIcon,
-  Button,
+  Text,
+  VStack,
 } from '@chakra-ui/react';
-import { FiBell, FiPackage, FiAlertTriangle, FiAlertCircle } from 'react-icons/fi';
+import { FiAlertCircle, FiAlertTriangle, FiPackage } from 'react-icons/fi';
 import axios from 'axios';
 import { API_BASE_URL } from '@/config/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface StockNotification {
   id: number;
-  type: string;
   title: string;
   message: string;
-  priority: string;
   is_read: boolean;
   created_at: string;
-  data?: any;
+  data?: unknown;
 }
 
 interface StockAlert {
   id: number;
-  product_id: number;
   product_name: string;
   product_code: string;
   current_stock: number;
   threshold_stock: number;
-  alert_type: string;
   urgency: string;
-  message: string;
   category_name?: string;
 }
 
 const StockNotifications: React.FC = () => {
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState<StockNotification[]>([]);
   const [stockAlerts, setStockAlerts] = useState<StockAlert[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
-  const { user } = useAuth();
+
+  const canViewStockNotifications =
+    user?.role === 'admin' ||
+    user?.role === 'inventory_manager' ||
+    user?.role === 'director';
+  const canDismissStockAlerts =
+    user?.role === 'admin' ||
+    user?.role === 'inventory_manager';
 
   useEffect(() => {
-    if (user?.role === 'admin' || user?.role === 'inventory_manager') {
-      fetchStockNotifications();
-      fetchStockAlerts();
-      // Increase interval to 5 minutes to reduce server load
-      const interval = setInterval(() => {
-        fetchStockNotifications();
-        fetchStockAlerts();
-      }, 300000); // Refresh every 5 minutes (300 seconds)
-      return () => clearInterval(interval);
+    if (!canViewStockNotifications) {
+      return;
     }
-  }, [user]);
+
+    const refresh = () => {
+      void refreshStockData();
+    };
+
+    refresh();
+    const interval = setInterval(() => {
+      refresh();
+    }, 300000);
+
+    return () => clearInterval(interval);
+    // Legacy component refresh only follows role visibility changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canViewStockNotifications]);
+
+  const refreshStockData = async () => {
+    await Promise.all([fetchStockNotifications(), fetchStockAlerts()]);
+  };
 
   const fetchStockNotifications = async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-
-      // Get MIN_STOCK, REORDER_ALERT and STOCK_OUT notifications
-      const [minStockResponse, reorderResponse, stockOutResponse] = await Promise.all([
+      const [listResponse, unreadCountResponse] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/v1/notifications`, {
-          params: { type: 'MIN_STOCK', limit: 10 },
+          params: { types: 'LOW_STOCK,REORDER_ALERT,STOCK_OUT', limit: 20 },
           headers: { Authorization: `Bearer ${token}` }
         }),
-        axios.get(`${API_BASE_URL}/api/v1/notifications`, {
-          params: { type: 'REORDER_ALERT', limit: 10 },
+        axios.get(`${API_BASE_URL}/api/v1/notifications/summary`, {
           headers: { Authorization: `Bearer ${token}` }
         }),
-        axios.get(`${API_BASE_URL}/api/v1/notifications`, {
-          params: { type: 'STOCK_OUT', limit: 10 },
-          headers: { Authorization: `Bearer ${token}` }
-        })
       ]);
 
-      const minStockNotifs = minStockResponse.data.notifications || [];
-      const reorderNotifs = reorderResponse.data.notifications || [];
-      const stockOutNotifs = stockOutResponse.data.notifications || [];
-
-      const allNotifs = [...minStockNotifs, ...reorderNotifs, ...stockOutNotifs]
+      const allNotifications = (listResponse.data.notifications || [])
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 10);
 
-      setNotifications(allNotifs);
-
-      // Get unread count for all types
-      const [minStockCount, reorderCount, stockOutCount] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
-          params: { type: 'MIN_STOCK' },
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        axios.get(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
-          params: { type: 'REORDER_ALERT' },
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        axios.get(`${API_BASE_URL}/api/v1/notifications/unread-count`, {
-          params: { type: 'STOCK_OUT' },
-          headers: { Authorization: `Bearer ${token}` }
-        })
-      ]);
-
-      const totalUnread = (minStockCount.data.count || 0) +
-        (reorderCount.data.count || 0) +
-        (stockOutCount.data.count || 0);
-      setUnreadCount(totalUnread);
+      const summary = unreadCountResponse.data.summary || {};
+      setNotifications(allNotifications);
+      setUnreadCount(summary.stock_unread || 0);
     } catch (error) {
       console.error('Failed to fetch stock notifications:', error);
+      setNotifications([]);
+      setUnreadCount(0);
     } finally {
       setLoading(false);
     }
@@ -134,9 +119,12 @@ const StockNotifications: React.FC = () => {
 
       if (response.data.data?.alerts) {
         setStockAlerts(response.data.data.alerts);
+      } else {
+        setStockAlerts(response.data.alerts || []);
       }
     } catch (error) {
       console.error('Failed to fetch stock alerts:', error);
+      setStockAlerts([]);
     }
   };
 
@@ -149,10 +137,14 @@ const StockNotifications: React.FC = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      setNotifications(prev =>
-        prev.map(n => n.id === notificationId ? { ...n, is_read: true } : n)
+      setNotifications((prev) =>
+        prev.map((notification) =>
+          notification.id === notificationId
+            ? { ...notification, is_read: true }
+            : notification
+        )
       );
-      setUnreadCount(prev => Math.max(0, prev - 1));
+      setUnreadCount((prev) => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Failed to mark notification as read:', error);
     }
@@ -167,7 +159,7 @@ const StockNotifications: React.FC = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      setStockAlerts(prev => prev.filter(a => a.id !== alertId));
+      setStockAlerts((prev) => prev.filter((alert) => alert.id !== alertId));
     } catch (error) {
       console.error('Failed to dismiss alert:', error);
     }
@@ -186,10 +178,14 @@ const StockNotifications: React.FC = () => {
 
   const getUrgencyColor = (urgency: string) => {
     switch (urgency) {
-      case 'critical': return 'red';
-      case 'high': return 'orange';
-      case 'medium': return 'yellow';
-      default: return 'blue';
+      case 'critical':
+        return 'red';
+      case 'high':
+        return 'orange';
+      case 'medium':
+        return 'yellow';
+      default:
+        return 'blue';
     }
   };
 
@@ -208,19 +204,27 @@ const StockNotifications: React.FC = () => {
     });
   };
 
-  // Don't show for non-authorized roles
-  if (user?.role !== 'admin' && user?.role !== 'inventory_manager') {
+  const parseNotificationData = (data?: unknown) => {
+    if (!data) return null;
+    if (typeof data !== 'string') return data as Record<string, unknown>;
+
+    try {
+      return JSON.parse(data) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+
+  if (!canViewStockNotifications) {
     return null;
   }
 
-  const totalAlerts = stockAlerts.length + unreadCount;
-
   return (
-    <Menu placement="bottom-end" autoSelect={false} onOpen={fetchStockNotifications}>
+    <Menu placement="bottom-end" autoSelect={false} onOpen={refreshStockData}>
       <MenuButton as={IconButton} aria-label="Stock Notifications" variant="ghost">
         <Box position="relative">
           <FiPackage />
-          {totalAlerts > 0 && (
+          {unreadCount > 0 && (
             <Badge
               colorScheme="red"
               borderRadius="full"
@@ -230,7 +234,7 @@ const StockNotifications: React.FC = () => {
               fontSize="0.6em"
               px={2}
             >
-              {totalAlerts}
+              {unreadCount}
             </Badge>
           )}
         </Box>
@@ -239,10 +243,9 @@ const StockNotifications: React.FC = () => {
       <MenuList minW="400px" maxW="90vw">
         <Box px={3} pt={2} pb={1}>
           <Text fontSize="md" fontWeight="bold">Stock Alerts</Text>
-          {totalAlerts > 0 && (
+          {(stockAlerts.length > 0 || unreadCount > 0) && (
             <Text fontSize="xs" color="gray.500">
-              {stockAlerts.length} active alert{stockAlerts.length !== 1 ? 's' : ''},
-              {unreadCount} unread
+              {stockAlerts.length} active alert{stockAlerts.length !== 1 ? 's' : ''}, {unreadCount} unread
             </Text>
           )}
         </Box>
@@ -262,7 +265,6 @@ const StockNotifications: React.FC = () => {
           </MenuItem>
         ) : (
           <Box maxH="400px" overflowY="auto">
-            {/* Active Stock Alerts */}
             {stockAlerts.map((alert) => (
               <Box key={`alert-${alert.id}`} p={3} borderBottom="1px" borderColor="gray.200">
                 <HStack align="start" spacing={3}>
@@ -278,7 +280,7 @@ const StockNotifications: React.FC = () => {
                     </HStack>
 
                     <Text fontSize="xs" color="gray.600">
-                      Code: {alert.product_code} {alert.category_name && `• ${alert.category_name}`}
+                      Code: {alert.product_code}{alert.category_name ? ` - ${alert.category_name}` : ''}
                     </Text>
 
                     <Alert status="warning" size="sm" borderRadius="md">
@@ -288,26 +290,29 @@ const StockNotifications: React.FC = () => {
                       </Text>
                     </Alert>
 
-                    <Button
-                      size="xs"
-                      colorScheme="gray"
-                      onClick={() => dismissAlert(alert.id)}
-                    >
-                      Dismiss
-                    </Button>
+                    {canDismissStockAlerts && (
+                      <Button
+                        size="xs"
+                        colorScheme="gray"
+                        onClick={() => dismissAlert(alert.id)}
+                      >
+                        Dismiss
+                      </Button>
+                    )}
                   </VStack>
                 </HStack>
               </Box>
             ))}
 
-            {/* Notifications */}
-            {notifications.map((notif) => {
-              const data = typeof notif.data === 'string' ? JSON.parse(notif.data) : notif.data;
+            {notifications.map((notification) => {
+              const data = parseNotificationData(notification.data);
               return (
                 <MenuItem
-                  key={`notif-${notif.id}`}
+                  key={`notif-${notification.id}`}
                   onClick={() => {
-                    if (!notif.is_read) handleMarkAsRead(notif.id);
+                    if (!notification.is_read) {
+                      handleMarkAsRead(notification.id);
+                    }
                   }}
                 >
                   <HStack align="start" spacing={3} w="full">
@@ -316,24 +321,24 @@ const StockNotifications: React.FC = () => {
                     </Box>
                     <VStack align="start" spacing={0} flex={1}>
                       <HStack justify="space-between" w="full">
-                        <Text fontSize="sm" fontWeight={notif.is_read ? 'normal' : 'semibold'}>
-                          {notif.title}
+                        <Text fontSize="sm" fontWeight={notification.is_read ? 'normal' : 'semibold'}>
+                          {notification.title}
                         </Text>
-                        {!notif.is_read && <Box w={2} h={2} bg="orange.500" borderRadius="full" />}
+                        {!notification.is_read && <Box w={2} h={2} bg="orange.500" borderRadius="full" />}
                       </HStack>
 
                       <Text fontSize="xs" color="gray.600" noOfLines={2}>
-                        {notif.message}
+                        {notification.message}
                       </Text>
 
                       {data && (
                         <Text fontSize="xs" color="gray.500">
-                          Stock: {data.current_stock} / Min: {data.minimum_stock}
+                          Stock: {String(data.current_stock ?? '-')} / Min: {String(data.minimum_stock ?? data.reorder_level ?? '-')}
                         </Text>
                       )}
 
                       <Text fontSize="xs" color="gray.500">
-                        {formatDate(notif.created_at)}
+                        {formatDate(notification.created_at)}
                       </Text>
                     </VStack>
                   </HStack>
@@ -346,9 +351,7 @@ const StockNotifications: React.FC = () => {
         {(stockAlerts.length > 0 || notifications.length > 0) && (
           <>
             <Divider />
-            <MenuItem
-              onClick={() => window.location.href = '/inventory'}
-            >
+            <MenuItem onClick={() => { window.location.href = '/inventory'; }}>
               <Text w="full" textAlign="center" fontSize="sm" color="blue.600">
                 Go to Inventory
               </Text>

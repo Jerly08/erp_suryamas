@@ -1166,7 +1166,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			FROM unified_journal_lines sjl
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			WHERE sje.status = ? 
-				AND DATE(sje.entry_date) <= ?
+				AND DATE(sje.entry_date) < ?
 				AND sje.deleted_at IS NULL
 				AND sjl.account_id = ?
 		`
@@ -1179,7 +1179,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			FROM unified_journal_lines sjl
 			JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 			WHERE sje.status = ? 
-				AND DATE(sje.entry_date) <= ?
+				AND DATE(sje.entry_date) < ?
 				AND sje.deleted_at IS NULL
 		`
 		openingArgs = []interface{}{models.SSOTStatusPosted, startDate}
@@ -1208,7 +1208,7 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 				FROM unified_journal_lines sjl
 				JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
 				WHERE sje.status = ? 
-					AND DATE(sje.entry_date) <= ?
+					AND DATE(sje.entry_date) < ?
 					AND sje.deleted_at IS NULL
 					AND sjl.account_id = ?
 			`

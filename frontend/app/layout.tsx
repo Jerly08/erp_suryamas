@@ -29,7 +29,7 @@ export default function RootLayout({
               
               // Theme initialization
               try {
-                const theme = localStorage.getItem('theme');
+                const theme = localStorage.getItem('theme') || localStorage.getItem('chakra-ui-color-mode');
                 if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
                   document.documentElement.classList.add('dark');
                   document.documentElement.setAttribute('data-theme', 'dark');

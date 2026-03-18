@@ -116,6 +116,35 @@ export interface DepreciationCalculation {
   useful_life_years: number;
 }
 
+export interface MonthlyDepreciationRunResult {
+  period: string;
+  processed_assets: number;
+  skipped_assets: number;
+  total_assets: number;
+  total_depreciation: number;
+  errors?: string[];
+}
+
+export interface DepreciationHistoryItem {
+  period: string;
+  entry_count: number;
+  total_depreciation: number;
+  last_run_at: string;
+  status: string;
+}
+
+export interface DepreciationHistoryDetailItem {
+  journal_id: number;
+  entry_number: string;
+  asset_id: number;
+  asset_code: string;
+  asset_name: string;
+  entry_date: string;
+  reference: string;
+  depreciation_amount: number;
+  status: string;
+}
+
 class AssetService {
   // Get all assets
   async getAssets(): Promise<{ data: Asset[]; message: string; count: number }> {
@@ -198,6 +227,41 @@ class AssetService {
   }> {
     const params = asOfDate ? { as_of_date: asOfDate } : {};
     const response = await api.get(API_ENDPOINTS.ASSETS.CALCULATE_DEPRECIATION(id), { params });
+    return response.data;
+  }
+
+  async runMonthlyDepreciation(year: number, month: number, userId?: number): Promise<{
+    data: MonthlyDepreciationRunResult;
+    message: string;
+  }> {
+    const response = await api.post(API_ENDPOINTS.ASSETS.RUN_DEPRECIATION, {
+      year,
+      month,
+      user_id: userId,
+    });
+    return response.data;
+  }
+
+  async getDepreciationHistory(limit = 6): Promise<{
+    data: DepreciationHistoryItem[];
+    message: string;
+    count: number;
+  }> {
+    const response = await api.get(API_ENDPOINTS.ASSETS.DEPRECIATION_HISTORY, {
+      params: { limit },
+    });
+    return response.data;
+  }
+
+  async getDepreciationHistoryDetail(period: string): Promise<{
+    data: {
+      period: string;
+      entries: DepreciationHistoryDetailItem[];
+    };
+    message: string;
+    count: number;
+  }> {
+    const response = await api.get(API_ENDPOINTS.ASSETS.DEPRECIATION_HISTORY_DETAIL(period));
     return response.data;
   }
 

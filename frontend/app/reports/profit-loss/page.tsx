@@ -114,6 +114,13 @@ const buildUniqueClosedPeriods = (entries: any[]): any[] => {
     return Array.from(uniqueMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 };
 
+type SectionPresentation = {
+    title: string;
+    description: string;
+    badgeLabel: string;
+    badgeColorScheme: string;
+};
+
 const ProfitLossPage: React.FC = () => {
     const router = useRouter();
     const { t } = useTranslation();
@@ -234,6 +241,9 @@ const ProfitLossPage: React.FC = () => {
                 end_date: endDate,
                 format: 'json'
             });
+            if (result instanceof Blob) {
+                throw new Error('Expected JSON profit-loss data but received file content');
+            }
             setData(result);
             toast({
                 title: t('reports.messages.success'),
@@ -497,6 +507,89 @@ const ProfitLossPage: React.FC = () => {
         }).format(Number(amount));
     };
 
+    const getSectionPresentation = (sectionName?: string): SectionPresentation => {
+        const normalized = (sectionName || '').toUpperCase();
+
+        if (normalized.includes('OTHER INCOME/EXPENSES') || normalized.includes('PENDAPATAN/BEBAN LAIN')) {
+            return {
+                title: t('reports.modal.sectionOtherNetTitle'),
+                description: t('reports.modal.sectionOtherNetDescription'),
+                badgeLabel: t('reports.modal.sectionNet'),
+                badgeColorScheme: 'orange',
+            };
+        }
+
+        if (normalized.includes('OTHER INCOME') || normalized.includes('PENDAPATAN LAIN')) {
+            return {
+                title: t('reports.modal.sectionOtherIncomeTitle'),
+                description: t('reports.modal.sectionOtherIncomeDescription'),
+                badgeLabel: t('reports.modal.sectionNonOperating'),
+                badgeColorScheme: 'purple',
+            };
+        }
+
+        if (normalized.includes('OTHER EXPENSE') || normalized.includes('BEBAN LAIN')) {
+            return {
+                title: t('reports.modal.sectionOtherExpensesTitle'),
+                description: t('reports.modal.sectionOtherExpensesDescription'),
+                badgeLabel: t('reports.modal.sectionNonOperating'),
+                badgeColorScheme: 'orange',
+            };
+        }
+
+        if (normalized.includes('COST OF GOODS SOLD') || normalized.includes('HARGA POKOK PENJUALAN')) {
+            return {
+                title: t('reports.modal.sectionCogsTitle'),
+                description: t('reports.modal.sectionCogsDescription'),
+                badgeLabel: t('reports.modal.sectionOperating'),
+                badgeColorScheme: 'blue',
+            };
+        }
+
+        if (normalized.includes('OPERATING EXPENSE') || normalized.includes('BEBAN OPERASIONAL')) {
+            return {
+                title: t('reports.modal.sectionOperatingExpensesTitle'),
+                description: t('reports.modal.sectionOperatingExpensesDescription'),
+                badgeLabel: t('reports.modal.sectionOperating'),
+                badgeColorScheme: 'blue',
+            };
+        }
+
+        if (normalized.includes('OPERATING INCOME') || normalized.includes('LABA OPERASIONAL') || normalized.includes('PENDAPATAN OPERASIONAL')) {
+            return {
+                title: t('reports.modal.sectionOperatingIncomeTitle'),
+                description: t('reports.modal.sectionOperatingIncomeDescription'),
+                badgeLabel: t('reports.modal.sectionOperating'),
+                badgeColorScheme: 'green',
+            };
+        }
+
+        if (normalized.includes('NET INCOME') || normalized.includes('LABA BERSIH')) {
+            return {
+                title: t('reports.modal.sectionNetIncomeTitle'),
+                description: t('reports.modal.sectionNetIncomeDescription'),
+                badgeLabel: t('reports.modal.sectionNet'),
+                badgeColorScheme: 'green',
+            };
+        }
+
+        if (normalized.includes('REVENUE') || normalized === 'PENDAPATAN') {
+            return {
+                title: t('reports.modal.sectionRevenueTitle'),
+                description: t('reports.modal.sectionRevenueDescription'),
+                badgeLabel: t('reports.modal.sectionOperating'),
+                badgeColorScheme: 'purple',
+            };
+        }
+
+        return {
+            title: sectionName || '-',
+            description: '',
+            badgeLabel: t('reports.modal.sectionOperating'),
+            badgeColorScheme: 'gray',
+        };
+    };
+
     return (
         <UnifiedLayout>
             <VStack spacing={6} align="stretch">
@@ -670,6 +763,84 @@ const ProfitLossPage: React.FC = () => {
                             </Text>
                         </Box>
 
+                        <Box bg={infoPanelBg} p={4} borderRadius="md" border="1px solid" borderColor={infoPanelBorderColor}>
+                            <VStack spacing={4} align="stretch">
+                                <HStack justify="space-between" align="start" flexWrap="wrap">
+                                    <VStack align="start" spacing={1}>
+                                        <Text fontSize="md" fontWeight="bold" color={infoPanelTextColor}>
+                                            {t('reports.modal.plClassificationTitle')}
+                                        </Text>
+                                        <Text fontSize="sm" color={infoPanelTextColor}>
+                                            {t('reports.modal.plClassificationDescription')}
+                                        </Text>
+                                    </VStack>
+                                    {data.data_source_label && (
+                                        <Badge colorScheme="blue" variant="subtle" px={2} py={1} borderRadius="md">
+                                            {t('reports.modal.dataSourceLabel')}: {data.data_source_label}
+                                        </Badge>
+                                    )}
+                                </HStack>
+
+                                <SimpleGrid columns={[1, 1, 2, 3]} spacing={3}>
+                                    {[
+                                        {
+                                            title: t('reports.modal.operatingRevenueTitle'),
+                                            hint: t('reports.modal.operatingRevenueHint'),
+                                            badge: t('reports.modal.sectionOperating'),
+                                            colorScheme: 'purple',
+                                            code: '4xxx',
+                                        },
+                                        {
+                                            title: t('reports.modal.operatingDirectCostTitle'),
+                                            hint: t('reports.modal.operatingDirectCostHint'),
+                                            badge: t('reports.modal.sectionOperating'),
+                                            colorScheme: 'blue',
+                                            code: '5xxx',
+                                        },
+                                        {
+                                            title: t('reports.modal.operatingExpenseTitle'),
+                                            hint: t('reports.modal.operatingExpenseHint'),
+                                            badge: t('reports.modal.sectionOperating'),
+                                            colorScheme: 'blue',
+                                            code: '6xxx',
+                                        },
+                                        {
+                                            title: t('reports.modal.nonOperatingIncomeTitle'),
+                                            hint: t('reports.modal.nonOperatingIncomeHint'),
+                                            badge: t('reports.modal.sectionNonOperating'),
+                                            colorScheme: 'purple',
+                                            code: '7xxx',
+                                        },
+                                        {
+                                            title: t('reports.modal.nonOperatingExpenseTitle'),
+                                            hint: t('reports.modal.nonOperatingExpenseHint'),
+                                            badge: t('reports.modal.sectionNonOperating'),
+                                            colorScheme: 'orange',
+                                            code: '8xxx',
+                                        },
+                                        {
+                                            title: t('reports.modal.taxExpenseTitle'),
+                                            hint: t('reports.modal.taxExpenseHint'),
+                                            badge: t('reports.modal.sectionTax'),
+                                            colorScheme: 'red',
+                                            code: '9xxx',
+                                        },
+                                    ].map((entry) => (
+                                        <Box key={entry.code} bg={nestedCardBg} p={3} borderRadius="md" border="1px solid" borderColor={infoPanelBorderColor}>
+                                            <VStack align="start" spacing={2}>
+                                                <HStack justify="space-between" w="full">
+                                                    <Badge colorScheme={entry.colorScheme}>{entry.badge}</Badge>
+                                                    <Badge variant="outline" colorScheme={entry.colorScheme}>{entry.code}</Badge>
+                                                </HStack>
+                                                <Text fontSize="sm" fontWeight="bold" color={textColor}>{entry.title}</Text>
+                                                <Text fontSize="xs" color={descriptionColor}>{entry.hint}</Text>
+                                            </VStack>
+                                        </Box>
+                                    ))}
+                                </SimpleGrid>
+                            </VStack>
+                        </Box>
+
                         {/* Summary Statistics */}
                         <SimpleGrid columns={[1, 2, 4]} spacing={4}>
                             <Box bg={revenueStatBg} p={4} borderRadius="md" textAlign="center">
@@ -781,10 +952,21 @@ const ProfitLossPage: React.FC = () => {
                                 <Text fontSize="lg" fontWeight="bold" color={headingColor}>
                                     {t('reports.modal.detailedBreakdown')}
                                 </Text>
-                                {data.sections.map((section: any, index: number) => (
+                                {data.sections.map((section: any, index: number) => {
+                                    const presentation = getSectionPresentation(section.name);
+
+                                    return (
                                     <Box key={index} bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                                         <HStack justify="space-between" mb={2}>
-                                            <Text fontSize="md" fontWeight="bold" color={headingColor}>{section.name}</Text>
+                                            <VStack align="start" spacing={1}>
+                                                <HStack spacing={2}>
+                                                    <Text fontSize="md" fontWeight="bold" color={headingColor}>{presentation.title}</Text>
+                                                    <Badge colorScheme={presentation.badgeColorScheme}>{presentation.badgeLabel}</Badge>
+                                                </HStack>
+                                                {presentation.description && (
+                                                    <Text fontSize="xs" color={descriptionColor}>{presentation.description}</Text>
+                                                )}
+                                            </VStack>
                                             <Text fontSize="md" fontWeight="bold" color={section.total >= 0 ? 'green.600' : 'red.600'}>
                                                 {formatCurrency(section.total || 0)}
                                             </Text>
@@ -817,8 +999,36 @@ const ProfitLossPage: React.FC = () => {
                                                 ))}
                                             </VStack>
                                         )}
+                                        {section.subsections && section.subsections.length > 0 && (
+                                            <VStack spacing={3} align="stretch" mt={3}>
+                                                {section.subsections.map((subsection: any, subsectionIndex: number) => (
+                                                    <Box key={`${index}-${subsectionIndex}`} bg={nestedCardBg} p={3} borderRadius="md" border="1px solid" borderColor={borderColor}>
+                                                        <HStack justify="space-between" mb={2}>
+                                                            <Text fontSize="sm" fontWeight="semibold" color={textColor}>{subsection.name}</Text>
+                                                            <Text fontSize="sm" fontWeight="bold" color={textColor}>
+                                                                {formatCurrency(subsection.total || 0)}
+                                                            </Text>
+                                                        </HStack>
+                                                        {subsection.items && subsection.items.length > 0 && (
+                                                            <VStack spacing={1} align="stretch">
+                                                                {subsection.items.map((item: any, itemIndex: number) => (
+                                                                    <HStack key={`${index}-${subsectionIndex}-${itemIndex}`} justify="space-between" pl={2} py={1}>
+                                                                        <Text fontSize="sm" color={descriptionColor} flex={1}>
+                                                                            {item.name}
+                                                                        </Text>
+                                                                        <Text fontSize="sm" fontWeight="medium" color={textColor} minW="120px" textAlign="right">
+                                                                            {item.is_percentage ? `${item.amount?.toFixed(1)}%` : formatCurrency(item.amount || 0)}
+                                                                        </Text>
+                                                                    </HStack>
+                                                                ))}
+                                                            </VStack>
+                                                        )}
+                                                    </Box>
+                                                ))}
+                                            </VStack>
+                                        )}
                                     </Box>
-                                ))}
+                                )})}
                             </VStack>
                         )}
 

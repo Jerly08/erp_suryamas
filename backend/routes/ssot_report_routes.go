@@ -82,6 +82,7 @@ func SetupSSOTReportRoutes(
 	// 📊 Balance Sheet (integrated with SSOT journal)
 	ssotBalanceSheetController := controllers.NewSSOTBalanceSheetController(db)
 	ssotReportsGroup.GET("/balance-sheet", ssotBalanceSheetController.GenerateSSOTBalanceSheet)
+	ssotReportsGroup.GET("/balance-sheet/archive", ssotBalanceSheetController.GetArchivedSSOTBalanceSheet)
 	ssotReportsGroup.GET("/balance-sheet/account-details", ssotBalanceSheetController.GetSSOTBalanceSheetAccountDetails)
 	ssotReportsGroup.GET("/balance-sheet/validate", ssotBalanceSheetController.ValidateSSOTBalanceSheet)
 	ssotReportsGroup.GET("/balance-sheet/comparison", ssotBalanceSheetController.GetSSOTBalanceSheetComparison)

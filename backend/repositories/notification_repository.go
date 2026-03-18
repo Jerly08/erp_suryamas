@@ -26,7 +26,7 @@ func (r *NotificationRepository) GetUserNotifications(userID uint, page, limit i
 	var total int64
 
 	query := r.db.Model(&models.Notification{}).Where("user_id = ?", userID)
-	
+
 	if onlyUnread {
 		query = query.Where("is_read = ?", false)
 	}
@@ -76,8 +76,8 @@ func (r *NotificationRepository) MarkAsRead(notificationID, userID uint) error {
 	return r.db.Model(&models.Notification{}).
 		Where("id = ? AND user_id = ?", notificationID, userID).
 		Updates(map[string]interface{}{
-			"is_read":  true,
-			"read_at":  time.Now(),
+			"is_read": true,
+			"read_at": time.Now(),
 		}).Error
 }
 
@@ -86,8 +86,8 @@ func (r *NotificationRepository) MarkAllAsRead(userID uint) error {
 	return r.db.Model(&models.Notification{}).
 		Where("user_id = ? AND is_read = ?", userID, false).
 		Updates(map[string]interface{}{
-			"is_read":  true,
-			"read_at":  time.Now(),
+			"is_read": true,
+			"read_at": time.Now(),
 		}).Error
 }
 
@@ -97,6 +97,21 @@ func (r *NotificationRepository) GetUnreadCount(userID uint) (int64, error) {
 	err := r.db.Model(&models.Notification{}).
 		Where("user_id = ? AND is_read = ?", userID, false).
 		Count(&count).Error
+	return count, err
+}
+
+// GetUnreadCountByTypes gets unread notification count for a user filtered by one or more types
+func (r *NotificationRepository) GetUnreadCountByTypes(userID uint, notificationTypes []string) (int64, error) {
+	var count int64
+
+	query := r.db.Model(&models.Notification{}).
+		Where("user_id = ? AND is_read = ?", userID, false)
+
+	if len(notificationTypes) > 0 {
+		query = query.Where("type IN ?", notificationTypes)
+	}
+
+	err := query.Count(&count).Error
 	return count, err
 }
 
@@ -172,9 +187,9 @@ func (r *NotificationRepository) GetNotificationsByPriority(userID uint, priorit
 // GetRecentNotifications gets recent notifications (last 24 hours)
 func (r *NotificationRepository) GetRecentNotifications(userID uint, limit int) ([]models.Notification, error) {
 	var notifications []models.Notification
-	
+
 	since := time.Now().Add(-24 * time.Hour)
-	
+
 	err := r.db.Where("user_id = ? AND created_at >= ?", userID, since).
 		Order("created_at DESC").
 		Limit(limit).
@@ -188,7 +203,7 @@ func (r *NotificationRepository) UpdateReadStatus(notificationIDs []uint, userID
 	updates := map[string]interface{}{
 		"is_read": isRead,
 	}
-	
+
 	if isRead {
 		updates["read_at"] = time.Now()
 	} else {
@@ -203,11 +218,11 @@ func (r *NotificationRepository) UpdateReadStatus(notificationIDs []uint, userID
 // GetNotificationsGroupedByType gets notifications grouped by type
 func (r *NotificationRepository) GetNotificationsGroupedByType(userID uint) (map[string][]models.Notification, error) {
 	var notifications []models.Notification
-	
+
 	err := r.db.Where("user_id = ?", userID).
 		Order("type, created_at DESC").
 		Find(&notifications).Error
-	
+
 	if err != nil {
 		return nil, err
 	}
@@ -219,4 +234,29 @@ func (r *NotificationRepository) GetNotificationsGroupedByType(userID uint) (map
 	}
 
 	return grouped, nil
+}
+
+// GetNotificationsByTypes gets notifications filtered by multiple types with global sorting and pagination
+func (r *NotificationRepository) GetNotificationsByTypes(userID uint, notificationTypes []string, page, limit int) ([]models.Notification, int64, error) {
+	var notifications []models.Notification
+	var total int64
+
+	query := r.db.Model(&models.Notification{}).
+		Where("user_id = ?", userID)
+
+	if len(notificationTypes) > 0 {
+		query = query.Where("type IN ?", notificationTypes)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * limit
+	err := query.Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&notifications).Error
+
+	return notifications, total, err
 }

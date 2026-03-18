@@ -28,6 +28,11 @@ class PeriodClosingService {
     return getAuthHeaders();
   }
 
+  private parseDateOnly(value: string): Date {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, (month || 1) - 1, day || 1);
+  }
+
   /**
    * Quick check apakah sebuah tanggal sudah masuk periode yang ditutup.
    * Digunakan untuk validasi form (misalnya payment) sebelum kirim request berat.
@@ -92,7 +97,7 @@ class PeriodClosingService {
    */
   private mapToFilterOptions(periods: ClosedPeriod[]): PeriodFilterOption[] {
     return periods
-      .sort((a, b) => new Date(b.end_date).getTime() - new Date(a.end_date).getTime())
+      .sort((a, b) => this.parseDateOnly(b.end_date).getTime() - this.parseDateOnly(a.end_date).getTime())
       .map(period => ({
         value: period.end_date,
         label: this.formatPeriodLabel(period),
@@ -106,7 +111,7 @@ class PeriodClosingService {
    * Example: "31 Des 2026 - Fiscal Year-End Closing 2026"
    */
   private formatPeriodLabel(period: ClosedPeriod): string {
-    const endDate = new Date(period.end_date).toLocaleDateString('id-ID', {
+    const endDate = this.parseDateOnly(period.end_date).toLocaleDateString('id-ID', {
       day: '2-digit',
       month: 'short',
       year: 'numeric'
@@ -120,7 +125,7 @@ class PeriodClosingService {
    */
   private getPeriodGroup(period: ClosedPeriod): string {
     const currentYear = new Date().getFullYear();
-    const periodYear = new Date(period.end_date).getFullYear();
+    const periodYear = this.parseDateOnly(period.end_date).getFullYear();
 
     if (periodYear === currentYear) {
       return 'Current Year';
@@ -164,12 +169,17 @@ class PeriodClosingService {
   /**
    * Validate period data structure
    */
-  validatePeriod(period: any): period is ClosedPeriod {
+  validatePeriod(period: unknown): period is ClosedPeriod {
+    if (!period || typeof period !== 'object') {
+      return false;
+    }
+
+    const candidate = period as Partial<ClosedPeriod>;
     return (
-      typeof period.id === 'number' &&
-      typeof period.end_date === 'string' &&
-      typeof period.description === 'string' &&
-      /^\d{4}-\d{2}-\d{2}$/.test(period.end_date)
+      typeof candidate.id === 'number' &&
+      typeof candidate.end_date === 'string' &&
+      typeof candidate.description === 'string' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(candidate.end_date)
     );
   }
 

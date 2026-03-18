@@ -13,7 +13,7 @@ import (
 )
 
 type NotificationHandler struct {
-	notificationService   *services.NotificationService
+	notificationService    *services.NotificationService
 	stockMonitoringService *services.StockMonitoringService
 }
 
@@ -22,6 +22,12 @@ func NewNotificationHandler(notificationService *services.NotificationService, s
 		notificationService:    notificationService,
 		stockMonitoringService: stockMonitoringService,
 	}
+}
+
+var approvalNotificationTypes = []string{
+	models.NotificationTypeApprovalPending,
+	models.NotificationTypeApprovalApproved,
+	models.NotificationTypeApprovalRejected,
 }
 
 // GetNotifications gets user notifications
@@ -35,7 +41,7 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 
 	// Proactively run minimum stock check so low-stock notifications appear without manual triggers
 	h.runAutoStockCheck(c)
-	
+
 	page := 1
 	limit := 20
 	onlyUnread := false
@@ -56,7 +62,15 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 		onlyUnread = true
 	}
 
-	notifications, total, err := h.notificationService.GetUserNotifications(userID, page, limit, onlyUnread)
+	notificationTypes := parseNotificationTypes(c)
+
+	var notifications []models.Notification
+	var total int64
+	if len(notificationTypes) > 0 {
+		notifications, total, err = h.notificationService.GetNotificationsByTypes(userID, notificationTypes, page, limit)
+	} else {
+		notifications, total, err = h.notificationService.GetUserNotifications(userID, page, limit, onlyUnread)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -64,9 +78,39 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"notifications": notifications,
-		"total": total,
-		"page": page,
-		"limit": limit,
+		"total":         total,
+		"page":          page,
+		"limit":         limit,
+	})
+}
+
+// GetNotificationSummary gets grouped unread counts for notification badges
+// GET /api/notifications/summary
+func (h *NotificationHandler) GetNotificationSummary(c *gin.Context) {
+	userID, err := utils.GetUserIDFromToken(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
+		return
+	}
+
+	h.runAutoStockCheck(c)
+
+	summary, err := h.notificationService.GetNotificationSummary(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	role, _ := utils.GetUserRoleFromToken(c)
+	role = strings.ToLower(role)
+	canViewStock := role == "admin" || role == "inventory_manager" || role == "director"
+	if !canViewStock {
+		summary["stock_unread"] = 0
+		summary["total_unread"] = summary["approval_unread"]
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"summary": summary,
 	})
 }
 
@@ -78,7 +122,7 @@ func (h *NotificationHandler) MarkNotificationAsRead(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	notificationID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid notification ID"})
@@ -104,7 +148,7 @@ func (h *NotificationHandler) MarkAllNotificationsAsRead(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	err = h.notificationService.MarkAllAsRead(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -127,13 +171,20 @@ func (h *NotificationHandler) GetUnreadCount(c *gin.Context) {
 
 	// Ensure stock alerts are created before counting
 	h.runAutoStockCheck(c)
-	
-	count, err := h.notificationService.GetUnreadCount(userID)
+
+	notificationTypes := parseNotificationTypes(c)
+
+	var count int64
+	if len(notificationTypes) > 0 {
+		count, err = h.notificationService.GetUnreadCountByTypes(userID, notificationTypes)
+	} else {
+		count, err = h.notificationService.GetUnreadCount(userID)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"count": count,
 	})
@@ -147,7 +198,7 @@ func (h *NotificationHandler) DeleteNotification(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	notificationID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid notification ID"})
@@ -177,7 +228,7 @@ func (h *NotificationHandler) GetNotificationsByType(c *gin.Context) {
 
 	// If requesting stock-related notifications, proactively run the stock check
 	h.runAutoStockCheck(c)
-	
+
 	page := 1
 	limit := 20
 
@@ -201,10 +252,10 @@ func (h *NotificationHandler) GetNotificationsByType(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"notifications": notifications,
-		"total": total,
-		"page": page,
-		"limit": limit,
-		"type": notificationType,
+		"total":         total,
+		"page":          page,
+		"limit":         limit,
+		"type":          notificationType,
 	})
 }
 
@@ -219,6 +270,8 @@ func (h *NotificationHandler) runAutoStockCheck(c *gin.Context) {
 	case "admin", "inventory_manager", "director":
 		if h.stockMonitoringService != nil {
 			_ = h.stockMonitoringService.CheckMinimumStock()
+			_ = h.stockMonitoringService.CheckOutOfStock()
+			_ = h.stockMonitoringService.CheckReorderLevel()
 			_ = h.stockMonitoringService.ResolveStockAlerts()
 		}
 	}
@@ -232,7 +285,7 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	if userRole != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only admin can create notifications"})
 		return
@@ -272,7 +325,7 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "Notification created successfully",
+		"message":      "Notification created successfully",
 		"notification": notification,
 	})
 }
@@ -285,7 +338,7 @@ func (h *NotificationHandler) GetApprovalNotifications(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-	
+
 	page := 1
 	limit := 20
 
@@ -301,40 +354,49 @@ func (h *NotificationHandler) GetApprovalNotifications(c *gin.Context) {
 		}
 	}
 
-	// Get approval notifications
-	approvalTypes := []string{
-		models.NotificationTypeApprovalPending,
-		models.NotificationTypeApprovalApproved,
-		models.NotificationTypeApprovalRejected,
+	paginatedNotifications, totalCount, err := h.notificationService.GetNotificationsByTypes(userID, approvalNotificationTypes, page, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-
-	allNotifications := []models.Notification{}
-	totalCount := int64(0)
-
-	for _, notifType := range approvalTypes {
-		notifications, total, err := h.notificationService.GetNotificationsByType(userID, notifType, 1, 1000)
-		if err == nil {
-			allNotifications = append(allNotifications, notifications...)
-			totalCount += total
-		}
-	}
-
-	// Apply pagination
-	start := (page - 1) * limit
-	end := start + limit
-	if end > len(allNotifications) {
-		end = len(allNotifications)
-	}
-	if start > len(allNotifications) {
-		start = len(allNotifications)
-	}
-
-	paginatedNotifications := allNotifications[start:end]
 
 	c.JSON(http.StatusOK, gin.H{
 		"notifications": paginatedNotifications,
-		"total": totalCount,
-		"page": page,
-		"limit": limit,
+		"total":         totalCount,
+		"page":          page,
+		"limit":         limit,
 	})
+}
+
+func parseNotificationTypes(c *gin.Context) []string {
+	rawValues := []string{}
+
+	if rawType := c.Query("type"); rawType != "" {
+		rawValues = append(rawValues, rawType)
+	}
+
+	if rawTypes := c.Query("types"); rawTypes != "" {
+		rawValues = append(rawValues, rawTypes)
+	}
+
+	if len(rawValues) == 0 {
+		return nil
+	}
+
+	types := make([]string, 0)
+	for _, raw := range rawValues {
+		for _, part := range strings.Split(raw, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed == "" {
+				continue
+			}
+			types = append(types, trimmed)
+		}
+	}
+
+	if len(types) == 0 {
+		return nil
+	}
+
+	return types
 }

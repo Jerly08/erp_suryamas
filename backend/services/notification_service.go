@@ -38,6 +38,11 @@ func (s *NotificationService) GetNotificationsByType(userID uint, notificationTy
 	return s.notificationRepo.GetNotificationsByType(userID, notificationType, page, limit)
 }
 
+// GetNotificationsByTypes gets notifications by multiple types for a user
+func (s *NotificationService) GetNotificationsByTypes(userID uint, notificationTypes []string, page, limit int) ([]models.Notification, int64, error) {
+	return s.notificationRepo.GetNotificationsByTypes(userID, notificationTypes, page, limit)
+}
+
 // MarkAsRead marks a notification as read
 func (s *NotificationService) MarkAsRead(notificationID, userID uint) error {
 	return s.notificationRepo.MarkAsRead(notificationID, userID)
@@ -51,6 +56,11 @@ func (s *NotificationService) MarkAllAsRead(userID uint) error {
 // GetUnreadCount gets count of unread notifications
 func (s *NotificationService) GetUnreadCount(userID uint) (int64, error) {
 	return s.notificationRepo.GetUnreadCount(userID)
+}
+
+// GetUnreadCountByTypes gets unread notification count filtered by notification types
+func (s *NotificationService) GetUnreadCountByTypes(userID uint, notificationTypes []string) (int64, error) {
+	return s.notificationRepo.GetUnreadCountByTypes(userID, notificationTypes)
 }
 
 // DeleteNotification deletes a notification
@@ -136,7 +146,7 @@ func (s *NotificationService) getApproversForPurchase(purchase *models.Purchase)
 	// This method is deprecated - use SmartNotificationService.getEligibleUsers instead
 	// Keeping for backward compatibility
 	var users []models.User
-	
+
 	if purchase.TotalAmount <= 25000000 {
 		// Get finance users from database
 		s.db.Where("LOWER(role) = LOWER(?) AND is_active = ?", "finance", true).Find(&users)
@@ -144,12 +154,12 @@ func (s *NotificationService) getApproversForPurchase(purchase *models.Purchase)
 		// Get director users from database
 		s.db.Where("LOWER(role) = LOWER(?) AND is_active = ?", "director", true).Find(&users)
 	}
-	
+
 	var approvers []uint
 	for _, user := range users {
 		approvers = append(approvers, user.ID)
 	}
-	
+
 	return approvers
 }
 
@@ -157,7 +167,7 @@ func (s *NotificationService) getApproversForPurchase(purchase *models.Purchase)
 func (s *NotificationService) getFinanceUserIDs() []uint {
 	var users []models.User
 	s.db.Where("LOWER(role) = LOWER(?) AND is_active = ?", "finance", true).Find(&users)
-	
+
 	var ids []uint
 	for _, user := range users {
 		ids = append(ids, user.ID)
@@ -169,7 +179,7 @@ func (s *NotificationService) getFinanceUserIDs() []uint {
 func (s *NotificationService) getDirectorUserIDs() []uint {
 	var users []models.User
 	s.db.Where("LOWER(role) = LOWER(?) AND is_active = ?", "director", true).Find(&users)
-	
+
 	var ids []uint
 	for _, user := range users {
 		ids = append(ids, user.ID)
@@ -186,29 +196,70 @@ func (s *NotificationService) CleanupOldNotifications(daysOld int) error {
 // GetNotificationStats gets notification statistics
 func (s *NotificationService) GetNotificationStats(userID uint) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
-	
+
 	// Get total notifications
 	total, err := s.notificationRepo.GetTotalCount(userID)
 	if err != nil {
 		return nil, err
 	}
 	stats["total_notifications"] = total
-	
+
 	// Get unread count
 	unread, err := s.GetUnreadCount(userID)
 	if err != nil {
 		return nil, err
 	}
 	stats["unread_notifications"] = unread
-	
+
 	// Get count by type
 	approvalPending, _ := s.notificationRepo.GetCountByType(userID, models.NotificationTypeApprovalPending)
 	approvalApproved, _ := s.notificationRepo.GetCountByType(userID, models.NotificationTypeApprovalApproved)
 	approvalRejected, _ := s.notificationRepo.GetCountByType(userID, models.NotificationTypeApprovalRejected)
-	
+
 	stats["approval_pending"] = approvalPending
 	stats["approval_approved"] = approvalApproved
 	stats["approval_rejected"] = approvalRejected
-	
+
 	return stats, nil
+}
+
+// GetNotificationSummary gets unread notification counts grouped for UI badges
+func (s *NotificationService) GetNotificationSummary(userID uint) (map[string]int64, error) {
+	summary := map[string]int64{
+		"approval_unread": 0,
+		"stock_unread":    0,
+		"total_unread":    0,
+	}
+
+	approvalTypes := []string{
+		models.NotificationTypeApprovalPending,
+		models.NotificationTypeApprovalApproved,
+		models.NotificationTypeApprovalRejected,
+	}
+	stockTypes := []string{
+		models.NotificationTypeLowStock,
+		models.NotificationTypeReorderAlert,
+		models.NotificationTypeStockOut,
+	}
+
+	approvalUnread, err := s.GetUnreadCountByTypes(userID, approvalTypes)
+	if err != nil {
+		return nil, err
+	}
+
+	stockUnread, err := s.GetUnreadCountByTypes(userID, stockTypes)
+	if err != nil {
+		return nil, err
+	}
+
+	totalUnread, err := s.GetUnreadCount(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	summary["approval_unread"] = approvalUnread
+	summary["stock_unread"] = stockUnread
+	summary["total_unread"] = totalUnread
+
+	return summary, nil
 }

@@ -537,6 +537,44 @@ func (s *CashBankService) resolveForexAccountID(tx *gorm.DB, isGain bool) (uint6
 	return 0, fmt.Errorf("failed to resolve forex %s account from COA. Expected account code %s or matching other income/expense leaf account", accountKind, expectedCodes)
 }
 
+func (s *CashBankService) validateCounterAccountWithTx(tx *gorm.DB, counterAccountID uint, cashBankAccountID uint, allowedTypes ...string) (*models.Account, error) {
+	var account models.Account
+	if err := tx.Where("id = ? AND deleted_at IS NULL", counterAccountID).First(&account).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("counter account %d not found", counterAccountID)
+		}
+		return nil, fmt.Errorf("failed to load counter account %d: %w", counterAccountID, err)
+	}
+
+	if !account.IsActive {
+		return nil, fmt.Errorf("counter account %s is inactive", account.Code)
+	}
+	if account.IsHeader {
+		return nil, fmt.Errorf("counter account %s is a header account and cannot be posted", account.Code)
+	}
+	if cashBankAccountID > 0 && account.ID == cashBankAccountID {
+		return nil, fmt.Errorf("counter account %s must be different from the cash/bank GL account", account.Code)
+	}
+	var linkedCashBank models.CashBank
+	if err := tx.Where("account_id = ? AND deleted_at IS NULL", counterAccountID).First(&linkedCashBank).Error; err == nil {
+		return nil, fmt.Errorf("counter account %s is linked to cash/bank account %s. Use transfer instead of direct deposit/withdrawal", account.Code, linkedCashBank.Name)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to validate cash/bank link for counter account %s: %w", account.Code, err)
+	}
+
+	if len(allowedTypes) > 0 {
+		allowed := make(map[string]bool, len(allowedTypes))
+		for _, accountType := range allowedTypes {
+			allowed[strings.ToUpper(accountType)] = true
+		}
+		if !allowed[strings.ToUpper(account.Type)] {
+			return nil, fmt.Errorf("counter account %s has invalid type %s", account.Code, account.Type)
+		}
+	}
+
+	return &account, nil
+}
+
 func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
 	tx *gorm.DB,
 	transfer *CashBankTransfer,
@@ -914,6 +952,13 @@ func (s *CashBankService) ProcessDeposit(request DepositRequest, userID uint) (*
 		}
 	}
 
+	if request.SourceAccountID != nil {
+		if _, err := s.validateCounterAccountWithTx(tx, *request.SourceAccountID, account.AccountID, models.AccountTypeRevenue, models.AccountTypeEquity, models.AccountTypeLiability); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
 	bookAmountIDR, appliedRate, err := s.calculateIncreaseBookAmount(account, request.Amount, request.ExchangeRate)
 	if err != nil {
 		tx.Rollback()
@@ -1010,6 +1055,13 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 		if err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to reload account after integrity fix: %v", err)
+		}
+	}
+
+	if request.TargetAccountID != nil {
+		if _, err := s.validateCounterAccountWithTx(tx, *request.TargetAccountID, account.AccountID, models.AccountTypeExpense, models.AccountTypeLiability, models.AccountTypeAsset); err != nil {
+			tx.Rollback()
+			return nil, err
 		}
 	}
 

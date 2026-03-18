@@ -24,6 +24,7 @@ import {
   useToast,
   Wrap,
   WrapItem,
+  useColorModeValue,
 } from "@chakra-ui/react";
 import { useForm } from "react-hook-form";
 import { useAuth } from "@/contexts/AuthContext";
@@ -80,6 +81,23 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   const [detailedSale, setDetailedSale] = useState<Sale | null>(null);
   const [loadingSaleDetail, setLoadingSaleDetail] = useState(false);
   const toast = useToast();
+  const modalBg = useColorModeValue("white", "gray.800");
+  const modalHeaderBg = useColorModeValue("gray.50", "gray.700");
+  const modalBorderColor = useColorModeValue("gray.200", "whiteAlpha.200");
+  const summaryBg = useColorModeValue("gray.50", "whiteAlpha.100");
+  const allocationBg = useColorModeValue("orange.50", "rgba(237, 137, 54, 0.12)");
+  const allocationBorder = useColorModeValue("orange.300", "orange.500");
+  const allocationCardBg = useColorModeValue("white", "whiteAlpha.50");
+  const allocationCardBorder = useColorModeValue("orange.100", "orange.500");
+  const historyBg = useColorModeValue("blue.50", "rgba(66, 153, 225, 0.12)");
+  const historyBorder = useColorModeValue("blue.400", "blue.500");
+  const textColor = useColorModeValue("gray.700", "whiteAlpha.900");
+  const headingColor = useColorModeValue("gray.800", "whiteAlpha.900");
+  const mutedTextColor = useColorModeValue("gray.600", "whiteAlpha.700");
+  const inputBg = useColorModeValue("white", "whiteAlpha.50");
+  const inputBorderColor = useColorModeValue("gray.300", "whiteAlpha.300");
+  const inputHoverBorder = useColorModeValue("gray.400", "whiteAlpha.500");
+  const dividerColor = useColorModeValue("gray.200", "whiteAlpha.200");
 
   const {
     register,
@@ -117,7 +135,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   const endingBookBalanceIDR = currentBookBalanceIDR + bankBookAmountIDR;
   const saleHistoricalRate =
     saleCurrency === "USD" && (sale?.exchange_rate || 0) > 0
-      ? sale.exchange_rate
+      ? sale?.exchange_rate || 1
       : 1;
   const receivableSettlementBookIDR =
     saleCurrency === "USD" && appliedExchangeRate > 0
@@ -640,54 +658,56 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   return (
     <Modal isOpen={isOpen} onClose={handleClose} size="lg">
       <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>{t("purchases.payment.title")}</ModalHeader>
+      <ModalContent bg={modalBg} border="1px solid" borderColor={modalBorderColor}>
+        <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor} color={headingColor}>
+          {t("purchases.payment.title")}
+        </ModalHeader>
         <ModalCloseButton />
 
         <form onSubmit={handleSubmit(onSubmit)}>
           <ModalBody>
             {sale && (
-              <Box mb={6} p={4} bg="gray.50" borderRadius="md">
+              <Box mb={6} p={4} bg={summaryBg} borderRadius="md" border="1px solid" borderColor={modalBorderColor}>
                 <VStack align="stretch" spacing={2}>
                   <HStack justify="space-between">
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color={mutedTextColor}>
                       {t("sales.form.code")}:
                     </Text>
-                    <Text fontWeight="medium">{sale.code}</Text>
+                    <Text fontWeight="medium" color={textColor}>{sale.code}</Text>
                   </HStack>
                   <HStack justify="space-between">
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color={mutedTextColor}>
                       {t("sales.invoice")}:
                     </Text>
-                    <Text fontWeight="medium">
+                    <Text fontWeight="medium" color={textColor}>
                       {sale.invoice_number || "N/A"}
                     </Text>
                   </HStack>
                   <HStack justify="space-between">
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color={mutedTextColor}>
                       {t("sales.customer")}:
                     </Text>
-                    <Text fontWeight="medium">
+                    <Text fontWeight="medium" color={textColor}>
                       {sale.customer?.name || "N/A"}
                     </Text>
                   </HStack>
-                  <Divider />
+                  <Divider borderColor={dividerColor} />
                   <HStack justify="space-between">
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color={mutedTextColor}>
                       {t("purchases.payment.totalAmount")}:
                     </Text>
-                    <Text fontWeight="bold">
+                    <Text fontWeight="bold" color={textColor}>
                       {salesService.formatCurrency(sale.total_amount)}
                     </Text>
                   </HStack>
                   <HStack justify="space-between">
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color={mutedTextColor}>
                       {t("purchases.payment.paidAmount")}:
                     </Text>
-                    <Text>{salesService.formatCurrency(sale.paid_amount)}</Text>
+                    <Text color={textColor}>{salesService.formatCurrency(sale.paid_amount)}</Text>
                   </HStack>
                   <HStack justify="space-between">
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color={mutedTextColor}>
                       {t("purchases.payment.outstanding")}:
                     </Text>
                     <Text fontWeight="bold" color="orange.600">
@@ -707,15 +727,15 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
               <Box
                 mb={4}
                 p={4}
-                bg="orange.50"
+                bg={allocationBg}
                 borderRadius="md"
                 borderLeft="4px"
-                borderColor="orange.300"
+                borderColor={allocationBorder}
               >
                 <Text fontSize="sm" fontWeight="bold" color="orange.700" mb={2}>
                   Auto-allocation ke termin invoice
                 </Text>
-                <Text fontSize="sm" color="gray.700" mb={3}>
+                <Text fontSize="sm" color={textColor} mb={3}>
                   Payment yang direkam akan otomatis masuk ke termin paling awal
                   yang masih outstanding. Jurnal AR tetap ke invoice total, tapi
                   jadwal termin di bawah ini akan ikut diperbarui.
@@ -726,43 +746,43 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                       key={`${schedule.sequence}-${schedule.due_date}`}
                       p={3}
                       borderRadius="md"
-                      bg="white"
+                      bg={allocationCardBg}
                       border="1px solid"
-                      borderColor="orange.100"
+                      borderColor={allocationCardBorder}
                     >
                       <HStack justify="space-between" align="start">
                         <Box>
-                          <Text fontSize="sm" fontWeight="semibold">
+                          <Text fontSize="sm" fontWeight="semibold" color={headingColor}>
                             Termin {schedule.sequence}
                           </Text>
-                          <Text fontSize="xs" color="gray.600">
+                          <Text fontSize="xs" color={mutedTextColor}>
                             Jatuh tempo:{" "}
                             {salesService.formatDate(schedule.due_date)}
                           </Text>
                           {schedule.description && (
-                            <Text fontSize="xs" color="gray.600">
+                            <Text fontSize="xs" color={mutedTextColor}>
                               {schedule.description}
                             </Text>
                           )}
                         </Box>
                         <Box textAlign="right">
-                          <Text fontSize="sm" fontWeight="semibold">
+                          <Text fontSize="sm" fontWeight="semibold" color={headingColor}>
                             {salesService.formatCurrency(schedule.amount)}
                           </Text>
-                          <Text fontSize="xs" color="gray.600">
+                          <Text fontSize="xs" color={mutedTextColor}>
                             {schedule.percentage}% dari invoice
                           </Text>
                         </Box>
                       </HStack>
 
                       <HStack mt={2} justify="space-between" fontSize="sm">
-                        <Text color="gray.600">
+                        <Text color={mutedTextColor}>
                           Sudah teralokasi:{" "}
                           {salesService.formatCurrency(
                             schedule.current_paid || 0,
                           )}
                         </Text>
-                        <Text color="gray.600">
+                        <Text color={mutedTextColor}>
                           Outstanding:{" "}
                           {salesService.formatCurrency(
                             schedule.current_outstanding || 0,
@@ -785,7 +805,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                             ? "green.600"
                             : schedule.projected_status === "PARTIAL"
                               ? "orange.600"
-                              : "gray.700"
+                              : textColor
                         }
                       >
                         Status setelah simpan: {schedule.projected_status} | Sisa
@@ -805,10 +825,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
               <Box
                 mb={4}
                 p={4}
-                bg="blue.50"
+                bg={historyBg}
                 borderRadius="md"
                 borderLeft="4px"
-                borderColor="blue.400"
+                borderColor={historyBorder}
               >
                 <Text fontSize="sm" fontWeight="bold" color="blue.700" mb={2}>
                   📋 {t("purchases.payment.previousPayments")}
@@ -816,7 +836,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                 <VStack spacing={2} align="stretch">
                   {sale.sale_payments.slice(-3).map((payment, index) => (
                     <HStack key={index} justify="space-between" fontSize="sm">
-                      <Text color="gray.600">
+                      <Text color={mutedTextColor}>
                         {salesService.formatDate(payment.date)} •{" "}
                         {payment.method}
                         {payment.reference && ` • Ref: ${payment.reference}`}
@@ -827,7 +847,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                     </HStack>
                   ))}
                   {sale.sale_payments.length > 3 && (
-                    <Text fontSize="xs" color="gray.500" textAlign="center">
+                    <Text fontSize="xs" color={mutedTextColor} textAlign="center">
                       ...{" "}
                       {t("purchases.payment.andMorePayments", {
                         count: sale.sale_payments.length - 3,
@@ -845,6 +865,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                   <Input
                     type="date"
                     max={new Date().toISOString().split("T")[0]} // Prevent future dates
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
                     {...register("date", {
                       required: t("validation.required"),
                       validate: {
@@ -876,6 +900,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                       fontWeight="medium"
                       fontSize="md"
                       pl={8}
+                      bg={inputBg}
+                      color={textColor}
+                      borderColor={inputBorderColor}
+                      _hover={{ borderColor: inputHoverBorder }}
                       {...register("amount", {
                         required: t("validation.required"),
                         min: {
@@ -902,7 +930,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
 
                   {/* Amount Info Display */}
                   {watchAmount > 0 && (
-                    <Text fontSize="sm" color="gray.600" mt={1}>
+                    <Text fontSize="sm" color={mutedTextColor} mt={1}>
                       💰 {t("purchases.payment.payment")}:{" "}
                       <Text as="span" fontWeight="bold" color="green.600">
                         Rp {formatRupiah(watchAmount)}
@@ -932,7 +960,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                   {/* Quick Amount Selection Buttons */}
                   {outstandingTermActions.length > 0 ? (
                     <Box mt={3}>
-                      <Text fontSize="xs" color="gray.600" mb={2}>
+                      <Text fontSize="xs" color={mutedTextColor} mb={2}>
                         Shortcut sesuai termin invoice:
                       </Text>
                       <Wrap spacing={2}>
@@ -964,7 +992,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                           </Button>
                         </WrapItem>
                       </Wrap>
-                      <Text fontSize="xs" color="gray.500" mt={2}>
+                      <Text fontSize="xs" color={mutedTextColor} mt={2}>
                         Klik termin untuk mengisi nominal outstanding termin itu
                         secara otomatis. Pilih full payment jika customer melunasi
                         seluruh invoice sekaligus.
@@ -1060,6 +1088,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                 <FormControl isRequired isInvalid={!!errors.method}>
                   <FormLabel>{t("purchases.payment.paymentMethod")}</FormLabel>
                   <Select
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
                     {...register("method", {
                       required: t("validation.required"),
                     })}
@@ -1088,6 +1120,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                       *
                     </FormLabel>
                     <Select
+                      bg={inputBg}
+                      color={textColor}
+                      borderColor={inputBorderColor}
+                      _hover={{ borderColor: inputHoverBorder }}
                       {...register("account_id", {
                         required:
                           watch("method") === "CASH"
@@ -1209,7 +1245,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                       })()}
 
                     {isUsdAccount && selectedAccount && watchAmount > 0 && (
-                      <Box mt={2} p={3} borderRadius="md" bg="blue.50">
+                      <Box mt={2} p={3} borderRadius="md" bg={historyBg} border="1px solid" borderColor={historyBorder}>
                         <Text
                           fontSize="sm"
                           color="blue.700"
@@ -1217,19 +1253,19 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                         >
                           Ringkasan payment valas
                         </Text>
-                        <Text fontSize="sm" color="gray.700" mt={1}>
+                        <Text fontSize="sm" color={textColor} mt={1}>
                           Piutang dilunasi:{" "}
                           {salesService.formatCurrency(watchAmount)}
                         </Text>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           USD native masuk:{" "}
                           {formatAccountBalance(incomingNativeAmount, "USD")}
                         </Text>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           Nilai buku saat ini:{" "}
                           {salesService.formatCurrency(currentBookBalanceIDR)}
                         </Text>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           Nilai buku setelah payment:{" "}
                           {salesService.formatCurrency(endingBookBalanceIDR)}
                         </Text>
@@ -1275,7 +1311,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
               </HStack>
 
               {requiresExchangeRate && (
-                <Box p={4} borderRadius="md" bg="blue.50">
+                <Box p={4} borderRadius="md" bg={historyBg} border="1px solid" borderColor={historyBorder}>
                   <VStack spacing={3} align="stretch">
                     <FormControl isRequired isInvalid={!!errors.exchange_rate}>
                       <FormLabel>Kurs transaksi (IDR per USD) *</FormLabel>
@@ -1284,6 +1320,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                         step="1"
                         min="0"
                         placeholder="Contoh: 16880"
+                        bg={inputBg}
+                        color={textColor}
+                        borderColor={inputBorderColor}
+                        _hover={{ borderColor: inputHoverBorder }}
                         {...register("exchange_rate", {
                           required:
                             "Kurs transaksi wajib diisi untuk rekening USD.",
@@ -1316,29 +1356,29 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                     )}
 
                     {loadingReferenceRate && (
-                      <Text fontSize="sm" color="gray.600">
+                      <Text fontSize="sm" color={mutedTextColor}>
                         Mengambil kurs referensi USD/IDR...
                       </Text>
                     )}
 
                     {watchExchangeRate > 0 && (
                       <>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           USD yang diterima customer payment ini:{" "}
                           {formatAccountBalance(incomingNativeAmount, "USD")}
                         </Text>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           Nilai buku bank yang diposting:{" "}
                           {salesService.formatCurrency(bankBookAmountIDR)}
                         </Text>
-                        <Text fontSize="sm" color="gray.700">
+                        <Text fontSize="sm" color={textColor}>
                           Nilai buku piutang historis yang ditutup:{" "}
                           {salesService.formatCurrency(
                             receivableSettlementBookIDR,
                           )}
                         </Text>
                         {saleCurrency === "USD" && saleHistoricalRate > 0 && (
-                          <Text fontSize="sm" color="gray.700">
+                          <Text fontSize="sm" color={textColor}>
                             Kurs invoice USD tersimpan: 1 USD ={" "}
                             {salesService.formatCurrency(saleHistoricalRate)}
                           </Text>
@@ -1372,6 +1412,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                 <FormLabel>{t("purchases.payment.reference")}</FormLabel>
                 <Input
                   placeholder={t("common.placeholders.referenceNumber")}
+                  bg={inputBg}
+                  color={textColor}
+                  borderColor={inputBorderColor}
+                  _hover={{ borderColor: inputHoverBorder }}
                   {...register("reference")}
                 />
               </FormControl>
@@ -1380,13 +1424,17 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                 <FormLabel>{t("purchases.payment.notes")}</FormLabel>
                 <Textarea
                   placeholder={t("purchases.payment.additionalNotes")}
+                  bg={inputBg}
+                  color={textColor}
+                  borderColor={inputBorderColor}
+                  _hover={{ borderColor: inputHoverBorder }}
                   {...register("notes")}
                 />
               </FormControl>
             </VStack>
           </ModalBody>
 
-          <ModalFooter>
+          <ModalFooter borderTopWidth="1px" borderColor={modalBorderColor}>
             <Button variant="ghost" mr={3} onClick={handleClose}>
               {t("common.cancel")}
             </Button>

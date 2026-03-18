@@ -533,36 +533,12 @@ func (pc *ProductController) UploadProductImage(c *gin.Context) {
 		return
 	}
 
-	// Validate file type
-	allowedTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/jpg":  true,
-		"image/png":  true,
-		"image/gif":  true,
-	}
-
-	if !allowedTypes[file.Header.Get("Content-Type")] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file type. Only JPEG, PNG, and GIF are allowed"})
-		return
-	}
-
-	// Validate file size (max 5MB)
-	maxSize := int64(5 * 1024 * 1024) // 5MB
-	if file.Size > maxSize {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File size too large. Maximum 5MB allowed"})
-		return
-	}
-
-	// Create uploads directory if it doesn't exist
 	uploadPath := "./uploads/products/"
-	if err := os.MkdirAll(uploadPath, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+	filename, filePath, err := prepareValidatedImageUpload(file, uint(productID), uploadPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Generate unique filename
-	filename := fmt.Sprintf("%d_%d_%s", productID, time.Now().Unix(), file.Filename)
-	filePath := uploadPath + filename
 
 	// Store old image path for cleanup if needed
 	oldImagePath := product.ImagePath

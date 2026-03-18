@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +20,26 @@ type AssetController struct {
 	assetService    services.AssetServiceInterface
 	db              *gorm.DB
 	assetJournalSvc *services.AssetJournalServiceSSOT
+}
+
+type DepreciationHistoryItem struct {
+	Period            string    `json:"period"`
+	EntryCount        int64     `json:"entry_count"`
+	TotalDepreciation float64   `json:"total_depreciation"`
+	LastRunAt         time.Time `json:"last_run_at"`
+	Status            string    `json:"status"`
+}
+
+type DepreciationHistoryDetailItem struct {
+	JournalID         uint      `json:"journal_id"`
+	EntryNumber       string    `json:"entry_number"`
+	AssetID           uint      `json:"asset_id"`
+	AssetCode         string    `json:"asset_code"`
+	AssetName         string    `json:"asset_name"`
+	EntryDate         time.Time `json:"entry_date"`
+	Reference         string    `json:"reference"`
+	DepreciationAmount float64  `json:"depreciation_amount"`
+	Status            string    `json:"status"`
 }
 
 type AssetCreateRequest struct {
@@ -495,6 +515,94 @@ func (ac *AssetController) GetDepreciationReport(c *gin.Context) {
 	})
 }
 
+// GetDepreciationHistory returns recent monthly depreciation runs grouped by period.
+func (ac *AssetController) GetDepreciationHistory(c *gin.Context) {
+	limit := 6
+	if limitStr := strings.TrimSpace(c.DefaultQuery("limit", "6")); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 24 {
+			limit = parsed
+		}
+	}
+
+	var items []DepreciationHistoryItem
+	err := ac.db.Raw(`
+		SELECT
+			COALESCE(substring(reference from 'DEP-(\d{4}-\d{2})'), to_char(entry_date, 'YYYY-MM')) AS period,
+			COUNT(*) AS entry_count,
+			COALESCE(SUM(total_debit), 0) AS total_depreciation,
+			MAX(created_at) AS last_run_at,
+			MIN(status) AS status
+		FROM unified_journal_ledger
+		WHERE source_type = ?
+			AND deleted_at IS NULL
+			AND reference IS NOT NULL
+		GROUP BY COALESCE(substring(reference from 'DEP-(\d{4}-\d{2})'), to_char(entry_date, 'YYYY-MM'))
+		ORDER BY period DESC
+		LIMIT ?
+	`, models.SSOTSourceTypeDepreciation, limit).Scan(&items).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to retrieve depreciation history",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Depreciation history retrieved successfully",
+		"data":    items,
+		"count":   len(items),
+	})
+}
+
+// GetDepreciationHistoryDetail returns the asset-level journals for a depreciation period.
+func (ac *AssetController) GetDepreciationHistoryDetail(c *gin.Context) {
+	period := strings.TrimSpace(c.Param("period"))
+	if matched, _ := regexp.MatchString(`^\d{4}-\d{2}$`, period); !matched {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid period format. Use YYYY-MM."})
+		return
+	}
+
+	var items []DepreciationHistoryDetailItem
+	err := ac.db.Raw(`
+		SELECT
+			ujl.id AS journal_id,
+			ujl.entry_number,
+			COALESCE(ujl.source_id, 0) AS asset_id,
+			COALESCE(ujl.source_code, '') AS asset_code,
+			COALESCE(a.name, '') AS asset_name,
+			ujl.entry_date,
+			ujl.reference,
+			COALESCE(ujl.total_debit, 0) AS depreciation_amount,
+			ujl.status
+		FROM unified_journal_ledger ujl
+		LEFT JOIN assets a ON a.id = ujl.source_id
+		WHERE ujl.source_type = ?
+			AND ujl.deleted_at IS NULL
+			AND (
+				ujl.reference LIKE ?
+				OR to_char(ujl.entry_date, 'YYYY-MM') = ?
+			)
+		ORDER BY ujl.entry_date DESC, ujl.source_code ASC, ujl.id DESC
+	`, models.SSOTSourceTypeDepreciation, "%-DEP-"+period, period).Scan(&items).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to retrieve depreciation history detail",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Depreciation history detail retrieved successfully",
+		"data": gin.H{
+			"period":  period,
+			"entries": items,
+		},
+		"count": len(items),
+	})
+}
+
 // GetDepreciationSchedule returns depreciation schedule for a specific asset
 func (ac *AssetController) GetDepreciationSchedule(c *gin.Context) {
 	idStr := c.Param("id")
@@ -611,37 +719,12 @@ func (ac *AssetController) UploadAssetImage(c *gin.Context) {
 		return
 	}
 
-	// Validate file type
-	allowedTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/jpg":  true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
-	}
-
-	if !allowedTypes[file.Header.Get("Content-Type")] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed"})
-		return
-	}
-
-	// Validate file size (max 5MB)
-	maxSize := int64(5 * 1024 * 1024) // 5MB
-	if file.Size > maxSize {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File size too large. Maximum 5MB allowed"})
-		return
-	}
-
-	// Create uploads directory if it doesn't exist
 	uploadPath := "./uploads/assets/"
-	if err := os.MkdirAll(uploadPath, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+	filename, filePath, err := prepareValidatedImageUpload(file, uint(assetID), uploadPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Generate unique filename
-	filename := fmt.Sprintf("%d_%d_%s", assetID, time.Now().Unix(), file.Filename)
-	filePath := uploadPath + filename
 
 	// Save the file
 	if err := c.SaveUploadedFile(file, filePath); err != nil {

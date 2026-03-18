@@ -30,6 +30,12 @@ interface NotificationItem {
   data?: string;
 }
 
+const APPROVAL_NOTIFICATION_TYPES = [
+  'APPROVAL_PENDING',
+  'APPROVAL_APPROVED',
+  'APPROVAL_REJECTED',
+];
+
 const ApprovalNotifications: React.FC = () => {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -47,16 +53,16 @@ const ApprovalNotifications: React.FC = () => {
       setLoading(true);
       const response = await approvalService.getNotifications({ limit: 20, type: 'approval' });
       setNotifications(response.notifications || []);
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle authentication errors gracefully
-      if (error.response?.status === 401) {
+      if (approvalServiceErrorStatus(error) === 401) {
         console.log('Authentication required for notifications');
         setNotifications([]);
         return;
       }
       
       // Handle other errors
-      if (error.response?.status !== 403 && !error.message?.includes('AUTH_SESSION_EXPIRED')) {
+      if (approvalServiceErrorStatus(error) !== 403 && !approvalServiceErrorMessage(error).includes('AUTH_SESSION_EXPIRED')) {
         console.error('Failed to fetch notifications:', error);
       }
       
@@ -68,18 +74,18 @@ const ApprovalNotifications: React.FC = () => {
 
   const fetchUnreadCount = async () => {
     try {
-      const response = await approvalService.getUnreadNotificationCount();
+      const response = await approvalService.getUnreadNotificationCount({ types: APPROVAL_NOTIFICATION_TYPES });
       setUnreadCount(response.count || 0);
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle authentication errors gracefully
-      if (error.response?.status === 401) {
+      if (approvalServiceErrorStatus(error) === 401) {
         console.log('Authentication required for notifications, count reset to 0');
         setUnreadCount(0);
         return;
       }
       
       // Handle other errors but don't spam the console
-      if (error.response?.status !== 403 && !error.message?.includes('AUTH_SESSION_EXPIRED')) {
+      if (approvalServiceErrorStatus(error) !== 403 && !approvalServiceErrorMessage(error).includes('AUTH_SESSION_EXPIRED')) {
         console.error('Failed to fetch unread count:', error);
       }
       
@@ -120,7 +126,7 @@ const ApprovalNotifications: React.FC = () => {
     return date.toLocaleDateString('id-ID', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const formatMessageCurrency = (message: string, data?: any) => {
+  const formatMessageCurrency = (message: string, data?: unknown) => {
     if (!message) return '';
 
     let result = message;
@@ -228,6 +234,21 @@ const ApprovalNotifications: React.FC = () => {
       </MenuList>
     </Menu>
   );
+};
+
+const approvalServiceErrorStatus = (error: unknown) => {
+  if (typeof error === 'object' && error !== null && 'response' in error) {
+    const response = (error as { response?: { status?: number } }).response;
+    return response?.status;
+  }
+  return undefined;
+};
+
+const approvalServiceErrorMessage = (error: unknown) => {
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    return String((error as { message?: unknown }).message ?? '');
+  }
+  return '';
 };
 
 export default ApprovalNotifications;

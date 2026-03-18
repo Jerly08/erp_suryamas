@@ -49,7 +49,7 @@ const addHeader = (doc: jsPDF, title: string, subtitle: string, yStart: number =
 };
 
 const addFooter = (doc: jsPDF) => {
-  const pageCount = doc.getNumberOfPages();
+  const pageCount = (doc as any).getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
     doc.setFontSize(8);
@@ -184,6 +184,7 @@ export const exportGeneralLedgerToPDF = (
   endDate: string
 ): void => {
   const doc = new jsPDF();
+  const isAllAccountsMode = !data.account?.account_code;
 
   const accountLabel = data.account?.account_code ? `${data.account.account_code} - ${data.account.account_name}` : 'Semua Akun';
   let yPos = addHeader(doc, 'Buku Besar', `${accountLabel}\nPeriode: ${formatDateShort(startDate)} - ${formatDateShort(endDate)}`);
@@ -191,40 +192,70 @@ export const exportGeneralLedgerToPDF = (
 
   // Summary
   doc.setFontSize(9);
-  doc.text(`Saldo Awal: ${formatCurrency(data.opening_balance || 0)}`, 14, yPos);
-  doc.text(`Total Debit: ${formatCurrency(data.total_debits || 0)}`, 80, yPos);
-  doc.text(`Total Kredit: ${formatCurrency(data.total_credits || 0)}`, 140, yPos);
-  yPos += 5;
-  doc.setFont('helvetica', 'bold');
-  doc.text(`Saldo Akhir: ${formatCurrency(data.closing_balance || 0)}`, 14, yPos);
-  doc.setFont('helvetica', 'normal');
-  yPos += 8;
+  if (isAllAccountsMode) {
+    doc.text(`Mutasi Debit Periode: ${formatCurrency(data.total_debits || 0)}`, 14, yPos);
+    doc.text(`Mutasi Kredit Periode: ${formatCurrency(data.total_credits || 0)}`, 108, yPos);
+    yPos += 5;
+    doc.setTextColor(100);
+    doc.text('Mode Semua Akun menampilkan total mutasi jurnal periode, bukan saldo akhir neraca.', 14, yPos);
+    doc.setTextColor(0);
+    yPos += 8;
+  } else {
+    doc.text(`Saldo Awal: ${formatCurrency(data.opening_balance || 0)}`, 14, yPos);
+    doc.text(`Total Debit: ${formatCurrency(data.total_debits || 0)}`, 80, yPos);
+    doc.text(`Total Kredit: ${formatCurrency(data.total_credits || 0)}`, 140, yPos);
+    yPos += 5;
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Saldo Akhir: ${formatCurrency(data.closing_balance || 0)}`, 14, yPos);
+    doc.setFont('helvetica', 'normal');
+    yPos += 8;
+  }
 
   const transactions = data.transactions || data.entries || [];
-  const tableData = transactions.map((t) => [
-    formatDate(t.date),
-    t.journal_code || '',
-    t.description || '',
-    t.debit_amount > 0 ? formatCurrency(t.debit_amount) : '-',
-    t.credit_amount > 0 ? formatCurrency(t.credit_amount) : '-',
-    formatCurrency(t.balance),
-  ]);
+  const tableData = transactions.map((t) => (
+    isAllAccountsMode
+      ? [
+          formatDate(t.date),
+          t.journal_code || '',
+          t.description || '',
+          t.debit_amount > 0 ? formatCurrency(t.debit_amount) : '-',
+          t.credit_amount > 0 ? formatCurrency(t.credit_amount) : '-',
+        ]
+      : [
+          formatDate(t.date),
+          t.journal_code || '',
+          t.description || '',
+          t.debit_amount > 0 ? formatCurrency(t.debit_amount) : '-',
+          t.credit_amount > 0 ? formatCurrency(t.credit_amount) : '-',
+          formatCurrency(t.balance),
+        ]
+  ));
 
   autoTable(doc, {
     startY: yPos,
-    head: [['Tanggal', 'Ref', 'Deskripsi', 'Debit', 'Kredit', 'Saldo']],
+    head: [isAllAccountsMode
+      ? ['Tanggal', 'Ref', 'Deskripsi', 'Debit', 'Kredit']
+      : ['Tanggal', 'Ref', 'Deskripsi', 'Debit', 'Kredit', 'Saldo']],
     body: tableData,
     styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
     headStyles: { fillColor: [41, 128, 185], textColor: 255, fontSize: 8, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [245, 245, 245] },
-    columnStyles: {
-      0: { cellWidth: 25 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 55 },
-      3: { halign: 'right', cellWidth: 28 },
-      4: { halign: 'right', cellWidth: 28 },
-      5: { halign: 'right', cellWidth: 28 },
-    },
+    columnStyles: isAllAccountsMode
+      ? {
+          0: { cellWidth: 25 },
+          1: { cellWidth: 35 },
+          2: { cellWidth: 75 },
+          3: { halign: 'right', cellWidth: 28 },
+          4: { halign: 'right', cellWidth: 28 },
+        }
+      : {
+          0: { cellWidth: 25 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 55 },
+          3: { halign: 'right', cellWidth: 28 },
+          4: { halign: 'right', cellWidth: 28 },
+          5: { halign: 'right', cellWidth: 28 },
+        },
     margin: { left: 14, right: 14 },
     theme: 'striped',
   });
@@ -239,32 +270,53 @@ export const exportGeneralLedgerToCSV = (
   startDate: string,
   endDate: string
 ): void => {
+  const isAllAccountsMode = !data.account?.account_code;
   const accountCode = data.account?.account_code || '';
   const accountName = data.account?.account_name || 'Semua Akun';
   const transactions = data.transactions || data.entries || [];
 
-  const headers = ['Tanggal', 'Ref', 'Akun Kode', 'Akun Nama', 'Deskripsi', 'Debit', 'Kredit', 'Saldo'];
+  const headers = isAllAccountsMode
+    ? ['Tanggal', 'Ref', 'Akun Kode', 'Akun Nama', 'Deskripsi', 'Debit', 'Kredit']
+    : ['Tanggal', 'Ref', 'Akun Kode', 'Akun Nama', 'Deskripsi', 'Debit', 'Kredit', 'Saldo'];
   const rows: string[][] = [];
 
   transactions.forEach((t) => {
-    rows.push([
-      formatDateShort(t.date),
-      t.journal_code || '',
-      t.account_code || accountCode,
-      t.account_name || accountName,
-      t.description || '',
-      t.debit_amount > 0 ? t.debit_amount.toString() : '0',
-      t.credit_amount > 0 ? t.credit_amount.toString() : '0',
-      (Number(t.balance) || 0).toString(),
-    ]);
+    rows.push(
+      isAllAccountsMode
+        ? [
+            formatDateShort(t.date),
+            t.journal_code || '',
+            t.account_code || accountCode,
+            t.account_name || accountName,
+            t.description || '',
+            t.debit_amount > 0 ? t.debit_amount.toString() : '0',
+            t.credit_amount > 0 ? t.credit_amount.toString() : '0',
+          ]
+        : [
+            formatDateShort(t.date),
+            t.journal_code || '',
+            t.account_code || accountCode,
+            t.account_name || accountName,
+            t.description || '',
+            t.debit_amount > 0 ? t.debit_amount.toString() : '0',
+            t.credit_amount > 0 ? t.credit_amount.toString() : '0',
+            (Number(t.balance) || 0).toString(),
+          ]
+    );
   });
 
   // Summary rows at the end
   rows.push([]);
-  rows.push(['', '', '', '', 'Saldo Awal', (Number(data.opening_balance) || 0).toString(), '', '']);
-  rows.push(['', '', '', '', 'Total Debit', (Number(data.total_debits) || 0).toString(), '', '']);
-  rows.push(['', '', '', '', 'Total Kredit', '', (Number(data.total_credits) || 0).toString(), '']);
-  rows.push(['', '', '', '', 'Saldo Akhir', '', '', (Number(data.closing_balance) || 0).toString()]);
+  if (isAllAccountsMode) {
+    rows.push(['', '', '', '', 'Mutasi Debit Periode', (Number(data.total_debits) || 0).toString(), '', '']);
+    rows.push(['', '', '', '', 'Mutasi Kredit Periode', '', (Number(data.total_credits) || 0).toString(), '']);
+    rows.push(['', '', '', '', 'Catatan', 'Mode Semua Akun menampilkan total mutasi jurnal periode, bukan saldo akhir neraca.', '', '']);
+  } else {
+    rows.push(['', '', '', '', 'Saldo Awal', (Number(data.opening_balance) || 0).toString(), '', '']);
+    rows.push(['', '', '', '', 'Total Debit', (Number(data.total_debits) || 0).toString(), '', '']);
+    rows.push(['', '', '', '', 'Total Kredit', '', (Number(data.total_credits) || 0).toString(), '']);
+    rows.push(['', '', '', '', 'Saldo Akhir', '', '', (Number(data.closing_balance) || 0).toString()]);
+  }
 
   const csvContent = [
     headers.join(','),

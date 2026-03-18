@@ -351,6 +351,7 @@ export const API_ENDPOINTS = {
 
     // Balance Sheet - matches backend: ssot_report_routes.go registers under /ssot-reports group
     BALANCE_SHEET: '/api/v1/ssot-reports/balance-sheet',
+    BALANCE_SHEET_ARCHIVE: '/api/v1/ssot-reports/balance-sheet/archive',
     BALANCE_SHEET_DETAILS: '/api/v1/ssot-reports/balance-sheet/account-details',
     BALANCE_SHEET_VALIDATE: '/api/v1/ssot-reports/balance-sheet/validate',
     BALANCE_SHEET_COMPARISON: '/api/v1/ssot-reports/balance-sheet/comparison',
@@ -372,6 +373,7 @@ export const API_ENDPOINTS = {
 
   // 🔔 Notification endpoints
   NOTIFICATIONS: '/api/v1/notifications',
+  NOTIFICATIONS_SUMMARY: '/api/v1/notifications/summary',
   NOTIFICATIONS_APPROVALS: '/api/v1/notifications/approvals',
   NOTIFICATIONS_BY_TYPE: (type: string) => `/api/v1/notifications/type/${type}`,
   NOTIFICATIONS_MARK_READ: (id: number) => `/api/v1/notifications/${id}/read`,
@@ -404,6 +406,9 @@ export const API_ENDPOINTS = {
     UPDATE: (id: number) => `/api/v1/assets/${id}`,
     DELETE: (id: number) => `/api/v1/assets/${id}`,
     SUMMARY: '/api/v1/assets/summary',
+    RUN_DEPRECIATION: '/api/v1/assets/run-depreciation',
+    DEPRECIATION_HISTORY: '/api/v1/assets/depreciation-history',
+    DEPRECIATION_HISTORY_DETAIL: (period: string) => `/api/v1/assets/depreciation-history/${period}`,
     DEPRECIATION_REPORT: '/api/v1/assets/depreciation-report',
     DEPRECIATION_SCHEDULE: (id: number) => `/api/v1/assets/${id}/depreciation-schedule`,
     CALCULATE_DEPRECIATION: (id: number) => `/api/v1/assets/${id}/calculate-depreciation`,

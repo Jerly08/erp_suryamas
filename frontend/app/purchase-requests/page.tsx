@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Box,
     Button,
@@ -48,6 +49,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import api from '@/services/api';
 
 export default function PurchaseRequestsPage() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
     const [requests, setRequests] = useState<PurchaseRequest[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
     const [products, setProducts] = useState<any[]>([]); // simplified type for catalogue items
@@ -68,6 +71,7 @@ export default function PurchaseRequestsPage() {
 
     const [selectedRequest, setSelectedRequest] = useState<PurchaseRequest | null>(null);
     const [rejectReason, setRejectReason] = useState('');
+    const handledNotificationRequestId = useRef<string | null>(null);
 
     // Form state
     const [department, setDepartment] = useState('');
@@ -224,6 +228,45 @@ export default function PurchaseRequestsPage() {
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        const notificationRequestId = searchParams.get('notificationRequestId');
+
+        if (!notificationRequestId || handledNotificationRequestId.current === notificationRequestId) {
+            return;
+        }
+
+        handledNotificationRequestId.current = notificationRequestId;
+
+        const clearNotificationRequestParam = () => {
+            const nextParams = new URLSearchParams(searchParams.toString());
+            nextParams.delete('notificationRequestId');
+            const nextUrl = nextParams.toString() ? `/purchase-requests?${nextParams.toString()}` : '/purchase-requests';
+            router.replace(nextUrl);
+        };
+
+        const requestId = Number(notificationRequestId);
+        if (!Number.isFinite(requestId)) {
+            clearNotificationRequestParam();
+            return;
+        }
+
+        const openRequestFromNotification = async () => {
+            try {
+                setLoading(true);
+                const detail = await purchaseRequestService.getById(requestId);
+                setSelectedRequest(detail);
+                onViewOpen();
+            } catch {
+                toast({ title: 'Gagal membuka detail PR dari notifikasi', status: 'error', duration: 3000 });
+            } finally {
+                setLoading(false);
+                clearNotificationRequestParam();
+            }
+        };
+
+        void openRequestFromNotification();
+    }, [onViewOpen, router, searchParams, toast]);
 
     const filteredRequests = requests.filter(r =>
         r.pr_number.toLowerCase().includes(searchQuery.toLowerCase()) ||

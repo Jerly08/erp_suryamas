@@ -27,6 +27,12 @@ func InitializeDatabase(db *gorm.DB) {
 	// Seed initial data
 	SeedData(db)
 
+	// Align critical profit-loss COA categories and dedicated non-operating accounts
+	ProfitLossCOAAlignmentMigration(db)
+
+	// Prevent duplicate depreciation posting when scheduler and manual runs overlap
+	DepreciationJournalGuardMigration(db)
+
 	// NOTE: UpdateExistingPurchaseData removed — it was resetting outstanding_amount
 	// for paid purchases every startup, corrupting payment data
 

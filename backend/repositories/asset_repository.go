@@ -3,6 +3,8 @@ package repositories
 import (
 	"app-sistem-akuntansi/models"
 	"errors"
+	"strings"
+
 	"gorm.io/gorm"
 )
 
@@ -78,11 +80,27 @@ func (r *AssetRepository) Create(asset *models.Asset) error {
 	// The service layer handles retries if there's a unique constraint violation
 	intendedIsActive := asset.IsActive
 	if err := r.db.Select("*").Create(asset).Error; err != nil {
+		if strings.Contains(err.Error(), "assets_pkey") {
+			if syncErr := r.db.Exec(`
+				SELECT setval(
+					pg_get_serial_sequence('assets', 'id'),
+					COALESCE((SELECT MAX(id) FROM assets), 1),
+					true
+				)
+			`).Error; syncErr == nil {
+				if retryErr := r.db.Select("*").Create(asset).Error; retryErr == nil {
+					goto applyActiveFlag
+				} else {
+					return retryErr
+				}
+			}
+		}
 		return err
 	}
 
 	// GORM can still fall back to the DB default for bool fields with `default:true`.
 	// Re-apply the intended flag explicitly so PENDING/INACTIVE assets persist as false.
+applyActiveFlag:
 	if err := r.db.Exec("UPDATE assets SET is_active = ? WHERE id = ?", intendedIsActive, asset.ID).Error; err != nil {
 		return err
 	}

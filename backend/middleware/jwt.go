@@ -39,22 +39,23 @@ func parseEnhancedToken(tokenString, secret string) (*jwt.Token, *EnhancedClaims
 
 // Enhanced Claims with additional security fields
 type EnhancedClaims struct {
-	UserID      uint   `json:"user_id"`
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	Role        string `json:"role"`
-	SessionID   string `json:"session_id"`
-	DeviceInfo  string `json:"device_info"`
-	IPAddress   string `json:"ip_address"`
-	TokenType   string `json:"token_type"` // access or refresh
+	UserID      uint     `json:"user_id"`
+	Username    string   `json:"username"`
+	Email       string   `json:"email"`
+	Role        string   `json:"role"`
+	SessionID   string   `json:"session_id"`
+	DeviceInfo  string   `json:"device_info"`
+	IPAddress   string   `json:"ip_address"`
+	TokenType   string   `json:"token_type"` // access or refresh
 	Permissions []string `json:"permissions,omitempty"`
 	jwt.RegisteredClaims
 }
 
 // GenerateTokenPair generates both access and refresh tokens
 func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress string) (*models.TokenResponse, error) {
-	cfg := config.LoadConfig()
-	
+	deviceInfo = sanitizeTokenMetadata(deviceInfo, "Web Browser", 500)
+	ipAddress = sanitizeTokenMetadata(ipAddress, "", 45)
+
 	// Generate session ID
 	sessionID, err := generateSecureToken(32)
 	if err != nil {
@@ -76,14 +77,145 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 		return nil, err
 	}
 
-	// Get user permissions
+	return jm.issueTokenPair(user, sessionID, deviceInfo, ipAddress, time.Now().Add(7*24*time.Hour))
+}
+
+// RefreshAccessToken generates a new access token using refresh token.
+// The refresh token is rotated on every successful refresh to reduce replay risk
+// without changing the response contract used by the frontend.
+func (jm *JWTManager) RefreshAccessToken(refreshTokenString, requestDeviceInfo, requestIPAddress, requestUserAgent string) (*models.TokenResponse, error) {
+	var userID uint
+	var username string
+	var sessionID string
+	var success bool
+	var failureReason string
+	var refreshCount int
+	var monitorExpiry time.Time
+
+	defer func() {
+		if GlobalTokenMonitor != nil {
+			GlobalTokenMonitor.LogRefreshAttempt(
+				userID,
+				username,
+				sessionID,
+				sanitizeTokenMetadata(requestIPAddress, "", 45),
+				sanitizeTokenMetadata(requestUserAgent, "", 1000),
+				success,
+				failureReason,
+				monitorExpiry,
+				refreshCount,
+			)
+		}
+	}()
+
+	cfg := config.LoadConfig()
+
+	token, claims, err := parseEnhancedToken(refreshTokenString, cfg.JWTRefreshSecret)
+	if err != nil || !token.Valid || claims.TokenType != "refresh" {
+		failureReason = "invalid_refresh_token"
+		return nil, fmt.Errorf("invalid refresh token")
+	}
+
+	var refreshToken models.RefreshToken
+	if err := jm.DB.Where("token = ? AND is_revoked = ?", refreshTokenString, false).First(&refreshToken).Error; err != nil {
+		failureReason = "refresh_token_not_found"
+		return nil, fmt.Errorf("refresh token not found or revoked")
+	}
+
+	if refreshToken.ExpiresAt.Before(time.Now()) {
+		failureReason = "refresh_token_expired"
+		return nil, fmt.Errorf("refresh token expired")
+	}
+
+	var user models.User
+	if err := jm.DB.First(&user, refreshToken.UserID).Error; err != nil {
+		failureReason = "user_not_found"
+		return nil, fmt.Errorf("user not found")
+	}
+
+	if !user.IsActive {
+		failureReason = "user_disabled"
+		return nil, fmt.Errorf("user account is disabled")
+	}
+
+	userID = user.ID
+	username = user.Username
+	sessionID = claims.SessionID
+
+	deviceInfo := sanitizeTokenMetadata(requestDeviceInfo, "", 500)
+	if deviceInfo == "" {
+		deviceInfo = sanitizeTokenMetadata(refreshToken.DeviceInfo, claims.DeviceInfo, 500)
+	}
+
+	ipAddress := sanitizeTokenMetadata(requestIPAddress, "", 45)
+	if ipAddress == "" {
+		ipAddress = sanitizeTokenMetadata(refreshToken.IPAddress, claims.IPAddress, 45)
+	}
+
+	var response *models.TokenResponse
+	err = jm.DB.Transaction(func(tx *gorm.DB) error {
+		txManager := &JWTManager{DB: tx}
+
+		permissions, err := txManager.getUserPermissions(user.Role)
+		if err != nil {
+			return err
+		}
+
+		if err := tx.Model(&models.RefreshToken{}).
+			Where("id = ?", refreshToken.ID).
+			Updates(map[string]interface{}{"is_revoked": true, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&models.UserSession{}).
+			Where("session_id = ?", claims.SessionID).
+			Updates(map[string]interface{}{
+				"last_activity": time.Now(),
+				"ip_address":    ipAddress,
+				"device_info":   deviceInfo,
+				"user_agent":    sanitizeTokenMetadata(requestUserAgent, "", 1000),
+			}).Error; err != nil {
+			return err
+		}
+
+		// Ensure access token claims reflect the current refresh context, while keeping the same session.
+		response, err = txManager.issueTokenPairWithPermissions(user, permissions, claims.SessionID, deviceInfo, ipAddress, refreshToken.ExpiresAt)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		failureReason = "refresh_rotation_failed"
+		return nil, err
+	}
+
+	success = true
+	monitorExpiry = response.ExpiresAt
+
+	var activeRefreshCount int64
+	jm.DB.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND is_revoked = ?", user.ID, false).
+		Count(&activeRefreshCount)
+	refreshCount = int(activeRefreshCount)
+
+	return response, nil
+}
+
+func (jm *JWTManager) issueTokenPair(user models.User, sessionID, deviceInfo, ipAddress string, refreshTokenExpiry time.Time) (*models.TokenResponse, error) {
 	permissions, err := jm.getUserPermissions(user.Role)
 	if err != nil {
 		return nil, err
 	}
 
-	// Generate access token
-	accessTokenExpiry := time.Now().Add(90 * time.Minute) // 90 minutes
+	return jm.issueTokenPairWithPermissions(user, permissions, sessionID, deviceInfo, ipAddress, refreshTokenExpiry)
+}
+
+func (jm *JWTManager) issueTokenPairWithPermissions(user models.User, permissions []string, sessionID, deviceInfo, ipAddress string, refreshTokenExpiry time.Time) (*models.TokenResponse, error) {
+	cfg := config.LoadConfig()
+	now := time.Now()
+
+	accessTokenExpiry := now.Add(90 * time.Minute)
 	accessClaims := &EnhancedClaims{
 		UserID:      user.ID,
 		Username:    user.Username,
@@ -96,8 +228,8 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 		Permissions: permissions,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(accessTokenExpiry),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
 			Issuer:    "accounting-system",
 			Subject:   fmt.Sprintf("%d", user.ID),
 			ID:        sessionID,
@@ -110,8 +242,6 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 		return nil, err
 	}
 
-	// Generate refresh token
-	refreshTokenExpiry := time.Now().Add(7 * 24 * time.Hour) // 7 days
 	refreshClaims := &EnhancedClaims{
 		UserID:     user.ID,
 		Username:   user.Username,
@@ -123,8 +253,8 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 		TokenType:  "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(refreshTokenExpiry),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
 			Issuer:    "accounting-system",
 			Subject:   fmt.Sprintf("%d", user.ID),
 			ID:        sessionID,
@@ -137,7 +267,6 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 		return nil, err
 	}
 
-	// Store refresh token in database
 	refreshTokenRecord := models.RefreshToken{
 		Token:      refreshTokenString,
 		UserID:     user.ID,
@@ -154,108 +283,21 @@ func (jm *JWTManager) GenerateTokenPair(user models.User, deviceInfo, ipAddress 
 		AccessToken:  accessTokenString,
 		RefreshToken: refreshTokenString,
 		TokenType:    "Bearer",
-		ExpiresIn:    int64(90 * 60), // 90 minutes in seconds
+		ExpiresIn:    int64(90 * 60),
 		ExpiresAt:    accessTokenExpiry,
 		User:         user,
 	}, nil
 }
 
-	// RefreshAccessToken generates a new access token using refresh token
-	func (jm *JWTManager) RefreshAccessToken(refreshTokenString string) (*models.TokenResponse, error) {
-		// Track refresh attempt for monitoring
-		var userID uint
-		var username string
-		var sessionID string
-		var success bool
-		var failureReason string
-		var refreshCount int
-		
-		defer func() {
-			if GlobalTokenMonitor != nil {
-				GlobalTokenMonitor.LogRefreshAttempt(
-					userID, username, sessionID, 
-					"", "", // IP and UserAgent will be empty here, should be passed from controller
-					success, failureReason,
-					time.Now().Add(90*time.Minute), // New token expiry
-					refreshCount,
-				)
-			}
-		}()
-	cfg := config.LoadConfig()
-
-	// Parse refresh token
-	token, claims, err := parseEnhancedToken(refreshTokenString, cfg.JWTRefreshSecret)
-
-	if err != nil || !token.Valid || claims.TokenType != "refresh" {
-		return nil, fmt.Errorf("invalid refresh token")
+func sanitizeTokenMetadata(value, fallback string, maxLen int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = strings.TrimSpace(fallback)
 	}
-
-	// Check if refresh token exists in database and is not revoked
-	var refreshToken models.RefreshToken
-	if err := jm.DB.Where("token = ? AND is_revoked = ?", refreshTokenString, false).First(&refreshToken).Error; err != nil {
-		return nil, fmt.Errorf("refresh token not found or revoked")
+	if maxLen > 0 && len(value) > maxLen {
+		value = value[:maxLen]
 	}
-
-	// Check if refresh token is expired
-	if refreshToken.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("refresh token expired")
-	}
-
-	// Get user
-	var user models.User
-	if err := jm.DB.First(&user, refreshToken.UserID).Error; err != nil {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	// Check if user is still active
-	if !user.IsActive {
-		return nil, fmt.Errorf("user account is disabled")
-	}
-
-	// Update session last activity
-	jm.DB.Model(&models.UserSession{}).Where("session_id = ?", claims.SessionID).Update("last_activity", time.Now())
-
-	// Generate new access token
-	permissions, err := jm.getUserPermissions(user.Role)
-	if err != nil {
-		return nil, err
-	}
-
-	accessTokenExpiry := time.Now().Add(90 * time.Minute)
-	accessClaims := &EnhancedClaims{
-		UserID:      user.ID,
-		Username:    user.Username,
-		Email:       user.Email,
-		Role:        user.Role,
-		SessionID:   claims.SessionID,
-		DeviceInfo:  claims.DeviceInfo,
-		IPAddress:   claims.IPAddress,
-		TokenType:   "access",
-		Permissions: permissions,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(accessTokenExpiry),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "accounting-system",
-			Subject:   fmt.Sprintf("%d", user.ID),
-			ID:        claims.SessionID,
-		},
-	}
-
-	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
-	accessTokenString, err := accessToken.SignedString([]byte(cfg.JWTAccessSecret))
-	if err != nil {
-		return nil, err
-	}
-
-	return &models.TokenResponse{
-		AccessToken:  accessTokenString,
-		RefreshToken: refreshTokenString, // Keep the same refresh token
-		TokenType:    "Bearer",
-		ExpiresIn:    int64(90 * 60),
-		ExpiresAt:    accessTokenExpiry,
-		User:         user,
-	}, nil
+	return value
 }
 
 // Enhanced JWT middleware with blacklist checking and session validation
@@ -263,7 +305,7 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Enhanced header debugging
 		authHeader := c.GetHeader("Authorization")
-		
+
 		// Debug: Log all headers for troubleshooting
 		if gin.Mode() == gin.DebugMode {
 			fmt.Printf("🔍 [JWT DEBUG] Path: %s\n", c.Request.URL.Path)
@@ -272,7 +314,7 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 			if authHeader != "" {
 				fmt.Printf("🔍 [JWT DEBUG] Authorization Header: [REDACTED]\n")
 			}
-			
+
 			// Log only header names containing 'auth' (case insensitive) with redacted values
 			for key := range c.Request.Header {
 				if strings.Contains(strings.ToLower(key), "auth") {
@@ -280,27 +322,27 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 				}
 			}
 		}
-		
+
 		if authHeader == "" {
 			// Enhanced error response with debugging info
 			errorResponse := gin.H{
-				"error": "Authorization header required",
-				"code":  "AUTH_HEADER_MISSING",
+				"error":   "Authorization header required",
+				"code":    "AUTH_HEADER_MISSING",
 				"message": "Please include 'Authorization: Bearer <token>' header in your request",
 			}
-			
+
 			// Add debug info in development mode
 			if gin.Mode() == gin.DebugMode {
 				errorResponse["debug"] = gin.H{
-					"path":           c.Request.URL.Path,
-					"method":         c.Request.Method,
-					"user_agent":     c.GetHeader("User-Agent"),
-					"content_type":   c.GetHeader("Content-Type"),
-					"all_headers":    len(c.Request.Header),
+					"path":            c.Request.URL.Path,
+					"method":          c.Request.Method,
+					"user_agent":      c.GetHeader("User-Agent"),
+					"content_type":    c.GetHeader("Content-Type"),
+					"all_headers":     len(c.Request.Header),
 					"expected_format": "Authorization: Bearer <your-jwt-token>",
 				}
 			}
-			
+
 			c.JSON(http.StatusUnauthorized, errorResponse)
 			c.Abort()
 			return
@@ -310,11 +352,11 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 		if tokenString == authHeader {
 			// Enhanced format error response
 			errorResponse := gin.H{
-				"error": "Invalid authorization header format",
-				"code":  "INVALID_AUTH_FORMAT",
+				"error":   "Invalid authorization header format",
+				"code":    "INVALID_AUTH_FORMAT",
 				"message": "Authorization header must start with 'Bearer ' followed by the token",
 			}
-			
+
 			if gin.Mode() == gin.DebugMode {
 				errorResponse["debug"] = gin.H{
 					"received_header": authHeader,
@@ -322,7 +364,7 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 					"header_length":   len(authHeader),
 				}
 			}
-			
+
 			c.JSON(http.StatusUnauthorized, errorResponse)
 			c.Abort()
 			return

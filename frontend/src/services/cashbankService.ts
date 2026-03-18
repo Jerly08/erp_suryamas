@@ -134,14 +134,6 @@ export interface TransferRequest {
   notes?: string;
 }
 
-// Manual journal entry - primarily used for withdrawal transactions
-export interface ManualJournalEntry {
-  account_id: number;
-  description: string;
-  debit_amount: number;
-  credit_amount: number;
-}
-
 export interface DepositRequest {
   account_id: number;
   date: string;
@@ -150,7 +142,6 @@ export interface DepositRequest {
   reference?: string;
   notes?: string;
   source_account_id?: number;
-  journal_entries?: ManualJournalEntry[];
 }
 
 export interface WithdrawalRequest {
@@ -161,7 +152,6 @@ export interface WithdrawalRequest {
   notes?: string;
   // Optional: expense/target GL account for automatic journal integration
   target_account_id?: number;
-  journal_entries?: ManualJournalEntry[];
 }
 
 export interface TransactionFilter {
@@ -222,6 +212,17 @@ interface ApiServiceErrorShape {
   code?: string;
 }
 
+export interface CashBankCounterpartyAccount {
+  id: number;
+  code: string;
+  name: string;
+  type: string;
+  category?: string;
+  is_active?: boolean;
+  is_header?: boolean;
+  balance: number;
+}
+
 export interface CashBankTransfer {
   id: number;
   transfer_number: string;
@@ -245,6 +246,56 @@ export interface CashBankTransfer {
 
 class CashBankService {
   // Use API_ENDPOINTS instead of hardcoded baseUrl
+
+  private normalizeAccountList(data: unknown): CashBankCounterpartyAccount[] {
+    const responseData = typeof data === 'object' && data !== null && 'data' in data
+      ? (data as { data?: unknown }).data
+      : undefined;
+    const accounts = Array.isArray(responseData) ? responseData : Array.isArray(data) ? data : [];
+    return accounts.filter((account: CashBankCounterpartyAccount) => account && account.id);
+  }
+
+  private isActiveLeafAccount(account: CashBankCounterpartyAccount): boolean {
+    return account.is_active !== false && account.is_header !== true;
+  }
+
+  private isNonOperatingRevenueAccount(account: CashBankCounterpartyAccount): boolean {
+    const code = (account.code || '').toUpperCase();
+    const category = (account.category || '').toUpperCase();
+    return code.startsWith('7') || [
+      'NON_OPERATING_REVENUE',
+      'INTEREST_INCOME',
+      'DIVIDEND_INCOME',
+      'GAIN_ON_SALE',
+      'OTHER_INCOME',
+    ].includes(category);
+  }
+
+  private isOperatingExpenseAccount(account: CashBankCounterpartyAccount): boolean {
+    const category = (account.category || '').toUpperCase();
+    return [
+      'OPERATING_EXPENSE',
+      'ADMINISTRATIVE_EXPENSE',
+      'SELLING_EXPENSE',
+      'MARKETING_EXPENSE',
+      'GENERAL_EXPENSE',
+      'DEPRECIATION_EXPENSE',
+      'AMORTIZATION_EXPENSE',
+      'BAD_DEBT_EXPENSE',
+    ].includes(category);
+  }
+
+  private isNonOperatingExpenseAccount(account: CashBankCounterpartyAccount): boolean {
+    const code = (account.code || '').toUpperCase();
+    const category = (account.category || '').toUpperCase();
+    return code.startsWith('8') || [
+      'NON_OPERATING_EXPENSE',
+      'INTEREST_EXPENSE',
+      'FINANCIAL_EXPENSE',
+      'LOSS_ON_SALE',
+      'OTHER_EXPENSE',
+    ].includes(category);
+  }
 
   // Get all cash and bank accounts
   async getCashBankAccounts(options?: { includeHolding?: boolean }): Promise<CashBank[]> {
@@ -308,7 +359,7 @@ class CashBankService {
   }
 
   // Process transfer
-  async processTransfer(data: TransferRequest): Promise<any> {
+  async processTransfer(data: TransferRequest): Promise<unknown> {
     try {
       const response = await api.post(API_ENDPOINTS.CASH_BANK.TRANSFER, data);
       return response.data?.data ?? response.data;
@@ -348,7 +399,7 @@ class CashBankService {
   // Get transactions for account
   async getTransactions(accountId: number, filter: TransactionFilter = {}): Promise<TransactionResult> {
     try {
-      const params: any = { _t: Date.now() };
+      const params: Record<string, string | number> = { _t: Date.now() };
       if (filter.page) params.page = filter.page;
       if (filter.limit) params.limit = filter.limit;
       if (filter.start_date) params.start_date = filter.start_date;
@@ -393,7 +444,7 @@ class CashBankService {
   // Get transaction history for an account with filtering
   async getTransactionHistory(accountId: number, filter: TransactionFilter = {}): Promise<TransactionResult> {
     try {
-      const params: any = { _t: Date.now() };
+      const params: Record<string, string | number> = { _t: Date.now() };
       if (filter.page) params.page = filter.page;
       if (filter.limit) params.limit = filter.limit;
       if (filter.start_date) params.start_date = filter.start_date;
@@ -421,7 +472,7 @@ class CashBankService {
   }
 
   // Check GL account links status
-  async checkGLAccountLinks(): Promise<any> {
+  async checkGLAccountLinks(): Promise<unknown> {
     try {
       const response = await api.get(API_ENDPOINTS.CASH_BANK.CHECK_GL_LINKS, {
         params: { _t: Date.now() },
@@ -434,12 +485,12 @@ class CashBankService {
   }
 
   // Get revenue accounts for deposit form
-  async getRevenueAccounts(): Promise<any[]> {
+  async getRevenueAccounts(): Promise<CashBankCounterpartyAccount[]> {
     try {
       const response = await api.get(API_ENDPOINTS.CASH_BANK.REVENUE_ACCOUNTS, {
         params: { _t: Date.now() },
       });
-      return response.data;
+      return this.normalizeAccountList(response.data);
     } catch (error) {
       console.error('Error fetching revenue accounts:', error);
       throw error;
@@ -447,17 +498,80 @@ class CashBankService {
   }
 
   // Get deposit source accounts for deposit form
-  // Business rule update: Deposit only needs equity accounts (no revenue)
-  async getDepositSourceAccounts(): Promise<{ revenue: any[], equity: any[] }> {
+  async getDepositSourceAccounts(): Promise<{
+    revenue: CashBankCounterpartyAccount[];
+    equity: CashBankCounterpartyAccount[];
+    liability: CashBankCounterpartyAccount[];
+  }> {
     try {
-      // Fetch only EQUITY accounts using the accounts endpoint with type filter
-      const response = await api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
-        params: { type: 'EQUITY', _t: Date.now() },
-      });
-      const equityAccounts = response.data?.data ?? response.data ?? [];
-      return { revenue: [], equity: equityAccounts };
+      const [revenueResponse, equityResponse, liabilityResponse] = await Promise.all([
+        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
+          params: { type: 'REVENUE', _t: Date.now() },
+        }),
+        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
+          params: { type: 'EQUITY', _t: Date.now() },
+        }),
+        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
+          params: { type: 'LIABILITY', _t: Date.now() },
+        }),
+      ]);
+
+      const revenueAccounts = this.normalizeAccountList(revenueResponse.data)
+        .filter((account) => this.isActiveLeafAccount(account) && this.isNonOperatingRevenueAccount(account));
+      const equityAccounts = this.normalizeAccountList(equityResponse.data)
+        .filter((account) => this.isActiveLeafAccount(account));
+      const liabilityAccounts = this.normalizeAccountList(liabilityResponse.data)
+        .filter((account) => this.isActiveLeafAccount(account));
+
+      return {
+        revenue: revenueAccounts,
+        equity: equityAccounts,
+        liability: liabilityAccounts,
+      };
     } catch (error) {
-      console.error('Error fetching deposit source accounts (equity only):', error);
+      console.error('Error fetching deposit source accounts:', error);
+      throw error;
+    }
+  }
+
+  async getWithdrawalTargetAccounts(): Promise<{
+    operatingExpense: CashBankCounterpartyAccount[];
+    nonOperatingExpense: CashBankCounterpartyAccount[];
+    liability: CashBankCounterpartyAccount[];
+    asset: CashBankCounterpartyAccount[];
+  }> {
+    try {
+      const [expenseResponse, liabilityResponse, assetResponse, cashBankAccounts] = await Promise.all([
+        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
+          params: { type: 'EXPENSE', _t: Date.now() },
+        }),
+        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
+          params: { type: 'LIABILITY', _t: Date.now() },
+        }),
+        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
+          params: { type: 'ASSET', _t: Date.now() },
+        }),
+        this.getCashBankAccounts({ includeHolding: true }),
+      ]);
+
+      const expenseAccounts = this.normalizeAccountList(expenseResponse.data)
+        .filter((account) => this.isActiveLeafAccount(account));
+      const cashBankLinkedAccountIDs = new Set(
+        cashBankAccounts
+          .map((account) => account.account_id)
+          .filter((accountID): accountID is number => typeof accountID === 'number' && accountID > 0),
+      );
+
+      return {
+        operatingExpense: expenseAccounts.filter((account) => this.isOperatingExpenseAccount(account)),
+        nonOperatingExpense: expenseAccounts.filter((account) => this.isNonOperatingExpenseAccount(account)),
+        liability: this.normalizeAccountList(liabilityResponse.data)
+          .filter((account) => this.isActiveLeafAccount(account)),
+        asset: this.normalizeAccountList(assetResponse.data)
+          .filter((account) => this.isActiveLeafAccount(account) && !cashBankLinkedAccountIDs.has(account.id)),
+      };
+    } catch (error) {
+      console.error('Error fetching withdrawal target accounts:', error);
       throw error;
     }
   }
@@ -531,9 +645,10 @@ class CashBankService {
         params: { _t: Date.now() },
       });
       return response.data?.data ?? response.data ?? [];
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const normalizedError = error as { response?: { status?: number } };
       // Silently return empty array if endpoint not available (e.g. backend not restarted yet)
-      if (error?.response?.status === 404) {
+      if (normalizedError.response?.status === 404) {
         return [];
       }
       console.error('Error fetching frozen history:', error);
@@ -574,4 +689,6 @@ export interface FrozenHistory {
   created_at: string;
 }
 
-export default new CashBankService();
+const cashBankService = new CashBankService();
+
+export default cashBankService;

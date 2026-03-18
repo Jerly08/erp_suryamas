@@ -70,6 +70,7 @@ export interface ApprovalHistory {
     username: string;
     first_name: string;
     last_name: string;
+    role: string;
   };
 }
 
@@ -256,8 +257,12 @@ class ApprovalService {
 
   // Get notifications
   async getNotifications(params: { page?: number; limit?: number; type?: string } = {}): Promise<any> {
-    // Use flat endpoints defined in API config
-    const endpoint = params.type ? API_ENDPOINTS.NOTIFICATIONS_BY_TYPE(params.type) : API_ENDPOINTS.NOTIFICATIONS;
+    let endpoint = API_ENDPOINTS.NOTIFICATIONS;
+    if (params.type === 'approval') {
+      endpoint = API_ENDPOINTS.NOTIFICATIONS_APPROVALS;
+    } else if (params.type) {
+      endpoint = API_ENDPOINTS.NOTIFICATIONS_BY_TYPE(params.type);
+    }
     const response = await api.get(endpoint, { params });
     return response.data;
   }
@@ -268,8 +273,18 @@ class ApprovalService {
   }
 
   // Get unread notification count
-  async getUnreadNotificationCount(): Promise<{ count: number }> {
-    const response = await api.get(API_ENDPOINTS.NOTIFICATIONS_UNREAD_COUNT);
+  async getUnreadNotificationCount(params: { type?: string; types?: string[] } = {}): Promise<{ count: number }> {
+    const queryParams: Record<string, string> = {};
+
+    if (params.type) {
+      queryParams.type = params.type;
+    }
+
+    if (params.types && params.types.length > 0) {
+      queryParams.types = params.types.join(',');
+    }
+
+    const response = await api.get(API_ENDPOINTS.NOTIFICATIONS_UNREAD_COUNT, { params: queryParams });
     return response.data;
   }
 

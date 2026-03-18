@@ -45,7 +45,7 @@ export const useDashboardAnalytics = (user: any, token: string | null) => {
 
     // Check if user has required role
     const userRoleNormalized = user.role?.toString().toLowerCase();
-    if (!['admin', 'director', 'finance'].includes(userRoleNormalized)) {
+    if (!['admin', 'director', 'finance', 'finance_manager'].includes(userRoleNormalized)) {
       setLoading(false);
       return;
     }

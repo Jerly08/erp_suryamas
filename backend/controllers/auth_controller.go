@@ -21,6 +21,17 @@ func NewAuthController(db *gorm.DB) *AuthController {
 	return &AuthController{DB: db}
 }
 
+func requestDeviceInfo(c *gin.Context) string {
+	userAgent := strings.TrimSpace(c.Request.UserAgent())
+	if userAgent == "" {
+		return "Web Browser"
+	}
+	if len(userAgent) > 500 {
+		return userAgent[:500]
+	}
+	return userAgent
+}
+
 // Helper function to convert role to uppercase for frontend
 func convertRoleToUppercase(role string) string {
 	switch role {
@@ -159,7 +170,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	// Use email as identifier
 	identifier := req.Email
 	password := req.Password
-	deviceInfo := "Web Browser"
+	deviceInfo := requestDeviceInfo(c)
 
 	// Find user by email or username
 	var user models.User
@@ -183,24 +194,24 @@ func (ac *AuthController) Login(c *gin.Context) {
 		return
 	}
 
-	// Check for existing active sessions and limit them
-	var existingSessions []models.UserSession
-	ac.DB.Where("user_id = ? AND is_active = ?", user.ID, true).Order("created_at DESC").Find(&existingSessions)
-
-	// If user has more than 5 active sessions, deactivate the oldest ones (increased from 3)
-	if len(existingSessions) > 5 {
-		oldSessions := existingSessions[5:]
-		for _, session := range oldSessions {
-			ac.DB.Model(&session).Update("is_active", false)
+	// Enforce a single active login per user by revoking older sessions first.
+	// Existing devices will receive SESSION_DEACTIVATED on their next request,
+	// which the frontend already maps to the session-expired flow.
+	var tokens *models.TokenResponse
+	err := ac.DB.Transaction(func(tx *gorm.DB) error {
+		txJWT := middleware.NewJWTManager(tx)
+		if err := txJWT.RevokeUserSessions(user.ID, "NEW_LOGIN"); err != nil {
+			return err
 		}
-		log.Printf("Deactivated %d old sessions for user %d during login", len(oldSessions), user.ID)
-	}
 
-	// Initialize JWT Manager
-	jw := middleware.NewJWTManager(ac.DB)
+		generatedTokens, err := txJWT.GenerateTokenPair(user, deviceInfo, c.ClientIP())
+		if err != nil {
+			return err
+		}
 
-	// Generate token pair
-	tokens, err := jw.GenerateTokenPair(user, deviceInfo, c.ClientIP())
+		tokens = generatedTokens
+		return nil
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
@@ -261,7 +272,7 @@ func (ac *AuthController) RefreshToken(c *gin.Context) {
 	}
 
 	jw := middleware.NewJWTManager(ac.DB)
-	tokens, err := jw.RefreshAccessToken(req.RefreshToken)
+	tokens, err := jw.RefreshAccessToken(req.RefreshToken, requestDeviceInfo(c), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired refresh token"})
 		return

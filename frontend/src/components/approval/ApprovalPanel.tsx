@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, VStack, HStack, Badge, Text, Spinner, Alert, AlertIcon, Divider, Button, Textarea, FormControl, FormLabel, FormHelperText, Checkbox, useToast } from '@chakra-ui/react';
+import { Box, VStack, HStack, Badge, Text, Spinner, Alert, AlertIcon, Divider, Button, Textarea, FormControl, FormLabel, FormHelperText, Checkbox, useToast, useColorModeValue } from '@chakra-ui/react';
 import { useApproval } from '@/hooks/useApproval';
 import { useAuth } from '@/contexts/AuthContext';
 import approvalService from '@/services/approvalService';
@@ -38,6 +38,22 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [approvalIntent, setApprovalIntent] = useState<'approve' | 'reject' | null>(null);
+  const panelBg = useColorModeValue('white', 'gray.800');
+  const panelBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const panelHeadingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const mutedTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
+  const bodyTextColor = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const historyCardBg = useColorModeValue('gray.50', 'whiteAlpha.100');
+  const historyRejectedBg = useColorModeValue('red.50', 'rgba(245, 101, 101, 0.16)');
+  const roleTextColor = useColorModeValue('blue.600', 'blue.200');
+  const dividerColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const textAreaBg = useColorModeValue('white', 'whiteAlpha.50');
+  const textAreaBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
+  const textAreaHoverColor = useColorModeValue('gray.400', 'whiteAlpha.500');
+  const directorHelperColor = useColorModeValue('gray.600', 'whiteAlpha.700');
+  const directorHintColor = useColorModeValue('blue.600', 'blue.200');
+  const rejectHoverShadow = useColorModeValue('0 4px 12px rgba(245, 101, 101, 0.25)', '0 4px 12px rgba(245, 101, 101, 0.18)');
+  const approveHoverShadow = useColorModeValue('0 4px 12px rgba(72, 187, 120, 0.25)', '0 4px 12px rgba(72, 187, 120, 0.18)');
 
   // Enhanced helper functions for UX
   const getValidationMessage = () => {
@@ -166,30 +182,39 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
   });
 
   return (
-    <Box borderWidth="1px" borderRadius="md" p={4} w="full">
+    <Box borderWidth="1px" borderRadius="md" p={4} w="full" bg={panelBg} borderColor={panelBorderColor}>
       <HStack justify="space-between" mb={2}>
-        <Text fontWeight="bold">Approval</Text>
+        <Text fontWeight="bold" color={panelHeadingColor}>Approval</Text>
         <Badge colorScheme={statusColor(approvalStatus)}>{(approvalStatus || 'NOT_REQUIRED').replace('_',' ')}</Badge>
       </HStack>
-      <Divider mb={3} />
+      <Divider mb={3} borderColor={dividerColor} />
       {loading ? (
-        <HStack><Spinner size="sm" /><Text>Loading approval history...</Text></HStack>
+        <HStack><Spinner size="sm" /><Text color={bodyTextColor}>Loading approval history...</Text></HStack>
       ) : error ? (
         <Alert status="error" mb={2}><AlertIcon />{error}</Alert>
       ) : history.length === 0 ? (
-        <Text color="gray.500">No approval history.</Text>
+        <Text color={mutedTextColor}>No approval history.</Text>
       ) : (
         <VStack align="stretch" spacing={2}>
           {history.map((h, i) => (
-            <Box key={i} p={3} borderRadius="md" bg={h.action === 'REJECTED' ? 'red.50' : 'gray.50'} borderLeft="3px solid" borderLeftColor={h.action === 'REJECTED' ? 'red.500' : statusColor(h.action) + '.500'}>
+            <Box
+              key={i}
+              p={3}
+              borderRadius="md"
+              bg={h.action === 'REJECTED' ? historyRejectedBg : historyCardBg}
+              borderLeft="3px solid"
+              borderLeftColor={h.action === 'REJECTED' ? 'red.500' : statusColor(h.action) + '.500'}
+              borderWidth="1px"
+              borderColor={panelBorderColor}
+            >
               <HStack justify="space-between" mb={1}>
-                <Text fontSize="sm" fontWeight="medium">
+                <Text fontSize="sm" fontWeight="medium" color={bodyTextColor}>
                   {h.user ? (
                     <>
-                      <Text as="span" color="blue.600" fontWeight="semibold">
+                      <Text as="span" color={roleTextColor} fontWeight="semibold">
                         {formatRoleForApproval(h.user.role)}
                       </Text>
-                      <Text as="span" color="gray.600" mx={1}>
+                      <Text as="span" color={mutedTextColor} mx={1}>
                         -
                       </Text>
                       <Text as="span">
@@ -202,11 +227,11 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
                 </Text>
                 <Badge colorScheme={statusColor(h.action)}>{h.action}</Badge>
               </HStack>
-              <Text fontSize="xs" color="gray.600" mb={1}>
+              <Text fontSize="xs" color={mutedTextColor} mb={1}>
                 {new Date(h.created_at).toLocaleString('id-ID')}
               </Text>
               {h.comments && (
-                <Text fontSize="sm" color="gray.800" fontStyle={h.action === 'REJECTED' ? 'italic' : 'normal'}>
+                <Text fontSize="sm" color={bodyTextColor} fontStyle={h.action === 'REJECTED' ? 'italic' : 'normal'}>
                   "{h.comments}"
                 </Text>
               )}
@@ -217,10 +242,10 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
 
       {canApprove && (
         <>
-          <Divider my={3} />
+          <Divider my={3} borderColor={dividerColor} />
           <VStack spacing={3} align="stretch">
             {/* Display current role for debugging and turn status */}
-            <Text fontSize="xs" color="gray.500">
+            <Text fontSize="xs" color={mutedTextColor}>
               Logged in as: {userRole} (normalized: {normalizedRole})
             </Text>
             
@@ -256,16 +281,19 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
             )}
             
             <FormControl>
-              <FormLabel fontSize="sm">Komentar</FormLabel>
+              <FormLabel fontSize="sm" color={panelHeadingColor}>Komentar</FormLabel>
               <Textarea
                 value={comments}
                 onChange={handleCommentsChange}
                 placeholder={hasUserInteracted ? "Contoh: Harga terlalu tinggi dibanding market rate, perlu negosiasi ulang..." : "Tambahkan catatan persetujuan/penolakan (opsional untuk Approve, wajib untuk Reject)"}
                 rows={3}
                 isDisabled={false} // Keep comment field always enabled
-                borderColor={validationAttempted && !comments.trim() ? 'red.300' : 'gray.200'}
+                bg={textAreaBg}
+                color={bodyTextColor}
+                borderColor={validationAttempted && !comments.trim() ? 'red.300' : textAreaBorderColor}
+                _placeholder={{ color: mutedTextColor }}
                 _hover={{
-                  borderColor: validationAttempted && !comments.trim() ? 'red.400' : 'gray.300'
+                  borderColor: validationAttempted && !comments.trim() ? 'red.400' : textAreaHoverColor
                 }}
                 _focus={{
                   borderColor: validationAttempted && !comments.trim() ? 'red.500' : 'blue.500',
@@ -279,7 +307,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
                   ? 'red.500'
                   : hasUserInteracted && comments.trim()
                     ? 'green.600'
-                    : 'gray.500'
+                    : mutedTextColor
               }>
                 {validationAttempted && !comments.trim()
                   ? 'Komentar wajib diisi untuk penolakan'
@@ -298,11 +326,11 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
                   colorScheme="blue"
                   isDisabled={approvalIntent === 'reject'} // Only disable when user explicitly clicks reject
                 >
-                  <Text fontSize="sm" fontWeight="medium">
+                  <Text fontSize="sm" fontWeight="medium" color={panelHeadingColor}>
                     Butuh persetujuan Director
                   </Text>
                 </Checkbox>
-                <FormHelperText fontSize="xs" color="gray.600">
+                <FormHelperText fontSize="xs" color={directorHelperColor}>
                   {approvalIntent === 'reject' ? (
                     <Text color="orange.600">
                       Checkbox dinonaktifkan - tidak dapat meminta persetujuan Director untuk penolakan
@@ -320,7 +348,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
                         </Text>
                       )}
                       {comments.trim().length > 0 && (
-                        <Text as="div" color="blue.600" fontSize="xs" mt={1}>
+                        <Text as="div" color={directorHintColor} fontSize="xs" mt={1}>
                           💡 Anda dapat menambahkan komentar dan tetap meminta persetujuan Director untuk approval
                         </Text>
                       )}
@@ -382,7 +410,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
               _hover={{
                 opacity: 1,
                 transform: 'translateY(-1px)',
-                boxShadow: '0 4px 12px rgba(245, 101, 101, 0.25)'
+                boxShadow: rejectHoverShadow
               }}
               _active={{
                 transform: 'translateY(0px)'
@@ -414,7 +442,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
               transition="all 0.3s ease"
               _hover={{
                 transform: 'translateY(-1px)',
-                boxShadow: '0 4px 12px rgba(72, 187, 120, 0.25)'
+                boxShadow: approveHoverShadow
               }}
               _active={{
                 transform: 'translateY(0px)'

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
 	"strings"
 	"time"
@@ -22,13 +23,14 @@ func NewSSOTProfitLossService(db *gorm.DB) *SSOTProfitLossService {
 
 // SSOTAccountBalance represents account balance from journal entries (renamed to avoid conflict)
 type SSOTAccountBalance struct {
-	AccountID   uint    `json:"account_id"`
-	AccountCode string  `json:"account_code"`
-	AccountName string  `json:"account_name"`
-	AccountType string  `json:"account_type"`
-	DebitTotal  float64 `json:"debit_total"`
-	CreditTotal float64 `json:"credit_total"`
-	NetBalance  float64 `json:"net_balance"`
+	AccountID       uint    `json:"account_id"`
+	AccountCode     string  `json:"account_code"`
+	AccountName     string  `json:"account_name"`
+	AccountType     string  `json:"account_type"`
+	AccountCategory string  `json:"account_category"`
+	DebitTotal      float64 `json:"debit_total"`
+	CreditTotal     float64 `json:"credit_total"`
+	NetBalance      float64 `json:"net_balance"`
 }
 
 // SSOTProfitLossData represents the comprehensive P&L structure for SSOT
@@ -161,6 +163,7 @@ func (s *SSOTProfitLossService) getAccountBalancesFromLegacy(startDate, endDate 
 			a.code as account_code,
 			MAX(a.name) as account_name,
 			MAX(a.type) as account_type,
+			MAX(a.category) as account_category,
 			COALESCE(SUM(jl.debit_amount), 0) as debit_total,
 			COALESCE(SUM(jl.credit_amount), 0) as credit_total,
 			CASE 
@@ -195,6 +198,7 @@ func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endDate st
 			a.code as account_code,
 			MAX(a.name) as account_name,
 			MAX(a.type) as account_type,
+			MAX(a.category) as account_category,
 			COALESCE(SUM(ujl.debit_amount), 0) as debit_total,
 			COALESCE(SUM(ujl.credit_amount), 0) as credit_total,
 			CASE 
@@ -270,11 +274,12 @@ func (s *SSOTProfitLossService) getPLFromAccountsBalance() ([]SSOTAccountBalance
 			code as account_code,
 			MAX(name) as account_name,
 			MAX(type) as account_type,
+			MAX(category) as account_category,
 			0 as debit_total,
 			0 as credit_total,
 			SUM(CASE WHEN UPPER(type) = 'EXPENSE' THEN balance ELSE balance END) as net_balance
 		FROM accounts
-		WHERE (code LIKE '4%%' OR code LIKE '5%%')
+		WHERE UPPER(type) IN ('REVENUE', 'EXPENSE')
 		  AND deleted_at IS NULL
 		GROUP BY code
 		HAVING SUM(balance) != 0
@@ -457,6 +462,8 @@ func (s *SSOTProfitLossService) generateProfitLossFromBalances(balances []SSOTAc
 		}
 	}
 
+	s.rebuildBelowOperatingSections(plData, balancesByCode)
+
 	// Calculate totals and ratios
 	s.calculatePLTotalsAndRatios(plData)
 
@@ -505,4 +512,83 @@ func (s *SSOTProfitLossService) calculatePLTotalsAndRatios(plData *SSOTProfitLos
 	if plData.Revenue.TotalRevenue > 0 {
 		plData.NetIncomeMargin = (plData.NetIncome / plData.Revenue.TotalRevenue) * 100
 	}
+}
+
+func (s *SSOTProfitLossService) rebuildBelowOperatingSections(plData *SSOTProfitLossData, balancesByCode map[string]SSOTAccountBalance) {
+	plData.OtherIncome = 0
+	plData.OtherExpenses = 0
+	plData.TaxExpense = 0
+	plData.OtherIncomeItems = []PLSectionItem{}
+	plData.OtherExpenseItems = []PLSectionItem{}
+	plData.TaxExpenseItems = []PLSectionItem{}
+
+	for _, balance := range balancesByCode {
+		if balance.NetBalance == 0 {
+			continue
+		}
+
+		item := PLSectionItem{
+			AccountCode: balance.AccountCode,
+			AccountName: balance.AccountName,
+			Amount:      balance.NetBalance,
+			AccountID:   balance.AccountID,
+		}
+
+		switch {
+		case s.isOtherIncomeAccount(balance):
+			plData.OtherIncome += balance.NetBalance
+			plData.OtherIncomeItems = append(plData.OtherIncomeItems, item)
+		case s.isTaxExpenseAccount(balance):
+			plData.TaxExpense += balance.NetBalance
+			plData.TaxExpenseItems = append(plData.TaxExpenseItems, item)
+		case s.isOtherExpenseAccount(balance):
+			plData.OtherExpenses += balance.NetBalance
+			plData.OtherExpenseItems = append(plData.OtherExpenseItems, item)
+		}
+	}
+}
+
+func (s *SSOTProfitLossService) isOtherIncomeAccount(balance SSOTAccountBalance) bool {
+	category := strings.ToUpper(strings.TrimSpace(balance.AccountCategory))
+	switch category {
+	case models.CategoryNonOperatingRevenue,
+		models.CategoryInterestIncome,
+		models.CategoryDividendIncome,
+		models.CategoryGainOnSale,
+		models.CategoryOtherIncome:
+		return true
+	}
+
+	return strings.HasPrefix(balance.AccountCode, "70") || strings.HasPrefix(balance.AccountCode, "71")
+}
+
+func (s *SSOTProfitLossService) isOtherExpenseAccount(balance SSOTAccountBalance) bool {
+	category := strings.ToUpper(strings.TrimSpace(balance.AccountCategory))
+	switch category {
+	case models.CategoryNonOperatingExpense,
+		models.CategoryInterestExpense,
+		models.CategoryFinancialExpense,
+		models.CategoryLossOnSale,
+		models.CategoryOtherExpense:
+		return true
+	}
+
+	code := balance.AccountCode
+	return strings.HasPrefix(code, "8") ||
+		strings.HasPrefix(code, "62") || strings.HasPrefix(code, "63") ||
+		strings.HasPrefix(code, "64") || strings.HasPrefix(code, "65") ||
+		strings.HasPrefix(code, "66") || strings.HasPrefix(code, "67") ||
+		strings.HasPrefix(code, "68") || strings.HasPrefix(code, "69") ||
+		strings.HasPrefix(code, "72") || strings.HasPrefix(code, "73") ||
+		strings.HasPrefix(code, "74") || strings.HasPrefix(code, "75") ||
+		strings.HasPrefix(code, "76") || strings.HasPrefix(code, "77") ||
+		strings.HasPrefix(code, "78") || strings.HasPrefix(code, "79")
+}
+
+func (s *SSOTProfitLossService) isTaxExpenseAccount(balance SSOTAccountBalance) bool {
+	if strings.EqualFold(strings.TrimSpace(balance.AccountCategory), models.CategoryTaxExpense) {
+		return true
+	}
+
+	return strings.HasPrefix(balance.AccountCode, "9")
 }

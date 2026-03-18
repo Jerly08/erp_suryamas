@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChakraProvider, ColorModeScript } from '@chakra-ui/react';
+import { ChakraProvider, ColorModeScript, localStorageManager } from '@chakra-ui/react';
 import { ThemeProvider } from '@/contexts/SimpleThemeContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { LanguageProvider } from '@/contexts/LanguageContext';
@@ -50,7 +50,8 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
   }
 
   return (
-    <ChakraProvider theme={theme}>
+    <ChakraProvider theme={theme} colorModeManager={localStorageManager}>
+      <ColorModeScript initialColorMode={theme.config.initialColorMode} />
       <ThemeProvider>
         <LanguageProvider>
           <AuthProvider>

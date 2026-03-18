@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"app-sistem-akuntansi/services"
 	"app-sistem-akuntansi/utils"
@@ -18,6 +19,37 @@ func NewCashBankHandler(cashBankService *services.CashBankService, accountServic
 	return &CashBankHandler{
 		cashBankService: cashBankService,
 		accountService:  accountService,
+	}
+}
+
+func classifyCashBankTransactionError(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+
+	if appErr := utils.GetAppError(err); appErr != nil {
+		return appErr.StatusCode
+	}
+
+	errorText := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(errorText, "closed_period:"):
+		return http.StatusConflict
+	case strings.Contains(errorText, "not found"),
+		strings.Contains(errorText, "inactive"),
+		strings.Contains(errorText, "header account"),
+		strings.Contains(errorText, "must be different"),
+		strings.Contains(errorText, "use transfer instead"),
+		strings.Contains(errorText, "insufficient balance"),
+		strings.Contains(errorText, "saldo tersedia tidak cukup"),
+		strings.Contains(errorText, "amount must be greater than zero"),
+		strings.Contains(errorText, "exchange rate required"),
+		strings.Contains(errorText, "counter account"),
+		strings.Contains(errorText, "target account"),
+		strings.Contains(errorText, "source account"):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
 	}
 }
 
@@ -131,7 +163,7 @@ func (h *CashBankHandler) ProcessDeposit(c *gin.Context) {
 
 	transaction, err := h.cashBankService.ProcessDeposit(request, userID.(uint))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to process deposit", err))
+		c.JSON(classifyCashBankTransactionError(err), utils.CreateErrorResponse("Failed to process deposit", err))
 		return
 	}
 
@@ -160,7 +192,7 @@ func (h *CashBankHandler) ProcessWithdrawal(c *gin.Context) {
 
 	transaction, err := h.cashBankService.ProcessWithdrawal(request, userID.(uint))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to process withdrawal", err))
+		c.JSON(classifyCashBankTransactionError(err), utils.CreateErrorResponse("Failed to process withdrawal", err))
 		return
 	}
 
@@ -189,7 +221,7 @@ func (h *CashBankHandler) ProcessTransfer(c *gin.Context) {
 
 	transfer, err := h.cashBankService.ProcessTransfer(request, userID.(uint))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to process transfer", err))
+		c.JSON(classifyCashBankTransactionError(err), utils.CreateErrorResponse("Failed to process transfer", err))
 		return
 	}
 

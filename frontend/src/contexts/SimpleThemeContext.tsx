@@ -3,6 +3,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
 type Theme = 'light' | 'dark';
+const THEME_STORAGE_KEY = 'theme';
+const CHAKRA_COLOR_MODE_KEY = 'chakra-ui-color-mode';
 
 interface ThemeContextType {
   theme: Theme;
@@ -32,10 +34,14 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     // Initialize theme
     const initTheme = () => {
       try {
-        const savedTheme = localStorage.getItem('theme') as Theme;
+        const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) as Theme;
+        const savedChakraTheme = localStorage.getItem(CHAKRA_COLOR_MODE_KEY) as Theme;
         if (savedTheme === 'dark' || savedTheme === 'light') {
           setTheme(savedTheme);
           applyTheme(savedTheme);
+        } else if (savedChakraTheme === 'dark' || savedChakraTheme === 'light') {
+          setTheme(savedChakraTheme);
+          applyTheme(savedChakraTheme);
         } else {
           // Check system preference
           const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -63,7 +69,8 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     
     // Store in localStorage
     try {
-      localStorage.setItem('theme', newTheme);
+      localStorage.setItem(THEME_STORAGE_KEY, newTheme);
+      localStorage.setItem(CHAKRA_COLOR_MODE_KEY, newTheme);
     } catch (error) {
       console.warn('Cannot save theme to localStorage');
     }

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/hooks/usePermissions';
@@ -61,6 +62,8 @@ import { getProductImageUrl, debugImageUrl } from '@/utils/imageUrl';
 import ProductImportModal from './ProductImportModal';
 
 const ProductCatalog: React.FC = () => {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const { t } = useTranslation();
   const { isService, hasInventory, getLabel } = useCompanyType();
@@ -91,6 +94,7 @@ const ProductCatalog: React.FC = () => {
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [tabIndex, setTabIndex] = useState(0);
   const [defaultIsAssembly, setDefaultIsAssembly] = useState(false);
+  const handledNotificationProductId = useRef<string | null>(null);
   const toast = useToast();
   const pageTitleColor = useColorModeValue('gray.800', 'var(--text-primary)');
   const cardBg = useColorModeValue('white', 'var(--bg-secondary)');
@@ -156,6 +160,55 @@ const ProductCatalog: React.FC = () => {
   useEffect(() => {
     fetchProducts();
   }, [searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, currentPage, tabIndex]);
+
+  useEffect(() => {
+    const notificationProductId = searchParams.get('notificationProductId');
+
+    if (!notificationProductId || handledNotificationProductId.current === notificationProductId) {
+      return;
+    }
+
+    handledNotificationProductId.current = notificationProductId;
+
+    const clearNotificationProductParam = () => {
+      const nextParams = new URLSearchParams(searchParams.toString());
+      nextParams.delete('notificationProductId');
+      const nextUrl = nextParams.toString() ? `/products?${nextParams.toString()}` : '/products';
+      router.replace(nextUrl);
+    };
+
+    const productId = Number(notificationProductId);
+    if (!Number.isFinite(productId)) {
+      clearNotificationProductParam();
+      return;
+    }
+
+    const existingProduct = products.find((product) => product.id === productId);
+    if (existingProduct) {
+      setDetailProduct(existingProduct);
+      onDetailOpen();
+      clearNotificationProductParam();
+      return;
+    }
+
+    const openProductFromNotification = async () => {
+      try {
+        const response = await ProductService.getProduct(productId);
+        setDetailProduct(response?.data || response);
+        onDetailOpen();
+      } catch (error) {
+        toast({
+          title: 'Failed to open product from notification',
+          status: 'error',
+          isClosable: true,
+        });
+      } finally {
+        clearNotificationProductParam();
+      }
+    };
+
+    void openProductFromNotification();
+  }, [onDetailOpen, products, router, searchParams, toast]);
 
   const fetchProducts = async () => {
     try {

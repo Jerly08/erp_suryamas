@@ -63,7 +63,6 @@ interface UserPermissionsProps {
     full_name: string;
     role: string;
   } | null;
-  token: string;
 }
 
 const modules = [
@@ -85,7 +84,7 @@ const modules = [
   { key: 'settings', label: 'Settings', description: 'System Settings & Invoice Types Management', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
 ];
 
-const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user, token }) => {
+const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user }) => {
   const [permissions, setPermissions] = useState<UserPermission | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);

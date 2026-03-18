@@ -55,8 +55,8 @@ import {
   Tooltip,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { FiPlus, FiEdit, FiTrash2, FiEye, FiDownload, FiMapPin, FiExternalLink, FiX, FiUpload, FiSettings, FiInfo } from 'react-icons/fi';
-import { assetService, Asset as BackendAsset } from '@/services/assetService';
+import { FiPlus, FiEdit, FiTrash2, FiEye, FiDownload, FiMapPin, FiExternalLink, FiX, FiUpload, FiSettings, FiInfo, FiPlay } from 'react-icons/fi';
+import { assetService, Asset as BackendAsset, MonthlyDepreciationRunResult, DepreciationHistoryItem, DepreciationHistoryDetailItem } from '@/services/assetService';
 import { ASSET_CATEGORIES, DEPRECIATION_METHOD_LABELS, AssetsSummary } from '@/types/asset';
 import AssetSummaryComponent from '@/components/assets/AssetSummary';
 import InteractiveMapPicker from '@/components/common/InteractiveMapPicker';
@@ -73,6 +73,15 @@ import {
 
 // Use the form data interface from validation utils
 type AssetFormData = FormData;
+
+const getPreviousPeriod = () => {
+  const now = new Date();
+  const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return {
+    year: previousMonth.getFullYear(),
+    month: previousMonth.getMonth() + 1,
+  };
+};
 
 const AssetsPage = () => {
   const { token, user } = useAuth();
@@ -134,6 +143,7 @@ const AssetsPage = () => {
   const openingEntryBg = useColorModeValue('green.50', 'green.900');
   const purchaseEntryTextColor = useColorModeValue('blue.700', 'blue.100');
   const openingEntryTextColor = useColorModeValue('green.700', 'green.100');
+  const depreciationRowHoverBg = useColorModeValue('purple.50', 'whiteAlpha.100');
   const openingAlertBg = useColorModeValue('green.50', 'green.900');
   const openingAlertBorder = useColorModeValue('green.200', 'green.700');
   const openingAlertTitleColor = useColorModeValue('green.700', 'green.100');
@@ -166,6 +176,17 @@ const AssetsPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
   const [isMapPickerOpen, setIsMapPickerOpen] = useState(false);
+  const [isRunDepreciationModalOpen, setIsRunDepreciationModalOpen] = useState(false);
+  const [isRunningDepreciation, setIsRunningDepreciation] = useState(false);
+  const [runDepreciationYear, setRunDepreciationYear] = useState<number>(getPreviousPeriod().year);
+  const [runDepreciationMonth, setRunDepreciationMonth] = useState<number>(getPreviousPeriod().month);
+  const [runDepreciationResult, setRunDepreciationResult] = useState<MonthlyDepreciationRunResult | null>(null);
+  const [depreciationHistory, setDepreciationHistory] = useState<DepreciationHistoryItem[]>([]);
+  const [isLoadingDepreciationHistory, setIsLoadingDepreciationHistory] = useState(false);
+  const [isDepreciationHistoryDetailOpen, setIsDepreciationHistoryDetailOpen] = useState(false);
+  const [isLoadingDepreciationHistoryDetail, setIsLoadingDepreciationHistoryDetail] = useState(false);
+  const [selectedDepreciationPeriod, setSelectedDepreciationPeriod] = useState<string>('');
+  const [selectedDepreciationEntries, setSelectedDepreciationEntries] = useState<DepreciationHistoryDetailItem[]>([]);
 
   // Image upload states
   const [pendingUpload, setPendingUpload] = useState<{ assetId: number, file: File } | null>(null);
@@ -258,6 +279,18 @@ const AssetsPage = () => {
     }
   };
 
+  const fetchDepreciationHistory = async () => {
+    try {
+      setIsLoadingDepreciationHistory(true);
+      const response = await assetService.getDepreciationHistory(6);
+      setDepreciationHistory(response.data || []);
+    } catch (error: any) {
+      console.error('Error fetching depreciation history:', error);
+    } finally {
+      setIsLoadingDepreciationHistory(false);
+    }
+  };
+
   // Fetch accounts for dropdowns (only optional accounts for manual asset entry)
   const fetchAccounts = async () => {
     try {
@@ -314,10 +347,52 @@ const AssetsPage = () => {
     if (token) {
       fetchAssets();
       fetchAssetsSummary();
+      fetchDepreciationHistory();
       fetchAccounts();
       fetchCategories(); // Load categories from database
     }
   }, [token]);
+
+  const formatDepreciationRunDate = (value?: string) => {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString(language === 'id' ? 'id-ID' : 'en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const handleOpenDepreciationHistoryDetail = async (period: string) => {
+    try {
+      setIsLoadingDepreciationHistoryDetail(true);
+      setSelectedDepreciationPeriod(period);
+      setSelectedDepreciationEntries([]);
+      setIsDepreciationHistoryDetailOpen(true);
+      const response = await assetService.getDepreciationHistoryDetail(period);
+      setSelectedDepreciationEntries(response.data.entries || []);
+    } catch (error: any) {
+      toast({
+        title: 'Gagal memuat detail depresiasi',
+        description: error.response?.data?.error || error.message || 'Detail periode tidak dapat dimuat.',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+      setIsDepreciationHistoryDetailOpen(false);
+    } finally {
+      setIsLoadingDepreciationHistoryDetail(false);
+    }
+  };
+
+  const handleCloseDepreciationHistoryDetail = () => {
+    setIsDepreciationHistoryDetailOpen(false);
+    setSelectedDepreciationEntries([]);
+    setSelectedDepreciationPeriod('');
+  };
 
   // Handle form submission for create/update
   const handleSubmit = async (e: React.FormEvent) => {
@@ -882,6 +957,67 @@ const AssetsPage = () => {
     });
   };
 
+  const handleOpenRunDepreciationModal = () => {
+    const previousPeriod = getPreviousPeriod();
+    setRunDepreciationYear(previousPeriod.year);
+    setRunDepreciationMonth(previousPeriod.month);
+    setRunDepreciationResult(null);
+    setIsRunDepreciationModalOpen(true);
+  };
+
+  const handleCloseRunDepreciationModal = () => {
+    if (isRunningDepreciation) return;
+    setIsRunDepreciationModalOpen(false);
+  };
+
+  const handleReplayDepreciationPeriod = (period: string) => {
+    const [yearStr, monthStr] = period.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    if (!Number.isNaN(year) && !Number.isNaN(month)) {
+      setRunDepreciationYear(year);
+      setRunDepreciationMonth(month);
+    }
+    setRunDepreciationResult(null);
+    setIsRunDepreciationModalOpen(true);
+  };
+
+  const handleRunDepreciation = async () => {
+    try {
+      setIsRunningDepreciation(true);
+      const parsedUserId = user?.id ? parseInt(user.id, 10) : undefined;
+      const response = await assetService.runMonthlyDepreciation(
+        runDepreciationYear,
+        runDepreciationMonth,
+        Number.isNaN(parsedUserId) ? undefined : parsedUserId
+      );
+
+      setRunDepreciationResult(response.data);
+      await Promise.all([fetchAssets(), fetchAssetsSummary(), fetchDepreciationHistory()]);
+
+      toast({
+        title: 'Depresiasi berhasil dijalankan',
+        description: response.message || `Periode ${response.data.period} selesai diproses.`,
+        status: 'success',
+        duration: 5000,
+        isClosable: true,
+      });
+    } catch (error: any) {
+      const parsedPeriodError = parseClosedPeriodError(error);
+      toast({
+        title: 'Gagal menjalankan depresiasi',
+        description: parsedPeriodError
+          ? `Periode tutup buku: ${formatClosedPeriodDate(parsedPeriodError.startDate)} - ${formatClosedPeriodDate(parsedPeriodError.endDate)}`
+          : (error.response?.data?.details || error.response?.data?.error || error.message || 'Terjadi kesalahan saat menjalankan depresiasi bulanan.'),
+        status: 'error',
+        duration: 7000,
+        isClosable: true,
+      });
+    } finally {
+      setIsRunningDepreciation(false);
+    }
+  };
+
   // Handle file change for image upload
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, assetId: number) => {
     if (e.target.files && e.target.files[0]) {
@@ -1168,6 +1304,16 @@ const AssetsPage = () => {
                 </Text>
               </Box>
               <Flex gap={3}>
+                {canEdit && (
+                  <Button
+                    variant="outline"
+                    leftIcon={<FiPlay />}
+                    onClick={handleOpenRunDepreciationModal}
+                    colorScheme="purple"
+                  >
+                    Run Depreciation
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   leftIcon={<FiDownload />}
@@ -1206,6 +1352,132 @@ const AssetsPage = () => {
               summary={summary}
               isLoading={isLoadingSummary}
             />
+
+            <Box
+              mt={6}
+              mb={5}
+              p={5}
+              borderWidth="1px"
+              borderColor={modalBorderColor}
+              borderRadius="xl"
+              bg={panelBg}
+            >
+              <Flex justify="space-between" align={{ base: 'flex-start', md: 'center' }} gap={3} mb={4} direction={{ base: 'column', md: 'row' }}>
+                <Box>
+                  <Heading size="sm" color={headingColor}>Depreciation Activity</Heading>
+                  <Text fontSize="sm" color={mutedTextColor} mt={1}>
+                    Lihat periode depresiasi yang sudah pernah dijalankan dan kapan batch terakhir diposting.
+                  </Text>
+                </Box>
+                <HStack spacing={2}>
+                  <Badge colorScheme="purple" variant="subtle">Auto scheduler: 1-5 tiap bulan</Badge>
+                  <Button size="sm" variant="ghost" onClick={fetchDepreciationHistory} isLoading={isLoadingDepreciationHistory}>
+                    Refresh
+                  </Button>
+                </HStack>
+              </Flex>
+
+              {depreciationHistory.length === 0 ? (
+                <Box borderWidth="1px" borderStyle="dashed" borderColor={emptyStateBorder} borderRadius="lg" p={4} bg={emptyStateBg}>
+                  <Text fontSize="sm" color={mutedTextColor}>
+                    Belum ada history run depresiasi yang tersimpan.
+                  </Text>
+                </Box>
+              ) : (
+                <Box borderWidth="1px" borderColor={entryCardBorderColor} borderRadius="lg" overflow="hidden" bg={entryCardBg}>
+                  <Grid
+                    templateColumns={{ base: '1fr', lg: '140px 190px 140px 180px 170px' }}
+                    gap={3}
+                    px={4}
+                    py={3}
+                    bg={modalHeaderBg}
+                    borderBottomWidth="1px"
+                    borderColor={entryCardBorderColor}
+                    display={{ base: 'none', lg: 'grid' }}
+                  >
+                    <Text fontSize="xs" fontWeight="bold" color={mutedTextColor}>PERIOD</Text>
+                    <Text fontSize="xs" fontWeight="bold" color={mutedTextColor}>LAST RUN</Text>
+                    <Text fontSize="xs" fontWeight="bold" color={mutedTextColor}>ASSETS</Text>
+                    <Text fontSize="xs" fontWeight="bold" color={mutedTextColor}>TOTAL DEPRECIATION</Text>
+                    <Text fontSize="xs" fontWeight="bold" color={mutedTextColor}>ACTION</Text>
+                  </Grid>
+
+                  <Box maxH="320px" overflowY="auto">
+                    <VStack spacing={0} align="stretch">
+                      {depreciationHistory.map((item, index) => (
+                        <Box
+                          key={item.period}
+                          px={4}
+                          py={3}
+                          borderBottomWidth={index === depreciationHistory.length - 1 ? '0' : '1px'}
+                          borderColor={entryCardBorderColor}
+                          cursor="pointer"
+                          _hover={{ bg: depreciationRowHoverBg }}
+                          transition="background 0.15s ease"
+                          onClick={() => handleOpenDepreciationHistoryDetail(item.period)}
+                        >
+                          <Grid
+                            templateColumns={{ base: '1fr', lg: '140px 190px 140px 180px 170px' }}
+                            gap={3}
+                            alignItems="center"
+                          >
+                            <Box>
+                              <HStack spacing={2} align="center">
+                                <Text fontWeight="bold" color={headingColor}>{item.period}</Text>
+                                <Badge colorScheme={item.status === 'POSTED' ? 'green' : 'orange'}>
+                                  {item.status}
+                                </Badge>
+                              </HStack>
+                              <Text display={{ base: 'block', lg: 'none' }} fontSize="xs" color={mutedTextColor} mt={1}>
+                                {item.entry_count} aset • {assetService.formatCurrency(item.total_depreciation)}
+                              </Text>
+                            </Box>
+
+                            <Text fontSize="sm" color={textColor}>
+                              {formatDepreciationRunDate(item.last_run_at)}
+                            </Text>
+
+                            <Box>
+                              <Text fontSize="sm" fontWeight="semibold" color={textColor}>{item.entry_count}</Text>
+                              <Text fontSize="xs" color={mutedTextColor}>asset journals</Text>
+                            </Box>
+
+                            <Box>
+                              <Text fontSize="sm" fontWeight="bold" color={textColor}>{assetService.formatCurrency(item.total_depreciation)}</Text>
+                              <Text fontSize="xs" color={mutedTextColor}>posted this period</Text>
+                            </Box>
+
+                            <HStack spacing={2} justify={{ base: 'flex-start', lg: 'flex-end' }}>
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDepreciationHistoryDetail(item.period);
+                                }}
+                              >
+                                View detail
+                              </Button>
+                              <Button
+                                size="xs"
+                                colorScheme="purple"
+                                variant="outline"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleReplayDepreciationPeriod(item.period);
+                                }}
+                              >
+                                Run again
+                              </Button>
+                            </HStack>
+                          </Grid>
+                        </Box>
+                      ))}
+                    </VStack>
+                  </Box>
+                </Box>
+              )}
+            </Box>
 
             {/* Filters */}
             <Box mb={4}>
@@ -2317,6 +2589,183 @@ const AssetsPage = () => {
                       {t('common.close')}
                     </Button>
                   </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            <Modal isOpen={isDepreciationHistoryDetailOpen} onClose={handleCloseDepreciationHistoryDetail} size="3xl">
+              <ModalOverlay />
+              <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor}>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
+                  Depreciation Detail {selectedDepreciationPeriod ? `- ${selectedDepreciationPeriod}` : ''}
+                </ModalHeader>
+                <ModalCloseButton color={textColor} />
+                <ModalBody pb={6}>
+                  {isLoadingDepreciationHistoryDetail ? (
+                    <Box py={8}>
+                      <Text fontSize="sm" color={mutedTextColor}>Memuat detail aset untuk periode ini...</Text>
+                    </Box>
+                  ) : selectedDepreciationEntries.length === 0 ? (
+                    <Box py={8}>
+                      <Text fontSize="sm" color={mutedTextColor}>Tidak ada entry depresiasi untuk periode ini.</Text>
+                    </Box>
+                  ) : (
+                    <VStack spacing={3} align="stretch">
+                      {selectedDepreciationEntries.map((entry) => (
+                        <Box
+                          key={`${entry.journal_id}-${entry.asset_id}`}
+                          borderWidth="1px"
+                          borderColor={entryCardBorderColor}
+                          borderRadius="lg"
+                          p={4}
+                          bg={entryCardBg}
+                        >
+                          <Flex justify="space-between" align={{ base: 'flex-start', md: 'center' }} direction={{ base: 'column', md: 'row' }} gap={3}>
+                            <Box>
+                              <HStack spacing={2} mb={1}>
+                                <Text fontWeight="bold" color={headingColor}>{entry.asset_code || `Asset #${entry.asset_id}`}</Text>
+                                <Badge colorScheme={entry.status === 'POSTED' ? 'green' : 'orange'}>{entry.status}</Badge>
+                              </HStack>
+                              <Text fontSize="sm" color={textColor}>{entry.asset_name || 'Nama aset tidak tersedia'}</Text>
+                              <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                                Journal: {entry.entry_number} | Posted: {formatDepreciationRunDate(entry.entry_date)}
+                              </Text>
+                            </Box>
+                            <Box textAlign={{ base: 'left', md: 'right' }}>
+                              <Text fontSize="xs" color={mutedTextColor}>Depreciation Amount</Text>
+                              <Text fontSize="lg" fontWeight="bold" color={textColor}>
+                                {assetService.formatCurrency(entry.depreciation_amount)}
+                              </Text>
+                            </Box>
+                          </Flex>
+                        </Box>
+                      ))}
+                    </VStack>
+                  )}
+                </ModalBody>
+                <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={modalBorderColor}>
+                  <HStack spacing={3}>
+                    {selectedDepreciationPeriod && (
+                      <Button
+                        colorScheme="purple"
+                        variant="outline"
+                        onClick={() => {
+                          handleCloseDepreciationHistoryDetail();
+                          handleReplayDepreciationPeriod(selectedDepreciationPeriod);
+                        }}
+                      >
+                        Run This Period Again
+                      </Button>
+                    )}
+                    <Button onClick={handleCloseDepreciationHistoryDetail}>
+                      Close
+                    </Button>
+                  </HStack>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
+            {/* Category Management Modal */}
+            <Modal isOpen={isRunDepreciationModalOpen} onClose={handleCloseRunDepreciationModal} size="lg">
+              <ModalOverlay />
+              <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor}>
+                <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
+                  Run Monthly Depreciation
+                </ModalHeader>
+                <ModalCloseButton color={textColor} isDisabled={isRunningDepreciation} />
+                <ModalBody pb={6}>
+                  <VStack spacing={4} align="stretch">
+                    <Alert status="info" borderRadius="md" bg={infoAlertBg} borderWidth="1px" borderColor={infoAlertBorder}>
+                      <AlertIcon />
+                      <Box>
+                        <AlertTitle color={infoAlertTitleColor} fontSize="sm">Batch depresiasi bulanan</AlertTitle>
+                        <AlertDescription color={infoAlertTextColor} fontSize="sm">
+                          Sistem akan membuat jurnal penyusutan untuk aset aktif yang sudah memiliki konfigurasi depresiasi lengkap pada periode yang dipilih.
+                        </AlertDescription>
+                      </Box>
+                    </Alert>
+
+                    <Grid templateColumns={{ base: '1fr', md: '1fr 1fr' }} gap={4}>
+                      <FormControl>
+                        <FormLabel fontSize="sm" fontWeight="medium">Tahun</FormLabel>
+                        <NumberInput
+                          min={2000}
+                          max={2100}
+                          value={runDepreciationYear}
+                          onChange={(_, valueAsNumber) => {
+                            if (!Number.isNaN(valueAsNumber)) setRunDepreciationYear(valueAsNumber);
+                          }}
+                        >
+                          <NumberInputField {...themedFieldStyles} />
+                          <NumberInputStepper>
+                            <NumberIncrementStepper />
+                            <NumberDecrementStepper />
+                          </NumberInputStepper>
+                        </NumberInput>
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel fontSize="sm" fontWeight="medium">Bulan</FormLabel>
+                        <Select
+                          value={String(runDepreciationMonth)}
+                          onChange={(e) => setRunDepreciationMonth(parseInt(e.target.value, 10))}
+                          {...themedFieldStyles}
+                        >
+                          {Array.from({ length: 12 }, (_, index) => (
+                            <option key={index + 1} value={index + 1}>
+                              {new Date(2000, index, 1).toLocaleString(language === 'id' ? 'id-ID' : 'en-US', { month: 'long' })}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    {runDepreciationResult && (
+                      <Box borderWidth="1px" borderColor={modalBorderColor} borderRadius="lg" p={4} bg={panelBg}>
+                        <Text fontWeight="semibold" color={headingColor} mb={3}>
+                          Hasil Run {runDepreciationResult.period}
+                        </Text>
+                        <Grid templateColumns={{ base: '1fr', md: 'repeat(2, 1fr)' }} gap={3}>
+                          <Box>
+                            <Text fontSize="xs" color={mutedTextColor}>Processed Assets</Text>
+                            <Text fontSize="lg" fontWeight="bold" color={textColor}>{runDepreciationResult.processed_assets}</Text>
+                          </Box>
+                          <Box>
+                            <Text fontSize="xs" color={mutedTextColor}>Skipped Assets</Text>
+                            <Text fontSize="lg" fontWeight="bold" color={textColor}>{runDepreciationResult.skipped_assets}</Text>
+                          </Box>
+                          <Box>
+                            <Text fontSize="xs" color={mutedTextColor}>Total Assets Checked</Text>
+                            <Text fontSize="lg" fontWeight="bold" color={textColor}>{runDepreciationResult.total_assets}</Text>
+                          </Box>
+                          <Box>
+                            <Text fontSize="xs" color={mutedTextColor}>Total Depreciation</Text>
+                            <Text fontSize="lg" fontWeight="bold" color={textColor}>{assetService.formatCurrency(runDepreciationResult.total_depreciation)}</Text>
+                          </Box>
+                        </Grid>
+                        {runDepreciationResult.errors && runDepreciationResult.errors.length > 0 && (
+                          <Box mt={4}>
+                            <Text fontSize="sm" fontWeight="semibold" color="orange.400" mb={2}>Warnings</Text>
+                            <VStack align="stretch" spacing={1}>
+                              {runDepreciationResult.errors.map((entry, index) => (
+                                <Text key={`${index}-${entry}`} fontSize="xs" color={mutedTextColor}>
+                                  - {entry}
+                                </Text>
+                              ))}
+                            </VStack>
+                          </Box>
+                        )}
+                      </Box>
+                    )}
+                  </VStack>
+                </ModalBody>
+                <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={modalBorderColor}>
+                  <Button onClick={handleCloseRunDepreciationModal} mr={3} isDisabled={isRunningDepreciation}>
+                    Close
+                  </Button>
+                  <Button colorScheme="purple" onClick={handleRunDepreciation} isLoading={isRunningDepreciation}>
+                    Process Depreciation
+                  </Button>
                 </ModalFooter>
               </ModalContent>
             </Modal>

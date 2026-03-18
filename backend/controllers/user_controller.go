@@ -1,16 +1,53 @@
 package controllers
 
 import (
-	"net/http"
-	"strconv"
 	"app-sistem-akuntansi/models"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"net/http"
+	"strconv"
 )
 
 type UserController struct {
 	db *gorm.DB
+}
+
+func getCurrentUserID(c *gin.Context) (uint, bool) {
+	rawUserID, exists := c.Get("user_id")
+	if !exists {
+		return 0, false
+	}
+
+	switch v := rawUserID.(type) {
+	case uint:
+		return v, true
+	case int:
+		if v < 0 {
+			return 0, false
+		}
+		return uint(v), true
+	case int64:
+		if v < 0 {
+			return 0, false
+		}
+		return uint(v), true
+	case float64:
+		if v < 0 {
+			return 0, false
+		}
+		return uint(v), true
+	default:
+		return 0, false
+	}
+}
+
+func (uc *UserController) activeAdminCount() (int64, error) {
+	var count int64
+	err := uc.db.Model(&models.User{}).
+		Where("role = ? AND is_active = ?", models.RoleAdmin, true).
+		Count(&count).Error
+	return count, err
 }
 
 func NewUserController(db *gorm.DB) *UserController {
@@ -113,10 +150,10 @@ func (uc *UserController) GetUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": response,
 		"pagination": gin.H{
-			"page":     page,
-			"limit":    limit,
-			"total":    total,
-			"pages":    (total + int64(limit) - 1) / int64(limit),
+			"page":  page,
+			"limit": limit,
+			"total": total,
+			"pages": (total + int64(limit) - 1) / int64(limit),
 		},
 	})
 }
@@ -195,12 +232,15 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 
 	// Create new user
 	user := models.User{
-		Username:  req.Username,
-		Email:     req.Email,
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
-		Role:      req.Role,
-		IsActive:  true,
+		Username:   req.Username,
+		Email:      req.Email,
+		FirstName:  req.FirstName,
+		LastName:   req.LastName,
+		Role:       req.Role,
+		Phone:      req.Phone,
+		Department: req.Department,
+		Position:   req.Position,
+		IsActive:   true,
 	}
 
 	// Hash password
@@ -218,15 +258,19 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 
 	// Return user without sensitive information
 	response := map[string]interface{}{
-		"id":            user.ID,
-		"username":      user.Username,
-		"email":         user.Email,
-		"role":          user.Role,
-		"first_name":    user.FirstName,
-		"last_name":     user.LastName,
-		"is_active":     user.IsActive,
-		"created_at":    user.CreatedAt,
-		"updated_at":    user.UpdatedAt,
+		"id":         user.ID,
+		"username":   user.Username,
+		"email":      user.Email,
+		"role":       user.Role,
+		"first_name": user.FirstName,
+		"last_name":  user.LastName,
+		"full_name":  user.GetDisplayName(),
+		"phone":      user.Phone,
+		"department": user.Department,
+		"position":   user.Position,
+		"is_active":  user.IsActive,
+		"created_at": user.CreatedAt,
+		"updated_at": user.UpdatedAt,
 	}
 
 	c.JSON(http.StatusCreated, response)
@@ -261,6 +305,35 @@ func (uc *UserController) UpdateUser(c *gin.Context) {
 	delete(updateData, "id")
 	delete(updateData, "created_at")
 	delete(updateData, "updated_at")
+
+	if user.Role == models.RoleAdmin && user.IsActive {
+		nextRole := user.Role
+		if role, exists := updateData["role"]; exists {
+			if roleStr, ok := role.(string); ok && roleStr != "" {
+				nextRole = roleStr
+			}
+		}
+
+		nextIsActive := user.IsActive
+		if isActive, exists := updateData["is_active"]; exists {
+			if isActiveBool, ok := isActive.(bool); ok {
+				nextIsActive = isActiveBool
+			}
+		}
+
+		if nextRole != models.RoleAdmin || !nextIsActive {
+			adminCount, countErr := uc.activeAdminCount()
+			if countErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate admin safeguards"})
+				return
+			}
+
+			if adminCount <= 1 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot remove or deactivate the last active admin"})
+				return
+			}
+		}
+	}
 
 	// Handle password update separately if provided
 	if password, exists := updateData["password"]; exists {
@@ -342,6 +415,24 @@ func (uc *UserController) DeleteUser(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
 		return
+	}
+
+	if currentUserID, ok := getCurrentUserID(c); ok && currentUserID == user.ID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "You cannot delete your own account"})
+		return
+	}
+
+	if user.Role == models.RoleAdmin && user.IsActive {
+		adminCount, countErr := uc.activeAdminCount()
+		if countErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate admin safeguards"})
+			return
+		}
+
+		if adminCount <= 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete the last active admin"})
+			return
+		}
 	}
 
 	// Soft delete the user

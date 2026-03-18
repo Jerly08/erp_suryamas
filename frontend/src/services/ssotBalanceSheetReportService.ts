@@ -96,6 +96,20 @@ export interface SSOTBalanceSheetValidation {
   issue?: string;
 }
 
+export interface SSOTBalanceSheetArchiveMetadata {
+  period_id: number;
+  start_date: string;
+  end_date: string;
+  description: string;
+  period_type?: string;
+  is_closed: boolean;
+  closed_at?: string | null;
+  snapshot_available: boolean;
+  snapshot_generated?: string | null;
+  calculation_basis: string;
+  report_display_mode: string;
+}
+
 export interface SSOTBalanceSheetComparison {
   from_date: string;
   to_date: string;
@@ -121,6 +135,10 @@ export interface SSOTBalanceSheetComparison {
   };
   balance_sheet_from: SSOTBalanceSheetData;
   balance_sheet_to: SSOTBalanceSheetData;
+}
+
+interface ReportServiceError extends Error {
+  status?: number;
 }
 
 // Legacy Balance Sheet data structure for compatibility
@@ -178,6 +196,12 @@ class SSOTBalanceSheetReportService {
     return getAuthHeaders();
   }
 
+  private getLocalDateString(): string {
+    const now = new Date();
+    const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    return localTime.toISOString().split('T')[0];
+  }
+
   private buildQueryString(params: Record<string, string | number | boolean | undefined>): string {
     const searchParams = new URLSearchParams();
     
@@ -191,13 +215,31 @@ class SSOTBalanceSheetReportService {
     return searchParams.toString();
   }
 
+  private async buildResponseError(response: Response, fallbackMessage: string): Promise<ReportServiceError> {
+    let message = fallbackMessage;
+
+    try {
+      const error = await response.json();
+      message =
+        error?.message ||
+        error?.error ||
+        fallbackMessage;
+    } catch {
+      message = `${fallbackMessage}. Server returned: ${response.status} ${response.statusText}`;
+    }
+
+    const serviceError = new Error(message) as ReportServiceError;
+    serviceError.status = response.status;
+    return serviceError;
+  }
+
   // Generate SSOT Balance Sheet
   async generateSSOTBalanceSheet(params: {
     as_of_date?: string;
     format?: 'json' | 'summary';
   } = {}): Promise<SSOTBalanceSheetData> {
     const queryParams = {
-      as_of_date: params.as_of_date || new Date().toISOString().split('T')[0],
+      as_of_date: params.as_of_date || this.getLocalDateString(),
       format: params.format || 'json'
     };
     
@@ -216,18 +258,43 @@ class SSOTBalanceSheetReportService {
     });
 
     if (!response.ok) {
-      // Try to parse error as JSON first, fallback to text if it's HTML
-      try {
-        const error = await response.json();
-        throw new Error(error.message || `Failed to generate SSOT Balance Sheet: ${response.statusText}`);
-      } catch (e) {
-        // If JSON parsing fails, it's likely HTML error page
-        throw new Error(`Failed to generate SSOT Balance Sheet. Server returned: ${response.status} ${response.statusText}`);
-      }
+      throw await this.buildResponseError(
+        response,
+        `Failed to generate SSOT Balance Sheet`
+      );
     }
 
     const result = await response.json();
     return result.data;
+  }
+
+  async getArchivedSSOTBalanceSheet(params: {
+    period_id?: number;
+    end_date?: string;
+  }): Promise<{ data: SSOTBalanceSheetData; archive: SSOTBalanceSheetArchiveMetadata }> {
+    const queryString = this.buildQueryString({
+      period_id: params.period_id,
+      end_date: params.end_date,
+    });
+    const baseUrl = API_ENDPOINTS.SSOT_REPORTS.BALANCE_SHEET_ARCHIVE;
+    const url = baseUrl + (queryString ? '?' + queryString : '');
+
+    const response = await fetch(url, {
+      headers: this.getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw await this.buildResponseError(
+        response,
+        `Failed to generate archived SSOT Balance Sheet`
+      );
+    }
+
+    const result = await response.json();
+    return {
+      data: result.data,
+      archive: result.archive,
+    };
   }
 
   // Generate SSOT Balance Sheet as PDF
@@ -235,7 +302,7 @@ class SSOTBalanceSheetReportService {
     as_of_date?: string;
   }): Promise<Blob> {
     const queryParams = {
-      as_of_date: params.as_of_date || new Date().toISOString().split('T')[0],
+      as_of_date: params.as_of_date || this.getLocalDateString(),
       format: 'pdf'
     };
     
@@ -259,7 +326,7 @@ class SSOTBalanceSheetReportService {
       try {
         const error = await response.json();
         throw new Error(error.message || `Failed to generate SSOT Balance Sheet PDF: ${response.statusText}`);
-      } catch (e) {
+      } catch {
         // If JSON parsing fails, it's likely HTML error page
         throw new Error(`Failed to generate SSOT Balance Sheet PDF. Server returned: ${response.status} ${response.statusText}`);
       }
@@ -273,7 +340,7 @@ class SSOTBalanceSheetReportService {
     as_of_date?: string;
   }): Promise<string> {
     const queryParams = {
-      as_of_date: params.as_of_date || new Date().toISOString().split('T')[0],
+      as_of_date: params.as_of_date || this.getLocalDateString(),
       format: 'csv'
     };
     
@@ -308,7 +375,7 @@ class SSOTBalanceSheetReportService {
       try {
         const errorJson = JSON.parse(errorText);
         throw new Error(errorJson.message || errorJson.error || `Failed to generate SSOT Balance Sheet CSV: ${response.statusText}`);
-      } catch (jsonError) {
+      } catch {
         // If not JSON, check if it's HTML
         if (errorText.trim().startsWith('<')) {
           throw new Error(`Failed to generate SSOT Balance Sheet CSV. Server returned an HTML error page.`);
@@ -330,14 +397,6 @@ class SSOTBalanceSheetReportService {
     return csvContent;
   }
 
-  // Convert balance sheet data to CSV format
-  private convertToCSV(data: SSOTBalanceSheetData): string {
-    // This is a simplified implementation - in reality, we should use the existing
-    // export utilities from the frontend
-    return "Account Code,Account Name,Category,Amount\n" +
-           "Sample Data,Sample Account,Asset,1000000";
-  }
-
   // Get SSOT Balance Sheet account details for drilldown
   async getBalanceSheetAccountDetails(params: {
     as_of_date?: string;
@@ -349,7 +408,7 @@ class SSOTBalanceSheetReportService {
     total_accounts: number;
   }> {
     const queryString = this.buildQueryString({
-      as_of_date: params.as_of_date || new Date().toISOString().split('T')[0],
+      as_of_date: params.as_of_date || this.getLocalDateString(),
       account_type: params.account_type
     });
     
@@ -373,7 +432,7 @@ class SSOTBalanceSheetReportService {
     as_of_date?: string;
   } = {}): Promise<SSOTBalanceSheetValidation> {
     const queryString = this.buildQueryString({
-      as_of_date: params.as_of_date || new Date().toISOString().split('T')[0]
+      as_of_date: params.as_of_date || this.getLocalDateString()
     });
     
     const url = API_ENDPOINTS.SSOT_REPORTS.BALANCE_SHEET_VALIDATE + (queryString ? '?' + queryString : '');

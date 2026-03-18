@@ -67,6 +67,9 @@ const LoginContent = () => {
   const decorativeElementBg1 = useColorModeValue('blue.100', 'blue.800');
   const decorativeElementBg2 = useColorModeValue('purple.100', 'purple.800');
   const passwordToggleHoverBg = useColorModeValue('gray.100', 'gray.600');
+  const supportPanelBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const supportPanelBorder = useColorModeValue('blue.100', 'whiteAlpha.200');
+  const supportIconBg = useColorModeValue('white', 'whiteAlpha.200');
   // Error alert colors
   const errorAlertBg = useColorModeValue('red.50', 'red.900');
   const errorAlertBorderColor = useColorModeValue('red.200', 'red.700');
@@ -595,40 +598,92 @@ const LoginContent = () => {
                   </HStack>
                   
                   {/* Support Text */}
-                  <VStack spacing={3}>
-                    <Text 
-                      textAlign="center" 
-                      color={textColor} 
-                      fontSize="sm"
-                    >
-                      Don't have an account?{' '}
-                      <Button 
-                        variant="link" 
-                        color={accentColor} 
-                        fontWeight="semibold"
+                  <Box
+                    bg={supportPanelBg}
+                    borderWidth="1px"
+                    borderColor={supportPanelBorder}
+                    borderRadius="xl"
+                    p={4}
+                  >
+                    <VStack spacing={4} align="stretch">
+                      <Text
+                        textAlign="center"
+                        color={headingColor}
                         fontSize="sm"
-                        p={0}
-                        h="auto"
-                        minW="auto"
-                        onClick={() => router.push('/register')}
-                        _hover={{
-                          textDecoration: 'underline'
-                        }}
+                        fontWeight="semibold"
                       >
-                        Sign up here
-                      </Button>
-                    </Text>
-                    
-                    <Text 
-                      textAlign="center" 
-                      color={textColor} 
-                      fontSize="xs"
-                      maxW="sm"
-                      lineHeight="relaxed"
-                    >
-                      By signing in, you agree to our terms of service and privacy policy.
-                    </Text>
-                  </VStack>
+                        Account access is managed by your administrator
+                      </Text>
+
+                      <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                        <HStack
+                          align="start"
+                          spacing={3}
+                          bg={supportIconBg}
+                          borderRadius="lg"
+                          px={3}
+                          py={3}
+                        >
+                          <Center
+                            w={8}
+                            h={8}
+                            borderRadius="lg"
+                            bg={useColorModeValue('blue.100', 'blue.800')}
+                            flexShrink={0}
+                          >
+                            <FiUsers color={iconColor} size={16} />
+                          </Center>
+                          <VStack align="start" spacing={0}>
+                            <Text color={headingColor} fontSize="sm" fontWeight="medium">
+                              Need an account?
+                            </Text>
+                            <Text color={textColor} fontSize="xs" lineHeight="short">
+                              Contact your admin or HR team to request user access.
+                            </Text>
+                          </VStack>
+                        </HStack>
+
+                        <HStack
+                          align="start"
+                          spacing={3}
+                          bg={supportIconBg}
+                          borderRadius="lg"
+                          px={3}
+                          py={3}
+                        >
+                          <Center
+                            w={8}
+                            h={8}
+                            borderRadius="lg"
+                            bg={useColorModeValue('green.100', 'green.800')}
+                            flexShrink={0}
+                          >
+                            <FiShield color={iconColor} size={16} />
+                          </Center>
+                          <VStack align="start" spacing={0}>
+                            <Text color={headingColor} fontSize="sm" fontWeight="medium">
+                              Forgot your password?
+                            </Text>
+                            <Text color={textColor} fontSize="xs" lineHeight="short">
+                              Ask your system administrator to reset your credentials.
+                            </Text>
+                          </VStack>
+                        </HStack>
+                      </SimpleGrid>
+
+                      <HStack justify="center" spacing={2}>
+                        <FiMail color={iconColor} size={14} />
+                        <Text
+                          textAlign="center"
+                          color={textColor}
+                          fontSize="xs"
+                          lineHeight="relaxed"
+                        >
+                          For login assistance, please contact your internal IT or system administrator.
+                        </Text>
+                      </HStack>
+                    </VStack>
+                  </Box>
                 </CardBody>
               </Card>
             </ScaleFade>

@@ -1369,7 +1369,8 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 		// Check if asset already exists for this purchase item (prevent duplicates)
 		var existingCount int64
 		s.db.Model(&models.Asset{}).Where(
-			"notes LIKE ? AND deleted_at IS NULL",
+			"notes LIKE ? AND notes LIKE ? AND deleted_at IS NULL",
+			fmt.Sprintf("%%Purchase %s%%", purchase.Code),
 			fmt.Sprintf("%%PurchaseItem:%d%%", item.ID),
 		).Count(&existingCount)
 		if existingCount > 0 {
@@ -1540,7 +1541,11 @@ func (s *PurchaseService) cleanupAutoCreatedAssetsFromPurchase(purchase *models.
 		}
 
 		var assets []models.Asset
-		if err := s.db.Where("notes LIKE ? AND deleted_at IS NULL", fmt.Sprintf("%%PurchaseItem:%d%%", item.ID)).Find(&assets).Error; err != nil {
+		if err := s.db.Where(
+			"notes LIKE ? AND notes LIKE ? AND deleted_at IS NULL",
+			fmt.Sprintf("%%Purchase %s%%", purchase.Code),
+			fmt.Sprintf("%%PurchaseItem:%d%%", item.ID),
+		).Find(&assets).Error; err != nil {
 			return fmt.Errorf("failed to find auto-created assets for purchase item %d: %v", item.ID, err)
 		}
 
@@ -1685,14 +1690,27 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		if err := s.db.First(&cashBank, *purchase.BankAccountID).Error; err != nil {
 			fmt.Printf("⚠️ Warning: Failed to find bank account %d for balance restoration: %v\n", *purchase.BankAccountID, err)
 		} else {
+			restoreAmount := purchase.TotalAmount
+			exchangeRate := 1.0
+			if cashBank.IsForeignCurrency() {
+				nativeAmount, carryRate, calcErr := calculatePurchaseNativeOutflow(&cashBank, purchase.TotalAmount)
+				if calcErr != nil {
+					fmt.Printf("âš ï¸ Warning: Failed to calculate reversal native amount for %s: %v\n", cashBank.Name, calcErr)
+				} else {
+					restoreAmount = nativeAmount
+					exchangeRate = carryRate
+					cashBank.BookBalanceIDR += purchase.TotalAmount
+				}
+			}
+
 			oldBalance := cashBank.Balance
-			cashBank.Balance += purchase.TotalAmount // Add back (restore)
+			cashBank.Balance += restoreAmount // Add back (restore)
 
 			if err := s.db.Save(&cashBank).Error; err != nil {
 				fmt.Printf("⚠️ Warning: Failed to restore cash/bank balance: %v\n", err)
 			} else {
 				fmt.Printf("✅ Cash/bank balance restored: %s %.2f → %.2f (+%.2f)\n",
-					cashBank.Name, oldBalance, cashBank.Balance, purchase.TotalAmount)
+					cashBank.Name, oldBalance, cashBank.Balance, restoreAmount)
 			}
 
 			// Create reversal transaction record
@@ -1700,7 +1718,10 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 				CashBankID:      *purchase.BankAccountID,
 				ReferenceType:   "PURCHASE_REVERSAL",
 				ReferenceID:     purchase.ID,
-				Amount:          purchase.TotalAmount, // Positive = incoming (reversal)
+				Amount:          restoreAmount, // Positive = incoming (reversal)
+				Currency:        normalizeCashBankCurrency(cashBank.Currency),
+				ExchangeRate:    exchangeRate,
+				BookAmountIDR:   purchase.TotalAmount,
 				BalanceAfter:    cashBank.Balance,
 				TransactionDate: time.Now(),
 				Notes:           fmt.Sprintf("Reversal: Purchase %s rejected", purchase.Code),
@@ -2233,6 +2254,58 @@ func isImmediatePayment(paymentMethod string) bool {
 		paymentMethod == models.PurchasePaymentCheck
 }
 
+func expectedCashBankTypeForPurchaseMethod(paymentMethod string) string {
+	method := strings.ToUpper(strings.TrimSpace(paymentMethod))
+	if method == "CASH" || method == "TUNAI" {
+		return models.CashBankTypeCash
+	}
+	return models.CashBankTypeBank
+}
+
+func calculatePurchaseNativeOutflow(cashBank *models.CashBank, bookAmountIDR float64) (float64, float64, error) {
+	if cashBank == nil {
+		return 0, 0, fmt.Errorf("cash/bank account is required")
+	}
+	if bookAmountIDR <= 0 {
+		return 0, 0, fmt.Errorf("book amount must be greater than zero")
+	}
+	if !cashBank.IsForeignCurrency() {
+		return bookAmountIDR, 1, nil
+	}
+	if cashBank.Balance <= 0 {
+		return 0, 0, fmt.Errorf("foreign currency balance is not available")
+	}
+
+	bookBalance := cashBank.EffectiveBookBalanceIDR()
+	carryRate := 0.0
+	if bookBalance > 0 {
+		carryRate = bookBalance / cashBank.Balance
+	}
+	if carryRate <= 0 {
+		carryRate = cashBank.EffectiveExchangeRate()
+	}
+	if carryRate <= 0 {
+		return 0, 0, fmt.Errorf("exchange rate is not available for %s", cashBank.Name)
+	}
+
+	nativeAmount := bookAmountIDR / carryRate
+	if nativeAmount <= 0 {
+		return 0, 0, fmt.Errorf("native amount must be greater than zero")
+	}
+	if nativeAmount-cashBank.Balance > 0.000001 {
+		return 0, 0, fmt.Errorf(
+			"insufficient balance in %s. Available: %.2f %s, Required: %.2f %s",
+			cashBank.Name,
+			cashBank.Balance,
+			normalizeCashBankCurrency(cashBank.Currency),
+			nativeAmount,
+			normalizeCashBankCurrency(cashBank.Currency),
+		)
+	}
+
+	return nativeAmount, carryRate, nil
+}
+
 // updateProductStockOnApproval updates product stock when purchase is approved
 func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase) error {
 	fmt.Printf("📦 Starting stock update for purchase %s with %d items\n", purchase.Code, len(purchase.PurchaseItems))
@@ -2722,30 +2795,33 @@ func (s *PurchaseService) updateCashBankBalanceForPurchaseAtomic(purchase *model
 			return fmt.Errorf("failed to sum existing cash/bank transactions: %v", err)
 		}
 
-		repairHistoryOnly := math.Abs(cashBank.Balance-(txSums.NativeAmount-purchase.TotalAmount)) <= 0.01
-		expectedBalanceAfter := cashBank.Balance - purchase.TotalAmount
+		bookAmountIDR := purchase.TotalAmount
+		nativeAmount := purchase.TotalAmount
+		exchangeRate := 1.0
+		if cashBank.IsForeignCurrency() {
+			nativeAmount, exchangeRate, err = calculatePurchaseNativeOutflow(&cashBank, purchase.TotalAmount)
+			if err != nil {
+				return err
+			}
+		}
+
+		repairHistoryOnly := math.Abs(cashBank.Balance-(txSums.NativeAmount-nativeAmount)) <= 0.01
+		expectedBalanceAfter := cashBank.Balance - nativeAmount
 		if repairHistoryOnly {
 			expectedBalanceAfter = cashBank.Balance
 			fmt.Printf("Detected partial purchase posting for %s: balance already reduced, backfilling history only\n", purchase.Code)
-		} else if cashBank.Balance < purchase.TotalAmount {
+		} else if cashBank.Balance < nativeAmount {
 			return fmt.Errorf("insufficient balance in %s. Available: %.2f, Required: %.2f",
-				cashBank.Name, cashBank.Balance, purchase.TotalAmount)
+				cashBank.Name, cashBank.Balance, nativeAmount)
 		}
 
 		currency := normalizeCashBankCurrency(cashBank.Currency)
-		exchangeRate := cashBank.EffectiveExchangeRate()
-		bookAmountIDR := purchase.TotalAmount
-		if cashBank.IsForeignCurrency() {
-			bookAmountIDR = purchase.TotalAmount * exchangeRate
-		} else {
-			exchangeRate = 1
-		}
 
 		cashBankTransaction := &models.CashBankTransaction{
 			CashBankID:      cashBankID,
 			ReferenceType:   "PURCHASE",
 			ReferenceID:     purchase.ID,
-			Amount:          -purchase.TotalAmount,
+			Amount:          -nativeAmount,
 			Currency:        currency,
 			ExchangeRate:    exchangeRate,
 			BookAmountIDR:   -bookAmountIDR,
@@ -2768,27 +2844,32 @@ func (s *PurchaseService) updateCashBankBalanceForPurchaseAtomic(purchase *model
 }
 
 func (s *PurchaseService) resolveCashBankIDForPurchaseAtomic(purchase *models.Purchase) (uint, error) {
+	expectedType := expectedCashBankTypeForPurchaseMethod(purchase.PaymentMethod)
+
 	if purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
+		var cashBank models.CashBank
+		if err := s.db.First(&cashBank, *purchase.BankAccountID).Error; err != nil {
+			return 0, fmt.Errorf("cash/bank account not found: %v", err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(cashBank.Type), expectedType) {
+			return 0, fmt.Errorf("%s payment must use a %s account, but %s is %s",
+				purchase.PaymentMethod,
+				strings.ToLower(expectedType),
+				cashBank.Name,
+				strings.ToLower(cashBank.Type))
+		}
 		fmt.Printf("Using specified bank account ID %d for atomic balance update\n", *purchase.BankAccountID)
 		return *purchase.BankAccountID, nil
 	}
 
-	defaultAccountCode := "1101"
-	method := strings.ToUpper(strings.TrimSpace(purchase.PaymentMethod))
-	if method == "CASH" || method == "TUNAI" {
-		defaultAccountCode = "1101"
-	}
-
-	var account models.Account
-	if err := s.db.Where("code = ? AND deleted_at IS NULL", defaultAccountCode).First(&account).Error; err != nil {
-		return 0, fmt.Errorf("default account %s not found: %v", defaultAccountCode, err)
-	}
-
 	var cashBank models.CashBank
-	if err := s.db.Where("account_id = ? AND deleted_at IS NULL", account.ID).First(&cashBank).Error; err != nil {
-		return 0, fmt.Errorf("cash_bank record for account %s not found: %v", defaultAccountCode, err)
+	if err := s.db.
+		Where("type = ? AND is_active = ? AND deleted_at IS NULL", expectedType, true).
+		Order("id ASC").
+		First(&cashBank).Error; err != nil {
+		return 0, fmt.Errorf("active %s account not found: %v", strings.ToLower(expectedType), err)
 	}
 
-	fmt.Printf("Using fallback cash/bank: %s (ID: %d, Code: %s)\n", cashBank.Name, cashBank.ID, defaultAccountCode)
+	fmt.Printf("Using fallback cash/bank: %s (ID: %d, Type: %s)\n", cashBank.Name, cashBank.ID, cashBank.Type)
 	return cashBank.ID, nil
 }

@@ -457,44 +457,11 @@ func (s *SSOTBalanceSheetService) generateBalanceSheetFromBalances(balances []SS
 	bsData.Equity.Items = []BSAccountItem{}
 	bsData.AccountDetails = balances
 
-	// CRITICAL FIX: Check if period has been closed BEFORE calculating Net Income
-	// After period closing: Revenue/Expense accounts should have balance=0 in accounts table
-	// We should NOT recalculate Net Income from journal lines as it causes double counting
-
-	// Strategy: Check accounts.balance (not journal lines) to determine if period closed
-	var totalRevenueBalance, totalExpenseBalance float64
-
-	for _, balance := range balances {
-		accountType := strings.ToUpper(balance.AccountType)
-		// Check for English OR Indonesian account types
-		if (accountType == "REVENUE" || accountType == "PENDAPATAN") && balance.NetBalance != 0 {
-			totalRevenueBalance += balance.NetBalance
-		} else if (accountType == "EXPENSE" || accountType == "BEBAN") && balance.NetBalance != 0 {
-			totalExpenseBalance += balance.NetBalance
-		}
-	}
-
-	// Check if closing entries exist for this period.
-	// If closing entries transferred net income to retained earnings,
-	// adding net income again would cause double-counting.
-	var closingEntryCount int64
-	s.db.Table("unified_journal_ledger").
-		Where("source_type = 'CLOSING' AND status = 'POSTED' AND deleted_at IS NULL AND DATE(entry_date) <= ?", asOf.Format("2006-01-02")).
-		Count(&closingEntryCount)
-
-	var netIncome float64
-	if closingEntryCount > 0 {
-		// Period has been closed.
-		// Retained earnings already includes net income from closing entries.
-		// Do NOT add net income again to avoid double-counting.
-		log.Printf("Period closed (closing entries: %d). Skipping net income addition to avoid double-counting.", closingEntryCount)
-		netIncome = 0
-	} else {
-		// Period NOT closed.
-		// Calculate and add net income as "Current Year Earnings".
-		netIncome = s.calculateNetIncome(asOf.Format("2006-01-02"))
-		log.Printf("Net income calculated from journals: %.2f (closing entries: %d)", netIncome, closingEntryCount)
-	}
+	// Current year earnings must always be derived from journal activity up to the
+	// requested as-of date. Posted closing entries already zero-out closed periods,
+	// so historical closings should not force net income to zero for later dates.
+	netIncome := s.calculateNetIncome(asOf.Format("2006-01-02"))
+	log.Printf("Net income calculated up to %s: %.2f", asOf.Format("2006-01-02"), netIncome)
 
 	// Process each account balance
 	for _, balance := range balances {

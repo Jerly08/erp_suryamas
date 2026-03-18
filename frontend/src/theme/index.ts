@@ -2,7 +2,7 @@ import { extendTheme, type ThemeConfig } from '@chakra-ui/react';
 
 const config: ThemeConfig = {
   initialColorMode: 'light',
-  useSystemColorMode: true,
+  useSystemColorMode: false,
   disableTransitionOnChange: false,
 };
 
@@ -104,6 +104,37 @@ const theme = extendTheme({
     Text: {
       baseStyle: {
         lineHeight: 'base',
+      },
+    },
+    Alert: {
+      variants: {
+        subtle: (props) => {
+          const isLightMode = props.colorMode === 'light';
+          const isSuccess = props.status === 'success' || props.colorScheme === 'green';
+
+          if (isLightMode && isSuccess) {
+            return {
+              container: {
+                bg: 'green.50',
+                color: 'green.800',
+                borderLeftWidth: '4px',
+                borderLeftColor: 'green.500',
+                boxShadow: 'sm',
+              },
+              title: {
+                color: 'green.800',
+              },
+              description: {
+                color: 'green.700',
+              },
+              icon: {
+                color: 'green.600',
+              },
+            };
+          }
+
+          return {};
+        },
       },
     },
   },
