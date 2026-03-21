@@ -40,6 +40,7 @@ export const stripInternalPaymentReference = (reference?: string): string => {
   }
 
   return reference
+    .replace(/^__ALLOC_PENDING__\s*/, '')
     .replace(/^__EXP_ACC:\d+,CB:\d+__/, '')
     .replace(/^__CB:\d+__/, '')
     .trim();
@@ -325,6 +326,12 @@ class PaymentService {
         pph_type: data.pph_type || '',
         pph_rate: data.pph_rate || 0,
         pph_amount: data.pph_amount || 0,
+        ...(data.allocations !== undefined && {
+          invoice_allocations: data.allocations,
+        }),
+        ...(data.bill_allocations !== undefined && {
+          bill_allocations: data.bill_allocations,
+        }),
       };
 
       const response = await api.put(`${this.getSSOTPaymentBase()}/${id}/draft`, ssotData);
@@ -368,7 +375,7 @@ class PaymentService {
       if (filters?.start_date) params.append('start_date', filters.start_date);
       if (filters?.end_date) params.append('end_date', filters.end_date);
 
-      const response = await api.get(API_ENDPOINTS.PAYMENTS.EXPORT + `?${params}`, {
+      const response = await api.get(API_ENDPOINTS.PAYMENTS.EXPORT_EXCEL + `?${params}`, {
         responseType: 'blob',
       });
 

@@ -98,8 +98,8 @@ type SSOTCashFlowData struct {
 	Enhanced    bool      `json:"enhanced"`
 
 	// Reconciliation Warning
-	HasReconciliationWarning  bool    `json:"has_reconciliation_warning"`
-	ReconciliationDifference  float64 `json:"reconciliation_difference,omitempty"`
+	HasReconciliationWarning bool    `json:"has_reconciliation_warning"`
+	ReconciliationDifference float64 `json:"reconciliation_difference,omitempty"`
 
 	// Account Details for Drilldown
 	AccountDetails []SSOTAccountBalance `json:"account_details,omitempty"`
@@ -152,23 +152,23 @@ func (s *SSOTCashFlowService) GenerateSSOTCashFlow(startDate, endDate string) (*
 		return nil, fmt.Errorf("invalid end date format: %v", err)
 	}
 
-	// Make end date inclusive by using exclusive upper bound (end + 1 day)
-	endExclusive := end.AddDate(0, 0, 1).Format("2006-01-02")
+	// Use an exclusive upper bound so timestamped journals on the next day are excluded.
+	endExclusive := end.AddDate(0, 0, 1)
 
 	// Get non-cash/non-PL transactions for balance sheet movement analysis
-	transactions, err := s.getCashFlowTransactions(startDate, endExclusive)
+	transactions, err := s.getCashFlowTransactions(start, endExclusive)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cash flow data: %v", err)
 	}
 
 	// Get net income for the period (from P&L accounts)
-	netIncome, err := s.getNetIncomeFromSSOT(startDate, endExclusive)
+	netIncome, err := s.getNetIncomeFromSSOT(start, endExclusive)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get net income: %v", err)
 	}
 
 	// Get beginning and ending cash balances
-	beginningCash, endingCash, err := s.getCashBalances(startDate, endExclusive)
+	beginningCash, endingCash, err := s.getCashBalances(start, endExclusive)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cash balances: %v", err)
 	}
@@ -184,7 +184,7 @@ func (s *SSOTCashFlowService) GenerateSSOTCashFlow(startDate, endDate string) (*
 
 // getCashFlowTransactions retrieves balance sheet account movements (excluding cash & P&L accounts)
 // for the indirect method cash flow statement
-func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string) ([]CashFlowTransaction, error) {
+func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endExclusive time.Time) ([]CashFlowTransaction, error) {
 	var transactions []CashFlowTransaction
 
 	// Indirect method: We need changes in non-cash balance sheet accounts
@@ -210,8 +210,8 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.deleted_at IS NULL
 		WHERE uje.status = 'POSTED' 
 			AND uje.entry_date >= ? 
-			AND DATE(uje.entry_date) <= ?
-			AND UPPER(COALESCE(uje.source_type, '')) != 'CLOSING'
+			AND uje.entry_date < ?
+			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('CLOSING', 'REVERSAL')
 			AND a.code NOT LIKE '1101%'
 			AND a.code NOT LIKE '4%'
 			AND a.code NOT LIKE '5%'
@@ -225,7 +225,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 		ORDER BY a.code
 	`
 
-	if err := s.db.Raw(query, startDate, endDate).Scan(&transactions).Error; err != nil {
+	if err := s.db.Raw(query, startDate, endExclusive).Scan(&transactions).Error; err != nil {
 		return nil, fmt.Errorf("error executing cash flow transactions query: %v", err)
 	}
 
@@ -240,7 +240,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endDate string)
 }
 
 // getNetIncomeFromSSOT calculates net income from revenue and expense accounts
-func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endDate string) (float64, error) {
+func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endExclusive time.Time) (float64, error) {
 	var result struct {
 		NetIncome float64 `json:"net_income"`
 	}
@@ -264,14 +264,14 @@ func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endDate string) (f
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.deleted_at IS NULL
 		WHERE uje.status = 'POSTED' 
 			AND uje.entry_date >= ? 
-			AND DATE(uje.entry_date) <= ?
-			AND UPPER(COALESCE(uje.source_type, '')) != 'CLOSING'
+			AND uje.entry_date < ?
+			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('CLOSING', 'REVERSAL')
 			AND a.deleted_at IS NULL
 			AND COALESCE(a.is_header, false) = false
 			AND (a.code LIKE '4%' OR a.code LIKE '5%' OR a.code LIKE '6%' OR a.code LIKE '7%' OR a.code LIKE '8%' OR a.code LIKE '9%')
 	`
 
-	if err := s.db.Raw(query, startDate, endDate).Scan(&result).Error; err != nil {
+	if err := s.db.Raw(query, startDate, endExclusive).Scan(&result).Error; err != nil {
 		return 0, fmt.Errorf("error calculating net income: %v", err)
 	}
 
@@ -281,7 +281,7 @@ func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endDate string) (f
 
 // getCashBalances gets beginning and ending cash balances
 // Cash accounts: 1101-xxx (KAS KECIL, KAS BESAR, BANK-GIRO, BANK-TABUNGAN)
-func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float64, float64, error) {
+func (s *SSOTCashFlowService) getCashBalances(startDate, endExclusive time.Time) (float64, float64, error) {
 	var beginningCash, endingCash float64
 
 	// Beginning cash = all cash account movements BEFORE the start date
@@ -296,7 +296,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 		WHERE uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
 			AND a.deleted_at IS NULL
-			AND DATE(uje.entry_date) <= ?
+			AND uje.entry_date < ?
 			AND a.code LIKE '1101%'
 	`
 
@@ -313,7 +313,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 		WHERE uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
 			AND a.deleted_at IS NULL
-			AND DATE(uje.entry_date) <= ?
+			AND uje.entry_date < ?
 			AND a.code LIKE '1101%'
 	`
 
@@ -328,7 +328,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 		return 0, 0, fmt.Errorf("error getting beginning cash balance: %v", err)
 	}
 
-	if err := s.db.Raw(endingQuery, endDate).Scan(&endResult).Error; err != nil {
+	if err := s.db.Raw(endingQuery, endExclusive).Scan(&endResult).Error; err != nil {
 		return 0, 0, fmt.Errorf("error getting ending cash balance: %v", err)
 	}
 
@@ -336,7 +336,7 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endDate string) (float6
 	endingCash = endResult.CashBalance
 
 	log.Printf("Beginning Cash (before %s): %.2f, Ending Cash (before %s): %.2f",
-		startDate, beginningCash, endDate, endingCash)
+		startDate.Format("2006-01-02"), beginningCash, endExclusive.Format("2006-01-02"), endingCash)
 
 	return beginningCash, endingCash, nil
 }
@@ -572,7 +572,19 @@ func (s *SSOTCashFlowService) categorizeCashFlowTransaction(cfData *SSOTCashFlow
 	// ============ FINANCING ACTIVITIES ============
 
 	// Share Capital / Equity (31xx — Modal Disetor, Laba Ditahan, etc.)
+	case strings.Contains(strings.ToLower(item.AccountName), "dividend") ||
+		strings.Contains(strings.ToLower(item.AccountName), "dividen"):
+		cfData.FinancingActivities.DividendsPaid += amount * -1
+		item.Amount = amount * -1
+		item.Type = "outflow"
+		cfData.FinancingActivities.Items = append(cfData.FinancingActivities.Items, item)
+
 	case strings.HasPrefix(code, "31"):
+		if !strings.EqualFold(category, "SHARE_CAPITAL") {
+			log.Printf("Skipping non-cash/internal equity movement from financing cash flow: %s %s (category: %s, amount: %.2f)",
+				code, item.AccountName, category, amount)
+			return
+		}
 		if amount > 0 {
 			cfData.FinancingActivities.ShareCapitalIncrease += amount
 			item.Type = "inflow"
@@ -607,23 +619,9 @@ func (s *SSOTCashFlowService) categorizeCashFlowTransaction(cfData *SSOTCashFlow
 		}
 		cfData.FinancingActivities.Items = append(cfData.FinancingActivities.Items, item)
 
-	// Dividends (check by account name)
-	case strings.Contains(strings.ToLower(item.AccountName), "dividend") ||
-		strings.Contains(strings.ToLower(item.AccountName), "dividen"):
-		cfData.FinancingActivities.DividendsPaid += amount * -1
-		item.Amount = amount * -1
-		item.Type = "outflow"
-		cfData.FinancingActivities.Items = append(cfData.FinancingActivities.Items, item)
-
-	// Retained Earnings and Other Equity (32xx, 33xx) — Financing Activities
 	case strings.HasPrefix(code, "32"), strings.HasPrefix(code, "33"):
-		if amount > 0 {
-			item.Type = "inflow"
-		} else {
-			item.Type = "outflow"
-		}
-		cfData.FinancingActivities.OtherFinancingActivities += amount
-		cfData.FinancingActivities.Items = append(cfData.FinancingActivities.Items, item)
+		log.Printf("Skipping internal equity movement from financing cash flow: %s %s (category: %s, amount: %.2f)",
+			code, item.AccountName, category, amount)
 
 	// ============ CATCH-ALL ============
 	default:
@@ -712,15 +710,9 @@ func (s *SSOTCashFlowService) calculateCashFlowTotals(cfData *SSOTCashFlowData) 
 			cfData.NetCashFlow += diff
 		} else {
 			// Large discrepancy — flag it visibly instead of hiding it
-			log.Printf("WARNING: Large reconciliation discrepancy of %.2f detected. Flagging in report.", diff)
+			log.Printf("WARNING: Large reconciliation discrepancy of %.2f detected. Leaving values unchanged and flagging in report.", diff)
 			cfData.HasReconciliationWarning = true
 			cfData.ReconciliationDifference = diff
-			// Still adjust to keep the report mathematically consistent,
-			// but the warning flag tells the user to investigate
-			cfData.OperatingActivities.Adjustments.OtherNonCashItems += diff
-			cfData.OperatingActivities.Adjustments.TotalAdjustments += diff
-			cfData.OperatingActivities.TotalOperatingCashFlow += diff
-			cfData.NetCashFlow += diff
 		}
 	}
 

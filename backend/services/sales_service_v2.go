@@ -26,6 +26,7 @@ type SalesServiceV2 struct {
 	salesJournalServiceSSOT *SalesJournalServiceSSOT // NEW: unified_journal_ledger (for Balance Sheet)
 	cogsService             *InventoryCOGSService    // NEW: COGS recording service
 	stockService            *StockService
+	stockMonitoringService  *StockMonitoringService
 	notificationService     *NotificationService
 	settingsService         *SettingsService
 	invoiceNumberService    *InvoiceNumberService
@@ -38,6 +39,7 @@ func NewSalesServiceV2(
 	salesJournalService *SalesJournalServiceV2,
 	salesJournalServiceSSOT *SalesJournalServiceSSOT,
 	stockService *StockService,
+	stockMonitoringService *StockMonitoringService,
 	notificationService *NotificationService,
 	settingsService *SettingsService,
 	invoiceNumberService *InvoiceNumberService,
@@ -53,6 +55,7 @@ func NewSalesServiceV2(
 		salesJournalServiceSSOT: salesJournalServiceSSOT,
 		cogsService:             cogsService,
 		stockService:            stockService,
+		stockMonitoringService:  stockMonitoringService,
 		notificationService:     notificationService,
 		settingsService:         settingsService,
 		invoiceNumberService:    invoiceNumberService,
@@ -218,6 +221,21 @@ func (s *SalesServiceV2) enforceCashBankGuards(tx *gorm.DB, cashBankIDs map[uint
 	}
 
 	return nil
+}
+
+func (s *SalesServiceV2) syncStockAlertsForProducts(productIDs map[uint]struct{}) {
+	if s.stockMonitoringService == nil || len(productIDs) == 0 {
+		return
+	}
+
+	affectedProductIDs := make([]uint, 0, len(productIDs))
+	for productID := range productIDs {
+		affectedProductIDs = append(affectedProductIDs, productID)
+	}
+
+	if err := s.stockMonitoringService.SyncProductAlerts(affectedProductIDs...); err != nil {
+		log.Printf("⚠️ Warning: Failed to sync stock alerts for %d products: %v", len(affectedProductIDs), err)
+	}
 }
 
 // CreateSale creates a new sale
@@ -1266,6 +1284,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 	}
 
 	// Update stock - CRITICAL: Block transaction if stock insufficient
+	affectedProductIDs := make(map[uint]struct{})
 	if s.stockService != nil {
 		for _, item := range sale.SaleItems {
 			// Load product to check if it's a service
@@ -1310,6 +1329,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 						tx.Rollback()
 						return nil, fmt.Errorf("Gagal memotong stok komponen '%s' untuk perakitan '%s': %v", bomItem.ComponentProduct.Name, product.Name, err)
 					}
+					affectedProductIDs[bomItem.ComponentProductID] = struct{}{}
 
 					log.Printf("✅ Kitting: Stock reduced for component %d (%s): %d → %d",
 						bomItem.ComponentProductID, bomItem.ComponentProduct.Name, bomItem.ComponentProduct.Stock, bomItem.ComponentProduct.Stock-requiredQty)
@@ -1336,6 +1356,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 				tx.Rollback()
 				return nil, fmt.Errorf("gagal mengurangi stock untuk product '%s': %v", product.Name, err)
 			}
+			affectedProductIDs[item.ProductID] = struct{}{}
 
 			log.Printf("✅ Stock reduced for product %d (%s): %d → %d",
 				product.ID, product.Name, product.Stock, product.Stock-item.Quantity)
@@ -1355,6 +1376,8 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 	if sale.ProjectID != nil && *sale.ProjectID > 0 {
 		s.recalculateProjectSalesRevenue(*sale.ProjectID)
 	}
+
+	s.syncStockAlertsForProducts(affectedProductIDs)
 
 	return &sale, nil
 }
@@ -1406,6 +1429,7 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 	}
 	forexGainLossAmount := 0.0
 	forexGainLossType := ""
+	var selectedCashBankSnapshot *cashBankSnapshot
 
 	var cashBank *models.CashBank
 	if paymentRequest.CashBankID != nil && *paymentRequest.CashBankID > 0 {
@@ -1427,16 +1451,15 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 		}
 
 		cashBank = &loadedCashBank
+		snapshot, snapshotErr := loadCashBankSnapshot(tx, *paymentRequest.CashBankID)
+		if snapshotErr != nil {
+			tx.Rollback()
+			return nil, snapshotErr
+		}
+		selectedCashBankSnapshot = snapshot
 	}
 
-	forexDiff := bankBookAmountIDR - receivableSettlementBookIDR
-	if forexDiff > 0.005 {
-		forexGainLossAmount = forexDiff
-		forexGainLossType = "GAIN"
-	} else if forexDiff < -0.005 {
-		forexGainLossAmount = -forexDiff
-		forexGainLossType = "LOSS"
-	}
+	forexGainLossAmount, forexGainLossType = classifyReceivableRealizedFX(bankBookAmountIDR, receivableSettlementBookIDR)
 
 	// Create payment record
 	payment := &models.SalePayment{
@@ -1455,6 +1478,7 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 		Notes:               paymentRequest.Notes,
 		UserID:              userID,
 	}
+	applyCashBankSnapshotToSalePayment(payment, selectedCashBankSnapshot)
 
 	if err := tx.Create(&payment).Error; err != nil {
 		tx.Rollback()
@@ -1470,6 +1494,7 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 		sale.Status = "PAID"
 		sale.OutstandingAmount = 0
 	}
+	sale.SettlementStatus = models.ResolveSaleSettlementStatus(sale.Status, sale.PaidAmount, sale.OutstandingAmount)
 
 	if err := tx.Save(&sale).Error; err != nil {
 		tx.Rollback()
@@ -1689,6 +1714,7 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 	}
 
 	// 5. Restore stock if needed
+	affectedProductIDs := make(map[uint]struct{})
 	if s.stockService != nil && (oldStatus == "INVOICED" || oldStatus == "PAID") {
 		for _, item := range sale.SaleItems {
 			if item.Product.IsService {
@@ -1705,6 +1731,8 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 						if requiredQty > 0 {
 							if err := s.stockService.RestoreStock(bomItem.ComponentProductID, requiredQty, tx); err != nil {
 								log.Printf("⚠️ Warning: Failed to restore stock for component %d of assembly %d: %v", bomItem.ComponentProductID, item.ProductID, err)
+							} else {
+								affectedProductIDs[bomItem.ComponentProductID] = struct{}{}
 							}
 						}
 					}
@@ -1718,6 +1746,8 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 			// Standard stock restoration
 			if err := s.stockService.RestoreStock(item.ProductID, item.Quantity, tx); err != nil {
 				log.Printf("⚠️ Warning: Failed to restore stock for product %d: %v", item.ProductID, err)
+			} else {
+				affectedProductIDs[item.ProductID] = struct{}{}
 			}
 		}
 	}
@@ -1727,6 +1757,8 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %v", err)
 	}
+
+	s.syncStockAlertsForProducts(affectedProductIDs)
 
 	return nil
 }
@@ -2183,20 +2215,57 @@ func deriveSaleDueDate(paymentTerms string, dueDate time.Time, schedules []model
 	return latest
 }
 
-// GetSalesSummary gets sales summary with date filtering
-func (s *SalesServiceV2) GetSalesSummary(startDate, endDate *time.Time) (*models.SalesSummaryResponse, error) {
-	log.Printf("📊 Getting sales summary (start: %v, end: %v)", startDate, endDate)
-
-	query := s.db.Model(&models.Sale{}).
-		Where("status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid})
-
-	// Apply date filters if provided
-	if startDate != nil {
-		query = query.Where("date >= ?", *startDate)
+func (s *SalesServiceV2) applySalesSummaryFilter(query *gorm.DB, filter models.SalesFilter) *gorm.DB {
+	if filter.Status != "" {
+		switch filter.Status {
+		case models.SaleStatusDraft:
+			query = query.Where("sales.status IN ?", []string{models.SaleStatusDraft, models.SaleStatusPending, models.SaleStatusConfirmed})
+		case models.SaleStatusInvoiced:
+			query = query.Where("sales.status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue})
+		default:
+			query = query.Where("sales.status = ?", filter.Status)
+		}
+	} else {
+		query = query.Where("sales.status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid})
 	}
-	if endDate != nil {
-		query = query.Where("date <= ?", *endDate)
+
+	if filter.CustomerID != "" {
+		query = query.Where("sales.customer_id = ?", filter.CustomerID)
 	}
+
+	if filter.StartDate != "" {
+		if t, err := time.Parse("2006-01-02", filter.StartDate); err == nil {
+			query = query.Where("sales.date >= ?", t)
+		} else {
+			query = query.Where("sales.date >= ?", filter.StartDate)
+		}
+	}
+
+	if filter.EndDate != "" {
+		if t, err := time.Parse("2006-01-02", filter.EndDate); err == nil {
+			nextDay := t.AddDate(0, 0, 1)
+			query = query.Where("sales.date < ?", nextDay)
+		} else {
+			query = query.Where("sales.date <= ?", filter.EndDate)
+		}
+	}
+
+	if filter.Search != "" {
+		searchPattern := "%" + filter.Search + "%"
+		query = query.Joins("LEFT JOIN contacts ON contacts.id = sales.customer_id").
+			Where("sales.invoice_number ILIKE ? OR sales.code ILIKE ? OR sales.reference ILIKE ? OR contacts.name ILIKE ?",
+				searchPattern, searchPattern, searchPattern, searchPattern)
+	}
+
+	return query
+}
+
+// GetSalesSummary gets sales summary with filter awareness
+func (s *SalesServiceV2) GetSalesSummary(filter models.SalesFilter) (*models.SalesSummaryResponse, error) {
+	log.Printf("📊 Getting sales summary with filters: status=%s, customer=%s, start=%s, end=%s, search=%s",
+		filter.Status, filter.CustomerID, filter.StartDate, filter.EndDate, filter.Search)
+
+	query := s.applySalesSummaryFilter(s.db.Model(&models.Sale{}), filter)
 
 	// Get basic counts and totals
 	var totalSales int64
@@ -2233,7 +2302,7 @@ func (s *SalesServiceV2) GetSalesSummary(startDate, endDate *time.Time) (*models
 	}
 
 	// Get top customers
-	topCustomers, err := s.getTopCustomers(startDate, endDate)
+	topCustomers, err := s.getTopCustomers(filter)
 	if err != nil {
 		log.Printf("⚠️ Warning: Failed to get top customers: %v", err)
 		topCustomers = []models.CustomerSales{} // Empty slice instead of nil
@@ -2253,23 +2322,16 @@ func (s *SalesServiceV2) GetSalesSummary(startDate, endDate *time.Time) (*models
 }
 
 // getTopCustomers gets top 5 customers by total sales amount
-func (s *SalesServiceV2) getTopCustomers(startDate, endDate *time.Time) ([]models.CustomerSales, error) {
+func (s *SalesServiceV2) getTopCustomers(filter models.SalesFilter) ([]models.CustomerSales, error) {
 	query := s.db.Table("sales").
 		Select("sales.customer_id, contacts.name as customer_name, COUNT(sales.id) as total_orders, SUM(sales.total_amount) as total_amount").
 		Joins("LEFT JOIN contacts ON contacts.id = sales.customer_id").
 		Where("sales.deleted_at IS NULL").
-		Where("sales.status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid}).
 		Group("sales.customer_id, contacts.name").
 		Order("total_amount DESC").
 		Limit(5)
 
-	// Apply date filters if provided
-	if startDate != nil {
-		query = query.Where("sales.date >= ?", *startDate)
-	}
-	if endDate != nil {
-		query = query.Where("sales.date <= ?", *endDate)
-	}
+	query = s.applySalesSummaryFilter(query, filter)
 
 	var topCustomers []models.CustomerSales
 	if err := query.Find(&topCustomers).Error; err != nil {

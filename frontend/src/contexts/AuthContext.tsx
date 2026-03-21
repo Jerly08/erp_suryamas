@@ -2,6 +2,7 @@
 
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { API_ENDPOINTS, API_BASE_URL } from '@/config/api';
+import { normalizeAuthUser } from '@/utils/userDisplay';
 
 // Define user type - backend sends lowercase roles
 export type UserRole = 'admin' | 'finance' | 'finance_manager' | 'inventory_manager' | 'director' | 'employee' | 'auditor' | 'operational_user';
@@ -10,8 +11,13 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: UserRole;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  full_name?: string;
+  role: UserRole | string;
   active: boolean;
+  is_active?: boolean;
   company_type?: string;
 }
 
@@ -39,13 +45,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isClient, setIsClient] = useState<boolean>(false);
 
   // Initialize auth state from localStorage on component mount
   useEffect(() => {
     const initializeAuth = async () => {
-      setIsClient(true);
-
       // Only access localStorage on client-side
       if (typeof window !== 'undefined') {
         try {
@@ -67,7 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.removeItem('lastLogoutTime');
           } else if (storedToken && storedUser) {
             // Validate token before auto-login
-            const userData = JSON.parse(storedUser);
+            const userData = normalizeAuthUser(JSON.parse(storedUser));
 
             // Check if token is expired by parsing JWT
             let isTokenExpired = false;
@@ -81,7 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   console.log('Stored token is expired, clearing auth data');
                 }
               }
-            } catch (e) {
+            } catch {
               console.log('Error parsing token, treating as expired');
               isTokenExpired = true;
             }
@@ -103,14 +106,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
                 if (response.ok) {
                   const validateData = await response.json();
-                  const validatedUser = {
-                    ...userData,
-                    company_type: validateData.company_type || userData.company_type
-                  };
+                  const validatedUser = normalizeAuthUser(
+                    {
+                      ...userData,
+                      ...(validateData.user || {}),
+                    },
+                    validateData.company_type || userData.company_type,
+                  );
 
                   setToken(storedToken);
                   setRefreshToken(storedRefreshToken);
                   setUser(validatedUser);
+                  localStorage.setItem('user', JSON.stringify(validatedUser));
                   console.log('Auth initialized from localStorage - token validated:', { user: validatedUser, hasToken: !!storedToken });
                 } else if (response.status === 401 || response.status === 403) {
                   console.log('Stored token is invalid (401/403), clearing auth data');
@@ -123,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   setToken(storedToken);
                   setRefreshToken(storedRefreshToken);
                   setUser(userData);
+                  localStorage.setItem('user', JSON.stringify(userData));
                 }
               } catch (error) {
                 console.log('Token validation failed (network/server error), proceeding with stored data:', error);
@@ -131,6 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setToken(storedToken);
                 setRefreshToken(storedRefreshToken);
                 setUser(userData);
+                localStorage.setItem('user', JSON.stringify(userData));
               }
             } else {
               console.log('Invalid stored auth data, clearing');
@@ -205,11 +214,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Save auth data - ensure role is lowercase
-      const userData: User = {
-        ...data.user,
-        role: data.user.role.toLowerCase(), // Ensure role is lowercase
-        company_type: data.company_type
-      };
+      const userData = normalizeAuthUser(data.user, data.company_type);
 
       setToken(data.access_token || data.token);
       setRefreshToken(data.refresh_token || data.refreshToken);
@@ -270,13 +275,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Save auth data
       setToken(data.token);
       setRefreshToken(data.refreshToken);
-      setUser(data.user);
+      const userData = normalizeAuthUser(data.user);
+      setUser(userData);
 
       // Store in localStorage (client-side only)
       if (typeof window !== 'undefined') {
         localStorage.setItem('token', data.token);
         localStorage.setItem('refreshToken', data.refreshToken);
-        localStorage.setItem('user', JSON.stringify(data.user));
+        localStorage.setItem('user', JSON.stringify(userData));
       }
     } catch (error) {
       console.error('Registration error:', error);
@@ -356,11 +362,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Handle different possible response field names
           const accessToken = data.access_token || data.token;
           const newRefreshToken = data.refresh_token || data.refreshToken;
-          const userData: User = {
-            ...data.user,
-            role: data.user.role.toLowerCase(), // Ensure role is lowercase
-            company_type: data.company_type
-          };
+          const userData = normalizeAuthUser(data.user, data.company_type);
 
           // Update auth data
           setToken(accessToken);

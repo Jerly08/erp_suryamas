@@ -36,11 +36,10 @@ func (ctl *COAPostedController) GetPostedBalances(c *gin.Context) {
 		WITH uj AS (
 			SELECT 
 				ujl.account_id,
-				COALESCE(SUM(ujl.debit_amount) FILTER (WHERE ujd.status = 'POSTED' AND ujd.deleted_at IS NULL AND (ujd.source_type <> 'SALE' OR (ujd.source_type = 'SALE' AND s.status IN ('INVOICED','PAID')))), 0) AS debit_sum,
-				COALESCE(SUM(ujl.credit_amount) FILTER (WHERE ujd.status = 'POSTED' AND ujd.deleted_at IS NULL AND (ujd.source_type <> 'SALE' OR (ujd.source_type = 'SALE' AND s.status IN ('INVOICED','PAID')))), 0) AS credit_sum
+				COALESCE(SUM(ujl.debit_amount) FILTER (WHERE ujd.status = 'POSTED' AND ujd.deleted_at IS NULL), 0) AS debit_sum,
+				COALESCE(SUM(ujl.credit_amount) FILTER (WHERE ujd.status = 'POSTED' AND ujd.deleted_at IS NULL), 0) AS credit_sum
 			FROM unified_journal_lines ujl
 			JOIN unified_journal_ledger ujd ON ujd.id = ujl.journal_id
-			LEFT JOIN sales s ON ujd.source_type = 'SALE' AND ujd.source_id = s.id
 			GROUP BY ujl.account_id
 		)
 		SELECT

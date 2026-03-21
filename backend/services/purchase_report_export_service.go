@@ -62,11 +62,7 @@ func (s *PurchaseReportExportService) ExportToCSV(data *PurchaseReportData, user
 		w.Write([]string{utils.T("purchases_by_vendor", language)})
 		headers := utils.GetCSVHeaders("purchase_report", language)
 		w.Write(headers)
-		limit := len(data.PurchasesByVendor)
-		if limit > 20 {
-			limit = 20
-		}
-		for i := 0; i < limit; i++ {
+		for i := 0; i < len(data.PurchasesByVendor); i++ {
 			v := data.PurchasesByVendor[i]
 			w.Write([]string{
 				fmt.Sprintf("%d", v.VendorID), v.VendorName,
@@ -228,11 +224,7 @@ func (s *PurchaseReportExportService) ExportToPDF(data *PurchaseReportData, user
 
 		// Vendor rows
 		pdf.SetFont("Arial", "", 7.5)
-		limit := len(data.PurchasesByVendor)
-		if limit > 20 {
-			limit = 20
-		}
-		for i := 0; i < limit; i++ {
+		for i := 0; i < len(data.PurchasesByVendor); i++ {
 			v := data.PurchasesByVendor[i]
 
 			// Check if we need a new page

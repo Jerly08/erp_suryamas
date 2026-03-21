@@ -21,10 +21,6 @@ export interface AssetFormData {
   accumulatedDepreciationAccountId?: number;
   openingAccumulatedDepreciation?: number;
   coordinates?: string;
-  entryType?: 'purchase' | 'opening';
-  paymentMethod?: string;
-  paymentAccountId?: number;
-  creditAccountId?: number;
 }
 
 export interface ValidationError {
@@ -44,7 +40,6 @@ export const validateAssetForm = (
     ? allowedCategories.map((c) => c.trim())
     : [...ASSET_CATEGORIES];
 
-  // Required field validations
   if (!data.name?.trim()) {
     errors.push({ field: 'name', message: 'Asset name is required' });
   } else if (data.name.trim().length < 2) {
@@ -64,25 +59,23 @@ export const validateAssetForm = (
   } else {
     const purchaseDate = new Date(data.purchaseDate);
     const today = new Date();
-    
+
     if (purchaseDate > today) {
       errors.push({ field: 'purchaseDate', message: 'Purchase date cannot be in the future' });
     }
-    
+
     const minDate = new Date('1900-01-01');
     if (purchaseDate < minDate) {
       errors.push({ field: 'purchaseDate', message: 'Purchase date seems too old' });
     }
   }
 
-  // Purchase price validation
   if (!data.purchasePrice || data.purchasePrice <= 0) {
     errors.push({ field: 'purchasePrice', message: 'Purchase price must be greater than 0' });
   } else if (data.purchasePrice > 999999999999) {
     errors.push({ field: 'purchasePrice', message: 'Purchase price is too large' });
   }
 
-  // Salvage value validation
   if (data.salvageValue !== undefined) {
     if (data.salvageValue < 0) {
       errors.push({ field: 'salvageValue', message: 'Salvage value cannot be negative' });
@@ -91,28 +84,25 @@ export const validateAssetForm = (
     }
   }
 
-  // Useful life validation
-  if ((data.category || '').toLowerCase().trim() !== 'tanah' && (data.category || '').toLowerCase().trim() !== 'land' && (!data.usefulLife || data.usefulLife <= 0)) {
+  const categoryLower = (data.category || '').toLowerCase().trim();
+  const isLand = categoryLower === 'tanah' || categoryLower === 'land';
+
+  if (!isLand && (!data.usefulLife || data.usefulLife <= 0)) {
     errors.push({ field: 'usefulLife', message: 'Useful life must be greater than 0' });
   } else if (data.usefulLife > 100) {
     errors.push({ field: 'usefulLife', message: 'Useful life cannot exceed 100 years' });
   }
 
-  // Depreciation account validation — required when status is ACTIVE
-  // (skip for land/tanah which doesn't depreciate)
-  const categoryLower = (data.category || '').toLowerCase().trim();
-  const isLand = categoryLower === 'tanah' || categoryLower === 'land';
-  if (data.entryType === 'opening') {
-    const openingAccumulated = data.openingAccumulatedDepreciation || 0;
-    if (openingAccumulated < 0) {
-      errors.push({ field: 'openingAccumulatedDepreciation', message: 'Opening accumulated depreciation cannot be negative' });
-    } else if (openingAccumulated >= data.purchasePrice) {
-      errors.push({ field: 'openingAccumulatedDepreciation', message: 'Opening accumulated depreciation must be less than purchase price' });
-    }
-    if (isLand && openingAccumulated > 0) {
-      errors.push({ field: 'openingAccumulatedDepreciation', message: 'Land assets should not have accumulated depreciation' });
-    }
+  const openingAccumulated = data.openingAccumulatedDepreciation || 0;
+  if (openingAccumulated < 0) {
+    errors.push({ field: 'openingAccumulatedDepreciation', message: 'Opening accumulated depreciation cannot be negative' });
+  } else if (openingAccumulated >= data.purchasePrice) {
+    errors.push({ field: 'openingAccumulatedDepreciation', message: 'Opening accumulated depreciation must be less than purchase price' });
   }
+  if (isLand && openingAccumulated > 0) {
+    errors.push({ field: 'openingAccumulatedDepreciation', message: 'Land assets should not have accumulated depreciation' });
+  }
+
   if (data.status === 'ACTIVE' && !isLand) {
     if (!data.depreciationAccountId) {
       errors.push({ field: 'depreciationAccountId', message: 'Depreciation expense account is required for active assets' });
@@ -122,17 +112,14 @@ export const validateAssetForm = (
     }
   }
 
-  // Serial number validation (if provided)
   if (data.serialNumber && data.serialNumber.length > 50) {
     errors.push({ field: 'serialNumber', message: 'Serial number must not exceed 50 characters' });
   }
 
-  // Location validation (if provided)
   if (data.location && data.location.length > 100) {
     errors.push({ field: 'location', message: 'Location must not exceed 100 characters' });
   }
 
-  // Notes validation (if provided)
   if (data.notes && data.notes.length > 1000) {
     errors.push({ field: 'notes', message: 'Notes must not exceed 1000 characters' });
   }
@@ -141,15 +128,14 @@ export const validateAssetForm = (
 };
 
 export const getFieldError = (errors: ValidationError[], field: keyof AssetFormData): string | undefined => {
-  const error = errors.find(e => e.field === field);
+  const error = errors.find((entry) => entry.field === field);
   return error?.message;
 };
 
 export const hasFieldError = (errors: ValidationError[], field: keyof AssetFormData): boolean => {
-  return errors.some(e => e.field === field);
+  return errors.some((entry) => entry.field === field);
 };
 
-// Helper function to format currency for display
 export const formatCurrency = (amount: number): string => {
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
@@ -159,7 +145,6 @@ export const formatCurrency = (amount: number): string => {
   }).format(amount);
 };
 
-// Helper function to format date for display
 export const formatDate = (dateString: string): string => {
   return new Date(dateString).toLocaleDateString('id-ID', {
     year: 'numeric',
@@ -168,18 +153,15 @@ export const formatDate = (dateString: string): string => {
   });
 };
 
-// Helper function to calculate book value
 export const calculateBookValue = (purchasePrice: number, accumulatedDepreciation: number): number => {
   return Math.max(0, purchasePrice - accumulatedDepreciation);
 };
 
-// Helper function to calculate depreciation percentage
 export const calculateDepreciationPercentage = (purchasePrice: number, accumulatedDepreciation: number): number => {
   if (purchasePrice === 0) return 0;
   return (accumulatedDepreciation / purchasePrice) * 100;
 };
 
-// Helper function to get category prefix for asset codes
 export const getCategoryPrefix = (category: string): string => {
   const prefixes: { [key: string]: string } = {
     'Real Estate': 'RE',
@@ -193,7 +175,6 @@ export const getCategoryPrefix = (category: string): string => {
   return prefixes[category] || 'AS';
 };
 
-// Helper function to get status display color
 export const getStatusColor = (status: string): string => {
   switch (status) {
     case 'ACTIVE':
@@ -207,7 +188,6 @@ export const getStatusColor = (status: string): string => {
   }
 };
 
-// Helper function to get condition display color
 export const getConditionColor = (condition: string): string => {
   switch (condition?.toLowerCase()) {
     case 'excellent':

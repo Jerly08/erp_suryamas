@@ -168,6 +168,12 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 		Notes:       fmt.Sprintf("Setor PPN - Terutang: %s. %s", ppnTerutangDec.StringFixed(2), req.Notes),
 		PaymentType: models.PaymentTypeTaxPPN,
 	}
+	snapshot, snapshotErr := loadCashBankSnapshot(tx, req.CashBankID)
+	if snapshotErr != nil {
+		tx.Rollback()
+		return nil, snapshotErr
+	}
+	applyCashBankSnapshotToPayment(payment, snapshot)
 
 	if err := tx.Create(payment).Error; err != nil {
 		tx.Rollback()

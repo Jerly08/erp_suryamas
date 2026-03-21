@@ -238,15 +238,17 @@ func (s *AssetJournalServiceSSOT) resolveCreditAccountForPayment(tx *gorm.DB, pa
 		return s.resolveAccountByCode(tx, "2101-001") // Utang Usaha Lokal
 
 	case "SALDO_AWAL", "OPENING":
-		// Opening balance: credit to equity account (Modal Disetor / Laba Ditahan)
+		// Opening balance: credit to dedicated opening-balance equity first,
+		// then fall back to other equity accounts if needed.
 		if creditAccountID != nil && *creditAccountID != 0 {
 			var acc models.Account
 			if err := tx.First(&acc, *creditAccountID).Error; err == nil {
 				return &acc, nil
 			}
 		}
-		// Default: try 3101 Modal Disetor, then 3102 Laba Ditahan
-		for _, code := range []string{"3101", "3102"} {
+		// Default: try 3104 Ekuitas Saldo Awal, then 3101 Modal Disetor,
+		// then 3102 Laba Ditahan.
+		for _, code := range []string{"3104", "3101", "3102"} {
 			acc, err := s.resolveAccountByCode(tx, code)
 			if err == nil {
 				return acc, nil
@@ -258,7 +260,7 @@ func (s *AssetJournalServiceSSOT) resolveCreditAccountForPayment(tx *gorm.DB, pa
 			First(&fallback).Error; err == nil {
 			return &fallback, nil
 		}
-		return nil, fmt.Errorf("equity account not found for opening balance (tried 3101, 3102). Please create an equity account in the Chart of Accounts")
+		return nil, fmt.Errorf("equity account not found for opening balance (tried 3104, 3101, 3102). Please create an equity account in the Chart of Accounts")
 
 	default:
 		// Default to AP (credit)

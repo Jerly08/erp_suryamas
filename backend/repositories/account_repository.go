@@ -1,15 +1,15 @@
 package repositories
 
 import (
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/utils"
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"time"
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/utils"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"log"
+	"time"
 )
 
 // AccountRepository defines account-related database operations
@@ -89,7 +89,7 @@ func (r *AccountRepo) Create(ctx context.Context, req *models.AccountCreateReque
 			return nil, utils.NewDatabaseError("find parent account", err)
 		}
 		level = parent.Level + 1
-		
+
 		// Set parent as header since it now has children
 		if err := r.DB.WithContext(ctx).Model(&parent).Update("is_header", true).Error; err != nil {
 			return nil, utils.NewDatabaseError("update parent header status", err)
@@ -127,10 +127,10 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 	// Add timeout to prevent hanging
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	
+
 	log.Printf("UpdateAccount called with code: %s", code)
 	log.Printf("Update request data: %+v", req)
-	
+
 	var account models.Account
 	if err := r.DB.WithContext(ctx).Where("code = ?", code).First(&account).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -167,7 +167,7 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 
 	// Store old parent for cleanup
 	oldParentID := account.ParentID
-	
+
 	// Update fields
 	if req.Code != "" {
 		account.Code = req.Code
@@ -193,7 +193,7 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 	if req.IsHeader != nil {
 		account.IsHeader = *req.IsHeader
 	}
-	
+
 	// Fast path: if only updating simple fields (name, description) without parent/structure changes
 	if req.ParentID == nil && (req.Code == "" || req.Code == code) && req.Type == "" {
 		log.Printf("Fast path update for account %s - only updating metadata", code)
@@ -202,7 +202,7 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 		}
 		return &account, nil
 	}
-	
+
 	// Handle parent change and level recalculation
 	if req.ParentID != nil {
 		log.Printf("Parent change requested for account %s", code)
@@ -216,12 +216,12 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 				}
 				return nil, utils.NewDatabaseError("find new parent account", err)
 			}
-			
+
 			// Check for circular reference
 			if err := r.checkCircularReference(ctx, account.ID, *req.ParentID); err != nil {
 				return nil, err
 			}
-			
+
 			// Validate parent-child type compatibility
 			if newParent.Type != account.Type {
 				return nil, utils.NewValidationError("Parent and child accounts must be of the same type", map[string]string{
@@ -230,11 +230,11 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 					"message":     fmt.Sprintf("Cannot assign %s account to %s parent", account.Type, newParent.Type),
 				})
 			}
-			
+
 			// Update parent and level
 			account.ParentID = req.ParentID
 			account.Level = newParent.Level + 1
-			
+
 			// Set new parent as header if it's not already
 			if !newParent.IsHeader {
 				if err := r.DB.WithContext(ctx).Model(&newParent).Update("is_header", true).Error; err != nil {
@@ -249,7 +249,7 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 			account.Level = 1
 		}
 	}
-	
+
 	// Update child levels if this account has children and level changed
 	if oldParentID != account.ParentID {
 		if err := r.updateChildrenLevels(ctx, account.ID, account.Level); err != nil {
@@ -260,7 +260,7 @@ func (r *AccountRepo) Update(ctx context.Context, code string, req *models.Accou
 	if err := r.DB.WithContext(ctx).Save(&account).Error; err != nil {
 		return nil, utils.NewDatabaseError("update account", err)
 	}
-	
+
 	// Clean up old parent header status if needed
 	if oldParentID != nil && (account.ParentID == nil || (account.ParentID != nil && *oldParentID != *account.ParentID)) {
 		// Check if old parent still has other children
@@ -452,7 +452,7 @@ func (r *AccountRepo) FindAll(ctx context.Context) ([]models.Account, error) {
 		for _, acc := range accounts {
 			// Create a copy without the children to avoid circular references in JSON
 			accountCopy := acc
-			accountCopy.Children = nil 
+			accountCopy.Children = nil
 			flattened = append(flattened, accountCopy)
 			if len(acc.Children) > 0 {
 				flatten(acc.Children)
@@ -544,7 +544,7 @@ func (r *AccountRepo) calculateTotalBalance(ctx context.Context, account *models
 
 	account.TotalBalance = childrenTotal
 	account.ChildCount = len(account.Children)
-	
+
 	// 🔧 DISABLED: Do not overwrite balance for header accounts
 	// Keep the original balance from database instead of calculating from children
 	// if account.IsHeader {
@@ -552,17 +552,16 @@ func (r *AccountRepo) calculateTotalBalance(ctx context.Context, account *models
 	// }
 }
 
-
 // BulkImport imports multiple accounts
 func (r *AccountRepo) BulkImport(ctx context.Context, accounts []models.AccountImportRequest) error {
 	tx := r.DB.WithContext(ctx).Begin()
-	
+
 	// Create a map to track parent codes
 	parentCodeMap := make(map[string]*uint)
-	
+
 	for _, req := range accounts {
 		var parentID *uint
-		
+
 		// Find parent if parent code is specified
 		if req.ParentCode != "" {
 			if cachedParentID, exists := parentCodeMap[req.ParentCode]; exists {
@@ -577,7 +576,7 @@ func (r *AccountRepo) BulkImport(ctx context.Context, accounts []models.AccountI
 				parentID = &parent.ID
 			}
 		}
-		
+
 		// Calculate level
 		level := 1
 		if parentID != nil {
@@ -588,7 +587,7 @@ func (r *AccountRepo) BulkImport(ctx context.Context, accounts []models.AccountI
 			}
 			level = parent.Level + 1
 		}
-		
+
 		account := models.Account{
 			Code:        req.Code,
 			Name:        req.Name,
@@ -601,13 +600,13 @@ func (r *AccountRepo) BulkImport(ctx context.Context, accounts []models.AccountI
 			IsActive:    true,
 			IsHeader:    false,
 		}
-		
+
 		if err := tx.Create(&account).Error; err != nil {
 			tx.Rollback()
 			return utils.NewDatabaseError("create account in bulk import", err)
 		}
 	}
-	
+
 	return tx.Commit().Error
 }
 
@@ -646,14 +645,13 @@ func (r *AccountRepo) CalculateBalance(ctx context.Context, accountID uint) (flo
 	// Final Balance = Opening Balance + Transaction Balance
 	// For accounts with normal credit balance (Liabilities, Equity, Revenue):
 	// Final Balance = Opening Balance + Transaction Balance
-return account.Balance + transactionBalance, nil
+	return account.Balance + transactionBalance, nil
 }
 
 // CalculateBalanceSSOT calculates account balance using SSOT (unified_journal_ledger/lines)
 // Rules:
 // - Only POSTED journals are included
-// - For SALES source_type, include only sales with status INVOICED or PAID
-// - Non-sales source types are included without extra filter
+// - Posted journals are trusted directly; no extra document-status filter
 // - Netting uses account type: ASSET/EXPENSE => debit - credit, others => credit - debit
 // - Fallback to accounts.balance when no SSOT data found
 func (r *AccountRepo) CalculateBalanceSSOT(ctx context.Context, accountID uint) (float64, error) {
@@ -675,14 +673,9 @@ func (r *AccountRepo) CalculateBalanceSSOT(ctx context.Context, accountID uint) 
 			COALESCE(SUM(ujl.credit_amount), 0) AS credit_sum
 		FROM unified_journal_lines ujl
 		JOIN unified_journal_ledger ujd ON ujd.id = ujl.journal_id
-		LEFT JOIN sales s ON ujd.source_type = 'SALE' AND ujd.source_id = s.id
 		WHERE ujl.account_id = ?
 		  AND ujd.status = 'POSTED'
 		  AND ujd.deleted_at IS NULL
-		  AND (
-				(ujd.source_type = 'SALE' AND s.status IN ('INVOICED','PAID'))
-				OR (ujd.source_type <> 'SALE')
-			)
 	`
 
 	if err := r.DB.WithContext(ctx).Raw(query, accountID).Scan(&result).Error; err != nil {
@@ -731,7 +724,7 @@ func (r *AccountRepo) UpdateBalance(ctx context.Context, accountID uint, debitAm
 
 	// Get the normal balance type for the account
 	normalBalance := account.GetNormalBalance()
-	
+
 	var balanceChange float64
 	if normalBalance == models.NormalBalanceDebit {
 		balanceChange = debitAmount - creditAmount
@@ -741,9 +734,9 @@ func (r *AccountRepo) UpdateBalance(ctx context.Context, accountID uint, debitAm
 
 	// Atomically update the balance using optimized raw SQL
 	err := r.DB.WithContext(ctx).Exec(
-		"UPDATE accounts SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL", 
+		"UPDATE accounts SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
 		balanceChange, accountID).Error
-		
+
 	if err != nil {
 		return utils.NewDatabaseError("update account balance", err)
 	}
@@ -821,7 +814,7 @@ func (r *AccountRepo) FixAccountHeaderStatus(ctx context.Context) error {
 		ID       uint
 		IsHeader bool
 	}
-	
+
 	if err := r.DB.WithContext(ctx).Raw(`
 		SELECT a.id, a.is_header 
 		FROM accounts a 
@@ -832,7 +825,7 @@ func (r *AccountRepo) FixAccountHeaderStatus(ctx context.Context) error {
 	`).Scan(&parentAccounts).Error; err != nil {
 		return utils.NewDatabaseError("find parent accounts", err)
 	}
-	
+
 	// Update accounts that should be headers but aren't
 	for _, parent := range parentAccounts {
 		if !parent.IsHeader {
@@ -841,7 +834,7 @@ func (r *AccountRepo) FixAccountHeaderStatus(ctx context.Context) error {
 			}
 		}
 	}
-	
+
 	// Get all accounts that don't have children but are marked as headers
 	var nonParentHeaders []uint
 	if err := r.DB.WithContext(ctx).Raw(`
@@ -856,14 +849,14 @@ func (r *AccountRepo) FixAccountHeaderStatus(ctx context.Context) error {
 	`).Pluck("id", &nonParentHeaders).Error; err != nil {
 		return utils.NewDatabaseError("find non-parent headers", err)
 	}
-	
+
 	// Update accounts that shouldn't be headers
 	for _, accountID := range nonParentHeaders {
 		if err := r.DB.WithContext(ctx).Model(&models.Account{}).Where("id = ?", accountID).Update("is_header", false).Error; err != nil {
 			return utils.NewDatabaseError("update non-header status", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -898,7 +891,7 @@ func (r *AccountRepo) checkCircularReference(ctx context.Context, accountID uint
 	if accountID == newParentID {
 		return utils.NewBadRequestError("An account cannot be its own parent")
 	}
-	
+
 	// Check if newParentID is a descendant of accountID
 	currentParentID := newParentID
 	for currentParentID != 0 {
@@ -909,17 +902,17 @@ func (r *AccountRepo) checkCircularReference(ctx context.Context, accountID uint
 			}
 			return utils.NewDatabaseError("check circular reference", err)
 		}
-		
+
 		if parent.ID == accountID {
 			return utils.NewBadRequestError("Cannot create circular reference: new parent is a descendant of this account")
 		}
-		
+
 		if parent.ParentID == nil {
 			break // Reached root, no circular reference
 		}
 		currentParentID = *parent.ParentID
 	}
-	
+
 	return nil
 }
 
@@ -930,19 +923,19 @@ func (r *AccountRepo) updateChildrenLevels(ctx context.Context, accountID uint, 
 	if err := r.DB.WithContext(ctx).Where("parent_id = ?", accountID).Find(&children).Error; err != nil {
 		return err
 	}
-	
+
 	// Update each child's level and recursively update their children
 	for _, child := range children {
 		newLevel := parentLevel + 1
 		if err := r.DB.WithContext(ctx).Model(&child).Update("level", newLevel).Error; err != nil {
 			return err
 		}
-		
+
 		// Recursively update grandchildren
 		if err := r.updateChildrenLevels(ctx, child.ID, newLevel); err != nil {
 			return err
 		}
 	}
-	
+
 	return nil
 }

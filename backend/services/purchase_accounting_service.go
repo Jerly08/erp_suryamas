@@ -1077,8 +1077,17 @@ func (s *PurchaseService) createPurchaseJournalLines(purchase *models.Purchase, 
 		lineNumber++
 	} else {
 		// Credit purchase: credit Accounts Payable with net payable (TotalAmount)
+		apAccountID := accountIDs.AccountsPayableID
+		if purchase.CreditAccountID != nil && *purchase.CreditAccountID != 0 {
+			var selectedAccount models.Account
+			if err := s.db.Select("id", "type", "is_header").First(&selectedAccount, *purchase.CreditAccountID).Error; err == nil &&
+				!selectedAccount.IsHeader &&
+				strings.EqualFold(strings.TrimSpace(selectedAccount.Type), models.AccountTypeLiability) {
+				apAccountID = selectedAccount.ID
+			}
+		}
 		lines = append(lines, models.JournalLine{
-			AccountID:    accountIDs.AccountsPayableID,
+			AccountID:    apAccountID,
 			Description:  fmt.Sprintf("Utang Usaha - %s", purchase.Vendor.Name),
 			DebitAmount:  0,
 			CreditAmount: purchase.TotalAmount,

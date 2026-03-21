@@ -1150,12 +1150,6 @@ const PaymentsPage: React.FC = () => {
               onSuccess={() => {
                 setShowPPNPayment(false);
                 loadPayments();
-                toast({
-                  title: t('common.messages.toast.success'),
-                  description: t('payments.messages.ppnSuccess'),
-                  status: 'success',
-                  duration: 3000,
-                });
               }}
             />
 
@@ -1171,12 +1165,6 @@ const PaymentsPage: React.FC = () => {
                 setShowExpensePayment(false);
                 setSelectedPayment(null);
                 loadPayments();
-                toast({
-                  title: t('common.messages.toast.success'),
-                  description: t('payments.messages.expenseSuccess'),
-                  status: 'success',
-                  duration: 3000,
-                });
               }}
             />
           </Box>

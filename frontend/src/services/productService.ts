@@ -116,6 +116,10 @@ class ProductService {
   async getProducts(params?: {
     search?: string;
     category?: string;
+    warehouse_location?: string;
+    status?: string;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
     page?: number;
     limit?: number;
     is_assembly?: boolean;

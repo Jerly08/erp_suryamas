@@ -65,6 +65,7 @@ type Sale struct {
 	BillingAddress     string         `json:"billing_address" gorm:"type:text"`
 	ShippingAddress    string         `json:"shipping_address" gorm:"type:text"`
 	Status             string         `json:"status" gorm:"size:20"` // DRAFT, PENDING, CONFIRMED, CANCELLED
+	SettlementStatus   string         `json:"settlement_status" gorm:"-"`
 	Notes              string         `json:"notes" gorm:"type:text"`
 	InternalNotes      string         `json:"internal_notes" gorm:"type:text"`
 	Reference          string         `json:"reference" gorm:"size:100"`
@@ -86,8 +87,7 @@ type Sale struct {
 
 // AfterFind hook to ensure computed fields are set correctly
 func (s *Sale) AfterFind(tx *gorm.DB) (err error) {
-	// Set computed field for frontend compatibility
-	s.SubTotal = s.Subtotal
+	s.refreshComputedFields()
 	return
 }
 
@@ -152,14 +152,15 @@ const (
 
 // Sale Status Constants
 const (
-	SaleStatusDraft     = "DRAFT"
-	SaleStatusPending   = "PENDING"
-	SaleStatusConfirmed = "CONFIRMED"
-	SaleStatusCompleted = "COMPLETED"
-	SaleStatusCancelled = "CANCELLED"
-	SaleStatusInvoiced  = "INVOICED"
-	SaleStatusOverdue   = "OVERDUE"
-	SaleStatusPaid      = "PAID"
+	SaleStatusDraft         = "DRAFT"
+	SaleStatusPending       = "PENDING"
+	SaleStatusConfirmed     = "CONFIRMED"
+	SaleStatusCompleted     = "COMPLETED"
+	SaleStatusCancelled     = "CANCELLED"
+	SaleStatusInvoiced      = "INVOICED"
+	SaleStatusOverdue       = "OVERDUE"
+	SaleStatusPaid          = "PAID"
+	SaleStatusPartiallyPaid = "PARTIALLY_PAID"
 )
 
 // Filter and Request DTOs
@@ -429,26 +430,32 @@ type SalePaymentSummary struct {
 
 // SalePayment model enhancement
 type SalePayment struct {
-	ID                  uint           `json:"id" gorm:"primaryKey"`
-	SaleID              uint           `json:"sale_id" gorm:"not null;index"`
-	Amount              float64        `json:"amount" gorm:"type:decimal(15,2);not null"`
-	NativeAmount        float64        `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
-	Currency            string         `json:"currency" gorm:"size:5;default:'IDR';not null"`
-	ExchangeRate        float64        `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
-	BookAmountIDR       float64        `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
-	ForexGainLossAmount float64        `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
-	ForexGainLossType   string         `json:"forex_gain_loss_type" gorm:"size:10"`
-	PaymentDate         time.Time      `json:"payment_date" gorm:"not null;index"`
-	PaymentMethod       string         `json:"payment_method" gorm:"size:50;not null"`
-	Reference           string         `json:"reference" gorm:"size:100"`
-	Notes               string         `json:"notes" gorm:"type:text"`
-	CashBankID          *uint          `json:"cash_bank_id" gorm:"index"`
-	AccountID           *uint          `json:"account_id" gorm:"index"`
-	UserID              uint           `json:"user_id" gorm:"not null;index"`
-	Status              string         `json:"status" gorm:"size:20;default:'COMPLETED'"` // COMPLETED, PENDING, CANCELLED
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	DeletedAt           gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                    uint           `json:"id" gorm:"primaryKey"`
+	SaleID                uint           `json:"sale_id" gorm:"not null;index"`
+	Amount                float64        `json:"amount" gorm:"type:decimal(15,2);not null"`
+	NativeAmount          float64        `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
+	Currency              string         `json:"currency" gorm:"size:5;default:'IDR';not null"`
+	ExchangeRate          float64        `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
+	BookAmountIDR         float64        `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
+	ForexGainLossAmount   float64        `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
+	ForexGainLossType     string         `json:"forex_gain_loss_type" gorm:"size:10"`
+	PaymentDate           time.Time      `json:"payment_date" gorm:"not null;index"`
+	PaymentMethod         string         `json:"payment_method" gorm:"size:50;not null"`
+	Reference             string         `json:"reference" gorm:"size:100"`
+	Notes                 string         `json:"notes" gorm:"type:text"`
+	CashBankID            *uint          `json:"cash_bank_id" gorm:"index"`
+	AccountID             *uint          `json:"account_id" gorm:"index"`
+	CashBankCode          string         `json:"cash_bank_code" gorm:"size:50"`
+	CashBankName          string         `json:"cash_bank_name" gorm:"size:120"`
+	CashBankCurrency      string         `json:"cash_bank_currency" gorm:"size:5"`
+	CashBankGLAccountID   *uint          `json:"cash_bank_gl_account_id" gorm:"index"`
+	CashBankGLAccountCode string         `json:"cash_bank_gl_account_code" gorm:"size:20"`
+	CashBankGLAccountName string         `json:"cash_bank_gl_account_name" gorm:"size:120"`
+	UserID                uint           `json:"user_id" gorm:"not null;index"`
+	Status                string         `json:"status" gorm:"size:20;default:'COMPLETED'"` // COMPLETED, PENDING, CANCELLED
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
+	DeletedAt             gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
 	Sale     Sale      `json:"sale" gorm:"foreignKey:SaleID"`
@@ -481,21 +488,46 @@ type SaleItemUpdateRequest struct {
 // GORM hooks untuk update computed fields (removed duplicate - see line 82)
 
 func (s *Sale) BeforeCreate(tx *gorm.DB) (err error) {
-	// Update SubTotal alias to match Subtotal
-	s.SubTotal = s.Subtotal
+	s.refreshComputedFields()
 	return
 }
 
 func (s *Sale) BeforeUpdate(tx *gorm.DB) (err error) {
-	// Update SubTotal alias to match Subtotal
-	s.SubTotal = s.Subtotal
+	s.refreshComputedFields()
 	return
 }
 
 func (s *Sale) AfterCreate(tx *gorm.DB) (err error) {
-	// Update SubTotal alias after create
-	s.SubTotal = s.Subtotal
+	s.refreshComputedFields()
 	return
+}
+
+func ResolveSaleSettlementStatus(status string, paidAmount, outstandingAmount float64) string {
+	switch status {
+	case SaleStatusCancelled:
+		return SaleStatusCancelled
+	case SaleStatusDraft, SaleStatusPending, SaleStatusConfirmed:
+		return status
+	}
+
+	if outstandingAmount <= 0.005 {
+		return SaleStatusPaid
+	}
+
+	if paidAmount > 0.005 {
+		return SaleStatusPartiallyPaid
+	}
+
+	return status
+}
+
+func (s *Sale) refreshComputedFields() {
+	if s == nil {
+		return
+	}
+
+	s.SubTotal = s.Subtotal
+	s.SettlementStatus = ResolveSaleSettlementStatus(s.Status, s.PaidAmount, s.OutstandingAmount)
 }
 
 // GORM hooks untuk SaleItem computed fields

@@ -51,20 +51,9 @@ func (ctrl *SSOTBalanceSheetController) GenerateSSOTBalanceSheet(c *gin.Context)
 	asOfDate := c.DefaultQuery("as_of_date", time.Now().Format("2006-01-02"))
 	format := c.DefaultQuery("format", "json")
 
-	// Log request for debugging
-	fmt.Printf("GenerateSSOTBalanceSheet called with asOfDate: %s, format: %s\n", asOfDate, format)
-	fmt.Printf("Request URL: %s\n", c.Request.URL.String())
-	fmt.Printf("Request headers: %v\n", c.Request.Header)
-
-	// Log additional debugging information
-	fmt.Printf("User-Agent: %s\n", c.GetHeader("User-Agent"))
-	fmt.Printf("Referer: %s\n", c.GetHeader("Referer"))
-	fmt.Printf("Origin: %s\n", c.GetHeader("Origin"))
-	fmt.Printf("Remote IP: %s\n", c.ClientIP())
-
 	// Validate date format using system settings (supports DD/MM/YYYY, MM/DD/YYYY, etc.)
-	if _, err := ctrl.parseDateBySettings(asOfDate); err != nil {
-		fmt.Printf("Date validation error: %v\n", err)
+	parsedAsOfDate, err := ctrl.parseDateBySettings(asOfDate)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid as_of_date format",
 			"message": err.Error(),
@@ -72,11 +61,11 @@ func (ctrl *SSOTBalanceSheetController) GenerateSSOTBalanceSheet(c *gin.Context)
 		})
 		return
 	}
+	normalizedAsOfDate := parsedAsOfDate.Format("2006-01-02")
 
 	// Generate Balance Sheet
-	balanceSheetData, err := ctrl.ssotBalanceSheetService.GenerateSSOTBalanceSheet(asOfDate)
+	balanceSheetData, err := ctrl.ssotBalanceSheetService.GenerateSSOTBalanceSheet(normalizedAsOfDate)
 	if err != nil {
-		fmt.Printf("Balance sheet generation error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to generate SSOT Balance Sheet",
 			"message": err.Error(),
@@ -87,14 +76,12 @@ func (ctrl *SSOTBalanceSheetController) GenerateSSOTBalanceSheet(c *gin.Context)
 	// Handle different output formats
 	switch format {
 	case "json":
-		fmt.Println("Returning JSON format")
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "success",
 			"message": "SSOT Balance Sheet generated successfully",
 			"data":    balanceSheetData,
 		})
 	case "summary":
-		fmt.Println("Returning summary format")
 		// Return a simplified summary view
 		summary := createBalanceSheetSummary(balanceSheetData)
 		c.JSON(http.StatusOK, gin.H{
@@ -103,10 +90,8 @@ func (ctrl *SSOTBalanceSheetController) GenerateSSOTBalanceSheet(c *gin.Context)
 			"data":    summary,
 		})
 	case "pdf":
-		fmt.Println("Generating PDF format")
-		pdfBytes, err := ctrl.pdfService.GenerateBalanceSheetPDF(balanceSheetData, asOfDate)
+		pdfBytes, err := ctrl.pdfService.GenerateBalanceSheetPDF(balanceSheetData, normalizedAsOfDate)
 		if err != nil {
-			fmt.Printf("PDF generation error: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "error",
 				"message": "Failed to generate Balance Sheet PDF",
@@ -114,18 +99,16 @@ func (ctrl *SSOTBalanceSheetController) GenerateSSOTBalanceSheet(c *gin.Context)
 			})
 			return
 		}
-		filename := fmt.Sprintf("SSOT_BalanceSheet_%s.pdf", asOfDate)
+		filename := fmt.Sprintf("SSOT_BalanceSheet_%s.pdf", normalizedAsOfDate)
 		c.Header("Content-Type", "application/pdf")
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 		c.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		c.Data(http.StatusOK, "application/pdf", pdfBytes)
 	case "csv":
-		fmt.Println("Generating CSV format")
 		// Generate actual CSV content instead of JSON metadata
 		// Create CSV content from balance sheet data
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Printf("CSV generation panic: %v\n", r)
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"status":  "error",
 					"message": "Failed to generate Balance Sheet CSV due to internal error",
@@ -134,16 +117,14 @@ func (ctrl *SSOTBalanceSheetController) GenerateSSOTBalanceSheet(c *gin.Context)
 			}
 		}()
 
-		csvContent := ctrl.generateCSVContent(balanceSheetData, asOfDate)
-		fmt.Printf("Generated CSV content length: %d\n", len(csvContent))
+		csvContent := ctrl.generateCSVContent(balanceSheetData, normalizedAsOfDate)
 
 		// Set appropriate headers for CSV download
 		c.Header("Content-Type", "text/csv; charset=utf-8")
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=SSOT_BalanceSheet_%s.csv", asOfDate))
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=SSOT_BalanceSheet_%s.csv", normalizedAsOfDate))
 		c.Data(http.StatusOK, "text/csv", []byte(csvContent))
 
 	default:
-		fmt.Printf("Invalid format requested: %s\n", format)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid format",
 			"message": "Supported formats: json, summary, pdf, csv",
@@ -265,13 +246,15 @@ func (ctrl *SSOTBalanceSheetController) GetSSOTBalanceSheetAccountDetails(c *gin
 	accountType := c.Query("account_type") // ASSET, LIABILITY, or EQUITY
 
 	// Validate parameters using system date format
-	if _, err := ctrl.parseDateBySettings(asOfDate); err != nil {
+	parsedAsOfDate, err := ctrl.parseDateBySettings(asOfDate)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid as_of_date format",
 			"message": err.Error(),
 		})
 		return
 	}
+	normalizedAsOfDate := parsedAsOfDate.Format("2006-01-02")
 
 	if accountType != "" && accountType != "ASSET" && accountType != "LIABILITY" && accountType != "EQUITY" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -281,7 +264,7 @@ func (ctrl *SSOTBalanceSheetController) GetSSOTBalanceSheetAccountDetails(c *gin
 	}
 
 	// Generate full balance sheet to get account details
-	balanceSheetData, err := ctrl.ssotBalanceSheetService.GenerateSSOTBalanceSheet(asOfDate)
+	balanceSheetData, err := ctrl.ssotBalanceSheetService.GenerateSSOTBalanceSheet(normalizedAsOfDate)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to get Balance Sheet account details",
@@ -306,7 +289,7 @@ func (ctrl *SSOTBalanceSheetController) GetSSOTBalanceSheetAccountDetails(c *gin
 		"status":  "success",
 		"message": "Balance Sheet account details retrieved successfully",
 		"data": map[string]interface{}{
-			"as_of_date":      asOfDate,
+			"as_of_date":      normalizedAsOfDate,
 			"account_type":    accountType,
 			"account_details": accountDetails,
 			"total_accounts":  len(accountDetails),
@@ -319,16 +302,18 @@ func (ctrl *SSOTBalanceSheetController) ValidateSSOTBalanceSheet(c *gin.Context)
 	asOfDate := c.DefaultQuery("as_of_date", time.Now().Format("2006-01-02"))
 
 	// Validate date format using system settings
-	if _, err := ctrl.parseDateBySettings(asOfDate); err != nil {
+	parsedAsOfDate, err := ctrl.parseDateBySettings(asOfDate)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid as_of_date format",
 			"message": err.Error(),
 		})
 		return
 	}
+	normalizedAsOfDate := parsedAsOfDate.Format("2006-01-02")
 
 	// Generate Balance Sheet
-	balanceSheetData, err := ctrl.ssotBalanceSheetService.GenerateSSOTBalanceSheet(asOfDate)
+	balanceSheetData, err := ctrl.ssotBalanceSheetService.GenerateSSOTBalanceSheet(normalizedAsOfDate)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to validate Balance Sheet",
@@ -339,7 +324,7 @@ func (ctrl *SSOTBalanceSheetController) ValidateSSOTBalanceSheet(c *gin.Context)
 
 	// Create validation result
 	validationResult := map[string]interface{}{
-		"as_of_date":                   asOfDate,
+		"as_of_date":                   normalizedAsOfDate,
 		"is_balanced":                  balanceSheetData.IsBalanced,
 		"total_assets":                 balanceSheetData.Assets.TotalAssets,
 		"total_liabilities_and_equity": balanceSheetData.TotalLiabilitiesAndEquity,

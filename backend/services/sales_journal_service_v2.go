@@ -554,6 +554,17 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 		return fmt.Errorf("failed to calculate receivable settlement historical book amount: %v", err)
 	}
 	forexGainLossValue := bankBookAmountValue - receivableSettlementValue
+	var paymentSnapshot *cashBankSnapshot
+	if payment.CashBankID != nil && *payment.CashBankID > 0 {
+		snapshot, snapshotErr := loadCashBankSnapshot(dbToUse, *payment.CashBankID)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		if err := ensureCashBankSnapshotConsistency(snapshot, payment.CashBankGLAccountID, payment.CashBankGLAccountCode, payment.CashBankGLAccountName); err != nil {
+			return fmt.Errorf("selected cash/bank account is inconsistent with payment journal snapshot: %w", err)
+		}
+		paymentSnapshot = snapshot
+	}
 
 	bankBookAmount := decimal.NewFromFloat(bankBookAmountValue)
 	receivableSettlement := decimal.NewFromFloat(receivableSettlementValue)
@@ -569,6 +580,7 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 		EntryDate:       payment.PaymentDate,
 		Description:     fmt.Sprintf("Customer Payment for Invoice #%s", sale.InvoiceNumber),
 		Reference:       fmt.Sprintf("PAY-%d", payment.ID),
+		Notes:           buildReceivablePaymentJournalNotes(payment, sale, bankBookAmountValue, receivableSettlementValue, forexGainLossValue),
 		TotalDebit:      decimal.Zero, // Will be computed after lines
 		TotalCredit:     decimal.Zero, // Will be computed after lines
 		Status:          "DRAFT",      // Start as DRAFT
@@ -590,7 +602,12 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 	// DEBIT: Cash/Bank based on payment method
 	var debitAcc *models.Account
 	method := strings.ToUpper(strings.TrimSpace(payment.PaymentMethod))
-	if payment.CashBankID != nil && *payment.CashBankID > 0 {
+	if paymentSnapshot != nil {
+		var tmp models.Account
+		if err := dbToUse.First(&tmp, paymentSnapshot.GLAccountID).Error; err == nil {
+			debitAcc = &tmp
+		}
+	} else if payment.CashBankID != nil && *payment.CashBankID > 0 {
 		// Use specific cash/bank account when provided
 		var cashBank models.CashBank
 		if err := dbToUse.First(&cashBank, *payment.CashBankID).Error; err == nil {

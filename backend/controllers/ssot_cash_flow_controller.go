@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
-	
+
 	"app-sistem-akuntansi/services"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -109,28 +109,31 @@ func (c *SSOTCashFlowController) GetSSOTCashFlow(ctx *gin.Context) {
 			})
 			return
 		}
-		
+
 		filename := c.exportService.GetPDFFilename(ssotData)
 		ctx.Header("Content-Type", "application/pdf")
 		ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfData)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfData)
-		
-case "csv":
-		// Align with SSOT P&L: return JSON metadata indicating client-side CSV generation
-		response := gin.H{
-			"start_date":     ssotData.StartDate.Format("2006-01-02"),
-			"end_date":       ssotData.EndDate.Format("2006-01-02"),
-			"data":           responseData,
-			"export_format":  "csv",
-			"export_ready":   true,
-			"csv_headers":    []string{"Activity", "Account Code", "Account Name", "Amount", "Type"},
-			"data_source":    "SSOT Journal System",
-			"generated_at":   time.Now().Format(time.RFC3339),
-			"report_title":   "SSOT Cash Flow Statement",
+
+	case "csv":
+		userID := ctx.GetUint("user_id")
+		csvData, err := c.exportService.ExportToCSV(ssotData, userID)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to generate CSV",
+				"error":   err.Error(),
+			})
+			return
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": response, "format": "csv"})
-		
+
+		filename := c.exportService.GetCSVFilename(ssotData)
+		ctx.Header("Content-Type", "text/csv; charset=utf-8")
+		ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		ctx.Header("Content-Length", strconv.Itoa(len(csvData)))
+		ctx.Data(http.StatusOK, "text/csv; charset=utf-8", csvData)
+
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -144,12 +147,12 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 	sections := []gin.H{}
 
 	// 1. OPERATING ACTIVITIES Section
-	if ssotData.OperatingActivities.NetIncome != 0 || 
-	   len(ssotData.OperatingActivities.Adjustments.Items) > 0 || 
-	   len(ssotData.OperatingActivities.WorkingCapitalChanges.Items) > 0 {
-		
+	if ssotData.OperatingActivities.NetIncome != 0 ||
+		len(ssotData.OperatingActivities.Adjustments.Items) > 0 ||
+		len(ssotData.OperatingActivities.WorkingCapitalChanges.Items) > 0 {
+
 		operatingItems := []gin.H{}
-		
+
 		// Net Income
 		if ssotData.OperatingActivities.NetIncome != 0 {
 			operatingItems = append(operatingItems, gin.H{
@@ -181,13 +184,13 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 		}
 
 		sections = append(sections, gin.H{
-			"name":    "OPERATING ACTIVITIES",
-			"total":   ssotData.OperatingActivities.TotalOperatingCashFlow,
-			"items":   operatingItems,
+			"name":  "OPERATING ACTIVITIES",
+			"total": ssotData.OperatingActivities.TotalOperatingCashFlow,
+			"items": operatingItems,
 			"summary": gin.H{
-				"net_income":                        ssotData.OperatingActivities.NetIncome,
-				"total_adjustments":                ssotData.OperatingActivities.Adjustments.TotalAdjustments,
-				"total_working_capital_changes":    ssotData.OperatingActivities.WorkingCapitalChanges.TotalWorkingCapitalChanges,
+				"net_income":                    ssotData.OperatingActivities.NetIncome,
+				"total_adjustments":             ssotData.OperatingActivities.Adjustments.TotalAdjustments,
+				"total_working_capital_changes": ssotData.OperatingActivities.WorkingCapitalChanges.TotalWorkingCapitalChanges,
 			},
 		})
 	}
@@ -195,7 +198,7 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 	// 2. INVESTING ACTIVITIES Section
 	if ssotData.InvestingActivities.TotalInvestingCashFlow != 0 || len(ssotData.InvestingActivities.Items) > 0 {
 		investingItems := []gin.H{}
-		
+
 		for _, item := range ssotData.InvestingActivities.Items {
 			investingItems = append(investingItems, gin.H{
 				"name":         item.AccountName,
@@ -210,12 +213,12 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 			"total": ssotData.InvestingActivities.TotalInvestingCashFlow,
 			"items": investingItems,
 			"summary": gin.H{
-				"purchase_of_fixed_assets":      ssotData.InvestingActivities.PurchaseOfFixedAssets,
-				"sale_of_fixed_assets":         ssotData.InvestingActivities.SaleOfFixedAssets,
-				"purchase_of_investments":      ssotData.InvestingActivities.PurchaseOfInvestments,
-				"sale_of_investments":          ssotData.InvestingActivities.SaleOfInvestments,
-				"intangible_asset_purchases":   ssotData.InvestingActivities.IntangibleAssetPurchases,
-				"other_investing_activities":   ssotData.InvestingActivities.OtherInvestingActivities,
+				"purchase_of_fixed_assets":   ssotData.InvestingActivities.PurchaseOfFixedAssets,
+				"sale_of_fixed_assets":       ssotData.InvestingActivities.SaleOfFixedAssets,
+				"purchase_of_investments":    ssotData.InvestingActivities.PurchaseOfInvestments,
+				"sale_of_investments":        ssotData.InvestingActivities.SaleOfInvestments,
+				"intangible_asset_purchases": ssotData.InvestingActivities.IntangibleAssetPurchases,
+				"other_investing_activities": ssotData.InvestingActivities.OtherInvestingActivities,
 			},
 		})
 	}
@@ -223,7 +226,7 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 	// 3. FINANCING ACTIVITIES Section
 	if ssotData.FinancingActivities.TotalFinancingCashFlow != 0 || len(ssotData.FinancingActivities.Items) > 0 {
 		financingItems := []gin.H{}
-		
+
 		for _, item := range ssotData.FinancingActivities.Items {
 			financingItems = append(financingItems, gin.H{
 				"name":         item.AccountName,
@@ -238,14 +241,14 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 			"total": ssotData.FinancingActivities.TotalFinancingCashFlow,
 			"items": financingItems,
 			"summary": gin.H{
-				"share_capital_increase":      ssotData.FinancingActivities.ShareCapitalIncrease,
-				"share_capital_decrease":      ssotData.FinancingActivities.ShareCapitalDecrease,
-				"long_term_debt_increase":     ssotData.FinancingActivities.LongTermDebtIncrease,
-				"long_term_debt_decrease":     ssotData.FinancingActivities.LongTermDebtDecrease,
-				"short_term_debt_increase":    ssotData.FinancingActivities.ShortTermDebtIncrease,
-				"short_term_debt_decrease":    ssotData.FinancingActivities.ShortTermDebtDecrease,
-				"dividends_paid":              ssotData.FinancingActivities.DividendsPaid,
-				"other_financing_activities":  ssotData.FinancingActivities.OtherFinancingActivities,
+				"share_capital_increase":     ssotData.FinancingActivities.ShareCapitalIncrease,
+				"share_capital_decrease":     ssotData.FinancingActivities.ShareCapitalDecrease,
+				"long_term_debt_increase":    ssotData.FinancingActivities.LongTermDebtIncrease,
+				"long_term_debt_decrease":    ssotData.FinancingActivities.LongTermDebtDecrease,
+				"short_term_debt_increase":   ssotData.FinancingActivities.ShortTermDebtIncrease,
+				"short_term_debt_decrease":   ssotData.FinancingActivities.ShortTermDebtDecrease,
+				"dividends_paid":             ssotData.FinancingActivities.DividendsPaid,
+				"other_financing_activities": ssotData.FinancingActivities.OtherFinancingActivities,
 			},
 		})
 	}
@@ -273,8 +276,8 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 
 	// Create the frontend-compatible response
 	return gin.H{
-		"title":   "Cash Flow Statement",
-		"period":  ssotData.StartDate.Format("2006-01-02") + " - " + ssotData.EndDate.Format("2006-01-02"),
+		"title":      "Cash Flow Statement",
+		"period":     ssotData.StartDate.Format("2006-01-02") + " - " + ssotData.EndDate.Format("2006-01-02"),
 		"start_date": ssotData.StartDate.Format("2006-01-02"),
 		"end_date":   ssotData.EndDate.Format("2006-01-02"),
 		"company": gin.H{
@@ -285,57 +288,59 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 		"enhanced": ssotData.Enhanced,
 		"hasData":  len(sections) > 0 && ssotData.NetCashFlow != 0,
 		// Top-level fields for frontend compatibility
-		"net_cash_flow":     ssotData.NetCashFlow,
-		"cash_at_beginning": ssotData.CashAtBeginning,
-		"cash_at_end":       ssotData.CashAtEnd,
-		"currency":          ssotData.Currency,
-		"generated_at":      ssotData.GeneratedAt.Format(time.RFC3339),
-		"data_source":       "SSOT Journal System",
+		"net_cash_flow":              ssotData.NetCashFlow,
+		"cash_at_beginning":          ssotData.CashAtBeginning,
+		"cash_at_end":                ssotData.CashAtEnd,
+		"has_reconciliation_warning": ssotData.HasReconciliationWarning,
+		"reconciliation_difference":  ssotData.ReconciliationDifference,
+		"currency":                   ssotData.Currency,
+		"generated_at":               ssotData.GeneratedAt.Format(time.RFC3339),
+		"data_source":                "SSOT Journal System",
 		// Add structured activity sections for direct frontend access
 		"operating_activities": gin.H{
 			"net_income": ssotData.OperatingActivities.NetIncome,
 			"adjustments": gin.H{
-				"depreciation":                 ssotData.OperatingActivities.Adjustments.Depreciation,
-				"amortization":                 ssotData.OperatingActivities.Adjustments.Amortization,
-				"bad_debt_expense":             ssotData.OperatingActivities.Adjustments.BadDebtExpense,
-				"gain_loss_on_asset_disposal":  ssotData.OperatingActivities.Adjustments.GainLossOnAssetDisposal,
-				"other_non_cash_items":         ssotData.OperatingActivities.Adjustments.OtherNonCashItems,
-				"total_adjustments":            ssotData.OperatingActivities.Adjustments.TotalAdjustments,
-				"items":                        c.transformCFItemsToFrontendFormat(ssotData.OperatingActivities.Adjustments.Items),
+				"depreciation":                ssotData.OperatingActivities.Adjustments.Depreciation,
+				"amortization":                ssotData.OperatingActivities.Adjustments.Amortization,
+				"bad_debt_expense":            ssotData.OperatingActivities.Adjustments.BadDebtExpense,
+				"gain_loss_on_asset_disposal": ssotData.OperatingActivities.Adjustments.GainLossOnAssetDisposal,
+				"other_non_cash_items":        ssotData.OperatingActivities.Adjustments.OtherNonCashItems,
+				"total_adjustments":           ssotData.OperatingActivities.Adjustments.TotalAdjustments,
+				"items":                       c.transformCFItemsToFrontendFormat(ssotData.OperatingActivities.Adjustments.Items),
 			},
 			"working_capital_changes": gin.H{
-				"accounts_receivable_change":   ssotData.OperatingActivities.WorkingCapitalChanges.AccountsReceivableChange,
-				"inventory_change":             ssotData.OperatingActivities.WorkingCapitalChanges.InventoryChange,
-				"prepaid_expenses_change":      ssotData.OperatingActivities.WorkingCapitalChanges.PrepaidExpensesChange,
-				"accounts_payable_change":      ssotData.OperatingActivities.WorkingCapitalChanges.AccountsPayableChange,
-				"accrued_liabilities_change":   ssotData.OperatingActivities.WorkingCapitalChanges.AccruedLiabilitiesChange,
-				"other_working_capital_change": ssotData.OperatingActivities.WorkingCapitalChanges.OtherWorkingCapitalChange,
+				"accounts_receivable_change":    ssotData.OperatingActivities.WorkingCapitalChanges.AccountsReceivableChange,
+				"inventory_change":              ssotData.OperatingActivities.WorkingCapitalChanges.InventoryChange,
+				"prepaid_expenses_change":       ssotData.OperatingActivities.WorkingCapitalChanges.PrepaidExpensesChange,
+				"accounts_payable_change":       ssotData.OperatingActivities.WorkingCapitalChanges.AccountsPayableChange,
+				"accrued_liabilities_change":    ssotData.OperatingActivities.WorkingCapitalChanges.AccruedLiabilitiesChange,
+				"other_working_capital_change":  ssotData.OperatingActivities.WorkingCapitalChanges.OtherWorkingCapitalChange,
 				"total_working_capital_changes": ssotData.OperatingActivities.WorkingCapitalChanges.TotalWorkingCapitalChanges,
-				"items":                        c.transformCFItemsToFrontendFormat(ssotData.OperatingActivities.WorkingCapitalChanges.Items),
+				"items":                         c.transformCFItemsToFrontendFormat(ssotData.OperatingActivities.WorkingCapitalChanges.Items),
 			},
 			"total_operating_cash_flow": ssotData.OperatingActivities.TotalOperatingCashFlow,
 		},
 		"investing_activities": gin.H{
-			"purchase_of_fixed_assets":     ssotData.InvestingActivities.PurchaseOfFixedAssets,
-			"sale_of_fixed_assets":         ssotData.InvestingActivities.SaleOfFixedAssets,
-			"purchase_of_investments":      ssotData.InvestingActivities.PurchaseOfInvestments,
-			"sale_of_investments":          ssotData.InvestingActivities.SaleOfInvestments,
-			"intangible_asset_purchases":   ssotData.InvestingActivities.IntangibleAssetPurchases,
-			"other_investing_activities":   ssotData.InvestingActivities.OtherInvestingActivities,
-			"total_investing_cash_flow":    ssotData.InvestingActivities.TotalInvestingCashFlow,
-			"items":                        c.transformCFItemsToFrontendFormat(ssotData.InvestingActivities.Items),
+			"purchase_of_fixed_assets":   ssotData.InvestingActivities.PurchaseOfFixedAssets,
+			"sale_of_fixed_assets":       ssotData.InvestingActivities.SaleOfFixedAssets,
+			"purchase_of_investments":    ssotData.InvestingActivities.PurchaseOfInvestments,
+			"sale_of_investments":        ssotData.InvestingActivities.SaleOfInvestments,
+			"intangible_asset_purchases": ssotData.InvestingActivities.IntangibleAssetPurchases,
+			"other_investing_activities": ssotData.InvestingActivities.OtherInvestingActivities,
+			"total_investing_cash_flow":  ssotData.InvestingActivities.TotalInvestingCashFlow,
+			"items":                      c.transformCFItemsToFrontendFormat(ssotData.InvestingActivities.Items),
 		},
 		"financing_activities": gin.H{
-			"share_capital_increase":      ssotData.FinancingActivities.ShareCapitalIncrease,
-			"share_capital_decrease":      ssotData.FinancingActivities.ShareCapitalDecrease,
-			"long_term_debt_increase":     ssotData.FinancingActivities.LongTermDebtIncrease,
-			"long_term_debt_decrease":     ssotData.FinancingActivities.LongTermDebtDecrease,
-			"short_term_debt_increase":    ssotData.FinancingActivities.ShortTermDebtIncrease,
-			"short_term_debt_decrease":    ssotData.FinancingActivities.ShortTermDebtDecrease,
-			"dividends_paid":              ssotData.FinancingActivities.DividendsPaid,
-			"other_financing_activities":  ssotData.FinancingActivities.OtherFinancingActivities,
-			"total_financing_cash_flow":   ssotData.FinancingActivities.TotalFinancingCashFlow,
-			"items":                       c.transformCFItemsToFrontendFormat(ssotData.FinancingActivities.Items),
+			"share_capital_increase":     ssotData.FinancingActivities.ShareCapitalIncrease,
+			"share_capital_decrease":     ssotData.FinancingActivities.ShareCapitalDecrease,
+			"long_term_debt_increase":    ssotData.FinancingActivities.LongTermDebtIncrease,
+			"long_term_debt_decrease":    ssotData.FinancingActivities.LongTermDebtDecrease,
+			"short_term_debt_increase":   ssotData.FinancingActivities.ShortTermDebtIncrease,
+			"short_term_debt_decrease":   ssotData.FinancingActivities.ShortTermDebtDecrease,
+			"dividends_paid":             ssotData.FinancingActivities.DividendsPaid,
+			"other_financing_activities": ssotData.FinancingActivities.OtherFinancingActivities,
+			"total_financing_cash_flow":  ssotData.FinancingActivities.TotalFinancingCashFlow,
+			"items":                      c.transformCFItemsToFrontendFormat(ssotData.FinancingActivities.Items),
 		},
 		"cash_flow_ratios": gin.H{
 			"operating_cash_flow_ratio": ssotData.CashFlowRatios.OperatingCashFlowRatio,
@@ -345,12 +350,12 @@ func (c *SSOTCashFlowController) TransformToFrontendFormat(ssotData *services.SS
 		},
 		"account_details": c.transformAccountDetailsToFrontendFormat(ssotData.AccountDetails),
 		"summary": gin.H{
-			"operating_cash_flow":  ssotData.OperatingActivities.TotalOperatingCashFlow,
-			"investing_cash_flow":  ssotData.InvestingActivities.TotalInvestingCashFlow,
-			"financing_cash_flow":  ssotData.FinancingActivities.TotalFinancingCashFlow,
-			"net_cash_flow":        ssotData.NetCashFlow,
-			"cash_at_beginning":    ssotData.CashAtBeginning,
-			"cash_at_end":          ssotData.CashAtEnd,
+			"operating_cash_flow": ssotData.OperatingActivities.TotalOperatingCashFlow,
+			"investing_cash_flow": ssotData.InvestingActivities.TotalInvestingCashFlow,
+			"financing_cash_flow": ssotData.FinancingActivities.TotalFinancingCashFlow,
+			"net_cash_flow":       ssotData.NetCashFlow,
+			"cash_at_beginning":   ssotData.CashAtBeginning,
+			"cash_at_end":         ssotData.CashAtEnd,
 		},
 		"cashFlowRatios": gin.H{
 			"operating_cash_flow_ratio": ssotData.CashFlowRatios.OperatingCashFlowRatio,
@@ -381,13 +386,13 @@ func (c *SSOTCashFlowController) transformAccountDetailsToFrontendFormat(account
 	var transformed []gin.H
 	for _, account := range accountDetails {
 		transformed = append(transformed, gin.H{
-			"account_id":     account.AccountID,
-			"account_code":   account.AccountCode,
-			"account_name":   account.AccountName,
-			"account_type":   account.AccountType,
-			"debit_total":    account.DebitTotal,
-			"credit_total":   account.CreditTotal,
-			"net_balance":    account.NetBalance,
+			"account_id":   account.AccountID,
+			"account_code": account.AccountCode,
+			"account_name": account.AccountName,
+			"account_type": account.AccountType,
+			"debit_total":  account.DebitTotal,
+			"credit_total": account.CreditTotal,
+			"net_balance":  account.NetBalance,
 		})
 	}
 	return transformed
@@ -398,23 +403,23 @@ func (c *SSOTCashFlowController) generateAnalysisMessage(ssotData *services.SSOT
 	if ssotData.CashAtEnd == ssotData.CashAtBeginning {
 		return "No net change in cash position detected. Review transactions to ensure all cash activities are properly recorded in the SSOT journal system."
 	}
-	
+
 	if ssotData.OperatingActivities.TotalOperatingCashFlow < 0 {
 		return "Operating activities generated negative cash flow. This may indicate operational challenges or seasonal timing differences."
 	}
-	
+
 	if ssotData.NetCashFlow > 0 && ssotData.OperatingActivities.TotalOperatingCashFlow > 0 {
 		return "Positive cash generation from operations with overall positive net cash flow indicates healthy cash management."
 	}
-	
+
 	if ssotData.InvestingActivities.TotalInvestingCashFlow < 0 {
 		return "Investment activities show cash outflow, indicating capital expenditure or asset purchases which may signal business expansion."
 	}
-	
+
 	if ssotData.FinancingActivities.TotalFinancingCashFlow > 0 {
 		return "Financing activities generated positive cash flow, indicating new capital raised or debt financing obtained."
 	}
-	
+
 	return "Cash Flow statement successfully generated from SSOT journal system with comprehensive analysis of all cash activities."
 }
 
@@ -445,12 +450,12 @@ func (c *SSOTCashFlowController) GetSSOTCashFlowSummary(ctx *gin.Context) {
 
 	// Create summary response
 	summary := gin.H{
-		"company":     ssotData.Company,
-		"period":      startDate + " to " + endDate,
-		"currency":    ssotData.Currency,
+		"company":  ssotData.Company,
+		"period":   startDate + " to " + endDate,
+		"currency": ssotData.Currency,
 		"activities": gin.H{
 			"operating": gin.H{
-				"cash_flow": ssotData.OperatingActivities.TotalOperatingCashFlow,
+				"cash_flow":  ssotData.OperatingActivities.TotalOperatingCashFlow,
 				"net_income": ssotData.OperatingActivities.NetIncome,
 			},
 			"investing": gin.H{
@@ -509,18 +514,18 @@ func (c *SSOTCashFlowController) ValidateSSOTCashFlow(ctx *gin.Context) {
 	expectedEndingCash := ssotData.CashAtBeginning + ssotData.NetCashFlow
 	tolerance := 0.01
 	isBalanced := (expectedEndingCash >= ssotData.CashAtEnd-tolerance && expectedEndingCash <= ssotData.CashAtEnd+tolerance)
-	
+
 	validationResult := gin.H{
-		"period":                startDate + " to " + endDate,
-		"is_balanced":           isBalanced,
-		"cash_at_beginning":     ssotData.CashAtBeginning,
-		"net_cash_flow":         ssotData.NetCashFlow,
-		"expected_ending_cash":  expectedEndingCash,
-		"actual_ending_cash":    ssotData.CashAtEnd,
-		"difference":            ssotData.CashAtEnd - expectedEndingCash,
-		"tolerance":             tolerance,
-		"validation_status":     map[bool]string{true: "PASS", false: "FAIL"}[isBalanced],
-		"generated_at":          ssotData.GeneratedAt,
+		"period":               startDate + " to " + endDate,
+		"is_balanced":          isBalanced,
+		"cash_at_beginning":    ssotData.CashAtBeginning,
+		"net_cash_flow":        ssotData.NetCashFlow,
+		"expected_ending_cash": expectedEndingCash,
+		"actual_ending_cash":   ssotData.CashAtEnd,
+		"difference":           ssotData.CashAtEnd - expectedEndingCash,
+		"tolerance":            tolerance,
+		"validation_status":    map[bool]string{true: "PASS", false: "FAIL"}[isBalanced],
+		"generated_at":         ssotData.GeneratedAt,
 	}
 
 	if !isBalanced {

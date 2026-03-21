@@ -2,12 +2,22 @@ import React, { useState } from 'react';
 import { Box, VStack, HStack, Badge, Text, Spinner, Alert, AlertIcon, Divider, Button, Textarea, FormControl, FormLabel, FormHelperText, Checkbox, useToast, useColorModeValue } from '@chakra-ui/react';
 import { useApproval } from '@/hooks/useApproval';
 import { useAuth } from '@/contexts/AuthContext';
-import approvalService from '@/services/approvalService';
 import { normalizeRole, formatRoleForApproval } from '@/utils/roles';
+import { getUserDisplayName } from '@/utils/userDisplay';
 
 interface ApprovalPanelProps {
   purchaseId?: number;
   approvalStatus?: string;
+  approvalSteps?: Array<{
+    id: number;
+    status: string;
+    is_active: boolean;
+    step?: {
+      approver_role?: string;
+      step_name?: string;
+      step_order?: number;
+    };
+  }>;
   canApprove?: boolean;
   onApprove?: (comments?: string, requiresDirector?: boolean) => void;
   onReject?: (comments: string) => void;
@@ -29,7 +39,7 @@ const statusColor = (s?: string) => {
   }
 };
 
-export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approvalStatus, canApprove = false, onApprove, onReject, actionLoading = false, purchaseAmount = 0 }) => {
+export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approvalStatus, approvalSteps = [], canApprove = false, onApprove, onReject, actionLoading = false, purchaseAmount = 0 }) => {
   const { history, loading, error, refresh } = useApproval(purchaseId);
   const { user } = useAuth();
   const toast = useToast();
@@ -100,11 +110,13 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
     }
   };
 
-  const rejectDisabled = comments.trim() === '';
   const userRole = user?.role || '';
-  const normalizedRole = normalizeRole(userRole as any);
+  const normalizedRole = normalizeRole(userRole);
+  const currentUserDisplayName = getUserDisplayName(user, {
+    fallback: 'Unknown User',
+    allowRoleFallback: false,
+  });
   const isFinanceRole = normalizedRole === 'finance';
-  const isDirectorRole = normalizedRole === 'director';
   const isPendingApproval = (approvalStatus || '').toUpperCase() === 'PENDING';
   const isNotStarted = (approvalStatus || '').toUpperCase() === 'NOT_STARTED';
   const isApproved = (approvalStatus || '').toUpperCase() === 'APPROVED';
@@ -112,6 +124,14 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
   
   // Determine the active step based on approval history
   const getActiveApprovalStep = () => {
+    const workflowActiveStep =
+      approvalSteps.find((step) => step.is_active && (step.status || '').toUpperCase() === 'PENDING') ||
+      approvalSteps.find((step) => (step.status || '').toUpperCase() === 'PENDING');
+
+    if (workflowActiveStep?.step?.approver_role) {
+      return normalizeRole(workflowActiveStep.step.approver_role);
+    }
+
     if (isApproved || isRejected) {
       return null; // Process completed
     }
@@ -122,37 +142,22 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
       return 'finance'; // First approval step is Finance
     }
     
-    // Check the last approval action
-    const lastApproval = history[history.length - 1];
-    
-    // If last action was Employee submitting/creating, next step is Finance
-    if (lastApproval.action === 'CREATED' || lastApproval.action === 'SUBMITTED' || 
-        lastApproval.action === 'APPROVED' && lastApproval.comments?.includes('Purchase submitted by Employee')) {
-      return 'finance';
-    }
-    
-    // If Finance approved and escalated to Director
-    if (lastApproval.action === 'APPROVED' && lastApproval.comments?.includes('Escalated to Director')) {
-      return 'director';
-    }
-    
     // If we're in pending status, determine who should act next based on history
     if (isPendingApproval) {
-      // Check if there's an escalation or director approval needed
-      const financeApproval = history.find(h => 
-        h.action === 'APPROVED' && 
-        (h.comments?.includes('Escalated') || h.comments?.includes('Director'))
-      );
-      if (financeApproval) {
+      const financeAlreadyApproved = history.some((entry) => {
+        if (entry.action !== 'APPROVED') return false;
+        const approverRole = normalizeRole(entry.user?.role || '');
+        return approverRole === 'finance';
+      });
+
+      if (financeAlreadyApproved) {
         return 'director';
       }
       
-      // Check if employee step is completed
-      const employeeSubmission = history.find(h => 
-        h.action === 'CREATED' || h.action === 'SUBMITTED' ||
-        (h.action === 'APPROVED' && h.comments?.includes('Purchase submitted by Employee'))
+      const requesterSubmission = history.find(h => 
+        h.action === 'CREATED' || h.action === 'SUBMITTED'
       );
-      if (employeeSubmission) {
+      if (requesterSubmission) {
         return 'finance';
       }
       
@@ -163,24 +168,16 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
   };
   
   const activeStep = getActiveApprovalStep();
-  const isUserTurn = activeStep === normalizedRole;
+  const activeStepIsEscalated = approvalSteps.some((step) => {
+    if (!step.is_active || (step.status || '').toUpperCase() !== 'PENDING') return false;
+    return (step.step?.step_name || '').toLowerCase().includes('escalated');
+  });
+  const isUserTurn = normalizedRole === 'admin' || activeStep === normalizedRole;
   const canUserAct = isUserTurn && canApprove && !isApproved && !isRejected;
   
   const shouldShowDirectorCheckbox = isFinanceRole && canUserAct && (isPendingApproval || isNotStarted);
   const isDisabled = isApproved || isRejected || !canUserAct; // Disable when completed or not user's turn
   
-  // Debug logging
-  console.log('ApprovalPanel Debug:', {
-    userRole,
-    normalizedRole,
-    isFinanceRole,
-    canApprove,
-    approvalStatus,
-    isPendingApproval,
-    isNotStarted,
-    shouldShowDirectorCheckbox
-  });
-
   return (
     <Box borderWidth="1px" borderRadius="md" p={4} w="full" bg={panelBg} borderColor={panelBorderColor}>
       <HStack justify="space-between" mb={2}>
@@ -196,47 +193,51 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
         <Text color={mutedTextColor}>No approval history.</Text>
       ) : (
         <VStack align="stretch" spacing={2}>
-          {history.map((h, i) => (
-            <Box
-              key={i}
-              p={3}
-              borderRadius="md"
-              bg={h.action === 'REJECTED' ? historyRejectedBg : historyCardBg}
-              borderLeft="3px solid"
-              borderLeftColor={h.action === 'REJECTED' ? 'red.500' : statusColor(h.action) + '.500'}
-              borderWidth="1px"
-              borderColor={panelBorderColor}
-            >
-              <HStack justify="space-between" mb={1}>
-                <Text fontSize="sm" fontWeight="medium" color={bodyTextColor}>
-                  {h.user ? (
-                    <>
-                      <Text as="span" color={roleTextColor} fontWeight="semibold">
-                        {formatRoleForApproval(h.user.role)}
-                      </Text>
-                      <Text as="span" color={mutedTextColor} mx={1}>
-                        -
-                      </Text>
-                      <Text as="span">
-                        {h.user.first_name} {h.user.last_name}
-                      </Text>
-                    </>
-                  ) : (
-                    'Unknown User'
-                  )}
+          {history.map((h, i) => {
+            const actorName = getUserDisplayName(h.user, {
+              fallback: 'Unknown User',
+              allowRoleFallback: false,
+            });
+            const actorRole = formatRoleForApproval(h.user?.role);
+
+            return (
+              <Box
+                key={i}
+                p={3}
+                borderRadius="md"
+                bg={h.action === 'REJECTED' ? historyRejectedBg : historyCardBg}
+                borderLeft="3px solid"
+                borderLeftColor={h.action === 'REJECTED' ? 'red.500' : statusColor(h.action) + '.500'}
+                borderWidth="1px"
+                borderColor={panelBorderColor}
+              >
+                <HStack justify="space-between" mb={1}>
+                  <Text fontSize="sm" fontWeight="medium" color={bodyTextColor}>
+                    <Text as="span">{actorName}</Text>
+                    {actorRole && actorRole !== actorName && (
+                      <>
+                        <Text as="span" color={mutedTextColor} mx={1}>
+                          -
+                        </Text>
+                        <Text as="span" color={roleTextColor} fontWeight="semibold">
+                          {actorRole}
+                        </Text>
+                      </>
+                    )}
+                  </Text>
+                  <Badge colorScheme={statusColor(h.action)}>{h.action}</Badge>
+                </HStack>
+                <Text fontSize="xs" color={mutedTextColor} mb={1}>
+                  {new Date(h.created_at).toLocaleString('id-ID')}
                 </Text>
-                <Badge colorScheme={statusColor(h.action)}>{h.action}</Badge>
-              </HStack>
-              <Text fontSize="xs" color={mutedTextColor} mb={1}>
-                {new Date(h.created_at).toLocaleString('id-ID')}
-              </Text>
-              {h.comments && (
-                <Text fontSize="sm" color={bodyTextColor} fontStyle={h.action === 'REJECTED' ? 'italic' : 'normal'}>
-                  "{h.comments}"
-                </Text>
-              )}
-            </Box>
-          ))}
+                {h.comments && (
+                  <Text fontSize="sm" color={bodyTextColor} fontStyle={h.action === 'REJECTED' ? 'italic' : 'normal'}>
+                    {h.comments}
+                  </Text>
+                )}
+              </Box>
+            );
+          })}
         </VStack>
       )}
 
@@ -244,9 +245,10 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
         <>
           <Divider my={3} borderColor={dividerColor} />
           <VStack spacing={3} align="stretch">
-            {/* Display current role for debugging and turn status */}
+            {/* Display active user and turn status */}
             <Text fontSize="xs" color={mutedTextColor}>
-              Logged in as: {userRole} (normalized: {normalizedRole})
+              Login sebagai: {currentUserDisplayName}
+              {normalizedRole ? ` (${formatRoleForApproval(normalizedRole)})` : ''}
             </Text>
             
             {/* Turn status message */}
@@ -255,7 +257,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
                 <AlertIcon />
                 <Text fontSize="sm">
                   Menunggu persetujuan dari: <Text as="span" fontWeight="bold">{formatRoleForApproval(activeStep)}</Text>
-                  {activeStep === 'director' && ' (sudah di-escalate ke Director)'}
+                  {activeStepIsEscalated && activeStep === 'director' && ' (sudah di-escalate ke Director)'}
                 </Text>
               </Alert>
             )}

@@ -141,8 +141,10 @@ func (s *SSOTProfitLossService) GenerateSSOTProfitLoss(startDate, endDate string
 		return nil, fmt.Errorf("invalid end date format: %v", err)
 	}
 
+	endExclusive := end.AddDate(0, 0, 1)
+
 	// Get account balances from SSOT journal entries (with data source flag)
-	accountBalances, source, err := s.getAccountBalancesFromSSOT(startDate, endDate)
+	accountBalances, source, err := s.getAccountBalancesFromSSOT(start, endExclusive)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account balances: %v", err)
 	}
@@ -155,7 +157,7 @@ func (s *SSOTProfitLossService) GenerateSSOTProfitLoss(startDate, endDate string
 }
 
 // getAccountBalancesFromLegacy retrieves account balances using legacy journal tables as fallback
-func (s *SSOTProfitLossService) getAccountBalancesFromLegacy(startDate, endDate string) ([]SSOTAccountBalance, error) {
+func (s *SSOTProfitLossService) getAccountBalancesFromLegacy(startDate, endExclusive time.Time) ([]SSOTAccountBalance, error) {
 	var balances []SSOTAccountBalance
 	legacyQuery := `
 		SELECT 
@@ -175,18 +177,18 @@ func (s *SSOTProfitLossService) getAccountBalancesFromLegacy(startDate, endDate 
 		FROM accounts a
 		LEFT JOIN journal_lines jl ON jl.account_id = a.id
 		LEFT JOIN journal_entries je ON je.id = jl.journal_entry_id AND je.status = 'POSTED' AND je.deleted_at IS NULL
-		WHERE je.entry_date >= ? AND je.entry_date <= ?
+		WHERE je.entry_date >= ? AND je.entry_date < ?
 		GROUP BY a.code
 		HAVING (COALESCE(SUM(jl.debit_amount), 0) <> 0 OR COALESCE(SUM(jl.credit_amount), 0) <> 0)
 		ORDER BY a.code`
-	if err := s.db.Raw(legacyQuery, startDate, endDate).Scan(&balances).Error; err != nil {
+	if err := s.db.Raw(legacyQuery, startDate, endExclusive).Scan(&balances).Error; err != nil {
 		return nil, fmt.Errorf("legacy account balances query failed: %v", err)
 	}
 	return balances, nil
 }
 
 // getAccountBalancesFromSSOT retrieves account balances from SSOT journal system, with automatic fallbacks
-func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endDate string) ([]SSOTAccountBalance, string, error) {
+func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endExclusive time.Time) ([]SSOTAccountBalance, string, error) {
 	var balances []SSOTAccountBalance
 	source := "SSOT"
 
@@ -213,14 +215,14 @@ func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endDate st
 			AND uje.status = 'POSTED' 
 			AND uje.deleted_at IS NULL
 			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('CLOSING', 'REVERSAL')
-		WHERE uje.entry_date >= ? AND uje.entry_date <= ? AND a.deleted_at IS NULL
+		WHERE uje.entry_date >= ? AND uje.entry_date < ? AND a.deleted_at IS NULL
 		GROUP BY a.code
 		HAVING (COALESCE(SUM(ujl.debit_amount), 0) <> 0 OR COALESCE(SUM(ujl.credit_amount), 0) <> 0)
 		ORDER BY a.code
 	`
 
-	fmt.Printf("[P&L DEBUG] Executing SSOT query for period %s to %s (excluding closing/reversal entries)\n", startDate, endDate)
-	if err := s.db.Raw(query, startDate, endDate).Scan(&balances).Error; err != nil {
+	fmt.Printf("[P&L DEBUG] Executing SSOT query for period %s to %s (exclusive upper bound, excluding closing/reversal entries)\n", startDate.Format("2006-01-02"), endExclusive.Format("2006-01-02"))
+	if err := s.db.Raw(query, startDate, endExclusive).Scan(&balances).Error; err != nil {
 		return nil, source, fmt.Errorf("error executing account balances query: %v", err)
 	}
 	fmt.Printf("[P&L DEBUG] Retrieved %d accounts from SSOT (excluding closing/reversal)\n", len(balances))
@@ -234,18 +236,13 @@ func (s *SSOTProfitLossService) getAccountBalancesFromSSOT(startDate, endDate st
 		}
 	}
 
-	// Fallback to legacy journals if SSOT returns no activity OR no PL activity (no 4xxx/5xxx)
+	// Fallback to legacy journals if SSOT returns no activity OR no PL activity (no 4xxx/5xxx).
+	// Do not use accounts.balance as a fallback because profit & loss must remain period-based.
 	if len(balances) == 0 || !hasPLActivity(balances) {
-		legacy, lerr := s.getAccountBalancesFromLegacy(startDate, endDate)
+		legacy, lerr := s.getAccountBalancesFromLegacy(startDate, endExclusive)
 		if lerr == nil && len(legacy) > 0 && hasPLActivity(legacy) {
 			source = "LEGACY"
 			return legacy, source, nil
-		}
-		// Final fallback: derive from accounts table balances for 4xxx/5xxx if journals have no PL activity
-		acctFallback, aerr := s.getPLFromAccountsBalance()
-		if aerr == nil && len(acctFallback) > 0 && hasPLActivity(acctFallback) {
-			source = "ACCOUNTS"
-			return acctFallback, source, nil
 		}
 	}
 

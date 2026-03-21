@@ -1,9 +1,9 @@
 package database
 
 import (
-	"log"
-	"gorm.io/gorm"
 	"app-sistem-akuntansi/models"
+	"gorm.io/gorm"
+	"log"
 )
 
 // FixAccountStructureMigration ensures proper account structure and automatic balance sync
@@ -12,10 +12,10 @@ func FixAccountStructureMigration(db *gorm.DB) {
 
 	// 1. Fix PPN account hierarchy and type
 	fixPPNAccountStructure(db)
-	
+
 	// 2. Ensure correct account types for all accounts
 	fixAccountTypes(db)
-	
+
 	// 3. Set up automatic balance synchronization triggers
 	setupBalanceSyncTriggers(db)
 
@@ -54,7 +54,7 @@ func fixPPNAccountStructure(db *gorm.DB) {
 	// Ensure correct PPN accounts exist:
 	// - 1240: PPN MASUKAN (Asset - Input VAT)
 	// - 2103: PPN KELUARAN (Liability - Output VAT)
-	
+
 	// Check if we need to fix any misnamed PPN accounts
 	var wrongPPNAccounts []struct {
 		ID   uint
@@ -62,7 +62,7 @@ func fixPPNAccountStructure(db *gorm.DB) {
 		Name string
 		Type string
 	}
-	
+
 	db.Raw(`
 		SELECT id, code, name, type 
 		FROM accounts 
@@ -72,7 +72,7 @@ func fixPPNAccountStructure(db *gorm.DB) {
 			  (code LIKE '1%' AND UPPER(name) LIKE '%PPN KELUARAN%')
 		  )
 	`).Scan(&wrongPPNAccounts)
-	
+
 	for _, acc := range wrongPPNAccounts {
 		log.Printf("    ⚠️  Found misplaced PPN account: %s - %s (Type: %s)", acc.Code, acc.Name, acc.Type)
 		log.Printf("       Please review and fix manually if needed")
@@ -87,18 +87,19 @@ func fixAccountTypes(db *gorm.DB) {
 		Code string
 		Type string
 	}{
-		{"1000", "ASSET"},   // ASSETS header
-		{"1100", "ASSET"},   // CURRENT ASSETS header  
-		{"1200", "ASSET"},   // ACCOUNTS RECEIVABLE header
-		{"1201", "ASSET"},   // Piutang Usaha
-		{"1500", "ASSET"},   // FIXED ASSETS header
-		{"1240", "ASSET"},   // PPN MASUKAN (Input VAT)
+		{"1000", "ASSET"},     // ASSETS header
+		{"1100", "ASSET"},     // CURRENT ASSETS header
+		{"1200", "ASSET"},     // ACCOUNTS RECEIVABLE header
+		{"1201", "ASSET"},     // Piutang Usaha
+		{"1500", "ASSET"},     // FIXED ASSETS header
+		{"1240", "ASSET"},     // PPN MASUKAN (Input VAT)
 		{"2000", "LIABILITY"}, // LIABILITIES header
-		{"2100", "LIABILITY"}, // CURRENT LIABILITIES header  
+		{"2100", "LIABILITY"}, // CURRENT LIABILITIES header
 		{"2101", "LIABILITY"}, // Utang Usaha
 		{"2103", "LIABILITY"}, // PPN KELUARAN (Output VAT)
 		{"3000", "EQUITY"},    // EQUITY header
 		{"3101", "EQUITY"},    // Modal Pemilik
+		{"3104", "EQUITY"},    // Ekuitas Saldo Awal
 		{"3201", "EQUITY"},    // Laba Ditahan
 		{"4000", "REVENUE"},   // REVENUE header
 		{"4101", "REVENUE"},   // Pendapatan Penjualan
@@ -112,7 +113,7 @@ func fixAccountTypes(db *gorm.DB) {
 		err := db.Model(&models.Account{}).
 			Where("code = ? AND deleted_at IS NULL", fix.Code).
 			Update("type", fix.Type).Error
-		
+
 		if err != nil {
 			log.Printf("    Warning: Failed to fix type for account %s: %v", fix.Code, err)
 		}
@@ -187,11 +188,11 @@ func setupBalanceSyncTriggers(db *gorm.DB) {
 		`CREATE TRIGGER trigger_update_balance_on_journal_line_insert
 		AFTER INSERT ON unified_journal_lines
 		FOR EACH ROW EXECUTE FUNCTION update_account_balance_from_ssot()`,
-		
+
 		`CREATE TRIGGER trigger_update_balance_on_journal_line_update
 		AFTER UPDATE ON unified_journal_lines
 		FOR EACH ROW EXECUTE FUNCTION update_account_balance_from_ssot()`,
-		
+
 		`CREATE TRIGGER trigger_update_balance_on_journal_line_delete
 		AFTER DELETE ON unified_journal_lines
 		FOR EACH ROW EXECUTE FUNCTION update_account_balance_from_ssot()`,
@@ -220,7 +221,7 @@ func runInitialBalanceSync(db *gorm.DB) {
 
 	// 2. Calculate and update balances from SSOT
 	var accountUpdates []struct {
-		AccountID       uint    `json:"account_id"`
+		AccountID         uint    `json:"account_id"`
 		CalculatedBalance float64 `json:"calculated_balance"`
 	}
 
@@ -244,7 +245,7 @@ func runInitialBalanceSync(db *gorm.DB) {
 		err = db.Model(&models.Account{}).
 			Where("id = ?", update.AccountID).
 			Update("balance", update.CalculatedBalance).Error
-		
+
 		if err != nil {
 			log.Printf("Warning: Failed to update account %d balance: %v", update.AccountID, err)
 		}

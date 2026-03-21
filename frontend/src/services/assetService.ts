@@ -405,45 +405,42 @@ class AssetService {
     return errors;
   }
 
-  // Get integrated cash & bank accounts (from cash_banks table with COA integration)
+  // Kept for cross-module account pickers that still reuse assetService.
   async getBankAccounts(): Promise<{ data: any[]; message: string }> {
-    // Use cashbank service to get integrated accounts instead of direct COA
     const response = await api.get(API_ENDPOINTS.CASH_BANK.PAYMENT_ACCOUNTS);
-    
-    // Transform the response to match expected format for asset form
+
     if (response.data && response.data.data) {
       return {
         data: response.data.data.map((account: any) => ({
           id: account.id,
           code: account.code,
           name: account.name,
-          type: account.type, // CASH or BANK
+          type: account.type,
           balance: account.balance,
           currency: account.currency || 'IDR',
           bank_name: account.bank_name,
           account_no: account.account_no,
-          account_id: account.account_id, // Link to COA
-          // Enhanced display info for better UX
-          display_name: account.bank_name 
+          account_id: account.account_id,
+          display_name: account.bank_name
             ? `${account.name} - ${account.bank_name} (${account.account_no})`
             : account.name,
           balance_formatted: new Intl.NumberFormat('id-ID', {
             style: 'currency',
             currency: account.currency || 'IDR',
-            minimumFractionDigits: 0
-          }).format(account.balance)
+            minimumFractionDigits: 0,
+          }).format(account.balance),
         })),
-        message: response.data.message || 'Cash & Bank accounts loaded successfully'
+        message: response.data.message || 'Cash & Bank accounts loaded successfully',
       };
     }
-    
+
     return {
       data: [],
-      message: 'No cash & bank accounts found'
+      message: 'No cash & bank accounts found',
     };
   }
 
-  // Get liability accounts for credit purchases
+  // Kept for cross-module account pickers that still reuse assetService.
   async getLiabilityAccounts(): Promise<{ data: any[]; message: string }> {
     const response = await api.get(API_ENDPOINTS.ACCOUNTS.LIST + '?type=LIABILITY');
     return response.data;

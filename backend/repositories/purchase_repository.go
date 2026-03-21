@@ -16,6 +16,49 @@ func NewPurchaseRepository(db *gorm.DB) *PurchaseRepository {
 	return &PurchaseRepository{db: db}
 }
 
+func (r *PurchaseRepository) applyPurchaseFilter(query *gorm.DB, filter models.PurchaseFilter) *gorm.DB {
+	if filter.Status != "" {
+		query = query.Where("purchases.status = ?", filter.Status)
+	}
+
+	if filter.VendorID != "" {
+		query = query.Where("purchases.vendor_id = ?", filter.VendorID)
+	}
+
+	if filter.ProjectID != "" {
+		query = query.Where("purchases.project_id = ?", filter.ProjectID)
+	}
+
+	if filter.UserID != 0 {
+		query = query.Where("purchases.user_id = ?", filter.UserID)
+	}
+
+	if filter.StartDate != "" {
+		query = query.Where("purchases.date >= ?", filter.StartDate)
+	}
+
+	if filter.EndDate != "" {
+		query = query.Where("purchases.date <= ?", filter.EndDate)
+	}
+
+	if filter.Search != "" {
+		like := "%" + filter.Search + "%"
+		query = query.Joins("LEFT JOIN contacts ON contacts.id = purchases.vendor_id").
+			Where("purchases.code ILIKE ? OR purchases.notes ILIKE ? OR contacts.name ILIKE ? OR contacts.code ILIKE ?",
+				like, like, like, like)
+	}
+
+	if filter.ApprovalStatus != "" {
+		query = query.Where("purchases.approval_status = ?", filter.ApprovalStatus)
+	}
+
+	if filter.RequiresApproval != nil {
+		query = query.Where("purchases.requires_approval = ?", *filter.RequiresApproval)
+	}
+
+	return query
+}
+
 // Purchase CRUD Operations
 
 func (r *PurchaseRepository) Create(purchase *models.Purchase) (*models.Purchase, error) {
@@ -85,47 +128,7 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 		Preload("ApprovalRequest.ApprovalSteps.Approver").
 		Preload("Approver")
 
-	// Apply filters
-	if filter.Status != "" {
-		query = query.Where("status = ?", filter.Status)
-	}
-
-	if filter.VendorID != "" {
-		query = query.Where("vendor_id = ?", filter.VendorID)
-	}
-
-	if filter.ProjectID != "" {
-		query = query.Where("project_id = ?", filter.ProjectID)
-	}
-
-	// Filter by user_id (for employee role - restrict to their own purchases)
-	if filter.UserID != 0 {
-		query = query.Where("user_id = ?", filter.UserID)
-	}
-
-	if filter.StartDate != "" {
-		query = query.Where("date >= ?", filter.StartDate)
-	}
-
-	if filter.EndDate != "" {
-		query = query.Where("date <= ?", filter.EndDate)
-	}
-
-	if filter.Search != "" {
-		like := "%" + filter.Search + "%"
-		// Join contacts to allow searching by vendor name/code as well
-		query = query.Joins("LEFT JOIN contacts ON contacts.id = purchases.vendor_id").
-			Where("purchases.code ILIKE ? OR purchases.notes ILIKE ? OR contacts.name ILIKE ? OR contacts.code ILIKE ?",
-				like, like, like, like)
-	}
-
-	if filter.ApprovalStatus != "" {
-		query = query.Where("approval_status = ?", filter.ApprovalStatus)
-	}
-
-	if filter.RequiresApproval != nil {
-		query = query.Where("requires_approval = ?", *filter.RequiresApproval)
-	}
+	query = r.applyPurchaseFilter(query, filter)
 
 	// Get total count
 	query.Count(&total)
@@ -306,41 +309,34 @@ func (r *PurchaseRepository) GetReceiptItems(receiptID uint) ([]models.PurchaseR
 
 // Statistics and Analytics
 
-func (r *PurchaseRepository) GetPurchasesSummary(startDate, endDate string) (*models.PurchaseSummary, error) {
+func (r *PurchaseRepository) GetPurchasesSummary(filter models.PurchaseFilter) (*models.PurchaseSummary, error) {
 	var summary models.PurchaseSummary
 
-	query := r.db.Model(&models.Purchase{})
-
-	if startDate != "" {
-		query = query.Where("date >= ?", startDate)
-	}
-	if endDate != "" {
-		query = query.Where("date <= ?", endDate)
+	activePurchasesQuery := func() *gorm.DB {
+		return r.applyPurchaseFilter(r.db.Model(&models.Purchase{}), filter).
+			Where("purchases.status != ? AND purchases.approval_status != ?", models.PurchaseStatusCancelled, models.PurchaseApprovalRejected)
 	}
 
 	// Get basic counts and totals
 	var totalCount int64
 	var totalAmount float64
 	var totalApprovedAmount float64
+	var totalPaid float64
+	var totalOutstanding float64
 
-	query.Count(&totalCount)
+	activePurchasesQuery().Count(&totalCount)
 	// Only include non-rejected purchases in total amount calculation
-	query.Where("status != ? AND approval_status != ?", models.PurchaseStatusCancelled, models.PurchaseApprovalRejected).
-		Select("COALESCE(SUM(total_amount), 0)").Scan(&totalAmount)
+	activePurchasesQuery().Select("COALESCE(SUM(total_amount), 0)").Scan(&totalAmount)
+	activePurchasesQuery().Select("COALESCE(SUM(paid_amount), 0)").Scan(&totalPaid)
+	activePurchasesQuery().Select("COALESCE(SUM(outstanding_amount), 0)").Scan(&totalOutstanding)
 
 	// Calculate approved purchases total
-	query2 := r.db.Model(&models.Purchase{})
-	if startDate != "" {
-		query2 = query2.Where("date >= ?", startDate)
-	}
-	if endDate != "" {
-		query2 = query2.Where("date <= ?", endDate)
-	}
+	query2 := r.applyPurchaseFilter(r.db.Model(&models.Purchase{}), filter)
 
 	// Debug: Log the values being used in query
 	fmt.Printf("[DEBUG] Approved query - Status values: %v, Approval status: %v\n", []string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}, models.PurchaseApprovalApproved)
 
-	query2.Where("status IN (?) AND approval_status = ?", []string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}, models.PurchaseApprovalApproved).
+	query2.Where("purchases.status IN (?) AND purchases.approval_status = ?", []string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}, models.PurchaseApprovalApproved).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&totalApprovedAmount)
 
 	// Debug: Log the result
@@ -351,9 +347,9 @@ func (r *PurchaseRepository) GetPurchasesSummary(startDate, endDate string) (*mo
 		Status string
 		Count  int64
 	}
-	r.db.Model(&models.Purchase{}).
-		Select("status, COUNT(*) as count").
-		Group("status").
+	r.applyPurchaseFilter(r.db.Model(&models.Purchase{}), filter).
+		Select("purchases.status as status, COUNT(*) as count").
+		Group("purchases.status").
 		Find(&statusCounts)
 
 	// Get approval status counts
@@ -361,14 +357,19 @@ func (r *PurchaseRepository) GetPurchasesSummary(startDate, endDate string) (*mo
 		ApprovalStatus string
 		Count          int64
 	}
-	r.db.Model(&models.Purchase{}).
-		Select("approval_status, COUNT(*) as count").
-		Group("approval_status").
+	r.applyPurchaseFilter(r.db.Model(&models.Purchase{}), filter).
+		Select("purchases.approval_status as approval_status, COUNT(*) as count").
+		Group("purchases.approval_status").
 		Find(&approvalStatusCounts)
 
 	summary.TotalPurchases = totalCount
 	summary.TotalAmount = totalAmount
 	summary.TotalApprovedAmount = totalApprovedAmount
+	summary.TotalPaid = totalPaid
+	summary.TotalOutstanding = totalOutstanding
+	if totalCount > 0 {
+		summary.AvgOrderValue = totalAmount / float64(totalCount)
+	}
 	summary.StatusCounts = make(map[string]int64)
 	summary.ApprovalStatusCounts = make(map[string]int64)
 
@@ -564,7 +565,10 @@ func (r *PurchaseRepository) CountJournalsByMonth(year, month int) (int64, error
 
 // GetPurchaseSummary gets purchase summary
 func (r *PurchaseRepository) GetPurchaseSummary(startDate, endDate string) (*models.PurchaseSummary, error) {
-	return r.GetPurchasesSummary(startDate, endDate)
+	return r.GetPurchasesSummary(models.PurchaseFilter{
+		StartDate: startDate,
+		EndDate:   endDate,
+	})
 }
 
 // GetPayablesReport gets payables report

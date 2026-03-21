@@ -662,6 +662,7 @@ func AutoMigrate(db *gorm.DB) {
 		&models.BOMItem{},
 		&models.ComponentTemplate{},
 		&models.ComponentTemplateItem{},
+		&models.Project{},
 		&models.ProjectBOM{},
 		&models.ProjectBOMItem{},
 
@@ -825,6 +826,10 @@ func AutoMigrate(db *gorm.DB) {
 	// Run settings table migration
 	RunSettingsMigration(db)
 
+	// Backfill payment cash/bank snapshots and normalize legacy account labels
+	RunPaymentSnapshotBackfillMigration(db)
+	RenameLegacyCOGSAccountLabel(db)
+
 	// PRODUCTION SAFETY: All balance synchronization logic disabled to prevent account balance resets
 	// Balance sync operations have been permanently disabled to protect production data
 	log.Println("ðŸ›¡ï¸  PRODUCTION MODE: All balance synchronization disabled to protect account balances")
@@ -832,6 +837,9 @@ func AutoMigrate(db *gorm.DB) {
 
 	// Run cleanup duplicate notifications migration
 	CleanupDuplicateNotificationsMigration(db)
+	if err := EnsureStockAlertNotificationUniqueness(db); err != nil {
+		log.Printf("Warning: stock alert uniqueness setup failed: %v", err)
+	}
 
 	// Add description column to accounting_periods table
 	if err := AddAccountingPeriodDescription(db); err != nil {

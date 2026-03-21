@@ -159,6 +159,20 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
   };
 
   const handleInputChange = (field: keyof Product, value: any) => {
+    if (field === 'is_service') {
+      setFormData(prev => ({
+        ...prev,
+        is_service: value,
+        is_assembly: value ? false : prev.is_assembly,
+        warehouse_location_id: value ? undefined : prev.warehouse_location_id,
+        stock: value ? 0 : prev.stock,
+        min_stock: value ? 0 : prev.min_stock,
+        max_stock: value ? 0 : prev.max_stock,
+        reorder_level: value ? 0 : prev.reorder_level,
+      }));
+      return;
+    }
+
     if (field === 'is_assembly') {
       setFormData(prev => ({
         ...prev,
@@ -166,6 +180,11 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
         purchase_price: value ? 0 : prev.purchase_price,
         cost_price: value ? 0 : prev.cost_price,
         is_service: value ? false : prev.is_service,
+        warehouse_location_id: value ? undefined : prev.warehouse_location_id,
+        stock: value ? 0 : prev.stock,
+        min_stock: value ? 0 : prev.min_stock,
+        max_stock: value ? 0 : prev.max_stock,
+        reorder_level: value ? 0 : prev.reorder_level,
       }));
       return;
     }
@@ -243,6 +262,20 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
       // Sanitasi nilai gudang jika produk adalah Jasa
       if (submitData.is_service) {
         submitData.warehouse_location_id = undefined;
+        submitData.stock = 0;
+        submitData.min_stock = 0;
+        submitData.max_stock = 0;
+        submitData.reorder_level = 0;
+      }
+
+      if (submitData.is_assembly) {
+        submitData.warehouse_location_id = undefined;
+        submitData.stock = 0;
+        submitData.min_stock = 0;
+        submitData.max_stock = 0;
+        submitData.reorder_level = 0;
+        submitData.purchase_price = 0;
+        submitData.cost_price = 0;
       }
 
       if (product?.id) {
@@ -294,12 +327,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ product, defaultIsAssembly, o
                 <Switch
                   id="is_service"
                   isChecked={formData.is_service}
-                  onChange={(e) => {
-                    handleInputChange('is_service', e.target.checked);
-                    if (e.target.checked && formData.is_assembly) {
-                      handleInputChange('is_assembly', false);
-                    }
-                  }}
+                  onChange={(e) => handleInputChange('is_service', e.target.checked)}
                   size="lg"
                 />
               </FormControl>

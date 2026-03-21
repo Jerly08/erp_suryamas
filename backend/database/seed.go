@@ -25,6 +25,7 @@ func SeedData(db *gorm.DB) {
 	} else {
 		log.Println("✅ Accounts seeded successfully with duplicate protection")
 	}
+	EnsureOpeningBalanceEquityAccount(db)
 	// Note: FixAccountHierarchies not needed - SeedAccountsImproved handles parent relationships
 
 	// ✅ CRITICAL: Ensure PPh prepaid tax accounts exist (required for sales with tax deductions)

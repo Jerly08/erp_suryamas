@@ -112,6 +112,7 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 	}
 
 	var selectedCashBank *models.CashBank
+	var selectedCashBankSnapshot *cashBankSnapshot
 	cashBankMutation := &cashBankBalanceMutation{
 		NativeAmount:    request.Amount,
 		BookAmountIDR:   request.Amount,
@@ -149,6 +150,11 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 		}
 
 		selectedCashBank = &cashBank
+		snapshot, snapshotErr := loadCashBankSnapshot(tx, request.CashBankID)
+		if snapshotErr != nil {
+			return nil, snapshotErr
+		}
+		selectedCashBankSnapshot = snapshot
 	}
 
 	// Robust transaction handling with automatic rollback
@@ -210,7 +216,7 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 		ForexGainLossAmount: 0,
 		Method:              request.Method,
 		Reference:           request.Reference,
-		Status:              models.PaymentStatusPending,
+		Status:              models.PaymentStatusCompleted,
 		Notes:               request.Notes,
 	}
 	if payment.Currency == "" {
@@ -223,6 +229,7 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 			payment.ExchangeRate = 1
 		}
 	}
+	applyCashBankSnapshotToPayment(payment, selectedCashBankSnapshot)
 
 	if err := tx.Create(payment).Error; err != nil {
 		log.Printf("❌ Failed to create payment: %v (%.2fms)", err, float64(time.Since(stepStart).Nanoseconds())/1000000)
@@ -338,16 +345,7 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 		}
 		totalReceivableSettlementBookIDR += receivableSettlementBookIDR
 
-		forexDiff := bankBookAmountIDR - receivableSettlementBookIDR
-		forexGainLossAmount := 0.0
-		forexGainLossType := ""
-		if forexDiff > 0.005 {
-			forexGainLossAmount = forexDiff
-			forexGainLossType = "GAIN"
-		} else if forexDiff < -0.005 {
-			forexGainLossAmount = -forexDiff
-			forexGainLossType = "LOSS"
-		}
+		forexGainLossAmount, forexGainLossType := classifyReceivableRealizedFX(bankBookAmountIDR, receivableSettlementBookIDR)
 
 		salePayment := &models.SalePayment{
 			SaleID:              sale.ID,
@@ -362,10 +360,14 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 			PaymentMethod:       payment.Method,
 			Reference:           fmt.Sprintf("Payment ID: %d", payment.ID),
 			Notes:               fmt.Sprintf("Created from Payment Management - %s", payment.Notes),
-			CashBankID:          &request.CashBankID,
 			UserID:              userID,
 			Status:              models.SalePaymentStatusCompleted,
 		}
+		if request.CashBankID > 0 {
+			cashBankID := request.CashBankID
+			salePayment.CashBankID = &cashBankID
+		}
+		applyCashBankSnapshotToSalePayment(salePayment, selectedCashBankSnapshot)
 
 		if err := tx.Create(salePayment).Error; err != nil {
 			log.Printf("❌ CRITICAL: Failed to create sale payment cross-reference for payment %d, sale %d: %v", payment.ID, sale.ID, err)
@@ -395,14 +397,7 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 
 	payment.ForexGainLossAmount = 0
 	payment.ForexGainLossType = ""
-	overallForexDiff := payment.BookAmountIDR - totalReceivableSettlementBookIDR
-	if overallForexDiff > 0.005 {
-		payment.ForexGainLossAmount = overallForexDiff
-		payment.ForexGainLossType = "GAIN"
-	} else if overallForexDiff < -0.005 {
-		payment.ForexGainLossAmount = -overallForexDiff
-		payment.ForexGainLossType = "LOSS"
-	}
+	payment.ForexGainLossAmount, payment.ForexGainLossType = classifyReceivableRealizedFX(payment.BookAmountIDR, totalReceivableSettlementBookIDR)
 	if err := tx.Save(payment).Error; err != nil {
 		log.Printf("âŒ Failed to update payment forex summary: %v", err)
 		return nil, fmt.Errorf("failed to update payment forex summary: %v", err)
@@ -460,10 +455,17 @@ func (s *PaymentService) CreateReceivablePaymentFixed(request PaymentCreateReque
 	stepStart = time.Now()
 	log.Printf("✅ Proceeding to status update (%.2fms)", float64(time.Since(stepStart).Nanoseconds())/1000000)
 
-	// Step 7: Update payment status
-	log.Printf("📝 Step 7: Updating payment status to COMPLETED...")
+	// Step 7: Finalize posted payment
+	log.Printf("📝 Step 7: Finalizing posted payment...")
 	stepStart = time.Now()
-	payment.Status = models.PaymentStatusCompleted
+	if request.CashBankID > 0 {
+		guard := NewCashBankCurrencyGuard(s.db)
+		if err := guard.EnforceAfterTransaction(tx, request.CashBankID); err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to finalize cash/bank sync after journal posting: %v", err)
+		}
+	}
+
 	if err := tx.Save(payment).Error; err != nil {
 		log.Printf("❌ Failed to save payment status: %v (%.2fms)", err, float64(time.Since(stepStart).Nanoseconds())/1000000)
 		return nil, fmt.Errorf("failed to update payment status: %v", err)
@@ -540,6 +542,7 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 		TransactionDate: request.Date,
 		Notes:           "Vendor payment disbursement",
 	}
+	var payableCashBankSnapshot *cashBankSnapshot
 
 	// Check cash/bank balance
 	log.Printf("Checking balance for CashBankID: %d", request.CashBankID)
@@ -586,6 +589,12 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 			return nil, fmt.Errorf("insufficient balance. Available: %.6f, Required: %.6f", cashBank.Balance, requiredNativeAmount)
 		}
 		log.Printf("Balance check passed: %.6f available (%s) (%.2fms)", cashBank.Balance, normalizedCurrency, float64(time.Since(balanceCheckStart).Nanoseconds())/1000000)
+		snapshot, snapshotErr := loadCashBankSnapshot(tx, request.CashBankID)
+		if snapshotErr != nil {
+			tx.Rollback()
+			return nil, snapshotErr
+		}
+		payableCashBankSnapshot = snapshot
 	}
 
 	// Generate payment code (prefix from settings)
@@ -612,7 +621,7 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 		BookAmountIDR: math.Abs(cashBankMutation.BookAmountIDR),
 		Method:        request.Method,
 		Reference:     request.Reference,
-		Status:        models.PaymentStatusPending,
+		Status:        models.PaymentStatusCompleted,
 		Notes:         request.Notes,
 	}
 	if payment.Currency == "" {
@@ -628,14 +637,8 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 	if payment.BookAmountIDR == 0 {
 		payment.BookAmountIDR = request.Amount
 	}
-	forexDiff := payment.BookAmountIDR - payment.Amount
-	if forexDiff > 0.005 {
-		payment.ForexGainLossAmount = forexDiff
-		payment.ForexGainLossType = "LOSS"
-	} else if forexDiff < -0.005 {
-		payment.ForexGainLossAmount = -forexDiff
-		payment.ForexGainLossType = "GAIN"
-	}
+	payment.ForexGainLossAmount, payment.ForexGainLossType = classifyPayableRealizedFX(payment.BookAmountIDR, payment.Amount)
+	applyCashBankSnapshotToPayment(payment, payableCashBankSnapshot)
 
 	if err := tx.Create(payment).Error; err != nil {
 		tx.Rollback()
@@ -762,6 +765,13 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 		return nil, err
 	}
 
+	if request.CashBankID > 0 {
+		postCommitGuard := NewCashBankCurrencyGuard(s.db)
+		if err := postCommitGuard.EnforceAfterTransaction(nil, request.CashBankID); err != nil {
+			log.Printf("⚠️ Warning: post-commit cash/bank sync failed for account %d: %v", request.CashBankID, err)
+		}
+	}
+
 	totalTime := time.Since(start)
 	log.Printf("✅ CreatePayablePayment completed successfully: ID=%d, Code=%s, Amount=%.2f, TotalTime=%.2fms",
 		payment.ID, payment.Code, payment.Amount, float64(totalTime.Nanoseconds())/1000000)
@@ -772,6 +782,9 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 // updateCashBankBalance updates cash/bank balance and creates transaction record
 func (s *PaymentService) updateCashBankBalance(tx *gorm.DB, cashBankID uint, amount float64, direction string, referenceID uint, userID uint, mutation *cashBankBalanceMutation) error {
 	guard := NewCashBankCurrencyGuard(s.db)
+	if err := guard.EnforceAfterTransaction(tx, cashBankID); err != nil {
+		return fmt.Errorf("failed to sync cash/bank state before payment: %w", err)
+	}
 	var cashBank models.CashBank
 	if err := tx.First(&cashBank, cashBankID).Error; err != nil {
 		return fmt.Errorf("cash/bank account not found: %v", err)
@@ -1201,8 +1214,31 @@ func (s *PaymentService) cancelPaymentTransaction(tx *gorm.DB, payment *models.P
 		}
 
 		if allocation.BillID != nil && *allocation.BillID > 0 {
-			// Reverse bill payment - would need proper tracking
-			// This is simplified
+			var purchase models.Purchase
+			if err := tx.First(&purchase, *allocation.BillID).Error; err == nil {
+				purchase.PaidAmount -= allocation.AllocatedAmount
+				if purchase.PaidAmount < 0 {
+					purchase.PaidAmount = 0
+				}
+				purchase.OutstandingAmount += allocation.AllocatedAmount
+				if purchase.OutstandingAmount < 0 {
+					purchase.OutstandingAmount = 0
+				}
+
+				switch {
+				case purchase.PaidAmount <= 0.01:
+					purchase.MatchingStatus = models.PurchaseMatchingPending
+				case purchase.OutstandingAmount <= 0.01:
+					purchase.MatchingStatus = models.PurchaseMatchingMatched
+					purchase.OutstandingAmount = 0
+				default:
+					purchase.MatchingStatus = models.PurchaseMatchingPartial
+				}
+
+				if err := tx.Save(&purchase).Error; err != nil {
+					return fmt.Errorf("failed to reverse purchase payment allocation: %v", err)
+				}
+			}
 		}
 	}
 
@@ -1579,7 +1615,10 @@ type BillAllocation struct {
 func (s *PaymentService) GetUnpaidInvoices(customerID uint) ([]OutstandingInvoice, error) {
 	// Get sales from sales repository where customer_id = customerID and outstanding_amount > 0
 	var sales []models.Sale
-	err := s.db.Where("customer_id = ? AND outstanding_amount > ?", customerID, 0).Find(&sales).Error
+	err := s.db.
+		Where("customer_id = ? AND outstanding_amount > ? AND deleted_at IS NULL", customerID, 0).
+		Where("status IN ?", models.SalePaymentEligibleStatuses()).
+		Find(&sales).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1611,9 +1650,14 @@ func (s *PaymentService) GetUnpaidInvoices(customerID uint) ([]OutstandingInvoic
 // GetUnpaidBills gets outstanding bills for a vendor
 func (s *PaymentService) GetUnpaidBills(vendorID uint) ([]OutstandingBill, error) {
 	// Get purchases from purchase repository where vendor_id = vendorID and outstanding_amount > 0
-	// Filter by APPROVED status and outstanding_amount > 0 to only show bills that need payment
+	// Use the same eligibility rule as purchase payment creation so the picker
+	// and transaction flow do not disagree on which bills are payable.
 	var purchases []models.Purchase
-	err := s.db.Where("vendor_id = ? AND status = ? AND outstanding_amount > ?", vendorID, "APPROVED", 0).Find(&purchases).Error
+	err := s.db.
+		Where("vendor_id = ? AND outstanding_amount > ? AND deleted_at IS NULL", vendorID, 0).
+		Where("status IN ?", models.PurchasePaymentEligibleStatuses()).
+		Where("UPPER(payment_method) = ?", models.PurchasePaymentCredit).
+		Find(&purchases).Error
 	if err != nil {
 		return nil, err
 	}

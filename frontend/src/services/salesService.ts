@@ -26,6 +26,15 @@ export interface Sale {
     | "PAID"
     | "OVERDUE"
     | "CANCELLED";
+  settlement_status?:
+    | "DRAFT"
+    | "PENDING"
+    | "CONFIRMED"
+    | "INVOICED"
+    | "PARTIALLY_PAID"
+    | "PAID"
+    | "OVERDUE"
+    | "CANCELLED";
   date: string;
   due_date?: string;
   valid_until?: string;
@@ -141,6 +150,12 @@ export interface SalePayment {
   reference?: string;
   cash_bank_id?: number;
   account_id?: number; // Make optional to match backend
+  cash_bank_code?: string;
+  cash_bank_name?: string;
+  cash_bank_currency?: string;
+  cash_bank_gl_account_id?: number;
+  cash_bank_gl_account_code?: string;
+  cash_bank_gl_account_name?: string;
   notes?: string;
   user_id: number;
 
@@ -294,6 +309,20 @@ export interface SalePaymentRequest {
   cash_bank_id?: number;
   account_id?: number; // Make optional to match backend
   notes?: string;
+}
+
+export interface IntegratedSalePaymentResponse {
+  success: boolean;
+  status: string;
+  message: string;
+  payment: SalePayment;
+  updated_sale?: {
+    id: number;
+    status: Sale["status"];
+    settlement_status?: NonNullable<Sale["settlement_status"]>;
+    paid_amount: number;
+    outstanding_amount: number;
+  };
 }
 
 export interface SaleReturnRequest {
@@ -463,7 +492,7 @@ class SalesService {
   async createIntegratedPayment(
     saleId: number,
     data: SalePaymentRequest,
-  ): Promise<any> {
+  ): Promise<IntegratedSalePaymentResponse> {
     // This endpoint creates payment records in both Sales and Payment Management
     // Map frontend field names to backend expected field names
     const backendData = {
@@ -518,12 +547,14 @@ class SalesService {
   // Reporting and Analytics
 
   async getSalesSummary(
-    startDate?: string,
-    endDate?: string,
+    filters: Partial<SalesFilter> = {},
   ): Promise<SalesSummary> {
     const params = new URLSearchParams();
-    if (startDate) params.append("start_date", startDate);
-    if (endDate) params.append("end_date", endDate);
+    if (filters.start_date) params.append("start_date", filters.start_date);
+    if (filters.end_date) params.append("end_date", filters.end_date);
+    if (filters.status) params.append("status", filters.status);
+    if (filters.customer_id) params.append("customer_id", filters.customer_id);
+    if (filters.search) params.append("search", filters.search);
 
     const response = await api.get(`${API_ENDPOINTS.SALES_SUMMARY}?${params}`);
     // Backend wraps responses as { status, message, data }
@@ -676,6 +707,7 @@ class SalesService {
       PENDING: "yellow",
       CONFIRMED: "blue",
       INVOICED: "purple",
+      PARTIALLY_PAID: "orange",
       PAID: "green",
       OVERDUE: "red",
       CANCELLED: "red",
@@ -689,6 +721,7 @@ class SalesService {
       PENDING: "Pending",
       CONFIRMED: "Confirmed",
       INVOICED: "Invoiced",
+      PARTIALLY_PAID: "Partially Paid",
       PAID: "Paid",
       OVERDUE: "Overdue",
       CANCELLED: "Cancelled",
@@ -704,6 +737,42 @@ class SalesService {
       SALE: "Sale",
     };
     return labels[type] || type;
+  }
+
+  getDisplayStatus(sale: Pick<Sale, "status" | "settlement_status">): string {
+    return sale.settlement_status || sale.status;
+  }
+
+  formatCashBankSnapshotSummary(
+    payment?: Partial<
+      Pick<
+        SalePayment,
+        | "cash_bank_code"
+        | "cash_bank_name"
+        | "cash_bank_currency"
+        | "cash_bank_gl_account_code"
+        | "cash_bank_gl_account_name"
+      >
+    >,
+  ): string {
+    if (!payment) return "";
+
+    const accountLabel = [payment.cash_bank_code, payment.cash_bank_name]
+      .filter(Boolean)
+      .join(" - ");
+    const currencyLabel = payment.cash_bank_currency
+      ? `[${payment.cash_bank_currency.toUpperCase()}]`
+      : "";
+    const glLabel = [
+      payment.cash_bank_gl_account_code,
+      payment.cash_bank_gl_account_name,
+    ]
+      .filter(Boolean)
+      .join(" - ");
+
+    return [accountLabel, currencyLabel, glLabel ? `GL ${glLabel}` : ""]
+      .filter(Boolean)
+      .join(" | ");
   }
 
   calculateLineTotal(
@@ -769,26 +838,28 @@ class SalesService {
       errors.push("At least one item is required");
     }
 
-      data.items?.forEach((item, index) => {
-        const hasManualName =
-          !!item.product_name && item.product_name.trim() !== "";
+    data.items?.forEach((item, index) => {
+      const hasManualName =
+        !!item.product_name && item.product_name.trim() !== "";
       if (
         !item.product_id &&
         !hasManualName &&
         (!item.description || item.description.trim() === "")
       ) {
-        errors.push(`Product, manual product name, or description is required for item ${index + 1}`);
+        errors.push(
+          `Product, manual product name, or description is required for item ${index + 1}`,
+        );
       }
       if (!item.quantity || item.quantity <= 0) {
         errors.push(`Valid quantity is required for item ${index + 1}`);
       }
-        if (!item.unit_price || item.unit_price < 0) {
-          errors.push(`Valid unit price is required for item ${index + 1}`);
-        }
-        if (!item.revenue_account_id || item.revenue_account_id <= 0) {
-          errors.push(`Revenue account / COA is required for item ${index + 1}`);
-        }
-      });
+      if (!item.unit_price || item.unit_price < 0) {
+        errors.push(`Valid unit price is required for item ${index + 1}`);
+      }
+      if (!item.revenue_account_id || item.revenue_account_id <= 0) {
+        errors.push(`Revenue account / COA is required for item ${index + 1}`);
+      }
+    });
 
     return errors;
   }

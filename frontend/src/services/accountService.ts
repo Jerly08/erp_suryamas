@@ -27,6 +27,22 @@ class AccountService {
     return headers;
   }
 
+  private resolveToken(token?: string): string | undefined {
+    if (token) {
+      return token;
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        return window.localStorage.getItem('token') || undefined;
+      } catch {
+        return undefined;
+      }
+    }
+
+    return undefined;
+  }
+
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
       let errorData: ApiError;
@@ -63,20 +79,18 @@ class AccountService {
     return result.data;
   }
 
-  // Get account catalog (minimal data for accounts) - PUBLIC ENDPOINT (no auth required)
+  // Get account catalog (minimal data for accounts)
   async getAccountCatalog(token?: string, type?: string): Promise<AccountCatalogItem[]> {
     let url = API_ENDPOINTS.ACCOUNTS.CATALOG;
     const params = new URLSearchParams();
     if (type) params.set('type', type);
     params.set('_t', Date.now().toString());
     url += `?${params.toString()}`;
+    const authToken = this.resolveToken(token);
 
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-      },
+      headers: { ...this.getHeaders(authToken), 'Cache-Control': 'no-store' },
       cache: 'no-store',
     });
 
@@ -84,21 +98,19 @@ class AccountService {
     return result.data;
   }
 
-  // Get expense accounts specifically for purchase items - PUBLIC ENDPOINT (no auth required)
+  // Get expense accounts specifically for purchase items
   async getExpenseAccounts(token?: string): Promise<AccountCatalogItem[]> {
-    return this.getAccountCatalog(undefined, 'EXPENSE');
+    return this.getAccountCatalog(token, 'EXPENSE');
   }
 
-  // Get liability accounts for credit payment methods - PUBLIC ENDPOINT (no auth required)
+  // Get liability accounts for credit payment methods
   async getCreditAccounts(token?: string): Promise<AccountCatalogItem[]> {
     const url = `${API_ENDPOINTS.ACCOUNTS.CREDIT}?type=LIABILITY&_t=${Date.now()}`;
+    const authToken = this.resolveToken(token);
 
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-      },
+      headers: { ...this.getHeaders(authToken), 'Cache-Control': 'no-store' },
       cache: 'no-store',
     });
 

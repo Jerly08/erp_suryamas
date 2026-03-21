@@ -343,7 +343,15 @@ func TestSSOTProfitLossExcludesClosingAndReversalEntries(t *testing.T) {
 	}
 
 	svc := NewSSOTProfitLossService(db)
-	balances, source, err := svc.getAccountBalancesFromSSOT("2026-03-01", "2026-03-31")
+	startDate, err := time.Parse("2006-01-02", "2026-03-01")
+	if err != nil {
+		t.Fatalf("parse start date: %v", err)
+	}
+	endDate, err := time.Parse("2006-01-02", "2026-03-31")
+	if err != nil {
+		t.Fatalf("parse end date: %v", err)
+	}
+	balances, source, err := svc.getAccountBalancesFromSSOT(startDate, endDate.AddDate(0, 0, 1))
 	if err != nil {
 		t.Fatalf("get account balances from ssot: %v", err)
 	}
@@ -414,5 +422,128 @@ func TestCurrentEarningsStartDateReturnsNilWithoutClosedPeriods(t *testing.T) {
 	asOf := normalizeClosingDayStart(time.Date(2026, time.April, 20, 0, 0, 0, 0, time.Local))
 	if got := svc.currentEarningsStartDate(asOf); got != nil {
 		t.Fatalf("expected nil current earnings start date, got %s", got.Format(time.RFC3339))
+	}
+}
+
+func TestValidateClosingWindowFirstClosingIncludesBlockingMessageInValidationMessages(t *testing.T) {
+	t.Setenv("ENV", "production")
+	t.Setenv("GO_ENV", "")
+	t.Setenv("ENVIRONMENT", "")
+	t.Setenv("ALLOW_SAME_DAY_PERIOD_CLOSING", "")
+
+	db := newPeriodClosingTestDB(t)
+
+	if err := db.Exec(`
+		CREATE TABLE accounting_periods (
+			id INTEGER PRIMARY KEY,
+			start_date DATETIME NOT NULL,
+			end_date DATETIME NOT NULL,
+			is_closed BOOLEAN DEFAULT FALSE,
+			deleted_at DATETIME
+		)
+	`).Error; err != nil {
+		t.Fatalf("create accounting_periods: %v", err)
+	}
+
+	svc := NewUnifiedPeriodClosingService(db)
+	startDate := normalizeClosingDayStart(time.Now().AddDate(0, 0, -1))
+	endDate := normalizeClosingDayStart(time.Now())
+
+	validationMessages, blockingMessages, lastClosedPeriod, err := svc.validateClosingWindow(db, startDate, endDate)
+	if err != nil {
+		t.Fatalf("validate closing window: %v", err)
+	}
+	if lastClosedPeriod != nil {
+		t.Fatalf("expected no last closed period, got %#v", lastClosedPeriod)
+	}
+	if len(blockingMessages) == 0 {
+		t.Fatal("expected blocking message for end date that has not fully ended")
+	}
+
+	if !strings.Contains(strings.Join(validationMessages, " | "), "First period closing - no previous closed period found.") {
+		t.Fatalf("expected first closing informational message, got %v", validationMessages)
+	}
+	if !strings.Contains(strings.Join(validationMessages, " | "), "End date must be before") {
+		t.Fatalf("expected blocking message to be surfaced in validation messages, got %v", validationMessages)
+	}
+}
+
+func TestValidateClosingWindowAllowsSameDayClosingInDevelopment(t *testing.T) {
+	t.Setenv("ENV", "development")
+	t.Setenv("GO_ENV", "")
+	t.Setenv("ENVIRONMENT", "")
+	t.Setenv("ALLOW_SAME_DAY_PERIOD_CLOSING", "")
+
+	db := newPeriodClosingTestDB(t)
+
+	if err := db.Exec(`
+		CREATE TABLE accounting_periods (
+			id INTEGER PRIMARY KEY,
+			start_date DATETIME NOT NULL,
+			end_date DATETIME NOT NULL,
+			is_closed BOOLEAN DEFAULT FALSE,
+			deleted_at DATETIME
+		)
+	`).Error; err != nil {
+		t.Fatalf("create accounting_periods: %v", err)
+	}
+
+	svc := NewUnifiedPeriodClosingService(db)
+	startDate := normalizeClosingDayStart(time.Now().AddDate(0, 0, -1))
+	endDate := normalizeClosingDayStart(time.Now())
+
+	validationMessages, blockingMessages, lastClosedPeriod, err := svc.validateClosingWindow(db, startDate, endDate)
+	if err != nil {
+		t.Fatalf("validate closing window: %v", err)
+	}
+	if lastClosedPeriod != nil {
+		t.Fatalf("expected no last closed period, got %#v", lastClosedPeriod)
+	}
+	if len(blockingMessages) != 0 {
+		t.Fatalf("expected same-day closing to be allowed in development, got %v", blockingMessages)
+	}
+	if !strings.Contains(strings.Join(validationMessages, " | "), "First period closing - no previous closed period found.") {
+		t.Fatalf("expected first closing informational message, got %v", validationMessages)
+	}
+}
+
+func TestIsEffectiveClosedAccountingPeriodProductionRequiresPreviousDay(t *testing.T) {
+	t.Setenv("ENV", "production")
+	t.Setenv("GO_ENV", "")
+	t.Setenv("ENVIRONMENT", "")
+	t.Setenv("ALLOW_SAME_DAY_PERIOD_CLOSING", "")
+
+	now := normalizeClosingDayStart(time.Date(2026, time.March, 21, 10, 0, 0, 0, time.Local))
+	sameDayClosed := models.AccountingPeriod{
+		IsClosed: true,
+		EndDate:  normalizeClosingDayEnd(time.Date(2026, time.March, 21, 0, 0, 0, 0, time.Local)),
+	}
+	previousDayClosed := models.AccountingPeriod{
+		IsClosed: true,
+		EndDate:  normalizeClosingDayEnd(time.Date(2026, time.March, 20, 0, 0, 0, 0, time.Local)),
+	}
+
+	if isEffectiveClosedAccountingPeriod(sameDayClosed, now) {
+		t.Fatal("expected same-day closed period to remain pending in production")
+	}
+	if !isEffectiveClosedAccountingPeriod(previousDayClosed, now) {
+		t.Fatal("expected previous-day closed period to be effective in production")
+	}
+}
+
+func TestIsEffectiveClosedAccountingPeriodDevelopmentAllowsSameDay(t *testing.T) {
+	t.Setenv("ENV", "development")
+	t.Setenv("GO_ENV", "")
+	t.Setenv("ENVIRONMENT", "")
+	t.Setenv("ALLOW_SAME_DAY_PERIOD_CLOSING", "")
+
+	now := normalizeClosingDayStart(time.Date(2026, time.March, 21, 10, 0, 0, 0, time.Local))
+	sameDayClosed := models.AccountingPeriod{
+		IsClosed: true,
+		EndDate:  normalizeClosingDayEnd(time.Date(2026, time.March, 21, 0, 0, 0, 0, time.Local)),
+	}
+
+	if !isEffectiveClosedAccountingPeriod(sameDayClosed, now) {
+		t.Fatal("expected same-day closed period to be effective in development")
 	}
 }

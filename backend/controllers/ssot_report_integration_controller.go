@@ -1,9 +1,12 @@
 package controllers
 
 import (
+	"bytes"
+	"encoding/csv"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"app-sistem-akuntansi/services"
@@ -64,6 +67,7 @@ func (c *SSOTReportIntegrationController) GetIntegratedFinancialReports(ctx *gin
 		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
+	endDate = normalizeInclusiveEndDate(endDateStr, endDate)
 
 	// Generate integrated reports
 	reports, err := c.integrationService.GenerateIntegratedReports(ctx, startDate, endDate)
@@ -120,6 +124,7 @@ func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) 
 		ctx.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
+	endDate = normalizeInclusiveEndDate(endDateStr, endDate)
 
 	var projectID *uint
 	if projectIDStr != "" {
@@ -170,17 +175,19 @@ func (c *SSOTReportIntegrationController) GetSSOTSalesSummary(ctx *gin.Context) 
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
 	case "csv":
-		// Follow SSOT P&L style: return JSON metadata for client-side CSV
-		meta := gin.H{
-			"start_date":    startDate.Format("2006-01-02"),
-			"end_date":      endDate.Format("2006-01-02"),
-			"data":          salesSummary,
-			"export_format": "csv",
-			"export_ready":  true,
-			"csv_headers":   []string{"Section", "Name", "Value"},
-			"report_title":  "SSOT Sales Summary",
+		csvBytes, err := c.salesExportService.ExportToCSV(salesSummary, 0)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to generate Sales Summary CSV",
+				"error":   err.Error(),
+			})
+			return
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": meta, "format": "csv"})
+		ctx.Header("Content-Type", "text/csv; charset=utf-8")
+		ctx.Header("Content-Disposition", "attachment; filename=SSOT_Sales_Summary.csv")
+		ctx.Header("Content-Length", strconv.Itoa(len(csvBytes)))
+		ctx.Data(http.StatusOK, "text/csv; charset=utf-8", csvBytes)
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -339,15 +346,15 @@ func (c *SSOTReportIntegrationController) GetSSOTTrialBalance(ctx *gin.Context) 
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
 	case "csv":
-		meta := gin.H{
-			"as_of_date":    asOfDate.Format("2006-01-02"),
-			"data":          trialBalance,
-			"export_ready":  true,
-			"export_format": "csv",
-			"csv_headers":   []string{"Account Code", "Account Name", "Debit Balance", "Credit Balance"},
-			"report_title":  "SSOT Trial Balance",
+		csvBytes, err := c.pdfService.GenerateTrialBalanceCSV(trialBalance, asOfDate.Format("2006-01-02"))
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to generate CSV", "error": err.Error()})
+			return
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": meta, "format": "csv"})
+		ctx.Header("Content-Type", "text/csv; charset=utf-8")
+		ctx.Header("Content-Disposition", "attachment; filename=SSOT_Trial_Balance.csv")
+		ctx.Header("Content-Length", strconv.Itoa(len(csvBytes)))
+		ctx.Data(http.StatusOK, "text/csv; charset=utf-8", csvBytes)
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -434,7 +441,15 @@ func (c *SSOTReportIntegrationController) GetSSOTGeneralLedger(ctx *gin.Context)
 			"data":   generalLedger,
 		})
 	case "pdf":
-		pdfBytes, err := c.pdfService.GenerateGeneralLedgerPDF(generalLedger, "All Accounts", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+		accountLabel := "All Accounts Activity"
+		if strings.TrimSpace(generalLedger.Account.Code) != "" {
+			accountLabel = strings.TrimSpace(generalLedger.Account.Code)
+			if strings.TrimSpace(generalLedger.Account.Name) != "" {
+				accountLabel += " - " + strings.TrimSpace(generalLedger.Account.Name)
+			}
+		}
+
+		pdfBytes, err := c.pdfService.GenerateGeneralLedgerPDF(generalLedger, accountLabel, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to generate PDF", "error": err.Error()})
 			return
@@ -444,22 +459,132 @@ func (c *SSOTReportIntegrationController) GetSSOTGeneralLedger(ctx *gin.Context)
 		ctx.Header("Content-Length", strconv.Itoa(len(pdfBytes)))
 		ctx.Data(http.StatusOK, "application/pdf", pdfBytes)
 	case "csv":
-		meta := gin.H{
-			"start_date":    startDate.Format("2006-01-02"),
-			"end_date":      endDate.Format("2006-01-02"),
-			"data":          generalLedger,
-			"export_ready":  true,
-			"export_format": "csv",
-			"csv_headers":   []string{"Date", "Account Code", "Account Name", "Description", "Debit", "Credit", "Balance"},
-			"report_title":  "SSOT General Ledger",
+		csvBytes, err := c.generateGeneralLedgerCSV(generalLedger, startDate, endDate)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to generate CSV",
+				"error":   err.Error(),
+			})
+			return
 		}
-		ctx.JSON(http.StatusOK, gin.H{"status": "success", "data": meta, "format": "csv"})
+		ctx.Header("Content-Type", "text/csv; charset=utf-8")
+		ctx.Header("Content-Disposition", "attachment; filename=SSOT_General_Ledger.csv")
+		ctx.Data(http.StatusOK, "text/csv", csvBytes)
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
 			"message": "Unsupported format. Use json, pdf, or csv",
 		})
 	}
+}
+
+func (c *SSOTReportIntegrationController) generateGeneralLedgerCSV(data *services.GeneralLedgerData, startDate, endDate time.Time) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteString("\uFEFF")
+	buf.WriteString("sep=;\n")
+
+	writer := csv.NewWriter(&buf)
+	writer.Comma = ';'
+
+	write := func(record []string) error {
+		return writer.Write(record)
+	}
+
+	accountLabel := "All Accounts Activity"
+	isSingleAccount := strings.TrimSpace(data.Account.Code) != ""
+	if isSingleAccount {
+		accountLabel = strings.TrimSpace(data.Account.Code)
+		if strings.TrimSpace(data.Account.Name) != "" {
+			accountLabel += " - " + strings.TrimSpace(data.Account.Name)
+		}
+	}
+
+	if err := write([]string{data.Company.Name}); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(data.Company.Address) != "" {
+		if err := write([]string{data.Company.Address}); err != nil {
+			return nil, err
+		}
+	}
+	if err := write([]string{}); err != nil {
+		return nil, err
+	}
+	if err := write([]string{"GENERAL LEDGER"}); err != nil {
+		return nil, err
+	}
+	if err := write([]string{"Account", accountLabel}); err != nil {
+		return nil, err
+	}
+	if err := write([]string{"Period", fmt.Sprintf("%s to %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))}); err != nil {
+		return nil, err
+	}
+	if err := write([]string{"Generated", time.Now().Format("2006-01-02 15:04")}); err != nil {
+		return nil, err
+	}
+	if err := write([]string{}); err != nil {
+		return nil, err
+	}
+
+	if isSingleAccount {
+		if err := write([]string{"Opening Balance", fmt.Sprintf("%.2f", data.OpeningBalance)}); err != nil {
+			return nil, err
+		}
+		if err := write([]string{"Total Debit", fmt.Sprintf("%.2f", data.TotalDebits)}); err != nil {
+			return nil, err
+		}
+		if err := write([]string{"Total Credit", fmt.Sprintf("%.2f", data.TotalCredits)}); err != nil {
+			return nil, err
+		}
+		if err := write([]string{"Closing Balance", fmt.Sprintf("%.2f", data.ClosingBalance)}); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := write([]string{"Period Debit", fmt.Sprintf("%.2f", data.TotalDebits)}); err != nil {
+			return nil, err
+		}
+		if err := write([]string{"Period Credit", fmt.Sprintf("%.2f", data.TotalCredits)}); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := write([]string{}); err != nil {
+		return nil, err
+	}
+
+	headers := []string{"Date", "Reference", "Account Code", "Account Name", "Description", "Debit", "Credit"}
+	if isSingleAccount {
+		headers = append(headers, "Balance")
+	}
+	if err := write(headers); err != nil {
+		return nil, err
+	}
+
+	for _, tx := range data.Transactions {
+		row := []string{
+			tx.Date.Format("2006-01-02"),
+			tx.JournalCode,
+			tx.AccountCode,
+			tx.AccountName,
+			tx.Description,
+			fmt.Sprintf("%.2f", tx.DebitAmount),
+			fmt.Sprintf("%.2f", tx.CreditAmount),
+		}
+		if isSingleAccount {
+			row = append(row, fmt.Sprintf("%.2f", tx.Balance))
+		}
+		if err := write(row); err != nil {
+			return nil, err
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
 
 // GetSSOTJournalAnalysis generates journal analysis integrated with SSOT journal
@@ -572,6 +697,25 @@ func (c *SSOTReportIntegrationController) parseDateBySettings(s string) (time.Ti
 		}
 	}
 	return time.Time{}, fmt.Errorf("invalid date format: %s (expected formats include YYYY-MM-DD or configured system date format)", s)
+}
+
+func normalizeInclusiveEndDate(raw string, parsed time.Time) time.Time {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return parsed
+	}
+
+	if !strings.Contains(trimmed, "T") && !strings.Contains(trimmed, " ") {
+		return time.Date(
+			parsed.Year(),
+			parsed.Month(),
+			parsed.Day(),
+			23, 59, 59, int(time.Second-time.Nanosecond),
+			parsed.Location(),
+		)
+	}
+
+	return parsed
 }
 
 // GetSSOTReportStatus provides status and health information about SSOT report integration

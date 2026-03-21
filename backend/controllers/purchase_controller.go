@@ -6,6 +6,7 @@ import (
 	"app-sistem-akuntansi/services"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -403,7 +404,7 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 		request.EscalateToDirector,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(purchaseApprovalErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -451,11 +452,36 @@ func (pc *PurchaseController) RejectPurchase(c *gin.Context) {
 		false, // no escalation for rejection
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(purchaseApprovalErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func purchaseApprovalErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+
+	switch {
+	case strings.Contains(message, "no active approval step found for your role"):
+		return http.StatusBadRequest
+	case strings.Contains(message, "approval request is no longer pending"):
+		return http.StatusBadRequest
+	case strings.Contains(message, "purchase cannot be approved in current status"):
+		return http.StatusBadRequest
+	case strings.Contains(message, "cannot be directly approved"):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func roundMoney2(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 // Receipt Operations
@@ -741,10 +767,32 @@ func (pc *PurchaseController) ValidateThreeWayMatching(c *gin.Context) {
 
 // GetPurchasesSummary returns purchase summary statistics
 func (pc *PurchaseController) GetPurchasesSummary(c *gin.Context) {
+	status := c.Query("status")
+	vendorID := c.Query("vendor_id")
+	projectID := c.Query("project_id")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
+	search := c.Query("search")
+	approvalStatus := c.Query("approval_status")
 
-	summary, err := pc.purchaseService.GetPurchasesSummary(startDate, endDate)
+	var requiresApproval *bool
+	if reqApp := c.Query("requires_approval"); reqApp != "" {
+		val := reqApp == "true"
+		requiresApproval = &val
+	}
+
+	filter := models.PurchaseFilter{
+		Status:           status,
+		VendorID:         vendorID,
+		ProjectID:        projectID,
+		StartDate:        startDate,
+		EndDate:          endDate,
+		Search:           search,
+		ApprovalStatus:   approvalStatus,
+		RequiresApproval: requiresApproval,
+	}
+
+	summary, err := pc.purchaseService.GetPurchasesSummary(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -835,9 +883,7 @@ func (pc *PurchaseController) GetPurchaseForPayment(c *gin.Context) {
 	}
 
 	// Check if purchase can receive payment
-	canReceivePayment := purchase.Status == models.PurchaseStatusApproved &&
-		purchase.PaymentMethod == "CREDIT" &&
-		purchase.OutstandingAmount > 0
+	canReceivePayment := models.IsPurchasePaymentEligible(purchase.Status, purchase.PaymentMethod, purchase.OutstandingAmount)
 
 	// Format response for payment processing
 	response := gin.H{
@@ -1029,16 +1075,16 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		return
 	}
 
-	// Validate purchase status - allow APPROVED, COMPLETED, or PAID (still requires CREDIT and outstanding > 0)
-	if !(purchase.Status == models.PurchaseStatusApproved || purchase.Status == models.PurchaseStatusCompleted || purchase.Status == models.PurchaseStatusPaid) {
+	// Validate purchase status using the same payment-eligibility rule exposed to the UI.
+	if !models.IsPurchasePaymentEligible(purchase.Status, purchase.PaymentMethod, purchase.OutstandingAmount) {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":           "Purchase must be approved or completed to receive payments",
+			"error":           "Purchase is not eligible to receive payment",
 			"purchase_status": purchase.Status,
 		})
 		return
 	}
 
-	if purchase.PaymentMethod != models.PurchasePaymentCredit {
+	if !models.IsCreditPurchaseMethod(purchase.PaymentMethod) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":          "Only credit purchases can receive payments",
 			"payment_method": purchase.PaymentMethod,
@@ -1047,13 +1093,18 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	}
 
 	// Validate payment amount
-	if request.Amount > purchase.OutstandingAmount {
+	requestedAmount := roundMoney2(request.Amount)
+	outstandingAmount := roundMoney2(purchase.OutstandingAmount)
+	if requestedAmount-outstandingAmount > 0.005 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":              "Payment amount exceeds outstanding amount",
-			"outstanding_amount": purchase.OutstandingAmount,
-			"requested_amount":   request.Amount,
+			"outstanding_amount": outstandingAmount,
+			"requested_amount":   requestedAmount,
 		})
 		return
+	}
+	if math.Abs(requestedAmount-outstandingAmount) <= 0.005 {
+		requestedAmount = outstandingAmount
 	}
 
 	// Get user ID with error handling
@@ -1081,7 +1132,7 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		ContactID:    purchase.VendorID,
 		CashBankID:   request.CashBankID,
 		Date:         paymentDate, // Use the parsed paymentDate
-		Amount:       request.Amount,
+		Amount:       requestedAmount,
 		ExchangeRate: request.ExchangeRate,
 		Method:       request.Method,
 		Reference:    request.Reference,
@@ -1089,7 +1140,7 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		BillAllocations: []services.BillAllocation{
 			{
 				BillID: uint(purchaseID),
-				Amount: request.Amount,
+				Amount: requestedAmount,
 			},
 		},
 	}
@@ -1109,7 +1160,7 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 				"error":            "Saldo rekening tidak mencukupi",
 				"error_type":       "INSUFFICIENT_BALANCE",
 				"details":          errorMessage,
-				"requested_amount": request.Amount,
+				"requested_amount": requestedAmount,
 				"status":           "error",
 				"message":          "Saldo di rekening bank yang dipilih tidak mencukupi untuk melakukan pembayaran ini",
 			})
@@ -1137,13 +1188,16 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	log.Printf("🔄 Updating purchase payment amounts for purchase %d...", purchaseID)
 
 	// Calculate new paid and outstanding amounts
-	newPaidAmount := purchase.PaidAmount + request.Amount
-	newOutstandingAmount := purchase.TotalAmount - newPaidAmount
+	newPaidAmount := roundMoney2(purchase.PaidAmount + requestedAmount)
+	newOutstandingAmount := roundMoney2(purchase.TotalAmount - newPaidAmount)
 
 	// DO NOT change status to PAID automatically when payment is made
 	// The purchase should remain APPROVED to allow receipt creation
 	// Only change to COMPLETED when both payment AND receipt are complete
 	newStatus := purchase.Status
+	if math.Abs(newOutstandingAmount) <= 0.005 {
+		newOutstandingAmount = 0
+	}
 	if newOutstandingAmount < 0 {
 		newOutstandingAmount = 0 // Ensure it doesn't go negative
 	}
@@ -1210,7 +1264,7 @@ func (pc *PurchaseController) GetPurchaseDashboard(c *gin.Context) {
 	userRole := c.MustGet("role").(string)
 
 	// Get summary
-	summary, err := pc.purchaseService.GetPurchasesSummary("", "")
+	summary, err := pc.purchaseService.GetPurchasesSummary(models.PurchaseFilter{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

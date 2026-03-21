@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -4496,6 +4497,126 @@ func (p *PDFService) GenerateTrialBalancePDF(trialBalanceData interface{}, asOfD
 	err = pdf.Output(&buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate trial balance PDF: %v", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// GenerateTrialBalanceCSV generates a CSV file for trial balance.
+func (p *PDFService) GenerateTrialBalanceCSV(trialBalanceData interface{}, asOfDate string) ([]byte, error) {
+	var tbMap map[string]interface{}
+	if m, ok := trialBalanceData.(map[string]interface{}); ok {
+		tbMap = m
+	} else {
+		payload, err := json.Marshal(trialBalanceData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal trial balance data: %v", err)
+		}
+		if err := json.Unmarshal(payload, &tbMap); err != nil {
+			return nil, fmt.Errorf("failed to parse trial balance data: %v", err)
+		}
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("\uFEFF")
+	buf.WriteString("sep=;\n")
+
+	writer := csv.NewWriter(&buf)
+	writer.Comma = ';'
+
+	companyName := "Perusahaan"
+	companyAddress := ""
+	if companyMap, ok := tbMap["company"].(map[string]interface{}); ok && companyMap != nil {
+		if name := getString(companyMap, "name"); name != "" {
+			companyName = name
+		}
+		companyAddress = getString(companyMap, "address")
+	}
+
+	currency := getString(tbMap, "currency")
+	if currency == "" {
+		currency = "IDR"
+	}
+
+	totalDebits := getNumFrom(tbMap["total_debits"])
+	totalCredits := getNumFrom(tbMap["total_credits"])
+	difference := getNumFrom(tbMap["difference"])
+	isBalanced := false
+	if value, ok := tbMap["is_balanced"].(bool); ok {
+		isBalanced = value
+	}
+
+	write := func(record []string) error {
+		return writer.Write(record)
+	}
+
+	if err := write([]string{companyName}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV header: %v", err)
+	}
+	if companyAddress != "" {
+		if err := write([]string{companyAddress}); err != nil {
+			return nil, fmt.Errorf("failed to write CSV header: %v", err)
+		}
+	}
+	if err := write([]string{}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV spacer: %v", err)
+	}
+	if err := write([]string{"TRIAL BALANCE"}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV title: %v", err)
+	}
+	if err := write([]string{"As of", asOfDate}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV as-of date: %v", err)
+	}
+	if err := write([]string{"Currency", currency}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV currency: %v", err)
+	}
+	if err := write([]string{"Generated", time.Now().Format("2006-01-02 15:04")}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV generated date: %v", err)
+	}
+	if err := write([]string{}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV spacer: %v", err)
+	}
+
+	if err := write([]string{"Account Code", "Account Name", "Account Type", "Debit Balance", "Credit Balance"}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV columns: %v", err)
+	}
+
+	if accounts, exists := tbMap["accounts"]; exists {
+		if accountSlice, ok := accounts.([]interface{}); ok {
+			for _, account := range accountSlice {
+				accountMap, ok := account.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if err := write([]string{
+					getString(accountMap, "account_code"),
+					getString(accountMap, "account_name"),
+					getString(accountMap, "account_type"),
+					fmt.Sprintf("%.2f", getNumFrom(accountMap["debit_balance"])),
+					fmt.Sprintf("%.2f", getNumFrom(accountMap["credit_balance"])),
+				}); err != nil {
+					return nil, fmt.Errorf("failed to write CSV account row: %v", err)
+				}
+			}
+		}
+	}
+
+	if err := write([]string{}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV spacer: %v", err)
+	}
+	if err := write([]string{"TOTAL", "", "", fmt.Sprintf("%.2f", totalDebits), fmt.Sprintf("%.2f", totalCredits)}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV total row: %v", err)
+	}
+	if err := write([]string{"Difference", fmt.Sprintf("%.2f", difference)}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV difference row: %v", err)
+	}
+	if err := write([]string{"Status", map[bool]string{true: "BALANCED", false: "NOT BALANCED"}[isBalanced]}); err != nil {
+		return nil, fmt.Errorf("failed to write CSV status row: %v", err)
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, fmt.Errorf("failed to flush trial balance CSV: %v", err)
 	}
 
 	return buf.Bytes(), nil

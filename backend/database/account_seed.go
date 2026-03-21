@@ -30,6 +30,7 @@ func SeedAccounts(db *gorm.DB) error {
 
 		// EQUITY (3xxx)
 		{Code: "3000", Name: strings.ToUpper("EQUITY"), Type: models.AccountTypeEquity, Category: models.CategoryEquity, Level: 1, IsHeader: true, IsActive: true},
+		{Code: "3104", Name: strings.ToUpper("OPENING BALANCE EQUITY"), Type: models.AccountTypeEquity, Category: models.CategoryEquity, Level: 2, IsHeader: false, IsActive: true},
 
 		// REVENUE (4xxx)
 		{Code: "4000", Name: strings.ToUpper("REVENUE"), Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 1, IsHeader: true, IsActive: true},
@@ -83,6 +84,7 @@ func SeedAccounts(db *gorm.DB) error {
 		"1100": "1000", // CURRENT ASSETS -> ASSETS
 		"1200": "1000", // FIXED ASSETS -> ASSETS (Changed parent from 1100 to 1000 in cleanup)
 		"2100": "2000", // CURRENT LIABILITIES -> LIABILITIES
+		"3104": "3000", // OPENING BALANCE EQUITY -> EQUITY
 		"6000": "5000", // OPERATING EXPENSES -> EXPENSES
 	}
 

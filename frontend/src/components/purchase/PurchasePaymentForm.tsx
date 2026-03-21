@@ -97,6 +97,17 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     return new Intl.NumberFormat('id-ID').format(numValue);
   };
 
+  const roundPaymentAmount = (value: number): number => {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(value * 100) / 100;
+  };
+
+  const amountsMatch = (left: number, right: number): boolean =>
+    Math.abs(roundPaymentAmount(left) - roundPaymentAmount(right)) <= 0.005;
+
+  const exceedsAmount = (left: number, right: number): boolean =>
+    roundPaymentAmount(left) - roundPaymentAmount(right) > 0.005;
+
   // Parse Rupiah string to number
   const parseRupiah = (value: string): number => {
     // Remove Rp prefix, spaces, and convert Indonesian decimal format
@@ -117,7 +128,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
           const latestPurchase = await purchaseService.getById(purchase.id);
           setFreshPurchase(latestPurchase);
 
-          const defaultAmount = latestPurchase.outstanding_amount || 0;
+          const defaultAmount = roundPaymentAmount(latestPurchase.outstanding_amount || 0);
           setFormData({
             amount: defaultAmount,
             exchange_rate: undefined,
@@ -139,7 +150,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
           });
           // Fallback to use the provided purchase prop
           setFreshPurchase(purchase);
-          const defaultAmount = purchase.outstanding_amount || 0;
+          const defaultAmount = roundPaymentAmount(purchase.outstanding_amount || 0);
           setFormData({
             amount: defaultAmount,
             exchange_rate: undefined,
@@ -200,16 +211,19 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     const currentPurchase = freshPurchase || purchase;
     if (!currentPurchase) return;
 
-    // Round amount to ensure it's an integer (no decimals for IDR)
-    const roundedAmount = Math.round(formData.amount);
+    const outstandingAmount = roundPaymentAmount(currentPurchase.outstanding_amount || 0);
+    const roundedAmount = roundPaymentAmount(formData.amount);
+    const amountToSubmit = amountsMatch(roundedAmount, outstandingAmount)
+      ? outstandingAmount
+      : roundedAmount;
     const dataToSubmit = {
       ...formData,
-      amount: roundedAmount,
+      amount: amountToSubmit,
       exchange_rate: formData.exchange_rate ? roundUsdIdrRate(formData.exchange_rate, 1) : undefined,
     };
 
     // Enhanced Validation
-    if (!roundedAmount || roundedAmount <= 0) {
+    if (!amountToSubmit || amountToSubmit <= 0) {
       toast({
         title: t('purchases.payment.validationError'),
         description: t('purchases.payment.amountRequired'),
@@ -221,8 +235,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     }
 
     // Strict validation: prevent exceeding outstanding amount using fresh data
-    if (roundedAmount > (currentPurchase.outstanding_amount || 0)) {
-      const maxAmount = currentPurchase.outstanding_amount || 0;
+    if (exceedsAmount(amountToSubmit, outstandingAmount)) {
+      const maxAmount = outstandingAmount;
       toast({
         title: t('purchases.payment.amountTooHigh') + ' ⚠️',
         description: t('purchases.payment.amountExceedsOutstanding'),
@@ -235,7 +249,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
 
     // Additional validation for minimum payment amount (optional: can be removed if not needed)
     const minPayment = 1000; // Rp 1,000 minimum
-    if (roundedAmount < minPayment) {
+    if (amountToSubmit < minPayment) {
       toast({
         title: t('purchases.payment.minimumPayment'),
         description: `${t('purchases.payment.amountRequired')} ${formatCurrency(minPayment)}`,
@@ -283,7 +297,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
         return;
       }
 
-      if (roundedAmount > getAccountBookBalance(selectedAccount)) {
+      if (exceedsAmount(amountToSubmit, getAccountBookBalance(selectedAccount))) {
         toast({
           title: t('purchases.payment.insufficientBalance') + ' ⚠️',
           description: t('purchases.payment.insufficientBalanceDesc'),
@@ -416,12 +430,12 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       return; // Ignore invalid characters
     }
 
-    const numericValue = parseRupiah(inputValue);
+    const numericValue = roundPaymentAmount(parseRupiah(inputValue));
 
     // Validate max amount using fresh purchase data
     const currentPurchase = freshPurchase || purchase;
-    const maxAmount = currentPurchase?.outstanding_amount || 0;
-    if (numericValue > maxAmount) {
+    const maxAmount = roundPaymentAmount(currentPurchase?.outstanding_amount || 0);
+    if (exceedsAmount(numericValue, maxAmount)) {
       toast({
         title: t('purchases.payment.amountTooHigh'),
         description: t('purchases.payment.maxPaymentAmount', { amount: formatCurrency(maxAmount) }),
@@ -674,8 +688,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                       variant="outline"
                       colorScheme="blue"
                       onClick={() => {
-                        // Use floor to ensure consistent integer amounts
-                        const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.25);
+                        const amount = roundPaymentAmount((currentPurchase?.outstanding_amount || 0) * 0.25);
                         setFormData(prev => ({ ...prev, amount }));
                         setDisplayAmount(formatRupiah(amount));
                       }}
@@ -688,8 +701,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                       variant="outline"
                       colorScheme="blue"
                       onClick={() => {
-                        // Use floor to ensure total doesn't exceed outstanding when split 50/50
-                        const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.5);
+                        const amount = roundPaymentAmount((currentPurchase?.outstanding_amount || 0) * 0.5);
                         setFormData(prev => ({ ...prev, amount }));
                         setDisplayAmount(formatRupiah(amount));
                       }}
@@ -702,8 +714,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                       variant="outline"
                       colorScheme="orange"
                       onClick={() => {
-                        // Use floor to ensure consistent integer amounts
-                        const amount = Math.floor((currentPurchase?.outstanding_amount || 0) * 0.8);
+                        const amount = roundPaymentAmount((currentPurchase?.outstanding_amount || 0) * 0.8);
                         setFormData(prev => ({ ...prev, amount }));
                         setDisplayAmount(formatRupiah(amount));
                       }}
@@ -716,7 +727,7 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                       variant="solid"
                       colorScheme="green"
                       onClick={() => {
-                        const amount = currentPurchase?.outstanding_amount || 0;
+                        const amount = roundPaymentAmount(currentPurchase?.outstanding_amount || 0);
                         setFormData(prev => ({ ...prev, amount }));
                         setDisplayAmount(formatRupiah(amount));
                       }}
@@ -732,12 +743,13 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                       {t('purchases.payment.paymentIndicator')} <Text as="span" fontWeight="bold" color="green.600">
                         {formatCurrency(formData.amount)}
                       </Text>
-                      {formData.amount < (currentPurchase?.outstanding_amount || 0) && (
+                      {!amountsMatch(formData.amount, currentPurchase?.outstanding_amount || 0) &&
+                        !exceedsAmount(formData.amount, currentPurchase?.outstanding_amount || 0) && (
                         <Text as="span" color="orange.500">
                           {` ${t('purchases.payment.separator')} `}{t('purchases.payment.remaining')}: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
                         </Text>
                       )}
-                      {formData.amount === (currentPurchase?.outstanding_amount || 0) && (
+                      {amountsMatch(formData.amount, currentPurchase?.outstanding_amount || 0) && (
                         <Text as="span" color="green.500">
                           {` ${t('purchases.payment.separator')} `}{t('purchases.payment.fullPaymentStatus')}
                         </Text>
@@ -746,17 +758,19 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                   )}
 
                   {/* Validation Messages */}
-                  {formData.amount > (currentPurchase?.outstanding_amount || 0) && (
+                  {exceedsAmount(formData.amount, currentPurchase?.outstanding_amount || 0) && (
                     <Text fontSize="sm" color="red.500" mt={1}>
                       {t('purchases.payment.warningIndicator')} {t('purchases.payment.amountExceedsBalance', { amount: formatCurrency(currentPurchase?.outstanding_amount || 0) })}
                     </Text>
                   )}
-                  {formData.amount > 0 && formData.amount <= (currentPurchase?.outstanding_amount || 0) && formData.amount < (currentPurchase?.outstanding_amount || 0) && (
+                  {formData.amount > 0 &&
+                    !exceedsAmount(formData.amount, currentPurchase?.outstanding_amount || 0) &&
+                    !amountsMatch(formData.amount, currentPurchase?.outstanding_amount || 0) && (
                     <Text fontSize="sm" color="blue.600" mt={1}>
                       {t('purchases.payment.partialPayment')} - {t('purchases.payment.remainingBalance')}: {formatCurrency((currentPurchase?.outstanding_amount || 0) - formData.amount)}
                     </Text>
                   )}
-                  {formData.amount === (currentPurchase?.outstanding_amount || 0) && formData.amount > 0 && (
+                  {amountsMatch(formData.amount, currentPurchase?.outstanding_amount || 0) && formData.amount > 0 && (
                     <Text fontSize="sm" color="green.600" mt={1} fontWeight="medium">
                       {t('purchases.payment.willFullyPay')}
                     </Text>

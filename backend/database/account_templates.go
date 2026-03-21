@@ -71,6 +71,7 @@ func GetStandardCOA(companyType string) []models.Account {
 		{Code: "3101", Name: "MODAL DISETOR", Type: models.AccountTypeEquity, Category: models.CategoryShareCapital, Level: 2, IsHeader: false, IsActive: true, IsSystemCritical: true},
 		{Code: "3102", Name: "LABA (RUGI) DITAHAN", Type: models.AccountTypeEquity, Category: models.CategoryRetainedEarnings, Level: 2, IsHeader: false, IsActive: true, IsSystemCritical: true},
 		{Code: "3103", Name: "LABA (RUGI) TAHUN BERJALAN", Type: models.AccountTypeEquity, Category: models.CategoryEquity, Level: 2, IsHeader: false, IsActive: true, IsSystemCritical: true},
+		{Code: "3104", Name: "EKUITAS SALDO AWAL", Type: models.AccountTypeEquity, Category: models.CategoryEquity, Level: 2, IsHeader: false, IsActive: true, IsSystemCritical: true},
 	}
 
 	// 1240 PPN MASUKAN legacy/compatibility check -> map to 2102-002 if needed or keep separate?

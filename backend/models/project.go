@@ -55,11 +55,13 @@ type ProjectCreateRequest struct {
 }
 
 type ProjectUpdateRequest struct {
-	Name        *string    `json:"name"`
-	Description *string    `json:"description"`
-	Status      *string    `json:"status"`
-	StartDate   *time.Time `json:"start_date"`
-	EndDate     *time.Time `json:"end_date"`
-	TotalBudget *float64   `json:"total_budget"`
-	ManagerID   *uint      `json:"manager_id"`
+	Name           *string    `json:"name"`
+	Description    *string    `json:"description"`
+	Status         *string    `json:"status"`
+	StartDate      *time.Time `json:"start_date"`
+	EndDate        *time.Time `json:"end_date"`
+	ClearStartDate bool       `json:"clear_start_date"`
+	ClearEndDate   bool       `json:"clear_end_date"`
+	TotalBudget    *float64   `json:"total_budget"`
+	ManagerID      *uint      `json:"manager_id"`
 }

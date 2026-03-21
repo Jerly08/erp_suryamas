@@ -62,6 +62,9 @@ func main() {
 	if err := database.RunAutoMigrations(db); err != nil {
 		log.Printf("Warning: Auto-migration failed: %v", err)
 	}
+	if err := database.EnsureStockAlertNotificationUniqueness(db); err != nil {
+		log.Printf("Warning: Stock alert uniqueness setup failed: %v", err)
+	}
 
 	// Check and verify SSOT Journal Migration
 	log.Println("⚡ Starting SSOT Journal System verification...")
@@ -115,12 +118,33 @@ func main() {
 	// Seed database with initial data
 	database.SeedData(db)
 
+	// Align journal access so employees can submit drafts while finance approves/posts them.
+	database.JournalManualApprovalPermissionMigration(db)
+
+	// Repair legacy reversal journals that became effective before the original journal date.
+	database.JournalReversalFutureDateAlignmentMigration(db)
+
 	// Ensure default Asset Categories exist and migrate legacy asset categories
 	database.AssetCategoryMigration(db)
 
 	// Run startup tasks including fix account header status
 	startupService := services.NewStartupService(db)
 	startupService.RunStartupTasks()
+
+	// Repair known legacy IDR cash/bank rows before recalculating balances.
+	database.CashBankBookAmountRepairMigration(db)
+
+	// Re-sync every cash/bank balance from transaction history so startup heals
+	// stale native/book balances even for accounts that are not touched today.
+	{
+		cashBankSyncSvc := services.NewCashBankCOASyncService(db)
+		synced, err := cashBankSyncSvc.SyncAllAssets()
+		if err != nil {
+			log.Printf("❌ Cash/bank startup sync failed: %v", err)
+		} else {
+			log.Printf("✅ Cash/bank startup sync completed for %d accounts", synced)
+		}
+	}
 
 	// Initialize and start session cleanup service
 	sessionCleanupService := services.NewSessionCleanupService(db)

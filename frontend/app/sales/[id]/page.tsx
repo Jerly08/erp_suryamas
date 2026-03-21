@@ -1,12 +1,12 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { useTranslation } from '@/hooks/useTranslation';
-import UnifiedLayout from '@/components/layout/UnifiedLayout';
-import salesService, { Sale } from '@/services/salesService';
-import PaymentForm from '@/components/sales/PaymentForm';
+import React, { useState, useEffect } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { useTranslation } from "@/hooks/useTranslation";
+import UnifiedLayout from "@/components/layout/UnifiedLayout";
+import salesService, { Sale } from "@/services/salesService";
+import PaymentForm from "@/components/sales/PaymentForm";
 import {
   Box,
   Heading,
@@ -38,8 +38,8 @@ import {
   Menu,
   MenuButton,
   MenuList,
-  MenuItem
-} from '@chakra-ui/react';
+  MenuItem,
+} from "@chakra-ui/react";
 import {
   FiArrowLeft,
   FiEdit,
@@ -48,15 +48,19 @@ import {
   FiMoreVertical,
   FiCheck,
   FiX,
-  FiFileText
-} from 'react-icons/fi';
+  FiFileText,
+} from "react-icons/fi";
 
 const SaleDetailPage: React.FC = () => {
   const { t } = useTranslation();
   const params = useParams();
   const router = useRouter();
   const toast = useToast();
-  const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
+  const {
+    isOpen: isPaymentOpen,
+    onOpen: onPaymentOpen,
+    onClose: onPaymentClose,
+  } = useDisclosure();
 
   const [sale, setSale] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,9 +71,9 @@ const SaleDetailPage: React.FC = () => {
 
   // Handle back navigation - simplified and more reliable
   const handleGoBack = () => {
-    console.log('Back button clicked');
+    console.log("Back button clicked");
     // Direct navigation to sales page - most reliable
-    router.push('/sales');
+    router.push("/sales");
   };
 
   // Load sale data
@@ -82,12 +86,13 @@ const SaleDetailPage: React.FC = () => {
       const saleData = await salesService.getSale(parseInt(saleId));
       setSale(saleData);
     } catch (error: any) {
-      setError(error.response?.data?.message || t('sales.detail.loadingError'));
+      setError(error.response?.data?.message || t("sales.detail.loadingError"));
       toast({
-        title: t('common.error'),
-        description: error.response?.data?.message || t('sales.detail.loadingError'),
-        status: 'error',
-        duration: 3000
+        title: t("common.error"),
+        description:
+          error.response?.data?.message || t("sales.detail.loadingError"),
+        status: "error",
+        duration: 3000,
       });
     } finally {
       setLoading(false);
@@ -99,29 +104,29 @@ const SaleDetailPage: React.FC = () => {
   }, [saleId]);
 
   // Handle status actions
-  const handleStatusAction = async (action: 'confirm' | 'cancel') => {
+  const handleStatusAction = async (action: "confirm" | "cancel") => {
     if (!sale) return;
 
     try {
       setActionLoading(true);
-      
-      if (action === 'confirm') {
+
+      if (action === "confirm") {
         await salesService.confirmSale(sale.id);
         toast({
-          title: t('sales.detail.confirmSuccess'),
-          description: t('sales.detail.confirmSuccess'),
-          status: 'success',
-          duration: 3000
+          title: t("sales.detail.confirmSuccess"),
+          description: t("sales.detail.confirmSuccess"),
+          status: "success",
+          duration: 3000,
         });
-      } else if (action === 'cancel') {
-        const reason = window.prompt(t('sales.detail.cancelReason'));
+      } else if (action === "cancel") {
+        const reason = window.prompt(t("sales.detail.cancelReason"));
         if (reason) {
           await salesService.cancelSale(sale.id, reason);
           toast({
-            title: t('sales.detail.cancelSuccess'),
-            description: t('sales.detail.cancelSuccess'),
-            status: 'success',
-            duration: 3000
+            title: t("sales.detail.cancelSuccess"),
+            description: t("sales.detail.cancelSuccess"),
+            status: "success",
+            duration: 3000,
           });
         } else {
           return;
@@ -131,10 +136,11 @@ const SaleDetailPage: React.FC = () => {
       loadSale(); // Reload to get updated status
     } catch (error: any) {
       toast({
-        title: t('common.error'),
-        description: error.response?.data?.message || t(`sales.detail.${action}Error`),
-        status: 'error',
-        duration: 3000
+        title: t("common.error"),
+        description:
+          error.response?.data?.message || t(`sales.detail.${action}Error`),
+        status: "error",
+        duration: 3000,
       });
     } finally {
       setActionLoading(false);
@@ -149,18 +155,19 @@ const SaleDetailPage: React.FC = () => {
       setActionLoading(true);
       await salesService.createInvoiceFromSale(sale.id);
       toast({
-        title: t('sales.detail.invoiceSuccess'),
-        description: t('sales.detail.invoiceSuccess'),
-        status: 'success',
-        duration: 3000
+        title: t("sales.detail.invoiceSuccess"),
+        description: t("sales.detail.invoiceSuccess"),
+        status: "success",
+        duration: 3000,
       });
       loadSale(); // Reload to get updated data
     } catch (error: any) {
       toast({
-        title: t('common.error'),
-        description: error.response?.data?.message || t('sales.detail.invoiceError'),
-        status: 'error',
-        duration: 3000
+        title: t("common.error"),
+        description:
+          error.response?.data?.message || t("sales.detail.invoiceError"),
+        status: "error",
+        duration: 3000,
       });
     } finally {
       setActionLoading(false);
@@ -173,16 +180,27 @@ const SaleDetailPage: React.FC = () => {
     loadSale(); // Reload to get updated payment status
   };
 
+  const displayStatus = sale?.settlement_status || sale?.status || "DRAFT";
+
   // Get status color
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
-      case 'paid': return 'green';
-      case 'invoiced': return 'blue';
-      case 'confirmed': return 'purple';
-      case 'overdue': return 'red';
-      case 'draft': return 'gray';
-      case 'cancelled': return 'red';
-      default: return 'gray';
+      case "paid":
+        return "green";
+      case "partially_paid":
+        return "orange";
+      case "invoiced":
+        return "blue";
+      case "confirmed":
+        return "purple";
+      case "overdue":
+        return "red";
+      case "draft":
+        return "gray";
+      case "cancelled":
+        return "red";
+      default:
+        return "gray";
     }
   };
 
@@ -203,7 +221,7 @@ const SaleDetailPage: React.FC = () => {
       <UnifiedLayout>
         <Alert status="error">
           <AlertIcon />
-          {error || t('sales.detail.saleNotFound')}
+          {error || t("sales.detail.saleNotFound")}
         </Alert>
       </UnifiedLayout>
     );
@@ -219,83 +237,96 @@ const SaleDetailPage: React.FC = () => {
               icon={<FiArrowLeft />}
               variant="outline"
               onClick={handleGoBack}
-              aria-label={t('sales.detail.goBack')}
-              _hover={{ 
-                bg: 'var(--bg-tertiary)', 
-                transform: 'translateX(-2px)',
-                borderColor: 'var(--accent-color)'
+              aria-label={t("sales.detail.goBack")}
+              _hover={{
+                bg: "var(--bg-tertiary)",
+                transform: "translateX(-2px)",
+                borderColor: "var(--accent-color)",
               }}
               size="md"
-              title={t('sales.detail.goBack')}
+              title={t("sales.detail.goBack")}
               borderColor="var(--border-color)"
               color="var(--text-primary)"
               bg="var(--bg-secondary)"
               cursor="pointer"
             />
             <VStack align="start" spacing={1}>
-              <Heading as="h1" size="xl">{t('sales.detail.title')}</Heading>
+              <Heading as="h1" size="xl">
+                {t("sales.detail.title")}
+              </Heading>
               <HStack spacing={2}>
-                <Text color="gray.600">{t('sales.detail.code')}: {sale.code}</Text>
-                <Badge colorScheme={getStatusColor(sale.status)} variant="subtle">
-                  {salesService.getStatusLabel(sale.status)}
+                <Text color="gray.600">
+                  {t("sales.detail.code")}: {sale.code}
+                </Text>
+                <Badge
+                  colorScheme={getStatusColor(displayStatus)}
+                  variant="subtle"
+                >
+                  {salesService.getStatusLabel(displayStatus)}
                 </Badge>
               </HStack>
             </VStack>
           </HStack>
-          
+
           <HStack spacing={3}>
             <Button
               leftIcon={<FiDownload />}
               variant="outline"
-              onClick={() => salesService.downloadInvoicePDF(sale.id, sale.invoice_number || sale.code)}
+              onClick={() =>
+                salesService.downloadInvoicePDF(
+                  sale.id,
+                  sale.invoice_number || sale.code,
+                )
+              }
             >
-              {t('sales.detail.downloadPDF')}
+              {t("sales.detail.downloadPDF")}
             </Button>
-            
+
             <Menu>
-              <MenuButton as={IconButton} icon={<FiMoreVertical />} variant="outline" />
+              <MenuButton
+                as={IconButton}
+                icon={<FiMoreVertical />}
+                variant="outline"
+              />
               <MenuList>
-                {sale.status === 'DRAFT' && (
-                  <MenuItem 
-                    icon={<FiCheck />} 
-                    onClick={() => handleStatusAction('confirm')}
+                {sale.status === "DRAFT" && (
+                  <MenuItem
+                    icon={<FiCheck />}
+                    onClick={() => handleStatusAction("confirm")}
                     isDisabled={actionLoading}
                   >
-                    {t('sales.detail.confirmSale')}
+                    {t("sales.detail.confirmSale")}
                   </MenuItem>
                 )}
-                {sale.status === 'CONFIRMED' && (
-                  <MenuItem 
-                    icon={<FiFileText />} 
+                {sale.status === "CONFIRMED" && (
+                  <MenuItem
+                    icon={<FiFileText />}
                     onClick={handleCreateInvoice}
                     isDisabled={actionLoading}
                   >
-                    {t('sales.detail.createInvoice')}
+                    {t("sales.detail.createInvoice")}
                   </MenuItem>
                 )}
                 {sale.outstanding_amount > 0 && (
-                  <MenuItem 
-                    icon={<FiDollarSign />} 
-                    onClick={onPaymentOpen}
-                  >
-                    {t('sales.detail.recordPayment')}
+                  <MenuItem icon={<FiDollarSign />} onClick={onPaymentOpen}>
+                    {t("sales.detail.recordPayment")}
                   </MenuItem>
                 )}
-                <MenuItem 
-                  icon={<FiEdit />} 
+                <MenuItem
+                  icon={<FiEdit />}
                   onClick={() => router.push(`/sales?edit=${sale.id}`)}
                 >
-                  {t('sales.detail.editSale')}
+                  {t("sales.detail.editSale")}
                 </MenuItem>
                 <Divider />
-                {sale.status !== 'CANCELLED' && (
-                  <MenuItem 
-                    icon={<FiX />} 
+                {sale.status !== "CANCELLED" && (
+                  <MenuItem
+                    icon={<FiX />}
                     color="red.500"
-                    onClick={() => handleStatusAction('cancel')}
+                    onClick={() => handleStatusAction("cancel")}
                     isDisabled={actionLoading}
                   >
-                    {t('sales.detail.cancelSale')}
+                    {t("sales.detail.cancelSale")}
                   </MenuItem>
                 )}
               </MenuList>
@@ -303,50 +334,81 @@ const SaleDetailPage: React.FC = () => {
           </HStack>
         </Flex>
 
-
         {/* Basic Information */}
         <Card>
           <CardHeader>
-            <Heading size="md">{t('sales.detail.saleInformation')}</Heading>
+            <Heading size="md">{t("sales.detail.saleInformation")}</Heading>
           </CardHeader>
           <CardBody>
             <Grid templateColumns="repeat(3, 1fr)" gap={6}>
               <GridItem>
                 <VStack align="start" spacing={2}>
-                  <Text fontSize="sm" color="gray.600">{t('sales.detail.customer')}</Text>
-                  <Text fontWeight="medium">{sale.customer ? sale.customer.name : t('sales.detail.notAvailable')}</Text>
-                </VStack>
-              </GridItem>
-              <GridItem>
-                <VStack align="start" spacing={2}>
-                  <Text fontSize="sm" color="gray.600">{t('sales.detail.invoiceNumber')}</Text>
-                  <Text fontWeight="medium">{sale.invoice_number ? sale.invoice_number : t('sales.detail.noInvoiceNumber')}</Text>
-                </VStack>
-              </GridItem>
-              <GridItem>
-                <VStack align="start" spacing={2}>
-                  <Text fontSize="sm" color="gray.600">{t('sales.detail.salesPerson')}</Text>
-                  <Text fontWeight="medium">{sale.sales_person ? sale.sales_person.name : t('sales.detail.notAvailable')}</Text>
-                </VStack>
-              </GridItem>
-              <GridItem>
-                <VStack align="start" spacing={2}>
-                  <Text fontSize="sm" color="gray.600">{t('sales.detail.date')}</Text>
-                  <Text fontWeight="medium">{salesService.formatDate(sale.date)}</Text>
-                </VStack>
-              </GridItem>
-              <GridItem>
-                <VStack align="start" spacing={2}>
-                  <Text fontSize="sm" color="gray.600">{t('sales.detail.dueDate')}</Text>
+                  <Text fontSize="sm" color="gray.600">
+                    {t("sales.detail.customer")}
+                  </Text>
                   <Text fontWeight="medium">
-                    {sale.due_date && sale.due_date !== '0001-01-01T00:00:00Z' ? salesService.formatDate(sale.due_date) : t('sales.detail.noDueDate')}
+                    {sale.customer
+                      ? sale.customer.name
+                      : t("sales.detail.notAvailable")}
                   </Text>
                 </VStack>
               </GridItem>
               <GridItem>
                 <VStack align="start" spacing={2}>
-                  <Text fontSize="sm" color="gray.600">{t('sales.detail.paymentTerms')}</Text>
-                  <Text fontWeight="medium">{sale.payment_terms ? sale.payment_terms : t('sales.detail.notAvailable')}</Text>
+                  <Text fontSize="sm" color="gray.600">
+                    {t("sales.detail.invoiceNumber")}
+                  </Text>
+                  <Text fontWeight="medium">
+                    {sale.invoice_number
+                      ? sale.invoice_number
+                      : t("sales.detail.noInvoiceNumber")}
+                  </Text>
+                </VStack>
+              </GridItem>
+              <GridItem>
+                <VStack align="start" spacing={2}>
+                  <Text fontSize="sm" color="gray.600">
+                    {t("sales.detail.salesPerson")}
+                  </Text>
+                  <Text fontWeight="medium">
+                    {sale.sales_person
+                      ? sale.sales_person.name
+                      : t("sales.detail.notAvailable")}
+                  </Text>
+                </VStack>
+              </GridItem>
+              <GridItem>
+                <VStack align="start" spacing={2}>
+                  <Text fontSize="sm" color="gray.600">
+                    {t("sales.detail.date")}
+                  </Text>
+                  <Text fontWeight="medium">
+                    {salesService.formatDate(sale.date)}
+                  </Text>
+                </VStack>
+              </GridItem>
+              <GridItem>
+                <VStack align="start" spacing={2}>
+                  <Text fontSize="sm" color="gray.600">
+                    {t("sales.detail.dueDate")}
+                  </Text>
+                  <Text fontWeight="medium">
+                    {sale.due_date && sale.due_date !== "0001-01-01T00:00:00Z"
+                      ? salesService.formatDate(sale.due_date)
+                      : t("sales.detail.noDueDate")}
+                  </Text>
+                </VStack>
+              </GridItem>
+              <GridItem>
+                <VStack align="start" spacing={2}>
+                  <Text fontSize="sm" color="gray.600">
+                    {t("sales.detail.paymentTerms")}
+                  </Text>
+                  <Text fontWeight="medium">
+                    {sale.payment_terms
+                      ? sale.payment_terms
+                      : t("sales.detail.notAvailable")}
+                  </Text>
                 </VStack>
               </GridItem>
             </Grid>
@@ -356,35 +418,45 @@ const SaleDetailPage: React.FC = () => {
         {/* Items */}
         <Card>
           <CardHeader>
-            <Heading size="md">{t('sales.detail.saleItems')}</Heading>
+            <Heading size="md">{t("sales.detail.saleItems")}</Heading>
           </CardHeader>
           <CardBody>
             <TableContainer>
               <Table variant="simple">
                 <Thead>
                   <Tr>
-                    <Th>{t('sales.detail.product')}</Th>
-                    <Th>{t('sales.detail.description')}</Th>
-                    <Th isNumeric>{t('sales.detail.quantity')}</Th>
-                    <Th isNumeric>{t('sales.detail.unitPrice')}</Th>
-                    <Th isNumeric>{t('sales.detail.discount')}</Th>
-                    <Th isNumeric>{t('sales.detail.total')}</Th>
+                    <Th>{t("sales.detail.product")}</Th>
+                    <Th>{t("sales.detail.description")}</Th>
+                    <Th isNumeric>{t("sales.detail.quantity")}</Th>
+                    <Th isNumeric>{t("sales.detail.unitPrice")}</Th>
+                    <Th isNumeric>{t("sales.detail.discount")}</Th>
+                    <Th isNumeric>{t("sales.detail.total")}</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
                   {sale.sale_items?.map((item, index) => (
                     <Tr key={index}>
                       <Td fontWeight="medium">
-                        {item.product_name || item.product?.name || t('sales.detail.notAvailable')}
+                        {item.product_name ||
+                          item.product?.name ||
+                          t("sales.detail.notAvailable")}
                       </Td>
-                      <Td>{item.description || t('sales.detail.noInvoiceNumber')}</Td>
+                      <Td>
+                        {item.description || t("sales.detail.noInvoiceNumber")}
+                      </Td>
                       <Td isNumeric>{item.quantity || 0}</Td>
-                      <Td isNumeric>{salesService.formatCurrency(item.unit_price || 0)}</Td>
                       <Td isNumeric>
-                        {item.discount_percent ? `${item.discount_percent}%` : t('sales.detail.noDiscount')}
+                        {salesService.formatCurrency(item.unit_price || 0)}
+                      </Td>
+                      <Td isNumeric>
+                        {item.discount_percent
+                          ? `${item.discount_percent}%`
+                          : t("sales.detail.noDiscount")}
                       </Td>
                       <Td isNumeric fontWeight="medium">
-                        {salesService.formatCurrency(item.line_total || item.total_price)}
+                        {salesService.formatCurrency(
+                          item.line_total || item.total_price,
+                        )}
                       </Td>
                     </Tr>
                   ))}
@@ -397,103 +469,127 @@ const SaleDetailPage: React.FC = () => {
         {/* Financial Summary */}
         <Card>
           <CardHeader>
-            <Heading size="md">{t('sales.detail.financialSummary')}</Heading>
+            <Heading size="md">{t("sales.detail.financialSummary")}</Heading>
           </CardHeader>
           <CardBody>
             <VStack spacing={4} align="stretch">
               {/* Subtotal */}
               <Flex justify="space-between">
-                <Text>{t('sales.detail.subtotal')}:</Text>
+                <Text>{t("sales.detail.subtotal")}:</Text>
                 <Text fontWeight="medium">
                   {salesService.formatCurrency(sale.subtotal || 0)}
                 </Text>
               </Flex>
-              
+
               {/* Global Discount - only show if > 0 */}
               {(sale.discount_percent > 0 || sale.discount_amount > 0) && (
                 <Flex justify="space-between">
-                  <Text color="red.500">{t('sales.detail.discountLabel')} ({sale.discount_percent || 0}%):</Text>
+                  <Text color="red.500">
+                    {t("sales.detail.discountLabel")} (
+                    {sale.discount_percent || 0}%):
+                  </Text>
                   <Text fontWeight="medium" color="red.500">
                     - {salesService.formatCurrency(sale.discount_amount || 0)}
                   </Text>
                 </Flex>
               )}
-              
+
               {/* PPN - only show if > 0 */}
-              {((sale.ppn_rate || sale.ppn_percent || 0) > 0 || (sale.ppn_amount || sale.ppn || 0) > 0) && (
+              {((sale.ppn_rate || sale.ppn_percent || 0) > 0 ||
+                (sale.ppn_amount || sale.ppn || 0) > 0) && (
                 <Flex justify="space-between">
-                  <Text color="blue.500">{t('sales.detail.ppn')} ({sale.ppn_rate || sale.ppn_percent || 0}%):</Text>
+                  <Text color="blue.500">
+                    {t("sales.detail.ppn")} (
+                    {sale.ppn_rate || sale.ppn_percent || 0}%):
+                  </Text>
                   <Text fontWeight="medium" color="blue.500">
-                    + {salesService.formatCurrency(sale.ppn_amount || sale.ppn || 0)}
+                    +{" "}
+                    {salesService.formatCurrency(
+                      sale.ppn_amount || sale.ppn || 0,
+                    )}
                   </Text>
                 </Flex>
               )}
-              
+
               {/* Other Tax Additions - only show if > 0 */}
               {(sale.other_tax_additions || 0) > 0 && (
                 <Flex justify="space-between">
-                  <Text color="blue.500">{t('sales.detail.otherTaxAdditions')}:</Text>
+                  <Text color="blue.500">
+                    {t("sales.detail.otherTaxAdditions")}:
+                  </Text>
                   <Text fontWeight="medium" color="blue.500">
-                    + {salesService.formatCurrency(sale.other_tax_additions || 0)}
+                    +{" "}
+                    {salesService.formatCurrency(sale.other_tax_additions || 0)}
                   </Text>
                 </Flex>
               )}
-              
+
               {/* PPh21 - only show if > 0 */}
               {((sale.pph21_rate || 0) > 0 || (sale.pph21_amount || 0) > 0) && (
                 <Flex justify="space-between">
-                  <Text color="orange.500">{t('sales.detail.pph21')} ({sale.pph21_rate || 0}%):</Text>
+                  <Text color="orange.500">
+                    {t("sales.detail.pph21")} ({sale.pph21_rate || 0}%):
+                  </Text>
                   <Text fontWeight="medium" color="orange.500">
                     - {salesService.formatCurrency(sale.pph21_amount || 0)}
                   </Text>
                 </Flex>
               )}
-              
+
               {/* PPh23 - only show if > 0 */}
               {((sale.pph23_rate || 0) > 0 || (sale.pph23_amount || 0) > 0) && (
                 <Flex justify="space-between">
-                  <Text color="orange.500">{t('sales.detail.pph23')} ({sale.pph23_rate || 0}%):</Text>
+                  <Text color="orange.500">
+                    {t("sales.detail.pph23")} ({sale.pph23_rate || 0}%):
+                  </Text>
                   <Text fontWeight="medium" color="orange.500">
                     - {salesService.formatCurrency(sale.pph23_amount || 0)}
                   </Text>
                 </Flex>
               )}
-              
+
               {/* Other Tax Deductions - only show if > 0 */}
               {(sale.other_tax_deductions || 0) > 0 && (
                 <Flex justify="space-between">
-                  <Text color="orange.500">{t('sales.detail.otherTaxDeductions')}:</Text>
+                  <Text color="orange.500">
+                    {t("sales.detail.otherTaxDeductions")}:
+                  </Text>
                   <Text fontWeight="medium" color="orange.500">
-                    - {salesService.formatCurrency(sale.other_tax_deductions || 0)}
+                    -{" "}
+                    {salesService.formatCurrency(
+                      sale.other_tax_deductions || 0,
+                    )}
                   </Text>
                 </Flex>
               )}
-              
+
               {/* Shipping Cost - only show if > 0 */}
               {(sale.shipping_cost || 0) > 0 && (
                 <Flex justify="space-between">
-                  <Text>{t('sales.detail.shippingCost')}:</Text>
+                  <Text>{t("sales.detail.shippingCost")}:</Text>
                   <Text fontWeight="medium">
                     + {salesService.formatCurrency(sale.shipping_cost || 0)}
                   </Text>
                 </Flex>
               )}
-              
+
               <Divider />
               <Flex justify="space-between" fontSize="lg">
-                <Text fontWeight="bold">{t('sales.detail.totalAmount')}:</Text>
+                <Text fontWeight="bold">{t("sales.detail.totalAmount")}:</Text>
                 <Text fontWeight="bold" color="blue.600">
                   {salesService.formatCurrency(sale.total_amount || 0)}
                 </Text>
               </Flex>
               <Flex justify="space-between">
-                <Text color="green.600">{t('sales.detail.paidAmount')}:</Text>
+                <Text color="green.600">{t("sales.detail.paidAmount")}:</Text>
                 <Text fontWeight="medium" color="green.600">
                   {salesService.formatCurrency(sale.paid_amount || 0)}
                 </Text>
               </Flex>
               <Flex justify="space-between" fontSize="lg">
-                <Text fontWeight="bold" color="orange.600">{t('sales.detail.outstanding')}:</Text>
+                <Text fontWeight="bold" color="orange.600">
+                  {t("sales.detail.outstanding")}:
+                </Text>
                 <Text fontWeight="bold" color="orange.600">
                   {salesService.formatCurrency(sale.outstanding_amount || 0)}
                 </Text>
@@ -506,19 +602,23 @@ const SaleDetailPage: React.FC = () => {
         {(sale.notes || sale.internal_notes) && (
           <Card>
             <CardHeader>
-              <Heading size="md">{t('sales.detail.notes')}</Heading>
+              <Heading size="md">{t("sales.detail.notes")}</Heading>
             </CardHeader>
             <CardBody>
               <VStack spacing={4} align="stretch">
                 {sale.notes && (
                   <Box>
-                    <Text fontSize="sm" color="gray.600" mb={2}>{t('sales.detail.customerNotes')}:</Text>
+                    <Text fontSize="sm" color="gray.600" mb={2}>
+                      {t("sales.detail.customerNotes")}:
+                    </Text>
                     <Text>{sale.notes}</Text>
                   </Box>
                 )}
                 {sale.internal_notes && (
                   <Box>
-                    <Text fontSize="sm" color="gray.600" mb={2}>{t('sales.detail.internalNotes')}:</Text>
+                    <Text fontSize="sm" color="gray.600" mb={2}>
+                      {t("sales.detail.internalNotes")}:
+                    </Text>
                     <Text>{sale.internal_notes}</Text>
                   </Box>
                 )}

@@ -228,6 +228,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 					CanExport:  false,
 					CanMenu:    true, // Can access purchases and requests menu
 				}
+			} else if module == "journal" {
+				// Employees may submit manual journals as drafts, but finance verifies/posts them.
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  true,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    true,
+				}
 			} else if module == "users" {
 				// Users module is admin-only - no access for employees
 				permissions[module] = &ModulePermission{

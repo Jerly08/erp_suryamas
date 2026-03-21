@@ -1,18 +1,18 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import SimpleLayout from '@/components/layout/SimpleLayout';
-import ProtectedModule from '@/components/common/ProtectedModule';
-import { useAuth } from '@/contexts/AuthContext';
-import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
-import { useModulePermissions } from '@/hooks/usePermissions';
-import { useTranslation } from '@/hooks/useTranslation';
-import EnhancedSalesTable from '@/components/sales/EnhancedSalesTable';
-import EnhancedStatsCards from '@/components/sales/EnhancedStatsCards';
-import SalesForm from '@/components/sales/SalesForm';
-import PaymentForm from '@/components/sales/PaymentForm';
-import InvoiceTypeManagement from '@/components/invoicetype/InvoiceTypeManagement';
-import salesService, { Sale, SalesFilter } from '@/services/salesService';
+import React, { useState, useEffect } from "react";
+import SimpleLayout from "@/components/layout/SimpleLayout";
+import ProtectedModule from "@/components/common/ProtectedModule";
+import { useAuth } from "@/contexts/AuthContext";
+import CompanyTypeGuard from "@/components/common/CompanyTypeGuard";
+import { useModulePermissions } from "@/hooks/usePermissions";
+import { useTranslation } from "@/hooks/useTranslation";
+import EnhancedSalesTable from "@/components/sales/EnhancedSalesTable";
+import EnhancedStatsCards from "@/components/sales/EnhancedStatsCards";
+import SalesForm from "@/components/sales/SalesForm";
+import PaymentForm from "@/components/sales/PaymentForm";
+import InvoiceTypeManagement from "@/components/invoicetype/InvoiceTypeManagement";
+import salesService, { Sale, SalesFilter } from "@/services/salesService";
 import {
   Box,
   Heading,
@@ -46,7 +46,7 @@ import {
   ModalHeader,
   ModalBody,
   ModalCloseButton,
-} from '@chakra-ui/react';
+} from "@chakra-ui/react";
 import {
   FiPlus,
   FiSearch,
@@ -55,12 +55,12 @@ import {
   FiFilter,
   FiBarChart,
   FiSettings,
-} from 'react-icons/fi';
+} from "react-icons/fi";
 import {
   handleLoadingError,
   handleDeleteError,
-  handleSuccess
-} from '@/utils/errorHandler';
+  handleSuccess,
+} from "@/utils/errorHandler";
 
 interface SalesPageState {
   sales: Sale[];
@@ -87,26 +87,45 @@ const SalesPageContent: React.FC = () => {
   const { user } = useAuth();
   const toast = useToast();
   const { t } = useTranslation();
-  const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('sales');
+  const { canCreate, canEdit, canDelete, canExport } =
+    useModulePermissions("sales");
 
-  const { isOpen: isFormOpen, onOpen: onFormOpen, onClose: onFormClose } = useDisclosure();
-  const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
-  const { isOpen: isInvoiceTypesOpen, onOpen: onInvoiceTypesOpen, onClose: onInvoiceTypesClose } = useDisclosure();
+  const {
+    isOpen: isFormOpen,
+    onOpen: onFormOpen,
+    onClose: onFormClose,
+  } = useDisclosure();
+  const {
+    isOpen: isPaymentOpen,
+    onOpen: onPaymentOpen,
+    onClose: onPaymentClose,
+  } = useDisclosure();
+  const {
+    isOpen: isInvoiceTypesOpen,
+    onOpen: onInvoiceTypesOpen,
+    onClose: onInvoiceTypesClose,
+  } = useDisclosure();
 
   // Tooltip descriptions for sales page
   const tooltips = {
-    search: 'Cari penjualan berdasarkan nomor invoice, nama customer, atau referensi',
-    status: 'Filter penjualan berdasarkan status workflow aktif: Draft, Invoiced, Paid, atau Cancelled.',
-    dateRange: 'Filter penjualan berdasarkan tanggal transaksi untuk periode tertentu',
-    export: 'Unduh data penjualan dalam format PDF atau Excel',
-    refresh: 'Muat ulang data penjualan terbaru dari server',
+    search:
+      "Cari penjualan berdasarkan nomor invoice, nama customer, atau referensi",
+    status:
+      "Filter penjualan berdasarkan status workflow aktif: Draft, Invoiced, Paid, atau Cancelled.",
+    dateRange:
+      "Filter penjualan berdasarkan tanggal transaksi untuk periode tertentu",
+    export: "Unduh data penjualan dalam format PDF atau Excel",
+    refresh: "Muat ulang data penjualan terbaru dari server",
   };
 
   // Theme-aware colors
-  const headingColor = useColorModeValue('gray.800', 'var(--text-primary)');
-  const subheadingColor = useColorModeValue('gray.600', 'var(--text-secondary)');
-  const tableBg = useColorModeValue('white', 'var(--bg-secondary)');
-  const textColor = useColorModeValue('gray.600', 'var(--text-secondary)');
+  const headingColor = useColorModeValue("gray.800", "var(--text-primary)");
+  const subheadingColor = useColorModeValue(
+    "gray.600",
+    "var(--text-secondary)",
+  );
+  const tableBg = useColorModeValue("white", "var(--bg-secondary)");
+  const textColor = useColorModeValue("gray.600", "var(--text-secondary)");
 
   const [state, setState] = useState<SalesPageState>({
     sales: [],
@@ -115,63 +134,69 @@ const SalesPageContent: React.FC = () => {
     filter: {
       page: 1,
       limit: 10,
-      search: '',
-      status: '',
-      start_date: '',
-      end_date: ''
+      search: "",
+      status: "",
+      start_date: "",
+      end_date: "",
     },
     selectedSale: null,
-    summary: null
+    summary: null,
   });
 
   // Load sales data
   const loadSales = async (newFilter?: Partial<SalesFilter>) => {
     try {
-      setState(prev => ({ ...prev, loading: true, error: null }));
+      setState((prev) => ({ ...prev, loading: true, error: null }));
 
-      const filter = newFilter ? { ...state.filter, ...newFilter } : state.filter;
+      const filter = newFilter
+        ? { ...state.filter, ...newFilter }
+        : state.filter;
       const result = await salesService.getSales(filter);
 
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         sales: result.data,
         filter: { ...filter, page: result.page },
-        loading: false
+        loading: false,
       }));
     } catch (error: any) {
       // Don't show error for 401 (authentication) - modal handles it
       if (error.response?.status === 401) {
-        setState(prev => ({
+        setState((prev) => ({
           ...prev,
           loading: false,
-          error: null // Clear error for auth issues
+          error: null, // Clear error for auth issues
         }));
         return; // Exit early, modal will handle auth error
       }
 
       // Handle other errors normally
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
-        error: error.response?.data?.message || 'Failed to load sales data',
-        loading: false
+        error: error.response?.data?.message || "Failed to load sales data",
+        loading: false,
       }));
 
       toast({
-        title: 'Error loading sales',
-        description: error.response?.data?.message || 'Failed to load sales data',
-        status: 'error',
-        duration: 3000
+        title: "Error loading sales",
+        description:
+          error.response?.data?.message || "Failed to load sales data",
+        status: "error",
+        duration: 3000,
       });
     }
   };
 
   // Load sales summary
-  const loadSalesSummary = async () => {
+  const loadSalesSummary = async (filterOverrides?: Partial<SalesFilter>) => {
     try {
-      const summary = await salesService.getSalesSummary();
-      setState(prev => ({ ...prev, summary }));
+      const mergedFilter = filterOverrides
+        ? { ...state.filter, ...filterOverrides }
+        : state.filter;
+      const summary = await salesService.getSalesSummary(mergedFilter);
+      setState((prev) => ({ ...prev, summary }));
     } catch (error) {
-      console.error('Failed to load sales summary:', error);
+      console.error("Failed to load sales summary:", error);
     }
   };
 
@@ -183,71 +208,83 @@ const SalesPageContent: React.FC = () => {
 
   // Handle search
   const handleSearch = (searchTerm: string) => {
-    setState(prev => ({ ...prev, filter: { ...prev.filter, search: searchTerm } }));
+    setState((prev) => ({
+      ...prev,
+      filter: { ...prev.filter, search: searchTerm },
+    }));
     loadSales({ search: searchTerm, page: 1 });
+    loadSalesSummary({ search: searchTerm, page: 1 });
   };
 
   // Handle filter change
   const handleFilterChange = (key: keyof SalesFilter, value: string) => {
-    setState(prev => ({ ...prev, filter: { ...prev.filter, [key]: value } }));
+    setState((prev) => ({ ...prev, filter: { ...prev.filter, [key]: value } }));
     loadSales({ [key]: value, page: 1 });
+    loadSalesSummary({ [key]: value, page: 1 });
   };
 
   // Handle create/edit sale
   const handleSaleAction = (sale?: Sale) => {
-    setState(prev => ({ ...prev, selectedSale: sale || null }));
+    setState((prev) => ({ ...prev, selectedSale: sale || null }));
     onFormOpen();
   };
 
   // Handle payment
   const handlePayment = (sale: Sale) => {
-    setState(prev => ({ ...prev, selectedSale: sale }));
+    setState((prev) => ({ ...prev, selectedSale: sale }));
     onPaymentOpen();
   };
 
   // Handle delete sale
   const handleDelete = async (sale: Sale) => {
-    if (!window.confirm('Are you sure you want to delete this sale?')) return;
+    if (!window.confirm("Are you sure you want to delete this sale?")) return;
 
     try {
       await salesService.deleteSale(sale.id);
-      handleSuccess('Sale has been deleted successfully', toast, 'delete sale');
+      handleSuccess("Sale has been deleted successfully", toast, "delete sale");
       loadSales();
       loadSalesSummary();
     } catch (error: any) {
-      handleDeleteError('sale', error, toast);
+      handleDeleteError("sale", error, toast);
     }
   };
 
   // Handle sale status actions
-  const handleSaleStatusAction = async (sale: Sale, action: 'confirm' | 'cancel') => {
+  const handleSaleStatusAction = async (
+    sale: Sale,
+    action: "confirm" | "cancel",
+  ) => {
     try {
-      let message = '';
+      let message = "";
 
       switch (action) {
-        case 'confirm':
+        case "confirm":
           // FIXED: Use createInvoiceFromSale to directly create invoice (DRAFT -> INVOICED)
           // This will create journal entries and set proper accounting impact
           await salesService.createInvoiceFromSale(sale.id);
-          message = 'Sale has been invoiced successfully! Journal entries have been created.';
+          message =
+            "Sale has been invoiced successfully! Journal entries have been created.";
           break;
-        case 'cancel':
-          const reason = window.prompt('Please provide a reason for cancellation:');
+        case "cancel":
+          const reason = window.prompt(
+            "Please provide a reason for cancellation:",
+          );
           if (!reason) return;
           await salesService.cancelSale(sale.id, reason);
-          message = 'Sale has been cancelled';
+          message = "Sale has been cancelled";
           break;
       }
 
-      handleSuccess(message, toast, action + ' sale');
+      handleSuccess(message, toast, action + " sale");
       loadSales();
       loadSalesSummary();
     } catch (error: any) {
       toast({
         title: `Error ${action}ing sale`,
-        description: error.response?.data?.message || `Failed to ${action} sale`,
-        status: 'error',
-        duration: 3000
+        description:
+          error.response?.data?.message || `Failed to ${action} sale`,
+        status: "error",
+        duration: 3000,
       });
     }
   };
@@ -259,15 +296,19 @@ const SalesPageContent: React.FC = () => {
         state.filter.start_date || undefined,
         state.filter.end_date || undefined,
         state.filter.status || undefined,
-        state.filter.search || undefined
+        state.filter.search || undefined,
       );
-      handleSuccess('Sales report PDF has been downloaded', toast, 'export report');
+      handleSuccess(
+        "Sales report PDF has been downloaded",
+        toast,
+        "export report",
+      );
     } catch (error: any) {
       toast({
-        title: 'Export failed',
-        description: 'Failed to export sales report PDF',
-        status: 'error',
-        duration: 3000
+        title: "Export failed",
+        description: "Failed to export sales report PDF",
+        status: "error",
+        duration: 3000,
       });
     }
   };
@@ -278,15 +319,19 @@ const SalesPageContent: React.FC = () => {
         state.filter.start_date || undefined,
         state.filter.end_date || undefined,
         state.filter.status || undefined,
-        state.filter.search || undefined
+        state.filter.search || undefined,
       );
-      handleSuccess('Sales report CSV has been downloaded', toast, 'export report');
+      handleSuccess(
+        "Sales report CSV has been downloaded",
+        toast,
+        "export report",
+      );
     } catch (error: any) {
       toast({
-        title: 'Export failed',
-        description: 'Failed to export sales report CSV',
-        status: 'error',
-        duration: 3000
+        title: "Export failed",
+        description: "Failed to export sales report CSV",
+        status: "error",
+        duration: 3000,
       });
     }
   };
@@ -295,49 +340,53 @@ const SalesPageContent: React.FC = () => {
   const handleDuplicate = async (sale: Sale) => {
     try {
       // Fetch the latest data to ensure we duplicate the most recent version
-      setState(prev => ({ ...prev, loading: true }));
+      setState((prev) => ({ ...prev, loading: true }));
       const freshSale = await salesService.getSale(sale.id);
 
       // Create a copy without ID and reset status-related fields
       const clonedSale = {
         ...freshSale,
         id: 0, // Reset ID to indicate new record
-        invoice_number: '', // Clear invoice number
-        code: '', // Clear code
-        status: 'DRAFT', // Reset status
+        invoice_number: "", // Clear invoice number
+        code: "", // Clear code
+        status: "DRAFT", // Reset status
         date: new Date().toISOString(), // Set to today
         due_date: new Date().toISOString(), // Set to today (will be recalculated)
         paid_amount: 0,
         outstanding_amount: 0,
-        approval_status: 'NOT_STARTED',
+        approval_status: "NOT_STARTED",
         approval_request: undefined,
         logs: [],
         // Ensure items ID are also reset if necessary, or handled by backend as new items
-        sale_items: freshSale.sale_items?.map(item => ({
+        sale_items: freshSale.sale_items?.map((item) => ({
           ...item,
           id: 0, // Reset item ID
-          sale_id: 0
-        }))
+          sale_id: 0,
+        })),
       } as Sale;
 
-      setState(prev => ({ ...prev, selectedSale: clonedSale, loading: false }));
+      setState((prev) => ({
+        ...prev,
+        selectedSale: clonedSale,
+        loading: false,
+      }));
       onFormOpen();
     } catch (error) {
-      console.error('Error fetching sale details for duplication:', error);
+      console.error("Error fetching sale details for duplication:", error);
       toast({
-        title: 'Error duplicating sale',
-        description: 'Failed to fetch latest sale data.',
-        status: 'error',
-        duration: 3000
+        title: "Error duplicating sale",
+        description: "Failed to fetch latest sale data.",
+        status: "error",
+        duration: 3000,
       });
-      setState(prev => ({ ...prev, loading: false }));
+      setState((prev) => ({ ...prev, loading: false }));
     }
   };
 
   // Handle form save
   const handleFormSave = () => {
     onFormClose();
-    setState(prev => ({ ...prev, selectedSale: null })); // Reset selected sale
+    setState((prev) => ({ ...prev, selectedSale: null })); // Reset selected sale
     loadSales();
     loadSalesSummary();
   };
@@ -345,7 +394,7 @@ const SalesPageContent: React.FC = () => {
   // Handle form close
   const handleFormClose = () => {
     onFormClose();
-    setState(prev => ({ ...prev, selectedSale: null })); // Reset selected sale
+    setState((prev) => ({ ...prev, selectedSale: null })); // Reset selected sale
   };
 
   // Handle payment save
@@ -357,7 +406,7 @@ const SalesPageContent: React.FC = () => {
 
   // Handle view details
   const handleViewDetails = (sale: Sale) => {
-    window.open(`/sales/${sale.id}`, '_blank');
+    window.open(`/sales/${sale.id}`, "_blank");
   };
 
   // Handle download invoice
@@ -367,26 +416,30 @@ const SalesPageContent: React.FC = () => {
 
   // Handle create receipt (PDF) when fully paid
   const handleCreateReceipt = (sale: Sale) => {
-    if (sale.status !== 'PAID' && sale.outstanding_amount > 0) {
+    if (sale.status !== "PAID" && sale.outstanding_amount > 0) {
       toast({
-        title: 'Not fully paid',
-        description: 'Receipt can only be created when the sale is fully paid.',
-        status: 'warning',
-        duration: 3000
+        title: "Not fully paid",
+        description: "Receipt can only be created when the sale is fully paid.",
+        status: "warning",
+        duration: 3000,
       });
       return;
     }
     salesService
       .downloadReceiptPDF(sale.id, sale.invoice_number || sale.code)
       .then(() => {
-        handleSuccess('Receipt has been generated and downloaded', toast, 'download receipt');
+        handleSuccess(
+          "Receipt has been generated and downloaded",
+          toast,
+          "download receipt",
+        );
       })
       .catch((err) => {
         toast({
-          title: 'Failed to generate receipt',
-          description: err?.message || 'Please try again later',
-          status: 'error',
-          duration: 4000
+          title: "Failed to generate receipt",
+          description: err?.message || "Please try again later",
+          status: "error",
+          duration: 4000,
         });
       });
   };
@@ -398,20 +451,23 @@ const SalesPageContent: React.FC = () => {
         <Flex justify="space-between" align="center" mb={6} wrap="wrap" gap={4}>
           <VStack align="start" spacing={1}>
             <Heading size="xl" color={headingColor} fontWeight="600">
-              {t('sales.management')}
+              {t("sales.management")}
             </Heading>
             <Text color={subheadingColor} fontSize="md">
-              {t('sales.manageTransactions')}
+              {t("sales.manageTransactions")}
             </Text>
           </VStack>
 
           <HStack spacing={3}>
-            <Tooltip label={t('sales.refreshData')}>
+            <Tooltip label={t("sales.refreshData")}>
               <IconButton
                 aria-label="Refresh"
                 icon={<FiRefreshCw />}
                 variant="ghost"
-                onClick={() => { loadSales(); loadSalesSummary(); }}
+                onClick={() => {
+                  loadSales();
+                  loadSalesSummary();
+                }}
                 isLoading={state.loading}
               />
             </Tooltip>
@@ -424,7 +480,7 @@ const SalesPageContent: React.FC = () => {
               onClick={onInvoiceTypesOpen}
               title="Manage Invoice Types"
             >
-              {t('sales.invoiceTypes')}
+              {t("sales.invoiceTypes")}
             </Button>
 
             {canExport && (
@@ -436,11 +492,15 @@ const SalesPageContent: React.FC = () => {
                   variant="outline"
                   size="md"
                 >
-                  {t('sales.exportReport')}
+                  {t("sales.exportReport")}
                 </MenuButton>
                 <MenuList>
-                  <MenuItem onClick={handleExportPDF}>{t('sales.exportPDF')}</MenuItem>
-                  <MenuItem onClick={handleExportCSV}>{t('sales.exportCSV')}</MenuItem>
+                  <MenuItem onClick={handleExportPDF}>
+                    {t("sales.exportPDF")}
+                  </MenuItem>
+                  <MenuItem onClick={handleExportCSV}>
+                    {t("sales.exportCSV")}
+                  </MenuItem>
                 </MenuList>
               </Menu>
             )}
@@ -454,11 +514,11 @@ const SalesPageContent: React.FC = () => {
                 fontWeight="medium"
                 onClick={() => handleSaleAction()}
                 _hover={{
-                  transform: 'translateY(-1px)',
-                  boxShadow: 'lg'
+                  transform: "translateY(-1px)",
+                  boxShadow: "lg",
                 }}
               >
-                {t('sales.createSale')}
+                {t("sales.createSale")}
               </Button>
             )}
           </HStack>
@@ -479,15 +539,20 @@ const SalesPageContent: React.FC = () => {
           <CardBody>
             <Flex gap={4} align="end" wrap="wrap">
               <Box flex="1" minW="300px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                  {t('sales.searchTransactions')}
+                <Text
+                  fontSize="sm"
+                  fontWeight="medium"
+                  mb={2}
+                  color={textColor}
+                >
+                  {t("sales.searchTransactions")}
                 </Text>
                 <InputGroup>
                   <InputLeftElement pointerEvents="none">
                     <FiSearch color={textColor} />
                   </InputLeftElement>
                   <Input
-                    placeholder={t('sales.searchPlaceholder')}
+                    placeholder={t("sales.searchPlaceholder")}
                     value={state.filter.search}
                     onChange={(e) => handleSearch(e.target.value)}
                     bg={tableBg}
@@ -496,42 +561,61 @@ const SalesPageContent: React.FC = () => {
               </Box>
 
               <Box minW="180px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                  {t('sales.filterByStatus')}
+                <Text
+                  fontSize="sm"
+                  fontWeight="medium"
+                  mb={2}
+                  color={textColor}
+                >
+                  {t("sales.filterByStatus")}
                 </Text>
                 <Select
-                  placeholder={t('sales.allStatus')}
+                  placeholder={t("sales.allStatus")}
                   value={state.filter.status}
-                  onChange={(e) => handleFilterChange('status', e.target.value)}
+                  onChange={(e) => handleFilterChange("status", e.target.value)}
                   bg={tableBg}
                 >
-                  <option value="DRAFT">{t('sales.draft')}</option>
-                  <option value="INVOICED">{t('sales.invoiced')}</option>
-                  <option value="PAID">{t('sales.paid')}</option>
-                  <option value="CANCELLED">{t('sales.cancelled')}</option>
+                  <option value="DRAFT">{t("sales.draft")}</option>
+                  <option value="INVOICED">{t("sales.invoiced")}</option>
+                  <option value="PAID">{t("sales.paid")}</option>
+                  <option value="CANCELLED">{t("sales.cancelled")}</option>
                 </Select>
               </Box>
 
               <Box minW="160px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                  {t('sales.startDate')}
+                <Text
+                  fontSize="sm"
+                  fontWeight="medium"
+                  mb={2}
+                  color={textColor}
+                >
+                  {t("sales.startDate")}
                 </Text>
                 <Input
                   type="date"
                   value={state.filter.start_date}
-                  onChange={(e) => handleFilterChange('start_date', e.target.value)}
+                  onChange={(e) =>
+                    handleFilterChange("start_date", e.target.value)
+                  }
                   bg={tableBg}
                 />
               </Box>
 
               <Box minW="160px">
-                <Text fontSize="sm" fontWeight="medium" mb={2} color={textColor}>
-                  {t('sales.endDate')}
+                <Text
+                  fontSize="sm"
+                  fontWeight="medium"
+                  mb={2}
+                  color={textColor}
+                >
+                  {t("sales.endDate")}
                 </Text>
                 <Input
                   type="date"
                   value={state.filter.end_date}
-                  onChange={(e) => handleFilterChange('end_date', e.target.value)}
+                  onChange={(e) =>
+                    handleFilterChange("end_date", e.target.value)
+                  }
                   bg={tableBg}
                 />
               </Box>
@@ -540,26 +624,33 @@ const SalesPageContent: React.FC = () => {
                 leftIcon={<FiFilter />}
                 variant="outline"
                 onClick={() => {
-                  setState(prev => ({
+                  setState((prev) => ({
                     ...prev,
                     filter: {
                       ...prev.filter,
-                      search: '',
-                      status: '',
-                      start_date: '',
-                      end_date: ''
-                    }
+                      search: "",
+                      status: "",
+                      start_date: "",
+                      end_date: "",
+                    },
                   }));
                   loadSales({
-                    search: '',
-                    status: '',
-                    start_date: '',
-                    end_date: '',
-                    page: 1
+                    search: "",
+                    status: "",
+                    start_date: "",
+                    end_date: "",
+                    page: 1,
+                  });
+                  loadSalesSummary({
+                    search: "",
+                    status: "",
+                    start_date: "",
+                    end_date: "",
+                    page: 1,
                   });
                 }}
               >
-                {t('sales.clearFilters')}
+                {t("sales.clearFilters")}
               </Button>
             </Flex>
           </CardBody>
@@ -579,8 +670,16 @@ const SalesPageContent: React.FC = () => {
           loading={state.loading}
           onViewDetails={handleViewDetails}
           onEdit={canEdit ? (sale) => handleSaleAction(sale) : undefined}
-          onConfirm={canEdit ? (sale) => handleSaleStatusAction(sale, 'confirm') : undefined}
-          onCancel={canEdit ? (sale) => handleSaleStatusAction(sale, 'cancel') : undefined}
+          onConfirm={
+            canEdit
+              ? (sale) => handleSaleStatusAction(sale, "confirm")
+              : undefined
+          }
+          onCancel={
+            canEdit
+              ? (sale) => handleSaleStatusAction(sale, "cancel")
+              : undefined
+          }
           onPayment={canEdit ? handlePayment : undefined}
           onDelete={canDelete ? handleDelete : undefined}
           onDuplicate={canCreate ? handleDuplicate : undefined}
@@ -591,7 +690,6 @@ const SalesPageContent: React.FC = () => {
           canEdit={canEdit}
           canDelete={canDelete}
         />
-
       </Box>
 
       {/* Sales Form Modal */}
@@ -599,8 +697,16 @@ const SalesPageContent: React.FC = () => {
         isOpen={isFormOpen}
         onClose={handleFormClose}
         onSave={handleFormSave}
-        sale={state.selectedSale && state.selectedSale.id > 0 ? state.selectedSale : undefined}
-        initialData={state.selectedSale && state.selectedSale.id === 0 ? state.selectedSale : undefined}
+        sale={
+          state.selectedSale && state.selectedSale.id > 0
+            ? state.selectedSale
+            : undefined
+        }
+        initialData={
+          state.selectedSale && state.selectedSale.id === 0
+            ? state.selectedSale
+            : undefined
+        }
       />
 
       {/* Payment Form Modal */}
@@ -623,7 +729,9 @@ const SalesPageContent: React.FC = () => {
           <ModalHeader>
             <HStack>
               <FiSettings />
-              <Text>{t('sales.invoiceTypes')} {t('common.management')}</Text>
+              <Text>
+                {t("sales.invoiceTypes")} {t("common.management")}
+              </Text>
             </HStack>
           </ModalHeader>
           <ModalCloseButton />

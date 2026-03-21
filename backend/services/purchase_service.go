@@ -34,6 +34,7 @@ type PurchaseService struct {
 	assetCapitalizationSvc *AssetCapitalizationService
 	journalServiceSSOT     *PurchaseJournalServiceSSOT // NEW: unified_journal_ledger (for Balance Sheet)
 	coaService             *COAService
+	stockMonitoringService *StockMonitoringService
 }
 
 type PurchaseResult struct {
@@ -57,6 +58,7 @@ func NewPurchaseService(
 	unifiedJournalService *UnifiedJournalService,
 	coaService *COAService,
 	purchaseJournalServiceSSOT *PurchaseJournalServiceSSOT,
+	stockMonitoringService *StockMonitoringService,
 ) *PurchaseService {
 	// Initialize SSOT Journal Adapter (wired to unified journal service)
 	// Use TaxAccountService so account mapping is flexible (no hardcoded codes)
@@ -64,19 +66,20 @@ func NewPurchaseService(
 	ssotAdapter := NewPurchaseSSOTJournalAdapter(db, unifiedJournalService, accountRepo, taxAccountService)
 
 	ps := &PurchaseService{
-		db:                    db,
-		purchaseRepo:          purchaseRepo,
-		productRepo:           productRepo,
-		contactRepo:           contactRepo,
-		accountRepo:           accountRepo,
-		approvalService:       approvalService,
-		journalService:        journalService,
-		journalRepo:           journalRepo,
-		pdfService:            pdfService,
-		unifiedJournalService: unifiedJournalService,
-		ssotJournalAdapter:    ssotAdapter,
-		journalServiceSSOT:    purchaseJournalServiceSSOT,
-		coaService:            coaService,
+		db:                     db,
+		purchaseRepo:           purchaseRepo,
+		productRepo:            productRepo,
+		contactRepo:            contactRepo,
+		accountRepo:            accountRepo,
+		approvalService:        approvalService,
+		journalService:         journalService,
+		journalRepo:            journalRepo,
+		pdfService:             pdfService,
+		unifiedJournalService:  unifiedJournalService,
+		ssotJournalAdapter:     ssotAdapter,
+		journalServiceSSOT:     purchaseJournalServiceSSOT,
+		coaService:             coaService,
+		stockMonitoringService: stockMonitoringService,
 	}
 	// Asset capitalization service (reuses existing repos and unified journal)
 	ps.assetCapitalizationSvc = NewAssetCapitalizationService(db, accountRepo, unifiedJournalService, journalRepo)
@@ -133,6 +136,11 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	}
 	fmt.Printf("✅ Vendor validation passed: %s (ID: %d)\n", vendor.Name, vendor.ID)
 
+	request.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(request.PaymentMethod)))
+	if err := s.validatePurchasePaymentConfiguration(request.PaymentMethod, request.BankAccountID, request.CreditAccountID); err != nil {
+		return nil, err
+	}
+
 	// Generate purchase code
 	code, err := s.generatePurchaseCode()
 	if err != nil {
@@ -150,7 +158,7 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		DueDate:  request.DueDate,
 		Discount: request.Discount,
 		// Payment method fields
-		PaymentMethod:    getPaymentMethod(request.PaymentMethod),
+		PaymentMethod:    request.PaymentMethod,
 		BankAccountID:    request.BankAccountID,
 		CreditAccountID:  request.CreditAccountID,
 		PaymentReference: request.PaymentReference,
@@ -306,7 +314,7 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 	// Update payment method fields
 	if request.PaymentMethod != nil {
-		purchase.PaymentMethod = *request.PaymentMethod
+		purchase.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(*request.PaymentMethod)))
 	}
 	if request.BankAccountID != nil {
 		purchase.BankAccountID = request.BankAccountID
@@ -316,6 +324,10 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 	if request.PaymentReference != nil {
 		purchase.PaymentReference = *request.PaymentReference
+	}
+
+	if err := s.validatePurchasePaymentConfiguration(purchase.PaymentMethod, purchase.BankAccountID, purchase.CreditAccountID); err != nil {
+		return nil, err
 	}
 
 	// Update items if provided
@@ -471,7 +483,7 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 
 	// Create approval request
 	fmt.Printf("ℹ Creating approval request for purchase %d\n", id)
-	err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, userID)
+	err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, purchase.UserID)
 	if err != nil {
 		fmt.Printf("❌ Failed to create approval request for purchase %d: %v\n", id, err)
 		return fmt.Errorf("failed to create approval request: %v", err)
@@ -482,7 +494,15 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 	// When Employee submits, we immediately progress to the next step (Finance/Manager)
 	// We directly update the database instead of calling ProcessApprovalAction
 	// to avoid role-check issues when the step preload doesn't work correctly
-	if purchase.ApprovalRequestID != nil {
+	submissionComment := "Purchase submitted by requester for approval"
+	if userID != purchase.UserID {
+		submissionComment = fmt.Sprintf("Purchase submitted for approval on behalf of requester by user %d", userID)
+	}
+	if err := s.advanceRequesterSubmissionStep(purchase, userID, submissionComment); err != nil {
+		return err
+	}
+
+	if false && purchase.ApprovalRequestID != nil {
 		now := time.Now()
 		requestID := *purchase.ApprovalRequestID
 
@@ -539,6 +559,78 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 	return err
 }
 
+func (s *PurchaseService) advanceRequesterSubmissionStep(purchase *models.Purchase, actorID uint, comments string) error {
+	if purchase == nil || purchase.ApprovalRequestID == nil {
+		return nil
+	}
+
+	var approvalReq models.ApprovalRequest
+	if err := s.db.Preload("ApprovalSteps.Step").First(&approvalReq, *purchase.ApprovalRequestID).Error; err != nil {
+		return fmt.Errorf("failed to load approval request for purchase submission: %v", err)
+	}
+
+	var requesterAction *models.ApprovalAction
+	for i := range approvalReq.ApprovalSteps {
+		action := &approvalReq.ApprovalSteps[i]
+		if action.IsActive &&
+			action.Status == models.ApprovalStatusPending &&
+			strings.EqualFold(strings.TrimSpace(action.Step.ApproverRole), "employee") {
+			requesterAction = action
+			break
+		}
+	}
+
+	if requesterAction == nil {
+		return nil
+	}
+
+	now := time.Now()
+	if err := s.db.Model(&models.ApprovalAction{}).
+		Where("id = ?", requesterAction.ID).
+		Updates(map[string]interface{}{
+			"status":      models.ApprovalStatusApproved,
+			"approver_id": actorID,
+			"comments":    comments,
+			"action_date": now,
+			"is_active":   false,
+		}).Error; err != nil {
+		return fmt.Errorf("failed to advance requester submission step: %v", err)
+	}
+
+	history := models.ApprovalHistory{
+		RequestID: approvalReq.ID,
+		UserID:    actorID,
+		Action:    models.ApprovalActionApproved,
+		Comments:  comments,
+		Metadata:  "{}",
+	}
+	if err := s.db.Create(&history).Error; err != nil {
+		return fmt.Errorf("failed to create requester submission history: %v", err)
+	}
+
+	nextStep := s.approvalService.getNextStep(approvalReq.ApprovalSteps, requesterAction.Step.StepOrder)
+	if nextStep == nil {
+		return nil
+	}
+
+	for i := range approvalReq.ApprovalSteps {
+		action := &approvalReq.ApprovalSteps[i]
+		if action.StepID == nextStep.ID {
+			action.IsActive = true
+			if err := s.db.Model(&models.ApprovalAction{}).
+				Where("id = ?", action.ID).
+				Update("is_active", true).Error; err != nil {
+				return fmt.Errorf("failed to activate next approval step: %v", err)
+			}
+			go s.approvalService.notifyApprovers(&approvalReq, *nextStep)
+			break
+		}
+	}
+
+	fmt.Printf("âœ… Request %d advanced from requester submission to %s step\n", approvalReq.ID, nextStep.StepName)
+	return nil
+}
+
 func (s *PurchaseService) ProcessPurchaseApproval(purchaseID uint, approved bool, userID uint) error {
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
 	if err != nil {
@@ -586,8 +678,40 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 
 	now := time.Now()
 	result := make(map[string]interface{})
+	userRoleNorm := strings.ToLower(strings.TrimSpace(userRole))
 
 	if !approved {
+		rejectionComments := strings.TrimSpace(comments)
+		if rejectionComments == "" {
+			rejectionComments = "Purchase rejected without comment"
+		}
+
+		if purchase.ApprovalRequestID != nil {
+			action := models.ApprovalActionDTO{
+				Action:   "REJECT",
+				Comments: rejectionComments,
+			}
+			if err := s.approvalService.ProcessApprovalAction(*purchase.ApprovalRequestID, userID, action); err != nil {
+				return nil, fmt.Errorf("failed to process purchase rejection: %v", err)
+			}
+
+			fmt.Printf("ðŸ”” Calling OnPurchaseRejected cleanup for purchase %d\n", purchaseID)
+			cleanupErr := s.OnPurchaseRejected(purchaseID)
+			if cleanupErr != nil {
+				fmt.Printf("âš ï¸ Warning: Post-rejection cleanup failed for purchase %d: %v\n", purchaseID, cleanupErr)
+			} else {
+				fmt.Printf("âœ… Post-rejection cleanup completed for purchase %d\n", purchaseID)
+			}
+
+			result["message"] = "Purchase rejected"
+			result["purchase_id"] = purchaseID
+			result["status"] = "REJECTED"
+			result["rejected_by"] = userID
+			result["rejected_at"] = now.Format(time.RFC3339)
+			result["rejection_reason"] = rejectionComments
+			return result, nil
+		}
+
 		// Purchase rejected
 		purchase.Status = models.PurchaseStatusCancelled
 		purchase.ApprovalStatus = models.PurchaseApprovalRejected
@@ -596,7 +720,7 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 		// If no approval request exists (DRAFT status), create one for history tracking
 		if purchase.ApprovalRequestID == nil {
 			// Create a minimal approval request for history tracking (without workflow dependency)
-			err = s.createMinimalApprovalRequestForRejection(purchase, userID)
+			err = s.createMinimalApprovalRequestForRejection(purchase, purchase.UserID)
 			if err != nil {
 				// Continue even if this fails - the rejection should still proceed
 			}
@@ -613,15 +737,15 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 			if approvalReq, err := s.approvalService.GetApprovalRequest(*purchase.ApprovalRequestID); err == nil {
 				approvalReq.Status = models.ApprovalStatusRejected
 				approvalReq.CompletedAt = &now
-				approvalReq.RejectReason = comments
-				s.approvalService.UpdateApprovalRequest(approvalReq)
+				approvalReq.RejectReason = rejectionComments
+				if updateErr := s.approvalService.UpdateApprovalRequest(approvalReq); updateErr != nil {
+					fmt.Printf("Failed to update approval request %d after rejection: %v\n", approvalReq.ID, updateErr)
+				} else {
+					go s.approvalService.notifyRequester(approvalReq, models.ApprovalActionRejected)
+				}
 			}
 
-			// Ensure comments are not empty for rejection history
-			historyComments := comments
-			if historyComments == "" {
-				historyComments = "Purchase rejected without comment"
-			}
+			historyComments := rejectionComments
 
 			historyErr := s.approvalService.CreateApprovalHistory(*purchase.ApprovalRequestID, userID, models.ApprovalActionRejected, historyComments)
 			if historyErr != nil {
@@ -648,15 +772,15 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 		result["status"] = "REJECTED"
 		result["rejected_by"] = userID
 		result["rejected_at"] = now.Format(time.RFC3339)
-		result["rejection_reason"] = comments
+		result["rejection_reason"] = rejectionComments
 		return result, nil
 	}
 
 	// Purchase is approved, check for escalation
-	if userRole == "finance" && escalateToDirector {
+	if userRoleNorm == "finance" && escalateToDirector {
 		// If no approval request exists (DRAFT status), create one
 		if purchase.ApprovalRequestID == nil {
-			err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, userID)
+			err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, purchase.UserID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create approval request: %v", err)
 			}
@@ -665,6 +789,10 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 			if err != nil {
 				return nil, err
 			}
+		}
+
+		if err := s.advanceRequesterSubmissionStep(purchase, purchase.UserID, "Purchase submitted by requester for approval"); err != nil {
+			return nil, err
 		}
 
 		// IMPORTANT: Escalate to director FIRST before processing approval
@@ -714,7 +842,7 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 
 	// If no approval request exists for non-DRAFT status, create one for history tracking
 	if purchase.ApprovalRequestID == nil {
-		err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, userID)
+		err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, purchase.UserID)
 		if err != nil {
 			fmt.Printf("Failed to create approval request: %v\n", err)
 			// Continue even if this fails - the approval should still proceed
@@ -724,6 +852,37 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if err := s.advanceRequesterSubmissionStep(purchase, purchase.UserID, "Purchase submitted by requester for approval"); err != nil {
+		return nil, err
+	}
+
+	if purchase.ApprovalRequestID != nil {
+		action := models.ApprovalActionDTO{
+			Action:   "APPROVE",
+			Comments: comments,
+		}
+		if err := s.approvalService.ProcessApprovalAction(*purchase.ApprovalRequestID, userID, action); err != nil {
+			return nil, fmt.Errorf("failed to process purchase approval: %v", err)
+		}
+
+		purchase, err = s.purchaseRepo.FindByID(purchaseID)
+		if err != nil {
+			return nil, err
+		}
+
+		resultMessage := "Purchase approved successfully"
+		if purchase.ApprovalStatus == models.PurchaseApprovalPending || purchase.Status == models.PurchaseStatusPending {
+			resultMessage = "Purchase approved at the current step and forwarded to the next approver"
+		}
+
+		result["message"] = resultMessage
+		result["purchase_id"] = purchaseID
+		result["escalated"] = false
+		result["status"] = purchase.Status
+		result["approval_status"] = purchase.ApprovalStatus
+		return result, nil
 	}
 
 	// Create approval history
@@ -1068,8 +1227,8 @@ func (s *PurchaseService) ValidateThreeWayMatching(purchaseID uint) (bool, error
 
 // Analytics and Reporting
 
-func (s *PurchaseService) GetPurchasesSummary(startDate, endDate string) (*models.PurchaseSummary, error) {
-	return s.purchaseRepo.GetPurchasesSummary(startDate, endDate)
+func (s *PurchaseService) GetPurchasesSummary(filter models.PurchaseFilter) (*models.PurchaseSummary, error) {
+	return s.purchaseRepo.GetPurchasesSummary(filter)
 }
 
 func (s *PurchaseService) GetVendorPurchaseSummary(vendorID uint) (*models.VendorPurchaseSummary, error) {
@@ -1195,7 +1354,7 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 
 	// 1. Update product stock
 	fmt.Printf("🔄 Updating product stock for approved purchase %d\n", purchaseID)
-	err = s.updateProductStockOnApproval(purchase)
+	affectedProductIDs, err := s.updateProductStockOnApproval(purchase)
 	if err != nil {
 		fmt.Printf("⚠️ Warning: Failed to update product stock: %v\n", err)
 		// Continue processing even if stock update fails
@@ -1275,6 +1434,8 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 		fmt.Printf("⚠️ Warning: Gagal memproses data Prepaid Expense: %v\n", err)
 		// Tidak mereturn error agar approval parent tetap jalan
 	}
+
+	s.syncStockAlertsForProducts(affectedProductIDs)
 
 	fmt.Printf("✅ Post-approval processing completed for purchase %s\n", purchase.Code)
 	return nil
@@ -1650,6 +1811,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 
 	// 4. Reverse product stock (subtract the quantities that were added on approval)
 	fmt.Printf("📦 Reversing product stock for rejected purchase %s\n", purchase.Code)
+	affectedProductIDs := make(map[uint]struct{})
 	for _, item := range purchase.PurchaseItems {
 		// Skip ASSET items - they don't have inventory/stock
 		if item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset {
@@ -1678,6 +1840,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		if err != nil {
 			fmt.Printf("⚠️ Warning: Failed to reverse stock for product %d: %v\n", product.ID, err)
 		} else {
+			affectedProductIDs[product.ID] = struct{}{}
 			fmt.Printf("✅ Product %d stock reversed: %d → %d\n", product.ID, oldStock, product.Stock)
 		}
 	}
@@ -1755,8 +1918,25 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		}
 	}
 
+	s.syncStockAlertsForProducts(affectedProductIDs)
+
 	fmt.Printf("✅ Post-rejection cleanup completed for purchase %s\n", purchase.Code)
 	return nil
+}
+
+func (s *PurchaseService) syncStockAlertsForProducts(productIDs map[uint]struct{}) {
+	if s.stockMonitoringService == nil || len(productIDs) == 0 {
+		return
+	}
+
+	affectedProductIDs := make([]uint, 0, len(productIDs))
+	for productID := range productIDs {
+		affectedProductIDs = append(affectedProductIDs, productID)
+	}
+
+	if err := s.stockMonitoringService.SyncProductAlerts(affectedProductIDs...); err != nil {
+		fmt.Printf("⚠️ Warning: Failed to sync stock alerts for %d products: %v\n", len(affectedProductIDs), err)
+	}
 }
 
 // Private helper methods
@@ -1951,6 +2131,60 @@ func getPaymentMethod(paymentMethod string) string {
 		return models.PurchasePaymentCredit // Default to credit
 	}
 	return paymentMethod
+}
+
+func (s *PurchaseService) validatePurchasePaymentConfiguration(paymentMethod string, bankAccountID *uint, creditAccountID *uint) error {
+	method := getPaymentMethod(strings.ToUpper(strings.TrimSpace(paymentMethod)))
+
+	switch method {
+	case models.PurchasePaymentCredit:
+		if bankAccountID != nil && *bankAccountID != 0 {
+			return fmt.Errorf("bank/cash account is not allowed for CREDIT purchase method")
+		}
+		if creditAccountID == nil || *creditAccountID == 0 {
+			return fmt.Errorf("credit account is required for CREDIT purchase method")
+		}
+
+		var creditAccount models.Account
+		if err := s.db.Select("id", "type", "is_header", "is_active").First(&creditAccount, *creditAccountID).Error; err != nil {
+			return fmt.Errorf("credit account not found: %v", err)
+		}
+		if !creditAccount.IsActive {
+			return fmt.Errorf("selected credit account is inactive")
+		}
+		if creditAccount.IsHeader {
+			return fmt.Errorf("selected credit account must be a detail account")
+		}
+		if strings.ToUpper(strings.TrimSpace(creditAccount.Type)) != models.AccountTypeLiability {
+			return fmt.Errorf("selected credit account must be a liability account")
+		}
+
+	case models.PurchasePaymentCash, models.PurchasePaymentTransfer, models.PurchasePaymentCheck:
+		if creditAccountID != nil && *creditAccountID != 0 {
+			return fmt.Errorf("credit account is only allowed for CREDIT purchase method")
+		}
+		if bankAccountID == nil || *bankAccountID == 0 {
+			return fmt.Errorf("cash/bank account is required for %s purchase method", method)
+		}
+
+		var cashBank models.CashBank
+		if err := s.db.Select("id", "type", "is_active").First(&cashBank, *bankAccountID).Error; err != nil {
+			return fmt.Errorf("cash/bank account not found: %v", err)
+		}
+		if !cashBank.IsActive {
+			return fmt.Errorf("selected cash/bank account is inactive")
+		}
+
+		expectedType := expectedCashBankTypeForPurchaseMethod(method)
+		if strings.ToUpper(strings.TrimSpace(cashBank.Type)) != expectedType {
+			return fmt.Errorf("selected cash/bank account must be of type %s for %s purchase method", expectedType, method)
+		}
+
+	default:
+		return fmt.Errorf("unsupported purchase payment method: %s", method)
+	}
+
+	return nil
 }
 
 // getPPNRateFromPointer returns default PPN rate of 11% if nil, otherwise respects the provided value
@@ -2299,8 +2533,9 @@ func calculatePurchaseNativeOutflow(cashBank *models.CashBank, bookAmountIDR flo
 }
 
 // updateProductStockOnApproval updates product stock when purchase is approved
-func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase) error {
+func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase) (map[uint]struct{}, error) {
 	fmt.Printf("📦 Starting stock update for purchase %s with %d items\n", purchase.Code, len(purchase.PurchaseItems))
+	affectedProductIDs := make(map[uint]struct{})
 
 	for _, item := range purchase.PurchaseItems {
 		// Skip ASSET items - they don't have inventory/stock
@@ -2320,6 +2555,16 @@ func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase
 		if err != nil {
 			fmt.Printf("❌ Error finding product %d: %v\n", *item.ProductID, err)
 			continue // Skip this item but continue with others
+		}
+
+		if product.IsAssembly {
+			fmt.Printf("ℹ️ Skipping stock update for assembly product %d (%s)\n", product.ID, product.Name)
+			continue
+		}
+
+		if product.IsService {
+			fmt.Printf("ℹ️ Skipping stock update for service product %d (%s)\n", product.ID, product.Name)
+			continue
 		}
 
 		fmt.Printf("📋 Product %d (%s): Current stock = %d, Adding quantity = %d\n",
@@ -2347,14 +2592,15 @@ func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase
 		err = s.productRepo.Update(context.Background(), product)
 		if err != nil {
 			fmt.Printf("❌ Failed to update product %d stock: %v\n", product.ID, err)
-			return fmt.Errorf("failed to update stock for product %d: %v", product.ID, err)
+			return affectedProductIDs, fmt.Errorf("failed to update stock for product %d: %v", product.ID, err)
 		}
+		affectedProductIDs[product.ID] = struct{}{}
 
 		fmt.Printf("✅ Product %d stock updated: %d → %d\n", product.ID, oldStock, product.Stock)
 	}
 
 	fmt.Printf("🎉 Stock update completed for purchase %s\n", purchase.Code)
-	return nil
+	return affectedProductIDs, nil
 }
 
 // createPaymentTrackingForCreditPurchase creates clean accounts payable tracking for approved credit purchases

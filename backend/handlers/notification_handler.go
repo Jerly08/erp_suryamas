@@ -39,9 +39,6 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 		return
 	}
 
-	// Proactively run minimum stock check so low-stock notifications appear without manual triggers
-	h.runAutoStockCheck(c)
-
 	page := 1
 	limit := 20
 	onlyUnread := false
@@ -92,8 +89,6 @@ func (h *NotificationHandler) GetNotificationSummary(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or missing token"})
 		return
 	}
-
-	h.runAutoStockCheck(c)
 
 	summary, err := h.notificationService.GetNotificationSummary(userID)
 	if err != nil {
@@ -169,9 +164,6 @@ func (h *NotificationHandler) GetUnreadCount(c *gin.Context) {
 		return
 	}
 
-	// Ensure stock alerts are created before counting
-	h.runAutoStockCheck(c)
-
 	notificationTypes := parseNotificationTypes(c)
 
 	var count int64
@@ -226,9 +218,6 @@ func (h *NotificationHandler) GetNotificationsByType(c *gin.Context) {
 	}
 	notificationType := c.Param("type")
 
-	// If requesting stock-related notifications, proactively run the stock check
-	h.runAutoStockCheck(c)
-
 	page := 1
 	limit := 20
 
@@ -257,24 +246,6 @@ func (h *NotificationHandler) GetNotificationsByType(c *gin.Context) {
 		"limit":         limit,
 		"type":          notificationType,
 	})
-}
-
-// runAutoStockCheck checks min stock and resolves alerts so notifications appear without manual triggers
-func (h *NotificationHandler) runAutoStockCheck(c *gin.Context) {
-	// Only run for roles that should see stock alerts
-	role, err := utils.GetUserRoleFromToken(c)
-	if err != nil {
-		return
-	}
-	switch strings.ToLower(role) {
-	case "admin", "inventory_manager", "director":
-		if h.stockMonitoringService != nil {
-			_ = h.stockMonitoringService.CheckMinimumStock()
-			_ = h.stockMonitoringService.CheckOutOfStock()
-			_ = h.stockMonitoringService.CheckReorderLevel()
-			_ = h.stockMonitoringService.ResolveStockAlerts()
-		}
-	}
 }
 
 // CreateNotification creates a new notification (admin only)

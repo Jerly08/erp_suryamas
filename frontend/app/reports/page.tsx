@@ -72,6 +72,7 @@ import { reportService } from '../../src/services/reportService';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
 import { ssotPurchaseReportService, SSOTPurchaseReportData } from '../../src/services/ssotPurchaseReportService';
+import periodClosingService, { type PeriodFilterOption } from '@/services/periodClosingService';
 // Import Cash Flow Export Service
 import cashFlowExportService from '../../src/services/cashFlowExportService';
 // Import Closing History Modal
@@ -145,18 +146,6 @@ const getAvailableReports = (t: TranslateFn) => [
     icon: FiTruck
   }
 ];
-
-interface ClosedPeriodHistoryEntry {
-  id?: number | string;
-  code?: string;
-  description?: string;
-  entry_date?: string;
-  end_date?: string;
-  start_date?: string;
-  fiscal_year?: number | string;
-  source?: string;
-  created_at?: string;
-}
 
 interface ClosedPeriodOption {
   value: string;
@@ -838,105 +827,30 @@ const ReportsPage: React.FC = () => {
     }
   };
 
-  // Helper: normalisasi & deduplikasi closed periods berdasarkan tanggal kalender (YYYY-MM-DD)
-  // Sekarang juga menyimpan start_date dari accounting_periods (jika tersedia)
-  const buildUniqueClosedPeriods = (entries: ClosedPeriodHistoryEntry[]): ClosedPeriodOption[] => {
-    if (!Array.isArray(entries)) return [];
+  const mapPeriodFilterOptions = (options: PeriodFilterOption[]): ClosedPeriodOption[] =>
+    options.map((option) => ({
+      value: option.value,
+      label: option.label,
+      date: option.value,
+      start_date: option.period.start_date?.slice(0, 10),
+      fiscal_year: new Date(option.value).getFullYear(),
+      entry_id: option.period.id,
+      code: undefined,
+      source: 'accounting_periods',
+      created_at: option.period.closed_at,
+    }));
 
-    // Backend returns (unified):
-    // - accounting_periods: { id, code, description, entry_date, start_date, created_at, total_debit, net_income, source }
-    // - ssot_journal:       { id, code, description, entry_date, created_at, total_debit, source }
-    const mapped = entries
-      .filter((entry) => entry && (entry.entry_date || entry.end_date))
-      .map((entry) => {
-        const rawEnd = String(entry.entry_date || entry.end_date);
-        // Ambil hanya bagian tanggal 'YYYY-MM-DD' untuk menghindari perbedaan timezone
-        const endDateKey = rawEnd.slice(0, 10);
-        const endDateObj = new Date(endDateKey);
-        const formattedEndDate = endDateObj.toLocaleDateString('id-ID', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric'
-        });
-
-        // Normalisasi start_date jika ada (accounting_periods)
-        const rawStart = entry.start_date ? String(entry.start_date).slice(0, 10) : undefined;
-
-        return {
-          value: endDateKey,
-          label: `${formattedEndDate} - ${entry.description || 'Period Closing'}`,
-          // date tetap disimpan sebagai end_date agar kompatibel dengan existing usage
-          date: endDateKey,
-          start_date: rawStart,
-          fiscal_year: endDateObj.getFullYear(),
-          entry_id: entry.id,
-          code: entry.code,
-          source: entry.source,
-          created_at: entry.created_at
-        };
-      });
-
-    // Deduplikasi berdasarkan tanggal kalender (end_date), prioritaskan source accounting_periods
-    const uniqueMap = new Map<string, ClosedPeriodOption>();
-    mapped.forEach((period) => {
-      const key = period.date;
-      const existing = uniqueMap.get(key);
-      if (!existing) {
-        uniqueMap.set(key, period);
-      } else {
-        if (period.source === 'accounting_periods' && existing.source !== 'accounting_periods') {
-          uniqueMap.set(key, period);
-        } else if (period.source === existing.source) {
-          const periodCreated = period.created_at ? new Date(period.created_at).getTime() : 0;
-          const existingCreated = existing.created_at ? new Date(existing.created_at).getTime() : 0;
-          if (periodCreated > existingCreated) {
-            uniqueMap.set(key, period);
-          }
-        }
-      }
-    });
-
-    return Array.from(uniqueMap.values()).sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+  const getEffectiveClosedPeriods = async (): Promise<ClosedPeriodOption[]> => {
+    const periods = await periodClosingService.getClosedPeriodsForFilter();
+    return mapPeriodFilterOptions(periods);
   };
 
   // Function untuk fetch closed periods
   const fetchClosedPeriods = async () => {
     setLoadingClosedPeriods(true);
     try {
-      const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-      console.log('[Reports] Fetching closed periods:', response.data);
-      console.log('[Reports] Raw data:', JSON.stringify(response.data, null, 2));
-
-      if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-        const periods = buildUniqueClosedPeriods(response.data.data);
-
-        setClosedPeriods(periods);
-        console.log(
-          `[Reports] Loaded ${periods.length} unique closed periods (from ${response.data.data.length} total entries):`,
-          periods
-        );
-
-        if (response.data.data.length > periods.length) {
-          console.log(
-            `[Reports] Deduplicated ${response.data.data.length - periods.length} duplicate entries`
-          );
-        }
-
-        if (periods.length === 0) {
-          console.warn('[Reports] No valid closed periods found - entries may not have entry_date');
-        }
-      } else {
-        console.log('[Reports] No closed periods found in response or invalid data structure');
-        console.log('[Reports] Response structure:', {
-          hasSuccess: !!response.data.success,
-          hasData: !!response.data.data,
-          dataType: typeof response.data.data,
-          isArray: Array.isArray(response.data.data)
-        });
-        setClosedPeriods([]);
-      }
+      const periods = await getEffectiveClosedPeriods();
+      setClosedPeriods(periods);
     } catch (error: unknown) {
       const errorMessage = getErrorMessage(error, 'Failed to fetch closed periods');
       console.error('[Reports] Error fetching closed periods:', error);
@@ -1909,13 +1823,11 @@ const ReportsPage: React.FC = () => {
                 <Button
                   size="md"
                   variant="outline"
-                  colorScheme="blue"
-                  onClick={async () => {
-                    setLoadingSSOTPLClosedPeriods(true);
-                    try {
-                      const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                      if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                        const periods = buildUniqueClosedPeriods(response.data.data);
+                    colorScheme="blue"
+                    onClick={async () => {
+                      setLoadingSSOTPLClosedPeriods(true);
+                      try {
+                        const periods = await getEffectiveClosedPeriods();
                         setSSOTPLClosedPeriods(periods);
                         toast({
                           title: t('messages.toast.success'),
@@ -1923,11 +1835,10 @@ const ReportsPage: React.FC = () => {
                           status: 'success',
                           duration: 2000
                         });
-                      }
-                    } catch (error) {
-                      console.error('Failed to load closed periods:', error);
-                    } finally {
-                      setLoadingSSOTPLClosedPeriods(false);
+                      } catch (error) {
+                        console.error('Failed to load closed periods:', error);
+                      } finally {
+                        setLoadingSSOTPLClosedPeriods(false);
                     }
                   }}
                   isLoading={loadingSSOTPLClosedPeriods}
@@ -2762,13 +2673,11 @@ const ReportsPage: React.FC = () => {
                 <Button
                   size="md"
                   variant="outline"
-                  colorScheme="blue"
-                  onClick={async () => {
-                    setLoadingSSOTCFClosedPeriods(true);
-                    try {
-                      const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                      if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                        const periods = buildUniqueClosedPeriods(response.data.data);
+                    colorScheme="blue"
+                    onClick={async () => {
+                      setLoadingSSOTCFClosedPeriods(true);
+                      try {
+                        const periods = await getEffectiveClosedPeriods();
                         setSSOTCFClosedPeriods(periods);
                         toast({
                           title: t('common.labels.loading'),
@@ -2776,11 +2685,10 @@ const ReportsPage: React.FC = () => {
                           status: 'success',
                           duration: 2000
                         });
-                      }
-                    } catch (error) {
-                      console.error('Failed to load closed periods:', error);
-                    } finally {
-                      setLoadingSSOTCFClosedPeriods(false);
+                      } catch (error) {
+                        console.error('Failed to load closed periods:', error);
+                      } finally {
+                        setLoadingSSOTCFClosedPeriods(false);
                     }
                   }}
                   isLoading={loadingSSOTCFClosedPeriods}
@@ -3423,13 +3331,11 @@ const ReportsPage: React.FC = () => {
                 <Button
                   size="md"
                   variant="outline"
-                  colorScheme="blue"
-                  onClick={async () => {
-                    setLoadingSSOTTBClosedPeriods(true);
-                    try {
-                      const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                      if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                        const periods = buildUniqueClosedPeriods(response.data.data);
+                    colorScheme="blue"
+                    onClick={async () => {
+                      setLoadingSSOTTBClosedPeriods(true);
+                      try {
+                        const periods = await getEffectiveClosedPeriods();
                         setSSOTTBClosedPeriods(periods);
                         toast({
                           title: t('reports.modal.status.success'),
@@ -3437,11 +3343,10 @@ const ReportsPage: React.FC = () => {
                           status: 'success',
                           duration: 2000
                         });
-                      }
-                    } catch (error) {
-                      console.error('Failed to load closed periods:', error);
-                    } finally {
-                      setLoadingSSOTTBClosedPeriods(false);
+                      } catch (error) {
+                        console.error('Failed to load closed periods:', error);
+                      } finally {
+                        setLoadingSSOTTBClosedPeriods(false);
                     }
                   }}
                   isLoading={loadingSSOTTBClosedPeriods}
@@ -4307,13 +4212,11 @@ const ReportsPage: React.FC = () => {
                   <Button
                     size="md"
                     variant="outline"
-                    colorScheme="blue"
-                    onClick={async () => {
-                      setLoadingSSOTGLClosedPeriods(true);
-                      try {
-                        const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-                        if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                          const periods = buildUniqueClosedPeriods(response.data.data);
+                      colorScheme="blue"
+                      onClick={async () => {
+                        setLoadingSSOTGLClosedPeriods(true);
+                        try {
+                          const periods = await getEffectiveClosedPeriods();
                           setSSOTGLClosedPeriods(periods);
                           toast({
                             title: 'Success',
@@ -4321,11 +4224,10 @@ const ReportsPage: React.FC = () => {
                             status: 'success',
                             duration: 2000
                           });
-                        }
-                      } catch (error) {
-                        console.error('Failed to load closed periods:', error);
-                      } finally {
-                        setLoadingSSOTGLClosedPeriods(false);
+                        } catch (error) {
+                          console.error('Failed to load closed periods:', error);
+                        } finally {
+                          setLoadingSSOTGLClosedPeriods(false);
                       }
                     }}
                     isLoading={loadingSSOTGLClosedPeriods}

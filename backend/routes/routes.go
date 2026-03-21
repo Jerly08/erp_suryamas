@@ -240,6 +240,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 		unifiedJournalService,      // Add unified journal service for SSOT integration
 		coaService,                 // Add COA service for journal V2 integration
 		purchaseJournalServiceSSOT, // NEW: SSOT service for Balance Sheet integration
+		stockMonitoringService,
 	)
 	// Handlers that depend on services (purchaseController will be initialized later)
 	purchaseApprovalHandler := handlers.NewPurchaseApprovalHandler(purchaseService, approvalService)
@@ -383,8 +384,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.DeleteJournalEntry)
 
 			// Status operations
-			unifiedJournals.PUT("/:id/post", permMiddleware.CanEdit("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.PostJournalEntry)
-			unifiedJournals.POST("/:id/reverse", permMiddleware.CanEdit("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.ReverseJournalEntry)
+			unifiedJournals.PUT("/:id/post", permMiddleware.CanApprove("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.PostJournalEntry)
+			unifiedJournals.POST("/:id/reverse", permMiddleware.CanApprove("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.ReverseJournalEntry)
 
 			// Balance management
 			unifiedJournals.GET("/account-balances", permMiddleware.CanView("journal"), unifiedJournalController.GetAccountBalances)
@@ -661,7 +662,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			invoiceTypeService := services.NewInvoiceTypeService(db)
 
 			// Initialize Sales Service V2 (clean implementation with proper status-based journal posting)
-			salesServiceV2 := services.NewSalesServiceV2(db, salesRepo, salesJournalServiceV2, salesJournalServiceSSOT, stockService, notificationService, settingsService, invoiceNumberService)
+			salesServiceV2 := services.NewSalesServiceV2(db, salesRepo, salesJournalServiceV2, salesJournalServiceSSOT, stockService, stockMonitoringService, notificationService, settingsService, invoiceNumberService)
 
 			// Initialize Payment repositories, services and controllers
 			paymentRepo := repositories.NewPaymentRepository(db)
@@ -692,6 +693,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				notifs.GET("", notificationHandler.GetNotifications)
 				notifs.GET("/summary", notificationHandler.GetNotificationSummary)
 				notifs.GET("/unread-count", notificationHandler.GetUnreadCount)
+				notifs.DELETE("/:id", notificationHandler.DeleteNotification)
 				notifs.PUT("/:id/read", notificationHandler.MarkNotificationAsRead)
 				notifs.PUT("/read-all", notificationHandler.MarkAllNotificationsAsRead)
 				notifs.GET("/type/:type", notificationHandler.GetNotificationsByType)

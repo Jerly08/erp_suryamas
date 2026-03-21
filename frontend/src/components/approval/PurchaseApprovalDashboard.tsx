@@ -60,6 +60,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import approvalService, { Purchase, ApprovalStats, ApprovalHistory } from '@/services/approvalService';
 import WorkflowVisualization from '@/components/approval/WorkflowVisualization';
 import { normalizeRole, humanizeRole } from '@/utils/roles';
+import { getUserDisplayName } from '@/utils/userDisplay';
 
 interface PurchaseApprovalDashboardProps {}
 
@@ -740,9 +741,10 @@ const getPriorityColor = (amount: number) => {
                         </VStack>
                       </Td>
                       <Td>
-                        {purchase.user?.name || 
-                         `${purchase.user?.first_name} ${purchase.user?.last_name}` || 
-                         'Unknown User'}
+                        {getUserDisplayName(purchase.user, {
+                          fallback: 'Unknown User',
+                          allowRoleFallback: false,
+                        })}
                       </Td>
                       <Td>
                         <HStack spacing={1}>
@@ -833,8 +835,10 @@ const getPriorityColor = (amount: number) => {
                     Amount: {formatCurrency(selectedPurchase.total_amount)}
                   </Text>
                   <Text color="gray.600">
-                    Requested by: {selectedPurchase.user?.name || 
-                                   `${selectedPurchase.user?.first_name} ${selectedPurchase.user?.last_name}`}
+                    Requested by: {getUserDisplayName(selectedPurchase.user, {
+                      fallback: 'Unknown User',
+                      allowRoleFallback: false,
+                    })}
                   </Text>
                 </Box>
                 <Divider />
@@ -975,9 +979,10 @@ const getPriorityColor = (amount: number) => {
                         <Td>{formatDate(entry.created_at)}</Td>
                         <Td>{getStatusBadge(entry.action)}</Td>
                         <Td>
-                          {entry.user ? 
-                           `${entry.user.first_name} ${entry.user.last_name}` : 
-                           'Unknown User'}
+                          {getUserDisplayName(entry.user, {
+                            fallback: 'Unknown User',
+                            allowRoleFallback: false,
+                          })}
                         </Td>
                         <Td>{entry.comments || '-'}</Td>
                       </Tr>

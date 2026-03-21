@@ -749,12 +749,33 @@ func (s *SSOTBalanceSheetService) categorizeLiabilityAccount(bsData *SSOTBalance
 	// IMPORTANT: Don't convert PPN accounts here - they need original values for netting
 	// Use code-based matching instead of name-based
 
-	// Removed negative liability inversion: negative liabilities (Debit > Credit)
-	// MUST remain negative to properly reduce Total Liabilities and match Total Assets.
 	amount := item.Amount
 
 	// Skip zero-balance items for cleaner display
 	if amount == 0 {
+		return
+	}
+
+	// Liability accounts that carry a debit balance should not be presented as
+	// negative liabilities on the face of the balance sheet. Reclass them to the
+	// asset side so the statement remains readable and aligned with accounting
+	// presentation rules for advances/overpayments.
+	if amount < 0 {
+		reclassItem := item
+		reclassItem.Amount = -amount
+		reclassItem.AccountName = fmt.Sprintf("%s (Saldo Debit Direklasifikasi)", item.AccountName)
+
+		switch {
+		case strings.HasPrefix(code, "22"), strings.HasPrefix(code, "23"):
+			bsData.Assets.NonCurrentAssets.OtherNonCurrentAssets += reclassItem.Amount
+			bsData.Assets.NonCurrentAssets.Items = append(bsData.Assets.NonCurrentAssets.Items, reclassItem)
+		default:
+			bsData.Assets.CurrentAssets.OtherCurrentAssets += reclassItem.Amount
+			bsData.Assets.CurrentAssets.Items = append(bsData.Assets.CurrentAssets.Items, reclassItem)
+		}
+
+		log.Printf("Reclassified negative liability to asset: %s - %s (Amount: %.2f)",
+			reclassItem.AccountCode, reclassItem.AccountName, reclassItem.Amount)
 		return
 	}
 

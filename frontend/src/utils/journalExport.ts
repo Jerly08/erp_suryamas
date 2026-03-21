@@ -3,6 +3,10 @@ import autoTable from 'jspdf-autotable';
 import { SSOTJournalEntry } from '@/services/ssotJournalService';
 import { SSOTGeneralLedgerData } from '@/services/ssotGeneralLedgerService';
 import { SSOTBalanceSheetData } from '@/services/ssotBalanceSheetReportService';
+import {
+  formatAccountingDate,
+  formatAccountingDateShort,
+} from '@/utils/accountingDate';
 
 // ===== HELPERS =====
 const formatCurrency = (amount: number): string => {
@@ -12,24 +16,6 @@ const formatCurrency = (amount: number): string => {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
   }).format(amount);
-};
-
-const formatDate = (dateString: string): string => {
-  if (!dateString) return '-';
-  return new Date(dateString).toLocaleDateString('id-ID', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  });
-};
-
-const formatDateShort = (dateString: string): string => {
-  if (!dateString) return '-';
-  return new Date(dateString).toLocaleDateString('id-ID', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric'
-  });
 };
 
 const addHeader = (doc: jsPDF, title: string, subtitle: string, yStart: number = 20): number => {
@@ -87,7 +73,7 @@ export const exportGeneralJournalToPDF = (
 ): void => {
   const doc = new jsPDF({ orientation: 'landscape' });
 
-  let yPos = addHeader(doc, 'Jurnal Umum', `Periode: ${formatDateShort(startDate)} - ${formatDateShort(endDate)}`);
+  let yPos = addHeader(doc, 'Jurnal Umum', `Periode: ${formatAccountingDateShort(startDate)} - ${formatAccountingDateShort(endDate)}`);
 
   // Summary
   const totalDebit = entries.reduce((sum, e) => sum + (Number(e.total_debit) || 0), 0);
@@ -102,7 +88,7 @@ export const exportGeneralJournalToPDF = (
     const lines = entry.lines || [];
     lines.forEach((line, index) => {
       tableData.push([
-        index === 0 ? formatDate(entry.entry_date) : '',
+        index === 0 ? formatAccountingDate(entry.entry_date) : '',
         index === 0 ? entry.entry_number : '',
         line.account ? `${line.account.code} - ${line.account.name}` : '-',
         line.description || '',
@@ -154,7 +140,7 @@ export const exportGeneralJournalToCSV = (
     const lines = entry.lines || [];
     lines.forEach((line, index) => {
       rows.push([
-        index === 0 ? formatDateShort(entry.entry_date) : '',
+        index === 0 ? formatAccountingDateShort(entry.entry_date) : '',
         index === 0 ? entry.entry_number : '',
         index === 0 ? entry.source_type : '',
         line.account?.code || '',
@@ -187,7 +173,7 @@ export const exportGeneralLedgerToPDF = (
   const isAllAccountsMode = !data.account?.account_code;
 
   const accountLabel = data.account?.account_code ? `${data.account.account_code} - ${data.account.account_name}` : 'Semua Akun';
-  let yPos = addHeader(doc, 'Buku Besar', `${accountLabel}\nPeriode: ${formatDateShort(startDate)} - ${formatDateShort(endDate)}`);
+  let yPos = addHeader(doc, 'Buku Besar', `${accountLabel}\nPeriode: ${formatAccountingDateShort(startDate)} - ${formatAccountingDateShort(endDate)}`);
   yPos += 4;
 
   // Summary
@@ -215,14 +201,14 @@ export const exportGeneralLedgerToPDF = (
   const tableData = transactions.map((t) => (
     isAllAccountsMode
       ? [
-          formatDate(t.date),
+          formatAccountingDate(t.date),
           t.journal_code || '',
           t.description || '',
           t.debit_amount > 0 ? formatCurrency(t.debit_amount) : '-',
           t.credit_amount > 0 ? formatCurrency(t.credit_amount) : '-',
         ]
       : [
-          formatDate(t.date),
+          formatAccountingDate(t.date),
           t.journal_code || '',
           t.description || '',
           t.debit_amount > 0 ? formatCurrency(t.debit_amount) : '-',
@@ -284,7 +270,7 @@ export const exportGeneralLedgerToCSV = (
     rows.push(
       isAllAccountsMode
         ? [
-            formatDateShort(t.date),
+            formatAccountingDateShort(t.date),
             t.journal_code || '',
             t.account_code || accountCode,
             t.account_name || accountName,
@@ -293,7 +279,7 @@ export const exportGeneralLedgerToCSV = (
             t.credit_amount > 0 ? t.credit_amount.toString() : '0',
           ]
         : [
-            formatDateShort(t.date),
+            formatAccountingDateShort(t.date),
             t.journal_code || '',
             t.account_code || accountCode,
             t.account_name || accountName,

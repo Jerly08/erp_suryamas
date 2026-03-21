@@ -11,6 +11,7 @@ import (
 	"app-sistem-akuntansi/services"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SSOTPaymentController handles payments using the Single Source of Truth posting service
@@ -37,7 +38,6 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 	}
 
 	// Set defaults for receivable payment
-	req.Method = "RECEIVABLE"
 	req.AutoCreateJournal = true
 
 	// Get user ID from JWT context
@@ -82,7 +82,6 @@ func (ctrl *SSOTPaymentController) CreatePayablePayment(c *gin.Context) {
 	}
 
 	// Set defaults for payable payment
-	req.Method = "PAYABLE"
 	req.AutoCreateJournal = true
 
 	// Get user ID from JWT context
@@ -235,21 +234,23 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 	}
 
 	var reqData struct {
-		ContactID        uint    `json:"contact_id"`
-		ExpenseAccountID *uint   `json:"expense_account_id"`
-		CashBankID       uint    `json:"cash_bank_id"`
-		Date             string  `json:"date"`
-		Amount           float64 `json:"amount"`
-		ExchangeRate     float64 `json:"exchange_rate"`
-		Method           string  `json:"method"`
-		Reference        string  `json:"reference"`
-		Notes            string  `json:"notes"`
-		Description      string  `json:"description"`
-		PPHType          string  `json:"pph_type"`
-		PPHRate          float64 `json:"pph_rate"`
-		PPHAmount        float64 `json:"pph_amount"`
-		TargetBillID     *uint   `json:"target_bill_id"`
-		TargetInvoiceID  *uint   `json:"target_invoice_id"`
+		ContactID          uint                      `json:"contact_id"`
+		ExpenseAccountID   *uint                     `json:"expense_account_id"`
+		CashBankID         uint                      `json:"cash_bank_id"`
+		Date               string                    `json:"date"`
+		Amount             float64                   `json:"amount"`
+		ExchangeRate       float64                   `json:"exchange_rate"`
+		Method             string                    `json:"method"`
+		Reference          string                    `json:"reference"`
+		Notes              string                    `json:"notes"`
+		Description        string                    `json:"description"`
+		PPHType            string                    `json:"pph_type"`
+		PPHRate            float64                   `json:"pph_rate"`
+		PPHAmount          float64                   `json:"pph_amount"`
+		TargetBillID       *uint                     `json:"target_bill_id"`
+		TargetInvoiceID    *uint                     `json:"target_invoice_id"`
+		InvoiceAllocations []services.AllocationItem `json:"invoice_allocations"`
+		BillAllocations    []services.AllocationItem `json:"bill_allocations"`
 	}
 
 	if err := c.ShouldBindJSON(&reqData); err != nil {
@@ -260,7 +261,7 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		return
 	}
 
-	payment, err := ctrl.enhancedPaymentService.UpdateDraftPayment(uint(paymentID), func(p *models.Payment) error {
+	payment, err := ctrl.enhancedPaymentService.UpdateDraftPayment(uint(paymentID), func(tx *gorm.DB, p *models.Payment) error {
 		// Update fields if provided
 		if reqData.ContactID != 0 {
 			p.ContactID = reqData.ContactID
@@ -313,6 +314,19 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 			p.Reference = reqData.Reference
 		} else {
 			p.Reference = models.StripInternalPaymentReference(p.Reference)
+		}
+
+		if p.PaymentType != models.PaymentTypeExpense && !strings.HasPrefix(p.PaymentType, "TAX_PPN") {
+			allocationReq := &services.PaymentWithJournalRequest{
+				ContactID:          p.ContactID,
+				TargetBillID:       reqData.TargetBillID,
+				TargetInvoiceID:    reqData.TargetInvoiceID,
+				InvoiceAllocations: reqData.InvoiceAllocations,
+				BillAllocations:    reqData.BillAllocations,
+			}
+			if err := ctrl.enhancedPaymentService.SyncDraftStandardPaymentAllocations(tx, p, allocationReq); err != nil {
+				return err
+			}
 		}
 
 		return nil

@@ -198,11 +198,15 @@ type SalesSummaryData struct {
 
 // SalesSummaryItem represents an individual sale transaction in the summary
 type SalesSummaryItem struct {
-	Date         string  `json:"date"`
-	Code         string  `json:"code"`
-	CustomerName string  `json:"customer_name"`
-	TotalAmount  float64 `json:"total_amount"`
-	Status       string  `json:"status"`
+	Date         string           `json:"date"`
+	SaleID       uint             `json:"sale_id"`
+	Code         string           `json:"code"`
+	CustomerName string           `json:"customer_name"`
+	TotalAmount  float64          `json:"total_amount"`
+	PaidAmount   float64          `json:"paid_amount"`
+	Outstanding  float64          `json:"outstanding"`
+	Status       string           `json:"status"`
+	Items        []SaleItemDetail `json:"items,omitempty"`
 }
 
 // PurchaseSummaryData represents comprehensive purchase analytics
@@ -391,6 +395,8 @@ type GeneralLedgerEntry struct {
 	JournalCode  string    `json:"journal_code"`
 	Description  string    `json:"description"`
 	Reference    string    `json:"reference"`
+	AccountCode  string    `json:"account_code,omitempty"`
+	AccountName  string    `json:"account_name,omitempty"`
 	DebitAmount  float64   `json:"debit_amount"`
 	CreditAmount float64   `json:"credit_amount"`
 	Balance      float64   `json:"balance"`
@@ -1069,6 +1075,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 	query := ers.db.Preload("Customer").
 		Preload("SaleItems").
 		Preload("SaleItems.Product").
+		Preload("SaleReturns", "status = ?", models.ReturnStatusApproved).
 		Preload("SalesPerson")
 
 	// Log the exact query parameters
@@ -1080,10 +1087,11 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			endDate.Format("2006-01-02 15:04:05")),
 	}).Debug("Executing sales data query")
 
-	// Use timezone-aware date range for better accuracy
-	// Only include APPROVED/COMPLETED sales - exclude DRAFT/CANCELLED
+	// Use timezone-aware date range for better accuracy.
+	// Sales summaries should only include lifecycle states that already
+	// represent recognized receivables/revenue in the business flow.
 	query = query.Where("date >= ? AND date <= ?", startDate, endDate).
-		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"})
+		Where("status IN ?", models.SaleOperationalReportStatuses())
 	if projectID != nil {
 		query = query.Where("project_id = ?", *projectID)
 	}
@@ -1221,6 +1229,11 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		summary.TotalTax += taxForSale
 		// Sum discount
 		summary.TotalDiscount += sale.DiscountAmount
+		for _, saleReturn := range sale.SaleReturns {
+			if saleReturn.Status == models.ReturnStatusApproved {
+				summary.TotalReturns += saleReturn.TotalAmount
+			}
+		}
 		customerSet[sale.CustomerID] = true
 
 		// Process customer data
@@ -1310,7 +1323,7 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 
 	// Calculate TotalSales (bruto = includes tax) and NetRevenue (after tax+discount)
 	summary.TotalSales = summary.TotalRevenue
-	summary.NetRevenue = summary.TotalRevenue - summary.TotalTax - summary.TotalDiscount
+	summary.NetRevenue = summary.TotalRevenue - summary.TotalTax - summary.TotalDiscount - summary.TotalReturns
 
 	// Calculate average prices and order values
 	for _, customerData := range customerMap {
@@ -1395,12 +1408,52 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 		if sale.Customer.Name != "" {
 			custName = sale.Customer.Name
 		}
+		transactionItems := make([]SaleItemDetail, 0, len(sale.SaleItems))
+		for _, item := range sale.SaleItems {
+			productName := item.ProductName
+			if productName == "" && item.Product.ID != 0 {
+				productName = item.Product.Name
+			}
+			productCode := ""
+			unit := "pcs"
+			if item.Product.ID != 0 {
+				productCode = item.Product.Code
+				if item.Product.Unit != "" {
+					unit = item.Product.Unit
+				}
+			}
+			transactionItems = append(transactionItems, SaleItemDetail{
+				ProductID:   item.ProductID,
+				ProductCode: productCode,
+				ProductName: productName,
+				Quantity:    float64(item.Quantity),
+				UnitPrice:   item.UnitPrice,
+				TotalPrice:  item.LineTotal,
+				Unit:        unit,
+				SaleDate:    sale.Date,
+				InvoiceNumber: func() string {
+					if sale.InvoiceNumber != "" {
+						return sale.InvoiceNumber
+					}
+					return sale.Code
+				}(),
+			})
+		}
+
+		transactionCode := sale.InvoiceNumber
+		if transactionCode == "" {
+			transactionCode = sale.Code
+		}
 		summary.Items = append(summary.Items, SalesSummaryItem{
+			SaleID:       sale.ID,
 			Date:         sale.Date.Format("2006-01-02"),
-			Code:         sale.InvoiceNumber,
+			Code:         transactionCode,
 			CustomerName: custName,
 			TotalAmount:  sale.TotalAmount,
+			PaidAmount:   sale.PaidAmount,
+			Outstanding:  sale.OutstandingAmount,
 			Status:       sale.Status,
+			Items:        transactionItems,
 		})
 	}
 
@@ -1517,13 +1570,14 @@ func calculateDataQualityScore(sales []models.Sale) float64 {
 
 // GenerateVendorAnalysis creates comprehensive vendor analysis report
 func (ers *EnhancedReportService) GenerateVendorAnalysis(startDate, endDate time.Time) (*VendorAnalysisData, error) {
-	// Query purchase data - only APPROVED/COMPLETED purchases
+	// Query purchase data using the same operational inclusion rule as the
+	// dedicated purchase reports. Avoid legacy ghost statuses like LUNAS/POSTED.
 	var purchases []models.Purchase
 	if err := ers.db.Preload("Vendor").
 		Preload("PurchaseItems").
 		Preload("PurchaseItems.Product").
 		Where("date BETWEEN ? AND ?", startDate, endDate).
-		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"}).
+		Where("status <> ? AND (status IN ? OR approval_status = ?)", models.PurchaseStatusCancelled, models.PurchaseOperationalReportStatuses(), models.PurchaseApprovalApproved).
 		Find(&purchases).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch purchase data: %v", err)
 	}
@@ -2205,13 +2259,14 @@ func (ers *EnhancedReportService) GenerateJournalEntryAnalysisWithFilters(startD
 
 // GeneratePurchaseSummary creates comprehensive purchase analytics
 func (ers *EnhancedReportService) GeneratePurchaseSummary(startDate, endDate time.Time, groupBy string) (*PurchaseSummaryData, error) {
-	// Query purchase data - only APPROVED/COMPLETED purchases
+	// Query purchase data using the same rule as the SSOT purchase report so the
+	// reportable population is consistent across operational reports.
 	var purchases []models.Purchase
 	if err := ers.db.Preload("Vendor").
 		Preload("PurchaseItems").
 		Preload("PurchaseItems.Product").
 		Where("date BETWEEN ? AND ?", startDate, endDate).
-		Where("status IN ?", []string{"APPROVED", "COMPLETED", "LUNAS", "PAID"}).
+		Where("status <> ? AND (status IN ? OR approval_status = ?)", models.PurchaseStatusCancelled, models.PurchaseOperationalReportStatuses(), models.PurchaseApprovalApproved).
 		Find(&purchases).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch purchase data: %v", err)
 	}
@@ -2273,13 +2328,14 @@ func (ers *EnhancedReportService) GeneratePurchaseSummary(startDate, endDate tim
 			}
 		}
 
-		// Process status data
-		if statusData, exists := statusMap[purchase.Status]; exists {
+		// Report purchase status as settlement progress, not raw workflow status.
+		reportStatus := models.NormalizePurchaseSettlementStatus(purchase.Status, purchase.PaidAmount, purchase.OutstandingAmount)
+		if statusData, exists := statusMap[reportStatus]; exists {
 			statusData.Count++
 			statusData.Amount += purchase.TotalAmount
 		} else {
-			statusMap[purchase.Status] = &StatusData{
-				Status: purchase.Status,
+			statusMap[reportStatus] = &StatusData{
+				Status: reportStatus,
 				Count:  1,
 				Amount: purchase.TotalAmount,
 			}

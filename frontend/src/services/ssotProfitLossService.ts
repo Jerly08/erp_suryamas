@@ -122,11 +122,6 @@ class SSOTProfitLossService {
     const baseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
     const url = `${baseUrl}${API_V1_BASE}/reports/ssot-profit-loss${queryString ? '?' + queryString : ''}`;
 
-    console.log('API_BASE_URL:', API_BASE_URL);
-    console.log('API_V1_BASE:', API_V1_BASE);
-    console.log('Making SSOT Profit Loss request to:', url);
-    console.log('Query params:', params);
-
     const response = await fetch(url, {
       headers: this.getAuthHeaders(),
     });

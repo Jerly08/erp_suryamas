@@ -163,7 +163,7 @@ func (c *SSOTProfitLossController) GetSSOTProfitLoss(ctx *gin.Context) {
 	default:
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Unsupported format. Use json, pdf, or excel",
+			"message": "Unsupported format. Use json, pdf, csv, or excel",
 		})
 	}
 }
@@ -603,13 +603,19 @@ func (c *SSOTProfitLossController) filterItemsByPrefix(items []services.PLSectio
 // generateAnalysisMessage creates a contextual message based on the P&L data
 func (c *SSOTProfitLossController) generateAnalysisMessage(ssotData *services.SSOTProfitLossData) string {
 	if ssotData.Revenue.TotalRevenue == 0 {
-		if ssotData.COGS.TotalCOGS > 0 || ssotData.OperatingExpenses.TotalOpEx > 0 {
+		if ssotData.COGS.TotalCOGS > 0 ||
+			ssotData.OperatingExpenses.TotalOpEx > 0 ||
+			ssotData.OtherExpenses > 0 ||
+			ssotData.TaxExpense > 0 {
 			return "Expenses and costs have been recorded but no revenue transactions were found in journal entries. This may indicate that payment transactions are not yet reflected in the journal system."
 		}
 		return "No revenue or expense transactions found for this period. The report shows data from SSOT journal system but no income-generating or cost activities were recorded."
 	}
 
-	if ssotData.COGS.TotalCOGS == 0 && ssotData.OperatingExpenses.TotalOpEx == 0 {
+	if ssotData.COGS.TotalCOGS == 0 &&
+		ssotData.OperatingExpenses.TotalOpEx == 0 &&
+		ssotData.OtherExpenses == 0 &&
+		ssotData.TaxExpense == 0 {
 		return "Revenue recorded but no costs or expenses found. This indicates either a service business model or missing cost allocation in the journal entries."
 	}
 

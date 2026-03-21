@@ -58,7 +58,12 @@ func (s *SalesReportExportService) ExportToCSV(data *SalesSummaryData, userID ui
 
 	// Summary with localization
 	w.Write([]string{utils.T("summary", language)})
+	w.Write([]string{"Total Sales (Gross)", fmt.Sprintf("%.2f", data.TotalSales)})
 	w.Write([]string{utils.T("total_revenue", language), fmt.Sprintf("%.2f", data.TotalRevenue)})
+	w.Write([]string{"Total Tax", fmt.Sprintf("%.2f", data.TotalTax)})
+	w.Write([]string{"Total Discount", fmt.Sprintf("%.2f", data.TotalDiscount)})
+	w.Write([]string{"Total Returns", fmt.Sprintf("%.2f", data.TotalReturns)})
+	w.Write([]string{"Net Revenue", fmt.Sprintf("%.2f", data.NetRevenue)})
 	w.Write([]string{utils.T("total_transactions", language), fmt.Sprintf("%d", data.TotalTransactions)})
 	w.Write([]string{utils.T("average_order_value", language), fmt.Sprintf("%.2f", data.AverageOrderValue)})
 	w.Write([]string{utils.T("total_customers", language), fmt.Sprintf("%d", data.TotalCustomers)})
@@ -68,11 +73,7 @@ func (s *SalesReportExportService) ExportToCSV(data *SalesSummaryData, userID ui
 	if len(data.SalesByCustomer) > 0 {
 		w.Write([]string{utils.T("sales_by_customer", language)})
 		w.Write([]string{"Customer ID", "Customer Name", "Total Sales", "Transaction Count", "Average Order", "Last Order Date"})
-		limit := len(data.SalesByCustomer)
-		if limit > 20 {
-			limit = 20
-		}
-		for i := 0; i < limit; i++ {
+		for i := 0; i < len(data.SalesByCustomer); i++ {
 			c := data.SalesByCustomer[i]
 			w.Write([]string{
 				fmt.Sprintf("%d", c.CustomerID),
@@ -202,7 +203,12 @@ func (s *SalesReportExportService) ExportToPDF(data *SalesSummaryData, userID ui
 		label string
 		value string
 	}{
+		{"Total Sales (Gross)", formatRupiahSimple(data.TotalSales)},
 		{utils.T("total_revenue", language), formatRupiahSimple(data.TotalRevenue)},
+		{"Total Tax", formatRupiahSimple(data.TotalTax)},
+		{"Total Discount", formatRupiahSimple(data.TotalDiscount)},
+		{"Total Returns", formatRupiahSimple(data.TotalReturns)},
+		{"Net Revenue", formatRupiahSimple(data.NetRevenue)},
 		{utils.T("total_transactions", language), fmt.Sprintf("%d", data.TotalTransactions)},
 		{utils.T("average_order_value", language), formatRupiahSimple(data.AverageOrderValue)},
 		{utils.T("total_customers", language), fmt.Sprintf("%d", data.TotalCustomers)},
@@ -232,11 +238,7 @@ func (s *SalesReportExportService) ExportToPDF(data *SalesSummaryData, userID ui
 
 		// Customer rows
 		pdf.SetFont("Arial", "", 7.5)
-		limit := len(data.SalesByCustomer)
-		if limit > 20 {
-			limit = 20
-		}
-		for i := 0; i < limit; i++ {
+		for i := 0; i < len(data.SalesByCustomer); i++ {
 			c := data.SalesByCustomer[i]
 
 			// Check if we need a new page

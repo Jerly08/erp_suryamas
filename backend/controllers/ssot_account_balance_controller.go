@@ -28,53 +28,44 @@ func NewSSOTAccountBalanceController(db *gorm.DB) *SSOTAccountBalanceController 
 	return &SSOTAccountBalanceController{db: db}
 }
 
-// GetSSOTAccountBalances returns net balances per account from SSOT (INVOICED/PAID sales only)
-// GET /api/v1/ssot-reports/account-balances?as_of_date=YYYY-MM-DD&status_filter=POSTED&source_filter=INVOICED_ONLY
+// GetSSOTAccountBalances returns net balances per account from posted SSOT journals.
+// GET /api/v1/ssot-reports/account-balances?as_of_date=YYYY-MM-DD&status_filter=POSTED&source_filter=ALL
 func (ctl *SSOTAccountBalanceController) GetSSOTAccountBalances(c *gin.Context) {
 	asOf := c.DefaultQuery("as_of_date", time.Now().Format("2006-01-02"))
 	statusFilter := c.DefaultQuery("status_filter", "POSTED")
 	sourceFilter := c.DefaultQuery("source_filter", "ALL")
-	
+
 	if _, err := time.Parse("2006-01-02", asOf); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid as_of_date, expected YYYY-MM-DD"})
 		return
 	}
-	
-	// Use the parameters for logging/validation
-	_ = statusFilter // Currently hardcoded to POSTED in query
-	_ = sourceFilter // Currently filtering to INVOICED_ONLY in query
 
-	// 🎯 CRITICAL FIX: Only include journal entries from INVOICED/PAID sales
-	// This ensures COA balances NEVER include DRAFT or CONFIRMED sales
+	// Reserved for future filtering hooks. Financial balances currently trust
+	// posted SSOT journals only and do not re-filter by source document status.
+	_ = statusFilter
+	_ = sourceFilter
+
 	query := `
-		SELECT 
+		SELECT
 			a.id as account_id,
 			a.code as account_code,
 			a.name as account_name,
 			a.type as account_type,
 			COALESCE(SUM(ujl.debit_amount), 0) as debit_total,
 			COALESCE(SUM(ujl.credit_amount), 0) as credit_total,
-			CASE 
-				WHEN a.type IN ('ASSET', 'EXPENSE') THEN 
+			CASE
+				WHEN a.type IN ('ASSET', 'EXPENSE') THEN
 					COALESCE(SUM(ujl.debit_amount), 0) - COALESCE(SUM(ujl.credit_amount), 0)
-				ELSE 
+				ELSE
 					COALESCE(SUM(ujl.credit_amount), 0) - COALESCE(SUM(ujl.debit_amount), 0)
 			END as net_balance
 		FROM accounts a
 		LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
 		LEFT JOIN unified_journal_ledger ujd ON ujd.id = ujl.journal_id
-		LEFT JOIN sales s ON ujd.source_type = 'SALE' AND ujd.source_id = s.id
-		WHERE ujd.status = 'POSTED' 
+		WHERE ujd.status = 'POSTED'
 		  AND ujd.entry_date <= ?
 		  AND ujd.deleted_at IS NULL
 		  AND COALESCE(a.is_header, false) = false
-		  AND (
-			  -- Only include sales that are INVOICED or PAID
-			  (ujd.source_type = 'SALE' AND s.status IN ('INVOICED', 'PAID'))
-			  OR
-			  -- Include non-sales transactions (payments, deposits, etc.)
-			  ujd.source_type != 'SALE'
-		  )
 		GROUP BY a.id, a.code, a.name, a.type
 		ORDER BY a.code
 	`
@@ -85,7 +76,6 @@ func (ctl *SSOTAccountBalanceController) GetSSOTAccountBalances(c *gin.Context) 
 		return
 	}
 
-	// Check if SSOT has any data, if not fall back to accounts.balance
 	hasSSotData := false
 	for _, row := range rows {
 		if row.DebitTotal != 0 || row.CreditTotal != 0 {
@@ -94,10 +84,9 @@ func (ctl *SSOTAccountBalanceController) GetSSOTAccountBalances(c *gin.Context) 
 		}
 	}
 
-	// If no SSOT data, fallback to accounts table
 	if !hasSSotData {
 		fallbackQuery := `
-			SELECT 
+			SELECT
 				a.id as account_id,
 				a.code as account_code,
 				a.name as account_name,
@@ -109,12 +98,12 @@ func (ctl *SSOTAccountBalanceController) GetSSOTAccountBalances(c *gin.Context) 
 			WHERE COALESCE(a.is_header, false) = false
 			ORDER BY a.code
 		`
-		
+
 		if err := ctl.db.Raw(fallbackQuery).Scan(&rows).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query fallback balances", "message": err.Error()})
 			return
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "success",
 			"data":    rows,
@@ -129,7 +118,7 @@ func (ctl *SSOTAccountBalanceController) GetSSOTAccountBalances(c *gin.Context) 
 		"status":  "success",
 		"data":    rows,
 		"as_of":   asOf,
-		"source":  "SSOT_INVOICED_ONLY",
-		"message": "✅ Filtered to INVOICED/PAID sales only - DRAFT/CONFIRMED sales excluded",
+		"source":  "SSOT_POSTED_ONLY",
+		"message": "Using posted SSOT journals only",
 	})
 }

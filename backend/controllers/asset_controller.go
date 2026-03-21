@@ -31,15 +31,15 @@ type DepreciationHistoryItem struct {
 }
 
 type DepreciationHistoryDetailItem struct {
-	JournalID         uint      `json:"journal_id"`
-	EntryNumber       string    `json:"entry_number"`
-	AssetID           uint      `json:"asset_id"`
-	AssetCode         string    `json:"asset_code"`
-	AssetName         string    `json:"asset_name"`
-	EntryDate         time.Time `json:"entry_date"`
-	Reference         string    `json:"reference"`
-	DepreciationAmount float64  `json:"depreciation_amount"`
-	Status            string    `json:"status"`
+	JournalID          uint      `json:"journal_id"`
+	EntryNumber        string    `json:"entry_number"`
+	AssetID            uint      `json:"asset_id"`
+	AssetCode          string    `json:"asset_code"`
+	AssetName          string    `json:"asset_name"`
+	EntryDate          time.Time `json:"entry_date"`
+	Reference          string    `json:"reference"`
+	DepreciationAmount float64   `json:"depreciation_amount"`
+	Status             string    `json:"status"`
 }
 
 type AssetCreateRequest struct {
@@ -186,6 +186,18 @@ func (ac *AssetController) CreateAsset(c *gin.Context) {
 		return
 	}
 
+	userRole := strings.ToLower(strings.TrimSpace(c.GetString("user_role")))
+	if userRole == "" {
+		userRole = strings.ToLower(strings.TrimSpace(c.GetString("role")))
+	}
+	if userRole != "admin" && userRole != "finance" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":   "Opening balance asset creation is restricted",
+			"details": "Only admin and finance can record existing assets / opening balances from Asset Master.",
+		})
+		return
+	}
+
 	// Convert request to asset model
 	asset := &models.Asset{
 		Code:                             req.Code,
@@ -223,10 +235,19 @@ func (ac *AssetController) CreateAsset(c *gin.Context) {
 		asset.IsActive = false
 	}
 
-	// Default payment method if not provided
-	paymentMethod := req.PaymentMethod
+	// Asset Master now only accepts opening/existing asset entries.
+	// New asset purchases must go through the Purchases module so vendor,
+	// payable, payment, and purchase-report flows stay consistent.
+	paymentMethod := strings.ToUpper(strings.TrimSpace(req.PaymentMethod))
 	if paymentMethod == "" {
-		paymentMethod = "CREDIT" // Default to credit purchase
+		paymentMethod = "SALDO_AWAL"
+	}
+	if paymentMethod != "SALDO_AWAL" && paymentMethod != "OPENING" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Direct asset purchases are no longer supported from Asset Master",
+			"details": "Create new asset purchases from Purchases using item type ASSET. Asset Master only accepts existing/opening balance assets.",
+		})
+		return
 	}
 
 	// Atomically create asset AND acquisition journal in one transaction

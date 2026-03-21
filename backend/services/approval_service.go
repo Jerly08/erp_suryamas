@@ -467,8 +467,21 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 		return err
 	}
 
-	// POST-APPROVAL PROCESSING: Trigger business logic for approved purchases
 	if purchaseToProcess != nil && s.postApprovalCallback != nil {
+		var purchase models.Purchase
+		if err := s.db.First(&purchase, *purchaseToProcess).Error; err != nil {
+			fmt.Printf("Warning: failed to load purchase %d before post-approval processing: %v\n", *purchaseToProcess, err)
+		} else if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+			fmt.Printf("Warning: blocked post-approval processing for purchase %d in closed period: %v\n", *purchaseToProcess, err)
+		} else if err := s.postApprovalCallback.OnPurchaseApproved(*purchaseToProcess); err != nil {
+			fmt.Printf("Warning: post-approval processing failed for purchase %d: %v\n", *purchaseToProcess, err)
+		} else {
+			fmt.Printf("Post-approval processing completed for purchase %d\n", *purchaseToProcess)
+		}
+	}
+
+	// POST-APPROVAL PROCESSING: Trigger business logic for approved purchases
+	if false && purchaseToProcess != nil && s.postApprovalCallback != nil {
 		go func(purchaseID uint) {
 			var purchase models.Purchase
 			if err := s.db.First(&purchase, purchaseID).Error; err != nil {
@@ -641,34 +654,43 @@ func (s *ApprovalService) getNextStep(actions []models.ApprovalAction, currentOr
 
 // updateEntityStatus updates the status of sale/purchase entity
 func (s *ApprovalService) updateEntityStatus(tx *gorm.DB, entityType string, entityID uint, approvalStatus string) error {
-	var status, approvalStatusField string
-
-	switch approvalStatus {
-	case "APPROVED":
-		status = "APPROVED"
-		approvalStatusField = "APPROVED"
-	case "REJECTED":
-		status = "CANCELLED"
-		approvalStatusField = "REJECTED"
-	default:
-		return errors.New("invalid approval status")
-	}
-
 	now := time.Now()
-	updates := map[string]interface{}{
-		"status":          status,
-		"approval_status": approvalStatusField,
-		"updated_at":      now,
-	}
-
-	if approvalStatus == "APPROVED" {
-		updates["approved_at"] = now
-	}
 
 	switch entityType {
 	case models.EntityTypeSale:
+		updates := map[string]interface{}{
+			"updated_at": now,
+		}
+
+		switch approvalStatus {
+		case "APPROVED":
+			// Sales do not persist APPROVED as a lifecycle status. Approval moves
+			// the document into the confirmed stage and accounting still waits for invoicing.
+			updates["status"] = models.SaleStatusConfirmed
+		case "REJECTED":
+			updates["status"] = models.SaleStatusCancelled
+		default:
+			return errors.New("invalid approval status")
+		}
+
 		return tx.Model(&models.Sale{}).Where("id = ?", entityID).Updates(updates).Error
 	case models.EntityTypePurchase:
+		updates := map[string]interface{}{
+			"updated_at": now,
+		}
+
+		switch approvalStatus {
+		case "APPROVED":
+			updates["status"] = models.PurchaseStatusApproved
+			updates["approval_status"] = models.PurchaseApprovalApproved
+			updates["approved_at"] = now
+		case "REJECTED":
+			updates["status"] = models.PurchaseStatusCancelled
+			updates["approval_status"] = models.PurchaseApprovalRejected
+		default:
+			return errors.New("invalid approval status")
+		}
+
 		err := tx.Model(&models.Purchase{}).Where("id = ?", entityID).Updates(updates).Error
 		if err != nil {
 			return err
@@ -689,6 +711,12 @@ func (s *ApprovalService) updateEntityStatus(tx *gorm.DB, entityType string, ent
 
 // notifyApprovers sends notifications to approvers
 func (s *ApprovalService) notifyApprovers(request *models.ApprovalRequest, step models.ApprovalStep) {
+	// The employee submission step is a self-service transition, not a true
+	// approval queue item. Avoid notifying the requester or every employee user.
+	if strings.EqualFold(strings.TrimSpace(step.ApproverRole), "employee") {
+		return
+	}
+
 	// Get users with the required role (case-insensitive)
 	var users []models.User
 	s.db.Where("LOWER(role) = LOWER(?) AND is_active = ?", step.ApproverRole, true).Find(&users)
@@ -731,6 +759,38 @@ func (s *ApprovalService) notifyRequester(request *models.ApprovalRequest, actio
 			notificationType = models.NotificationTypeApprovalApproved
 			title = "Request Approved"
 			message = fmt.Sprintf("Your request '%s' has been approved", request.RequestTitle)
+		} else if request.Status == models.ApprovalStatusPending {
+			notificationType = models.NotificationTypeApprovalPending
+			title = "Approval Progress Updated"
+
+			nextStepName := ""
+			lastApprovedRole := ""
+			var lastApprovedAt *time.Time
+			for _, step := range request.ApprovalSteps {
+				if step.IsActive && step.Status == models.ApprovalStatusPending && nextStepName == "" {
+					nextStepName = step.Step.StepName
+				}
+
+				if step.Status == models.ApprovalStatusApproved && step.ActionDate != nil {
+					if lastApprovedAt == nil || step.ActionDate.After(*lastApprovedAt) {
+						lastApprovedAt = step.ActionDate
+						lastApprovedRole = step.Step.ApproverRole
+					}
+				}
+			}
+
+			if nextStepName != "" && lastApprovedRole != "" {
+				message = fmt.Sprintf(
+					"Your request '%s' was approved by %s and is now waiting for %s",
+					request.RequestTitle,
+					formatApprovalRoleLabel(lastApprovedRole),
+					nextStepName,
+				)
+			} else if nextStepName != "" {
+				message = fmt.Sprintf("Your request '%s' is now waiting for %s", request.RequestTitle, nextStepName)
+			} else {
+				message = fmt.Sprintf("Your request '%s' moved to the next approval step", request.RequestTitle)
+			}
 		} else {
 			return // Don't notify on intermediate approvals
 		}
@@ -757,6 +817,15 @@ func (s *ApprovalService) notifyRequester(request *models.ApprovalRequest, actio
 	}
 
 	s.db.Create(&notification)
+}
+
+func formatApprovalRoleLabel(role string) string {
+	role = strings.TrimSpace(strings.ToLower(role))
+	if role == "" {
+		return "an approver"
+	}
+
+	return strings.ToUpper(role[:1]) + role[1:]
 }
 
 // isDuplicateApprovalNotification checks if similar approval notification already exists

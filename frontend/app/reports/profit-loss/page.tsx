@@ -8,6 +8,7 @@ import { ssotProfitLossService, SSOTProfitLossData } from '@/services/ssotProfit
 import { ssotJournalService } from '@/services/ssotJournalService';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
+import periodClosingService from '@/services/periodClosingService';
 import {
     Box,
     Heading,
@@ -219,11 +220,13 @@ const ProfitLossPage: React.FC = () => {
     const loadClosedPeriods = async () => {
         setLoadingClosedPeriods(true);
         try {
-            const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-            if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                const periods = buildUniqueClosedPeriods(response.data.data);
-                setClosedPeriods(periods);
-            }
+            const periods = await periodClosingService.getClosedPeriodsForFilter();
+            setClosedPeriods(periods.map((period) => ({
+                value: period.value,
+                label: period.label,
+                date: period.value,
+                start_date: period.period.start_date?.slice(0, 10),
+            })));
         } catch (error) {
             console.error('Failed to load closed periods:', error);
         } finally {
@@ -345,17 +348,32 @@ const ProfitLossPage: React.FC = () => {
         onDetailOpen();
 
         try {
-            // Fetch journal entries for the selected date range
-            const response = await ssotJournalService.getJournalEntries({
+            // Fetch journal entries for the selected date range using the same
+            // posted-only scope as the report, then exclude closing/reversal
+            // entries so the drilldown matches the P&L totals.
+            const initialResponse = await ssotJournalService.getJournalEntries({
                 start_date: startDate,
                 end_date: endDate,
                 status: 'posted',
-                limit: 100,
+                limit: 200,
             });
+
+            const response = initialResponse.total > initialResponse.data.length
+                ? await ssotJournalService.getJournalEntries({
+                    start_date: startDate,
+                    end_date: endDate,
+                    status: 'posted',
+                    limit: Math.min(initialResponse.total, 5000),
+                })
+                : initialResponse;
 
             // Filter entries that include the selected account code
             const filteredEntries: any[] = [];
             response.data.forEach((entry: any) => {
+                const sourceType = String(entry.source_type || '').toUpperCase();
+                if (sourceType === 'CLOSING' || sourceType === 'REVERSAL') {
+                    return;
+                }
                 if (entry.lines && Array.isArray(entry.lines)) {
                     entry.lines.forEach((line: any) => {
                         if (line.account?.code === accountCode || line.account_code === accountCode) {
@@ -670,6 +688,11 @@ const ProfitLossPage: React.FC = () => {
                                     {t('reports.modal.loadHistory')}
                                 </Button>
                             </HStack>
+                            {!loadingClosedPeriods && closedPeriods.length === 0 && (
+                                <Text fontSize="xs" color={descriptionColor}>
+                                    Belum ada periode tutup final yang bisa dipakai untuk mode archive. Periode yang masih future-pending atau sudah reopen tidak ditampilkan.
+                                </Text>
+                            )}
 
                             <Divider />
 

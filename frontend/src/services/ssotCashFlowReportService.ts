@@ -95,6 +95,8 @@ export interface SSOTCashFlowData {
   
   generated_at: string;
   enhanced: boolean;
+  has_reconciliation_warning?: boolean;
+  reconciliation_difference?: number;
   account_details: Array<{
     account_id: number;
     account_code: string;
@@ -306,6 +308,8 @@ class SSOTCashFlowReportService {
     if ('net_cash_flow' in processed) processed.net_cash_flow = processValue(processed.net_cash_flow);
     if ('cash_at_beginning' in processed) processed.cash_at_beginning = processValue(processed.cash_at_beginning);
     if ('cash_at_end' in processed) processed.cash_at_end = processValue(processed.cash_at_end);
+    if ('reconciliation_difference' in processed) processed.reconciliation_difference = processValue(processed.reconciliation_difference);
+    if ('has_reconciliation_warning' in processed) processed.has_reconciliation_warning = Boolean(processed.has_reconciliation_warning);
     
     // Process operating activities
     if (processed.operating_activities) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -52,6 +53,7 @@ func main() {
 		fmt.Println("   - Semua transaksi penjualan/pembelian")
 		fmt.Println("   - Semua prepaid expense dan jadwal amortisasinya")
 		fmt.Println("   - Semua classic journals & SSOT journals")
+		fmt.Println("   - Semua data period closing / accounting periods")
 		fmt.Println("   - Payments, inventory movements, expenses, notifications, stock alerts")
 		fmt.Println("   - Balance & stock akan direset ke 0, sequence direset")
 	} else if mode == 2 {
@@ -62,6 +64,7 @@ func main() {
 	} else if mode == 4 {
 		fmt.Println("🧹 MODE RESET SALDO MASTER: Reset balance COA & CASH BANK (tanpa hapus akun)")
 		fmt.Println("   - Menghapus SEMUA transaksi & jurnal (sama seperti Mode 1)")
+		fmt.Println("   - Menghapus SEMUA data period closing / accounting periods")
 		fmt.Println("   - Menetapkan saldo accounts.balance & cash_banks.balance = 0 (TANPA TRUNCATE akun)")
 		fmt.Println("   - Gunakan hanya di DEV/TEST! Pastikan sudah mem-backup bila perlu")
 	} else if mode == 5 {
@@ -86,7 +89,7 @@ func main() {
 		fmt.Println("   - ⚠️  PERINGATAN: Ini operasi yang sangat merusak!")
 	} else if mode == 8 {
 		fmt.Println("🗂️  MODE HAPUS MODUL: Hapus data modul tertentu secara selektif")
-		fmt.Println("   - Pilih modul mana yang ingin dihapus: BOMs, Projects, Purchase Requests, Products")
+		fmt.Println("   - Pilih modul mana yang ingin dihapus: BOMs, Projects, Purchase Requests, Products, Assets")
 		fmt.Println("   - Sekarang juga mendukung Prepaid Expenses + jurnal amortisasi/terminasi")
 		fmt.Println("   - Setiap modul dihapus beserta soft-delete-nya (hard delete)")
 		fmt.Println("   - Sequence ID direset untuk modul yang dipilih")
@@ -243,7 +246,7 @@ func main() {
 
 	if mode == 1 {
 		fmt.Println("\n🎉 HARD DELETE RESET SELESAI!")
-		fmt.Println("Database siap digunakan dengan COA yang bersih.")
+		fmt.Println("Database siap digunakan dengan COA yang bersih, termasuk period closing yang sudah direset.")
 		fmt.Println("Anda bisa mulai input transaksi baru dari 0.")
 	} else if mode == 2 {
 		fmt.Println("\n🎉 SOFT DELETE SELESAI!")
@@ -252,7 +255,7 @@ func main() {
 		fmt.Println("\nUntuk recovery: go run scripts/maintenance/reset_transaction_data_gorm.go (pilih opsi 3)")
 	} else if mode == 4 {
 		fmt.Println("\n🎉 RESET SALDO MASTER SELESAI!")
-		fmt.Println("Saldo COA & Cash Bank telah direset ke 0 dan semua transaksi/jurnal telah dibersihkan.")
+		fmt.Println("Saldo COA & Cash Bank telah direset ke 0, semua transaksi/jurnal dibersihkan, dan period closing dihapus.")
 		fmt.Println("Akun COA & Cash Bank tetap ada (tidak dihapus).")
 	} else if mode == 5 {
 		fmt.Println("\n🎉 HAPUS PERIODE CLOSING SELESAI!")
@@ -621,6 +624,16 @@ func executeTransactionResetWithGORM(db *gorm.DB) error {
 		fmt.Printf("   ⚠️  Warning: Delete ApprovalRequest error (maybe table not exist): %v\n", err)
 	}
 
+	fmt.Println("   🗑️  Menghapus period closing / accounting periods...")
+	periodCount, err := deleteAccountingPeriodsInTx(tx)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	if periodCount > 0 {
+		fmt.Printf("      - %d period closing dihapus\n", periodCount)
+	}
+
 	fmt.Println("   📊 CLASSIC JOURNAL: Menghapus journal entries...")
 	// Classic Journal entries
 	if err := tx.Unscoped().Where("1 = 1").Delete(&models.JournalEntry{}).Error; err != nil {
@@ -731,19 +744,30 @@ func resetMainSequences(db *gorm.DB) {
 		"unified_journal_ledger_id_seq",
 		"unified_journal_lines_id_seq",
 		"journal_event_log_id_seq",
+		// Period closing sequences
+		"accounting_periods_id_seq",
 	}
 
 	for _, seq := range sequences {
-		// Check if sequence exists before resetting
-		var exists bool
-		db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = ? AND relkind = 'S')", seq).Scan(&exists)
-
-		if exists {
-			if err := db.Exec(fmt.Sprintf("ALTER SEQUENCE %s RESTART WITH 1", seq)).Error; err != nil {
-				fmt.Printf("   ⚠️  Warning: Gagal reset sequence %s: %v\n", seq, err)
-			}
-		}
+		resetSequenceIfExists(db, seq)
 	}
+}
+
+func deleteAccountingPeriodsInTx(tx *gorm.DB) (int64, error) {
+	var countBefore int64
+	if err := tx.Model(&models.AccountingPeriod{}).Count(&countBefore).Error; err != nil {
+		return 0, fmt.Errorf("gagal hitung accounting_periods: %w", err)
+	}
+
+	if countBefore == 0 {
+		return 0, nil
+	}
+
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.AccountingPeriod{}).Error; err != nil {
+		return countBefore, fmt.Errorf("gagal hapus accounting_periods: %w", err)
+	}
+
+	return countBefore, nil
 }
 
 func executeMasterPurgeWithGORM(db *gorm.DB) error {
@@ -1687,16 +1711,12 @@ func executeDeletePeriodClosingWithGORM(db *gorm.DB) error {
 
 	tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
 
-	// Count dulu sebelum dihapus
-	var countBefore int64
-	tx.Model(&models.AccountingPeriod{}).Count(&countBefore)
-	fmt.Printf("   📊 Total periode closing yang akan dihapus: %d\n", countBefore)
-
-	// Hapus dengan Unscoped (hard delete)
-	if err := tx.Unscoped().Where("1 = 1").Delete(&models.AccountingPeriod{}).Error; err != nil {
+	countBefore, err := deleteAccountingPeriodsInTx(tx)
+	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("gagal hapus accounting_periods: %v", err)
+		return err
 	}
+	fmt.Printf("   📊 Total periode closing yang akan dihapus: %d\n", countBefore)
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
@@ -1706,14 +1726,7 @@ func executeDeletePeriodClosingWithGORM(db *gorm.DB) error {
 
 	// Reset sequence
 	fmt.Println("   🔢 Reset sequence accounting_periods...")
-	var exists bool
-	db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'accounting_periods_id_seq' AND relkind = 'S')").Scan(&exists)
-
-	if exists {
-		if err := db.Exec("ALTER SEQUENCE accounting_periods_id_seq RESTART WITH 1").Error; err != nil {
-			fmt.Printf("   ⚠️  Warning: Gagal reset sequence accounting_periods_id_seq: %v\n", err)
-		}
-	}
+	resetSequenceIfExists(db, "accounting_periods_id_seq")
 
 	duration := time.Since(start)
 	fmt.Printf("✅ Hapus periode closing selesai dalam waktu: %s\n", duration.String())
@@ -1936,8 +1949,238 @@ func shouldSkipSequence(seqName string) bool {
 // MODE 8 — HAPUS MODUL TERTENTU SECARA SELEKTIF
 // ============================================================================
 
+func deleteAssetModuleDataWithGORM(db *gorm.DB) error {
+	fmt.Println("\n   Menghapus modul: Assets...")
+
+	tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
+	if err := tx.Exec("SET LOCAL session_replication_role = 'replica'").Error; err != nil {
+		fmt.Printf("   Warning: Gagal set session_replication_role=replica untuk assets: %v\n", err)
+	}
+	_ = tx.Exec("SET CONSTRAINTS ALL DEFERRED").Error
+
+	var assetCount int64
+	if err := tx.Model(&models.Asset{}).Count(&assetCount).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hitung assets: %w", err)
+	}
+
+	var categoryCount int64
+	if err := tx.Model(&models.AssetCategory{}).Count(&categoryCount).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hitung asset categories: %w", err)
+	}
+
+	assetSourceTypes := []string{
+		models.SSOTSourceTypeAsset,
+		models.SSOTSourceTypeOpening,
+		models.SSOTSourceTypeDepreciation,
+	}
+
+	assetJournalScope := `
+		id IN (
+			SELECT id
+			FROM unified_journal_ledger
+			WHERE deleted_at IS NULL
+				AND source_type IN ?
+		)
+		OR (
+			source_type = ?
+			AND reversed_from IN (
+				SELECT id
+				FROM unified_journal_ledger
+				WHERE deleted_at IS NULL
+					AND source_type IN ?
+			)
+		)
+	`
+
+	var ssotJournalCount int64
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where(assetJournalScope, assetSourceTypes, models.SSOTSourceTypeReversal, assetSourceTypes).
+		Count(&ssotJournalCount).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hitung SSOT asset journals: %w", err)
+	}
+
+	if err := tx.Exec(`
+		DELETE FROM journal_event_log
+		WHERE journal_id IN (
+			SELECT id
+			FROM unified_journal_ledger
+			WHERE deleted_at IS NULL
+				AND (
+					source_type IN ?
+					OR (
+						source_type = ?
+						AND reversed_from IN (
+							SELECT id
+							FROM unified_journal_ledger
+							WHERE deleted_at IS NULL
+								AND source_type IN ?
+						)
+					)
+				)
+		)
+	`, assetSourceTypes, models.SSOTSourceTypeReversal, assetSourceTypes).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus journal_event_log assets: %w", err)
+	}
+
+	if err := tx.Exec(`
+		DELETE FROM unified_journal_lines
+		WHERE journal_id IN (
+			SELECT id
+			FROM unified_journal_ledger
+			WHERE deleted_at IS NULL
+				AND (
+					source_type IN ?
+					OR (
+						source_type = ?
+						AND reversed_from IN (
+							SELECT id
+							FROM unified_journal_ledger
+							WHERE deleted_at IS NULL
+								AND source_type IN ?
+						)
+					)
+				)
+		)
+	`, assetSourceTypes, models.SSOTSourceTypeReversal, assetSourceTypes).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus unified_journal_lines assets: %w", err)
+	}
+
+	if err := tx.Where(assetJournalScope, assetSourceTypes, models.SSOTSourceTypeReversal, assetSourceTypes).
+		Unscoped().
+		Delete(&models.SSOTJournalEntry{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus unified_journal_ledger assets: %w", err)
+	}
+
+	legacyAssetReferenceTypes := []string{
+		models.JournalRefAsset,
+		"DEPRECIATION",
+	}
+
+	var classicJournalCount int64
+	if err := tx.Model(&models.JournalEntry{}).
+		Where("reference_type IN ?", legacyAssetReferenceTypes).
+		Count(&classicJournalCount).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hitung classic asset journals: %w", err)
+	}
+
+	if err := tx.Exec(`
+		DELETE FROM journal_lines
+		WHERE journal_entry_id IN (
+			SELECT id
+			FROM journal_entries
+			WHERE reference_type IN ?
+		)
+	`, legacyAssetReferenceTypes).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus journal_lines assets: %w", err)
+	}
+
+	if err := tx.Where("reference_type IN ?", legacyAssetReferenceTypes).
+		Unscoped().
+		Delete(&models.JournalEntry{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus journal_entries assets: %w", err)
+	}
+
+	if err := tx.Exec("UPDATE purchase_items SET asset_category_id = NULL WHERE asset_category_id IS NOT NULL").Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal null-kan relasi asset_category_id di purchase_items: %w", err)
+	}
+
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.Asset{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus assets: %w", err)
+	}
+
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.AssetCategory{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus asset_categories: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal commit hapus modul assets: %w", err)
+	}
+
+	resetSequenceIfExists(db, "assets_id_seq")
+	resetSequenceIfExists(db, "asset_categories_id_seq")
+
+	removedFiles, removeErr := clearAssetUploadDirectories()
+	if removeErr != nil {
+		fmt.Printf("   Warning: Gagal bersihkan upload assets sepenuhnya: %v\n", removeErr)
+	}
+
+	fmt.Printf("   Deleted assets: %d\n", assetCount)
+	fmt.Printf("   Deleted asset categories: %d\n", categoryCount)
+	fmt.Printf("   Deleted SSOT asset journals: %d\n", ssotJournalCount)
+	fmt.Printf("   Deleted classic asset journals: %d\n", classicJournalCount)
+	fmt.Printf("   Deleted upload files assets: %d\n", removedFiles)
+
+	return nil
+}
+
+func clearAssetUploadDirectories() (int, error) {
+	candidates := []string{
+		filepath.Join(".", "uploads", "assets"),
+		filepath.Join("backend", "uploads", "assets"),
+		filepath.Join("..", "uploads", "assets"),
+	}
+
+	removedFiles := 0
+	var lastErr error
+	seen := map[string]bool{}
+
+	for _, candidate := range candidates {
+		absPath, err := filepath.Abs(candidate)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if seen[absPath] {
+			continue
+		}
+		seen[absPath] = true
+
+		info, err := os.Stat(absPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			lastErr = err
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+
+		entries, err := os.ReadDir(absPath)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		for _, entry := range entries {
+			entryPath := filepath.Join(absPath, entry.Name())
+			if err := os.RemoveAll(entryPath); err != nil {
+				lastErr = err
+				continue
+			}
+			removedFiles++
+		}
+	}
+
+	return removedFiles, lastErr
+}
+
 // executeDeleteModuleDataWithGORM menghapus data modul tertentu secara selektif.
-// User memilih satu atau lebih modul: BOMs, Projects, Purchase Requests, Products, Prepaid Expenses.
+// User memilih satu atau lebih modul: BOMs, Projects, Purchase Requests, Products, Prepaid Expenses, Assets.
 func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	start := time.Now()
 
@@ -1948,8 +2191,9 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	fmt.Println("  c) Purchase Requests (semua PR + PR items + approval)")
 	fmt.Println("  d) Products (semua produk + stock)")
 	fmt.Println("  e) Prepaid Expenses (header + schedule + jurnal amortisasi/terminasi)")
+	fmt.Println("  f) Assets (asset master + categories + jurnal asset/depresiasi + upload image)")
 	fmt.Println("  all) Hapus semua modul di atas")
-	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c,e atau all): ")
+	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c,e,f atau all): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
@@ -2037,6 +2281,13 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	if deleteAll || selected["e"] {
 		if err := deletePrepaidModuleDataWithGORM(db); err != nil {
 			fmt.Printf("   âš ï¸  Warning: Gagal hapus modul prepaid: %v\n", err)
+		}
+	}
+
+	// Hapus modul Assets
+	if deleteAll || selected["f"] {
+		if err := deleteAssetModuleDataWithGORM(db); err != nil {
+			fmt.Printf("   Warning: Gagal hapus modul assets: %v\n", err)
 		}
 	}
 

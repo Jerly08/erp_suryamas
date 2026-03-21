@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -16,6 +18,15 @@ type ComponentTemplateController struct {
 
 func NewComponentTemplateController(db *gorm.DB) *ComponentTemplateController {
 	return &ComponentTemplateController{DB: db}
+}
+
+func isUniqueConstraintError(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate key value")
 }
 
 // GetTemplates returns all component templates with item count
@@ -115,7 +126,29 @@ func (ct *ComponentTemplateController) CreateTemplate(c *gin.Context) {
 			}
 		} else {
 			if err := tx.Create(&template).Error; err != nil {
-				return err
+				// Another request may have created the same template name moments earlier.
+				// Reuse that row instead of failing the whole request with a 500.
+				if !isUniqueConstraintError(err) {
+					return err
+				}
+
+				if err := tx.Unscoped().Where("name = ?", payload.Name).First(&template).Error; err != nil {
+					return err
+				}
+
+				if err := tx.Unscoped().
+					Model(&template).
+					Updates(map[string]interface{}{
+						"name":        payload.Name,
+						"description": payload.Description,
+						"deleted_at":  nil,
+					}).Error; err != nil {
+					return err
+				}
+
+				if err := tx.Unscoped().Where("template_id = ?", template.ID).Delete(&models.ComponentTemplateItem{}).Error; err != nil {
+					return err
+				}
 			}
 		}
 

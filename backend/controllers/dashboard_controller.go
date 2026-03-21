@@ -38,25 +38,6 @@ func (dc *DashboardController) GetStockAlertsBanner(c *gin.Context) {
 		return
 	}
 
-	// Auto-check minimum stock before returning alerts so users see up-to-date alerts
-	// This avoids relying solely on stock updates or purchases to trigger notifications
-	if err := dc.stockMonitoringService.CheckMinimumStock(); err != nil {
-		// Don't block the response if the check fails; continue with best-effort data
-		fmt.Printf("Warning: CheckMinimumStock failed: %v\n", err)
-	}
-	// Auto-check out of stock alerts too
-	if err := dc.stockMonitoringService.CheckOutOfStock(); err != nil {
-		fmt.Printf("Warning: CheckOutOfStock failed: %v\n", err)
-	}
-	// Auto-check reorder alerts as well so the stock tab stays consistent
-	if err := dc.stockMonitoringService.CheckReorderLevel(); err != nil {
-		fmt.Printf("Warning: CheckReorderLevel failed: %v\n", err)
-	}
-	// Resolve alerts for items that have recovered above minimum
-	if err := dc.stockMonitoringService.ResolveStockAlerts(); err != nil {
-		fmt.Printf("Warning: ResolveStockAlerts failed: %v\n", err)
-	}
-
 	// Get active stock alerts
 	activeAlerts, err := dc.stockMonitoringService.GetActiveStockAlerts()
 	if err != nil {

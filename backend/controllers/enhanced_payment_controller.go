@@ -1,24 +1,24 @@
 package controllers
 
 import (
-	"fmt"
-	"net/http"
-	"strconv"
-	"time"
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/services"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"net/http"
+	"strconv"
+	"time"
 )
 
 type EnhancedPaymentController struct {
-	db                     *gorm.DB
-	paymentService         *services.PaymentService
-	salesRepo              *repositories.SalesRepository
-	purchaseRepo           *repositories.PurchaseRepository
-	contactRepo            repositories.ContactRepository
-	cashBankRepo           *repositories.CashBankRepository
+	db             *gorm.DB
+	paymentService *services.PaymentService
+	salesRepo      *repositories.SalesRepository
+	purchaseRepo   *repositories.PurchaseRepository
+	contactRepo    repositories.ContactRepository
+	cashBankRepo   *repositories.CashBankRepository
 }
 
 func NewEnhancedPaymentController(
@@ -30,46 +30,46 @@ func NewEnhancedPaymentController(
 	cashBankRepo *repositories.CashBankRepository,
 ) *EnhancedPaymentController {
 	return &EnhancedPaymentController{
-		db:                     db,
-		paymentService:         paymentService,
-		salesRepo:              salesRepo,
-		purchaseRepo:           purchaseRepo,
-		contactRepo:            contactRepo,
-		cashBankRepo:           cashBankRepo,
+		db:             db,
+		paymentService: paymentService,
+		salesRepo:      salesRepo,
+		purchaseRepo:   purchaseRepo,
+		contactRepo:    contactRepo,
+		cashBankRepo:   cashBankRepo,
 	}
 }
 
 // Enhanced Payment Request dengan auto-detection dan validation
 type EnhancedPaymentRequest struct {
 	// Core payment info
-	ContactID   uint      `json:"contact_id" binding:"required"`
-	CashBankID  uint      `json:"cash_bank_id"`
-	Date        time.Time `json:"date" binding:"required"`
-	Amount      float64   `json:"amount" binding:"required,min=0.01"`
-	Reference   string    `json:"reference"`
-	Notes       string    `json:"notes"`
-	
+	ContactID  uint      `json:"contact_id" binding:"required"`
+	CashBankID uint      `json:"cash_bank_id"`
+	Date       time.Time `json:"date" binding:"required"`
+	Amount     float64   `json:"amount" binding:"required,min=0.01"`
+	Reference  string    `json:"reference"`
+	Notes      string    `json:"notes"`
+
 	// Auto-filled based on contact type (optional in request)
-	Method      string `json:"method,omitempty"`
-	
+	Method string `json:"method,omitempty"`
+
 	// Specific invoice/bill to allocate to (optional)
 	TargetInvoiceID *uint `json:"target_invoice_id,omitempty"`
 	TargetBillID    *uint `json:"target_bill_id,omitempty"`
-	
+
 	// Advanced options
-	AutoAllocate       bool `json:"auto_allocate" default:"true"`
-	SkipBalanceCheck   bool `json:"skip_balance_check,omitempty"`
-	ForceProcess       bool `json:"force_process,omitempty"`
+	AutoAllocate     bool `json:"auto_allocate" default:"true"`
+	SkipBalanceCheck bool `json:"skip_balance_check,omitempty"`
+	ForceProcess     bool `json:"force_process,omitempty"`
 }
 
 // Enhanced Payment Response with full allocation details
 type EnhancedPaymentResponse struct {
-	Payment     models.Payment                   `json:"payment"`
-	Allocations []models.PaymentAllocation       `json:"allocations"`
-	CashBank    *models.CashBank                 `json:"cash_bank,omitempty"`
-	Contact     models.Contact                   `json:"contact"`
-	Summary     PaymentProcessingSummary         `json:"summary"`
-	Warnings    []string                         `json:"warnings,omitempty"`
+	Payment     models.Payment             `json:"payment"`
+	Allocations []models.PaymentAllocation `json:"allocations"`
+	CashBank    *models.CashBank           `json:"cash_bank,omitempty"`
+	Contact     models.Contact             `json:"contact"`
+	Summary     PaymentProcessingSummary   `json:"summary"`
+	Warnings    []string                   `json:"warnings,omitempty"`
 }
 
 type PaymentProcessingSummary struct {
@@ -86,7 +86,7 @@ type PaymentProcessingSummary struct {
 // 🎯 MAIN ENDPOINT: Record Enhanced Payment
 func (ctrl *EnhancedPaymentController) RecordEnhancedPayment(c *gin.Context) {
 	startTime := time.Now()
-	
+
 	var req EnhancedPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -210,7 +210,7 @@ func (ctrl *EnhancedPaymentController) validateAndEnhanceRequest(req EnhancedPay
 			return nil, nil, nil, fmt.Errorf("target invoice is already fully paid")
 		}
 		if req.Amount > sale.OutstandingAmount {
-			warnings = append(warnings, fmt.Sprintf("Payment amount (%.2f) exceeds invoice outstanding (%.2f). Will be adjusted.", 
+			warnings = append(warnings, fmt.Sprintf("Payment amount (%.2f) exceeds invoice outstanding (%.2f). Will be adjusted.",
 				req.Amount, sale.OutstandingAmount))
 		}
 	}
@@ -227,7 +227,7 @@ func (ctrl *EnhancedPaymentController) validateAndEnhanceRequest(req EnhancedPay
 			return nil, nil, nil, fmt.Errorf("target bill is already fully paid")
 		}
 		if req.Amount > purchase.OutstandingAmount {
-			warnings = append(warnings, fmt.Sprintf("Payment amount (%.2f) exceeds bill outstanding (%.2f). Will be adjusted.", 
+			warnings = append(warnings, fmt.Sprintf("Payment amount (%.2f) exceeds bill outstanding (%.2f). Will be adjusted.",
 				req.Amount, purchase.OutstandingAmount))
 		}
 	}
@@ -239,7 +239,7 @@ func (ctrl *EnhancedPaymentController) validateAndEnhanceRequest(req EnhancedPay
 			return nil, nil, nil, fmt.Errorf("failed to auto-select cash/bank account: %v", err)
 		}
 		req.CashBankID = cashBankID
-		
+
 		cashBank, _ := ctrl.cashBankRepo.FindByID(cashBankID)
 		warnings = append(warnings, fmt.Sprintf("Auto-selected cash/bank account: %s", cashBank.Name))
 	}
@@ -263,14 +263,14 @@ func (ctrl *EnhancedPaymentController) processEnhancedPayment(req *EnhancedPayme
 
 	// 📝 STEP 1: Create payment record
 	payment := &models.Payment{
-		ContactID:   req.ContactID,
-		UserID:      userID,
-		Date:        req.Date,
-		Amount:      req.Amount,
-		Method:      req.Method,
-		Reference:   req.Reference,
-		Notes:       req.Notes,
-		Status:      models.PaymentStatusPending,
+		ContactID: req.ContactID,
+		UserID:    userID,
+		Date:      req.Date,
+		Amount:    req.Amount,
+		Method:    req.Method,
+		Reference: req.Reference,
+		Notes:     req.Notes,
+		Status:    models.PaymentStatusCompleted,
 	}
 
 	// Generate unique code
@@ -390,7 +390,7 @@ func (ctrl *EnhancedPaymentController) createSmartAllocations(tx *gorm.DB, payme
 			PaymentID:       uint64(payment.ID),
 			AllocatedAmount: remainingAmount,
 		}
-		
+
 		if err := tx.Create(&genericAllocation).Error; err != nil {
 			return nil, fmt.Errorf("failed to create generic allocation: %v", err)
 		}
@@ -435,7 +435,7 @@ func (ctrl *EnhancedPaymentController) allocateToSpecificInvoice(tx *gorm.DB, pa
 
 	if err := tx.Model(&sale).Updates(map[string]interface{}{
 		"outstanding_amount": newOutstanding,
-		"status":            status,
+		"status":             status,
 	}).Error; err != nil {
 		return models.PaymentAllocation{}, 0, fmt.Errorf("failed to update invoice outstanding: %v", err)
 	}
@@ -477,7 +477,7 @@ func (ctrl *EnhancedPaymentController) allocateToSpecificBill(tx *gorm.DB, payme
 
 	if err := tx.Model(&purchase).Updates(map[string]interface{}{
 		"outstanding_amount": newOutstanding,
-		"status":            status,
+		"status":             status,
 	}).Error; err != nil {
 		return models.PaymentAllocation{}, 0, fmt.Errorf("failed to update bill outstanding: %v", err)
 	}
@@ -499,7 +499,7 @@ func getUserIDFromContext(c *gin.Context) uint {
 // Auto-select cash/bank account
 func (ctrl *EnhancedPaymentController) autoSelectCashBank(method string, amount float64) (uint, error) {
 	var cashBank models.CashBank
-	
+
 	accountType := "CASH"
 	if method == "PAYABLE" && amount > 1000000 { // Large payments prefer bank
 		accountType = "BANK"
@@ -510,7 +510,7 @@ func (ctrl *EnhancedPaymentController) autoSelectCashBank(method string, amount 
 	if method == "PAYABLE" {
 		query = query.Where("balance >= ?", amount)
 	}
-	
+
 	if err := query.Order("balance DESC").First(&cashBank).Error; err != nil {
 		// Fallback to any active account
 		if err := ctrl.db.Where("is_active = ?", true).Order("balance DESC").First(&cashBank).Error; err != nil {
@@ -533,15 +533,15 @@ func (ctrl *EnhancedPaymentController) generatePaymentCode(tx *gorm.DB, method s
 	now := time.Now()
 	year := now.Year()
 	month := int(now.Month())
-	
+
 	// Get next sequence
 	var maxSeq int
 	tx.Model(&models.Payment{}).
-		Where("EXTRACT(YEAR FROM date) = ? AND EXTRACT(MONTH FROM date) = ? AND code LIKE ?", 
+		Where("EXTRACT(YEAR FROM date) = ? AND EXTRACT(MONTH FROM date) = ? AND code LIKE ?",
 			year, month, prefix+"-%").
 		Select("COALESCE(MAX(CAST(SUBSTRING(code FROM '[0-9]+$') AS INTEGER)), 0)").
 		Scan(&maxSeq)
-	
+
 	seq := maxSeq + 1
 	return fmt.Sprintf("%s-%04d/%02d/%04d", prefix, year, month, seq), nil
 }
@@ -571,7 +571,7 @@ func (ctrl *EnhancedPaymentController) updateCashBankBalance(tx *gorm.DB, paymen
 
 	// Create transaction record (if CashBankTransaction model exists)
 	// TODO: Implement CashBankTransaction model if needed
-	
+
 	return nil
 }
 

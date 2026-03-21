@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -119,6 +120,42 @@ func (s *StockMonitoringService) CheckSingleProductStock(productID uint) error {
 	return nil
 }
 
+// SyncProductAlerts refreshes alert state for a set of affected products and then
+// resolves alerts that are no longer applicable after the stock change.
+func (s *StockMonitoringService) SyncProductAlerts(productIDs ...uint) error {
+	if s == nil || len(productIDs) == 0 {
+		return nil
+	}
+
+	seen := make(map[uint]struct{}, len(productIDs))
+	var firstErr error
+
+	for _, productID := range productIDs {
+		if productID == 0 {
+			continue
+		}
+		if _, exists := seen[productID]; exists {
+			continue
+		}
+		seen[productID] = struct{}{}
+
+		if err := s.CheckSingleProductStock(productID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	if err := s.ResolveStockAlerts(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	return firstErr
+}
+
 // GetLowStockProducts returns list of products with low stock
 func (s *StockMonitoringService) GetLowStockProducts() ([]models.Product, error) {
 	var products []models.Product
@@ -173,40 +210,15 @@ func (s *StockMonitoringService) GetStockAlerts() (map[string]interface{}, error
 // Private helper methods
 
 func (s *StockMonitoringService) createMinimumStockNotification(product *models.Product) error {
-	// Check if active stock alert already exists for this product
-	var existingAlert models.StockAlert
-	err := s.db.Where("product_id = ? AND alert_type = ? AND status = ?",
-		product.ID, models.StockAlertTypeLowStock, models.StockAlertStatusActive).
-		First(&existingAlert).Error
-
-	if err == nil {
-		// Update existing alert with current stock
-		existingAlert.CurrentStock = product.Stock
-		existingAlert.LastAlertAt = time.Now()
-		s.db.Save(&existingAlert)
+	stockAlert, created, err := s.upsertActiveStockAlert(product, models.StockAlertTypeLowStock, product.MinStock)
+	if err != nil {
+		log.Printf("[STOCK-ALERT-ERROR] Failed to upsert low stock alert for product %d: %v", product.ID, err)
+		return err
+	}
+	if !created {
 		log.Printf("[STOCK-ALERT] Updated existing low stock alert for product '%s' (ID: %d) - Current: %d, Min: %d",
 			product.Name, product.ID, product.Stock, product.MinStock)
-		return nil // Don't create duplicate notification
-	}
-
-	// Only log if it's a real error (not "record not found")
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("[STOCK-ALERT-ERROR] Error checking existing stock alert for product %d: %v", product.ID, err)
-		return err
-	}
-
-	// Create new stock alert record
-	stockAlert := models.StockAlert{
-		ProductID:      product.ID,
-		AlertType:      models.StockAlertTypeLowStock,
-		CurrentStock:   product.Stock,
-		ThresholdStock: product.MinStock,
-		Status:         models.StockAlertStatusActive,
-		LastAlertAt:    time.Now(),
-	}
-	if err := s.db.Create(&stockAlert).Error; err != nil {
-		log.Printf("[STOCK-ALERT-ERROR] Failed to create stock alert record for product %d: %v", product.ID, err)
-		return err
+		return nil
 	}
 	log.Printf("[STOCK-ALERT] Created new low stock alert for product '%s' (ID: %d) - Current: %d, Min: %d",
 		product.Name, product.ID, product.Stock, product.MinStock)
@@ -243,41 +255,15 @@ func (s *StockMonitoringService) createMinimumStockNotification(product *models.
 	log.Printf("[STOCK-NOTIFICATION] Sending low stock notifications for product '%s' (ID: %d) to %d users",
 		product.Name, product.ID, len(userIDs))
 	for _, userID := range userIDs {
-		// Check if notification already exists for this product and user
-		var existingNotif models.Notification
-		err := s.db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Where("user_id = ? AND type = ? AND data::text LIKE ? AND is_read = ?",
-			userID, models.NotificationTypeLowStock,
-			fmt.Sprintf(`%%"product_id":%d%%`, product.ID), false).
-			First(&existingNotif).Error
-
-		if err == nil {
-			// Update existing notification
-			existingNotif.Message = message
-			existingNotif.Data = string(dataJSON)
-			existingNotif.UpdatedAt = time.Now()
-			s.db.Save(&existingNotif)
-			continue
-		}
-
-		// Skip if it's not a "record not found" error
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("[STOCK-NOTIFICATION-ERROR] Error checking existing notification for user %d, product %d: %v",
-				userID, product.ID, err)
-			continue
-		}
-
-		// Create new notification
-		notification := models.Notification{
-			UserID:   userID,
-			Type:     models.NotificationTypeLowStock,
-			Title:    title,
-			Message:  message,
-			Data:     string(dataJSON),
-			Priority: models.NotificationPriorityHigh,
-			IsRead:   false,
-		}
-
-		if err := s.db.Create(&notification).Error; err != nil {
+		if err := s.saveOrUpdateStockNotification(
+			userID,
+			models.NotificationTypeLowStock,
+			product.ID,
+			title,
+			message,
+			string(dataJSON),
+			models.NotificationPriorityHigh,
+		); err != nil {
 			log.Printf("[STOCK-NOTIFICATION-ERROR] Failed to create notification for user %d, product %d: %v",
 				userID, product.ID, err)
 		}
@@ -287,40 +273,15 @@ func (s *StockMonitoringService) createMinimumStockNotification(product *models.
 }
 
 func (s *StockMonitoringService) createOutOfStockNotification(product *models.Product) error {
-	// Check if active stock alert already exists for this product
-	var existingAlert models.StockAlert
-	err := s.db.Where("product_id = ? AND alert_type = ? AND status = ?",
-		product.ID, models.StockAlertTypeOutOfStock, models.StockAlertStatusActive).
-		First(&existingAlert).Error
-
-	if err == nil {
-		// Update existing alert with current stock
-		existingAlert.CurrentStock = product.Stock
-		existingAlert.LastAlertAt = time.Now()
-		s.db.Save(&existingAlert)
+	stockAlert, created, err := s.upsertActiveStockAlert(product, models.StockAlertTypeOutOfStock, 0)
+	if err != nil {
+		log.Printf("[STOCK-ALERT-ERROR] Failed to upsert out of stock alert for product %d: %v", product.ID, err)
+		return err
+	}
+	if !created {
 		log.Printf("[STOCK-ALERT] Updated existing out of stock alert for product '%s' (ID: %d)",
 			product.Name, product.ID)
-		return nil // Don't create duplicate notification
-	}
-
-	// Only log if it's a real error (not "record not found")
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		log.Printf("[STOCK-ALERT-ERROR] Error checking existing stock alert for product %d: %v", product.ID, err)
-		return err
-	}
-
-	// Create new stock alert record
-	stockAlert := models.StockAlert{
-		ProductID:      product.ID,
-		AlertType:      models.StockAlertTypeOutOfStock,
-		CurrentStock:   product.Stock,
-		ThresholdStock: 0,
-		Status:         models.StockAlertStatusActive,
-		LastAlertAt:    time.Now(),
-	}
-	if err := s.db.Create(&stockAlert).Error; err != nil {
-		log.Printf("[STOCK-ALERT-ERROR] Failed to create stock alert record for product %d: %v", product.ID, err)
-		return err
+		return nil
 	}
 	log.Printf("[STOCK-ALERT] Created new out of stock alert for product '%s' (ID: %d)",
 		product.Name, product.ID)
@@ -356,41 +317,15 @@ func (s *StockMonitoringService) createOutOfStockNotification(product *models.Pr
 	log.Printf("[STOCK-NOTIFICATION] Sending out of stock notifications for product '%s' (ID: %d) to %d users",
 		product.Name, product.ID, len(userIDs))
 	for _, userID := range userIDs {
-		// Check if notification already exists for this product and user
-		var existingNotif models.Notification
-		err := s.db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Where("user_id = ? AND type = ? AND data::text LIKE ? AND is_read = ?",
-			userID, models.NotificationTypeStockOut,
-			fmt.Sprintf(`%%"product_id":%d%%`, product.ID), false).
-			First(&existingNotif).Error
-
-		if err == nil {
-			// Update existing notification
-			existingNotif.Message = message
-			existingNotif.Data = string(dataJSON)
-			existingNotif.UpdatedAt = time.Now()
-			s.db.Save(&existingNotif)
-			continue
-		}
-
-		// Skip if it's not a "record not found" error
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("[STOCK-NOTIFICATION-ERROR] Error checking existing notification for user %d, product %d: %v",
-				userID, product.ID, err)
-			continue
-		}
-
-		// Create new notification
-		notification := models.Notification{
-			UserID:   userID,
-			Type:     models.NotificationTypeStockOut,
-			Title:    title,
-			Message:  message,
-			Data:     string(dataJSON),
-			Priority: models.NotificationPriorityUrgent,
-			IsRead:   false,
-		}
-
-		if err := s.db.Create(&notification).Error; err != nil {
+		if err := s.saveOrUpdateStockNotification(
+			userID,
+			models.NotificationTypeStockOut,
+			product.ID,
+			title,
+			message,
+			string(dataJSON),
+			models.NotificationPriorityUrgent,
+		); err != nil {
 			log.Printf("[STOCK-NOTIFICATION-ERROR] Failed to create notification for user %d, product %d: %v",
 				userID, product.ID, err)
 		}
@@ -432,41 +367,15 @@ func (s *StockMonitoringService) createReorderNotification(product *models.Produ
 
 	// Send notification to all inventory managers
 	for _, userID := range userIDs {
-		// Check if notification already exists for this product and user
-		var existingNotif models.Notification
-		err := s.db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).Where("user_id = ? AND type = ? AND data::text LIKE ? AND is_read = ?",
-			userID, models.NotificationTypeReorderAlert,
-			fmt.Sprintf(`%%"product_id":%d%%`, product.ID), false).
-			First(&existingNotif).Error
-
-		if err == nil {
-			// Update existing notification
-			existingNotif.Message = message
-			existingNotif.Data = string(dataJSON)
-			existingNotif.UpdatedAt = time.Now()
-			s.db.Save(&existingNotif)
-			continue
-		}
-
-		// Skip if it's not a "record not found" error
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("[REORDER-NOTIFICATION-ERROR] Error checking existing notification for user %d, product %d: %v",
-				userID, product.ID, err)
-			continue
-		}
-
-		// Create new notification
-		notification := models.Notification{
-			UserID:   userID,
-			Type:     models.NotificationTypeReorderAlert,
-			Title:    title,
-			Message:  message,
-			Data:     string(dataJSON),
-			Priority: models.NotificationPriorityMedium,
-			IsRead:   false,
-		}
-
-		if err := s.db.Create(&notification).Error; err != nil {
+		if err := s.saveOrUpdateStockNotification(
+			userID,
+			models.NotificationTypeReorderAlert,
+			product.ID,
+			title,
+			message,
+			string(dataJSON),
+			models.NotificationPriorityMedium,
+		); err != nil {
 			log.Printf("[REORDER-NOTIFICATION-ERROR] Failed to create notification for user %d, product %d: %v",
 				userID, product.ID, err)
 		}
@@ -543,14 +452,119 @@ func (s *StockMonitoringService) ResolveStockAlerts() error {
 // markStockNotificationsAsRead marks all stock-related notifications for a product as read
 func (s *StockMonitoringService) markStockNotificationsAsRead(productID uint) error {
 	return s.db.Model(&models.Notification{}).
-		Where("type IN ? AND data::text LIKE ? AND is_read = ?",
+		Where("type IN ? AND data->>'product_id' = ? AND is_read = ?",
 			[]string{models.NotificationTypeLowStock, models.NotificationTypeReorderAlert, models.NotificationTypeStockOut},
-			fmt.Sprintf(`%%"product_id":%d%%`, productID),
+			fmt.Sprintf("%d", productID),
 			false).
 		Updates(map[string]interface{}{
 			"is_read": true,
 			"read_at": time.Now(),
 		}).Error
+}
+
+func (s *StockMonitoringService) upsertActiveStockAlert(product *models.Product, alertType string, threshold int) (*models.StockAlert, bool, error) {
+	var existingAlert models.StockAlert
+	err := s.db.Where("product_id = ? AND alert_type = ? AND status = ?",
+		product.ID, alertType, models.StockAlertStatusActive).
+		First(&existingAlert).Error
+
+	if err == nil {
+		existingAlert.CurrentStock = product.Stock
+		existingAlert.ThresholdStock = threshold
+		existingAlert.LastAlertAt = time.Now()
+		return &existingAlert, false, s.db.Save(&existingAlert).Error
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
+	}
+
+	stockAlert := models.StockAlert{
+		ProductID:      product.ID,
+		AlertType:      alertType,
+		CurrentStock:   product.Stock,
+		ThresholdStock: threshold,
+		Status:         models.StockAlertStatusActive,
+		LastAlertAt:    time.Now(),
+	}
+	if err := s.db.Create(&stockAlert).Error; err != nil {
+		if isPGUniqueViolation(err) {
+			err = s.db.Where("product_id = ? AND alert_type = ? AND status = ?",
+				product.ID, alertType, models.StockAlertStatusActive).
+				First(&existingAlert).Error
+			if err != nil {
+				return nil, false, err
+			}
+
+			existingAlert.CurrentStock = product.Stock
+			existingAlert.ThresholdStock = threshold
+			existingAlert.LastAlertAt = time.Now()
+			return &existingAlert, false, s.db.Save(&existingAlert).Error
+		}
+
+		return nil, false, err
+	}
+
+	return &stockAlert, true, nil
+}
+
+func isPGUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func (s *StockMonitoringService) saveOrUpdateStockNotification(userID uint, notificationType string, productID uint, title, message, data, priority string) error {
+	var existingNotif models.Notification
+	err := s.db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).
+		Where("user_id = ? AND type = ? AND data->>'product_id' = ? AND is_read = ?",
+			userID, notificationType, fmt.Sprintf("%d", productID), false).
+		First(&existingNotif).Error
+
+	if err == nil {
+		existingNotif.Title = title
+		existingNotif.Message = message
+		existingNotif.Data = data
+		existingNotif.Priority = priority
+		existingNotif.UpdatedAt = time.Now()
+		return s.db.Save(&existingNotif).Error
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	notification := models.Notification{
+		UserID:   userID,
+		Type:     notificationType,
+		Title:    title,
+		Message:  message,
+		Data:     data,
+		Priority: priority,
+		IsRead:   false,
+	}
+
+	if err := s.db.Create(&notification).Error; err != nil {
+		if !isPGUniqueViolation(err) {
+			return err
+		}
+
+		err = s.db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}).
+			Where("user_id = ? AND type = ? AND data->>'product_id' = ? AND is_read = ?",
+				userID, notificationType, fmt.Sprintf("%d", productID), false).
+			First(&existingNotif).Error
+		if err != nil {
+			return err
+		}
+
+		existingNotif.Title = title
+		existingNotif.Message = message
+		existingNotif.Data = data
+		existingNotif.Priority = priority
+		existingNotif.UpdatedAt = time.Now()
+		return s.db.Save(&existingNotif).Error
+	}
+
+	return nil
 }
 
 // GetActiveStockAlerts returns only active stock alerts for dashboard

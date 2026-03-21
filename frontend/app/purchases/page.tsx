@@ -1,14 +1,17 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
-import { useTranslation } from '@/hooks/useTranslation';
-import SimpleLayout from '@/components/layout/SimpleLayout';
-import { parseClosedPeriodError, formatClosedPeriodDate } from '@/utils/errorHandler';
-import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
-import { DataTable } from '@/components/common/DataTable';
-import EnhancedPurchaseTable from '@/components/purchase/EnhancedPurchaseTable';
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/contexts/AuthContext";
+import { useTranslation } from "@/hooks/useTranslation";
+import SimpleLayout from "@/components/layout/SimpleLayout";
+import {
+  parseClosedPeriodError,
+  formatClosedPeriodDate,
+} from "@/utils/errorHandler";
+import CompanyTypeGuard from "@/components/common/CompanyTypeGuard";
+import { DataTable } from "@/components/common/DataTable";
+import EnhancedPurchaseTable from "@/components/purchase/EnhancedPurchaseTable";
 import {
   Box,
   Flex,
@@ -78,7 +81,7 @@ import {
   Radio,
   RadioGroup,
   Stack,
-} from '@chakra-ui/react';
+} from "@chakra-ui/react";
 import {
   FiPlus,
   FiEye,
@@ -93,28 +96,33 @@ import {
   FiPackage,
   FiDownload,
   FiFileText,
-  FiSearch
-} from 'react-icons/fi';
-import purchaseService, { Purchase, PurchaseFilterParams, PurchaseItem } from '@/services/purchaseService';
-import SubmitApprovalButton from '@/components/purchase/SubmitApprovalButton';
-import { ApprovalPanel } from '@/components/approval/ApprovalPanel';
-import PurchasePaymentForm from '@/components/purchase/PurchasePaymentForm';
-import contactService from '@/services/contactService';
-import productService, { Product } from '@/services/productService';
-import accountService from '@/services/accountService';
-import { Account as GLAccount, AccountCatalogItem } from '@/types/account';
-import approvalService from '@/services/approvalService';
-import { assetService } from '@/services/assetService';
-import { normalizeRole } from '@/utils/roles';
-import { useModulePermissions } from '@/hooks/usePermissions';
-import ProtectedModule from '@/components/common/ProtectedModule';
-import { useColorModeValue } from '@chakra-ui/react';
-import SearchableSelect from '@/components/common/SearchableSelect';
-import CurrencyInput from '@/components/common/CurrencyInput';
+  FiSearch,
+} from "react-icons/fi";
+import purchaseService, {
+  Purchase,
+  PurchaseFilterParams,
+  PurchaseItem,
+  PurchaseSummary,
+} from "@/services/purchaseService";
+import SubmitApprovalButton from "@/components/purchase/SubmitApprovalButton";
+import { ApprovalPanel } from "@/components/approval/ApprovalPanel";
+import PurchasePaymentForm from "@/components/purchase/PurchasePaymentForm";
+import contactService from "@/services/contactService";
+import productService, { Product } from "@/services/productService";
+import accountService from "@/services/accountService";
+import { Account as GLAccount, AccountCatalogItem } from "@/types/account";
+import approvalService from "@/services/approvalService";
+import { assetService } from "@/services/assetService";
+import { normalizeRole } from "@/utils/roles";
+import { useModulePermissions } from "@/hooks/usePermissions";
+import ProtectedModule from "@/components/common/ProtectedModule";
+import { useColorModeValue } from "@chakra-ui/react";
+import SearchableSelect from "@/components/common/SearchableSelect";
+import CurrencyInput from "@/components/common/CurrencyInput";
 // SSOT Journal Integration
-import PurchaseJournalEntriesModal from '../../src/components/purchase/PurchaseJournalEntriesModal';
-import purchaseJournalService from '../../src/services/purchaseJournalService';
-import { API_ENDPOINTS } from '@/config/api';
+import PurchaseJournalEntriesModal from "../../src/components/purchase/PurchaseJournalEntriesModal";
+import purchaseJournalService from "../../src/services/purchaseJournalService";
+import { API_ENDPOINTS } from "@/config/api";
 
 // Types for form data
 interface PurchaseFormData {
@@ -141,7 +149,7 @@ interface PurchaseFormData {
   // Payment method fields
   payment_method: string;
   bank_account_id: string;
-  credit_account_id: string;  // New field for liability account
+  credit_account_id: string; // New field for liability account
   payment_reference: string;
 
   items: PurchaseItemFormData[];
@@ -154,10 +162,10 @@ interface PurchaseItemFormData {
   discount: string;
   tax: string;
   expense_account_id: string;
-  item_type: string;          // "INVENTORY" | "ASSET" | "PREPAID"
+  item_type: string; // "INVENTORY" | "ASSET" | "PREPAID"
   is_fixed_asset: boolean;
-  description: string;        // Asset name/description / Prepaid name
-  asset_category_id: string;  // Asset category ID
+  description: string; // Asset name/description / Prepaid name
+  asset_category_id: string; // Asset category ID
   amortization_month: string; // Durasi bulan amortisasi untuk PREPAID
 }
 
@@ -178,6 +186,30 @@ interface BankAccount {
   last_exchange_rate?: number;
   frozen_amount?: number;
 }
+
+const normalizePurchasePaymentFields = (
+  current: PurchaseFormData,
+  nextPaymentMethod: string,
+): PurchaseFormData => {
+  const normalizedMethod = nextPaymentMethod || "CREDIT";
+  const nextState: PurchaseFormData = {
+    ...current,
+    payment_method: normalizedMethod,
+  };
+
+  if (normalizedMethod === "CREDIT") {
+    nextState.bank_account_id = "";
+    nextState.payment_reference = "";
+    return nextState;
+  }
+
+  nextState.credit_account_id = "";
+  if (normalizedMethod === "CASH") {
+    nextState.payment_reference = "";
+  }
+
+  return nextState;
+};
 
 interface Receipt {
   id: number;
@@ -213,62 +245,62 @@ interface ReceiptItem {
 // Status color mapping
 const getStatusColor = (status: string) => {
   switch (status.toLowerCase()) {
-    case 'approved':
-    case 'completed':
-      return 'green';
-    case 'draft':
-    case 'pending_approval':
-      return 'yellow';
-    case 'pending':
-      return 'blue';
-    case 'cancelled':
-    case 'rejected':
-      return 'red';
+    case "approved":
+    case "completed":
+      return "green";
+    case "draft":
+    case "pending_approval":
+      return "yellow";
+    case "pending":
+      return "blue";
+    case "cancelled":
+    case "rejected":
+      return "red";
     default:
-      return 'gray';
+      return "gray";
   }
 };
 
 // Approval status color mapping
 const getApprovalStatusColor = (approvalStatus: string) => {
-  switch ((approvalStatus || '').toLowerCase()) {
-    case 'approved':
-      return 'green';
-    case 'pending':
-      return 'yellow';
-    case 'rejected':
-      return 'red';
-    case 'not_required':
-    case 'not_started':
-      return 'gray';
+  switch ((approvalStatus || "").toLowerCase()) {
+    case "approved":
+      return "green";
+    case "pending":
+      return "yellow";
+    case "rejected":
+      return "red";
+    case "not_required":
+    case "not_started":
+      return "gray";
     default:
-      return 'gray';
+      return "gray";
   }
 };
 
 // Format currency in IDR
 const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
     minimumFractionDigits: 0,
-    maximumFractionDigits: 0
+    maximumFractionDigits: 0,
   }).format(amount);
 };
 
 const formatAccountBalance = (amount: number, currency?: string) => {
-  const normalizedCurrency = (currency || 'IDR').toUpperCase();
+  const normalizedCurrency = (currency || "IDR").toUpperCase();
 
-  if (normalizedCurrency === 'USD') {
-    return `USD ${amount.toLocaleString('en-US', {
+  if (normalizedCurrency === "USD") {
+    return `USD ${amount.toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
   }
 
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount);
@@ -277,31 +309,35 @@ const formatAccountBalance = (amount: number, currency?: string) => {
 const getAccountBookBalance = (account?: Partial<BankAccount>) => {
   if (!account) return 0;
 
-  const normalizedCurrency = (account.currency || 'IDR').toUpperCase();
+  const normalizedCurrency = (account.currency || "IDR").toUpperCase();
   const nativeBalance = account.balance || 0;
 
-  if (normalizedCurrency === 'IDR') {
+  if (normalizedCurrency === "IDR") {
     return nativeBalance;
   }
 
-  if (typeof account.book_balance_idr === 'number') {
+  if (typeof account.book_balance_idr === "number") {
     return account.book_balance_idr;
   }
 
-  const fallbackRate = account.last_exchange_rate && account.last_exchange_rate > 0
-    ? account.last_exchange_rate
-    : 1;
+  const fallbackRate =
+    account.last_exchange_rate && account.last_exchange_rate > 0
+      ? account.last_exchange_rate
+      : 1;
 
   return nativeBalance * fallbackRate;
 };
 
 const formatBankAccountSummary = (account?: Partial<BankAccount>) => {
   if (!account) {
-    return formatAccountBalance(0, 'IDR');
+    return formatAccountBalance(0, "IDR");
   }
 
-  const nativeLabel = formatAccountBalance(account.balance || 0, account.currency);
-  if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+  const nativeLabel = formatAccountBalance(
+    account.balance || 0,
+    account.currency,
+  );
+  if ((account.currency || "IDR").toUpperCase() === "IDR") {
     return nativeLabel;
   }
 
@@ -310,21 +346,26 @@ const formatBankAccountSummary = (account?: Partial<BankAccount>) => {
 
 // Format date
 const formatDate = (date: string) => {
-  return new Date(date).toLocaleDateString('id-ID');
+  return new Date(date).toLocaleDateString("id-ID");
 };
 
 const isReceiptablePurchaseItem = (item?: { item_type?: string | null }) => {
-  const itemType = String(item?.item_type || 'INVENTORY').toUpperCase();
-  return itemType !== 'PREPAID';
+  const itemType = String(item?.item_type || "INVENTORY").toUpperCase();
+  return itemType !== "PREPAID";
 };
 
-const getReceiptablePurchaseItems = <T extends { item_type?: string | null }>(items?: T[] | null): T[] => {
+const getReceiptablePurchaseItems = <T extends { item_type?: string | null }>(
+  items?: T[] | null,
+): T[] => {
   if (!Array.isArray(items)) return [];
   return items.filter(isReceiptablePurchaseItem);
 };
 
 const purchaseHasReceiptableItems = (purchase: Purchase) => {
-  if (!Array.isArray(purchase.purchase_items) || purchase.purchase_items.length === 0) {
+  if (
+    !Array.isArray(purchase.purchase_items) ||
+    purchase.purchase_items.length === 0
+  ) {
     // Fallback: if list endpoint doesn't include items, don't hide the action prematurely.
     return true;
   }
@@ -333,74 +374,81 @@ const purchaseHasReceiptableItems = (purchase: Purchase) => {
 };
 
 const createPurchaseItemFormData = (
-  overrides: Partial<PurchaseItemFormData> = {}
+  overrides: Partial<PurchaseItemFormData> = {},
 ): PurchaseItemFormData => ({
-  product_id: '',
-  quantity: '1',
-  unit_price: '0',
-  discount: '0',
-  tax: '0',
-  expense_account_id: '',
-  item_type: 'INVENTORY',
+  product_id: "",
+  quantity: "1",
+  unit_price: "0",
+  discount: "0",
+  tax: "0",
+  expense_account_id: "",
+  item_type: "INVENTORY",
   is_fixed_asset: false,
-  description: '',
-  asset_category_id: '',
-  amortization_month: '',
+  description: "",
+  asset_category_id: "",
+  amortization_month: "",
   ...overrides,
 });
 
-const mapPurchaseItemToFormData = (item: PurchaseItem): PurchaseItemFormData => {
-  const itemType = item.item_type || (item.is_fixed_asset ? 'ASSET' : 'INVENTORY');
+const mapPurchaseItemToFormData = (
+  item: PurchaseItem,
+): PurchaseItemFormData => {
+  const itemType =
+    item.item_type || (item.is_fixed_asset ? "ASSET" : "INVENTORY");
 
   return createPurchaseItemFormData({
-    product_id: item.product_id?.toString() || '',
-    quantity: item.quantity?.toString() || '1',
-    unit_price: item.unit_price?.toString() || '0',
-    discount: item.discount?.toString() || '0',
-    tax: item.tax?.toString() || '0',
-    expense_account_id: item.expense_account_id?.toString() || '',
+    product_id: item.product_id?.toString() || "",
+    quantity: item.quantity?.toString() || "1",
+    unit_price: item.unit_price?.toString() || "0",
+    discount: item.discount?.toString() || "0",
+    tax: item.tax?.toString() || "0",
+    expense_account_id: item.expense_account_id?.toString() || "",
     item_type: itemType,
-    is_fixed_asset: item.is_fixed_asset || itemType === 'ASSET',
-    description: item.description || '',
-    asset_category_id: item.asset_category_id?.toString() || '',
-    amortization_month: itemType === 'PREPAID' ? (item.amortization_month?.toString() || '12') : '',
+    is_fixed_asset: item.is_fixed_asset || itemType === "ASSET",
+    description: item.description || "",
+    asset_category_id: item.asset_category_id?.toString() || "",
+    amortization_month:
+      itemType === "PREPAID" ? item.amortization_month?.toString() || "12" : "",
   });
 };
 
 const getPurchaseItemDisplayName = (item: PurchaseItem) => {
-  if (item.is_fixed_asset || item.item_type === 'ASSET') {
-    return `${item.description || 'Aset Tanpa Deskripsi'} (Aset Tetap)`;
+  if (item.is_fixed_asset || item.item_type === "ASSET") {
+    return `${item.description || "Aset Tanpa Deskripsi"} (Aset Tetap)`;
   }
 
-  if (item.item_type === 'PREPAID') {
-    return item.description || 'Prepaid Tanpa Deskripsi';
+  if (item.item_type === "PREPAID") {
+    return item.description || "Prepaid Tanpa Deskripsi";
   }
 
-  return item.product?.name || (item.product_id ? `Product #${item.product_id}` : 'Produk Tidak Ditemukan');
+  return (
+    item.product?.name ||
+    (item.product_id ? `Product #${item.product_id}` : "Produk Tidak Ditemukan")
+  );
 };
 
 const columns = [
-  { header: 'Code', accessor: 'code' as keyof Purchase },
+  { header: "Code", accessor: "code" as keyof Purchase },
   {
-    header: 'Vendor',
+    header: "Vendor",
     accessor: ((row: Purchase) => {
-      return row.vendor?.name || 'N/A';
-    }) as (row: Purchase) => React.ReactNode
+      return row.vendor?.name || "N/A";
+    }) as (row: Purchase) => React.ReactNode,
   },
   {
-    header: 'Date',
+    header: "Date",
     accessor: ((row: Purchase) => {
-      return new Date(row.date).toLocaleDateString('id-ID');
-    }) as (row: Purchase) => React.ReactNode
+      return new Date(row.date).toLocaleDateString("id-ID");
+    }) as (row: Purchase) => React.ReactNode,
   },
   {
-    header: 'Total',
+    header: "Total",
     accessor: ((row: Purchase) => {
       return formatCurrency(row.total_amount);
-    }) as (row: Purchase) => React.ReactNode
+    }) as (row: Purchase) => React.ReactNode,
   },
   {
-    header: 'Paid',
+    header: "Paid",
     accessor: ((row: Purchase) => {
       const paidAmount = row.paid_amount || 0;
       return (
@@ -411,10 +459,10 @@ const columns = [
           {formatCurrency(paidAmount)}
         </Text>
       );
-    }) as (row: Purchase) => React.ReactNode
+    }) as (row: Purchase) => React.ReactNode,
   },
   {
-    header: 'Outstanding',
+    header: "Outstanding",
     accessor: ((row: Purchase) => {
       const outstandingAmount = row.outstanding_amount || 0;
       return (
@@ -425,17 +473,17 @@ const columns = [
           {formatCurrency(outstandingAmount)}
         </Text>
       );
-    }) as (row: Purchase) => React.ReactNode
+    }) as (row: Purchase) => React.ReactNode,
   },
   {
-    header: 'Payment',
+    header: "Payment",
     accessor: ((row: Purchase) => {
-      const paymentMethod = row.payment_method || 'CASH';
+      const paymentMethod = row.payment_method || "CASH";
       const canReceivePayment = purchaseService.canReceivePayment(row);
       return (
         <VStack spacing={1} align="start">
           <Badge
-            colorScheme={paymentMethod === 'CREDIT' ? 'blue' : 'gray'}
+            colorScheme={paymentMethod === "CREDIT" ? "blue" : "gray"}
             variant="subtle"
             fontSize="xs"
           >
@@ -448,23 +496,26 @@ const columns = [
           )}
         </VStack>
       );
-    }) as (row: Purchase) => React.ReactNode
+    }) as (row: Purchase) => React.ReactNode,
   },
   {
-    header: 'Status',
+    header: "Status",
     accessor: ((row: Purchase) => (
       <Badge colorScheme={getStatusColor(row.status)} variant="subtle">
-        {row.status.replace('_', ' ').toUpperCase()}
+        {row.status.replace("_", " ").toUpperCase()}
       </Badge>
-    )) as (row: Purchase) => React.ReactNode
+    )) as (row: Purchase) => React.ReactNode,
   },
   {
-    header: 'Approval Status',
+    header: "Approval Status",
     accessor: ((row: Purchase) => (
-      <Badge colorScheme={getApprovalStatusColor(row.approval_status)} variant="subtle">
-        {row.approval_status.replace('_', ' ').toUpperCase()}
+      <Badge
+        colorScheme={getApprovalStatusColor(row.approval_status)}
+        variant="subtle"
+      >
+        {row.approval_status.replace("_", " ").toUpperCase()}
       </Badge>
-    )) as (row: Purchase) => React.ReactNode
+    )) as (row: Purchase) => React.ReactNode,
   },
 ];
 
@@ -472,78 +523,109 @@ const PurchasesPage: React.FC = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { token, user } = useAuth();
-  const isServiceCompany = user?.company_type === 'SERVICE';
+  const isServiceCompany = user?.company_type === "SERVICE";
   const toast = useToast();
   const { t, language } = useTranslation();
-  const { isOpen: isFilterOpen, onOpen: onFilterOpen, onClose: onFilterClose } = useDisclosure();
+  const {
+    isOpen: isFilterOpen,
+    onOpen: onFilterOpen,
+    onClose: onFilterClose,
+  } = useDisclosure();
 
   // Theme colors for enhanced styling - MUST be at top to follow Rules of Hooks
-  const bgColor = useColorModeValue('gray.50', 'gray.900');
-  const cardBg = useColorModeValue('white', 'gray.800');
-  const headingColor = useColorModeValue('gray.800', 'gray.100');
-  const borderColor = useColorModeValue('gray.200', 'gray.600');
+  const bgColor = useColorModeValue("gray.50", "gray.900");
+  const cardBg = useColorModeValue("white", "gray.800");
+  const headingColor = useColorModeValue("gray.800", "gray.100");
+  const borderColor = useColorModeValue("gray.200", "gray.600");
 
   // Pre-calculate all useColorModeValue calls to avoid conditional hook calls
-  const textSecondary = useColorModeValue('gray.600', 'gray.400');
-  const textPrimary = useColorModeValue('gray.700', 'gray.200');
-  const hoverBg = useColorModeValue('gray.50', 'gray.700');
-  const hoverBorder = useColorModeValue('gray.300', 'gray.500');
-  const buttonBlueBg = useColorModeValue('blue.500', 'blue.600');
-  const buttonBlueHover = useColorModeValue('blue.600', 'blue.500');
+  const textSecondary = useColorModeValue("gray.600", "gray.400");
+  const textPrimary = useColorModeValue("gray.700", "gray.200");
+  const hoverBg = useColorModeValue("gray.50", "gray.700");
+  const hoverBorder = useColorModeValue("gray.300", "gray.500");
+  const buttonBlueBg = useColorModeValue("blue.500", "blue.600");
+  const buttonBlueHover = useColorModeValue("blue.600", "blue.500");
   const statColors = {
-    orange: useColorModeValue('orange.600', 'orange.400'),
-    green: useColorModeValue('green.600', 'green.400'),
-    red: useColorModeValue('red.600', 'red.400'),
-    purple: useColorModeValue('purple.600', 'purple.400'),
-    blue: useColorModeValue('blue.600', 'blue.300')
+    orange: useColorModeValue("orange.600", "orange.400"),
+    green: useColorModeValue("green.600", "green.400"),
+    red: useColorModeValue("red.600", "red.400"),
+    purple: useColorModeValue("purple.600", "purple.400"),
+    blue: useColorModeValue("blue.600", "blue.300"),
   };
   const statBgColors = {
-    orange: useColorModeValue('orange.50', 'orange.900'),
-    green: useColorModeValue('green.50', 'green.900'),
-    red: useColorModeValue('red.50', 'red.900'),
-    purple: useColorModeValue('purple.50', 'purple.900'),
-    blue: useColorModeValue('blue.50', 'blue.900')
+    orange: useColorModeValue("orange.50", "orange.900"),
+    green: useColorModeValue("green.50", "green.900"),
+    red: useColorModeValue("red.50", "red.900"),
+    purple: useColorModeValue("purple.50", "purple.900"),
+    blue: useColorModeValue("blue.50", "blue.900"),
   };
-  const modalBg = useColorModeValue('white', 'gray.900');
-  const modalFilterBg = useColorModeValue('blue.50', 'blue.900');
-  const modalFilterColor = useColorModeValue('blue.600', 'blue.300');
-  const modalHoverBg = useColorModeValue('gray.100', 'gray.700');
-  const inputHoverBorder = useColorModeValue('gray.300', 'gray.500');
-  const inputFocusBorder = useColorModeValue('blue.500', 'blue.400');
-  const inputFocusShadow = `0 0 0 1px ${useColorModeValue('blue.500', 'blue.400')}`;
-  const ghostHoverBg = useColorModeValue('gray.50', 'gray.700');
+  const modalBg = useColorModeValue("white", "gray.900");
+  const modalFilterBg = useColorModeValue("blue.50", "blue.900");
+  const modalFilterColor = useColorModeValue("blue.600", "blue.300");
+  const modalHoverBg = useColorModeValue("gray.100", "gray.700");
+  const inputHoverBorder = useColorModeValue("gray.300", "gray.500");
+  const inputFocusBorder = useColorModeValue("blue.500", "blue.400");
+  const inputFocusShadow = `0 0 0 1px ${useColorModeValue("blue.500", "blue.400")}`;
+  const ghostHoverBg = useColorModeValue("gray.50", "gray.700");
 
   // Additional colors for view modal
-  const modalContentBg = useColorModeValue('white', 'gray.800');
-  const modalHeaderBg = useColorModeValue('gray.50', 'gray.700');
-  const notesBoxBg = useColorModeValue('gray.50', 'gray.600');
-  const tableBg = useColorModeValue('white', 'gray.700');
-  const tableHeaderBg = useColorModeValue('gray.50', 'gray.600');
-  const inputBg = useColorModeValue('white', 'whiteAlpha.50');
-  const inputTextColor = useColorModeValue('gray.800', 'whiteAlpha.900');
-  const inputPlaceholderColor = useColorModeValue('gray.500', 'whiteAlpha.500');
-  const inputBorderColor = useColorModeValue('gray.300', 'whiteAlpha.300');
-  const readOnlyInputBg = useColorModeValue('gray.100', 'whiteAlpha.100');
-  const helperTextColor = useColorModeValue('gray.500', 'whiteAlpha.700');
-  const warningTextColor = useColorModeValue('orange.600', 'orange.300');
-  const employeeInfoBg = useColorModeValue('blue.50', 'blue.900');
-  const employeeInfoBorder = useColorModeValue('blue.200', 'blue.700');
-  const employeeInfoText = useColorModeValue('blue.700', 'blue.100');
-  const greenButtonHoverBg = useColorModeValue('green.50', 'rgba(56, 161, 105, 0.16)');
-  const blueButtonHoverBg = useColorModeValue('blue.50', 'rgba(66, 153, 225, 0.16)');
-  const redButtonHoverBg = useColorModeValue('red.50', 'rgba(229, 62, 62, 0.16)');
-  const inventoryTypeBg = useColorModeValue('blue.50', 'rgba(49, 130, 206, 0.18)');
-  const inventoryTypeHoverBg = useColorModeValue('blue.100', 'rgba(49, 130, 206, 0.28)');
-  const inventoryTypeBorder = useColorModeValue('blue.300', 'blue.500');
-  const inventoryTypeText = useColorModeValue('blue.700', 'blue.200');
-  const assetTypeBg = useColorModeValue('orange.50', 'rgba(221, 107, 32, 0.18)');
-  const assetTypeHoverBg = useColorModeValue('orange.100', 'rgba(221, 107, 32, 0.28)');
-  const assetTypeBorder = useColorModeValue('orange.300', 'orange.500');
-  const assetTypeText = useColorModeValue('orange.700', 'orange.200');
-  const prepaidTypeBg = useColorModeValue('purple.50', 'rgba(128, 90, 213, 0.18)');
-  const prepaidTypeHoverBg = useColorModeValue('purple.100', 'rgba(128, 90, 213, 0.28)');
-  const prepaidTypeBorder = useColorModeValue('purple.300', 'purple.500');
-  const prepaidTypeText = useColorModeValue('purple.700', 'purple.200');
+  const modalContentBg = useColorModeValue("white", "gray.800");
+  const modalHeaderBg = useColorModeValue("gray.50", "gray.700");
+  const notesBoxBg = useColorModeValue("gray.50", "gray.600");
+  const tableBg = useColorModeValue("white", "gray.700");
+  const tableHeaderBg = useColorModeValue("gray.50", "gray.600");
+  const inputBg = useColorModeValue("white", "whiteAlpha.50");
+  const inputTextColor = useColorModeValue("gray.800", "whiteAlpha.900");
+  const inputPlaceholderColor = useColorModeValue("gray.500", "whiteAlpha.500");
+  const inputBorderColor = useColorModeValue("gray.300", "whiteAlpha.300");
+  const readOnlyInputBg = useColorModeValue("gray.100", "whiteAlpha.100");
+  const helperTextColor = useColorModeValue("gray.500", "whiteAlpha.700");
+  const warningTextColor = useColorModeValue("orange.600", "orange.300");
+  const employeeInfoBg = useColorModeValue("blue.50", "blue.900");
+  const employeeInfoBorder = useColorModeValue("blue.200", "blue.700");
+  const employeeInfoText = useColorModeValue("blue.700", "blue.100");
+  const greenButtonHoverBg = useColorModeValue(
+    "green.50",
+    "rgba(56, 161, 105, 0.16)",
+  );
+  const blueButtonHoverBg = useColorModeValue(
+    "blue.50",
+    "rgba(66, 153, 225, 0.16)",
+  );
+  const redButtonHoverBg = useColorModeValue(
+    "red.50",
+    "rgba(229, 62, 62, 0.16)",
+  );
+  const inventoryTypeBg = useColorModeValue(
+    "blue.50",
+    "rgba(49, 130, 206, 0.18)",
+  );
+  const inventoryTypeHoverBg = useColorModeValue(
+    "blue.100",
+    "rgba(49, 130, 206, 0.28)",
+  );
+  const inventoryTypeBorder = useColorModeValue("blue.300", "blue.500");
+  const inventoryTypeText = useColorModeValue("blue.700", "blue.200");
+  const assetTypeBg = useColorModeValue(
+    "orange.50",
+    "rgba(221, 107, 32, 0.18)",
+  );
+  const assetTypeHoverBg = useColorModeValue(
+    "orange.100",
+    "rgba(221, 107, 32, 0.28)",
+  );
+  const assetTypeBorder = useColorModeValue("orange.300", "orange.500");
+  const assetTypeText = useColorModeValue("orange.700", "orange.200");
+  const prepaidTypeBg = useColorModeValue(
+    "purple.50",
+    "rgba(128, 90, 213, 0.18)",
+  );
+  const prepaidTypeHoverBg = useColorModeValue(
+    "purple.100",
+    "rgba(128, 90, 213, 0.28)",
+  );
+  const prepaidTypeBorder = useColorModeValue("purple.300", "purple.500");
+  const prepaidTypeText = useColorModeValue("purple.700", "purple.200");
   const fieldFocusStyles = {
     borderColor: inputFocusBorder,
     boxShadow: inputFocusShadow,
@@ -551,27 +633,27 @@ const PurchasesPage: React.FC = () => {
 
   // Tooltip descriptions for purchase page
   const tooltips = {
-    search: t('purchases.tooltips.search'),
-    vendor: t('purchases.tooltips.vendor'),
-    status: t('purchases.tooltips.status'),
-    approvalStatus: t('purchases.tooltips.approvalStatus'),
-    date: t('purchases.tooltips.date'),
-    dueDate: t('purchases.tooltips.dueDate'),
-    paymentMethod: t('purchases.tooltips.paymentMethod'),
-    bankAccount: t('purchases.tooltips.bankAccount'),
-    creditAccount: t('purchases.tooltips.creditAccount'),
-    ppnRate: t('purchases.tooltips.ppnRate'),
-    otherTaxAdditions: t('purchases.tooltips.otherTaxAdditions'),
-    pph21Rate: t('purchases.tooltips.pph21Rate'),
-    pph23Rate: t('purchases.tooltips.pph23Rate'),
-    otherTaxDeductions: t('purchases.tooltips.otherTaxDeductions'),
-    discount: t('purchases.tooltips.discount'),
-    product: t('purchases.tooltips.product'),
-    quantity: t('purchases.tooltips.quantity'),
-    unitPrice: t('purchases.tooltips.unitPrice'),
-    expenseAccount: t('purchases.tooltips.expenseAccount'),
-    notes: t('purchases.tooltips.notes'),
-    reference: t('purchases.tooltips.reference'),
+    search: t("purchases.tooltips.search"),
+    vendor: t("purchases.tooltips.vendor"),
+    status: t("purchases.tooltips.status"),
+    approvalStatus: t("purchases.tooltips.approvalStatus"),
+    date: t("purchases.tooltips.date"),
+    dueDate: t("purchases.tooltips.dueDate"),
+    paymentMethod: t("purchases.tooltips.paymentMethod"),
+    bankAccount: t("purchases.tooltips.bankAccount"),
+    creditAccount: t("purchases.tooltips.creditAccount"),
+    ppnRate: t("purchases.tooltips.ppnRate"),
+    otherTaxAdditions: t("purchases.tooltips.otherTaxAdditions"),
+    pph21Rate: t("purchases.tooltips.pph21Rate"),
+    pph23Rate: t("purchases.tooltips.pph23Rate"),
+    otherTaxDeductions: t("purchases.tooltips.otherTaxDeductions"),
+    discount: t("purchases.tooltips.discount"),
+    product: t("purchases.tooltips.product"),
+    quantity: t("purchases.tooltips.quantity"),
+    unitPrice: t("purchases.tooltips.unitPrice"),
+    expenseAccount: t("purchases.tooltips.expenseAccount"),
+    notes: t("purchases.tooltips.notes"),
+    reference: t("purchases.tooltips.reference"),
   };
 
   // State management
@@ -588,19 +670,19 @@ const PurchasesPage: React.FC = () => {
 
   // Filter state
   const [filters, setFilters] = useState<PurchaseFilterParams>({
-    status: '',
-    vendor_id: '',
-    project_id: '',
-    approval_status: '',
-    search: '',
-    start_date: '',
-    end_date: '',
+    status: "",
+    vendor_id: "",
+    project_id: "",
+    approval_status: "",
+    search: "",
+    start_date: "",
+    end_date: "",
     page: 1,
     limit: 10,
   });
 
   // Local search state (client-side, no debouncing needed)
-  const [searchInput, setSearchInput] = useState('');
+  const [searchInput, setSearchInput] = useState("");
 
   // Statistics state
   const [stats, setStats] = useState({
@@ -616,23 +698,52 @@ const PurchasesPage: React.FC = () => {
   });
 
   // Local UI helpers to reflect receipt availability/completion immediately after creation
-  const [purchasesWithReceipts, setPurchasesWithReceipts] = useState<Set<number>>(new Set());
-  const [fullyReceivedPurchases, setFullyReceivedPurchases] = useState<Set<number>>(new Set());
-  const [remainingQtyMap, setRemainingQtyMap] = useState<Record<number, number>>({});
+  const [purchasesWithReceipts, setPurchasesWithReceipts] = useState<
+    Set<number>
+  >(new Set());
+  const [fullyReceivedPurchases, setFullyReceivedPurchases] = useState<
+    Set<number>
+  >(new Set());
+  const [remainingQtyMap, setRemainingQtyMap] = useState<
+    Record<number, number>
+  >({});
 
   // View and Edit Modal states
-  const { isOpen: isViewOpen, onOpen: onViewOpen, onClose: onViewClose } = useDisclosure();
-  const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure();
-  const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
+  const {
+    isOpen: isViewOpen,
+    onOpen: onViewOpen,
+    onClose: onViewClose,
+  } = useDisclosure();
+  const {
+    isOpen: isEditOpen,
+    onOpen: onEditOpen,
+    onClose: onEditClose,
+  } = useDisclosure();
+  const {
+    isOpen: isCreateOpen,
+    onOpen: onCreateOpen,
+    onClose: onCreateClose,
+  } = useDisclosure();
 
   // Receipt Modal states
-  const { isOpen: isReceiptOpen, onOpen: onReceiptOpen, onClose: onReceiptClose } = useDisclosure();
+  const {
+    isOpen: isReceiptOpen,
+    onOpen: onReceiptOpen,
+    onClose: onReceiptClose,
+  } = useDisclosure();
 
   // Payment Modal states
-  const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
+  const {
+    isOpen: isPaymentOpen,
+    onOpen: onPaymentOpen,
+    onClose: onPaymentClose,
+  } = useDisclosure();
 
-  const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
-  const [selectedPurchaseForPayment, setSelectedPurchaseForPayment] = useState<Purchase | null>(null);
+  const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(
+    null,
+  );
+  const [selectedPurchaseForPayment, setSelectedPurchaseForPayment] =
+    useState<Purchase | null>(null);
   const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [loadingPRs, setLoadingPRs] = useState(false);
@@ -641,44 +752,47 @@ const PurchasesPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<GLAccount[]>([]);
   const [fixedAssetAccounts, setFixedAssetAccounts] = useState<GLAccount[]>([]);
-  const [loadingFixedAssetAccounts, setLoadingFixedAssetAccounts] = useState(false);
+  const [loadingFixedAssetAccounts, setLoadingFixedAssetAccounts] =
+    useState(false);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [creditAccounts, setCreditAccounts] = useState<GLAccount[]>([]);  // New state for liability accounts
-  const [cashBanks, setCashBanks] = useState<any[]>([]);  // For payment form
+  const [creditAccounts, setCreditAccounts] = useState<GLAccount[]>([]); // New state for liability accounts
+  const [cashBanks, setCashBanks] = useState<any[]>([]); // For payment form
   const [loadingExpenseAccounts, setLoadingExpenseAccounts] = useState(false);
-  const [defaultExpenseAccountId, setDefaultExpenseAccountId] = useState<number | null>(null);
+  const [defaultExpenseAccountId, setDefaultExpenseAccountId] = useState<
+    number | null
+  >(null);
   const [canListExpenseAccounts, setCanListExpenseAccounts] = useState(true);
   const [loadingBankAccounts, setLoadingBankAccounts] = useState(false);
-  const [loadingCreditAccounts, setLoadingCreditAccounts] = useState(false);  // New loading state
+  const [loadingCreditAccounts, setLoadingCreditAccounts] = useState(false); // New loading state
   const [defaultTaxRate, setDefaultTaxRate] = useState<number>(0);
   const [formData, setFormData] = useState<PurchaseFormData>({
-    vendor_id: '',
-    purchase_request_id: '',
-    project_id: '',
-    date: new Date().toISOString().split('T')[0],
-    due_date: '',
-    notes: '',
-    discount: '0',
+    vendor_id: "",
+    purchase_request_id: "",
+    project_id: "",
+    date: new Date().toISOString().split("T")[0],
+    due_date: "",
+    notes: "",
+    discount: "0",
 
     // Legacy tax field
-    tax: '0',
+    tax: "0",
 
     // Tax additions (Penambahan)
-    ppn_rate: '0',
-    other_tax_additions: '0',
+    ppn_rate: "0",
+    other_tax_additions: "0",
 
     // Tax deductions (Pemotongan)
-    pph21_rate: '0',
-    pph23_rate: '0',
-    other_tax_deductions: '0',
+    pph21_rate: "0",
+    pph23_rate: "0",
+    other_tax_deductions: "0",
 
     // Payment method fields
-    payment_method: 'CREDIT',
-    bank_account_id: '',
-    credit_account_id: '',  // New field for liability account
-    payment_reference: '',
+    payment_method: "CREDIT",
+    bank_account_id: "",
+    credit_account_id: "", // New field for liability account
+    payment_reference: "",
 
-    items: []
+    items: [],
   });
   const [loadingVendors, setLoadingVendors] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
@@ -686,36 +800,44 @@ const PurchasesPage: React.FC = () => {
   const [loadingAssetCategories, setLoadingAssetCategories] = useState(false);
 
   // Add Vendor Modal states
-  const { isOpen: isAddVendorOpen, onOpen: onAddVendorOpen, onClose: onAddVendorClose } = useDisclosure();
+  const {
+    isOpen: isAddVendorOpen,
+    onOpen: onAddVendorOpen,
+    onClose: onAddVendorClose,
+  } = useDisclosure();
   const [newVendorData, setNewVendorData] = useState({
-    name: '',
-    code: '',
-    email: '',
-    phone: '',
-    mobile: '',
-    address: '',
-    pic_name: '',
-    external_id: '',
-    notes: ''
+    name: "",
+    code: "",
+    email: "",
+    phone: "",
+    mobile: "",
+    address: "",
+    pic_name: "",
+    external_id: "",
+    notes: "",
   });
   const [savingVendor, setSavingVendor] = useState(false);
 
   // Add Product Modal states
-  const { isOpen: isAddProductOpen, onOpen: onAddProductOpen, onClose: onAddProductClose } = useDisclosure();
+  const {
+    isOpen: isAddProductOpen,
+    onOpen: onAddProductOpen,
+    onClose: onAddProductClose,
+  } = useDisclosure();
   const [newProductData, setNewProductData] = useState({
-    name: '',
-    code: '',
-    description: '',
-    unit: '',
-    purchase_price: '0',
-    sale_price: '0',
+    name: "",
+    code: "",
+    description: "",
+    unit: "",
+    purchase_price: "0",
+    sale_price: "0",
   });
   const [savingProduct, setSavingProduct] = useState(false);
 
   // Receipt form state
   const [receiptFormData, setReceiptFormData] = useState({
-    received_date: new Date().toISOString().split('T')[0],
-    notes: '',
+    received_date: new Date().toISOString().split("T")[0],
+    notes: "",
     receipt_items: [] as Array<{
       purchase_item_id: number;
       quantity_received: number;
@@ -727,59 +849,81 @@ const PurchasesPage: React.FC = () => {
       asset_useful_life?: number;
       asset_salvage_percentage?: number;
       serial_number?: string;
-    }>
+    }>,
   });
   const [savingReceipt, setSavingReceipt] = useState(false);
 
   // Journal Modal states
-  const { isOpen: isJournalOpen, onOpen: onJournalOpen, onClose: onJournalClose } = useDisclosure();
-  const [selectedPurchaseForJournal, setSelectedPurchaseForJournal] = useState<Purchase | null>(null);
+  const {
+    isOpen: isJournalOpen,
+    onOpen: onJournalOpen,
+    onClose: onJournalClose,
+  } = useDisclosure();
+  const [selectedPurchaseForJournal, setSelectedPurchaseForJournal] =
+    useState<Purchase | null>(null);
 
   // Finance Tax/Payment Config Modal states
-  const { isOpen: isFinanceTaxOpen, onOpen: onFinanceTaxOpen, onClose: onFinanceTaxClose } = useDisclosure();
-  const [financeTaxPurchase, setFinanceTaxPurchase] = useState<Purchase | null>(null);
+  const {
+    isOpen: isFinanceTaxOpen,
+    onOpen: onFinanceTaxOpen,
+    onClose: onFinanceTaxClose,
+  } = useDisclosure();
+  const [financeTaxPurchase, setFinanceTaxPurchase] = useState<Purchase | null>(
+    null,
+  );
   const [financeTaxForm, setFinanceTaxForm] = useState({
-    ppn_rate: '0',
-    other_tax_additions: '0',
-    pph21_rate: '0',
-    pph23_rate: '0',
-    other_tax_deductions: '0',
-    payment_method: 'CREDIT',
-    bank_account_id: '',
-    credit_account_id: '',
-    payment_reference: '',
+    ppn_rate: "0",
+    other_tax_additions: "0",
+    pph21_rate: "0",
+    pph23_rate: "0",
+    other_tax_deductions: "0",
+    payment_method: "CREDIT",
+    bank_account_id: "",
+    credit_account_id: "",
+    payment_reference: "",
   });
   const [savingFinanceTax, setSavingFinanceTax] = useState(false);
 
   // Receipts modal state
-  const { isOpen: isReceiptsOpen, onOpen: onReceiptsOpen, onClose: onReceiptsClose } = useDisclosure();
+  const {
+    isOpen: isReceiptsOpen,
+    onOpen: onReceiptsOpen,
+    onClose: onReceiptsClose,
+  } = useDisclosure();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loadingReceipts, setLoadingReceipts] = useState(false);
-  const [selectedPurchaseForReceipts, setSelectedPurchaseForReceipts] = useState<Purchase | null>(null);
+  const [selectedPurchaseForReceipts, setSelectedPurchaseForReceipts] =
+    useState<Purchase | null>(null);
   const handledNotificationPurchaseId = useRef<string | null>(null);
 
   // Role-based permissions (kept for approval workflow logic)
   const roleNorm = normalizeRole(user?.role as any);
-  const isFinanceOrAdmin = roleNorm === 'admin' || roleNorm === 'finance';
+  const isFinanceOrAdmin = roleNorm === "admin" || roleNorm === "finance";
 
   // Permission-based access control
-  const { canCreate, canEdit, canDelete, canExport, canApprove } = useModulePermissions('purchases');
+  const { canCreate, canEdit, canDelete, canExport, canApprove } =
+    useModulePermissions("purchases");
 
   // Fetch system settings for default tax rate
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const api = (await import('@/services/api')).default;
-        const response = await api.get('/api/v1/settings/public');
+        const api = (await import("@/services/api")).default;
+        const response = await api.get("/api/v1/settings/public");
         if (response.data?.data?.default_tax_rate !== undefined) {
           const rate = response.data.data.default_tax_rate;
-          console.log('PurchasesPage: Using default tax rate from settings:', rate);
+          console.log(
+            "PurchasesPage: Using default tax rate from settings:",
+            rate,
+          );
           setDefaultTaxRate(rate);
           // Set initial form ppn_rate to match settings
-          setFormData(prev => ({ ...prev, ppn_rate: rate.toString() }));
+          setFormData((prev) => ({ ...prev, ppn_rate: rate.toString() }));
         }
       } catch (err) {
-        console.warn('PurchasesPage: Failed to load system settings, using default tax rate: 0');
+        console.warn(
+          "PurchasesPage: Failed to load system settings, using default tax rate: 0",
+        );
       }
     };
     if (token) fetchSettings();
@@ -790,9 +934,9 @@ const PurchasesPage: React.FC = () => {
     try {
       // This would typically call a notification service API
       // For now, we'll just log it as the notification is handled by backend
-      console.log('Director notification sent for purchase:', purchase.code);
+      console.log("Director notification sent for purchase:", purchase.code);
     } catch (err) {
-      console.error('Error sending director notification:', err);
+      console.error("Error sending director notification:", err);
     }
   };
 
@@ -800,9 +944,9 @@ const PurchasesPage: React.FC = () => {
   const handleAddVendor = async () => {
     if (!newVendorData.name.trim()) {
       toast({
-        title: t('common.error'),
-        description: t('contacts.validation.nameRequired'),
-        status: 'error',
+        title: t("common.error"),
+        description: t("contacts.validation.nameRequired"),
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -811,9 +955,10 @@ const PurchasesPage: React.FC = () => {
 
     if (!newVendorData.email.trim()) {
       toast({
-        title: t('common.error'),
-        description: t('contacts.validation.emailRequired') || 'Vendor email is required',
-        status: 'error',
+        title: t("common.error"),
+        description:
+          t("contacts.validation.emailRequired") || "Vendor email is required",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -827,18 +972,26 @@ const PurchasesPage: React.FC = () => {
       let vendorCode = newVendorData.code.trim();
       if (!vendorCode) {
         // Generate code based on name + timestamp + random to ensure uniqueness
-        const namePrefix = newVendorData.name.trim().substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X');
+        const namePrefix = newVendorData.name
+          .trim()
+          .substring(0, 3)
+          .toUpperCase()
+          .replace(/[^A-Z]/g, "X");
         const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp
-        const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0'); // 3-digit random
+        const random = Math.floor(Math.random() * 1000)
+          .toString()
+          .padStart(3, "0"); // 3-digit random
         vendorCode = `V${namePrefix}${timestamp}${random}`;
       } else {
         // Check if manually entered code already exists in current vendors list
-        const existingVendor = vendors.find(v => v.code.toLowerCase() === vendorCode.toLowerCase());
+        const existingVendor = vendors.find(
+          (v) => v.code.toLowerCase() === vendorCode.toLowerCase(),
+        );
         if (existingVendor) {
           toast({
-            title: 'Error',
+            title: "Error",
             description: `Vendor code "${vendorCode}" already exists. Please use a different code or leave empty for auto-generation.`,
-            status: 'error',
+            status: "error",
             duration: 5000,
             isClosable: true,
           });
@@ -849,28 +1002,33 @@ const PurchasesPage: React.FC = () => {
       const vendorPayload = {
         ...newVendorData,
         code: vendorCode,
-        type: 'VENDOR' as const,
-        is_active: true
+        type: "VENDOR" as const,
+        is_active: true,
       };
 
-      console.log('Creating vendor with payload:', vendorPayload);
+      console.log("Creating vendor with payload:", vendorPayload);
 
       let newVendor;
       try {
         newVendor = await contactService.createContact(token!, vendorPayload);
-        console.log('Vendor creation response:', newVendor);
+        console.log("Vendor creation response:", newVendor);
 
         // Check if the response indicates an error (some APIs return error in success response)
-        if (newVendor && typeof newVendor === 'object' && 'error' in newVendor) {
-          throw new Error(newVendor.error as string || 'Server returned an error');
+        if (
+          newVendor &&
+          typeof newVendor === "object" &&
+          "error" in newVendor
+        ) {
+          throw new Error(
+            (newVendor.error as string) || "Server returned an error",
+          );
         }
-
       } catch (createError: any) {
-        console.error('API Error creating vendor:', createError);
+        console.error("API Error creating vendor:", createError);
         throw new Error(
           createError.message ||
-          createError.response?.data?.error ||
-          'Failed to create vendor: Server error'
+            createError.response?.data?.error ||
+            "Failed to create vendor: Server error",
         );
       }
 
@@ -880,14 +1038,18 @@ const PurchasesPage: React.FC = () => {
 
       // Additional checks for undefined response
       if (!newVendor) {
-        console.error('Vendor creation returned undefined response');
-        throw new Error('Failed to create vendor: Server returned no response. Please try again.');
+        console.error("Vendor creation returned undefined response");
+        throw new Error(
+          "Failed to create vendor: Server returned no response. Please try again.",
+        );
       }
 
       if (!vendorData || !vendorData.id) {
-        console.error('Invalid vendor response:', newVendor);
-        console.error('Expected vendor data with id field, got:', vendorData);
-        throw new Error('Failed to create vendor: Invalid response structure from server. Please check console for details.');
+        console.error("Invalid vendor response:", newVendor);
+        console.error("Expected vendor data with id field, got:", vendorData);
+        throw new Error(
+          "Failed to create vendor: Invalid response structure from server. Please check console for details.",
+        );
       }
 
       // Use the validated vendor data
@@ -902,41 +1064,43 @@ const PurchasesPage: React.FC = () => {
         code: finalVendorCode,
       };
 
-      console.log('Adding formatted vendor to list:', formattedVendor);
-      setVendors(prev => [...prev, formattedVendor]);
+      console.log("Adding formatted vendor to list:", formattedVendor);
+      setVendors((prev) => [...prev, formattedVendor]);
 
       // Select the new vendor in the form
-      setFormData(prev => ({ ...prev, vendor_id: vendorId.toString() }));
+      setFormData((prev) => ({ ...prev, vendor_id: vendorId.toString() }));
 
       // Reset form and close modal
       setNewVendorData({
-        name: '',
-        code: '',
-        email: '',
-        phone: '',
-        mobile: '',
-        address: '',
-        pic_name: '',
-        external_id: '',
-        notes: ''
+        name: "",
+        code: "",
+        email: "",
+        phone: "",
+        mobile: "",
+        address: "",
+        pic_name: "",
+        external_id: "",
+        notes: "",
       });
 
       onAddVendorClose();
 
       toast({
-        title: t('common.success'),
-        description: t('contacts.messages.createSuccess', { name: vendorName }) || `Vendor "${vendorName}" created successfully and selected`,
-        status: 'success',
+        title: t("common.success"),
+        description:
+          t("contacts.messages.createSuccess", { name: vendorName }) ||
+          `Vendor "${vendorName}" created successfully and selected`,
+        status: "success",
         duration: 3000,
         isClosable: true,
       });
-
     } catch (err: any) {
-      console.error('Error creating vendor:', err);
+      console.error("Error creating vendor:", err);
       toast({
-        title: t('common.error'),
-        description: err.response?.data?.error || t('contacts.messages.saveFailed'),
-        status: 'error',
+        title: t("common.error"),
+        description:
+          err.response?.data?.error || t("contacts.messages.saveFailed"),
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -949,9 +1113,9 @@ const PurchasesPage: React.FC = () => {
   const handleAddProduct = async () => {
     if (!newProductData.name.trim()) {
       toast({
-        title: 'Error',
-        description: 'Product name is required',
-        status: 'error',
+        title: "Error",
+        description: "Product name is required",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -960,9 +1124,9 @@ const PurchasesPage: React.FC = () => {
 
     if (!newProductData.unit.trim()) {
       toast({
-        title: 'Error',
-        description: 'Product unit is required',
-        status: 'error',
+        title: "Error",
+        description: "Product unit is required",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -972,7 +1136,8 @@ const PurchasesPage: React.FC = () => {
     try {
       setSavingProduct(true);
 
-      const generatedProductCode = newProductData.code.trim() || `PRD-${Date.now()}`;
+      const generatedProductCode =
+        newProductData.code.trim() || `PRD-${Date.now()}`;
 
       const productPayload: Product = {
         name: newProductData.name,
@@ -992,58 +1157,63 @@ const PurchasesPage: React.FC = () => {
       };
 
       const newProduct = await productService.createProduct(productPayload);
-      const createdProduct = ('data' in newProduct ? newProduct.data : newProduct) as Product;
+      const createdProduct = (
+        "data" in newProduct ? newProduct.data : newProduct
+      ) as Product;
 
       // Add the new product to the products list
-      setProducts(prev => [...prev, createdProduct]);
+      setProducts((prev) => [...prev, createdProduct]);
 
       // Select the new product in the form if we have items
       if (formData.items.length > 0) {
         const items = [...formData.items];
         items[0] = {
           ...items[0],
-          product_id: createdProduct.id?.toString() || '',
-          unit_price: createdProduct.purchase_price?.toString() || '0'
+          product_id: createdProduct.id?.toString() || "",
+          unit_price: createdProduct.purchase_price?.toString() || "0",
         };
         setFormData({ ...formData, items });
       } else {
         // Add a new item with the created product
         setFormData({
           ...formData,
-          items: [createPurchaseItemFormData({
-            product_id: createdProduct.id?.toString() || '',
-            unit_price: createdProduct.purchase_price?.toString() || '0',
-            expense_account_id: defaultExpenseAccountId ? defaultExpenseAccountId.toString() : ''
-          })]
+          items: [
+            createPurchaseItemFormData({
+              product_id: createdProduct.id?.toString() || "",
+              unit_price: createdProduct.purchase_price?.toString() || "0",
+              expense_account_id: defaultExpenseAccountId
+                ? defaultExpenseAccountId.toString()
+                : "",
+            }),
+          ],
         });
       }
 
       // Reset form and close modal
       setNewProductData({
-        name: '',
-        code: '',
-        description: '',
-        unit: '',
-        purchase_price: '0',
-        sale_price: '0',
+        name: "",
+        code: "",
+        description: "",
+        unit: "",
+        purchase_price: "0",
+        sale_price: "0",
       });
 
       onAddProductClose();
 
       toast({
-        title: 'Success',
+        title: "Success",
         description: `Product "${newProduct.data.name}" created successfully and selected`,
-        status: 'success',
+        status: "success",
         duration: 3000,
         isClosable: true,
       });
-
     } catch (err: any) {
-      console.error('Error creating product:', err);
+      console.error("Error creating product:", err);
       toast({
-        title: 'Error',
-        description: err.response?.data?.error || 'Failed to create product',
-        status: 'error',
+        title: "Error",
+        description: err.response?.data?.error || "Failed to create product",
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -1053,7 +1223,9 @@ const PurchasesPage: React.FC = () => {
   };
 
   // Fetch purchases from API
-  const fetchPurchases = async (filterParams: PurchaseFilterParams = filters) => {
+  const fetchPurchases = async (
+    filterParams: PurchaseFilterParams = filters,
+  ) => {
     if (!token) return;
 
     try {
@@ -1073,65 +1245,117 @@ const PurchasesPage: React.FC = () => {
         totalPages: response?.total_pages || 0,
       });
 
-      // Calculate stats with correct logic for approval status
-      // Note: We use purchaseData.length for total since pagination affects response.total
-      const totalPurchases = purchaseData.length;
-      const pendingApproval = purchaseData.filter(p => {
-        const approvalStatus = (p?.approval_status || '').toUpperCase();
-        const status = (p?.status || '').toUpperCase();
-        // Pending approval includes: PENDING approval status, or purchases requiring approval that haven't been approved/rejected
-        return approvalStatus === 'PENDING' ||
-          (!!p?.requires_approval && approvalStatus !== 'APPROVED' && approvalStatus !== 'REJECTED' && status !== 'CANCELLED');
-      }).length;
-
-      const approved = purchaseData.filter(p => (p?.approval_status || '').toUpperCase() === 'APPROVED').length;
-      const rejected = purchaseData.filter(p => {
-        const approvalStatus = (p?.approval_status || '').toUpperCase();
-        const status = (p?.status || '').toUpperCase();
-        return approvalStatus === 'REJECTED' || status === 'CANCELLED';
-      }).length;
-
-      // Calculate total value, paid amount, and outstanding amount from current page data
-      const totalValue = purchaseData.reduce((sum, p) => {
-        const amount = p?.total_amount || 0;
-        return sum + (typeof amount === 'number' ? amount : parseFloat(amount) || 0);
-      }, 0);
-
-      const totalPaid = purchaseData.reduce((sum, p) => {
-        const amount = p?.paid_amount || 0;
-        return sum + (typeof amount === 'number' ? amount : parseFloat(amount) || 0);
-      }, 0);
-
-      const totalOutstanding = purchaseData.reduce((sum, p) => {
-        const amount = p?.outstanding_amount || 0;
-        return sum + (typeof amount === 'number' ? amount : parseFloat(amount) || 0);
-      }, 0);
-
-      // Fetch purchase summary to get approved amount
-      let totalApprovedAmount = 0;
+      // Fetch summary with the SAME filters as the table so cards stay consistent
+      let summaryResponse: PurchaseSummary | null = null;
       try {
-        const summaryResponse = await purchaseService.getSummary();
-        totalApprovedAmount = summaryResponse.total_approved_amount || 0;
+        summaryResponse = await purchaseService.getSummary({
+          status: filterParams.status,
+          vendor_id: filterParams.vendor_id,
+          project_id: filterParams.project_id,
+          start_date: filterParams.start_date,
+          end_date: filterParams.end_date,
+          search: filterParams.search,
+          approval_status: filterParams.approval_status,
+          requires_approval: filterParams.requires_approval,
+        });
       } catch (summaryErr) {
-        console.warn('Failed to fetch purchase summary:', summaryErr);
-        // Continue without approved amount if summary fetch fails
+        console.warn("Failed to fetch purchase summary:", summaryErr);
+      }
+
+      const statusCounts = summaryResponse?.status_counts || {};
+      const approvalCounts = summaryResponse?.approval_status_counts || {};
+
+      const pendingApproval =
+        approvalCounts.PENDING ||
+        purchaseData.filter((p) => {
+          const approvalStatus = (p?.approval_status || "").toUpperCase();
+          const status = (p?.status || "").toUpperCase();
+          return (
+            approvalStatus === "PENDING" ||
+            (!!p?.requires_approval &&
+              approvalStatus !== "APPROVED" &&
+              approvalStatus !== "REJECTED" &&
+              status !== "CANCELLED")
+          );
+        }).length;
+
+      const approved =
+        approvalCounts.APPROVED ||
+        purchaseData.filter(
+          (p) => (p?.approval_status || "").toUpperCase() === "APPROVED",
+        ).length;
+
+      const rejected =
+        Math.max(approvalCounts.REJECTED || 0, statusCounts.CANCELLED || 0) ||
+        purchaseData.filter((p) => {
+          const approvalStatus = (p?.approval_status || "").toUpperCase();
+          const status = (p?.status || "").toUpperCase();
+          return approvalStatus === "REJECTED" || status === "CANCELLED";
+        }).length;
+
+      const totalPurchases =
+        summaryResponse?.total_purchases ??
+        response?.total ??
+        purchaseData.length;
+      const totalValue = summaryResponse?.total_amount ?? 0;
+      const totalPaid = summaryResponse?.total_paid ?? 0;
+      const totalOutstanding = summaryResponse?.total_outstanding ?? 0;
+      const totalApprovedAmount = summaryResponse?.total_approved_amount ?? 0;
+
+      if (!summaryResponse) {
+        const fallbackTotalValue = purchaseData.reduce((sum, p) => {
+          const amount = p?.total_amount || 0;
+          return (
+            sum +
+            (typeof amount === "number" ? amount : parseFloat(amount) || 0)
+          );
+        }, 0);
+
+        const fallbackTotalPaid = purchaseData.reduce((sum, p) => {
+          const amount = p?.paid_amount || 0;
+          return (
+            sum +
+            (typeof amount === "number" ? amount : parseFloat(amount) || 0)
+          );
+        }, 0);
+
+        const fallbackTotalOutstanding = purchaseData.reduce((sum, p) => {
+          const amount = p?.outstanding_amount || 0;
+          return (
+            sum +
+            (typeof amount === "number" ? amount : parseFloat(amount) || 0)
+          );
+        }, 0);
+
+        setStats({
+          total: response?.total || totalPurchases,
+          pending: pendingApproval,
+          approved: approved,
+          rejected: rejected,
+          needingApproval: pendingApproval,
+          totalValue: fallbackTotalValue,
+          totalApprovedAmount: 0,
+          totalPaid: fallbackTotalPaid,
+          totalOutstanding: fallbackTotalOutstanding,
+        });
+        return;
       }
 
       setStats({
-        total: response?.total || totalPurchases, // Use API total if available, otherwise current page count
+        total: totalPurchases,
         pending: pendingApproval,
         approved: approved,
         rejected: rejected,
-        needingApproval: pendingApproval, // Same as pending for now
-        totalValue: totalValue, // Add total value to stats
-        totalApprovedAmount: totalApprovedAmount, // Add approved amount from summary
-        totalPaid: totalPaid, // Add total paid amount
-        totalOutstanding: totalOutstanding, // Add total outstanding amount
+        needingApproval: pendingApproval,
+        totalValue: totalValue,
+        totalApprovedAmount: totalApprovedAmount,
+        totalPaid: totalPaid,
+        totalOutstanding: totalOutstanding,
       });
 
       setError(null);
     } catch (err: any) {
-      console.error('Error fetching purchases:', err);
+      console.error("Error fetching purchases:", err);
 
       // Set empty state on error
       setPurchases([]);
@@ -1154,13 +1378,17 @@ const PurchasesPage: React.FC = () => {
         totalOutstanding: 0,
       });
 
-      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch purchases';
+      const errorMessage =
+        err.response?.data?.message ||
+        err.message ||
+        "Failed to fetch purchases";
       setError(errorMessage);
 
       toast({
-        title: 'Error',
-        description: 'Failed to fetch purchase data. Please check your connection and try again.',
-        status: 'error',
+        title: "Error",
+        description:
+          "Failed to fetch purchase data. Please check your connection and try again.",
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -1195,18 +1423,20 @@ const PurchasesPage: React.FC = () => {
 
     // Filter purchases based on search term
     const searchTerm = value.toLowerCase();
-    const filtered = allPurchases.filter(purchase => {
+    const filtered = allPurchases.filter((purchase) => {
       // Search in purchase code
       if (purchase.code?.toLowerCase().includes(searchTerm)) return true;
 
       // Search in vendor name
-      if (purchase.vendor?.name?.toLowerCase().includes(searchTerm)) return true;
+      if (purchase.vendor?.name?.toLowerCase().includes(searchTerm))
+        return true;
 
       // Search in notes
       if (purchase.notes?.toLowerCase().includes(searchTerm)) return true;
 
       // Search in payment reference
-      if (purchase.payment_reference?.toLowerCase().includes(searchTerm)) return true;
+      if (purchase.payment_reference?.toLowerCase().includes(searchTerm))
+        return true;
 
       return false;
     });
@@ -1232,9 +1462,9 @@ const PurchasesPage: React.FC = () => {
   const handleRefresh = () => {
     fetchPurchases();
     toast({
-      title: 'Refreshed',
-      description: 'Purchase data has been refreshed',
-      status: 'info',
+      title: "Refreshed",
+      description: "Purchase data has been refreshed",
+      status: "info",
       duration: 2000,
       isClosable: true,
     });
@@ -1249,11 +1479,21 @@ const PurchasesPage: React.FC = () => {
         approval_status: filters.approval_status || undefined,
         start_date: filters.start_date || undefined,
         end_date: filters.end_date || undefined,
-        search: filters.search || undefined
+        search: filters.search || undefined,
       });
-      toast({ title: 'Success', description: 'Purchase report PDF has been downloaded', status: 'success', duration: 3000 });
+      toast({
+        title: "Success",
+        description: "Purchase report PDF has been downloaded",
+        status: "success",
+        duration: 3000,
+      });
     } catch (error: any) {
-      toast({ title: 'Export failed', description: error?.message || 'Failed to export purchases PDF', status: 'error', duration: 3000 });
+      toast({
+        title: "Export failed",
+        description: error?.message || "Failed to export purchases PDF",
+        status: "error",
+        duration: 3000,
+      });
     }
   };
 
@@ -1265,11 +1505,21 @@ const PurchasesPage: React.FC = () => {
         approval_status: filters.approval_status || undefined,
         start_date: filters.start_date || undefined,
         end_date: filters.end_date || undefined,
-        search: filters.search || undefined
+        search: filters.search || undefined,
       });
-      toast({ title: 'Success', description: 'Purchase report CSV has been downloaded', status: 'success', duration: 3000 });
+      toast({
+        title: "Success",
+        description: "Purchase report CSV has been downloaded",
+        status: "success",
+        duration: 3000,
+      });
     } catch (error: any) {
-      toast({ title: 'Export failed', description: error?.message || 'Failed to export purchases CSV', status: 'error', duration: 3000 });
+      toast({
+        title: "Export failed",
+        description: error?.message || "Failed to export purchases CSV",
+        status: "error",
+        duration: 3000,
+      });
     }
   };
 
@@ -1279,17 +1529,18 @@ const PurchasesPage: React.FC = () => {
       await purchaseService.submitForApproval(purchaseId);
       await fetchPurchases(); // Refresh data
       toast({
-        title: 'Success',
-        description: 'Purchase submitted for approval',
-        status: 'success',
+        title: "Success",
+        description: "Purchase submitted for approval",
+        status: "success",
         duration: 3000,
         isClosable: true,
       });
     } catch (err: any) {
       toast({
-        title: 'Error',
-        description: err.response?.data?.error || 'Failed to submit purchase for approval',
-        status: 'error',
+        title: "Error",
+        description:
+          err.response?.data?.error || "Failed to submit purchase for approval",
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -1299,12 +1550,14 @@ const PurchasesPage: React.FC = () => {
   // Handle delete purchase
   const handleDelete = async (purchaseId: number) => {
     // Find the purchase to check its status
-    const purchaseToDelete = purchases.find(p => p.id === purchaseId);
-    const isApproved = purchaseToDelete && (purchaseToDelete.status || '').toUpperCase() === 'APPROVED';
+    const purchaseToDelete = purchases.find((p) => p.id === purchaseId);
+    const isApproved =
+      purchaseToDelete &&
+      (purchaseToDelete.status || "").toUpperCase() === "APPROVED";
 
     const confirmMessage = isApproved
-      ? 'WARNING: This purchase is APPROVED. Are you sure you want to delete this approved purchase? This action cannot be undone.'
-      : 'Are you sure you want to delete this purchase?';
+      ? "WARNING: This purchase is APPROVED. Are you sure you want to delete this approved purchase? This action cannot be undone."
+      : "Are you sure you want to delete this purchase?";
 
     if (!confirm(confirmMessage)) return;
 
@@ -1312,28 +1565,33 @@ const PurchasesPage: React.FC = () => {
       await purchaseService.delete(purchaseId);
       await fetchPurchases(); // Refresh data
       toast({
-        title: 'Success',
-        description: `Purchase ${isApproved ? '(APPROVED)' : ''} deleted successfully`,
-        status: 'success',
+        title: "Success",
+        description: `Purchase ${isApproved ? "(APPROVED)" : ""} deleted successfully`,
+        status: "success",
         duration: 3000,
         isClosable: true,
       });
     } catch (err: any) {
-      const errMsg = err.response?.data?.error || err.message || '';
+      const errMsg = err.response?.data?.error || err.message || "";
       const closedPeriod = parseClosedPeriodError(errMsg);
       if (closedPeriod) {
         toast({
-          title: t('messages.toast.closedPeriodError'),
-          description: t('messages.toast.closedPeriodErrorDesc', { date: formatClosedPeriodDate(closedPeriod.date, language) }),
-          status: 'error',
+          title: t("messages.toast.closedPeriodError"),
+          description: t("messages.toast.closedPeriodErrorDesc", {
+            date: formatClosedPeriodDate(closedPeriod.date, language),
+          }),
+          status: "error",
           duration: 5000,
           isClosable: true,
         });
       } else {
         toast({
-        title: t('messages.toast.error'),
-          description: errMsg || t('purchases.messages.deleteError') || 'Failed to delete purchase',
-          status: 'error',
+          title: t("messages.toast.error"),
+          description:
+            errMsg ||
+            t("purchases.messages.deleteError") ||
+            "Failed to delete purchase",
+          status: "error",
           duration: 5000,
           isClosable: true,
         });
@@ -1350,9 +1608,9 @@ const PurchasesPage: React.FC = () => {
       onViewOpen();
     } catch (err: any) {
       toast({
-        title: 'Error',
-        description: 'Failed to fetch purchase details',
-        status: 'error',
+        title: "Error",
+        description: "Failed to fetch purchase details",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1364,9 +1622,12 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
-    const notificationPurchaseId = searchParams.get('notificationPurchaseId');
+    const notificationPurchaseId = searchParams.get("notificationPurchaseId");
 
-    if (!notificationPurchaseId || handledNotificationPurchaseId.current === notificationPurchaseId) {
+    if (
+      !notificationPurchaseId ||
+      handledNotificationPurchaseId.current === notificationPurchaseId
+    ) {
       return;
     }
 
@@ -1374,8 +1635,10 @@ const PurchasesPage: React.FC = () => {
 
     const clearNotificationPurchaseParam = () => {
       const nextParams = new URLSearchParams(searchParams.toString());
-      nextParams.delete('notificationPurchaseId');
-      const nextUrl = nextParams.toString() ? `/purchases?${nextParams.toString()}` : '/purchases';
+      nextParams.delete("notificationPurchaseId");
+      const nextUrl = nextParams.toString()
+        ? `/purchases?${nextParams.toString()}`
+        : "/purchases";
       router.replace(nextUrl);
     };
 
@@ -1392,9 +1655,9 @@ const PurchasesPage: React.FC = () => {
         onViewOpen();
       } catch (error) {
         toast({
-          title: 'Error',
-          description: 'Failed to open purchase from notification',
-          status: 'error',
+          title: "Error",
+          description: "Failed to open purchase from notification",
+          status: "error",
           duration: 3000,
           isClosable: true,
         });
@@ -1412,9 +1675,9 @@ const PurchasesPage: React.FC = () => {
       // Validate that purchase can receive payment
       if (!purchaseService.canReceivePayment(purchase)) {
         toast({
-          title: t('purchases.cannotRecordPaymentTitle'),
-          description: t('purchases.canReceivePaymentErrorDesc'),
-          status: 'warning',
+          title: t("purchases.cannotRecordPaymentTitle"),
+          description: t("purchases.canReceivePaymentErrorDesc"),
+          status: "warning",
           duration: 4000,
           isClosable: true,
         });
@@ -1430,9 +1693,9 @@ const PurchasesPage: React.FC = () => {
       onPaymentOpen();
     } catch (err: any) {
       toast({
-        title: 'Error',
-        description: 'Failed to prepare payment form',
-        status: 'error',
+        title: "Error",
+        description: "Failed to prepare payment form",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1442,9 +1705,11 @@ const PurchasesPage: React.FC = () => {
   // Handle payment success
   const handlePaymentSuccess = async (result: any) => {
     toast({
-      title: t('purchases.paymentSuccessTitle'),
-      description: t('purchases.paymentSuccessDesc', { code: result.payment?.code || 'N/A' }),
-      status: 'success',
+      title: t("purchases.paymentSuccessTitle"),
+      description: t("purchases.paymentSuccessDesc", {
+        code: result.payment?.code || "N/A",
+      }),
+      status: "success",
       duration: 5000,
       isClosable: true,
     });
@@ -1457,22 +1722,25 @@ const PurchasesPage: React.FC = () => {
   const fetchCashBanksForPayment = async () => {
     if (!token) return;
     try {
-      const response = await fetch('/api/v1/cash-bank/reports/payment-accounts', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        "/api/v1/cash-bank/reports/payment-accounts",
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
-        throw new Error('Failed to fetch cash banks');
+        throw new Error("Failed to fetch cash banks");
       }
 
       const data = await response.json();
       setCashBanks(data.data || []);
     } catch (err: any) {
-      console.error('Error fetching cash banks for payment:', err);
+      console.error("Error fetching cash banks for payment:", err);
       // Don't show error toast here as it's called from handleRecordPayment
     }
   };
@@ -1485,13 +1753,15 @@ const PurchasesPage: React.FC = () => {
       setSelectedPurchase(detailResponse);
 
       // Safety guard: backend hanya mengizinkan status APPROVED, PENDING, atau PAID
-      const serverStatus = (detailResponse.status || '').toUpperCase();
-      const allowedStatuses = ['APPROVED', 'PENDING', 'PAID'];
+      const serverStatus = (detailResponse.status || "").toUpperCase();
+      const allowedStatuses = ["APPROVED", "PENDING", "PAID"];
       if (!allowedStatuses.includes(serverStatus)) {
         toast({
-          title: t('purchases.createReceiptErrorTitle'),
-          description: t('purchases.createReceiptErrorDesc', { status: serverStatus || 'UNKNOWN' }),
-          status: 'warning',
+          title: t("purchases.createReceiptErrorTitle"),
+          description: t("purchases.createReceiptErrorDesc", {
+            status: serverStatus || "UNKNOWN",
+          }),
+          status: "warning",
           duration: 5000,
           isClosable: true,
         });
@@ -1499,10 +1769,16 @@ const PurchasesPage: React.FC = () => {
       }
 
       // Fetch existing receipts to compute remaining qty per item
-      const receiptsRes = await fetch(`${API_ENDPOINTS.PURCHASES_RECEIPTS_BY_ID(purchase.id)}`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-      });
+      const receiptsRes = await fetch(
+        `${API_ENDPOINTS.PURCHASES_RECEIPTS_BY_ID(purchase.id)}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
       let existingReceipts: any[] = [];
       if (receiptsRes.ok) {
         const data = await receiptsRes.json();
@@ -1510,22 +1786,26 @@ const PurchasesPage: React.FC = () => {
       }
       const receivedMap: Record<number, number> = {};
       for (const r of existingReceipts) {
-        for (const it of (r.receipt_items || [])) {
+        for (const it of r.receipt_items || []) {
           const pid = it.purchase_item_id || it.purchase_item?.id;
           if (!pid) continue;
-          receivedMap[pid] = (receivedMap[pid] || 0) + (it.quantity_received || 0);
+          receivedMap[pid] =
+            (receivedMap[pid] || 0) + (it.quantity_received || 0);
         }
       }
 
       // Ensure accounts catalog is loaded (to detect fixed asset 150x)
       await fetchExpenseAccounts();
 
-      const receiptableItems = getReceiptablePurchaseItems(detailResponse.purchase_items || []);
+      const receiptableItems = getReceiptablePurchaseItems(
+        detailResponse.purchase_items || [],
+      );
       if (receiptableItems.length === 0) {
         toast({
-          title: 'Receipt tidak diperlukan',
-          description: 'Purchase ini hanya berisi item prepaid seperti sewa dibayar di muka, jadi tidak perlu goods receipt.',
-          status: 'info',
+          title: "Receipt tidak diperlukan",
+          description:
+            "Purchase ini hanya berisi item prepaid seperti sewa dibayar di muka, jadi tidak perlu goods receipt.",
+          status: "info",
           duration: 5000,
           isClosable: true,
         });
@@ -1537,16 +1817,29 @@ const PurchasesPage: React.FC = () => {
         const receivedSoFar = receivedMap[item.id] || 0;
         const remaining = Math.max((item.quantity || 0) - receivedSoFar, 0);
         // Determine if the item's expense account is a Fixed Asset (150x) to default-enable asset creation
-        const acc = expenseAccounts.find(a => a.id === item.expense_account_id);
-        const accCode = (acc?.code || '').toString();
-        const accName = (acc?.name || '').toLowerCase();
-        const isFixedAsset = accCode.startsWith('15') || accName.includes('asset tetap') || accName.includes('fixed asset') || accName.includes('bangunan') || accName.includes('gedung') || accName.includes('peralatan') || accName.includes('kendaraan') || accName.includes('mesin') || accName.includes('furniture') || accName.includes('computer') || accName.includes('komputer');
+        const acc = expenseAccounts.find(
+          (a) => a.id === item.expense_account_id,
+        );
+        const accCode = (acc?.code || "").toString();
+        const accName = (acc?.name || "").toLowerCase();
+        const isFixedAsset =
+          accCode.startsWith("15") ||
+          accName.includes("asset tetap") ||
+          accName.includes("fixed asset") ||
+          accName.includes("bangunan") ||
+          accName.includes("gedung") ||
+          accName.includes("peralatan") ||
+          accName.includes("kendaraan") ||
+          accName.includes("mesin") ||
+          accName.includes("furniture") ||
+          accName.includes("computer") ||
+          accName.includes("komputer");
         return {
           purchase_item_id: item.id,
           quantity_received: remaining, // default to remaining qty
-          condition: 'GOOD',
-          notes: '',
-          create_asset: isFixedAsset // auto-enable when account is fixed asset
+          condition: "GOOD",
+          notes: "",
+          create_asset: isFixedAsset, // auto-enable when account is fixed asset
         };
       });
       const remainingMap: Record<number, number> = {};
@@ -1557,13 +1850,13 @@ const PurchasesPage: React.FC = () => {
       setRemainingQtyMap(remainingMap);
 
       // If semua sisa = 0, tidak perlu buka modal dan sembunyikan tombol Create Receipt
-      const allZero = Object.values(remainingMap).every(v => v <= 0);
+      const allZero = Object.values(remainingMap).every((v) => v <= 0);
       if (allZero) {
-        setFullyReceivedPurchases(prev => new Set(prev).add(purchase.id));
+        setFullyReceivedPurchases((prev) => new Set(prev).add(purchase.id));
         toast({
-          title: t('purchases.allItemsReceivedTitle'),
-          description: t('purchases.allItemsReceivedDesc'),
-          status: 'info',
+          title: t("purchases.allItemsReceivedTitle"),
+          description: t("purchases.allItemsReceivedDesc"),
+          status: "info",
           duration: 4000,
           isClosable: true,
         });
@@ -1571,17 +1864,17 @@ const PurchasesPage: React.FC = () => {
       }
 
       setReceiptFormData({
-        received_date: new Date().toISOString().split('T')[0],
-        notes: '',
-        receipt_items: receiptItems
+        received_date: new Date().toISOString().split("T")[0],
+        notes: "",
+        receipt_items: receiptItems,
       });
 
       onReceiptOpen();
     } catch (err: any) {
       toast({
-        title: 'Error',
-        description: 'Failed to fetch purchase details for receipt creation',
-        status: 'error',
+        title: "Error",
+        description: "Failed to fetch purchase details for receipt creation",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1592,9 +1885,9 @@ const PurchasesPage: React.FC = () => {
   const handleSaveReceipt = async () => {
     if (!selectedPurchase) {
       toast({
-        title: 'Error', // Or common.error
-        description: t('purchases.noPurchaseSelected'),
-        status: 'error',
+        title: "Error", // Or common.error
+        description: t("purchases.noPurchaseSelected"),
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1603,9 +1896,9 @@ const PurchasesPage: React.FC = () => {
 
     if (receiptFormData.receipt_items.length === 0) {
       toast({
-        title: 'Error',
-        description: t('purchases.addReceiptItemError'),
-        status: 'error',
+        title: "Error",
+        description: t("purchases.addReceiptItemError"),
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1617,9 +1910,10 @@ const PurchasesPage: React.FC = () => {
 
       // Filter setelah validasi agar minimal ada 1 item
       const filteredItems = receiptFormData.receipt_items
-        .filter(item => (item.quantity_received || 0) > 0)
-        .map(item => {
-          const maxRemaining = remainingQtyMap[item.purchase_item_id] ?? item.quantity_received;
+        .filter((item) => (item.quantity_received || 0) > 0)
+        .map((item) => {
+          const maxRemaining =
+            remainingQtyMap[item.purchase_item_id] ?? item.quantity_received;
           const safeQty = Math.min(item.quantity_received, maxRemaining);
 
           return {
@@ -1636,29 +1930,31 @@ const PurchasesPage: React.FC = () => {
 
       if (filteredItems.length === 0) {
         toast({
-          title: t('purchases.noItemsToReceiveTitle'),
-          description: t('purchases.noItemsToReceiveDesc'),
-          status: 'info',
+          title: t("purchases.noItemsToReceiveTitle"),
+          description: t("purchases.noItemsToReceiveDesc"),
+          status: "info",
           duration: 4000,
           isClosable: true,
         });
-        setFullyReceivedPurchases(prev => selectedPurchase ? new Set(prev).add(selectedPurchase.id) : prev);
+        setFullyReceivedPurchases((prev) =>
+          selectedPurchase ? new Set(prev).add(selectedPurchase.id) : prev,
+        );
         onReceiptClose();
         return;
       }
 
       const payload = {
         purchase_id: selectedPurchase.id,
-        received_date: receiptFormData.received_date + 'T00:00:00Z',
+        received_date: receiptFormData.received_date + "T00:00:00Z",
         notes: receiptFormData.notes,
         receipt_items: filteredItems,
       };
 
       // Call API to create receipt
       const response = await fetch(`/api/v1/purchases/receipts`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
@@ -1666,12 +1962,12 @@ const PurchasesPage: React.FC = () => {
 
       // Robust error handling: backend may respond with plain text (e.g. "Internal Server Error")
       if (!response.ok) {
-        let errorMessage = 'Failed to create receipt';
+        let errorMessage = "Failed to create receipt";
 
         try {
-          const contentType = response.headers.get('content-type') || '';
+          const contentType = response.headers.get("content-type") || "";
 
-          if (contentType.includes('application/json')) {
+          if (contentType.includes("application/json")) {
             const errorData = await response.json();
             // Prefer specific backend fields, but fall back to any useful details
             errorMessage =
@@ -1680,7 +1976,7 @@ const PurchasesPage: React.FC = () => {
               errorData?.details ||
               errorMessage;
 
-            console.error('Create receipt failed with JSON error:', {
+            console.error("Create receipt failed with JSON error:", {
               status: response.status,
               statusText: response.statusText,
               errorData,
@@ -1690,77 +1986,94 @@ const PurchasesPage: React.FC = () => {
             if (errorText) {
               errorMessage = errorText;
             }
-            console.error('Create receipt failed with non-JSON response:', {
+            console.error("Create receipt failed with non-JSON response:", {
               status: response.status,
               statusText: response.statusText,
               body: errorText,
             });
           }
         } catch (parseError) {
-          console.error('Failed to parse receipt error response:', parseError);
+          console.error("Failed to parse receipt error response:", parseError);
         }
 
         // Include HTTP status in the thrown error message for easier debugging
-        throw new Error(`${errorMessage} (HTTP ${response.status} ${response.statusText})`);
+        throw new Error(
+          `${errorMessage} (HTTP ${response.status} ${response.statusText})`,
+        );
       }
 
       let receiptData: any = {};
       try {
         receiptData = await response.json();
       } catch (parseOkError) {
-        console.error('Failed to parse receipt success response as JSON:', parseOkError);
+        console.error(
+          "Failed to parse receipt success response as JSON:",
+          parseOkError,
+        );
       }
 
       // Normalize receipt number from API response shape
-      const receiptNumber: string = receiptData?.receipt?.receipt_number || receiptData?.receipt_number || 'N/A';
+      const receiptNumber: string =
+        receiptData?.receipt?.receipt_number ||
+        receiptData?.receipt_number ||
+        "N/A";
 
       // Mark this purchase as having receipts in local UI state
-      setPurchasesWithReceipts(prev => new Set(prev).add(selectedPurchase.id));
+      setPurchasesWithReceipts((prev) =>
+        new Set(prev).add(selectedPurchase.id),
+      );
 
       // Update remaining map after this receipt
       const newRemaining: Record<number, number> = { ...remainingQtyMap };
       for (const ri of receiptFormData.receipt_items) {
-        newRemaining[ri.purchase_item_id] = Math.max((newRemaining[ri.purchase_item_id] ?? 0) - (ri.quantity_received || 0), 0);
+        newRemaining[ri.purchase_item_id] = Math.max(
+          (newRemaining[ri.purchase_item_id] ?? 0) -
+            (ri.quantity_received || 0),
+          0,
+        );
       }
       setRemainingQtyMap(newRemaining);
 
       // Determine if this receipt completes all remaining quantities
-      const isFullyReceived = Object.values(newRemaining).every(v => v <= 0);
+      const isFullyReceived = Object.values(newRemaining).every((v) => v <= 0);
       if (isFullyReceived) {
-        setFullyReceivedPurchases(prev => new Set(prev).add(selectedPurchase.id));
+        setFullyReceivedPurchases((prev) =>
+          new Set(prev).add(selectedPurchase.id),
+        );
       }
 
       // NOTE: Asset creation is now automatic at purchase approval time (PSAK 16 accrual basis)
       // No need to create assets from receipts anymore
 
-      const successMessage = t('purchases.receiptCreatedSuccessDescNoAssets', { number: receiptNumber });
+      const successMessage = t("purchases.receiptCreatedSuccessDescNoAssets", {
+        number: receiptNumber,
+      });
 
       toast({
-        title: t('purchases.receiptCreatedSuccessTitle'),
+        title: t("purchases.receiptCreatedSuccessTitle"),
         description: successMessage,
-        status: 'success',
+        status: "success",
         duration: 5000,
         isClosable: true,
       });
 
       // Reset form and close modal
       setReceiptFormData({
-        received_date: new Date().toISOString().split('T')[0],
-        notes: '',
-        receipt_items: []
+        received_date: new Date().toISOString().split("T")[0],
+        notes: "",
+        receipt_items: [],
       });
 
       onReceiptClose();
 
       // Refresh the purchase list
       await fetchPurchases();
-
     } catch (err: any) {
-      console.error('Error creating receipt:', err);
+      console.error("Error creating receipt:", err);
       toast({
-        title: 'Error',
-        description: err.message || 'Failed to create receipt',
-        status: 'error',
+        title: "Error",
+        description: err.message || "Failed to create receipt",
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -1777,21 +2090,23 @@ const PurchasesPage: React.FC = () => {
       setLoadingVendors(true);
 
       const response = await fetch(`/api/v1/contacts?type=VENDOR`, {
-        method: 'GET',
+        method: "GET",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch vendors');
+        throw new Error("Failed to fetch vendors");
       }
 
       const vendorsData = await response.json();
 
       // Handle both array and object responses (e.g., { data: [...] })
-      const vendorsArray = Array.isArray(vendorsData) ? vendorsData : (vendorsData.data || []);
+      const vendorsArray = Array.isArray(vendorsData)
+        ? vendorsData
+        : vendorsData.data || [];
 
       // Transform the data to match our Vendor interface
       const formattedVendors = vendorsArray.map((vendor: any) => ({
@@ -1802,11 +2117,11 @@ const PurchasesPage: React.FC = () => {
 
       setVendors(formattedVendors);
     } catch (err: any) {
-      console.error('Error fetching vendors:', err);
+      console.error("Error fetching vendors:", err);
       toast({
-        title: 'Error',
-        description: 'Failed to fetch vendors',
-        status: 'error',
+        title: "Error",
+        description: "Failed to fetch vendors",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1820,17 +2135,21 @@ const PurchasesPage: React.FC = () => {
     if (!token) return;
     try {
       setLoadingPRs(true);
-      const response = await fetch('/api/v1/purchase-requests', {
-        headers: { Authorization: `Bearer ${token}` }
+      const response = await fetch("/api/v1/purchase-requests", {
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) {
         const data = await response.json();
-        const prs = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+        const prs = Array.isArray(data.data)
+          ? data.data
+          : Array.isArray(data)
+            ? data
+            : [];
         // Only show APPROVED PRs
-        setPurchaseRequests(prs.filter((pr: any) => pr.status === 'APPROVED'));
+        setPurchaseRequests(prs.filter((pr: any) => pr.status === "APPROVED"));
       }
     } catch (err: any) {
-      console.error('Error fetching PRs:', err);
+      console.error("Error fetching PRs:", err);
     } finally {
       setLoadingPRs(false);
     }
@@ -1841,15 +2160,21 @@ const PurchasesPage: React.FC = () => {
     if (!token) return;
     try {
       setLoadingProjects(true);
-      const response = await fetch('/api/v1/projects', {
-        headers: { Authorization: `Bearer ${token}` }
+      const response = await fetch("/api/v1/projects", {
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) {
         const data = await response.json();
-        setProjects(Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []));
+        setProjects(
+          Array.isArray(data.data)
+            ? data.data
+            : Array.isArray(data)
+              ? data
+              : [],
+        );
       }
     } catch (err: any) {
-      console.error('Error fetching projects:', err);
+      console.error("Error fetching projects:", err);
     } finally {
       setLoadingProjects(false);
     }
@@ -1863,11 +2188,11 @@ const PurchasesPage: React.FC = () => {
       const list: Product[] = Array.isArray(data?.data) ? data.data : [];
       setProducts(list);
     } catch (err: any) {
-      console.error('Error fetching products:', err);
+      console.error("Error fetching products:", err);
       toast({
-        title: 'Error',
-        description: 'Failed to fetch products',
-        status: 'error',
+        title: "Error",
+        description: "Failed to fetch products",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1883,7 +2208,7 @@ const PurchasesPage: React.FC = () => {
       const res = await assetService.getAssetCategories();
       setAssetCategories(res?.data || []);
     } catch (err: any) {
-      console.error('Error fetching asset categories:', err);
+      console.error("Error fetching asset categories:", err);
       setAssetCategories([]);
     } finally {
       setLoadingAssetCategories(false);
@@ -1896,16 +2221,19 @@ const PurchasesPage: React.FC = () => {
     try {
       setLoadingBankAccounts(true);
 
-      const response = await fetch('/api/v1/cash-bank/reports/payment-accounts', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        "/api/v1/cash-bank/reports/payment-accounts",
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
-        throw new Error('Failed to fetch bank accounts');
+        throw new Error("Failed to fetch bank accounts");
       }
 
       const data = await response.json();
@@ -1916,11 +2244,11 @@ const PurchasesPage: React.FC = () => {
 
       setBankAccounts(allAccounts);
     } catch (err: any) {
-      console.error('Error fetching bank accounts:', err);
+      console.error("Error fetching bank accounts:", err);
       toast({
-        title: 'Error',
-        description: 'Failed to fetch bank accounts',
-        status: 'error',
+        title: "Error",
+        description: "Failed to fetch bank accounts",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -1938,50 +2266,62 @@ const PurchasesPage: React.FC = () => {
       // Use public catalog endpoint for all roles - no authentication required
       try {
         const catalogData = await accountService.getCreditAccounts(); // Use our fixed public method
-        const formattedAccounts: GLAccount[] = catalogData.map(item => ({
+        const formattedAccounts: GLAccount[] = catalogData.map((item) => ({
           id: item.id,
           code: item.code,
           name: item.name,
-          type: 'LIABILITY' as const,
+          type: "LIABILITY" as const,
           is_active: item.active,
           level: 1,
           is_header: false,
           balance: 0,
-          created_at: '',
-          updated_at: '',
-          description: '',
+          created_at: "",
+          updated_at: "",
+          description: "",
         }));
-        console.log('Formatted credit accounts from public catalog:', formattedAccounts);
+        console.log(
+          "Formatted credit accounts from public catalog:",
+          formattedAccounts,
+        );
         setCreditAccounts(formattedAccounts);
         return; // Success, exit early
       } catch (catalogError: any) {
-        console.log('Public catalog endpoint failed, trying regular endpoint with auth:', catalogError.message);
+        console.log(
+          "Public catalog endpoint failed, trying regular endpoint with auth:",
+          catalogError.message,
+        );
         // Fall through to try regular endpoint with authentication
       }
 
       // Use full account data for other roles or as fallback for EMPLOYEE
       try {
-        const data = await accountService.getAccounts(token, 'LIABILITY');
+        const data = await accountService.getAccounts(token, "LIABILITY");
         const list: GLAccount[] = Array.isArray(data) ? data : [];
-        console.log('Formatted credit accounts from regular endpoint:', list);
+        console.log("Formatted credit accounts from regular endpoint:", list);
         setCreditAccounts(list);
       } catch (regularError: any) {
-        console.error('Regular accounts endpoint also failed:', regularError);
+        console.error("Regular accounts endpoint also failed:", regularError);
         throw regularError; // Re-throw to be caught by outer catch
       }
     } catch (err: any) {
-      console.error('Error fetching credit accounts:', err);
+      console.error("Error fetching credit accounts:", err);
       // If both endpoints fail, fall back to manual entry mode
       setCreditAccounts([]);
 
       // Show friendly message for network errors, but don't show "Limited Access" for public endpoint failures
-      console.log('Unable to load credit accounts, falling back to manual entry mode');
+      console.log(
+        "Unable to load credit accounts, falling back to manual entry mode",
+      );
       // Only show toast for actual network errors, not permission issues
-      if (!err.message?.includes('Network error') && !err.message?.includes('Failed to fetch')) {
+      if (
+        !err.message?.includes("Network error") &&
+        !err.message?.includes("Failed to fetch")
+      ) {
         toast({
-          title: 'Network Issue',
-          description: 'Unable to load credit accounts list. Please check your connection.',
-          status: 'warning',
+          title: "Network Issue",
+          description:
+            "Unable to load credit accounts list. Please check your connection.",
+          status: "warning",
           duration: 3000,
           isClosable: true,
         });
@@ -2003,19 +2343,21 @@ const PurchasesPage: React.FC = () => {
       try {
         // Fetch expense accounts using public endpoint
         const expenseCatalogData = await accountService.getExpenseAccounts(); // Use our fixed public method
-        const formattedExpenseAccounts: GLAccount[] = expenseCatalogData.map(item => ({
-          id: item.id,
-          code: item.code,
-          name: item.name,
-          type: 'EXPENSE' as const,
-          is_active: item.active,
-          level: 1,
-          is_header: false,
-          balance: 0,
-          created_at: '',
-          updated_at: '',
-          description: '',
-        }));
+        const formattedExpenseAccounts: GLAccount[] = expenseCatalogData.map(
+          (item) => ({
+            id: item.id,
+            code: item.code,
+            name: item.name,
+            type: "EXPENSE" as const,
+            is_active: item.active,
+            level: 1,
+            is_header: false,
+            balance: 0,
+            created_at: "",
+            updated_at: "",
+            description: "",
+          }),
+        );
 
         // For service companies: only show expense accounts (no inventory/fixed assets)
         if (isServiceCompany) {
@@ -2023,63 +2365,86 @@ const PurchasesPage: React.FC = () => {
         } else {
           // Fetch asset accounts (inventory + fixed assets) using public endpoint
           try {
-            const assetCatalogData = await accountService.getAccountCatalog(undefined, 'ASSET'); // Public endpoint
+            const assetCatalogData = await accountService.getAccountCatalog(
+              undefined,
+              "ASSET",
+            ); // Public endpoint
             // Include both inventory and fixed asset accounts
-            const assetAccounts = assetCatalogData.filter(item => {
-              const code = item.code || '';
-              const name = (item.name || '').toLowerCase();
+            const assetAccounts = assetCatalogData
+              .filter((item) => {
+                const code = item.code || "";
+                const name = (item.name || "").toLowerCase();
 
-              // Inventory accounts (current assets)
-              const isInventory = code.startsWith('1103') || name.includes('persediaan');
+                // Inventory accounts (current assets)
+                const isInventory =
+                  code.startsWith("1103") || name.includes("persediaan");
 
-              // Fixed asset accounts (codes 1500-1599 and specific account codes)
-              const isFixedAsset =
-                (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
-                ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
-                name.includes('fixed asset') ||
-                name.includes('asset tetap') ||
-                name.includes('peralatan') ||
-                name.includes('mesin') ||
-                name.includes('printer') ||
-                name.includes('komputer') ||
-                name.includes('equipment') ||
-                name.includes('furniture') ||
-                name.includes('kendaraan') ||
-                name.includes('bangunan') ||
-                name.includes('gedung');
+                // Fixed asset accounts (codes 1500-1599 and specific account codes)
+                const isFixedAsset =
+                  (code.startsWith("15") && code.length >= 4) || // Fixed asset codes 1500-1599
+                  ["1501", "1502", "1503", "1504", "1505", "1509"].includes(
+                    code,
+                  ) || // Specific known fixed asset accounts
+                  name.includes("fixed asset") ||
+                  name.includes("asset tetap") ||
+                  name.includes("peralatan") ||
+                  name.includes("mesin") ||
+                  name.includes("printer") ||
+                  name.includes("komputer") ||
+                  name.includes("equipment") ||
+                  name.includes("furniture") ||
+                  name.includes("kendaraan") ||
+                  name.includes("bangunan") ||
+                  name.includes("gedung");
 
-              // Prepaid / Current Asset accounts (Beban Dibayar Dimuka)
-              const isPrepaidAsset =
-                code.startsWith('1104') || code.startsWith('1105') || code.startsWith('1106') ||
-                code.startsWith('1107') || code.startsWith('1108') || code.startsWith('1109') ||
-                name.includes('prepaid') || name.includes('dibayar dimuka') ||
-                name.includes('uang muka') || name.includes('bayar dimuka') ||
-                name.includes('sewa dibayar') || name.includes('asuransi dibayar');
+                // Prepaid / Current Asset accounts (Beban Dibayar Dimuka)
+                const isPrepaidAsset =
+                  code.startsWith("1104") ||
+                  code.startsWith("1105") ||
+                  code.startsWith("1106") ||
+                  code.startsWith("1107") ||
+                  code.startsWith("1108") ||
+                  code.startsWith("1109") ||
+                  name.includes("prepaid") ||
+                  name.includes("dibayar dimuka") ||
+                  name.includes("uang muka") ||
+                  name.includes("bayar dimuka") ||
+                  name.includes("sewa dibayar") ||
+                  name.includes("asuransi dibayar");
 
-              return isInventory || isFixedAsset || isPrepaidAsset;
-            }).map(item => ({
-              id: item.id,
-              code: item.code,
-              name: item.name,
-              type: 'ASSET' as const,
-              is_active: item.active,
-              level: 1,
-              is_header: false,
-              balance: 0,
-              created_at: '',
-              updated_at: '',
-              description: '',
-            }));
+                return isInventory || isFixedAsset || isPrepaidAsset;
+              })
+              .map((item) => ({
+                id: item.id,
+                code: item.code,
+                name: item.name,
+                type: "ASSET" as const,
+                is_active: item.active,
+                level: 1,
+                is_header: false,
+                balance: 0,
+                created_at: "",
+                updated_at: "",
+                description: "",
+              }));
             allAccounts = [...assetAccounts, ...formattedExpenseAccounts];
           } catch (assetError) {
-            console.log('Could not fetch asset accounts, using expense only:', assetError);
+            console.log(
+              "Could not fetch asset accounts, using expense only:",
+              assetError,
+            );
             allAccounts = formattedExpenseAccounts;
           }
         }
 
         // Filter out header/parent accounts — only detail accounts can be selected for transactions
-        const detailAccounts = allAccounts.filter(acc => !acc.is_header);
-        console.log('Formatted accounts from public catalog (inventory + fixed assets + expense), filtered headers:', detailAccounts.length, '/', allAccounts.length);
+        const detailAccounts = allAccounts.filter((acc) => !acc.is_header);
+        console.log(
+          "Formatted accounts from public catalog (inventory + fixed assets + expense), filtered headers:",
+          detailAccounts.length,
+          "/",
+          allAccounts.length,
+        );
         setExpenseAccounts(detailAccounts);
         setCanListExpenseAccounts(true);
         if (detailAccounts.length > 0) {
@@ -2087,88 +2452,121 @@ const PurchasesPage: React.FC = () => {
         }
         return; // Success, exit early
       } catch (catalogError: any) {
-        console.log('Public catalog endpoint failed, trying regular endpoint with auth:', catalogError.message);
+        console.log(
+          "Public catalog endpoint failed, trying regular endpoint with auth:",
+          catalogError.message,
+        );
         // Fall through to try regular endpoint with authentication
       }
 
       // Use full account data for other roles or as fallback for EMPLOYEE
       try {
         // Fetch expense accounts
-        const expenseData = await accountService.getAccounts(token, 'EXPENSE');
-        const expenseList: GLAccount[] = Array.isArray(expenseData) ? expenseData : [];
+        const expenseData = await accountService.getAccounts(token, "EXPENSE");
+        const expenseList: GLAccount[] = Array.isArray(expenseData)
+          ? expenseData
+          : [];
 
         // Try to fetch asset accounts (inventory + fixed assets)
         let allAccountsList: GLAccount[] = expenseList;
         if (!isServiceCompany) {
           try {
-            const assetData = await accountService.getAccounts(token, 'ASSET');
-            const assetList: GLAccount[] = Array.isArray(assetData) ? assetData : [];
-            const assetAccounts = assetList.filter(acc => {
-              const code = acc.code || '';
-              const name = (acc.name || '').toLowerCase();
+            const assetData = await accountService.getAccounts(token, "ASSET");
+            const assetList: GLAccount[] = Array.isArray(assetData)
+              ? assetData
+              : [];
+            const assetAccounts = assetList.filter((acc) => {
+              const code = acc.code || "";
+              const name = (acc.name || "").toLowerCase();
 
               // Inventory accounts (current assets)
-              const isInventory = code.startsWith('1103') || name.includes('persediaan');
+              const isInventory =
+                code.startsWith("1103") || name.includes("persediaan");
 
               // Fixed asset accounts (codes 1500-1599 and specific account codes)
               const isFixedAsset =
-                (code.startsWith('15') && code.length >= 4) || // Fixed asset codes 1500-1599
-                ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) || // Specific known fixed asset accounts
-                name.includes('fixed asset') ||
-                name.includes('asset tetap') ||
-                name.includes('peralatan') ||
-                name.includes('mesin') ||
-                name.includes('printer') ||
-                name.includes('komputer') ||
-                name.includes('equipment') ||
-                name.includes('furniture') ||
-                name.includes('kendaraan') ||
-                name.includes('bangunan') ||
-                name.includes('gedung');
+                (code.startsWith("15") && code.length >= 4) || // Fixed asset codes 1500-1599
+                ["1501", "1502", "1503", "1504", "1505", "1509"].includes(
+                  code,
+                ) || // Specific known fixed asset accounts
+                name.includes("fixed asset") ||
+                name.includes("asset tetap") ||
+                name.includes("peralatan") ||
+                name.includes("mesin") ||
+                name.includes("printer") ||
+                name.includes("komputer") ||
+                name.includes("equipment") ||
+                name.includes("furniture") ||
+                name.includes("kendaraan") ||
+                name.includes("bangunan") ||
+                name.includes("gedung");
 
               // Prepaid / Current Asset accounts (Beban Dibayar Dimuka)
               const isPrepaidAsset =
-                code.startsWith('1104') || code.startsWith('1105') || code.startsWith('1106') ||
-                code.startsWith('1107') || code.startsWith('1108') || code.startsWith('1109') ||
-                name.includes('prepaid') || name.includes('dibayar dimuka') ||
-                name.includes('uang muka') || name.includes('bayar dimuka') ||
-                name.includes('sewa dibayar') || name.includes('asuransi dibayar');
+                code.startsWith("1104") ||
+                code.startsWith("1105") ||
+                code.startsWith("1106") ||
+                code.startsWith("1107") ||
+                code.startsWith("1108") ||
+                code.startsWith("1109") ||
+                name.includes("prepaid") ||
+                name.includes("dibayar dimuka") ||
+                name.includes("uang muka") ||
+                name.includes("bayar dimuka") ||
+                name.includes("sewa dibayar") ||
+                name.includes("asuransi dibayar");
 
               return isInventory || isFixedAsset || isPrepaidAsset;
             });
             allAccountsList = [...assetAccounts, ...expenseList];
           } catch (assetError) {
-            console.log('Could not fetch asset accounts from regular endpoint, using expense only:', assetError);
+            console.log(
+              "Could not fetch asset accounts from regular endpoint, using expense only:",
+              assetError,
+            );
           }
         }
 
         // Filter out header/parent accounts — only detail accounts can be selected for transactions
-        const detailAccountsList = allAccountsList.filter(acc => !acc.is_header);
-        console.log('Formatted accounts from regular endpoint (inventory + fixed assets + expense), filtered headers:', detailAccountsList.length, '/', allAccountsList.length);
+        const detailAccountsList = allAccountsList.filter(
+          (acc) => !acc.is_header,
+        );
+        console.log(
+          "Formatted accounts from regular endpoint (inventory + fixed assets + expense), filtered headers:",
+          detailAccountsList.length,
+          "/",
+          allAccountsList.length,
+        );
         setExpenseAccounts(detailAccountsList);
         setCanListExpenseAccounts(true);
         if (detailAccountsList.length > 0) {
           setDefaultExpenseAccountId(detailAccountsList[0].id as number);
         }
       } catch (regularError: any) {
-        console.error('Regular accounts endpoint also failed:', regularError);
+        console.error("Regular accounts endpoint also failed:", regularError);
         throw regularError; // Re-throw to be caught by outer catch
       }
     } catch (err: any) {
-      console.error('Error fetching accounts:', err);
+      console.error("Error fetching accounts:", err);
       // If both endpoints fail, fall back to manual entry mode
       setCanListExpenseAccounts(false);
       setExpenseAccounts([]);
       setDefaultExpenseAccountId(null);
 
       // Show friendly message for network errors, but don't show "Limited Access" for public endpoint failures
-      console.log('Unable to load expense accounts, falling back to manual entry mode');
+      console.log(
+        "Unable to load expense accounts, falling back to manual entry mode",
+      );
       // Only show toast for actual network errors, not permission issues
-      if (!err.message?.includes('Network error') && !err.message?.includes('Failed to fetch')) {
+      if (
+        !err.message?.includes("Network error") &&
+        !err.message?.includes("Failed to fetch")
+      ) {
         toast({
-          title: 'Network Issue',
-          description: 'Unable to load accounts list. Please check your connection.',
-          status: 'warning',
+          title: "Network Issue",
+          description:
+            "Unable to load accounts list. Please check your connection.",
+          status: "warning",
           duration: 3000,
           isClosable: true,
         });
@@ -2180,11 +2578,11 @@ const PurchasesPage: React.FC = () => {
 
   // Helper function to get receiver name from user object
   const getReceiverName = (receiver: any): string => {
-    if (!receiver) return 'N/A';
+    if (!receiver) return "N/A";
 
     // Try to build name from FirstName and LastName
     if (receiver.first_name || receiver.last_name) {
-      return `${receiver.first_name || ''} ${receiver.last_name || ''}`.trim();
+      return `${receiver.first_name || ""} ${receiver.last_name || ""}`.trim();
     }
 
     // Fallback to username
@@ -2193,7 +2591,7 @@ const PurchasesPage: React.FC = () => {
     }
 
     // Final fallback
-    return 'N/A';
+    return "N/A";
   };
 
   // Handle view receipts
@@ -2203,29 +2601,32 @@ const PurchasesPage: React.FC = () => {
       setSelectedPurchaseForReceipts(purchase);
 
       // Fetch all receipts (include PARTIAL and COMPLETE)
-      const response = await fetch(`${API_ENDPOINTS.PURCHASES_RECEIPTS_BY_ID(purchase.id)}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        `${API_ENDPOINTS.PURCHASES_RECEIPTS_BY_ID(purchase.id)}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
-        throw new Error('Failed to fetch receipts');
+        throw new Error("Failed to fetch receipts");
       }
 
       const data = await response.json();
       setReceipts(data.data || []);
       // Mark purchase as having receipts locally
-      setPurchasesWithReceipts(prev => new Set(prev).add(purchase.id));
+      setPurchasesWithReceipts((prev) => new Set(prev).add(purchase.id));
       onReceiptsOpen();
     } catch (err: any) {
-      console.error('Error fetching receipts:', err);
+      console.error("Error fetching receipts:", err);
       toast({
-        title: 'Error',
-        description: 'Failed to fetch receipts',
-        status: 'error',
+        title: "Error",
+        description: "Failed to fetch receipts",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -2235,23 +2636,29 @@ const PurchasesPage: React.FC = () => {
   };
 
   // Handle download receipt PDF
-  const handleDownloadReceiptPDF = async (receiptId: number, receiptNumber: string) => {
+  const handleDownloadReceiptPDF = async (
+    receiptId: number,
+    receiptNumber: string,
+  ) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.PURCHASES_RECEIPT_PDF(receiptId)}`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        `${API_ENDPOINTS.PURCHASES_RECEIPT_PDF(receiptId)}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
-        throw new Error('Failed to generate receipt PDF');
+        throw new Error("Failed to generate receipt PDF");
       }
 
       // Create blob and download
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
       link.download = `receipt_${receiptNumber}.pdf`;
       document.body.appendChild(link);
@@ -2260,18 +2667,18 @@ const PurchasesPage: React.FC = () => {
       window.URL.revokeObjectURL(url);
 
       toast({
-        title: 'Success',
+        title: "Success",
         description: `Receipt ${receiptNumber} PDF downloaded successfully`,
-        status: 'success',
+        status: "success",
         duration: 3000,
         isClosable: true,
       });
     } catch (err: any) {
-      console.error('Error downloading receipt PDF:', err);
+      console.error("Error downloading receipt PDF:", err);
       toast({
-        title: 'Error',
-        description: 'Failed to download receipt PDF',
-        status: 'error',
+        title: "Error",
+        description: "Failed to download receipt PDF",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -2281,40 +2688,57 @@ const PurchasesPage: React.FC = () => {
   // Helper function to get valid account IDs
   const getValidAccountIds = async () => {
     try {
-      console.log('🔍 Fetching valid account IDs for asset creation...');
+      console.log("🔍 Fetching valid account IDs for asset creation...");
 
       // Try to get available accounts
       const [fixedAssetRes, liabilityRes, depreciationRes] = await Promise.all([
         assetService.getFixedAssetAccounts().catch(() => ({ data: [] })),
         assetService.getLiabilityAccounts().catch(() => ({ data: [] })),
-        assetService.getDepreciationExpenseAccounts().catch(() => ({ data: [] }))
+        assetService
+          .getDepreciationExpenseAccounts()
+          .catch(() => ({ data: [] })),
       ]);
 
       const fixedAssets = fixedAssetRes.data || [];
       const liabilities = liabilityRes.data || [];
       const depreciation = depreciationRes.data || [];
 
-      console.log('📋 Available accounts:', { fixedAssets: fixedAssets.length, liabilities: liabilities.length, depreciation: depreciation.length });
+      console.log("📋 Available accounts:", {
+        fixedAssets: fixedAssets.length,
+        liabilities: liabilities.length,
+        depreciation: depreciation.length,
+      });
 
       return {
         assetAccountId: fixedAssets.length > 0 ? fixedAssets[0].id : undefined,
-        liabilityAccountId: liabilities.length > 0 ? liabilities[0].id : undefined,
-        depreciationAccountId: depreciation.length > 0 ? depreciation[0].id : undefined
+        liabilityAccountId:
+          liabilities.length > 0 ? liabilities[0].id : undefined,
+        depreciationAccountId:
+          depreciation.length > 0 ? depreciation[0].id : undefined,
       };
     } catch (err) {
-      console.warn('⚠️ Could not fetch account IDs, using undefined (backend will use defaults)');
+      console.warn(
+        "⚠️ Could not fetch account IDs, using undefined (backend will use defaults)",
+      );
       return {
         assetAccountId: undefined,
         liabilityAccountId: undefined,
-        depreciationAccountId: undefined
+        depreciationAccountId: undefined,
       };
     }
   };
 
   // NEW: Create assets from receipt items
-  const createAssetsFromReceipt = async (purchase: Purchase, assetItems: any[], receiptNumber: string) => {
+  const createAssetsFromReceipt = async (
+    purchase: Purchase,
+    assetItems: any[],
+    receiptNumber: string,
+  ) => {
     try {
-      console.log('📝 Starting asset creation process...', { purchase: purchase.code, assetItemsCount: assetItems.length });
+      console.log("📝 Starting asset creation process...", {
+        purchase: purchase.code,
+        assetItemsCount: assetItems.length,
+      });
       const assetsCreated = [] as any[];
       const errors = [] as string[];
 
@@ -2324,18 +2748,25 @@ const PurchasesPage: React.FC = () => {
         const res = await assetService.getAssets();
         existingAssets = res.data || [];
       } catch (e) {
-        console.warn('⚠️ Could not load existing assets for duplicate guard. Proceeding without duplicate check.');
+        console.warn(
+          "⚠️ Could not load existing assets for duplicate guard. Proceeding without duplicate check.",
+        );
       }
       const existingSerials = new Set<string>(
         existingAssets
-          .map((a: any) => (a.serial_number || '').toString().trim().toLowerCase())
-          .filter((s: string) => !!s)
+          .map((a: any) =>
+            (a.serial_number || "").toString().trim().toLowerCase(),
+          )
+          .filter((s: string) => !!s),
       );
 
       // Helper to detect duplicate by computed name + receipt reference in notes
       const isDuplicateByNameAndReceipt = (name: string) => {
         return existingAssets.some(
-          (a: any) => a.name === name && typeof a.notes === 'string' && a.notes.includes(`Receipt ${receiptNumber}`)
+          (a: any) =>
+            a.name === name &&
+            typeof a.notes === "string" &&
+            a.notes.includes(`Receipt ${receiptNumber}`),
         );
       };
 
@@ -2343,24 +2774,31 @@ const PurchasesPage: React.FC = () => {
       const accountIds = await getValidAccountIds();
 
       for (const receiptItem of assetItems) {
-        console.log('🔧 Processing asset item:', receiptItem);
+        console.log("🔧 Processing asset item:", receiptItem);
 
         // Find the corresponding purchase item
-        const purchaseItem = purchase.purchase_items?.find(p => p.id === receiptItem.purchase_item_id);
+        const purchaseItem = purchase.purchase_items?.find(
+          (p) => p.id === receiptItem.purchase_item_id,
+        );
 
         if (!purchaseItem) {
-          console.error('❌ Purchase item not found for receipt item:', receiptItem.purchase_item_id);
+          console.error(
+            "❌ Purchase item not found for receipt item:",
+            receiptItem.purchase_item_id,
+          );
           continue;
         }
 
-        console.log('✅ Found purchase item:', purchaseItem);
+        console.log("✅ Found purchase item:", purchaseItem);
 
         // Calculate asset values
-        const purchasePrice = purchaseItem.unit_price * receiptItem.quantity_received;
-        const salvageValue = purchasePrice * (receiptItem.asset_salvage_percentage || 10) / 100;
+        const purchasePrice =
+          purchaseItem.unit_price * receiptItem.quantity_received;
+        const salvageValue =
+          (purchasePrice * (receiptItem.asset_salvage_percentage || 10)) / 100;
 
         // Create asset payload aligned with AssetCreateRequest; let backend handle journals
-        const assetName = `${purchaseItem.product?.name || 'Asset'} (${purchase.code})`;
+        const assetName = `${purchaseItem.product?.name || "Asset"} (${purchase.code})`;
 
         // Parse user ID from auth context (backend requires user_id)
         let userIdNum: number | undefined = undefined;
@@ -2372,15 +2810,19 @@ const PurchasesPage: React.FC = () => {
             }
           }
         } catch (e) {
-          console.warn('Could not parse user.id for asset creation', user?.id, e);
+          console.warn(
+            "Could not parse user.id for asset creation",
+            user?.id,
+            e,
+          );
         }
 
         const assetData = {
           // Core Asset Info
           name: assetName,
-          category: receiptItem.asset_category || 'Equipment',
+          category: receiptItem.asset_category || "Equipment",
           serial_number: receiptItem.serial_number || undefined,
-          condition: receiptItem.condition || 'Good',
+          condition: receiptItem.condition || "Good",
           is_active: true,
 
           // Financial Info
@@ -2388,10 +2830,10 @@ const PurchasesPage: React.FC = () => {
           purchase_price: purchasePrice,
           salvage_value: salvageValue,
           useful_life: receiptItem.asset_useful_life || 5,
-          depreciation_method: 'STRAIGHT_LINE',
+          depreciation_method: "STRAIGHT_LINE",
 
           // Notes (include references & vendor info here instead of extra fields)
-          notes: `Auto-created from Purchase ${purchase.code}, Receipt ${receiptNumber}. Vendor: ${purchase.vendor?.name || 'N/A'}. ${receiptItem.notes || ''}`,
+          notes: `Auto-created from Purchase ${purchase.code}, Receipt ${receiptNumber}. Vendor: ${purchase.vendor?.name || "N/A"}. ${receiptItem.notes || ""}`,
 
           // Accounting links (optional, backend may fall back to defaults)
           asset_account_id: accountIds.assetAccountId,
@@ -2399,80 +2841,108 @@ const PurchasesPage: React.FC = () => {
 
           // Backend-required context
           user_id: userIdNum,
-          payment_method: 'CREDIT',
+          payment_method: "CREDIT",
         };
 
-        console.log('📋 Asset data prepared:', assetData);
+        console.log("📋 Asset data prepared:", assetData);
 
         try {
           // Duplicate guard: skip if serial exists OR name+receipt already present
-          const serialKey = (assetData.serial_number || '').toString().trim().toLowerCase();
-          if ((serialKey && existingSerials.has(serialKey)) || isDuplicateByNameAndReceipt(assetName)) {
-            console.warn('⏭️ Skipping duplicate asset creation for', { assetName, serial: serialKey });
+          const serialKey = (assetData.serial_number || "")
+            .toString()
+            .trim()
+            .toLowerCase();
+          if (
+            (serialKey && existingSerials.has(serialKey)) ||
+            isDuplicateByNameAndReceipt(assetName)
+          ) {
+            console.warn("⏭️ Skipping duplicate asset creation for", {
+              assetName,
+              serial: serialKey,
+            });
             continue;
           }
 
           // Use assetService to create asset
-          console.log('🚀 Calling assetService.createAsset with data:', assetData);
+          console.log(
+            "🚀 Calling assetService.createAsset with data:",
+            assetData,
+          );
           const newAsset = await assetService.createAsset(assetData);
-          console.log('✅ Asset created successfully via assetService:', newAsset);
+          console.log(
+            "✅ Asset created successfully via assetService:",
+            newAsset,
+          );
           assetsCreated.push(newAsset);
           // Update in-memory sets to prevent duplicates within the same run
           if (serialKey) existingSerials.add(serialKey);
-          existingAssets.push({ name: assetName, notes: assetData.notes, serial_number: assetData.serial_number });
+          existingAssets.push({
+            name: assetName,
+            notes: assetData.notes,
+            serial_number: assetData.serial_number,
+          });
         } catch (apiError: any) {
-          console.error('❌ AssetService Error:', apiError);
+          console.error("❌ AssetService Error:", apiError);
           const errorResponse = apiError.response?.data;
-          let errorMessage = apiError.message || 'Unknown error';
+          let errorMessage = apiError.message || "Unknown error";
 
           // Handle specific account-related errors
-          if (errorResponse?.details?.includes('foreign key constraint')) {
-            errorMessage = 'Account configuration error. Please check Chart of Accounts setup.';
-          } else if (errorResponse?.details?.includes('fk_journal_lines_account')) {
-            errorMessage = 'Invalid account IDs. Asset created without journal entries.';
+          if (errorResponse?.details?.includes("foreign key constraint")) {
+            errorMessage =
+              "Account configuration error. Please check Chart of Accounts setup.";
+          } else if (
+            errorResponse?.details?.includes("fk_journal_lines_account")
+          ) {
+            errorMessage =
+              "Invalid account IDs. Asset created without journal entries.";
           } else if (errorResponse?.error) {
             errorMessage = errorResponse.error;
           }
 
-          console.error('❌ Detailed error:', {
+          console.error("❌ Detailed error:", {
             status: apiError.response?.status,
             data: errorResponse,
-            message: errorMessage
+            message: errorMessage,
           });
 
-          errors.push(`Asset for ${purchaseItem.product?.name}: ${errorMessage}`);
+          errors.push(
+            `Asset for ${purchaseItem.product?.name}: ${errorMessage}`,
+          );
         }
       }
 
-      console.log('📊 Asset creation summary:', { created: assetsCreated.length, errors: errors.length });
+      console.log("📊 Asset creation summary:", {
+        created: assetsCreated.length,
+        errors: errors.length,
+      });
 
       if (assetsCreated.length > 0) {
         toast({
-          title: 'Assets Created Successfully! 🎉',
+          title: "Assets Created Successfully! 🎉",
           description: `${assetsCreated.length} asset(s) automatically created from this receipt.`,
-          status: 'success',
+          status: "success",
           duration: 5000,
           isClosable: true,
         });
       }
 
       if (errors.length > 0) {
-        console.error('⚠️ Asset creation errors:', errors);
+        console.error("⚠️ Asset creation errors:", errors);
         toast({
-          title: 'Partial Asset Creation',
+          title: "Partial Asset Creation",
           description: `${assetsCreated.length} assets created, ${errors.length} failed. Check console for details.`,
-          status: 'warning',
+          status: "warning",
           duration: 7000,
           isClosable: true,
         });
       }
-
     } catch (err: any) {
-      console.error('💥 Critical error in asset creation:', err);
+      console.error("💥 Critical error in asset creation:", err);
       toast({
-        title: 'Asset Creation Error',
-        description: 'Receipt created successfully, but assets could not be created. Please create them manually.',
-        status: 'error',
+        title: "Asset Creation Error",
+        description:
+          "Receipt created successfully, but assets could not be created. Please create them manually.",
+        status: "error",
         duration: 7000,
         isClosable: true,
       });
@@ -2482,21 +2952,24 @@ const PurchasesPage: React.FC = () => {
   // Handle download all receipts PDF
   const handleDownloadAllReceiptsPDF = async (purchase: Purchase) => {
     try {
-      const response = await fetch(`${API_ENDPOINTS.PURCHASES_ALL_RECEIPTS_PDF(purchase.id)}`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        `${API_ENDPOINTS.PURCHASES_ALL_RECEIPTS_PDF(purchase.id)}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
-        throw new Error('Failed to generate combined receipts PDF');
+        throw new Error("Failed to generate combined receipts PDF");
       }
 
       // Create blob and download
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
       link.download = `receipts_${purchase.code}.pdf`;
       document.body.appendChild(link);
@@ -2505,18 +2978,18 @@ const PurchasesPage: React.FC = () => {
       window.URL.revokeObjectURL(url);
 
       toast({
-        title: 'Success',
+        title: "Success",
         description: `All receipts for ${purchase.code} downloaded successfully`,
-        status: 'success',
+        status: "success",
         duration: 3000,
         isClosable: true,
       });
     } catch (err: any) {
-      console.error('Error downloading all receipts PDF:', err);
+      console.error("Error downloading all receipts PDF:", err);
       toast({
-        title: 'Error',
-        description: 'Failed to download receipts PDF',
-        status: 'error',
+        title: "Error",
+        description: "Failed to download receipts PDF",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -2532,33 +3005,41 @@ const PurchasesPage: React.FC = () => {
 
       // Set form data for editing
       setFormData({
-        vendor_id: detailResponse.vendor_id?.toString() || '',
-        purchase_request_id: detailResponse.purchase_request_id?.toString() || '',
-        project_id: detailResponse.project_id?.toString() || '',
-        date: detailResponse.date.split('T')[0], // Format for date input
-        due_date: detailResponse.due_date ? detailResponse.due_date.split('T')[0] : '',
-        notes: detailResponse.notes || '',
-        discount: detailResponse.discount?.toString() || '0',
-        tax: detailResponse.tax?.toString() || '0',
+        vendor_id: detailResponse.vendor_id?.toString() || "",
+        purchase_request_id:
+          detailResponse.purchase_request_id?.toString() || "",
+        project_id: detailResponse.project_id?.toString() || "",
+        date: detailResponse.date.split("T")[0], // Format for date input
+        due_date: detailResponse.due_date
+          ? detailResponse.due_date.split("T")[0]
+          : "",
+        notes: detailResponse.notes || "",
+        discount: detailResponse.discount?.toString() || "0",
+        tax: detailResponse.tax?.toString() || "0",
         // Tax additions (Penambahan)
-        ppn_rate: detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
-        other_tax_additions: detailResponse.other_tax_additions?.toString() || '0',
+        ppn_rate:
+          detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
+        other_tax_additions:
+          detailResponse.other_tax_additions?.toString() || "0",
         // Tax deductions (Pemotongan)
-        pph21_rate: detailResponse.pph21_rate?.toString() || '0',
-        pph23_rate: detailResponse.pph23_rate?.toString() || '0',
-        other_tax_deductions: detailResponse.other_tax_deductions?.toString() || '0',
+        pph21_rate: detailResponse.pph21_rate?.toString() || "0",
+        pph23_rate: detailResponse.pph23_rate?.toString() || "0",
+        other_tax_deductions:
+          detailResponse.other_tax_deductions?.toString() || "0",
         // Payment method fields
-        payment_method: detailResponse.payment_method || 'CREDIT',
-        bank_account_id: detailResponse.bank_account_id?.toString() || '',
-        credit_account_id: detailResponse.credit_account_id?.toString() || '',
-        payment_reference: detailResponse.payment_reference || '',
-        items: detailResponse.purchase_items?.map(mapPurchaseItemToFormData) || [
+        payment_method: detailResponse.payment_method || "CREDIT",
+        bank_account_id: detailResponse.bank_account_id?.toString() || "",
+        credit_account_id: detailResponse.credit_account_id?.toString() || "",
+        payment_reference: detailResponse.payment_reference || "",
+        items: detailResponse.purchase_items?.map(
+          mapPurchaseItemToFormData,
+        ) || [
           createPurchaseItemFormData({
-            product_id: '2',
-            unit_price: '1000',
-            expense_account_id: '1'
-          })
-        ]
+            product_id: "2",
+            unit_price: "1000",
+            expense_account_id: "1",
+          }),
+        ],
       });
 
       await fetchVendors(); // Load vendors for dropdown
@@ -2571,9 +3052,9 @@ const PurchasesPage: React.FC = () => {
       onEditOpen();
     } catch (err: any) {
       toast({
-        title: 'Error',
-        description: 'Failed to fetch purchase details for editing',
-        status: 'error',
+        title: "Error",
+        description: "Failed to fetch purchase details for editing",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -2586,24 +3067,27 @@ const PurchasesPage: React.FC = () => {
       const detailResponse = await purchaseService.getById(purchase.id);
       setFinanceTaxPurchase(detailResponse);
       setFinanceTaxForm({
-        ppn_rate: detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
-        other_tax_additions: detailResponse.other_tax_additions?.toString() || '0',
-        pph21_rate: detailResponse.pph21_rate?.toString() || '0',
-        pph23_rate: detailResponse.pph23_rate?.toString() || '0',
-        other_tax_deductions: detailResponse.other_tax_deductions?.toString() || '0',
-        payment_method: detailResponse.payment_method || 'CREDIT',
-        bank_account_id: detailResponse.bank_account_id?.toString() || '',
-        credit_account_id: detailResponse.credit_account_id?.toString() || '',
-        payment_reference: detailResponse.payment_reference || '',
+        ppn_rate:
+          detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
+        other_tax_additions:
+          detailResponse.other_tax_additions?.toString() || "0",
+        pph21_rate: detailResponse.pph21_rate?.toString() || "0",
+        pph23_rate: detailResponse.pph23_rate?.toString() || "0",
+        other_tax_deductions:
+          detailResponse.other_tax_deductions?.toString() || "0",
+        payment_method: detailResponse.payment_method || "CREDIT",
+        bank_account_id: detailResponse.bank_account_id?.toString() || "",
+        credit_account_id: detailResponse.credit_account_id?.toString() || "",
+        payment_reference: detailResponse.payment_reference || "",
       });
       await fetchBankAccounts();
       await fetchCreditAccounts();
       onFinanceTaxOpen();
     } catch (err: any) {
       toast({
-        title: 'Error',
-        description: 'Gagal memuat detail purchase',
-        status: 'error',
+        title: "Error",
+        description: "Gagal memuat detail purchase",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -2613,39 +3097,54 @@ const PurchasesPage: React.FC = () => {
   // Calculate total payment amount including taxes for balance validation
   const calculateFinanceTaxTotal = () => {
     if (!financeTaxPurchase) return 0;
-    const netBeforeTax = financeTaxPurchase.net_before_tax || financeTaxPurchase.total_amount || 0;
+    const netBeforeTax =
+      financeTaxPurchase.net_before_tax || financeTaxPurchase.total_amount || 0;
     const ppnRate = parseFloat(financeTaxForm.ppn_rate) || 0;
-    const otherTaxAdditions = parseFloat(financeTaxForm.other_tax_additions) || 0;
+    const otherTaxAdditions =
+      parseFloat(financeTaxForm.other_tax_additions) || 0;
     const pph21Rate = parseFloat(financeTaxForm.pph21_rate) || 0;
     const pph23Rate = parseFloat(financeTaxForm.pph23_rate) || 0;
-    const otherTaxDeductions = parseFloat(financeTaxForm.other_tax_deductions) || 0;
+    const otherTaxDeductions =
+      parseFloat(financeTaxForm.other_tax_deductions) || 0;
 
     const ppnAmount = netBeforeTax * (ppnRate / 100);
     const pph21Amount = netBeforeTax * (pph21Rate / 100);
     const pph23Amount = netBeforeTax * (pph23Rate / 100);
 
-    return netBeforeTax + ppnAmount + otherTaxAdditions - pph21Amount - pph23Amount - otherTaxDeductions;
+    return (
+      netBeforeTax +
+      ppnAmount +
+      otherTaxAdditions -
+      pph21Amount -
+      pph23Amount -
+      otherTaxDeductions
+    );
   };
 
   // Check if selected bank/cash account has sufficient balance
   const getSelectedBankAccount = (): BankAccount | undefined => {
     if (!financeTaxForm.bank_account_id) return undefined;
-    return getEligibleBankAccounts().find(a => a.id.toString() === financeTaxForm.bank_account_id);
+    return getEligibleBankAccounts().find(
+      (a) => a.id.toString() === financeTaxForm.bank_account_id,
+    );
   };
 
   const getEligibleBankAccounts = (): BankAccount[] => {
-    if (financeTaxForm.payment_method === 'CASH') {
-      return bankAccounts.filter(a => a.type === 'CASH');
+    if (financeTaxForm.payment_method === "CASH") {
+      return bankAccounts.filter((a) => a.type === "CASH");
     }
-    if (financeTaxForm.payment_method === 'BANK_TRANSFER' || financeTaxForm.payment_method === 'CHECK') {
-      return bankAccounts.filter(a => a.type === 'BANK');
+    if (
+      financeTaxForm.payment_method === "BANK_TRANSFER" ||
+      financeTaxForm.payment_method === "CHECK"
+    ) {
+      return bankAccounts.filter((a) => a.type === "BANK");
     }
     return [];
   };
 
   const isBalanceInsufficient = (): boolean => {
     const paymentMethod = financeTaxForm.payment_method;
-    if (paymentMethod === 'CREDIT') return false;
+    if (paymentMethod === "CREDIT") return false;
     const selectedAccount = getSelectedBankAccount();
     if (!selectedAccount) return false;
     const totalPayment = calculateFinanceTaxTotal();
@@ -2655,7 +3154,9 @@ const PurchasesPage: React.FC = () => {
   // Get accounts with sufficient balance for recommendations
   const getSufficientAccounts = (): BankAccount[] => {
     const totalPayment = calculateFinanceTaxTotal();
-    return getEligibleBankAccounts().filter(a => getAccountBookBalance(a) >= totalPayment);
+    return getEligibleBankAccounts().filter(
+      (a) => getAccountBookBalance(a) >= totalPayment,
+    );
   };
 
   // Save Finance Tax/Payment Config (only tax + payment fields, NO items)
@@ -2667,9 +3168,9 @@ const PurchasesPage: React.FC = () => {
     if (isBalanceInsufficient()) {
       const selectedAccount = getSelectedBankAccount();
       toast({
-        title: 'Saldo Tidak Mencukupi',
+        title: "Saldo Tidak Mencukupi",
         description: `Saldo ${selectedAccount?.name} (${formatBankAccountSummary(selectedAccount)}) tidak mencukupi untuk pembayaran ${formatCurrency(calculateFinanceTaxTotal())}. Silakan pilih akun lain.`,
-        status: 'error',
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -2678,14 +3179,22 @@ const PurchasesPage: React.FC = () => {
     try {
       setSavingFinanceTax(true);
       const payload: any = {
-        ppn_rate: !isNaN(parseFloat(financeTaxForm.ppn_rate)) ? parseFloat(financeTaxForm.ppn_rate) : defaultTaxRate,
-        other_tax_additions: parseFloat(financeTaxForm.other_tax_additions) || 0,
+        ppn_rate: !isNaN(parseFloat(financeTaxForm.ppn_rate))
+          ? parseFloat(financeTaxForm.ppn_rate)
+          : defaultTaxRate,
+        other_tax_additions:
+          parseFloat(financeTaxForm.other_tax_additions) || 0,
         pph21_rate: parseFloat(financeTaxForm.pph21_rate) || 0,
         pph23_rate: parseFloat(financeTaxForm.pph23_rate) || 0,
-        other_tax_deductions: parseFloat(financeTaxForm.other_tax_deductions) || 0,
+        other_tax_deductions:
+          parseFloat(financeTaxForm.other_tax_deductions) || 0,
         payment_method: financeTaxForm.payment_method,
-        bank_account_id: financeTaxForm.bank_account_id ? parseInt(financeTaxForm.bank_account_id) : undefined,
-        credit_account_id: financeTaxForm.credit_account_id ? parseInt(financeTaxForm.credit_account_id) : undefined,
+        bank_account_id: financeTaxForm.bank_account_id
+          ? parseInt(financeTaxForm.bank_account_id)
+          : undefined,
+        credit_account_id: financeTaxForm.credit_account_id
+          ? parseInt(financeTaxForm.credit_account_id)
+          : undefined,
         payment_reference: financeTaxForm.payment_reference,
         // NOTE: No items sent — backend will skip item update
       };
@@ -2693,9 +3202,9 @@ const PurchasesPage: React.FC = () => {
       await purchaseService.update(financeTaxPurchase.id, payload);
 
       toast({
-        title: 'Berhasil',
+        title: "Berhasil",
         description: `Konfigurasi pajak & pembayaran untuk ${financeTaxPurchase.code} berhasil disimpan. Gunakan tombol "Action Required" untuk approve.`,
-        status: 'success',
+        status: "success",
         duration: 5000,
         isClosable: true,
       });
@@ -2703,11 +3212,15 @@ const PurchasesPage: React.FC = () => {
       onFinanceTaxClose();
       await fetchPurchases();
     } catch (err: any) {
-      const errorMessage = err.response?.data?.message || err.response?.data?.error || err.message || 'An error occurred';
+      const errorMessage =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        "An error occurred";
       toast({
-        title: 'Error',
+        title: "Error",
         description: errorMessage,
-        status: 'error',
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -2720,33 +3233,33 @@ const PurchasesPage: React.FC = () => {
   const handleCreate = async () => {
     // Reset form data
     setFormData({
-      vendor_id: '',
-      purchase_request_id: '',
-      project_id: '',
-      date: new Date().toISOString().split('T')[0], // Today's date
-      due_date: '',
-      notes: '',
-      discount: '0',
+      vendor_id: "",
+      purchase_request_id: "",
+      project_id: "",
+      date: new Date().toISOString().split("T")[0], // Today's date
+      due_date: "",
+      notes: "",
+      discount: "0",
 
       // Legacy tax field
-      tax: '0',
+      tax: "0",
 
       // Tax additions (Penambahan)
       ppn_rate: defaultTaxRate.toString(),
-      other_tax_additions: '0',
+      other_tax_additions: "0",
 
       // Tax deductions (Pemotongan)
-      pph21_rate: '0',
-      pph23_rate: '0',
-      other_tax_deductions: '0',
+      pph21_rate: "0",
+      pph23_rate: "0",
+      other_tax_deductions: "0",
 
       // Payment method fields
-      payment_method: 'CREDIT',
-      bank_account_id: '',
-      credit_account_id: '',
-      payment_reference: '',
+      payment_method: "CREDIT",
+      bank_account_id: "",
+      credit_account_id: "",
+      payment_reference: "",
 
-      items: []
+      items: [],
     });
     setSelectedPurchase(null);
     await fetchVendors(); // Load vendors for dropdown
@@ -2764,9 +3277,9 @@ const PurchasesPage: React.FC = () => {
   const handleSave = async () => {
     if (!formData.vendor_id) {
       toast({
-        title: 'Error',
-        description: 'Please select a vendor',
-        status: 'error',
+        title: "Error",
+        description: "Please select a vendor",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -2775,9 +3288,9 @@ const PurchasesPage: React.FC = () => {
 
     if (formData.items.length === 0) {
       toast({
-        title: 'Error',
-        description: 'Please add at least one item',
-        status: 'error',
+        title: "Error",
+        description: "Please add at least one item",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -2785,31 +3298,71 @@ const PurchasesPage: React.FC = () => {
     }
 
     // Validate all items based on item_type
-    const invalidItems = formData.items.filter(item => {
-      if (item.item_type === 'ASSET') {
-        // Asset items require: description, asset_category_id, quantity
-        return !item.description || !item.asset_category_id || !item.quantity;
+    const invalidItems = formData.items.filter((item) => {
+      const quantity = parseFloat(item.quantity);
+      const unitPrice = parseFloat(item.unit_price);
+      const amortizationMonth = parseInt(item.amortization_month || "0", 10);
+      const hasValidQuantity = Number.isFinite(quantity) && quantity > 0;
+      const hasValidUnitPrice = Number.isFinite(unitPrice) && unitPrice >= 0;
+
+      if (!hasValidQuantity || !hasValidUnitPrice) {
+        return true;
       }
-      if (item.item_type === 'PREPAID') {
-        // Prepaid items require: description, expense_account_id, quantity
-        return !item.description || !item.expense_account_id || !item.quantity;
+
+      if (item.item_type === "ASSET") {
+        // Asset items require: description, asset_category_id, quantity
+        return !item.description?.trim() || !item.asset_category_id;
+      }
+      if (item.item_type === "PREPAID") {
+        // Prepaid items require: description, expense_account_id, quantity, amortization month
+        return (
+          !item.description?.trim() ||
+          !item.expense_account_id ||
+          amortizationMonth <= 0
+        );
       }
       // Inventory items require: product_id, quantity, expense_account_id
-      return !item.product_id || !item.quantity || !item.expense_account_id;
+      return !item.product_id || !item.expense_account_id;
     });
 
     if (invalidItems.length > 0) {
-      const assetInvalid = invalidItems.some(i => i.item_type === 'ASSET');
-      const prepaidInvalid = invalidItems.some(i => i.item_type === 'PREPAID');
-      
-      let errorMsg = 'Please fill in all required fields for each item';
-      if (assetInvalid) errorMsg = 'Item Aset Tetap: Nama aset dan Kategori Aset harus diisi.';
-      else if (prepaidInvalid) errorMsg = 'Item Prepaid: Deskripsi dan Akun harus diisi.';
+      const assetInvalid = invalidItems.some((i) => i.item_type === "ASSET");
+      const prepaidInvalid = invalidItems.some(
+        (i) => i.item_type === "PREPAID",
+      );
+
+      let errorMsg = "Please fill in all required fields for each item";
+      if (assetInvalid)
+        errorMsg = "Item Aset Tetap: Nama aset dan Kategori Aset harus diisi.";
+      else if (prepaidInvalid)
+        errorMsg = "Item Prepaid: Deskripsi dan Akun harus diisi.";
 
       toast({
-        title: 'Error',
+        title: "Error",
         description: errorMsg,
-        status: 'error',
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (formData.payment_method === "CREDIT" && !formData.credit_account_id) {
+      toast({
+        title: "Error",
+        description: "Please select a liability account for credit purchases",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (formData.payment_method !== "CREDIT" && !formData.bank_account_id) {
+      toast({
+        title: "Error",
+        description: `Please select a ${formData.payment_method === "CASH" ? "cash" : "bank"} account for this payment method`,
+        status: "error",
         duration: 4000,
         isClosable: true,
       });
@@ -2819,36 +3372,67 @@ const PurchasesPage: React.FC = () => {
     try {
       setLoading(true);
 
+      const normalizedPayment = normalizePurchasePaymentFields(
+        formData,
+        formData.payment_method,
+      );
+      const normalizedPaymentMethod = normalizedPayment.payment_method;
+
       // Format the payload with proper tax rates
       const payload: any = {
         vendor_id: parseInt(formData.vendor_id),
-        date: formData.date ? `${formData.date}T00:00:00Z` : new Date().toISOString(),
-        due_date: formData.due_date ? `${formData.due_date}T00:00:00Z` : undefined,
+        date: formData.date
+          ? `${formData.date}T00:00:00Z`
+          : new Date().toISOString(),
+        due_date: formData.due_date
+          ? `${formData.due_date}T00:00:00Z`
+          : undefined,
         notes: formData.notes,
         discount: parseFloat(formData.discount) || 0,
         // Send proper tax rates (not legacy tax field)
-        ppn_rate: !isNaN(parseFloat(formData.ppn_rate)) ? parseFloat(formData.ppn_rate) : defaultTaxRate,
+        ppn_rate: !isNaN(parseFloat(formData.ppn_rate))
+          ? parseFloat(formData.ppn_rate)
+          : defaultTaxRate,
         other_tax_additions: parseFloat(formData.other_tax_additions) || 0,
         pph21_rate: parseFloat(formData.pph21_rate) || 0,
         pph23_rate: parseFloat(formData.pph23_rate) || 0,
         other_tax_deductions: parseFloat(formData.other_tax_deductions) || 0,
         // Payment method fields
-        payment_method: formData.payment_method,
-        bank_account_id: formData.bank_account_id ? parseInt(formData.bank_account_id) : undefined,
-        credit_account_id: formData.credit_account_id ? parseInt(formData.credit_account_id) : undefined,
-        payment_reference: formData.payment_reference,
-        items: formData.items.map(item => ({
-          item_type: item.item_type || 'INVENTORY',
-          is_fixed_asset: item.item_type === 'ASSET',
-          description: item.description || '',
-          asset_category_id: item.asset_category_id ? parseInt(item.asset_category_id) : undefined,
+        payment_method: normalizedPaymentMethod,
+        bank_account_id:
+          normalizedPaymentMethod === "CREDIT" ||
+          !normalizedPayment.bank_account_id
+            ? undefined
+            : parseInt(normalizedPayment.bank_account_id),
+        credit_account_id:
+          normalizedPaymentMethod === "CREDIT" &&
+          normalizedPayment.credit_account_id
+            ? parseInt(normalizedPayment.credit_account_id)
+            : undefined,
+        payment_reference:
+          normalizedPaymentMethod === "BANK_TRANSFER" ||
+          normalizedPaymentMethod === "CHECK"
+            ? normalizedPayment.payment_reference.trim()
+            : "",
+        items: formData.items.map((item) => ({
+          item_type: item.item_type || "INVENTORY",
+          is_fixed_asset: item.item_type === "ASSET",
+          description: item.description || "",
+          asset_category_id: item.asset_category_id
+            ? parseInt(item.asset_category_id)
+            : undefined,
           product_id: item.product_id ? parseInt(item.product_id) : undefined,
-          amortization_month: item.item_type === 'PREPAID' ? parseInt(item.amortization_month) || 0 : 0,
+          amortization_month:
+            item.item_type === "PREPAID"
+              ? parseInt(item.amortization_month) || 0
+              : 0,
           quantity: parseFloat(item.quantity),
           unit_price: parseFloat(item.unit_price),
           discount: parseFloat(item.discount) || 0,
           tax: parseFloat(item.tax) || 0,
-          expense_account_id: item.expense_account_id ? parseInt(item.expense_account_id) : undefined,
+          expense_account_id: item.expense_account_id
+            ? parseInt(item.expense_account_id)
+            : undefined,
         })),
       };
 
@@ -2865,9 +3449,9 @@ const PurchasesPage: React.FC = () => {
         // Update existing purchase
         response = await purchaseService.update(selectedPurchase.id, payload);
         toast({
-          title: 'Success',
+          title: "Success",
           description: `Purchase ${response.code} updated successfully`,
-          status: 'success',
+          status: "success",
           duration: 3000,
           isClosable: true,
         });
@@ -2876,9 +3460,9 @@ const PurchasesPage: React.FC = () => {
         // Create new purchase
         response = await purchaseService.create(payload);
         toast({
-          title: 'Success',
+          title: "Success",
           description: `Purchase ${response.code} created successfully. Use "Submit for Approval" button to submit when ready.`,
-          status: 'success',
+          status: "success",
           duration: 5000,
           isClosable: true,
         });
@@ -2890,14 +3474,17 @@ const PurchasesPage: React.FC = () => {
 
       // Refresh the list
       await fetchPurchases();
-
     } catch (err: any) {
-      console.error('Error saving purchase:', err);
-      const errorMessage = err.response?.data?.message || err.response?.data?.error || err.message || 'An error occurred';
+      console.error("Error saving purchase:", err);
+      const errorMessage =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        "An error occurred";
       toast({
-        title: 'Error',
+        title: "Error",
         description: errorMessage,
-        status: 'error',
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -2905,7 +3492,6 @@ const PurchasesPage: React.FC = () => {
       setLoading(false);
     }
   };
-
 
   // Handle duplicate purchase
   const handleDuplicate = async (purchase: Purchase) => {
@@ -2916,27 +3502,31 @@ const PurchasesPage: React.FC = () => {
 
       // Set form data for NEW purchase (cleared ID, cleared status-related fields)
       setFormData({
-        vendor_id: detailResponse.vendor_id?.toString() || '',
-        purchase_request_id: '',
-        project_id: detailResponse.project_id?.toString() || '',
-        date: new Date().toISOString().split('T')[0], // Use today's date
-        due_date: '', // Clear due date
-        notes: detailResponse.notes || '',
-        discount: detailResponse.discount?.toString() || '0',
-        tax: detailResponse.tax?.toString() || '0',
+        vendor_id: detailResponse.vendor_id?.toString() || "",
+        purchase_request_id: "",
+        project_id: detailResponse.project_id?.toString() || "",
+        date: new Date().toISOString().split("T")[0], // Use today's date
+        due_date: "", // Clear due date
+        notes: detailResponse.notes || "",
+        discount: detailResponse.discount?.toString() || "0",
+        tax: detailResponse.tax?.toString() || "0",
         // Tax additions
-        ppn_rate: detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
-        other_tax_additions: detailResponse.other_tax_additions?.toString() || '0',
+        ppn_rate:
+          detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
+        other_tax_additions:
+          detailResponse.other_tax_additions?.toString() || "0",
         // Tax deductions
-        pph21_rate: detailResponse.pph21_rate?.toString() || '0',
-        pph23_rate: detailResponse.pph23_rate?.toString() || '0',
-        other_tax_deductions: detailResponse.other_tax_deductions?.toString() || '0',
+        pph21_rate: detailResponse.pph21_rate?.toString() || "0",
+        pph23_rate: detailResponse.pph23_rate?.toString() || "0",
+        other_tax_deductions:
+          detailResponse.other_tax_deductions?.toString() || "0",
         // Payment method fields
-        payment_method: detailResponse.payment_method || 'CREDIT',
-        bank_account_id: detailResponse.bank_account_id?.toString() || '',
-        credit_account_id: detailResponse.credit_account_id?.toString() || '',
-        payment_reference: '', // Clear payment reference
-        items: detailResponse.purchase_items?.map(mapPurchaseItemToFormData) || []
+        payment_method: detailResponse.payment_method || "CREDIT",
+        bank_account_id: detailResponse.bank_account_id?.toString() || "",
+        credit_account_id: detailResponse.credit_account_id?.toString() || "",
+        payment_reference: "", // Clear payment reference
+        items:
+          detailResponse.purchase_items?.map(mapPurchaseItemToFormData) || [],
       });
 
       // Reset selected purchase so it treats it as NEW
@@ -2950,140 +3540,191 @@ const PurchasesPage: React.FC = () => {
         fetchProductsList(),
         fetchExpenseAccounts(),
         fetchBankAccounts(),
-        fetchCreditAccounts()
+        fetchCreditAccounts(),
       ]);
 
       onCreateOpen();
 
       toast({
-        title: t('common.duplicate'),
-        description: t('purchases.messages.duplicateSuccess'),
-        status: 'info',
+        title: t("common.duplicate"),
+        description: t("purchases.messages.duplicateSuccess"),
+        status: "info",
         duration: 3000,
         isClosable: true,
       });
     } catch (error) {
-      console.error('Error duplicating purchase:', error);
+      console.error("Error duplicating purchase:", error);
       toast({
-        title: 'Error',
-        description: 'Failed to duplicate purchase data',
-        status: 'error',
+        title: "Error",
+        description: "Failed to duplicate purchase data",
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
     } finally {
       setLoading(false);
     }
+  };
 
+  const getCurrentApprovalStepInfo = (purchase?: Purchase | null) => {
+    const steps = purchase?.approval_request?.approval_steps || [];
+    const activeStep =
+      steps.find(
+        (step) => step.is_active && (step.status || "").toUpperCase() === "PENDING",
+      ) ||
+      steps.find((step) => (step.status || "").toUpperCase() === "PENDING");
 
+    if (!activeStep?.step?.approver_role) {
+      return null;
+    }
+
+    const stepName = activeStep.step.step_name || "";
+
+    return {
+      step_name: stepName,
+      approver_role: normalizeRole(activeStep.step.approver_role),
+      step_order: activeStep.step.step_order,
+      is_escalated: stepName.toLowerCase().includes("escalated"),
+    };
+  };
+
+  const canCurrentUserActOnPurchase = (purchase?: Purchase | null) => {
+    const roleNorm = normalizeRole(user?.role as any);
+    if (!purchase || !roleNorm) return false;
+
+    const approvalStatus = (purchase.approval_status || "").toUpperCase();
+    const purchaseStatus = (purchase.status || "").toUpperCase();
+
+    if (
+      approvalStatus === "APPROVED" ||
+      approvalStatus === "REJECTED" ||
+      purchaseStatus === "CANCELLED"
+    ) {
+      return false;
+    }
+
+    if (roleNorm === "admin") {
+      return true;
+    }
+
+    if (purchaseStatus === "DRAFT") {
+      return roleNorm === "finance" || roleNorm === "director";
+    }
+
+    const activeStep = getCurrentApprovalStepInfo(purchase);
+    if (!activeStep?.approver_role) {
+      return false;
+    }
+
+    return activeStep.approver_role === roleNorm;
   };
 
   // Smart Action Button Logic
   const getActionButtonProps = (purchase: Purchase) => {
     const roleNorm = normalizeRole(user?.role as any);
-    const status = (purchase.approval_status || '').toUpperCase();
-    const purchaseStatus = (purchase.status || '').toUpperCase();
-
-    // Helper function to get current active approval step
-    const getCurrentActiveStep = () => {
-      // Check if we have approval steps data from backend
-      if (purchase.approval_request?.approval_steps) {
-        // Find the active step that's pending - this is the most important check
-        const activeStep = purchase.approval_request.approval_steps.find(
-          step => step.is_active && step.status === 'PENDING'
-        );
-
-        if (activeStep) {
-          return {
-            step_name: activeStep.step.step_name,
-            approver_role: normalizeRole(activeStep.step.approver_role),
-            step_order: activeStep.step.step_order,
-            is_escalated: activeStep.step.step_name?.includes('Escalated') || activeStep.step.step_name?.includes('Director') || false
-          };
-        }
-
-        // If no active step found, check for any pending step (fallback)
-        const pendingStep = purchase.approval_request.approval_steps.find(
-          step => step.status === 'PENDING'
-        );
-
-        if (pendingStep) {
-          return {
-            step_name: pendingStep.step.step_name,
-            approver_role: normalizeRole(pendingStep.step.approver_role),
-            step_order: pendingStep.step.step_order,
-            is_escalated: pendingStep.step.step_name?.includes('Escalated') || pendingStep.step.step_name?.includes('Director') || false
-          };
-        }
-      }
-
-      // Fallback logic if no approval steps data available
-      if (purchaseStatus === 'DRAFT' && roleNorm === 'employee') {
-        return { step_name: 'Submit', approver_role: 'employee', step_order: 0, is_escalated: false };
-      }
-
-      // Enhanced fallback logic based on status and amount
-      if (status === 'PENDING' || status === 'NOT_STARTED' || purchaseStatus === 'PENDING_APPROVAL') {
-        // Check if this purchase requires director approval based on amount or other criteria
-        const requiresDirectorApproval = purchase.total_amount > 25000000;
-
-        // Check if purchase has been escalated to director (look for director-related indicators)
-        const currentStepName = (purchase.approval_request as { current_step_name?: string } | undefined)?.current_step_name;
-        const isEscalatedToDirector = purchase.approval_request?.approval_steps?.some(
-          step => normalizeRole(step.step.approver_role) === 'director' && step.status === 'PENDING'
-        ) || currentStepName?.toLowerCase().includes('director');
-
-        if (requiresDirectorApproval || isEscalatedToDirector) {
-          return { step_name: 'Director Approval', approver_role: 'director', step_order: 2, is_escalated: true };
-        }
-
-        // Default to finance approval
-        return { step_name: 'Finance Approval', approver_role: 'finance', step_order: 1, is_escalated: false };
-      }
-
-      return null;
-    };
-
-    const activeStep = getCurrentActiveStep();
-    const isUserTurn = activeStep?.approver_role === roleNorm;
+    const status = (purchase.approval_status || "").toUpperCase();
+    const purchaseStatus = (purchase.status || "").toUpperCase();
+    const activeStep = getCurrentApprovalStepInfo(purchase);
+    const isUserTurn =
+      roleNorm === "admin"
+        ? status !== "APPROVED" &&
+          status !== "REJECTED" &&
+          purchaseStatus !== "CANCELLED"
+        : activeStep?.approver_role === roleNorm;
 
     // Completed states
-    if (status === 'APPROVED' || status === 'REJECTED' || purchaseStatus === 'CANCELLED') {
-      return { text: 'View', icon: <FiEye />, colorScheme: 'gray', variant: 'outline' };
+    if (
+      status === "APPROVED" ||
+      status === "REJECTED" ||
+      purchaseStatus === "CANCELLED"
+    ) {
+      return {
+        text: "View",
+        icon: <FiEye />,
+        colorScheme: "gray",
+        variant: "outline",
+      };
     }
 
     // User's turn to act
     if (isUserTurn) {
-      if (roleNorm === 'employee' && purchaseStatus === 'DRAFT') {
-        return { text: 'Submit for Approval', icon: <FiAlertCircle />, colorScheme: 'blue', variant: 'solid' };
+      if (roleNorm === "employee" && purchaseStatus === "DRAFT") {
+        return {
+          text: "Submit for Approval",
+          icon: <FiAlertCircle />,
+          colorScheme: "blue",
+          variant: "solid",
+        };
       }
 
       // Show appropriate text based on escalation
-      const actionText = activeStep?.is_escalated ? 'Action Required (Escalated)' : 'Action Required';
-      return { text: actionText, icon: <FiAlertCircle />, colorScheme: 'orange', variant: 'solid' };
+      const actionText = activeStep?.is_escalated
+        ? "Action Required (Escalated)"
+        : "Action Required";
+      return {
+        text: actionText,
+        icon: <FiAlertCircle />,
+        colorScheme: "orange",
+        variant: "solid",
+      };
+    }
+
+    if (
+      purchaseStatus === "DRAFT" &&
+      canCurrentUserActOnPurchase(purchase) &&
+      roleNorm !== "employee"
+    ) {
+      return {
+        text: "Action Required",
+        icon: <FiAlertCircle />,
+        colorScheme: "orange",
+        variant: "solid",
+      };
     }
 
     // Waiting for others - show who needs to act
-    if (status === 'PENDING' || purchaseStatus === 'PENDING_APPROVAL') {
+    if (status === "PENDING" || purchaseStatus === "PENDING_APPROVAL") {
       if (activeStep) {
-        const waitingForRole = activeStep.approver_role === 'finance' ? 'Finance' :
-          activeStep.approver_role === 'director' ? 'Director' :
-            activeStep.approver_role === 'admin' ? 'Admin' : 'Approval';
+        const waitingForRole =
+          activeStep.approver_role === "finance"
+            ? "Finance"
+            : activeStep.approver_role === "director"
+              ? "Director"
+              : activeStep.approver_role === "admin"
+                ? "Admin"
+                : "Approval";
 
-        const waitingText = activeStep.is_escalated ? `Waiting for ${waitingForRole} (Escalated)` : `Waiting for ${waitingForRole}`;
-        return { text: waitingText, icon: <FiClock />, colorScheme: 'blue', variant: 'outline' };
+        const waitingText = activeStep.is_escalated
+          ? `Waiting for ${waitingForRole} (Escalated)`
+          : `Waiting for ${waitingForRole}`;
+        return {
+          text: waitingText,
+          icon: <FiClock />,
+          colorScheme: "blue",
+          variant: "outline",
+        };
       }
-      return { text: 'Review Progress', icon: <FiClock />, colorScheme: 'blue', variant: 'outline' };
+      return {
+        text: "Review Progress",
+        icon: <FiClock />,
+        colorScheme: "blue",
+        variant: "outline",
+      };
     }
 
-    return { text: 'View', icon: <FiEye />, colorScheme: 'gray', variant: 'outline' };
+    return {
+      text: "View",
+      icon: <FiEye />,
+      colorScheme: "gray",
+      variant: "outline",
+    };
   };
 
   // Action buttons for each row
   const renderActions = (purchase: Purchase) => {
     const actionProps = getActionButtonProps(purchase);
     const roleNorm = normalizeRole(user?.role as any);
-    const purchaseStatus = (purchase.status || '').toUpperCase();
+    const purchaseStatus = (purchase.status || "").toUpperCase();
 
     return (
       <HStack spacing={2}>
@@ -3095,25 +3736,30 @@ const PurchasesPage: React.FC = () => {
           leftIcon={actionProps.icon}
           onClick={() => {
             // Handle special case for employee submitting draft purchase
-            if (roleNorm === 'employee' && purchaseStatus === 'DRAFT' && actionProps.text === 'Submit for Approval') {
+            if (
+              roleNorm === "employee" &&
+              purchaseStatus === "DRAFT" &&
+              actionProps.text === "Submit for Approval"
+            ) {
               handleSubmitForApproval(purchase.id);
             } else {
               setSelectedPurchase(purchase);
               onViewOpen();
             }
           }}
-          fontWeight={actionProps.variant === 'solid' ? 'semibold' : 'medium'}
+          fontWeight={actionProps.variant === "solid" ? "semibold" : "medium"}
           _hover={{
-            transform: 'translateY(-1px)',
-            boxShadow: 'md'
+            transform: "translateY(-1px)",
+            boxShadow: "md",
           }}
         >
           {actionProps.text}
         </Button>
 
         {/* Finance/Admin: Edit Tax & Payment button for PENDING purchases (read-only items) */}
-        {(purchaseStatus === 'PENDING' || purchaseStatus === 'PENDING_APPROVAL') &&
-          (roleNorm === 'admin' || roleNorm === 'finance') && (
+        {(purchaseStatus === "PENDING" ||
+          purchaseStatus === "PENDING_APPROVAL") &&
+          (roleNorm === "admin" || roleNorm === "finance") && (
             <Button
               size="sm"
               colorScheme="teal"
@@ -3122,8 +3768,8 @@ const PurchasesPage: React.FC = () => {
               onClick={() => handleFinanceTaxConfig(purchase)}
               fontWeight="medium"
               _hover={{
-                transform: 'translateY(-1px)',
-                boxShadow: 'md'
+                transform: "translateY(-1px)",
+                boxShadow: "md",
               }}
             >
               Set Pajak & Pembayaran
@@ -3131,9 +3777,13 @@ const PurchasesPage: React.FC = () => {
           )}
 
         {/* Record Payment button for APPROVED or PAID CREDIT purchases with outstanding amount */}
-        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID' || purchaseStatus === 'COMPLETED') &&
+        {(purchaseStatus === "APPROVED" ||
+          purchaseStatus === "PAID" ||
+          purchaseStatus === "COMPLETED") &&
           purchaseService.canReceivePayment(purchase) &&
-          (roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director') && (
+          (roleNorm === "admin" ||
+            roleNorm === "finance" ||
+            roleNorm === "director") && (
             <Button
               size="sm"
               colorScheme="blue"
@@ -3142,8 +3792,8 @@ const PurchasesPage: React.FC = () => {
               onClick={() => handleRecordPayment(purchase)}
               fontWeight="semibold"
               _hover={{
-                transform: 'translateY(-1px)',
-                boxShadow: 'md'
+                transform: "translateY(-1px)",
+                boxShadow: "md",
               }}
             >
               Record Payment
@@ -3151,9 +3801,12 @@ const PurchasesPage: React.FC = () => {
           )}
 
         {/* Create Receipt button for APPROVED or PAID purchases for roles allowed by purchase edit permission */}
-        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID') &&
+        {(purchaseStatus === "APPROVED" || purchaseStatus === "PAID") &&
           canEdit &&
-          (roleNorm === 'inventory_manager' || roleNorm === 'admin' || roleNorm === 'director' || roleNorm === 'finance') &&
+          (roleNorm === "inventory_manager" ||
+            roleNorm === "admin" ||
+            roleNorm === "director" ||
+            roleNorm === "finance") &&
           purchaseHasReceiptableItems(purchase) &&
           !fullyReceivedPurchases.has(purchase.id) && (
             <Button
@@ -3164,8 +3817,8 @@ const PurchasesPage: React.FC = () => {
               onClick={() => handleCreateReceipt(purchase)}
               fontWeight="semibold"
               _hover={{
-                transform: 'translateY(-1px)',
-                boxShadow: 'md'
+                transform: "translateY(-1px)",
+                boxShadow: "md",
               }}
             >
               Create Receipt
@@ -3173,9 +3826,12 @@ const PurchasesPage: React.FC = () => {
           )}
 
         {/* View Receipts button only for purchases that can have goods receipts */}
-        {(
-          roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director' || roleNorm === 'inventory_manager' || roleNorm === 'employee'
-        ) && purchaseHasReceiptableItems(purchase) && (
+        {(roleNorm === "admin" ||
+          roleNorm === "finance" ||
+          roleNorm === "director" ||
+          roleNorm === "inventory_manager" ||
+          roleNorm === "employee") &&
+          purchaseHasReceiptableItems(purchase) && (
             <Button
               size="sm"
               colorScheme="blue"
@@ -3184,8 +3840,8 @@ const PurchasesPage: React.FC = () => {
               onClick={() => handleViewReceipts(purchase)}
               fontWeight="medium"
               _hover={{
-                transform: 'translateY(-1px)',
-                boxShadow: 'md'
+                transform: "translateY(-1px)",
+                boxShadow: "md",
               }}
             >
               Receipts
@@ -3193,8 +3849,12 @@ const PurchasesPage: React.FC = () => {
           )}
 
         {/* View Journal Entries button for APPROVED or PAID purchases - for users with report view permissions */}
-        {(purchaseStatus === 'APPROVED' || purchaseStatus === 'PAID' || purchaseStatus === 'COMPLETED') &&
-          (roleNorm === 'admin' || roleNorm === 'finance' || roleNorm === 'director') && (
+        {(purchaseStatus === "APPROVED" ||
+          purchaseStatus === "PAID" ||
+          purchaseStatus === "COMPLETED") &&
+          (roleNorm === "admin" ||
+            roleNorm === "finance" ||
+            roleNorm === "director") && (
             <Button
               size="sm"
               colorScheme="purple"
@@ -3206,16 +3866,16 @@ const PurchasesPage: React.FC = () => {
               }}
               fontWeight="medium"
               _hover={{
-                transform: 'translateY(-1px)',
-                boxShadow: 'md'
+                transform: "translateY(-1px)",
+                boxShadow: "md",
               }}
             >
-              {t('purchases.viewJournal')}
+              {t("purchases.viewJournal")}
             </Button>
           )}
 
         {/* Delete button for ADMIN - can delete any status */}
-        {normalizeRole(user?.role as any) === 'admin' && (
+        {normalizeRole(user?.role as any) === "admin" && (
           <Button
             size="sm"
             colorScheme="red"
@@ -3223,7 +3883,7 @@ const PurchasesPage: React.FC = () => {
             leftIcon={<FiTrash2 />}
             onClick={() => handleDelete(purchase.id)}
           >
-            {t('purchases.delete')}
+            {t("purchases.delete")}
           </Button>
         )}
 
@@ -3236,9 +3896,17 @@ const PurchasesPage: React.FC = () => {
     return (
       <ProtectedModule module="purchases">
         <CompanyTypeGuard moduleName="Purchases">
-          <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
+          <SimpleLayout
+            allowedRoles={[
+              "admin",
+              "finance",
+              "inventory_manager",
+              "employee",
+              "director",
+            ]}
+          >
             <Box>
-              <Text>{t('purchases.loadingPurchases')}</Text>
+              <Text>{t("purchases.loadingPurchases")}</Text>
             </Box>
           </SimpleLayout>
         </CompanyTypeGuard>
@@ -3249,12 +3917,16 @@ const PurchasesPage: React.FC = () => {
   return (
     <ProtectedModule module="purchases">
       <CompanyTypeGuard moduleName="Purchases">
-        <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
-          <Box
-            bg={bgColor}
-            minH="100vh"
-            p={6}
-          >
+        <SimpleLayout
+          allowedRoles={[
+            "admin",
+            "finance",
+            "inventory_manager",
+            "employee",
+            "director",
+          ]}
+        >
+          <Box bg={bgColor} minH="100vh" p={6}>
             <VStack spacing={6} align="stretch">
               {/* Enhanced Header */}
               <Card
@@ -3266,35 +3938,33 @@ const PurchasesPage: React.FC = () => {
                 mb={2}
               >
                 <CardBody p={6}>
-                  <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
+                  <Flex
+                    justify="space-between"
+                    align="center"
+                    wrap="wrap"
+                    gap={4}
+                  >
                     <VStack align="start" spacing={1}>
-                      <Heading
-                        size="xl"
-                        color={headingColor}
-                        fontWeight="600"
-                      >
-                        {t('purchases.title') || 'Purchase Management'}
+                      <Heading size="xl" color={headingColor} fontWeight="600">
+                        {t("purchases.title") || "Purchase Management"}
                       </Heading>
-                      <Text
-                        fontSize="md"
-                        color={textSecondary}
-                      >
-                        {t('purchases.manageTransactions')}
+                      <Text fontSize="md" color={textSecondary}>
+                        {t("purchases.manageTransactions")}
                       </Text>
                     </VStack>
 
                     <HStack spacing={3}>
-                      <Tooltip label={t('purchases.refreshData')}>
+                      <Tooltip label={t("purchases.refreshData")}>
                         <IconButton
-                          aria-label={t('purchases.refresh')}
+                          aria-label={t("purchases.refresh")}
                           icon={<FiRefreshCw />}
                           variant="ghost"
                           onClick={handleRefresh}
                           isLoading={loading}
                           _hover={{
                             bg: hoverBg,
-                            transform: 'translateY(-1px)',
-                            boxShadow: 'md'
+                            transform: "translateY(-1px)",
+                            boxShadow: "md",
                           }}
                           transition="all 0.2s ease"
                         />
@@ -3310,11 +3980,11 @@ const PurchasesPage: React.FC = () => {
                           _hover={{
                             bg: hoverBg,
                             borderColor: hoverBorder,
-                            transform: 'translateY(-1px)'
+                            transform: "translateY(-1px)",
                           }}
                           transition="all 0.2s ease"
                         >
-                          {t('purchases.exportReport')}
+                          {t("purchases.exportReport")}
                         </MenuButton>
                         <MenuList
                           zIndex={10001}
@@ -3325,8 +3995,18 @@ const PurchasesPage: React.FC = () => {
                           minW="160px"
                           maxW="240px"
                         >
-                          <MenuItem onClick={handleExportPDF} icon={<FiFileText />}>{t('purchases.exportPDF')}</MenuItem>
-                          <MenuItem onClick={handleExportCSV} icon={<FiDownload />}>{t('purchases.exportCSV')}</MenuItem>
+                          <MenuItem
+                            onClick={handleExportPDF}
+                            icon={<FiFileText />}
+                          >
+                            {t("purchases.exportPDF")}
+                          </MenuItem>
+                          <MenuItem
+                            onClick={handleExportCSV}
+                            icon={<FiDownload />}
+                          >
+                            {t("purchases.exportCSV")}
+                          </MenuItem>
                         </MenuList>
                       </Menu>
 
@@ -3339,11 +4019,11 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           onClick={handleCreate}
                           _hover={{
-                            transform: 'translateY(-1px)',
-                            boxShadow: 'lg'
+                            transform: "translateY(-1px)",
+                            boxShadow: "lg",
                           }}
                         >
-                          {t('purchases.createPurchase')}
+                          {t("purchases.createPurchase")}
                         </Button>
                       )}
                     </HStack>
@@ -3352,7 +4032,10 @@ const PurchasesPage: React.FC = () => {
               </Card>
 
               {/* Enhanced Statistics Cards */}
-              <Grid templateColumns="repeat(auto-fit, minmax(280px, 1fr))" gap={6}>
+              <Grid
+                templateColumns="repeat(auto-fit, minmax(280px, 1fr))"
+                gap={6}
+              >
                 <Card
                   bg={cardBg}
                   borderWidth="1px"
@@ -3360,9 +4043,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3375,7 +4058,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.totalPurchases')}
+                          {t("purchases.totalPurchases")}
                         </StatLabel>
                         <StatNumber
                           color={headingColor}
@@ -3404,9 +4087,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3419,7 +4102,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.pendingApproval')}
+                          {t("purchases.pendingApproval")}
                         </StatLabel>
                         <StatNumber
                           color={statColors.orange}
@@ -3448,9 +4131,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3463,7 +4146,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.approved')}
+                          {t("purchases.approved")}
                         </StatLabel>
                         <StatNumber
                           color={statColors.green}
@@ -3492,9 +4175,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3507,7 +4190,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.rejected')}
+                          {t("purchases.rejected")}
                         </StatLabel>
                         <StatNumber
                           color={statColors.red}
@@ -3536,9 +4219,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3551,7 +4234,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.totalValue')}
+                          {t("purchases.totalValue")}
                         </StatLabel>
                         <StatNumber
                           color={headingColor}
@@ -3580,9 +4263,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3595,7 +4278,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.totalApprovedAmount')}
+                          {t("purchases.totalApprovedAmount")}
                         </StatLabel>
                         <StatNumber
                           color={headingColor}
@@ -3624,9 +4307,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3639,7 +4322,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.totalPaid')}
+                          {t("purchases.totalPaid")}
                         </StatLabel>
                         <StatNumber
                           color={statColors.green}
@@ -3668,9 +4351,9 @@ const PurchasesPage: React.FC = () => {
                   boxShadow="sm"
                   borderRadius="lg"
                   _hover={{
-                    boxShadow: 'md',
-                    transform: 'translateY(-2px)',
-                    transition: 'all 0.2s ease'
+                    boxShadow: "md",
+                    transform: "translateY(-2px)",
+                    transition: "all 0.2s ease",
                   }}
                   transition="all 0.2s ease"
                 >
@@ -3683,7 +4366,7 @@ const PurchasesPage: React.FC = () => {
                           fontWeight="medium"
                           mb={2}
                         >
-                          {t('purchases.outstandingAmount')}
+                          {t("purchases.outstandingAmount")}
                         </StatLabel>
                         <StatNumber
                           color={statColors.orange}
@@ -3719,15 +4402,20 @@ const PurchasesPage: React.FC = () => {
                 <CardBody>
                   <Flex gap={4} align="end" wrap="wrap">
                     <Box flex="1" minW="300px">
-                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                        {t('purchases.searchTransactions')}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
+                        {t("purchases.searchTransactions")}
                       </Text>
                       <InputGroup>
                         <InputLeftElement pointerEvents="none">
                           <FiSearch color={textSecondary} />
                         </InputLeftElement>
                         <Input
-                          placeholder={t('purchases.searchPlaceholder')}
+                          placeholder={t("purchases.searchPlaceholder")}
                           value={searchInput}
                           onChange={(e) => handleSearchChange(e.target.value)}
                           bg={cardBg}
@@ -3736,13 +4424,20 @@ const PurchasesPage: React.FC = () => {
                     </Box>
 
                     <Box minW="180px">
-                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                        {t('purchases.filterByVendor')}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
+                        {t("purchases.filterByVendor")}
                       </Text>
                       <Select
-                        placeholder={t('purchases.allVendors')}
-                        value={filters.vendor_id || ''}
-                        onChange={(e) => handleFilterChange({ vendor_id: e.target.value })}
+                        placeholder={t("purchases.allVendors")}
+                        value={filters.vendor_id || ""}
+                        onChange={(e) =>
+                          handleFilterChange({ vendor_id: e.target.value })
+                        }
                         bg={cardBg}
                       >
                         {vendors.map((vendor) => (
@@ -3754,13 +4449,20 @@ const PurchasesPage: React.FC = () => {
                     </Box>
 
                     <Box minW="160px">
-                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
                         Project
                       </Text>
                       <Select
                         placeholder="All Projects"
-                        value={filters.project_id || ''}
-                        onChange={(e) => handleFilterChange({ project_id: e.target.value })}
+                        value={filters.project_id || ""}
+                        onChange={(e) =>
+                          handleFilterChange({ project_id: e.target.value })
+                        }
                         bg={cardBg}
                       >
                         {projects.map((proj) => (
@@ -3772,61 +4474,107 @@ const PurchasesPage: React.FC = () => {
                     </Box>
 
                     <Box minW="160px">
-                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                        {t('purchases.filterByStatus')}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
+                        {t("purchases.filterByStatus")}
                       </Text>
                       <Select
-                        placeholder={t('purchases.allStatuses')}
-                        value={filters.status || ''}
-                        onChange={(e) => handleFilterChange({ status: e.target.value })}
+                        placeholder={t("purchases.allStatuses")}
+                        value={filters.status || ""}
+                        onChange={(e) =>
+                          handleFilterChange({ status: e.target.value })
+                        }
                         bg={cardBg}
                       >
-                        <option value="">{t('purchases.allStatuses')}</option>
-                        <option value="draft">{t('purchases.draft')}</option>
-                        <option value="pending_approval">{t('purchases.pendingApprovalStatus')}</option>
-                        <option value="approved">{t('purchases.approved')}</option>
-                        <option value="cancelled">{t('purchases.cancelled')}</option>
+                        <option value="">{t("purchases.allStatuses")}</option>
+                        <option value="draft">{t("purchases.draft")}</option>
+                        <option value="pending_approval">
+                          {t("purchases.pendingApprovalStatus")}
+                        </option>
+                        <option value="approved">
+                          {t("purchases.approved")}
+                        </option>
+                        <option value="cancelled">
+                          {t("purchases.cancelled")}
+                        </option>
                       </Select>
                     </Box>
 
                     <Box minW="160px">
-                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                        {t('purchases.approvalStatus')}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
+                        {t("purchases.approvalStatus")}
                       </Text>
                       <Select
-                        placeholder={t('purchases.allApprovalStatuses')}
-                        value={filters.approval_status || ''}
-                        onChange={(e) => handleFilterChange({ approval_status: e.target.value })}
+                        placeholder={t("purchases.allApprovalStatuses")}
+                        value={filters.approval_status || ""}
+                        onChange={(e) =>
+                          handleFilterChange({
+                            approval_status: e.target.value,
+                          })
+                        }
                         bg={cardBg}
                       >
-                        <option value="">{t('purchases.allApprovalStatuses')}</option>
-                        <option value="not_required">{t('purchases.notRequired')}</option>
-                        <option value="pending">{t('purchases.pending')}</option>
-                        <option value="approved">{t('purchases.approved')}</option>
-                        <option value="rejected">{t('purchases.rejected')}</option>
+                        <option value="">
+                          {t("purchases.allApprovalStatuses")}
+                        </option>
+                        <option value="not_required">
+                          {t("purchases.notRequired")}
+                        </option>
+                        <option value="pending">
+                          {t("purchases.pending")}
+                        </option>
+                        <option value="approved">
+                          {t("purchases.approved")}
+                        </option>
+                        <option value="rejected">
+                          {t("purchases.rejected")}
+                        </option>
                       </Select>
                     </Box>
 
                     <Box minW="160px">
-                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                        {t('purchases.startDate')}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
+                        {t("purchases.startDate")}
                       </Text>
                       <Input
                         type="date"
-                        value={filters.start_date || ''}
-                        onChange={(e) => handleFilterChange({ start_date: e.target.value })}
+                        value={filters.start_date || ""}
+                        onChange={(e) =>
+                          handleFilterChange({ start_date: e.target.value })
+                        }
                         bg={cardBg}
                       />
                     </Box>
 
                     <Box minW="160px">
-                      <Text fontSize="sm" fontWeight="medium" mb={2} color={textSecondary}>
-                        {t('purchases.endDate')}
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
+                        {t("purchases.endDate")}
                       </Text>
                       <Input
                         type="date"
-                        value={filters.end_date || ''}
-                        onChange={(e) => handleFilterChange({ end_date: e.target.value })}
+                        value={filters.end_date || ""}
+                        onChange={(e) =>
+                          handleFilterChange({ end_date: e.target.value })
+                        }
                         bg={cardBg}
                       />
                     </Box>
@@ -3836,25 +4584,25 @@ const PurchasesPage: React.FC = () => {
                       variant="outline"
                       onClick={() => {
                         // Clear search input state
-                        setSearchInput('');
+                        setSearchInput("");
                         // Reset purchases to show all
                         setPurchases(allPurchases);
                         // Reset filters
                         setFilters({
                           page: 1,
                           limit: 10,
-                          status: '',
-                          vendor_id: '',
-                          project_id: '',
-                          approval_status: '',
-                          search: '',
-                          start_date: '',
-                          end_date: ''
+                          status: "",
+                          vendor_id: "",
+                          project_id: "",
+                          approval_status: "",
+                          search: "",
+                          start_date: "",
+                          end_date: "",
                         });
                         fetchPurchases({ page: 1, limit: 10 });
                       }}
                     >
-                      {t('purchases.clearFilters')}
+                      {t("purchases.clearFilters")}
                     </Button>
                   </Flex>
                 </CardBody>
@@ -3870,7 +4618,7 @@ const PurchasesPage: React.FC = () => {
                 onDelete={canDelete ? handleDelete : undefined}
                 onDuplicate={canEdit ? handleDuplicate : undefined}
                 renderActions={renderActions}
-                title={t('purchases.purchaseTransactions')}
+                title={t("purchases.purchaseTransactions")}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}
                 canEdit={canEdit}
@@ -3882,25 +4630,32 @@ const PurchasesPage: React.FC = () => {
               <Modal isOpen={isViewOpen} onClose={onViewClose} size="xl">
                 <ModalOverlay />
                 <ModalContent bg={modalContentBg}>
-                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
-                    {t('purchases.viewPurchase')} - {selectedPurchase?.code}
+                  <ModalHeader
+                    bg={modalHeaderBg}
+                    borderBottomWidth={1}
+                    borderColor={borderColor}
+                  >
+                    {t("purchases.viewPurchase")} - {selectedPurchase?.code}
                   </ModalHeader>
                   <ModalCloseButton />
                   <ModalBody>
                     {selectedPurchase && (
                       <VStack spacing={6} align="stretch">
                         {/* Show rejection alert for cancelled/rejected purchases */}
-                        {(selectedPurchase.status === 'CANCELLED' || selectedPurchase.approval_status === 'REJECTED') && (
+                        {(selectedPurchase.status === "CANCELLED" ||
+                          selectedPurchase.approval_status === "REJECTED") && (
                           <Alert status="error" variant="left-accent">
                             <AlertIcon />
                             <VStack align="start" spacing={1}>
                               <AlertTitle>
-                                {selectedPurchase.status === 'CANCELLED' ? t('purchases.purchaseCancelled') : t('purchases.purchaseRejected')}
+                                {selectedPurchase.status === "CANCELLED"
+                                  ? t("purchases.purchaseCancelled")
+                                  : t("purchases.purchaseRejected")}
                               </AlertTitle>
                               <AlertDescription>
-                                {selectedPurchase.status === 'CANCELLED'
-                                  ? t('purchases.purchaseCancelledDesc')
-                                  : t('purchases.purchaseRejectedDesc')}
+                                {selectedPurchase.status === "CANCELLED"
+                                  ? t("purchases.purchaseCancelledDesc")
+                                  : t("purchases.purchaseRejectedDesc")}
                               </AlertDescription>
                             </VStack>
                           </Alert>
@@ -3909,36 +4664,64 @@ const PurchasesPage: React.FC = () => {
                         {/* Basic Info */}
                         <SimpleGrid columns={2} spacing={4}>
                           <FormControl>
-                            <FormLabel>{t('purchases.purchaseCode')}</FormLabel>
-                            <Text fontWeight="medium">{selectedPurchase.code}</Text>
+                            <FormLabel>{t("purchases.purchaseCode")}</FormLabel>
+                            <Text fontWeight="medium">
+                              {selectedPurchase.code}
+                            </Text>
                           </FormControl>
 
                           <FormControl>
-                            <FormLabel>{t('purchases.vendor')}</FormLabel>
-                            <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
+                            <FormLabel>{t("purchases.vendor")}</FormLabel>
+                            <Text fontWeight="medium">
+                              {selectedPurchase.vendor?.name || "N/A"}
+                            </Text>
                           </FormControl>
 
                           <FormControl>
-                            <FormLabel>{t('purchases.date')}</FormLabel>
-                            <Text fontWeight="medium">{new Date(selectedPurchase.date).toLocaleDateString('id-ID')}</Text>
+                            <FormLabel>{t("purchases.date")}</FormLabel>
+                            <Text fontWeight="medium">
+                              {new Date(
+                                selectedPurchase.date,
+                              ).toLocaleDateString("id-ID")}
+                            </Text>
                           </FormControl>
 
                           <FormControl>
-                            <FormLabel>{t('purchases.totalAmount')}</FormLabel>
-                            <Text fontWeight="medium" color="green.500">{formatCurrency(selectedPurchase.total_amount)}</Text>
+                            <FormLabel>{t("purchases.totalAmount")}</FormLabel>
+                            <Text fontWeight="medium" color="green.500">
+                              {formatCurrency(selectedPurchase.total_amount)}
+                            </Text>
                           </FormControl>
 
                           <FormControl>
-                            <FormLabel>{t('purchases.status')}</FormLabel>
-                            <Badge colorScheme={getStatusColor(selectedPurchase.status)} variant="subtle" w="fit-content">
-                              {selectedPurchase.status.replace('_', ' ').toUpperCase()}
+                            <FormLabel>{t("purchases.status")}</FormLabel>
+                            <Badge
+                              colorScheme={getStatusColor(
+                                selectedPurchase.status,
+                              )}
+                              variant="subtle"
+                              w="fit-content"
+                            >
+                              {selectedPurchase.status
+                                .replace("_", " ")
+                                .toUpperCase()}
                             </Badge>
                           </FormControl>
 
                           <FormControl>
-                            <FormLabel>{t('purchases.approvalStatus')}</FormLabel>
-                            <Badge colorScheme={getApprovalStatusColor(selectedPurchase.approval_status)} variant="subtle" w="fit-content">
-                              {selectedPurchase.approval_status.replace('_', ' ').toUpperCase()}
+                            <FormLabel>
+                              {t("purchases.approvalStatus")}
+                            </FormLabel>
+                            <Badge
+                              colorScheme={getApprovalStatusColor(
+                                selectedPurchase.approval_status,
+                              )}
+                              variant="subtle"
+                              w="fit-content"
+                            >
+                              {selectedPurchase.approval_status
+                                .replace("_", " ")
+                                .toUpperCase()}
                             </Badge>
                           </FormControl>
                         </SimpleGrid>
@@ -3946,39 +4729,66 @@ const PurchasesPage: React.FC = () => {
                         {/* Payment Information */}
                         {selectedPurchase.payment_method && (
                           <Box>
-                            <FormLabel mb={3}>{t('purchases.paymentInformation')}</FormLabel>
+                            <FormLabel mb={3}>
+                              {t("purchases.paymentInformation")}
+                            </FormLabel>
                             <SimpleGrid columns={3} spacing={4}>
                               <FormControl>
-                                <FormLabel fontSize="sm">{t('purchases.paymentMethod')}</FormLabel>
+                                <FormLabel fontSize="sm">
+                                  {t("purchases.paymentMethod")}
+                                </FormLabel>
                                 <Badge
                                   colorScheme={
-                                    selectedPurchase.payment_method === 'CREDIT' ? 'orange' :
-                                      selectedPurchase.payment_method === 'CASH' ? 'green' :
-                                        selectedPurchase.payment_method === 'BANK_TRANSFER' ? 'blue' :
-                                          selectedPurchase.payment_method === 'CHECK' ? 'purple' : 'gray'
+                                    selectedPurchase.payment_method === "CREDIT"
+                                      ? "orange"
+                                      : selectedPurchase.payment_method ===
+                                          "CASH"
+                                        ? "green"
+                                        : selectedPurchase.payment_method ===
+                                            "BANK_TRANSFER"
+                                          ? "blue"
+                                          : selectedPurchase.payment_method ===
+                                              "CHECK"
+                                            ? "purple"
+                                            : "gray"
                                   }
                                   variant="subtle"
                                   w="fit-content"
                                 >
-                                  {selectedPurchase.payment_method.replace('_', ' ')}
+                                  {selectedPurchase.payment_method.replace(
+                                    "_",
+                                    " ",
+                                  )}
                                 </Badge>
                               </FormControl>
 
                               {selectedPurchase.bank_account_id && (
                                 <FormControl>
-                                  <FormLabel fontSize="sm">{t('purchases.bankAccount')}</FormLabel>
+                                  <FormLabel fontSize="sm">
+                                    {t("purchases.bankAccount")}
+                                  </FormLabel>
                                   <Text fontWeight="medium">
                                     {(() => {
                                       // Prefer relation from backend if available
-                                      const relatedAccount: any = (selectedPurchase as any).bank_account;
+                                      const relatedAccount: any = (
+                                        selectedPurchase as any
+                                      ).bank_account;
                                       const accountFromList = bankAccounts.find(
-                                        (account) => account.id === selectedPurchase.bank_account_id
+                                        (account) =>
+                                          account.id ===
+                                          selectedPurchase.bank_account_id,
                                       );
-                                      const name = relatedAccount?.name || accountFromList?.name;
-                                      const code = relatedAccount?.code || accountFromList?.code;
-                                      if (!name && !code) return 'Unknown Account';
-                                      if (name && code) return `${name} (${code})`;
-                                      return name || code || 'Unknown Account';
+                                      const name =
+                                        relatedAccount?.name ||
+                                        accountFromList?.name;
+                                      const code =
+                                        relatedAccount?.code ||
+                                        accountFromList?.code;
+                                      if (!name && !code)
+                                        return "Unknown Account";
+                                      if (name && code)
+                                        return `${name} (${code})`;
+                                      return name || code || "Unknown Account";
                                     })()}
                                   </Text>
                                 </FormControl>
@@ -3986,8 +4796,12 @@ const PurchasesPage: React.FC = () => {
 
                               {selectedPurchase.payment_reference && (
                                 <FormControl>
-                                  <FormLabel fontSize="sm">{t('purchases.paymentReference')}</FormLabel>
-                                  <Text fontWeight="medium">{selectedPurchase.payment_reference}</Text>
+                                  <FormLabel fontSize="sm">
+                                    {t("purchases.paymentReference")}
+                                  </FormLabel>
+                                  <Text fontWeight="medium">
+                                    {selectedPurchase.payment_reference}
+                                  </Text>
                                 </FormControl>
                               )}
                             </SimpleGrid>
@@ -3997,8 +4811,15 @@ const PurchasesPage: React.FC = () => {
                         {/* Notes */}
                         {selectedPurchase.notes && (
                           <FormControl>
-                            <FormLabel>{t('purchases.notes')}</FormLabel>
-                            <Text p={3} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor} color={textPrimary}>
+                            <FormLabel>{t("purchases.notes")}</FormLabel>
+                            <Text
+                              p={3}
+                              bg={notesBoxBg}
+                              borderRadius="md"
+                              border="1px solid"
+                              borderColor={borderColor}
+                              color={textPrimary}
+                            >
                               {selectedPurchase.notes}
                             </Text>
                           </FormControl>
@@ -4008,132 +4829,177 @@ const PurchasesPage: React.FC = () => {
                         <ApprovalPanel
                           purchaseId={selectedPurchase.id}
                           approvalStatus={selectedPurchase.approval_status}
+                          approvalSteps={
+                            selectedPurchase.approval_request?.approval_steps || []
+                          }
                           purchaseAmount={selectedPurchase.total_amount}
-                          canApprove={(() => {
-                            const roleNorm = normalizeRole(user?.role as any);
-                            const isDraft = (selectedPurchase.status || '').toUpperCase() === 'DRAFT';
-                            const isPending = (selectedPurchase.approval_status || '').toUpperCase() === 'PENDING';
-                            const isNotStarted = (selectedPurchase.approval_status || '').toUpperCase() === 'NOT_STARTED';
-
-                            // Admin can always approve
-                            if (roleNorm === 'admin') return true;
-
-                            // Finance can approve DRAFT purchases, pending purchases (escalated), or purchases that haven't started approval
-                            if (roleNorm === 'finance' && (isDraft || isPending || isNotStarted)) return true;
-
-                            // Director can approve pending purchases (escalated)
-                            if (roleNorm === 'director' && isPending) return true;
-
-                            // Check approval steps for other roles
-                            const steps: any[] = (selectedPurchase as any)?.approval_steps || [];
-                            if (!Array.isArray(steps) || steps.length === 0) return false;
-                            const active = steps.find((s: any) => s.is_active && s.status === 'PENDING');
-                            const approverRole = active?.step?.approver_role ? normalizeRole(active.step.approver_role) : null;
-                            return !!approverRole && approverRole === roleNorm;
-                          })()}
-                          onApprove={async (comments?: string, requiresDirector?: boolean) => {
+                          canApprove={canCurrentUserActOnPurchase(
+                            selectedPurchase,
+                          )}
+                          onApprove={async (
+                            comments?: string,
+                            requiresDirector?: boolean,
+                          ) => {
                             if (!selectedPurchase) return;
                             try {
                               // Call API to approve with escalation parameter
-                              const result = await approvalService.approvePurchase(selectedPurchase.id, {
-                                comments: comments || '',
-                                escalate_to_director: requiresDirector || false
-                              });
+                              const result =
+                                await approvalService.approvePurchase(
+                                  selectedPurchase.id,
+                                  {
+                                    comments: comments || "",
+                                    escalate_to_director:
+                                      requiresDirector || false,
+                                  },
+                                );
 
                               // Handle different approval outcomes
                               if (result.escalated) {
                                 toast({
-                                  title: 'Approved & Escalated',
-                                  description: result.message || 'Purchase approved by Finance and escalated to Director for final approval',
-                                  status: 'info',
+                                  title: "Approved & Escalated",
+                                  description:
+                                    result.message ||
+                                    "Purchase approved by Finance and escalated to Director for final approval",
+                                  status: "info",
                                   duration: 5000,
-                                  isClosable: true
+                                  isClosable: true,
                                 });
 
                                 // Send notification to directors
                                 await notifyDirectors(selectedPurchase);
                               } else {
                                 toast({
-                                  title: 'Approved',
-                                  description: result.message || 'Purchase approved successfully',
-                                  status: 'success',
+                                  title: "Approved",
+                                  description:
+                                    result.message ||
+                                    "Purchase approved successfully",
+                                  status: "success",
                                   duration: 3000,
-                                  isClosable: true
+                                  isClosable: true,
                                 });
                               }
 
                               // Refresh purchase data
-                              const detailResponse = await purchaseService.getById(selectedPurchase.id);
+                              const detailResponse =
+                                await purchaseService.getById(
+                                  selectedPurchase.id,
+                                );
                               setSelectedPurchase(detailResponse);
                               await fetchPurchases();
                               // Don't close modal - let user see the updated history with comments
                             } catch (err: any) {
                               toast({
-                                title: 'Error',
-                                description: err.response?.data?.message || err.response?.data?.error || 'Failed to approve',
-                                status: 'error',
+                                title: "Error",
+                                description:
+                                  err.response?.data?.message ||
+                                  err.response?.data?.error ||
+                                  "Failed to approve",
+                                status: "error",
                                 duration: 5000,
-                                isClosable: true
+                                isClosable: true,
                               });
                             }
                           }}
                           onReject={async (comments: string) => {
                             if (!selectedPurchase) return;
-                            if (!comments || comments.trim() === '') {
-                              toast({ title: 'Komentar diperlukan', description: 'Mohon isi alasan penolakan.', status: 'warning', duration: 3000, isClosable: true });
+                            if (!comments || comments.trim() === "") {
+                              toast({
+                                title: "Komentar diperlukan",
+                                description: "Mohon isi alasan penolakan.",
+                                status: "warning",
+                                duration: 3000,
+                                isClosable: true,
+                              });
                               return;
                             }
                             try {
-                              await approvalService.rejectPurchase(selectedPurchase.id, { comments });
-                              toast({ title: 'Rejected', description: 'Purchase rejected successfully', status: 'warning', duration: 3000, isClosable: true });
-                              const detailResponse = await purchaseService.getById(selectedPurchase.id);
+                              await approvalService.rejectPurchase(
+                                selectedPurchase.id,
+                                { comments },
+                              );
+                              toast({
+                                title: "Rejected",
+                                description: "Purchase rejected successfully",
+                                status: "warning",
+                                duration: 3000,
+                                isClosable: true,
+                              });
+                              const detailResponse =
+                                await purchaseService.getById(
+                                  selectedPurchase.id,
+                                );
                               setSelectedPurchase(detailResponse);
                               await fetchPurchases();
                               // Don't close modal - let user see the updated history with rejection comments
                             } catch (err: any) {
-                              toast({ title: 'Error', description: err.response?.data?.message || 'Failed to reject', status: 'error', duration: 5000, isClosable: true });
+                              toast({
+                                title: "Error",
+                                description:
+                                  err.response?.data?.message ||
+                                  "Failed to reject",
+                                status: "error",
+                                duration: 5000,
+                                isClosable: true,
+                              });
                             }
                           }}
                         />
 
                         {/* Items */}
-                        {selectedPurchase.purchase_items && selectedPurchase.purchase_items.length > 0 && (
-                          <FormControl>
-                            <FormLabel>{t('purchases.purchaseItems')}</FormLabel>
-                            <TableContainer>
-                              <Table size="sm" bg={tableBg}>
-                                <Thead bg={tableHeaderBg}>
-                                  <Tr>
-                                    <Th>{t('purchases.product')}</Th>
-                                    <Th isNumeric>{t('purchases.quantity')}</Th>
-                                    <Th isNumeric>{t('purchases.unitPrice')}</Th>
-                                    <Th isNumeric>{t('purchases.total')}</Th>
-                                  </Tr>
-                                </Thead>
-                                <Tbody>
-                                  {selectedPurchase.purchase_items.map((item: any, index: number) => (
-                                    <Tr key={index}>
-                                      <Td>
-                                        {item.item_type === 'ASSET' || item.is_fixed_asset
-                                          ? `${item.description || 'Unknown Asset'} (Aset Tetap)`
-                                          : item.product?.name || 'N/A'
-                                        }
-                                      </Td>
-                                      <Td isNumeric>{item.quantity}</Td>
-                                      <Td isNumeric>{formatCurrency(item.unit_price)}</Td>
-                                      <Td isNumeric>{formatCurrency(item.quantity * item.unit_price)}</Td>
+                        {selectedPurchase.purchase_items &&
+                          selectedPurchase.purchase_items.length > 0 && (
+                            <FormControl>
+                              <FormLabel>
+                                {t("purchases.purchaseItems")}
+                              </FormLabel>
+                              <TableContainer>
+                                <Table size="sm" bg={tableBg}>
+                                  <Thead bg={tableHeaderBg}>
+                                    <Tr>
+                                      <Th>{t("purchases.product")}</Th>
+                                      <Th isNumeric>
+                                        {t("purchases.quantity")}
+                                      </Th>
+                                      <Th isNumeric>
+                                        {t("purchases.unitPrice")}
+                                      </Th>
+                                      <Th isNumeric>{t("purchases.total")}</Th>
                                     </Tr>
-                                  ))}
-                                </Tbody>
-                              </Table>
-                            </TableContainer>
-                          </FormControl>
-                        )}
+                                  </Thead>
+                                  <Tbody>
+                                    {selectedPurchase.purchase_items.map(
+                                      (item: any, index: number) => (
+                                        <Tr key={index}>
+                                          <Td>
+                                            {item.item_type === "ASSET" ||
+                                            item.is_fixed_asset
+                                              ? `${item.description || "Unknown Asset"} (Aset Tetap)`
+                                              : item.product?.name || "N/A"}
+                                          </Td>
+                                          <Td isNumeric>{item.quantity}</Td>
+                                          <Td isNumeric>
+                                            {formatCurrency(item.unit_price)}
+                                          </Td>
+                                          <Td isNumeric>
+                                            {formatCurrency(
+                                              item.quantity * item.unit_price,
+                                            )}
+                                          </Td>
+                                        </Tr>
+                                      ),
+                                    )}
+                                  </Tbody>
+                                </Table>
+                              </TableContainer>
+                            </FormControl>
+                          )}
                       </VStack>
                     )}
                   </ModalBody>
                   <ModalFooter>
-                    <Button onClick={onViewClose}>{t('purchases.close')}</Button>
+                    <Button onClick={onViewClose}>
+                      {t("purchases.close")}
+                    </Button>
                   </ModalFooter>
                 </ModalContent>
               </Modal>
@@ -4142,19 +5008,24 @@ const PurchasesPage: React.FC = () => {
               <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl">
                 <ModalOverlay />
                 <ModalContent bg={modalContentBg}>
-                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  <ModalHeader
+                    bg={modalHeaderBg}
+                    borderBottomWidth={1}
+                    borderColor={borderColor}
+                  >
                     Edit Purchase - {selectedPurchase?.code}
                   </ModalHeader>
                   <ModalCloseButton />
                   <ModalBody>
                     <VStack spacing={4} align="stretch">
-
-
-
                       {/* Tax Configuration Section */}
                       <Card>
                         <CardHeader pb={3}>
-                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          <Text
+                            fontSize="md"
+                            fontWeight="semibold"
+                            color={textPrimary}
+                          >
                             💰 Tax Configuration
                           </Text>
                         </CardHeader>
@@ -4162,15 +5033,27 @@ const PurchasesPage: React.FC = () => {
                           <VStack spacing={4} align="stretch">
                             {/* Tax Additions (Penambahan) */}
                             <Box>
-                              <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
+                              <Text
+                                fontSize="sm"
+                                fontWeight="medium"
+                                color={statColors.green}
+                                mb={3}
+                              >
                                 ➕ Tax Additions (Penambahan)
                               </Text>
                               <SimpleGrid columns={2} spacing={4}>
                                 <FormControl>
-                                  <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
+                                  <FormLabel fontSize="sm">
+                                    PPN Rate (%)
+                                  </FormLabel>
                                   <NumberInput
                                     value={formData.ppn_rate}
-                                    onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
+                                    onChange={(value) =>
+                                      setFormData({
+                                        ...formData,
+                                        ppn_rate: value,
+                                      })
+                                    }
                                     size="sm"
                                     min={0}
                                     max={100}
@@ -4182,14 +5065,23 @@ const PurchasesPage: React.FC = () => {
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Pajak Pertambahan Nilai (default 11%)</FormHelperText>
+                                  <FormHelperText fontSize="xs">
+                                    Pajak Pertambahan Nilai (default 11%)
+                                  </FormHelperText>
                                 </FormControl>
 
                                 <FormControl>
-                                  <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
+                                  <FormLabel fontSize="sm">
+                                    Other Tax Additions (%)
+                                  </FormLabel>
                                   <NumberInput
                                     value={formData.other_tax_additions}
-                                    onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
+                                    onChange={(value) =>
+                                      setFormData({
+                                        ...formData,
+                                        other_tax_additions: value,
+                                      })
+                                    }
                                     size="sm"
                                     min={0}
                                     max={100}
@@ -4201,7 +5093,9 @@ const PurchasesPage: React.FC = () => {
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Pajak tambahan lainnya (opsional)</FormHelperText>
+                                  <FormHelperText fontSize="xs">
+                                    Pajak tambahan lainnya (opsional)
+                                  </FormHelperText>
                                 </FormControl>
                               </SimpleGrid>
                             </Box>
@@ -4210,15 +5104,27 @@ const PurchasesPage: React.FC = () => {
 
                             {/* Tax Deductions (Pemotongan) */}
                             <Box>
-                              <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
+                              <Text
+                                fontSize="sm"
+                                fontWeight="medium"
+                                color={statColors.red}
+                                mb={3}
+                              >
                                 ➖ Tax Deductions (Pemotongan)
                               </Text>
                               <SimpleGrid columns={3} spacing={4}>
                                 <FormControl>
-                                  <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
+                                  <FormLabel fontSize="sm">
+                                    PPh 21 Rate (%)
+                                  </FormLabel>
                                   <NumberInput
                                     value={formData.pph21_rate}
-                                    onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
+                                    onChange={(value) =>
+                                      setFormData({
+                                        ...formData,
+                                        pph21_rate: value,
+                                      })
+                                    }
                                     size="sm"
                                     min={0}
                                     max={100}
@@ -4230,14 +5136,23 @@ const PurchasesPage: React.FC = () => {
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 21</FormHelperText>
+                                  <FormHelperText fontSize="xs">
+                                    Pajak Penghasilan Pasal 21
+                                  </FormHelperText>
                                 </FormControl>
 
                                 <FormControl>
-                                  <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
+                                  <FormLabel fontSize="sm">
+                                    PPh 23 Rate (%)
+                                  </FormLabel>
                                   <NumberInput
                                     value={formData.pph23_rate}
-                                    onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
+                                    onChange={(value) =>
+                                      setFormData({
+                                        ...formData,
+                                        pph23_rate: value,
+                                      })
+                                    }
                                     size="sm"
                                     min={0}
                                     max={100}
@@ -4249,14 +5164,23 @@ const PurchasesPage: React.FC = () => {
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Pajak Penghasilan Pasal 23</FormHelperText>
+                                  <FormHelperText fontSize="xs">
+                                    Pajak Penghasilan Pasal 23
+                                  </FormHelperText>
                                 </FormControl>
 
                                 <FormControl>
-                                  <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
+                                  <FormLabel fontSize="sm">
+                                    Other Tax Deductions (%)
+                                  </FormLabel>
                                   <NumberInput
                                     value={formData.other_tax_deductions}
-                                    onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
+                                    onChange={(value) =>
+                                      setFormData({
+                                        ...formData,
+                                        other_tax_deductions: value,
+                                      })
+                                    }
                                     size="sm"
                                     min={0}
                                     max={100}
@@ -4268,64 +5192,167 @@ const PurchasesPage: React.FC = () => {
                                       <NumberDecrementStepper />
                                     </NumberInputStepper>
                                   </NumberInput>
-                                  <FormHelperText fontSize="xs">Potongan pajak lainnya (opsional)</FormHelperText>
+                                  <FormHelperText fontSize="xs">
+                                    Potongan pajak lainnya (opsional)
+                                  </FormHelperText>
                                 </FormControl>
                               </SimpleGrid>
                             </Box>
 
                             {/* Tax Summary Calculation */}
                             {formData.items.length > 0 && (
-                              <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
+                              <Box
+                                mt={4}
+                                p={4}
+                                bg={notesBoxBg}
+                                borderRadius="md"
+                                border="1px solid"
+                                borderColor={borderColor}
+                              >
                                 <VStack spacing={2} align="stretch">
-                                  <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
+                                  <Text
+                                    fontSize="sm"
+                                    fontWeight="semibold"
+                                    color={textPrimary}
+                                  >
+                                    Tax Summary:
+                                  </Text>
                                   {(() => {
-                                    const subtotal = formData.items.reduce((total, item) => {
-                                      const qty = parseFloat(item.quantity || '0');
-                                      const price = parseFloat(item.unit_price || '0');
-                                      const discount = parseFloat(item.discount || '0');
-                                      const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                      const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
-                                      return total + lineTotal;
-                                    }, 0);
+                                    const subtotal = formData.items.reduce(
+                                      (total, item) => {
+                                        const qty = parseFloat(
+                                          item.quantity || "0",
+                                        );
+                                        const price = parseFloat(
+                                          item.unit_price || "0",
+                                        );
+                                        const discount = parseFloat(
+                                          item.discount || "0",
+                                        );
+                                        const itemSubtotal =
+                                          (isNaN(qty) ? 0 : qty) *
+                                          (isNaN(price) ? 0 : price);
+                                        const lineTotal =
+                                          itemSubtotal -
+                                          (isNaN(discount) ? 0 : discount);
+                                        return total + lineTotal;
+                                      },
+                                      0,
+                                    );
 
-                                    const discount = (parseFloat(formData.discount) || 0) / 100;
-                                    const discountedSubtotal = subtotal * (1 - discount);
+                                    const discount =
+                                      (parseFloat(formData.discount) || 0) /
+                                      100;
+                                    const discountedSubtotal =
+                                      subtotal * (1 - discount);
 
-                                    const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
-                                    const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
-                                    const totalAdditions = ppnAmount + otherAdditions;
+                                    const ppnAmount =
+                                      (discountedSubtotal *
+                                        (parseFloat(formData.ppn_rate) || 0)) /
+                                      100;
+                                    const otherAdditions =
+                                      (discountedSubtotal *
+                                        (parseFloat(
+                                          formData.other_tax_additions,
+                                        ) || 0)) /
+                                      100;
+                                    const totalAdditions =
+                                      ppnAmount + otherAdditions;
 
-                                    const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
-                                    const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
-                                    const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
-                                    const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
+                                    const pph21Amount =
+                                      (discountedSubtotal *
+                                        (parseFloat(formData.pph21_rate) ||
+                                          0)) /
+                                      100;
+                                    const pph23Amount =
+                                      (discountedSubtotal *
+                                        (parseFloat(formData.pph23_rate) ||
+                                          0)) /
+                                      100;
+                                    const otherDeductions =
+                                      (discountedSubtotal *
+                                        (parseFloat(
+                                          formData.other_tax_deductions,
+                                        ) || 0)) /
+                                      100;
+                                    const totalDeductions =
+                                      pph21Amount +
+                                      pph23Amount +
+                                      otherDeductions;
 
-                                    const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
+                                    const finalTotal =
+                                      discountedSubtotal +
+                                      totalAdditions -
+                                      totalDeductions;
 
                                     return (
-                                      <SimpleGrid columns={2} spacing={4} fontSize="xs">
+                                      <SimpleGrid
+                                        columns={2}
+                                        spacing={4}
+                                        fontSize="xs"
+                                      >
                                         <VStack align="start" spacing={1}>
-                                          <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
-                                          <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
-                                          <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
+                                          <Text color={textSecondary}>
+                                            Subtotal: {formatCurrency(subtotal)}
+                                          </Text>
+                                          <Text color={textSecondary}>
+                                            Discount ({formData.discount}%): -
+                                            {formatCurrency(
+                                              subtotal * discount,
+                                            )}
+                                          </Text>
+                                          <Text color={textSecondary}>
+                                            After Discount:{" "}
+                                            {formatCurrency(discountedSubtotal)}
+                                          </Text>
                                         </VStack>
 
                                         <VStack align="start" spacing={1}>
-                                          <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
-                                          {parseFloat(formData.other_tax_additions) > 0 && (
-                                            <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
+                                          <Text color={statColors.green}>
+                                            + PPN ({formData.ppn_rate}%):{" "}
+                                            {formatCurrency(ppnAmount)}
+                                          </Text>
+                                          {parseFloat(
+                                            formData.other_tax_additions,
+                                          ) > 0 && (
+                                            <Text color={statColors.green}>
+                                              + Other Additions (
+                                              {formData.other_tax_additions}%):{" "}
+                                              {formatCurrency(otherAdditions)}
+                                            </Text>
                                           )}
-                                          {parseFloat(formData.pph21_rate) > 0 && (
-                                            <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
+                                          {parseFloat(formData.pph21_rate) >
+                                            0 && (
+                                            <Text color={statColors.red}>
+                                              - PPh 21 ({formData.pph21_rate}%):{" "}
+                                              {formatCurrency(pph21Amount)}
+                                            </Text>
                                           )}
-                                          {parseFloat(formData.pph23_rate) > 0 && (
-                                            <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
+                                          {parseFloat(formData.pph23_rate) >
+                                            0 && (
+                                            <Text color={statColors.red}>
+                                              - PPh 23 ({formData.pph23_rate}%):{" "}
+                                              {formatCurrency(pph23Amount)}
+                                            </Text>
                                           )}
-                                          {parseFloat(formData.other_tax_deductions) > 0 && (
-                                            <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
+                                          {parseFloat(
+                                            formData.other_tax_deductions,
+                                          ) > 0 && (
+                                            <Text color={statColors.red}>
+                                              - Other Deductions (
+                                              {formData.other_tax_deductions}%):{" "}
+                                              {formatCurrency(otherDeductions)}
+                                            </Text>
                                           )}
-                                          <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
-                                            Final Total: {formatCurrency(finalTotal)}
+                                          <Text
+                                            fontWeight="bold"
+                                            color={statColors.blue}
+                                            borderTop="1px solid"
+                                            borderColor={borderColor}
+                                            pt={1}
+                                          >
+                                            Final Total:{" "}
+                                            {formatCurrency(finalTotal)}
                                           </Text>
                                         </VStack>
                                       </SimpleGrid>
@@ -4341,122 +5368,179 @@ const PurchasesPage: React.FC = () => {
                       {/* Payment Method Section */}
                       <Card>
                         <CardHeader pb={3}>
-                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          <Text
+                            fontSize="md"
+                            fontWeight="semibold"
+                            color={textPrimary}
+                          >
                             💳 Payment Method
                           </Text>
                         </CardHeader>
                         <CardBody pt={0}>
                           <SimpleGrid columns={2} spacing={4}>
                             <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Payment Method
+                              </FormLabel>
                               <Select
                                 value={formData.payment_method}
                                 onChange={(e) => {
-                                  // Reset bank_account_id saat ganti payment method untuk menghindari konflik
-                                  setFormData({
-                                    ...formData,
-                                    payment_method: e.target.value,
-                                    bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
-                                  })
+                                  setFormData(
+                                    normalizePurchasePaymentFields(
+                                      formData,
+                                      e.target.value,
+                                    ),
+                                  );
                                 }}
                                 size="sm"
                               >
                                 <option value="CREDIT">Credit</option>
                                 <option value="CASH">Cash</option>
-                                <option value="BANK_TRANSFER">Bank Transfer</option>
+                                <option value="BANK_TRANSFER">
+                                  Bank Transfer
+                                </option>
                                 <option value="CHECK">Check</option>
                               </Select>
                               <FormHelperText fontSize="xs">
-                                {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
-                                {formData.payment_method === 'CASH' && 'Direct cash payment'}
-                                {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
-                                {formData.payment_method === 'CHECK' && 'Payment by check'}
+                                {formData.payment_method === "CREDIT" &&
+                                  "Purchase on credit - payment due later"}
+                                {formData.payment_method === "CASH" &&
+                                  "Direct cash payment"}
+                                {formData.payment_method === "BANK_TRANSFER" &&
+                                  "Electronic bank transfer"}
+                                {formData.payment_method === "CHECK" &&
+                                  "Payment by check"}
                               </FormHelperText>
                             </FormControl>
 
                             {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
-                            {formData.payment_method !== 'CREDIT' && (
+                            {formData.payment_method !== "CREDIT" && (
                               <FormControl isRequired>
                                 <FormLabel fontSize="sm" fontWeight="medium">
-                                  {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
+                                  {formData.payment_method === "CASH"
+                                    ? "Cash Account"
+                                    : "Bank Account"}
                                 </FormLabel>
                                 <Select
                                   value={formData.bank_account_id}
-                                  onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
+                                  onChange={(e) =>
+                                    setFormData({
+                                      ...formData,
+                                      bank_account_id: e.target.value,
+                                    })
+                                  }
                                   size="sm"
                                   disabled={loadingBankAccounts}
-                                  placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
+                                  placeholder={
+                                    loadingBankAccounts
+                                      ? "Loading accounts..."
+                                      : formData.payment_method === "CASH"
+                                        ? "Select cash account"
+                                        : "Select bank account"
+                                  }
                                 >
                                   {bankAccounts
-                                    .filter(account => {
+                                    .filter((account) => {
                                       // Filter berdasarkan payment method
-                                      if (formData.payment_method === 'CASH') {
-                                        return account.type === 'CASH';
+                                      if (formData.payment_method === "CASH") {
+                                        return account.type === "CASH";
                                       } else {
-                                        return account.type === 'BANK';
+                                        return account.type === "BANK";
                                       }
                                     })
                                     .map((account) => (
-                                      <option key={account.id} value={account.id.toString()}>
-                                        {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
+                                      <option
+                                        key={account.id}
+                                        value={account.id.toString()}
+                                      >
+                                        {account.name} ({account.code}) -{" "}
+                                        {account.currency}{" "}
+                                        {account.balance?.toLocaleString() ||
+                                          "0"}
                                       </option>
-                                    ))
-                                  }
+                                    ))}
                                 </Select>
                                 <FormHelperText fontSize="xs">
-                                  Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
+                                  Required: Select{" "}
+                                  {formData.payment_method === "CASH"
+                                    ? "cash"
+                                    : "bank"}{" "}
+                                  account for payment processing
                                 </FormHelperText>
                               </FormControl>
                             )}
 
                             {/* Credit Account dropdown for Credit payment */}
-                            {formData.payment_method === 'CREDIT' && (
+                            {formData.payment_method === "CREDIT" && (
                               <FormControl isRequired>
                                 <FormLabel fontSize="sm" fontWeight="medium">
                                   Liability Account
                                 </FormLabel>
                                 <Select
                                   value={formData.credit_account_id}
-                                  onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
+                                  onChange={(e) =>
+                                    setFormData({
+                                      ...formData,
+                                      credit_account_id: e.target.value,
+                                    })
+                                  }
                                   size="sm"
                                   disabled={loadingCreditAccounts}
-                                  placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
+                                  placeholder={
+                                    loadingCreditAccounts
+                                      ? "Loading accounts..."
+                                      : "Select liability account"
+                                  }
                                 >
                                   {creditAccounts.map((account) => (
-                                    <option key={account.id} value={account.id?.toString()}>
+                                    <option
+                                      key={account.id}
+                                      value={account.id?.toString()}
+                                    >
                                       {account.code} - {account.name}
                                     </option>
                                   ))}
                                 </Select>
                                 <FormHelperText fontSize="xs">
-                                  Required: Select liability account for tracking credit purchases
+                                  Required: Select liability account for
+                                  tracking credit purchases
                                 </FormHelperText>
                               </FormControl>
                             )}
                           </SimpleGrid>
 
                           {/* Payment Reference (for non-credit and non-cash payments) */}
-                          {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
-                            <FormControl mt={4}>
-                              <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
-                              <Input
-                                value={formData.payment_reference}
-                                onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
-                                placeholder={
-                                  formData.payment_method === 'CHECK' ? 'Check number' :
-                                    formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
-                                      'Payment reference number'
-                                }
-                                size="sm"
-                              />
-                              <FormHelperText fontSize="xs">
-                                Optional reference for tracking this payment
-                              </FormHelperText>
-                            </FormControl>
-                          )}
+                          {formData.payment_method !== "CREDIT" &&
+                            formData.payment_method !== "CASH" && (
+                              <FormControl mt={4}>
+                                <FormLabel fontSize="sm" fontWeight="medium">
+                                  Payment Reference
+                                </FormLabel>
+                                <Input
+                                  value={formData.payment_reference}
+                                  onChange={(e) =>
+                                    setFormData({
+                                      ...formData,
+                                      payment_reference: e.target.value,
+                                    })
+                                  }
+                                  placeholder={
+                                    formData.payment_method === "CHECK"
+                                      ? "Check number"
+                                      : formData.payment_method ===
+                                          "BANK_TRANSFER"
+                                        ? "Transaction ID or reference number"
+                                        : "Payment reference number"
+                                  }
+                                  size="sm"
+                                />
+                                <FormHelperText fontSize="xs">
+                                  Optional reference for tracking this payment
+                                </FormHelperText>
+                              </FormControl>
+                            )}
                         </CardBody>
                       </Card>
-
                     </VStack>
                   </ModalBody>
                   <ModalFooter>
@@ -4476,10 +5560,27 @@ const PurchasesPage: React.FC = () => {
               <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="6xl">
                 <ModalOverlay />
                 <ModalContent maxW="95vw" maxH="95vh" bg={modalContentBg}>
-                  <ModalHeader bg={modalHeaderBg} borderRadius="md" mx={4} mt={4} mb={2} borderBottomWidth={1} borderColor={borderColor}>
+                  <ModalHeader
+                    bg={modalHeaderBg}
+                    borderRadius="md"
+                    mx={4}
+                    mt={4}
+                    mb={2}
+                    borderBottomWidth={1}
+                    borderColor={borderColor}
+                  >
                     <HStack>
-                      <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
-                      <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                      <Box
+                        w={1}
+                        h={6}
+                        bg={statColors.blue}
+                        borderRadius="full"
+                      />
+                      <Text
+                        fontSize="lg"
+                        fontWeight="bold"
+                        color={statColors.blue}
+                      >
                         Create New Purchase
                       </Text>
                     </HStack>
@@ -4490,20 +5591,43 @@ const PurchasesPage: React.FC = () => {
                       {/* Basic Information Section */}
                       <Card>
                         <CardHeader pb={3}>
-                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                          <Text
+                            fontSize="md"
+                            fontWeight="semibold"
+                            color={textPrimary}
+                          >
                             📋 Basic Information
                           </Text>
                         </CardHeader>
                         <CardBody pt={0}>
-                          <SimpleGrid columns={{ base: 1, md: 2, lg: 3 }} spacing={4}>
+                          <SimpleGrid
+                            columns={{ base: 1, md: 2, lg: 3 }}
+                            spacing={4}
+                          >
                             <FormControl>
-                              <FormLabel fontSize="sm" fontWeight="medium">{t('purchases.purchaseCode')}</FormLabel>
-                              <Input value={t('purchases.autoGenerated')} isReadOnly bg={readOnlyInputBg} borderColor={inputBorderColor} size="sm" color={helperTextColor} />
-                              <FormHelperText fontSize="xs" color={helperTextColor}>{t('purchases.autoGeneratedDesc')}</FormHelperText>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                {t("purchases.purchaseCode")}
+                              </FormLabel>
+                              <Input
+                                value={t("purchases.autoGenerated")}
+                                isReadOnly
+                                bg={readOnlyInputBg}
+                                borderColor={inputBorderColor}
+                                size="sm"
+                                color={helperTextColor}
+                              />
+                              <FormHelperText
+                                fontSize="xs"
+                                color={helperTextColor}
+                              >
+                                {t("purchases.autoGeneratedDesc")}
+                              </FormHelperText>
                             </FormControl>
 
                             <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">Vendor</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Vendor
+                              </FormLabel>
                               <HStack spacing={2}>
                                 {loadingVendors ? (
                                   <Spinner size="sm" />
@@ -4511,7 +5635,12 @@ const PurchasesPage: React.FC = () => {
                                   <Select
                                     placeholder="Select vendor"
                                     value={formData.vendor_id}
-                                    onChange={(e) => setFormData({ ...formData, vendor_id: e.target.value })}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        vendor_id: e.target.value,
+                                      })
+                                    }
                                     size="sm"
                                     flex={1}
                                     bg={inputBg}
@@ -4519,9 +5648,11 @@ const PurchasesPage: React.FC = () => {
                                     borderColor={inputBorderColor}
                                     _hover={{ borderColor: inputHoverBorder }}
                                     _focusVisible={fieldFocusStyles}
-                                    _placeholder={{ color: inputPlaceholderColor }}
+                                    _placeholder={{
+                                      color: inputPlaceholderColor,
+                                    }}
                                   >
-                                    {vendors.map(vendor => (
+                                    {vendors.map((vendor) => (
                                       <option key={vendor.id} value={vendor.id}>
                                         {vendor.name} ({vendor.code})
                                       </option>
@@ -4542,7 +5673,9 @@ const PurchasesPage: React.FC = () => {
                             </FormControl>
 
                             <FormControl>
-                              <FormLabel fontSize="sm" fontWeight="medium">Purchase Request</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Purchase Request
+                              </FormLabel>
                               {loadingPRs ? (
                                 <Spinner size="sm" />
                               ) : (
@@ -4551,24 +5684,42 @@ const PurchasesPage: React.FC = () => {
                                   value={formData.purchase_request_id}
                                   onChange={(e) => {
                                     const selectedPrId = e.target.value;
-                                    const selectedPr = purchaseRequests.find(pr => pr.id.toString() === selectedPrId);
+                                    const selectedPr = purchaseRequests.find(
+                                      (pr) => pr.id.toString() === selectedPrId,
+                                    );
 
                                     // Map PR items to form items
-                                    const prItems: PurchaseItemFormData[] = (selectedPr?.items || []).map((item: any) => ({
+                                    const prItems: PurchaseItemFormData[] = (
+                                      selectedPr?.items || []
+                                    ).map((item: any) => ({
                                       ...createPurchaseItemFormData({
-                                        product_id: item.product_id?.toString() || '',
-                                        quantity: item.quantity?.toString() || '1',
-                                        unit_price: item.estimated_price?.toString() || '0',
-                                        expense_account_id: defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '',
-                                      })
+                                        product_id:
+                                          item.product_id?.toString() || "",
+                                        quantity:
+                                          item.quantity?.toString() || "1",
+                                        unit_price:
+                                          item.estimated_price?.toString() ||
+                                          "0",
+                                        expense_account_id:
+                                          defaultExpenseAccountId
+                                            ? defaultExpenseAccountId.toString()
+                                            : "",
+                                      }),
                                     }));
 
-                                    setFormData(prev => ({
+                                    setFormData((prev) => ({
                                       ...prev,
                                       purchase_request_id: selectedPrId,
-                                      project_id: selectedPr?.project_id ? selectedPr.project_id.toString() : prev.project_id,
-                                      items: prItems.length > 0 ? prItems : prev.items,
-                                      notes: selectedPr?.notes ? `Dari PR: ${selectedPr.pr_number}. ${selectedPr.notes}` : prev.notes,
+                                      project_id: selectedPr?.project_id
+                                        ? selectedPr.project_id.toString()
+                                        : prev.project_id,
+                                      items:
+                                        prItems.length > 0
+                                          ? prItems
+                                          : prev.items,
+                                      notes: selectedPr?.notes
+                                        ? `Dari PR: ${selectedPr.pr_number}. ${selectedPr.notes}`
+                                        : prev.notes,
                                     }));
                                   }}
                                   size="sm"
@@ -4577,38 +5728,58 @@ const PurchasesPage: React.FC = () => {
                                   borderColor={inputBorderColor}
                                   _hover={{ borderColor: inputHoverBorder }}
                                   _focusVisible={fieldFocusStyles}
-                                  _placeholder={{ color: inputPlaceholderColor }}
+                                  _placeholder={{
+                                    color: inputPlaceholderColor,
+                                  }}
                                 >
-                                  {purchaseRequests.map(pr => (
+                                  {purchaseRequests.map((pr) => (
                                     <option key={pr.id} value={pr.id}>
-                                      {pr.pr_number} - {pr.department ? `${pr.department}` : ''} ({formatCurrency(pr.total_estimated_amount)})
+                                      {pr.pr_number} -{" "}
+                                      {pr.department ? `${pr.department}` : ""}{" "}
+                                      (
+                                      {formatCurrency(
+                                        pr.total_estimated_amount,
+                                      )}
+                                      )
                                     </option>
                                   ))}
                                 </Select>
                               )}
-                              <FormHelperText fontSize="xs" color={warningTextColor}>
+                              <FormHelperText
+                                fontSize="xs"
+                                color={warningTextColor}
+                              >
                                 Warning: Amount cannot exceed PR limit
                               </FormHelperText>
                             </FormControl>
 
                             <FormControl>
-                              <FormLabel fontSize="sm" fontWeight="medium">Project</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Project
+                              </FormLabel>
                               {loadingProjects ? (
                                 <Spinner size="sm" />
                               ) : (
                                 <Select
                                   placeholder="Select Project (Optional)"
                                   value={formData.project_id}
-                                  onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                                  onChange={(e) =>
+                                    setFormData({
+                                      ...formData,
+                                      project_id: e.target.value,
+                                    })
+                                  }
                                   size="sm"
                                   bg={inputBg}
                                   color={inputTextColor}
                                   borderColor={inputBorderColor}
                                   _hover={{ borderColor: inputHoverBorder }}
                                   _focusVisible={fieldFocusStyles}
-                                  _placeholder={{ color: inputPlaceholderColor }}
+                                  _placeholder={{
+                                    color: inputPlaceholderColor,
+                                  }}
                                 >
-                                  {projects.map(proj => (
+                                  {projects.map((proj) => (
                                     <option key={proj.id} value={proj.id}>
                                       {proj.name} ({proj.code})
                                     </option>
@@ -4618,12 +5789,19 @@ const PurchasesPage: React.FC = () => {
                             </FormControl>
 
                             <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">Purchase Date</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Purchase Date
+                              </FormLabel>
                               <Input
                                 type="date"
                                 size="sm"
                                 value={formData.date}
-                                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    date: e.target.value,
+                                  })
+                                }
                                 bg={inputBg}
                                 color={inputTextColor}
                                 borderColor={inputBorderColor}
@@ -4633,12 +5811,19 @@ const PurchasesPage: React.FC = () => {
                             </FormControl>
 
                             <FormControl>
-                              <FormLabel fontSize="sm" fontWeight="medium">Due Date</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Due Date
+                              </FormLabel>
                               <Input
                                 type="date"
                                 size="sm"
                                 value={formData.due_date}
-                                onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    due_date: e.target.value,
+                                  })
+                                }
                                 bg={inputBg}
                                 color={inputTextColor}
                                 borderColor={inputBorderColor}
@@ -4650,28 +5835,51 @@ const PurchasesPage: React.FC = () => {
 
                           <SimpleGrid columns={2} spacing={4} mt={4}>
                             <FormControl>
-                              <FormLabel fontSize="sm" fontWeight="medium">Discount (%)</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Discount (%)
+                              </FormLabel>
                               <NumberInput
                                 value={formData.discount}
-                                onChange={(value) => setFormData({ ...formData, discount: value })}
+                                onChange={(value) =>
+                                  setFormData({ ...formData, discount: value })
+                                }
                                 size="sm"
                                 min={0}
                                 max={100}
                               >
-                                <NumberInputField placeholder="0" bg={inputBg} color={inputTextColor} borderColor={inputBorderColor} _hover={{ borderColor: inputHoverBorder }} _focusVisible={fieldFocusStyles} />
+                                <NumberInputField
+                                  placeholder="0"
+                                  bg={inputBg}
+                                  color={inputTextColor}
+                                  borderColor={inputBorderColor}
+                                  _hover={{ borderColor: inputHoverBorder }}
+                                  _focusVisible={fieldFocusStyles}
+                                />
                                 <NumberInputStepper>
                                   <NumberIncrementStepper />
                                   <NumberDecrementStepper />
                                 </NumberInputStepper>
                               </NumberInput>
-                              <FormHelperText fontSize="xs" color={helperTextColor}>Masukkan persentase diskon atas subtotal (0-100)</FormHelperText>
+                              <FormHelperText
+                                fontSize="xs"
+                                color={helperTextColor}
+                              >
+                                Masukkan persentase diskon atas subtotal (0-100)
+                              </FormHelperText>
                             </FormControl>
 
                             <FormControl>
-                              <FormLabel fontSize="sm" fontWeight="medium">Notes</FormLabel>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Notes
+                              </FormLabel>
                               <Textarea
                                 value={formData.notes}
-                                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    notes: e.target.value,
+                                  })
+                                }
                                 placeholder="Enter any notes or descriptions..."
                                 rows={3}
                                 size="sm"
@@ -4692,7 +5900,11 @@ const PurchasesPage: React.FC = () => {
                       <Card>
                         <CardHeader pb={3}>
                           <Flex justify="space-between" align="center">
-                            <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
+                            <Text
+                              fontSize="md"
+                              fontWeight="semibold"
+                              color={textPrimary}
+                            >
                               🛒 Purchase Items
                             </Text>
                             <Button
@@ -4706,9 +5918,13 @@ const PurchasesPage: React.FC = () => {
                                   items: [
                                     ...formData.items,
                                     createPurchaseItemFormData({
-                                      expense_account_id: isServiceCompany && expenseAccounts.length > 0 ? expenseAccounts[0].id!.toString() : '',
-                                    })
-                                  ]
+                                      expense_account_id:
+                                        isServiceCompany &&
+                                        expenseAccounts.length > 0
+                                          ? expenseAccounts[0].id!.toString()
+                                          : "",
+                                    }),
+                                  ],
                                 });
                               }}
                             >
@@ -4721,14 +5937,70 @@ const PurchasesPage: React.FC = () => {
                             <Table size="sm" variant="simple">
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="130px">Tipe Item</Th>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>Produk / Deskripsi Aset</Th>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Qty</Th>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Unit Price (IDR)</Th>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Discount (IDR)</Th>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary}>{isServiceCompany ? 'Akun Beban *' : 'Account'}</Th>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} isNumeric>Line Total (IDR)</Th>
-                                  <Th fontSize="xs" fontWeight="semibold" color={textSecondary} w="60px">Action</Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                    w="130px"
+                                  >
+                                    Tipe Item
+                                  </Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                  >
+                                    Produk / Deskripsi Aset
+                                  </Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                    isNumeric
+                                  >
+                                    Qty
+                                  </Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                    isNumeric
+                                  >
+                                    Unit Price (IDR)
+                                  </Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                    isNumeric
+                                  >
+                                    Discount (IDR)
+                                  </Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                  >
+                                    {isServiceCompany
+                                      ? "Akun Beban *"
+                                      : "Account"}
+                                  </Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                    isNumeric
+                                  >
+                                    Line Total (IDR)
+                                  </Th>
+                                  <Th
+                                    fontSize="xs"
+                                    fontWeight="semibold"
+                                    color={textSecondary}
+                                    w="60px"
+                                  >
+                                    Action
+                                  </Th>
                                 </Tr>
                               </Thead>
                               <Tbody>
@@ -4736,8 +6008,19 @@ const PurchasesPage: React.FC = () => {
                                   <Tr>
                                     <Td colSpan={8} textAlign="center" py={8}>
                                       <VStack spacing={2}>
-                                        <Text fontSize="sm" color={textSecondary}>No items added yet</Text>
-                                        <Text fontSize="xs" color={textSecondary}>Click &quot;Add Item&quot; button to start adding purchase items</Text>
+                                        <Text
+                                          fontSize="sm"
+                                          color={textSecondary}
+                                        >
+                                          No items added yet
+                                        </Text>
+                                        <Text
+                                          fontSize="xs"
+                                          color={textSecondary}
+                                        >
+                                          Click &quot;Add Item&quot; button to
+                                          start adding purchase items
+                                        </Text>
                                       </VStack>
                                     </Td>
                                   </Tr>
@@ -4747,19 +6030,32 @@ const PurchasesPage: React.FC = () => {
                                       {/* Kolom Tipe Item - Dropdown (Select) diganti dari Radio */}
                                       <Td verticalAlign="top" pt={4}>
                                         <Select
-                                          value={item.item_type || 'INVENTORY'}
+                                          value={item.item_type || "INVENTORY"}
                                           onChange={(e) => {
                                             const val = e.target.value;
                                             const items = [...formData.items];
                                             items[index] = {
                                               ...items[index],
                                               item_type: val,
-                                              is_fixed_asset: val === 'ASSET',
+                                              is_fixed_asset: val === "ASSET",
                                               // Reset fields saat ganti tipe
-                                              product_id: val === 'ASSET' || val === 'PREPAID' ? '' : items[index].product_id,
-                                              description: val === 'INVENTORY' ? '' : items[index].description,
-                                              asset_category_id: val === 'INVENTORY' || val === 'PREPAID' ? '' : items[index].asset_category_id,
-                                              amortization_month: val === 'PREPAID' ? '12' : '',
+                                              product_id:
+                                                val === "ASSET" ||
+                                                val === "PREPAID"
+                                                  ? ""
+                                                  : items[index].product_id,
+                                              description:
+                                                val === "INVENTORY"
+                                                  ? ""
+                                                  : items[index].description,
+                                              asset_category_id:
+                                                val === "INVENTORY" ||
+                                                val === "PREPAID"
+                                                  ? ""
+                                                  : items[index]
+                                                      .asset_category_id,
+                                              amortization_month:
+                                                val === "PREPAID" ? "12" : "",
                                             };
                                             setFormData({ ...formData, items });
                                           }}
@@ -4768,86 +6064,169 @@ const PurchasesPage: React.FC = () => {
                                           fontSize="xs"
                                           fontWeight="medium"
                                           cursor="pointer"
-                                          bg={item.item_type === 'PREPAID' ? prepaidTypeBg : item.item_type === 'ASSET' ? assetTypeBg : inventoryTypeBg}
-                                          borderColor={item.item_type === 'PREPAID' ? prepaidTypeBorder : item.item_type === 'ASSET' ? assetTypeBorder : inventoryTypeBorder}
-                                          color={item.item_type === 'PREPAID' ? prepaidTypeText : item.item_type === 'ASSET' ? assetTypeText : inventoryTypeText}
+                                          bg={
+                                            item.item_type === "PREPAID"
+                                              ? prepaidTypeBg
+                                              : item.item_type === "ASSET"
+                                                ? assetTypeBg
+                                                : inventoryTypeBg
+                                          }
+                                          borderColor={
+                                            item.item_type === "PREPAID"
+                                              ? prepaidTypeBorder
+                                              : item.item_type === "ASSET"
+                                                ? assetTypeBorder
+                                                : inventoryTypeBorder
+                                          }
+                                          color={
+                                            item.item_type === "PREPAID"
+                                              ? prepaidTypeText
+                                              : item.item_type === "ASSET"
+                                                ? assetTypeText
+                                                : inventoryTypeText
+                                          }
                                           _hover={{
-                                            bg: item.item_type === 'PREPAID' ? prepaidTypeHoverBg : item.item_type === 'ASSET' ? assetTypeHoverBg : inventoryTypeHoverBg,
+                                            bg:
+                                              item.item_type === "PREPAID"
+                                                ? prepaidTypeHoverBg
+                                                : item.item_type === "ASSET"
+                                                  ? assetTypeHoverBg
+                                                  : inventoryTypeHoverBg,
                                           }}
                                           _focusVisible={fieldFocusStyles}
                                         >
-                                          <option value="INVENTORY">📦 Persediaan</option>
-                                          <option value="ASSET">🏢 Aset Tetap</option>
-                                          <option value="PREPAID">⏳ Prepaid Expense</option>
+                                          <option value="INVENTORY">
+                                            📦 Persediaan
+                                          </option>
+                                          <option value="ASSET">
+                                            🏢 Aset Tetap
+                                          </option>
+                                          <option value="PREPAID">
+                                            ⏳ Prepaid Expense
+                                          </option>
                                         </Select>
                                       </Td>
 
                                       {/* Kolom Produk / Deskripsi Aset / Prepaid - Kondisional */}
-                                      <Td minW="220px" verticalAlign="top" pt={3}>
-                                        {item.item_type === 'ASSET' ? (
+                                      <Td
+                                        minW="220px"
+                                        verticalAlign="top"
+                                        pt={3}
+                                      >
+                                        {item.item_type === "ASSET" ? (
                                           /* === ASSET MODE: Input Deskripsi + Kategori Aset === */
                                           <VStack spacing={2} align="stretch">
                                             <Input
                                               placeholder="Nama aset (cth: Laptop Dell, AC Daikin)"
                                               value={item.description}
                                               onChange={(e) => {
-                                                const items = [...formData.items];
-                                                items[index] = { ...items[index], description: e.target.value };
-                                                setFormData({ ...formData, items });
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  description: e.target.value,
+                                                };
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
                                               }}
                                               size="sm"
                                               bg={inputBg}
                                               color={inputTextColor}
                                               borderColor={assetTypeBorder}
-                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _hover={{
+                                                borderColor: inputHoverBorder,
+                                              }}
                                               _focusVisible={fieldFocusStyles}
-                                              _placeholder={{ color: inputPlaceholderColor }}
+                                              _placeholder={{
+                                                color: inputPlaceholderColor,
+                                              }}
                                             />
                                             <Select
                                               placeholder="Pilih Kategori Aset"
                                               value={item.asset_category_id}
                                               onChange={(e) => {
-                                                const items = [...formData.items];
-                                                items[index] = { ...items[index], asset_category_id: e.target.value };
-                                                setFormData({ ...formData, items });
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  asset_category_id:
+                                                    e.target.value,
+                                                };
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
                                               }}
                                               size="sm"
                                               bg={inputBg}
                                               color={inputTextColor}
                                               borderColor={assetTypeBorder}
-                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _hover={{
+                                                borderColor: inputHoverBorder,
+                                              }}
                                               _focusVisible={fieldFocusStyles}
-                                              _placeholder={{ color: inputPlaceholderColor }}
-                                              isDisabled={loadingAssetCategories}
+                                              _placeholder={{
+                                                color: inputPlaceholderColor,
+                                              }}
+                                              isDisabled={
+                                                loadingAssetCategories
+                                              }
                                             >
                                               {assetCategories.map((cat) => (
-                                                <option key={cat.id} value={cat.id?.toString()}>
+                                                <option
+                                                  key={cat.id}
+                                                  value={cat.id?.toString()}
+                                                >
                                                   {cat.code} - {cat.name}
                                                 </option>
                                               ))}
                                             </Select>
-                                            <Badge colorScheme="orange" fontSize="2xs" px={2} py={0.5} borderRadius="md" w="fit-content">
-                                              Aset akan otomatis terdaftar dengan status PENDING
+                                            <Badge
+                                              colorScheme="orange"
+                                              fontSize="2xs"
+                                              px={2}
+                                              py={0.5}
+                                              borderRadius="md"
+                                              w="fit-content"
+                                            >
+                                              Aset akan otomatis terdaftar
+                                              dengan status PENDING
                                             </Badge>
                                           </VStack>
-                                        ) : item.item_type === 'PREPAID' ? (
+                                        ) : item.item_type === "PREPAID" ? (
                                           /* === PREPAID MODE: Input Deskripsi + Durasi Amortisasi === */
                                           <VStack spacing={2} align="stretch">
                                             <Input
                                               placeholder="Nama Kontrak/Sewa (cth: Sewa Ruko 1 Tahun)"
                                               value={item.description}
                                               onChange={(e) => {
-                                                const items = [...formData.items];
-                                                items[index] = { ...items[index], description: e.target.value };
-                                                setFormData({ ...formData, items });
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  description: e.target.value,
+                                                };
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
                                               }}
                                               size="sm"
                                               bg={inputBg}
                                               color={inputTextColor}
                                               borderColor={prepaidTypeBorder}
-                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _hover={{
+                                                borderColor: inputHoverBorder,
+                                              }}
                                               _focusVisible={fieldFocusStyles}
-                                              _placeholder={{ color: inputPlaceholderColor }}
+                                              _placeholder={{
+                                                color: inputPlaceholderColor,
+                                              }}
                                             />
                                             <InputGroup size="sm">
                                               <NumberInput
@@ -4857,9 +6236,17 @@ const PurchasesPage: React.FC = () => {
                                                 clampValueOnBlur={false}
                                                 value={item.amortization_month}
                                                 onChange={(val) => {
-                                                  const items = [...formData.items];
-                                                  items[index] = { ...items[index], amortization_month: val };
-                                                  setFormData({ ...formData, items });
+                                                  const items = [
+                                                    ...formData.items,
+                                                  ];
+                                                  items[index] = {
+                                                    ...items[index],
+                                                    amortization_month: val,
+                                                  };
+                                                  setFormData({
+                                                    ...formData,
+                                                    items,
+                                                  });
                                                 }}
                                                 w="full"
                                                 borderColor={prepaidTypeBorder}
@@ -4870,18 +6257,36 @@ const PurchasesPage: React.FC = () => {
                                                   placeholder="12"
                                                   bg={inputBg}
                                                   color={inputTextColor}
-                                                  borderColor={prepaidTypeBorder}
-                                                  _hover={{ borderColor: inputHoverBorder }}
-                                                  _focusVisible={fieldFocusStyles}
-                                                  _placeholder={{ color: inputPlaceholderColor }}
+                                                  borderColor={
+                                                    prepaidTypeBorder
+                                                  }
+                                                  _hover={{
+                                                    borderColor:
+                                                      inputHoverBorder,
+                                                  }}
+                                                  _focusVisible={
+                                                    fieldFocusStyles
+                                                  }
+                                                  _placeholder={{
+                                                    color:
+                                                      inputPlaceholderColor,
+                                                  }}
                                                 />
                                                 <NumberInputStepper>
                                                   <NumberIncrementStepper />
                                                   <NumberDecrementStepper />
                                                 </NumberInputStepper>
                                               </NumberInput>
-                                              <InputLeftElement width="1.5rem" justifyContent="center">
-                                                <Text fontSize="xs" color={helperTextColor}>⏱️</Text>
+                                              <InputLeftElement
+                                                width="1.5rem"
+                                                justifyContent="center"
+                                              >
+                                                <Text
+                                                  fontSize="xs"
+                                                  color={helperTextColor}
+                                                >
+                                                  ⏱️
+                                                </Text>
                                               </InputLeftElement>
                                               <Box
                                                 position="absolute"
@@ -4891,61 +6296,111 @@ const PurchasesPage: React.FC = () => {
                                                 zIndex={1}
                                                 pointerEvents="none"
                                               >
-                                                <Text fontSize="xs" color={helperTextColor} fontWeight="medium">Bln</Text>
+                                                <Text
+                                                  fontSize="xs"
+                                                  color={helperTextColor}
+                                                  fontWeight="medium"
+                                                >
+                                                  Bln
+                                                </Text>
                                               </Box>
                                             </InputGroup>
-                                            <Badge colorScheme="purple" fontSize="2xs" px={2} py={0.5} borderRadius="md" w="fit-content" alignSelf="flex-start">
-                                              Amortisasi berjalan otomatis setelah bayar
+                                            <Badge
+                                              colorScheme="purple"
+                                              fontSize="2xs"
+                                              px={2}
+                                              py={0.5}
+                                              borderRadius="md"
+                                              w="fit-content"
+                                              alignSelf="flex-start"
+                                            >
+                                              Amortisasi berjalan otomatis
+                                              setelah bayar
                                             </Badge>
                                           </VStack>
+                                        ) : /* === INVENTORY MODE: Select Produk (seperti sebelumnya) === */
+                                        loadingProducts ? (
+                                          <Flex
+                                            align="center"
+                                            justify="center"
+                                            h="32px"
+                                          >
+                                            <Spinner size="sm" />
+                                          </Flex>
                                         ) : (
-                                          /* === INVENTORY MODE: Select Produk (seperti sebelumnya) === */
-                                          loadingProducts ? (
-                                            <Flex align="center" justify="center" h="32px">
-                                              <Spinner size="sm" />
-                                            </Flex>
-                                          ) : (
-                                            <HStack spacing={2}>
-                                              <Select
-                                                placeholder={isServiceCompany ? 'Pilih Produk/Jasa' : 'Select product'}
-                                                value={item.product_id}
-                                                onChange={(e) => {
-                                                  const items = [...formData.items];
-                                                  items[index] = { ...items[index], product_id: e.target.value };
-                                                  // Auto-fill unit price from product purchase_price if available
-                                                  const selectedProduct = products.find(p => p.id?.toString() === e.target.value);
-                                                  if (selectedProduct && selectedProduct.purchase_price) {
-                                                    items[index] = { ...items[index], unit_price: selectedProduct.purchase_price.toString() };
-                                                  }
-                                                  setFormData({ ...formData, items });
-                                                }}
-                                                size="sm"
-                                                maxW="280px"
-                                                bg={inputBg}
-                                                color={inputTextColor}
-                                                borderColor={inputBorderColor}
-                                                _hover={{ borderColor: inputHoverBorder }}
-                                                _focusVisible={fieldFocusStyles}
-                                                _placeholder={{ color: inputPlaceholderColor }}
-                                              >
-                                                {products.map((p) => (
-                                                  <option key={p.id} value={p.id?.toString()}>
-                                                    {isServiceCompany ? `${p?.code} - ${p?.name}` : `${p?.id} - ${p?.name || p?.code}`}
-                                                  </option>
-                                                ))}
-                                              </Select>
-                                              <IconButton
-                                                aria-label="Add new product"
-                                                icon={<FiPlus />}
-                                                size="sm"
-                                                colorScheme="blue"
-                                                variant="outline"
-                                                onClick={onAddProductOpen}
-                                                title="Add New Product"
-                                                _hover={{ bg: blueButtonHoverBg }}
-                                              />
-                                            </HStack>
-                                          )
+                                          <HStack spacing={2}>
+                                            <Select
+                                              placeholder={
+                                                isServiceCompany
+                                                  ? "Pilih Produk/Jasa"
+                                                  : "Select product"
+                                              }
+                                              value={item.product_id}
+                                              onChange={(e) => {
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  product_id: e.target.value,
+                                                };
+                                                // Auto-fill unit price from product purchase_price if available
+                                                const selectedProduct =
+                                                  products.find(
+                                                    (p) =>
+                                                      p.id?.toString() ===
+                                                      e.target.value,
+                                                  );
+                                                if (
+                                                  selectedProduct &&
+                                                  selectedProduct.purchase_price
+                                                ) {
+                                                  items[index] = {
+                                                    ...items[index],
+                                                    unit_price:
+                                                      selectedProduct.purchase_price.toString(),
+                                                  };
+                                                }
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
+                                              }}
+                                              size="sm"
+                                              maxW="280px"
+                                              bg={inputBg}
+                                              color={inputTextColor}
+                                              borderColor={inputBorderColor}
+                                              _hover={{
+                                                borderColor: inputHoverBorder,
+                                              }}
+                                              _focusVisible={fieldFocusStyles}
+                                              _placeholder={{
+                                                color: inputPlaceholderColor,
+                                              }}
+                                            >
+                                              {products.map((p) => (
+                                                <option
+                                                  key={p.id}
+                                                  value={p.id?.toString()}
+                                                >
+                                                  {isServiceCompany
+                                                    ? `${p?.code} - ${p?.name}`
+                                                    : `${p?.id} - ${p?.name || p?.code}`}
+                                                </option>
+                                              ))}
+                                            </Select>
+                                            <IconButton
+                                              aria-label="Add new product"
+                                              icon={<FiPlus />}
+                                              size="sm"
+                                              colorScheme="blue"
+                                              variant="outline"
+                                              onClick={onAddProductOpen}
+                                              title="Add New Product"
+                                              _hover={{ bg: blueButtonHoverBg }}
+                                            />
+                                          </HStack>
                                         )}
                                       </Td>
 
@@ -4958,8 +6413,14 @@ const PurchasesPage: React.FC = () => {
                                             value={item.quantity}
                                             onChange={(valueString) => {
                                               const items = [...formData.items];
-                                              items[index] = { ...items[index], quantity: valueString };
-                                              setFormData({ ...formData, items });
+                                              items[index] = {
+                                                ...items[index],
+                                                quantity: valueString,
+                                              };
+                                              setFormData({
+                                                ...formData,
+                                                items,
+                                              });
                                             }}
                                             maxW="80px"
                                           >
@@ -4969,9 +6430,13 @@ const PurchasesPage: React.FC = () => {
                                               bg={inputBg}
                                               color={inputTextColor}
                                               borderColor={inputBorderColor}
-                                              _hover={{ borderColor: inputHoverBorder }}
+                                              _hover={{
+                                                borderColor: inputHoverBorder,
+                                              }}
                                               _focusVisible={fieldFocusStyles}
-                                              _placeholder={{ color: inputPlaceholderColor }}
+                                              _placeholder={{
+                                                color: inputPlaceholderColor,
+                                              }}
                                             />
                                             <NumberInputStepper>
                                               <NumberIncrementStepper />
@@ -4985,11 +6450,19 @@ const PurchasesPage: React.FC = () => {
                                       <Td isNumeric verticalAlign="top" pt={3}>
                                         <Box maxW="160px">
                                           <CurrencyInput
-                                            value={parseFloat(item.unit_price) || 0}
+                                            value={
+                                              parseFloat(item.unit_price) || 0
+                                            }
                                             onChange={(value) => {
                                               const items = [...formData.items];
-                                              items[index] = { ...items[index], unit_price: value.toString() };
-                                              setFormData({ ...formData, items });
+                                              items[index] = {
+                                                ...items[index],
+                                                unit_price: value.toString(),
+                                              };
+                                              setFormData({
+                                                ...formData,
+                                                items,
+                                              });
                                             }}
                                             placeholder="Rp 10.000"
                                             size="sm"
@@ -5003,11 +6476,19 @@ const PurchasesPage: React.FC = () => {
                                       <Td isNumeric verticalAlign="top" pt={3}>
                                         <Box maxW="140px">
                                           <CurrencyInput
-                                            value={parseFloat(item.discount) || 0}
+                                            value={
+                                              parseFloat(item.discount) || 0
+                                            }
                                             onChange={(value) => {
                                               const items = [...formData.items];
-                                              items[index] = { ...items[index], discount: value.toString() };
-                                              setFormData({ ...formData, items });
+                                              items[index] = {
+                                                ...items[index],
+                                                discount: value.toString(),
+                                              };
+                                              setFormData({
+                                                ...formData,
+                                                items,
+                                              });
                                             }}
                                             placeholder="Rp 0"
                                             size="sm"
@@ -5018,105 +6499,218 @@ const PurchasesPage: React.FC = () => {
                                       </Td>
 
                                       {/* Kolom Account - Hidden for ASSET type */}
-                                      <Td minW="240px" verticalAlign="top" pt={3}>
-                                        {item.item_type === 'ASSET' ? (
+                                      <Td
+                                        minW="240px"
+                                        verticalAlign="top"
+                                        pt={3}
+                                      >
+                                        {item.item_type === "ASSET" ? (
                                           <Box maxW="240px">
                                             <SearchableSelect
-                                              options={expenseAccounts.filter(acc => {
-                                                const code = acc.code || '';
-                                                const name = (acc.name || '').toLowerCase();
-                                                return (code.startsWith('15') && code.length >= 4) ||
-                                                  ['1501', '1502', '1503', '1504', '1505', '1509'].includes(code) ||
-                                                  name.includes('fixed asset') || name.includes('asset tetap') ||
-                                                  name.includes('peralatan') || name.includes('mesin') ||
-                                                  name.includes('printer') || name.includes('komputer') ||
-                                                  name.includes('equipment') || name.includes('furniture') ||
-                                                  name.includes('kendaraan') || name.includes('bangunan') ||
-                                                  name.includes('gedung');
-                                              }).map(acc => ({
-                                                id: acc.id!,
-                                                code: acc.code,
-                                                name: acc.name,
-                                                active: acc.is_active
-                                              }))}
+                                              options={expenseAccounts
+                                                .filter((acc) => {
+                                                  const code = acc.code || "";
+                                                  const name = (
+                                                    acc.name || ""
+                                                  ).toLowerCase();
+                                                  return (
+                                                    (code.startsWith("15") &&
+                                                      code.length >= 4) ||
+                                                    [
+                                                      "1501",
+                                                      "1502",
+                                                      "1503",
+                                                      "1504",
+                                                      "1505",
+                                                      "1509",
+                                                    ].includes(code) ||
+                                                    name.includes(
+                                                      "fixed asset",
+                                                    ) ||
+                                                    name.includes(
+                                                      "asset tetap",
+                                                    ) ||
+                                                    name.includes(
+                                                      "peralatan",
+                                                    ) ||
+                                                    name.includes("mesin") ||
+                                                    name.includes("printer") ||
+                                                    name.includes("komputer") ||
+                                                    name.includes(
+                                                      "equipment",
+                                                    ) ||
+                                                    name.includes(
+                                                      "furniture",
+                                                    ) ||
+                                                    name.includes(
+                                                      "kendaraan",
+                                                    ) ||
+                                                    name.includes("bangunan") ||
+                                                    name.includes("gedung")
+                                                  );
+                                                })
+                                                .map((acc) => ({
+                                                  id: acc.id!,
+                                                  code: acc.code,
+                                                  name: acc.name,
+                                                  active: acc.is_active,
+                                                }))}
                                               value={item.expense_account_id}
                                               onChange={(val) => {
-                                                const items = [...formData.items];
-                                                items[index] = { ...items[index], expense_account_id: val.toString() };
-                                                setFormData({ ...formData, items });
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  expense_account_id:
+                                                    val.toString(),
+                                                };
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
                                               }}
                                               placeholder="Pilih Akun Aset Tetap..."
                                               isLoading={loadingExpenseAccounts}
-                                              isDisabled={item.item_type !== 'ASSET'}
-                                              displayFormat={(option) => `${option.code} - ${option.name}`}
+                                              isDisabled={
+                                                item.item_type !== "ASSET"
+                                              }
+                                              displayFormat={(option) =>
+                                                `${option.code} - ${option.name}`
+                                              }
                                             />
                                           </Box>
-                                        ) : item.item_type === 'PREPAID' ? (
+                                        ) : item.item_type === "PREPAID" ? (
                                           /* === PREPAID MODE: Show Current Asset / Prepaid accounts only === */
                                           <Box maxW="240px">
                                             <SearchableSelect
-                                              options={expenseAccounts.filter(acc => {
-                                                const code = acc.code || '';
-                                                const name = (acc.name || '').toLowerCase();
-                                                // Current Asset / Prepaid accounts (Beban Dibayar Dimuka)
-                                                // Typically codes 1104, 1105, 1106, or other current asset codes
-                                                const isPrepaidAsset =
-                                                  code.startsWith('1104') || code.startsWith('1105') || code.startsWith('1106') ||
-                                                  code.startsWith('1107') || code.startsWith('1108') || code.startsWith('1109') ||
-                                                  name.includes('prepaid') || name.includes('dibayar dimuka') ||
-                                                  name.includes('uang muka') || name.includes('bayar dimuka') ||
-                                                  name.includes('sewa dibayar') || name.includes('asuransi dibayar');
-                                                // Also include generic current asset accounts (11xx) that are not inventory (1103) or cash (1101/1102)
-                                                const isOtherCurrentAsset =
-                                                  (code.startsWith('11') && code.length >= 4 &&
-                                                   !code.startsWith('1101') && !code.startsWith('1102') && !code.startsWith('1103'));
-                                                return isPrepaidAsset || isOtherCurrentAsset;
-                                              }).map(acc => ({
-                                                id: acc.id!,
-                                                code: acc.code,
-                                                name: acc.name,
-                                                active: acc.is_active
-                                              }))}
+                                              options={expenseAccounts
+                                                .filter((acc) => {
+                                                  const code = acc.code || "";
+                                                  const name = (
+                                                    acc.name || ""
+                                                  ).toLowerCase();
+                                                  // Current Asset / Prepaid accounts (Beban Dibayar Dimuka)
+                                                  // Typically codes 1104, 1105, 1106, or other current asset codes
+                                                  const isPrepaidAsset =
+                                                    code.startsWith("1104") ||
+                                                    code.startsWith("1105") ||
+                                                    code.startsWith("1106") ||
+                                                    code.startsWith("1107") ||
+                                                    code.startsWith("1108") ||
+                                                    code.startsWith("1109") ||
+                                                    name.includes("prepaid") ||
+                                                    name.includes(
+                                                      "dibayar dimuka",
+                                                    ) ||
+                                                    name.includes(
+                                                      "uang muka",
+                                                    ) ||
+                                                    name.includes(
+                                                      "bayar dimuka",
+                                                    ) ||
+                                                    name.includes(
+                                                      "sewa dibayar",
+                                                    ) ||
+                                                    name.includes(
+                                                      "asuransi dibayar",
+                                                    );
+                                                  // Also include generic current asset accounts (11xx) that are not inventory (1103) or cash (1101/1102)
+                                                  const isOtherCurrentAsset =
+                                                    code.startsWith("11") &&
+                                                    code.length >= 4 &&
+                                                    !code.startsWith("1101") &&
+                                                    !code.startsWith("1102") &&
+                                                    !code.startsWith("1103");
+                                                  return (
+                                                    isPrepaidAsset ||
+                                                    isOtherCurrentAsset
+                                                  );
+                                                })
+                                                .map((acc) => ({
+                                                  id: acc.id!,
+                                                  code: acc.code,
+                                                  name: acc.name,
+                                                  active: acc.is_active,
+                                                }))}
                                               value={item.expense_account_id}
                                               onChange={(val) => {
-                                                const items = [...formData.items];
-                                                items[index] = { ...items[index], expense_account_id: val.toString() };
-                                                setFormData({ ...formData, items });
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  expense_account_id:
+                                                    val.toString(),
+                                                };
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
                                               }}
                                               placeholder="Pilih Akun Aset Lancar (Prepaid)..."
                                               isLoading={loadingExpenseAccounts}
-                                              displayFormat={(option) => `${option.code} - ${option.name}`}
+                                              displayFormat={(option) =>
+                                                `${option.code} - ${option.name}`
+                                              }
                                             />
                                           </Box>
                                         ) : canListExpenseAccounts ? (
                                           <Box maxW="240px">
                                             <SearchableSelect
-                                              options={expenseAccounts.map(acc => ({
-                                                id: acc.id!,
-                                                code: acc.code,
-                                                name: acc.name,
-                                                active: acc.is_active
-                                              }))}
+                                              options={expenseAccounts.map(
+                                                (acc) => ({
+                                                  id: acc.id!,
+                                                  code: acc.code,
+                                                  name: acc.name,
+                                                  active: acc.is_active,
+                                                }),
+                                              )}
                                               value={item.expense_account_id}
                                               onChange={(value) => {
-                                                const items = [...formData.items];
-                                                items[index] = { ...items[index], expense_account_id: value.toString() };
-                                                setFormData({ ...formData, items });
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  expense_account_id:
+                                                    value.toString(),
+                                                };
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
                                               }}
                                               placeholder="Pilih akun..."
                                               isLoading={loadingExpenseAccounts}
-                                              displayFormat={(option) => `${option.code} - ${option.name}`}
+                                              displayFormat={(option) =>
+                                                `${option.code} - ${option.name}`
+                                              }
                                             />
                                           </Box>
                                         ) : (
                                           <FormControl>
                                             <NumberInput
                                               min={1}
-                                              value={item.expense_account_id || (defaultExpenseAccountId ? defaultExpenseAccountId.toString() : '')}
+                                              value={
+                                                item.expense_account_id ||
+                                                (defaultExpenseAccountId
+                                                  ? defaultExpenseAccountId.toString()
+                                                  : "")
+                                              }
                                               onChange={(v) => {
-                                                const items = [...formData.items];
-                                                items[index] = { ...items[index], expense_account_id: v.toString() };
-                                                setFormData({ ...formData, items });
+                                                const items = [
+                                                  ...formData.items,
+                                                ];
+                                                items[index] = {
+                                                  ...items[index],
+                                                  expense_account_id:
+                                                    v.toString(),
+                                                };
+                                                setFormData({
+                                                  ...formData,
+                                                  items,
+                                                });
                                               }}
                                               maxW="240px"
                                               size="sm"
@@ -5127,9 +6721,13 @@ const PurchasesPage: React.FC = () => {
                                                 bg={inputBg}
                                                 color={inputTextColor}
                                                 borderColor={inputBorderColor}
-                                                _hover={{ borderColor: inputHoverBorder }}
+                                                _hover={{
+                                                  borderColor: inputHoverBorder,
+                                                }}
                                                 _focusVisible={fieldFocusStyles}
-                                                _placeholder={{ color: inputPlaceholderColor }}
+                                                _placeholder={{
+                                                  color: inputPlaceholderColor,
+                                                }}
                                               />
                                             </NumberInput>
                                           </FormControl>
@@ -5138,13 +6736,27 @@ const PurchasesPage: React.FC = () => {
 
                                       {/* Kolom Line Total */}
                                       <Td isNumeric verticalAlign="top" pt={3}>
-                                        <Text fontSize="sm" fontWeight="medium" color={statColors.green}>
+                                        <Text
+                                          fontSize="sm"
+                                          fontWeight="medium"
+                                          color={statColors.green}
+                                        >
                                           {(() => {
-                                            const qty = parseFloat(item.quantity || '0');
-                                            const price = parseFloat(item.unit_price || '0');
-                                            const discount = parseFloat(item.discount || '0');
-                                            const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                            const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
+                                            const qty = parseFloat(
+                                              item.quantity || "0",
+                                            );
+                                            const price = parseFloat(
+                                              item.unit_price || "0",
+                                            );
+                                            const discount = parseFloat(
+                                              item.discount || "0",
+                                            );
+                                            const subtotal =
+                                              (isNaN(qty) ? 0 : qty) *
+                                              (isNaN(price) ? 0 : price);
+                                            const lineTotal =
+                                              subtotal -
+                                              (isNaN(discount) ? 0 : discount);
                                             return formatCurrency(lineTotal);
                                           })()}
                                         </Text>
@@ -5175,21 +6787,47 @@ const PurchasesPage: React.FC = () => {
 
                           {/* Summary Row */}
                           {formData.items.length > 0 && (
-                            <Box mt={4} p={4} bg={statBgColors.blue} borderRadius="md" borderLeft="4px solid" borderLeftColor={statColors.blue}>
+                            <Box
+                              mt={4}
+                              p={4}
+                              bg={statBgColors.blue}
+                              borderRadius="md"
+                              borderLeft="4px solid"
+                              borderLeftColor={statColors.blue}
+                            >
                               <Flex justify="space-between" align="center">
-                                <Text fontSize="sm" fontWeight="medium" color={textPrimary}>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight="medium"
+                                  color={textPrimary}
+                                >
                                   Total Items: {formData.items.length}
                                 </Text>
-                                <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
-                                  Subtotal: {formatCurrency(
+                                <Text
+                                  fontSize="lg"
+                                  fontWeight="bold"
+                                  color={statColors.blue}
+                                >
+                                  Subtotal:{" "}
+                                  {formatCurrency(
                                     formData.items.reduce((total, item) => {
-                                      const qty = parseFloat(item.quantity || '0');
-                                      const price = parseFloat(item.unit_price || '0');
-                                      const discount = parseFloat(item.discount || '0');
-                                      const subtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                      const lineTotal = subtotal - (isNaN(discount) ? 0 : discount);
+                                      const qty = parseFloat(
+                                        item.quantity || "0",
+                                      );
+                                      const price = parseFloat(
+                                        item.unit_price || "0",
+                                      );
+                                      const discount = parseFloat(
+                                        item.discount || "0",
+                                      );
+                                      const subtotal =
+                                        (isNaN(qty) ? 0 : qty) *
+                                        (isNaN(price) ? 0 : price);
+                                      const lineTotal =
+                                        subtotal -
+                                        (isNaN(discount) ? 0 : discount);
                                       return total + lineTotal;
-                                    }, 0)
+                                    }, 0),
                                   )}
                                 </Text>
                               </Flex>
@@ -5197,8 +6835,13 @@ const PurchasesPage: React.FC = () => {
                           )}
 
                           <FormControl>
-                            <FormHelperText mt={3} fontSize="xs" color={helperTextColor}>
-                              📌 Tambahkan minimal 1 item pembelian. Semua field harus diisi dengan benar.
+                            <FormHelperText
+                              mt={3}
+                              fontSize="xs"
+                              color={helperTextColor}
+                            >
+                              📌 Tambahkan minimal 1 item pembelian. Semua field
+                              harus diisi dengan benar.
                             </FormHelperText>
                           </FormControl>
                         </CardBody>
@@ -5206,358 +6849,642 @@ const PurchasesPage: React.FC = () => {
 
                       {/* Employee Info Banner */}
                       {!isFinanceOrAdmin && (
-                        <Box p={4} bg={employeeInfoBg} borderRadius="md" border="1px solid" borderColor={employeeInfoBorder}>
-                          <Text fontSize="sm" color={employeeInfoText} fontWeight="medium">
-                            ℹ️ Konfigurasi Pajak dan Metode Pembayaran akan diatur oleh Finance saat proses approval. Default: PPN 11%, Metode Pembayaran Credit.
+                        <Box
+                          p={4}
+                          bg={employeeInfoBg}
+                          borderRadius="md"
+                          border="1px solid"
+                          borderColor={employeeInfoBorder}
+                        >
+                          <Text
+                            fontSize="sm"
+                            color={employeeInfoText}
+                            fontWeight="medium"
+                          >
+                            ℹ️ Konfigurasi Pajak dan Metode Pembayaran akan
+                            diatur oleh Finance saat proses approval. Default:
+                            PPN 11%, Metode Pembayaran Credit.
                           </Text>
                         </Box>
                       )}
 
                       {/* Tax Configuration Section — Finance/Admin only */}
-                      {isFinanceOrAdmin && (<Card>
-                        <CardHeader pb={3}>
-                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                            💰 Tax Configuration
-                          </Text>
-                        </CardHeader>
-                        <CardBody pt={0}>
-                          <VStack spacing={4} align="stretch">
-                            {/* Tax Additions (Penambahan) */}
-                            <Box>
-                              <Text fontSize="sm" fontWeight="medium" color={statColors.green} mb={3}>
-                                ➕ Tax Additions (Penambahan)
-                              </Text>
-                              <SimpleGrid columns={2} spacing={4}>
-                                <FormControl>
-                                  <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
-                                  <NumberInput
-                                    value={formData.ppn_rate}
-                                    onChange={(value) => setFormData({ ...formData, ppn_rate: value })}
-                                    size="sm"
-                                    min={0}
-                                    max={100}
-                                    step={0.1}
-                                  >
-                                    <NumberInputField
-                                      placeholder="11"
-                                      bg={inputBg}
-                                      color={inputTextColor}
-                                      borderColor={inputBorderColor}
-                                      _hover={{ borderColor: inputHoverBorder }}
-                                      _focusVisible={fieldFocusStyles}
-                                      _placeholder={{ color: inputPlaceholderColor }}
-                                    />
-                                    <NumberInputStepper>
-                                      <NumberIncrementStepper />
-                                      <NumberDecrementStepper />
-                                    </NumberInputStepper>
-                                  </NumberInput>
-                                  <FormHelperText fontSize="xs" color={helperTextColor}>Pajak Pertambahan Nilai (default 11%)</FormHelperText>
-                                </FormControl>
+                      {isFinanceOrAdmin && (
+                        <Card>
+                          <CardHeader pb={3}>
+                            <Text
+                              fontSize="md"
+                              fontWeight="semibold"
+                              color={textPrimary}
+                            >
+                              💰 Tax Configuration
+                            </Text>
+                          </CardHeader>
+                          <CardBody pt={0}>
+                            <VStack spacing={4} align="stretch">
+                              {/* Tax Additions (Penambahan) */}
+                              <Box>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight="medium"
+                                  color={statColors.green}
+                                  mb={3}
+                                >
+                                  ➕ Tax Additions (Penambahan)
+                                </Text>
+                                <SimpleGrid columns={2} spacing={4}>
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      PPN Rate (%)
+                                    </FormLabel>
+                                    <NumberInput
+                                      value={formData.ppn_rate}
+                                      onChange={(value) =>
+                                        setFormData({
+                                          ...formData,
+                                          ppn_rate: value,
+                                        })
+                                      }
+                                      size="sm"
+                                      min={0}
+                                      max={100}
+                                      step={0.1}
+                                    >
+                                      <NumberInputField
+                                        placeholder="11"
+                                        bg={inputBg}
+                                        color={inputTextColor}
+                                        borderColor={inputBorderColor}
+                                        _hover={{
+                                          borderColor: inputHoverBorder,
+                                        }}
+                                        _focusVisible={fieldFocusStyles}
+                                        _placeholder={{
+                                          color: inputPlaceholderColor,
+                                        }}
+                                      />
+                                      <NumberInputStepper>
+                                        <NumberIncrementStepper />
+                                        <NumberDecrementStepper />
+                                      </NumberInputStepper>
+                                    </NumberInput>
+                                    <FormHelperText
+                                      fontSize="xs"
+                                      color={helperTextColor}
+                                    >
+                                      Pajak Pertambahan Nilai (default 11%)
+                                    </FormHelperText>
+                                  </FormControl>
 
-                                <FormControl>
-                                  <FormLabel fontSize="sm">Other Tax Additions (%)</FormLabel>
-                                  <NumberInput
-                                    value={formData.other_tax_additions}
-                                    onChange={(value) => setFormData({ ...formData, other_tax_additions: value })}
-                                    size="sm"
-                                    min={0}
-                                    max={100}
-                                    step={0.1}
-                                  >
-                                    <NumberInputField
-                                      placeholder="0"
-                                      bg={inputBg}
-                                      color={inputTextColor}
-                                      borderColor={inputBorderColor}
-                                      _hover={{ borderColor: inputHoverBorder }}
-                                      _focusVisible={fieldFocusStyles}
-                                      _placeholder={{ color: inputPlaceholderColor }}
-                                    />
-                                    <NumberInputStepper>
-                                      <NumberIncrementStepper />
-                                      <NumberDecrementStepper />
-                                    </NumberInputStepper>
-                                  </NumberInput>
-                                  <FormHelperText fontSize="xs" color={helperTextColor}>Pajak tambahan lainnya (opsional)</FormHelperText>
-                                </FormControl>
-                              </SimpleGrid>
-                            </Box>
-
-                            <Divider />
-
-                            {/* Tax Deductions (Pemotongan) */}
-                            <Box>
-                              <Text fontSize="sm" fontWeight="medium" color={statColors.red} mb={3}>
-                                ➖ Tax Deductions (Pemotongan)
-                              </Text>
-                              <SimpleGrid columns={3} spacing={4}>
-                                <FormControl>
-                                  <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
-                                  <NumberInput
-                                    value={formData.pph21_rate}
-                                    onChange={(value) => setFormData({ ...formData, pph21_rate: value })}
-                                    size="sm"
-                                    min={0}
-                                    max={100}
-                                    step={0.1}
-                                  >
-                                    <NumberInputField
-                                      placeholder="2"
-                                      bg={inputBg}
-                                      color={inputTextColor}
-                                      borderColor={inputBorderColor}
-                                      _hover={{ borderColor: inputHoverBorder }}
-                                      _focusVisible={fieldFocusStyles}
-                                      _placeholder={{ color: inputPlaceholderColor }}
-                                    />
-                                    <NumberInputStepper>
-                                      <NumberIncrementStepper />
-                                      <NumberDecrementStepper />
-                                    </NumberInputStepper>
-                                  </NumberInput>
-                                  <FormHelperText fontSize="xs" color={helperTextColor}>PPh 21: 2% jasa konstruksi, 15% dividen/bunga</FormHelperText>
-                                </FormControl>
-
-                                <FormControl>
-                                  <FormLabel fontSize="sm">PPh 23 Rate (%)</FormLabel>
-                                  <NumberInput
-                                    value={formData.pph23_rate}
-                                    onChange={(value) => setFormData({ ...formData, pph23_rate: value })}
-                                    size="sm"
-                                    min={0}
-                                    max={100}
-                                    step={0.1}
-                                  >
-                                    <NumberInputField
-                                      placeholder="2"
-                                      bg={inputBg}
-                                      color={inputTextColor}
-                                      borderColor={inputBorderColor}
-                                      _hover={{ borderColor: inputHoverBorder }}
-                                      _focusVisible={fieldFocusStyles}
-                                      _placeholder={{ color: inputPlaceholderColor }}
-                                    />
-                                    <NumberInputStepper>
-                                      <NumberIncrementStepper />
-                                      <NumberDecrementStepper />
-                                    </NumberInputStepper>
-                                  </NumberInput>
-                                  <FormHelperText fontSize="xs" color={helperTextColor}>PPh 23: 2% jasa umum, 15% dividen/bunga/royalti</FormHelperText>
-                                </FormControl>
-
-                                <FormControl>
-                                  <FormLabel fontSize="sm">Other Tax Deductions (%)</FormLabel>
-                                  <NumberInput
-                                    value={formData.other_tax_deductions}
-                                    onChange={(value) => setFormData({ ...formData, other_tax_deductions: value })}
-                                    size="sm"
-                                    min={0}
-                                    max={100}
-                                    step={0.1}
-                                  >
-                                    <NumberInputField
-                                      placeholder="0"
-                                      bg={inputBg}
-                                      color={inputTextColor}
-                                      borderColor={inputBorderColor}
-                                      _hover={{ borderColor: inputHoverBorder }}
-                                      _focusVisible={fieldFocusStyles}
-                                      _placeholder={{ color: inputPlaceholderColor }}
-                                    />
-                                    <NumberInputStepper>
-                                      <NumberIncrementStepper />
-                                      <NumberDecrementStepper />
-                                    </NumberInputStepper>
-                                  </NumberInput>
-                                  <FormHelperText fontSize="xs" color={helperTextColor}>Potongan pajak lainnya (opsional)</FormHelperText>
-                                </FormControl>
-                              </SimpleGrid>
-                            </Box>
-
-                            {/* Tax Summary Calculation */}
-                            {formData.items.length > 0 && (
-                              <Box mt={4} p={4} bg={notesBoxBg} borderRadius="md" border="1px solid" borderColor={borderColor}>
-                                <VStack spacing={2} align="stretch">
-                                  <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>Tax Summary:</Text>
-                                  {(() => {
-                                    const subtotal = formData.items.reduce((total, item) => {
-                                      const qty = parseFloat(item.quantity || '0');
-                                      const price = parseFloat(item.unit_price || '0');
-                                      const discount = parseFloat(item.discount || '0');
-                                      const itemSubtotal = (isNaN(qty) ? 0 : qty) * (isNaN(price) ? 0 : price);
-                                      const lineTotal = itemSubtotal - (isNaN(discount) ? 0 : discount);
-                                      return total + lineTotal;
-                                    }, 0);
-
-                                    const discount = (parseFloat(formData.discount) || 0) / 100;
-                                    const discountedSubtotal = subtotal * (1 - discount);
-
-                                    const ppnAmount = discountedSubtotal * (parseFloat(formData.ppn_rate) || 0) / 100;
-                                    const otherAdditions = discountedSubtotal * (parseFloat(formData.other_tax_additions) || 0) / 100;
-                                    const totalAdditions = ppnAmount + otherAdditions;
-
-                                    const pph21Amount = discountedSubtotal * (parseFloat(formData.pph21_rate) || 0) / 100;
-                                    const pph23Amount = discountedSubtotal * (parseFloat(formData.pph23_rate) || 0) / 100;
-                                    const otherDeductions = discountedSubtotal * (parseFloat(formData.other_tax_deductions) || 0) / 100;
-                                    const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
-
-                                    const finalTotal = discountedSubtotal + totalAdditions - totalDeductions;
-
-                                    return (
-                                      <SimpleGrid columns={2} spacing={4} fontSize="xs">
-                                        <VStack align="start" spacing={1}>
-                                          <Text color={textSecondary}>Subtotal: {formatCurrency(subtotal)}</Text>
-                                          <Text color={textSecondary}>Discount ({formData.discount}%): -{formatCurrency(subtotal * discount)}</Text>
-                                          <Text color={textSecondary}>After Discount: {formatCurrency(discountedSubtotal)}</Text>
-                                        </VStack>
-
-                                        <VStack align="start" spacing={1}>
-                                          <Text color={statColors.green}>+ PPN ({formData.ppn_rate}%): {formatCurrency(ppnAmount)}</Text>
-                                          {parseFloat(formData.other_tax_additions) > 0 && (
-                                            <Text color={statColors.green}>+ Other Additions ({formData.other_tax_additions}%): {formatCurrency(otherAdditions)}</Text>
-                                          )}
-                                          {parseFloat(formData.pph21_rate) > 0 && (
-                                            <Text color={statColors.red}>- PPh 21 ({formData.pph21_rate}%): {formatCurrency(pph21Amount)}</Text>
-                                          )}
-                                          {parseFloat(formData.pph23_rate) > 0 && (
-                                            <Text color={statColors.red}>- PPh 23 ({formData.pph23_rate}%): {formatCurrency(pph23Amount)}</Text>
-                                          )}
-                                          {parseFloat(formData.other_tax_deductions) > 0 && (
-                                            <Text color={statColors.red}>- Other Deductions ({formData.other_tax_deductions}%): {formatCurrency(otherDeductions)}</Text>
-                                          )}
-                                          <Text fontWeight="bold" color={statColors.blue} borderTop="1px solid" borderColor={borderColor} pt={1}>
-                                            Final Total: {formatCurrency(finalTotal)}
-                                          </Text>
-                                        </VStack>
-                                      </SimpleGrid>
-                                    );
-                                  })()}
-                                </VStack>
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      Other Tax Additions (%)
+                                    </FormLabel>
+                                    <NumberInput
+                                      value={formData.other_tax_additions}
+                                      onChange={(value) =>
+                                        setFormData({
+                                          ...formData,
+                                          other_tax_additions: value,
+                                        })
+                                      }
+                                      size="sm"
+                                      min={0}
+                                      max={100}
+                                      step={0.1}
+                                    >
+                                      <NumberInputField
+                                        placeholder="0"
+                                        bg={inputBg}
+                                        color={inputTextColor}
+                                        borderColor={inputBorderColor}
+                                        _hover={{
+                                          borderColor: inputHoverBorder,
+                                        }}
+                                        _focusVisible={fieldFocusStyles}
+                                        _placeholder={{
+                                          color: inputPlaceholderColor,
+                                        }}
+                                      />
+                                      <NumberInputStepper>
+                                        <NumberIncrementStepper />
+                                        <NumberDecrementStepper />
+                                      </NumberInputStepper>
+                                    </NumberInput>
+                                    <FormHelperText
+                                      fontSize="xs"
+                                      color={helperTextColor}
+                                    >
+                                      Pajak tambahan lainnya (opsional)
+                                    </FormHelperText>
+                                  </FormControl>
+                                </SimpleGrid>
                               </Box>
-                            )}
-                          </VStack>
-                        </CardBody>
-                      </Card>)}
+
+                              <Divider />
+
+                              {/* Tax Deductions (Pemotongan) */}
+                              <Box>
+                                <Text
+                                  fontSize="sm"
+                                  fontWeight="medium"
+                                  color={statColors.red}
+                                  mb={3}
+                                >
+                                  ➖ Tax Deductions (Pemotongan)
+                                </Text>
+                                <SimpleGrid columns={3} spacing={4}>
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      PPh 21 Rate (%)
+                                    </FormLabel>
+                                    <NumberInput
+                                      value={formData.pph21_rate}
+                                      onChange={(value) =>
+                                        setFormData({
+                                          ...formData,
+                                          pph21_rate: value,
+                                        })
+                                      }
+                                      size="sm"
+                                      min={0}
+                                      max={100}
+                                      step={0.1}
+                                    >
+                                      <NumberInputField
+                                        placeholder="2"
+                                        bg={inputBg}
+                                        color={inputTextColor}
+                                        borderColor={inputBorderColor}
+                                        _hover={{
+                                          borderColor: inputHoverBorder,
+                                        }}
+                                        _focusVisible={fieldFocusStyles}
+                                        _placeholder={{
+                                          color: inputPlaceholderColor,
+                                        }}
+                                      />
+                                      <NumberInputStepper>
+                                        <NumberIncrementStepper />
+                                        <NumberDecrementStepper />
+                                      </NumberInputStepper>
+                                    </NumberInput>
+                                    <FormHelperText
+                                      fontSize="xs"
+                                      color={helperTextColor}
+                                    >
+                                      PPh 21: 2% jasa konstruksi, 15%
+                                      dividen/bunga
+                                    </FormHelperText>
+                                  </FormControl>
+
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      PPh 23 Rate (%)
+                                    </FormLabel>
+                                    <NumberInput
+                                      value={formData.pph23_rate}
+                                      onChange={(value) =>
+                                        setFormData({
+                                          ...formData,
+                                          pph23_rate: value,
+                                        })
+                                      }
+                                      size="sm"
+                                      min={0}
+                                      max={100}
+                                      step={0.1}
+                                    >
+                                      <NumberInputField
+                                        placeholder="2"
+                                        bg={inputBg}
+                                        color={inputTextColor}
+                                        borderColor={inputBorderColor}
+                                        _hover={{
+                                          borderColor: inputHoverBorder,
+                                        }}
+                                        _focusVisible={fieldFocusStyles}
+                                        _placeholder={{
+                                          color: inputPlaceholderColor,
+                                        }}
+                                      />
+                                      <NumberInputStepper>
+                                        <NumberIncrementStepper />
+                                        <NumberDecrementStepper />
+                                      </NumberInputStepper>
+                                    </NumberInput>
+                                    <FormHelperText
+                                      fontSize="xs"
+                                      color={helperTextColor}
+                                    >
+                                      PPh 23: 2% jasa umum, 15%
+                                      dividen/bunga/royalti
+                                    </FormHelperText>
+                                  </FormControl>
+
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      Other Tax Deductions (%)
+                                    </FormLabel>
+                                    <NumberInput
+                                      value={formData.other_tax_deductions}
+                                      onChange={(value) =>
+                                        setFormData({
+                                          ...formData,
+                                          other_tax_deductions: value,
+                                        })
+                                      }
+                                      size="sm"
+                                      min={0}
+                                      max={100}
+                                      step={0.1}
+                                    >
+                                      <NumberInputField
+                                        placeholder="0"
+                                        bg={inputBg}
+                                        color={inputTextColor}
+                                        borderColor={inputBorderColor}
+                                        _hover={{
+                                          borderColor: inputHoverBorder,
+                                        }}
+                                        _focusVisible={fieldFocusStyles}
+                                        _placeholder={{
+                                          color: inputPlaceholderColor,
+                                        }}
+                                      />
+                                      <NumberInputStepper>
+                                        <NumberIncrementStepper />
+                                        <NumberDecrementStepper />
+                                      </NumberInputStepper>
+                                    </NumberInput>
+                                    <FormHelperText
+                                      fontSize="xs"
+                                      color={helperTextColor}
+                                    >
+                                      Potongan pajak lainnya (opsional)
+                                    </FormHelperText>
+                                  </FormControl>
+                                </SimpleGrid>
+                              </Box>
+
+                              {/* Tax Summary Calculation */}
+                              {formData.items.length > 0 && (
+                                <Box
+                                  mt={4}
+                                  p={4}
+                                  bg={notesBoxBg}
+                                  borderRadius="md"
+                                  border="1px solid"
+                                  borderColor={borderColor}
+                                >
+                                  <VStack spacing={2} align="stretch">
+                                    <Text
+                                      fontSize="sm"
+                                      fontWeight="semibold"
+                                      color={textPrimary}
+                                    >
+                                      Tax Summary:
+                                    </Text>
+                                    {(() => {
+                                      const subtotal = formData.items.reduce(
+                                        (total, item) => {
+                                          const qty = parseFloat(
+                                            item.quantity || "0",
+                                          );
+                                          const price = parseFloat(
+                                            item.unit_price || "0",
+                                          );
+                                          const discount = parseFloat(
+                                            item.discount || "0",
+                                          );
+                                          const itemSubtotal =
+                                            (isNaN(qty) ? 0 : qty) *
+                                            (isNaN(price) ? 0 : price);
+                                          const lineTotal =
+                                            itemSubtotal -
+                                            (isNaN(discount) ? 0 : discount);
+                                          return total + lineTotal;
+                                        },
+                                        0,
+                                      );
+
+                                      const discount =
+                                        (parseFloat(formData.discount) || 0) /
+                                        100;
+                                      const discountedSubtotal =
+                                        subtotal * (1 - discount);
+
+                                      const ppnAmount =
+                                        (discountedSubtotal *
+                                          (parseFloat(formData.ppn_rate) ||
+                                            0)) /
+                                        100;
+                                      const otherAdditions =
+                                        (discountedSubtotal *
+                                          (parseFloat(
+                                            formData.other_tax_additions,
+                                          ) || 0)) /
+                                        100;
+                                      const totalAdditions =
+                                        ppnAmount + otherAdditions;
+
+                                      const pph21Amount =
+                                        (discountedSubtotal *
+                                          (parseFloat(formData.pph21_rate) ||
+                                            0)) /
+                                        100;
+                                      const pph23Amount =
+                                        (discountedSubtotal *
+                                          (parseFloat(formData.pph23_rate) ||
+                                            0)) /
+                                        100;
+                                      const otherDeductions =
+                                        (discountedSubtotal *
+                                          (parseFloat(
+                                            formData.other_tax_deductions,
+                                          ) || 0)) /
+                                        100;
+                                      const totalDeductions =
+                                        pph21Amount +
+                                        pph23Amount +
+                                        otherDeductions;
+
+                                      const finalTotal =
+                                        discountedSubtotal +
+                                        totalAdditions -
+                                        totalDeductions;
+
+                                      return (
+                                        <SimpleGrid
+                                          columns={2}
+                                          spacing={4}
+                                          fontSize="xs"
+                                        >
+                                          <VStack align="start" spacing={1}>
+                                            <Text color={textSecondary}>
+                                              Subtotal:{" "}
+                                              {formatCurrency(subtotal)}
+                                            </Text>
+                                            <Text color={textSecondary}>
+                                              Discount ({formData.discount}%): -
+                                              {formatCurrency(
+                                                subtotal * discount,
+                                              )}
+                                            </Text>
+                                            <Text color={textSecondary}>
+                                              After Discount:{" "}
+                                              {formatCurrency(
+                                                discountedSubtotal,
+                                              )}
+                                            </Text>
+                                          </VStack>
+
+                                          <VStack align="start" spacing={1}>
+                                            <Text color={statColors.green}>
+                                              + PPN ({formData.ppn_rate}%):{" "}
+                                              {formatCurrency(ppnAmount)}
+                                            </Text>
+                                            {parseFloat(
+                                              formData.other_tax_additions,
+                                            ) > 0 && (
+                                              <Text color={statColors.green}>
+                                                + Other Additions (
+                                                {formData.other_tax_additions}
+                                                %):{" "}
+                                                {formatCurrency(otherAdditions)}
+                                              </Text>
+                                            )}
+                                            {parseFloat(formData.pph21_rate) >
+                                              0 && (
+                                              <Text color={statColors.red}>
+                                                - PPh 21 ({formData.pph21_rate}
+                                                %):{" "}
+                                                {formatCurrency(pph21Amount)}
+                                              </Text>
+                                            )}
+                                            {parseFloat(formData.pph23_rate) >
+                                              0 && (
+                                              <Text color={statColors.red}>
+                                                - PPh 23 ({formData.pph23_rate}
+                                                %):{" "}
+                                                {formatCurrency(pph23Amount)}
+                                              </Text>
+                                            )}
+                                            {parseFloat(
+                                              formData.other_tax_deductions,
+                                            ) > 0 && (
+                                              <Text color={statColors.red}>
+                                                - Other Deductions (
+                                                {formData.other_tax_deductions}
+                                                %):{" "}
+                                                {formatCurrency(
+                                                  otherDeductions,
+                                                )}
+                                              </Text>
+                                            )}
+                                            <Text
+                                              fontWeight="bold"
+                                              color={statColors.blue}
+                                              borderTop="1px solid"
+                                              borderColor={borderColor}
+                                              pt={1}
+                                            >
+                                              Final Total:{" "}
+                                              {formatCurrency(finalTotal)}
+                                            </Text>
+                                          </VStack>
+                                        </SimpleGrid>
+                                      );
+                                    })()}
+                                  </VStack>
+                                </Box>
+                              )}
+                            </VStack>
+                          </CardBody>
+                        </Card>
+                      )}
 
                       {/* Payment Method Section — Finance/Admin only */}
-                      {isFinanceOrAdmin && (<Card>
-                        <CardHeader pb={3}>
-                          <Text fontSize="md" fontWeight="semibold" color={textPrimary}>
-                            💳 Payment Method
-                          </Text>
-                        </CardHeader>
-                        <CardBody pt={0}>
-                          <SimpleGrid columns={2} spacing={4}>
-                            <FormControl isRequired>
-                              <FormLabel fontSize="sm" fontWeight="medium">Payment Method</FormLabel>
-                              <Select
-                                value={formData.payment_method}
-                                onChange={(e) => {
-                                  // Reset bank_account_id saat ganti payment method untuk menghindari konflik
-                                  setFormData({
-                                    ...formData,
-                                    payment_method: e.target.value,
-                                    bank_account_id: e.target.value === 'CREDIT' ? '' : '' // Reset untuk memaksa user pilih ulang
-                                  })
-                                }}
-                                size="sm"
-                              >
-                                <option value="CREDIT">Credit</option>
-                                <option value="CASH">Cash</option>
-                                <option value="BANK_TRANSFER">Bank Transfer</option>
-                                <option value="CHECK">Check</option>
-                              </Select>
-                              <FormHelperText fontSize="xs">
-                                {formData.payment_method === 'CREDIT' && 'Purchase on credit - payment due later'}
-                                {formData.payment_method === 'CASH' && 'Direct cash payment'}
-                                {formData.payment_method === 'BANK_TRANSFER' && 'Electronic bank transfer'}
-                                {formData.payment_method === 'CHECK' && 'Payment by check'}
-                              </FormHelperText>
-                            </FormControl>
-
-                            {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
-                            {formData.payment_method !== 'CREDIT' && (
+                      {isFinanceOrAdmin && (
+                        <Card>
+                          <CardHeader pb={3}>
+                            <Text
+                              fontSize="md"
+                              fontWeight="semibold"
+                              color={textPrimary}
+                            >
+                              💳 Payment Method
+                            </Text>
+                          </CardHeader>
+                          <CardBody pt={0}>
+                            <SimpleGrid columns={2} spacing={4}>
                               <FormControl isRequired>
                                 <FormLabel fontSize="sm" fontWeight="medium">
-                                  {formData.payment_method === 'CASH' ? 'Cash Account' : 'Bank Account'}
+                                  Payment Method
                                 </FormLabel>
                                 <Select
-                                  value={formData.bank_account_id}
-                                  onChange={(e) => setFormData({ ...formData, bank_account_id: e.target.value })}
+                                  value={formData.payment_method}
+                                  onChange={(e) => {
+                                    setFormData(
+                                      normalizePurchasePaymentFields(
+                                        formData,
+                                        e.target.value,
+                                      ),
+                                    );
+                                  }}
                                   size="sm"
-                                  disabled={loadingBankAccounts}
-                                  placeholder={loadingBankAccounts ? 'Loading accounts...' : formData.payment_method === 'CASH' ? 'Select cash account' : 'Select bank account'}
                                 >
-                                  {bankAccounts
-                                    .filter(account => {
-                                      // Filter berdasarkan payment method
-                                      if (formData.payment_method === 'CASH') {
-                                        return account.type === 'CASH';
-                                      } else {
-                                        return account.type === 'BANK';
-                                      }
-                                    })
-                                    .map((account) => (
-                                      <option key={account.id} value={account.id.toString()}>
-                                        {account.name} ({account.code}) - {account.currency} {account.balance?.toLocaleString() || '0'}
+                                  <option value="CREDIT">Credit</option>
+                                  <option value="CASH">Cash</option>
+                                  <option value="BANK_TRANSFER">
+                                    Bank Transfer
+                                  </option>
+                                  <option value="CHECK">Check</option>
+                                </Select>
+                                <FormHelperText fontSize="xs">
+                                  {formData.payment_method === "CREDIT" &&
+                                    "Purchase on credit - payment due later"}
+                                  {formData.payment_method === "CASH" &&
+                                    "Direct cash payment"}
+                                  {formData.payment_method ===
+                                    "BANK_TRANSFER" &&
+                                    "Electronic bank transfer"}
+                                  {formData.payment_method === "CHECK" &&
+                                    "Payment by check"}
+                                </FormHelperText>
+                              </FormControl>
+
+                              {/* Cash/Bank Account dropdown for Bank Transfer, Cash, Check */}
+                              {formData.payment_method !== "CREDIT" && (
+                                <FormControl isRequired>
+                                  <FormLabel fontSize="sm" fontWeight="medium">
+                                    {formData.payment_method === "CASH"
+                                      ? "Cash Account"
+                                      : "Bank Account"}
+                                  </FormLabel>
+                                  <Select
+                                    value={formData.bank_account_id}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        bank_account_id: e.target.value,
+                                      })
+                                    }
+                                    size="sm"
+                                    disabled={loadingBankAccounts}
+                                    placeholder={
+                                      loadingBankAccounts
+                                        ? "Loading accounts..."
+                                        : formData.payment_method === "CASH"
+                                          ? "Select cash account"
+                                          : "Select bank account"
+                                    }
+                                  >
+                                    {bankAccounts
+                                      .filter((account) => {
+                                        // Filter berdasarkan payment method
+                                        if (
+                                          formData.payment_method === "CASH"
+                                        ) {
+                                          return account.type === "CASH";
+                                        } else {
+                                          return account.type === "BANK";
+                                        }
+                                      })
+                                      .map((account) => (
+                                        <option
+                                          key={account.id}
+                                          value={account.id.toString()}
+                                        >
+                                          {account.name} ({account.code}) -{" "}
+                                          {account.currency}{" "}
+                                          {account.balance?.toLocaleString() ||
+                                            "0"}
+                                        </option>
+                                      ))}
+                                  </Select>
+                                  <FormHelperText fontSize="xs">
+                                    Required: Select{" "}
+                                    {formData.payment_method === "CASH"
+                                      ? "cash"
+                                      : "bank"}{" "}
+                                    account for payment processing
+                                  </FormHelperText>
+                                </FormControl>
+                              )}
+
+                              {/* Credit Account dropdown for Credit payment */}
+                              {formData.payment_method === "CREDIT" && (
+                                <FormControl isRequired>
+                                  <FormLabel fontSize="sm" fontWeight="medium">
+                                    Liability Account
+                                  </FormLabel>
+                                  <Select
+                                    value={formData.credit_account_id}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        credit_account_id: e.target.value,
+                                      })
+                                    }
+                                    size="sm"
+                                    disabled={loadingCreditAccounts}
+                                    placeholder={
+                                      loadingCreditAccounts
+                                        ? "Loading accounts..."
+                                        : "Select liability account"
+                                    }
+                                  >
+                                    {creditAccounts.map((account) => (
+                                      <option
+                                        key={account.id}
+                                        value={account.id?.toString()}
+                                      >
+                                        {account.code} - {account.name}
                                       </option>
-                                    ))
-                                  }
-                                </Select>
-                                <FormHelperText fontSize="xs">
-                                  Required: Select {formData.payment_method === 'CASH' ? 'cash' : 'bank'} account for payment processing
-                                </FormHelperText>
-                              </FormControl>
-                            )}
+                                    ))}
+                                  </Select>
+                                  <FormHelperText fontSize="xs">
+                                    Required: Select liability account for
+                                    tracking credit purchases
+                                  </FormHelperText>
+                                </FormControl>
+                              )}
+                            </SimpleGrid>
 
-                            {/* Credit Account dropdown for Credit payment */}
-                            {formData.payment_method === 'CREDIT' && (
-                              <FormControl isRequired>
-                                <FormLabel fontSize="sm" fontWeight="medium">
-                                  Liability Account
-                                </FormLabel>
-                                <Select
-                                  value={formData.credit_account_id}
-                                  onChange={(e) => setFormData({ ...formData, credit_account_id: e.target.value })}
-                                  size="sm"
-                                  disabled={loadingCreditAccounts}
-                                  placeholder={loadingCreditAccounts ? 'Loading accounts...' : 'Select liability account'}
-                                >
-                                  {creditAccounts.map((account) => (
-                                    <option key={account.id} value={account.id?.toString()}>
-                                      {account.code} - {account.name}
-                                    </option>
-                                  ))}
-                                </Select>
-                                <FormHelperText fontSize="xs">
-                                  Required: Select liability account for tracking credit purchases
-                                </FormHelperText>
-                              </FormControl>
-                            )}
-                          </SimpleGrid>
-
-                          {/* Payment Reference (for non-credit and non-cash payments) */}
-                          {formData.payment_method !== 'CREDIT' && formData.payment_method !== 'CASH' && (
-                            <FormControl mt={4}>
-                              <FormLabel fontSize="sm" fontWeight="medium">Payment Reference</FormLabel>
-                              <Input
-                                value={formData.payment_reference}
-                                onChange={(e) => setFormData({ ...formData, payment_reference: e.target.value })}
-                                placeholder={
-                                  formData.payment_method === 'CHECK' ? 'Check number' :
-                                    formData.payment_method === 'BANK_TRANSFER' ? 'Transaction ID or reference number' :
-                                      'Payment reference number'
-                                }
-                                size="sm"
-                              />
-                              <FormHelperText fontSize="xs">
-                                Optional reference for tracking this payment
-                              </FormHelperText>
-                            </FormControl>
-                          )}
-                        </CardBody>
-                      </Card>)}
+                            {/* Payment Reference (for non-credit and non-cash payments) */}
+                            {formData.payment_method !== "CREDIT" &&
+                              formData.payment_method !== "CASH" && (
+                                <FormControl mt={4}>
+                                  <FormLabel fontSize="sm" fontWeight="medium">
+                                    Payment Reference
+                                  </FormLabel>
+                                  <Input
+                                    value={formData.payment_reference}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        payment_reference: e.target.value,
+                                      })
+                                    }
+                                    placeholder={
+                                      formData.payment_method === "CHECK"
+                                        ? "Check number"
+                                        : formData.payment_method ===
+                                            "BANK_TRANSFER"
+                                          ? "Transaction ID or reference number"
+                                          : "Payment reference number"
+                                    }
+                                    size="sm"
+                                  />
+                                  <FormHelperText fontSize="xs">
+                                    Optional reference for tracking this payment
+                                  </FormHelperText>
+                                </FormControl>
+                              )}
+                          </CardBody>
+                        </Card>
+                      )}
                     </VStack>
                   </ModalBody>
                   <ModalFooter>
@@ -5574,13 +7501,30 @@ const PurchasesPage: React.FC = () => {
               </Modal>
 
               {/* Add Vendor Modal */}
-              <Modal isOpen={isAddVendorOpen} onClose={onAddVendorClose} size="lg">
+              <Modal
+                isOpen={isAddVendorOpen}
+                onClose={onAddVendorClose}
+                size="lg"
+              >
                 <ModalOverlay />
                 <ModalContent bg={modalContentBg}>
-                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  <ModalHeader
+                    bg={modalHeaderBg}
+                    borderBottomWidth={1}
+                    borderColor={borderColor}
+                  >
                     <HStack>
-                      <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
-                      <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
+                      <Box
+                        w={1}
+                        h={6}
+                        bg={statColors.green}
+                        borderRadius="full"
+                      />
+                      <Text
+                        fontSize="lg"
+                        fontWeight="bold"
+                        color={statColors.green}
+                      >
                         Add New Vendor
                       </Text>
                     </HStack>
@@ -5595,7 +7539,12 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Enter vendor name"
                             value={newVendorData.name}
-                            onChange={(e) => setNewVendorData({ ...newVendorData, name: e.target.value })}
+                            onChange={(e) =>
+                              setNewVendorData({
+                                ...newVendorData,
+                                name: e.target.value,
+                              })
+                            }
                           />
                         </FormControl>
 
@@ -5605,7 +7554,12 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Auto-generated if empty"
                             value={newVendorData.code}
-                            onChange={(e) => setNewVendorData({ ...newVendorData, code: e.target.value })}
+                            onChange={(e) =>
+                              setNewVendorData({
+                                ...newVendorData,
+                                code: e.target.value,
+                              })
+                            }
                           />
                         </FormControl>
                       </SimpleGrid>
@@ -5618,7 +7572,12 @@ const PurchasesPage: React.FC = () => {
                             type="email"
                             placeholder="vendor@company.com"
                             value={newVendorData.email}
-                            onChange={(e) => setNewVendorData({ ...newVendorData, email: e.target.value })}
+                            onChange={(e) =>
+                              setNewVendorData({
+                                ...newVendorData,
+                                email: e.target.value,
+                              })
+                            }
                           />
                         </FormControl>
 
@@ -5628,7 +7587,12 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Enter phone number"
                             value={newVendorData.phone}
-                            onChange={(e) => setNewVendorData({ ...newVendorData, phone: e.target.value })}
+                            onChange={(e) =>
+                              setNewVendorData({
+                                ...newVendorData,
+                                phone: e.target.value,
+                              })
+                            }
                           />
                         </FormControl>
                       </SimpleGrid>
@@ -5640,7 +7604,12 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Enter mobile number"
                             value={newVendorData.mobile}
-                            onChange={(e) => setNewVendorData({ ...newVendorData, mobile: e.target.value })}
+                            onChange={(e) =>
+                              setNewVendorData({
+                                ...newVendorData,
+                                mobile: e.target.value,
+                              })
+                            }
                           />
                         </FormControl>
 
@@ -5650,7 +7619,12 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Person in charge"
                             value={newVendorData.pic_name}
-                            onChange={(e) => setNewVendorData({ ...newVendorData, pic_name: e.target.value })}
+                            onChange={(e) =>
+                              setNewVendorData({
+                                ...newVendorData,
+                                pic_name: e.target.value,
+                              })
+                            }
                           />
                         </FormControl>
                       </SimpleGrid>
@@ -5661,7 +7635,12 @@ const PurchasesPage: React.FC = () => {
                           size="sm"
                           placeholder="External vendor ID (optional)"
                           value={newVendorData.external_id}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, external_id: e.target.value })}
+                          onChange={(e) =>
+                            setNewVendorData({
+                              ...newVendorData,
+                              external_id: e.target.value,
+                            })
+                          }
                         />
                       </FormControl>
 
@@ -5672,7 +7651,12 @@ const PurchasesPage: React.FC = () => {
                           placeholder="Enter vendor address"
                           rows={3}
                           value={newVendorData.address}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, address: e.target.value })}
+                          onChange={(e) =>
+                            setNewVendorData({
+                              ...newVendorData,
+                              address: e.target.value,
+                            })
+                          }
                         />
                       </FormControl>
 
@@ -5683,7 +7667,12 @@ const PurchasesPage: React.FC = () => {
                           placeholder="Additional notes (optional)"
                           rows={2}
                           value={newVendorData.notes}
-                          onChange={(e) => setNewVendorData({ ...newVendorData, notes: e.target.value })}
+                          onChange={(e) =>
+                            setNewVendorData({
+                              ...newVendorData,
+                              notes: e.target.value,
+                            })
+                          }
                         />
                       </FormControl>
                     </VStack>
@@ -5694,15 +7683,15 @@ const PurchasesPage: React.FC = () => {
                         variant="ghost"
                         onClick={() => {
                           setNewVendorData({
-                            name: '',
-                            code: '',
-                            email: '',
-                            phone: '',
-                            mobile: '',
-                            address: '',
-                            pic_name: '',
-                            external_id: '',
-                            notes: ''
+                            name: "",
+                            code: "",
+                            email: "",
+                            phone: "",
+                            mobile: "",
+                            address: "",
+                            pic_name: "",
+                            external_id: "",
+                            notes: "",
                           });
                           onAddVendorClose();
                         }}
@@ -5724,13 +7713,30 @@ const PurchasesPage: React.FC = () => {
               </Modal>
 
               {/* Add Product Modal */}
-              <Modal isOpen={isAddProductOpen} onClose={onAddProductClose} size="lg">
+              <Modal
+                isOpen={isAddProductOpen}
+                onClose={onAddProductClose}
+                size="lg"
+              >
                 <ModalOverlay />
                 <ModalContent bg={modalContentBg}>
-                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  <ModalHeader
+                    bg={modalHeaderBg}
+                    borderBottomWidth={1}
+                    borderColor={borderColor}
+                  >
                     <HStack>
-                      <Box w={1} h={6} bg={statColors.blue} borderRadius="full" />
-                      <Text fontSize="lg" fontWeight="bold" color={statColors.blue}>
+                      <Box
+                        w={1}
+                        h={6}
+                        bg={statColors.blue}
+                        borderRadius="full"
+                      />
+                      <Text
+                        fontSize="lg"
+                        fontWeight="bold"
+                        color={statColors.blue}
+                      >
                         Add New Product
                       </Text>
                     </HStack>
@@ -5744,7 +7750,12 @@ const PurchasesPage: React.FC = () => {
                           size="sm"
                           placeholder="Enter product name"
                           value={newProductData.name}
-                          onChange={(e) => setNewProductData({ ...newProductData, name: e.target.value })}
+                          onChange={(e) =>
+                            setNewProductData({
+                              ...newProductData,
+                              name: e.target.value,
+                            })
+                          }
                         />
                       </FormControl>
 
@@ -5754,7 +7765,12 @@ const PurchasesPage: React.FC = () => {
                           size="sm"
                           placeholder="Enter product code (optional)"
                           value={newProductData.code}
-                          onChange={(e) => setNewProductData({ ...newProductData, code: e.target.value })}
+                          onChange={(e) =>
+                            setNewProductData({
+                              ...newProductData,
+                              code: e.target.value,
+                            })
+                          }
                         />
                       </FormControl>
 
@@ -5764,7 +7780,12 @@ const PurchasesPage: React.FC = () => {
                           size="sm"
                           placeholder="Enter product description"
                           value={newProductData.description}
-                          onChange={(e) => setNewProductData({ ...newProductData, description: e.target.value })}
+                          onChange={(e) =>
+                            setNewProductData({
+                              ...newProductData,
+                              description: e.target.value,
+                            })
+                          }
                         />
                       </FormControl>
 
@@ -5775,15 +7796,29 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="e.g., pcs, kg, box"
                             value={newProductData.unit}
-                            onChange={(e) => setNewProductData({ ...newProductData, unit: e.target.value })}
+                            onChange={(e) =>
+                              setNewProductData({
+                                ...newProductData,
+                                unit: e.target.value,
+                              })
+                            }
                           />
                         </FormControl>
 
                         <FormControl>
-                          <FormLabel fontSize="sm">Purchase Price (IDR)</FormLabel>
+                          <FormLabel fontSize="sm">
+                            Purchase Price (IDR)
+                          </FormLabel>
                           <CurrencyInput
-                            value={parseFloat(newProductData.purchase_price) || 0}
-                            onChange={(value) => setNewProductData({ ...newProductData, purchase_price: value.toString() })}
+                            value={
+                              parseFloat(newProductData.purchase_price) || 0
+                            }
+                            onChange={(value) =>
+                              setNewProductData({
+                                ...newProductData,
+                                purchase_price: value.toString(),
+                              })
+                            }
                             placeholder="Rp 10.000"
                             size="sm"
                             min={0}
@@ -5795,7 +7830,12 @@ const PurchasesPage: React.FC = () => {
                           <FormLabel fontSize="sm">Sale Price (IDR)</FormLabel>
                           <CurrencyInput
                             value={parseFloat(newProductData.sale_price) || 0}
-                            onChange={(value) => setNewProductData({ ...newProductData, sale_price: value.toString() })}
+                            onChange={(value) =>
+                              setNewProductData({
+                                ...newProductData,
+                                sale_price: value.toString(),
+                              })
+                            }
                             placeholder="Rp 15.000"
                             size="sm"
                             min={0}
@@ -5811,12 +7851,12 @@ const PurchasesPage: React.FC = () => {
                         variant="ghost"
                         onClick={() => {
                           setNewProductData({
-                            name: '',
-                            code: '',
-                            description: '',
-                            unit: '',
-                            purchase_price: '0',
-                            sale_price: '0',
+                            name: "",
+                            code: "",
+                            description: "",
+                            unit: "",
+                            purchase_price: "0",
+                            sale_price: "0",
                           });
                           onAddProductClose();
                         }}
@@ -5842,10 +7882,23 @@ const PurchasesPage: React.FC = () => {
               <Modal isOpen={isReceiptOpen} onClose={onReceiptClose} size="xl">
                 <ModalOverlay />
                 <ModalContent bg={modalContentBg}>
-                  <ModalHeader bg={modalHeaderBg} borderBottomWidth={1} borderColor={borderColor}>
+                  <ModalHeader
+                    bg={modalHeaderBg}
+                    borderBottomWidth={1}
+                    borderColor={borderColor}
+                  >
                     <HStack>
-                      <Box w={1} h={6} bg={statColors.green} borderRadius="full" />
-                      <Text fontSize="lg" fontWeight="bold" color={statColors.green}>
+                      <Box
+                        w={1}
+                        h={6}
+                        bg={statColors.green}
+                        borderRadius="full"
+                      />
+                      <Text
+                        fontSize="lg"
+                        fontWeight="bold"
+                        color={statColors.green}
+                      >
                         Create Goods Receipt - {selectedPurchase?.code}
                       </Text>
                     </HStack>
@@ -5859,17 +7912,27 @@ const PurchasesPage: React.FC = () => {
                           <CardBody p={4}>
                             <SimpleGrid columns={3} spacing={4}>
                               <FormControl>
-                                <FormLabel fontSize="sm">Purchase Code</FormLabel>
-                                <Text fontWeight="medium">{selectedPurchase.code}</Text>
+                                <FormLabel fontSize="sm">
+                                  Purchase Code
+                                </FormLabel>
+                                <Text fontWeight="medium">
+                                  {selectedPurchase.code}
+                                </Text>
                               </FormControl>
                               <FormControl>
                                 <FormLabel fontSize="sm">Vendor</FormLabel>
-                                <Text fontWeight="medium">{selectedPurchase.vendor?.name || 'N/A'}</Text>
+                                <Text fontWeight="medium">
+                                  {selectedPurchase.vendor?.name || "N/A"}
+                                </Text>
                               </FormControl>
                               <FormControl>
-                                <FormLabel fontSize="sm">Total Amount</FormLabel>
+                                <FormLabel fontSize="sm">
+                                  Total Amount
+                                </FormLabel>
                                 <Text fontWeight="medium" color="green.500">
-                                  {formatCurrency(selectedPurchase.total_amount)}
+                                  {formatCurrency(
+                                    selectedPurchase.total_amount,
+                                  )}
                                 </Text>
                               </FormControl>
                             </SimpleGrid>
@@ -5884,10 +7947,12 @@ const PurchasesPage: React.FC = () => {
                               type="date"
                               size="sm"
                               value={receiptFormData.received_date}
-                              onChange={(e) => setReceiptFormData({
-                                ...receiptFormData,
-                                received_date: e.target.value
-                              })}
+                              onChange={(e) =>
+                                setReceiptFormData({
+                                  ...receiptFormData,
+                                  received_date: e.target.value,
+                                })
+                              }
                             />
                           </FormControl>
                           <FormControl>
@@ -5896,10 +7961,12 @@ const PurchasesPage: React.FC = () => {
                               size="sm"
                               placeholder="General notes for this receipt"
                               value={receiptFormData.notes}
-                              onChange={(e) => setReceiptFormData({
-                                ...receiptFormData,
-                                notes: e.target.value
-                              })}
+                              onChange={(e) =>
+                                setReceiptFormData({
+                                  ...receiptFormData,
+                                  notes: e.target.value,
+                                })
+                              }
                             />
                           </FormControl>
                         </SimpleGrid>
@@ -5912,105 +7979,141 @@ const PurchasesPage: React.FC = () => {
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
                                   <Th fontSize="xs">Product</Th>
-                                  <Th fontSize="xs" isNumeric>Ordered Qty</Th>
-                                  <Th fontSize="xs" isNumeric>Received Qty</Th>
+                                  <Th fontSize="xs" isNumeric>
+                                    Ordered Qty
+                                  </Th>
+                                  <Th fontSize="xs" isNumeric>
+                                    Received Qty
+                                  </Th>
                                   <Th fontSize="xs">Condition</Th>
                                   <Th fontSize="xs">Serial Number</Th>
                                   <Th fontSize="xs">Notes</Th>
                                 </Tr>
                               </Thead>
                               <Tbody>
-                                {receiptFormData.receipt_items.map((receiptItem, index) => {
-                                  const purchaseItem = selectedPurchase.purchase_items?.find(
-                                    item => item.id === receiptItem.purchase_item_id
-                                  );
-                                  return (
-                                    <Tr key={receiptItem.purchase_item_id}>
-                                      <Td fontSize="sm">
-                                        {purchaseItem?.product?.name || 'Unknown Product'}
-                                      </Td>
-                                      <Td fontSize="sm" isNumeric>
-                                        {purchaseItem?.quantity || 0}
-                                      </Td>
-                                      <Td>
-                                        <FormControl>
-                                          <NumberInput
+                                {receiptFormData.receipt_items.map(
+                                  (receiptItem, index) => {
+                                    const purchaseItem =
+                                      selectedPurchase.purchase_items?.find(
+                                        (item) =>
+                                          item.id ===
+                                          receiptItem.purchase_item_id,
+                                      );
+                                    return (
+                                      <Tr key={receiptItem.purchase_item_id}>
+                                        <Td fontSize="sm">
+                                          {purchaseItem?.product?.name ||
+                                            "Unknown Product"}
+                                        </Td>
+                                        <Td fontSize="sm" isNumeric>
+                                          {purchaseItem?.quantity || 0}
+                                        </Td>
+                                        <Td>
+                                          <FormControl>
+                                            <NumberInput
+                                              size="sm"
+                                              min={0}
+                                              max={
+                                                remainingQtyMap[
+                                                  purchaseItem?.id as number
+                                                ] ??
+                                                (purchaseItem?.quantity || 0)
+                                              }
+                                              value={
+                                                receiptItem.quantity_received
+                                              }
+                                              onChange={(_, value) => {
+                                                const newItems = [
+                                                  ...receiptFormData.receipt_items,
+                                                ];
+                                                newItems[
+                                                  index
+                                                ].quantity_received =
+                                                  value || 0;
+                                                setReceiptFormData({
+                                                  ...receiptFormData,
+                                                  receipt_items: newItems,
+                                                });
+                                              }}
+                                            >
+                                              <NumberInputField />
+                                              <NumberInputStepper>
+                                                <NumberIncrementStepper />
+                                                <NumberDecrementStepper />
+                                              </NumberInputStepper>
+                                            </NumberInput>
+                                          </FormControl>
+                                        </Td>
+                                        <Td>
+                                          <Select
                                             size="sm"
-                                            min={0}
-                                            max={remainingQtyMap[purchaseItem?.id as number] ?? (purchaseItem?.quantity || 0)}
-                                            value={receiptItem.quantity_received}
-                                            onChange={(_, value) => {
-                                              const newItems = [...receiptFormData.receipt_items];
-                                              newItems[index].quantity_received = value || 0;
+                                            value={receiptItem.condition}
+                                            onChange={(e) => {
+                                              const newItems = [
+                                                ...receiptFormData.receipt_items,
+                                              ];
+                                              newItems[index].condition =
+                                                e.target.value;
                                               setReceiptFormData({
                                                 ...receiptFormData,
-                                                receipt_items: newItems
+                                                receipt_items: newItems,
                                               });
                                             }}
                                           >
-                                            <NumberInputField />
-                                            <NumberInputStepper>
-                                              <NumberIncrementStepper />
-                                              <NumberDecrementStepper />
-                                            </NumberInputStepper>
-                                          </NumberInput>
-                                        </FormControl>
-                                      </Td>
-                                      <Td>
-                                        <Select
-                                          size="sm"
-                                          value={receiptItem.condition}
-                                          onChange={(e) => {
-                                            const newItems = [...receiptFormData.receipt_items];
-                                            newItems[index].condition = e.target.value;
-                                            setReceiptFormData({
-                                              ...receiptFormData,
-                                              receipt_items: newItems
-                                            });
-                                          }}
-                                        >
-                                          <option value="GOOD">Good</option>
-                                          <option value="DAMAGED">Damaged</option>
-                                          <option value="DEFECTIVE">Defective</option>
-                                        </Select>
-                                      </Td>
-                                      {/* Serial Number */}
-                                      <Td>
-                                        <Input
-                                          size="sm"
-                                          placeholder="Serial/Chassis number"
-                                          value={receiptItem.serial_number || ''}
-                                          onChange={(e) => {
-                                            const newItems = [...receiptFormData.receipt_items];
-                                            newItems[index].serial_number = e.target.value;
-                                            setReceiptFormData({
-                                              ...receiptFormData,
-                                              receipt_items: newItems
-                                            });
-                                          }}
-                                        />
-                                      </Td>
+                                            <option value="GOOD">Good</option>
+                                            <option value="DAMAGED">
+                                              Damaged
+                                            </option>
+                                            <option value="DEFECTIVE">
+                                              Defective
+                                            </option>
+                                          </Select>
+                                        </Td>
+                                        {/* Serial Number */}
+                                        <Td>
+                                          <Input
+                                            size="sm"
+                                            placeholder="Serial/Chassis number"
+                                            value={
+                                              receiptItem.serial_number || ""
+                                            }
+                                            onChange={(e) => {
+                                              const newItems = [
+                                                ...receiptFormData.receipt_items,
+                                              ];
+                                              newItems[index].serial_number =
+                                                e.target.value;
+                                              setReceiptFormData({
+                                                ...receiptFormData,
+                                                receipt_items: newItems,
+                                              });
+                                            }}
+                                          />
+                                        </Td>
 
-
-                                      {/* Notes */}
-                                      <Td>
-                                        <Input
-                                          size="sm"
-                                          placeholder="Item notes"
-                                          value={receiptItem.notes}
-                                          onChange={(e) => {
-                                            const newItems = [...receiptFormData.receipt_items];
-                                            newItems[index].notes = e.target.value;
-                                            setReceiptFormData({
-                                              ...receiptFormData,
-                                              receipt_items: newItems
-                                            });
-                                          }}
-                                        />
-                                      </Td>
-                                    </Tr>
-                                  );
-                                })}
+                                        {/* Notes */}
+                                        <Td>
+                                          <Input
+                                            size="sm"
+                                            placeholder="Item notes"
+                                            value={receiptItem.notes}
+                                            onChange={(e) => {
+                                              const newItems = [
+                                                ...receiptFormData.receipt_items,
+                                              ];
+                                              newItems[index].notes =
+                                                e.target.value;
+                                              setReceiptFormData({
+                                                ...receiptFormData,
+                                                receipt_items: newItems,
+                                              });
+                                            }}
+                                          />
+                                        </Td>
+                                      </Tr>
+                                    );
+                                  },
+                                )}
                               </Tbody>
                             </Table>
                           </TableContainer>
@@ -6019,11 +8122,19 @@ const PurchasesPage: React.FC = () => {
                         <Alert status="info" variant="left-accent">
                           <AlertIcon />
                           <VStack align="start" spacing={1}>
-                            <AlertTitle fontSize="sm">Receipt Information</AlertTitle>
+                            <AlertTitle fontSize="sm">
+                              Receipt Information
+                            </AlertTitle>
                             <AlertDescription fontSize="xs">
-                              • Creating this receipt will mark the purchase as COMPLETED if all items are fully received.<br />
-                              • Stock quantities were already updated when the purchase was approved.<br />
-                              • Aset tetap (fixed assets) otomatis tercatat saat purchase di-approve. Cek halaman Assets untuk mengatur masa manfaat dan mengaktifkan depresiasi.
+                              • Creating this receipt will mark the purchase as
+                              COMPLETED if all items are fully received.
+                              <br />
+                              • Stock quantities were already updated when the
+                              purchase was approved.
+                              <br />• Aset tetap (fixed assets) otomatis
+                              tercatat saat purchase di-approve. Cek halaman
+                              Assets untuk mengatur masa manfaat dan
+                              mengaktifkan depresiasi.
                             </AlertDescription>
                           </VStack>
                         </Alert>
@@ -6036,9 +8147,11 @@ const PurchasesPage: React.FC = () => {
                         variant="ghost"
                         onClick={() => {
                           setReceiptFormData({
-                            received_date: new Date().toISOString().split('T')[0],
-                            notes: '',
-                            receipt_items: []
+                            received_date: new Date()
+                              .toISOString()
+                              .split("T")[0],
+                            notes: "",
+                            receipt_items: [],
                           });
                           onReceiptClose();
                         }}
@@ -6063,14 +8176,20 @@ const PurchasesPage: React.FC = () => {
               </Modal>
 
               {/* Receipts Modal */}
-              <Modal isOpen={isReceiptsOpen} onClose={onReceiptsClose} size="4xl">
+              <Modal
+                isOpen={isReceiptsOpen}
+                onClose={onReceiptsClose}
+                size="4xl"
+              >
                 <ModalOverlay />
                 <ModalContent>
                   <ModalHeader>
                     <HStack>
                       <Icon as={FiPackage} />
                       <VStack align="start" spacing={0}>
-                        <Text fontWeight="bold">Receipts for {selectedPurchaseForReceipts?.code}</Text>
+                        <Text fontWeight="bold">
+                          Receipts for {selectedPurchaseForReceipts?.code}
+                        </Text>
                         <Text fontSize="sm" color="gray.600">
                           Vendor: {selectedPurchaseForReceipts?.vendor?.name}
                         </Text>
@@ -6089,7 +8208,9 @@ const PurchasesPage: React.FC = () => {
                         {receipts.length === 0 ? (
                           <Alert status="info">
                             <AlertIcon />
-                            <Text>No completed receipts found for this purchase.</Text>
+                            <Text>
+                              No completed receipts found for this purchase.
+                            </Text>
                           </Alert>
                         ) : (
                           <TableContainer>
@@ -6105,17 +8226,29 @@ const PurchasesPage: React.FC = () => {
                                 </Tr>
                               </Thead>
                               <Tbody>
-                                {receipts.map(receipt => (
+                                {receipts.map((receipt) => (
                                   <Tr key={receipt.id}>
-                                    <Td fontWeight="medium">{receipt.receipt_number}</Td>
+                                    <Td fontWeight="medium">
+                                      {receipt.receipt_number}
+                                    </Td>
                                     <Td>{formatDate(receipt.received_date)}</Td>
                                     <Td>{getReceiverName(receipt.receiver)}</Td>
                                     <Td>
-                                      <Badge colorScheme={getStatusColor(receipt.status)}>
+                                      <Badge
+                                        colorScheme={getStatusColor(
+                                          receipt.status,
+                                        )}
+                                      >
                                         {receipt.status}
                                       </Badge>
                                     </Td>
-                                    <Td>{(receipt.receipt_items || []).reduce((sum: number, it: any) => sum + (it.quantity_received || 0), 0)}</Td>
+                                    <Td>
+                                      {(receipt.receipt_items || []).reduce(
+                                        (sum: number, it: any) =>
+                                          sum + (it.quantity_received || 0),
+                                        0,
+                                      )}
+                                    </Td>
                                     <Td>
                                       <IconButton
                                         aria-label="Download Receipt PDF"
@@ -6123,7 +8256,12 @@ const PurchasesPage: React.FC = () => {
                                         size="sm"
                                         colorScheme="blue"
                                         variant="ghost"
-                                        onClick={() => handleDownloadReceiptPDF(receipt.id, receipt.receipt_number)}
+                                        onClick={() =>
+                                          handleDownloadReceiptPDF(
+                                            receipt.id,
+                                            receipt.receipt_number,
+                                          )
+                                        }
                                         title="Download this receipt as PDF"
                                       />
                                     </Td>
@@ -6142,7 +8280,12 @@ const PurchasesPage: React.FC = () => {
                         <Button
                           leftIcon={<FiDownload />}
                           colorScheme="green"
-                          onClick={() => selectedPurchaseForReceipts && handleDownloadAllReceiptsPDF(selectedPurchaseForReceipts)}
+                          onClick={() =>
+                            selectedPurchaseForReceipts &&
+                            handleDownloadAllReceiptsPDF(
+                              selectedPurchaseForReceipts,
+                            )
+                          }
                           flex={1}
                         >
                           Download Receipts
@@ -6177,82 +8320,170 @@ const PurchasesPage: React.FC = () => {
               />
 
               {/* Finance Tax & Payment Configuration Modal (Read-Only Items) */}
-              <Modal isOpen={isFinanceTaxOpen} onClose={onFinanceTaxClose} size="4xl" scrollBehavior="inside">
+              <Modal
+                isOpen={isFinanceTaxOpen}
+                onClose={onFinanceTaxClose}
+                size="4xl"
+                scrollBehavior="inside"
+              >
                 <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
                 <ModalContent bg={modalBg} borderRadius="xl" maxH="90vh">
-                  <ModalHeader borderBottom="1px solid" borderColor={borderColor} pb={4}>
+                  <ModalHeader
+                    borderBottom="1px solid"
+                    borderColor={borderColor}
+                    pb={4}
+                  >
                     <VStack align="start" spacing={1}>
                       <Heading size="md" color={headingColor}>
                         Konfigurasi Pajak &amp; Pembayaran
                       </Heading>
                       <Text fontSize="sm" color={textSecondary}>
-                        {financeTaxPurchase?.code} — {financeTaxPurchase?.vendor?.name || 'N/A'}
+                        {financeTaxPurchase?.code} —{" "}
+                        {financeTaxPurchase?.vendor?.name || "N/A"}
                       </Text>
                     </VStack>
                   </ModalHeader>
                   <ModalCloseButton />
                   <ModalBody py={6}>
                     <VStack spacing={6} align="stretch">
-
                       {/* Read-Only Purchase Summary */}
-                      <Box borderWidth="1px" borderColor={borderColor} borderRadius="lg" p={4} bg={modalHeaderBg}>
-                        <Text fontWeight="bold" mb={3} color={headingColor} fontSize="sm">
+                      <Box
+                        borderWidth="1px"
+                        borderColor={borderColor}
+                        borderRadius="lg"
+                        p={4}
+                        bg={modalHeaderBg}
+                      >
+                        <Text
+                          fontWeight="bold"
+                          mb={3}
+                          color={headingColor}
+                          fontSize="sm"
+                        >
                           Ringkasan Purchase (Read-Only)
                         </Text>
-                        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3} mb={4}>
+                        <SimpleGrid
+                          columns={{ base: 1, md: 3 }}
+                          spacing={3}
+                          mb={4}
+                        >
                           <Box>
-                            <Text fontSize="xs" color={textSecondary}>Tanggal</Text>
-                            <Text fontSize="sm" fontWeight="medium">{financeTaxPurchase?.date ? formatDate(financeTaxPurchase.date) : '-'}</Text>
+                            <Text fontSize="xs" color={textSecondary}>
+                              Tanggal
+                            </Text>
+                            <Text fontSize="sm" fontWeight="medium">
+                              {financeTaxPurchase?.date
+                                ? formatDate(financeTaxPurchase.date)
+                                : "-"}
+                            </Text>
                           </Box>
                           <Box>
-                            <Text fontSize="xs" color={textSecondary}>Subtotal (Sebelum Diskon)</Text>
-                            <Text fontSize="sm" fontWeight="bold" color="blue.600">{formatCurrency(financeTaxPurchase?.subtotal_before_discount || 0)}</Text>
+                            <Text fontSize="xs" color={textSecondary}>
+                              Subtotal (Sebelum Diskon)
+                            </Text>
+                            <Text
+                              fontSize="sm"
+                              fontWeight="bold"
+                              color="blue.600"
+                            >
+                              {formatCurrency(
+                                financeTaxPurchase?.subtotal_before_discount ||
+                                  0,
+                              )}
+                            </Text>
                           </Box>
                           <Box>
-                            <Text fontSize="xs" color={textSecondary}>Diskon</Text>
-                            <Text fontSize="sm" fontWeight="medium">{financeTaxPurchase?.discount || 0}%</Text>
+                            <Text fontSize="xs" color={textSecondary}>
+                              Diskon
+                            </Text>
+                            <Text fontSize="sm" fontWeight="medium">
+                              {financeTaxPurchase?.discount || 0}%
+                            </Text>
                           </Box>
                         </SimpleGrid>
 
                         {/* Items Table (Read-Only) */}
-                        <Text fontSize="xs" color={textSecondary} mb={2} fontWeight="semibold">Item Pembelian</Text>
+                        <Text
+                          fontSize="xs"
+                          color={textSecondary}
+                          mb={2}
+                          fontWeight="semibold"
+                        >
+                          Item Pembelian
+                        </Text>
                         <TableContainer>
                           <Table size="sm" variant="simple">
                             <Thead bg={tableHeaderBg}>
                               <Tr>
                                 <Th fontSize="xs">Produk</Th>
-                                <Th fontSize="xs" isNumeric>Qty</Th>
-                                <Th fontSize="xs" isNumeric>Harga Satuan</Th>
-                                <Th fontSize="xs" isNumeric>Total</Th>
+                                <Th fontSize="xs" isNumeric>
+                                  Qty
+                                </Th>
+                                <Th fontSize="xs" isNumeric>
+                                  Harga Satuan
+                                </Th>
+                                <Th fontSize="xs" isNumeric>
+                                  Total
+                                </Th>
                               </Tr>
                             </Thead>
                             <Tbody>
-                              {financeTaxPurchase?.purchase_items?.map((item: any, idx) => (
-                                <Tr key={idx}>
-                                  <Td fontSize="sm">
-                                    {getPurchaseItemDisplayName(item)}
-                                  </Td>
-                                  <Td fontSize="sm" isNumeric>{item.quantity}</Td>
-                                  <Td fontSize="sm" isNumeric>{formatCurrency(item.unit_price)}</Td>
-                                  <Td fontSize="sm" isNumeric fontWeight="medium">{formatCurrency(item.total_price)}</Td>
-                                </Tr>
-                              ))}
+                              {financeTaxPurchase?.purchase_items?.map(
+                                (item: any, idx) => (
+                                  <Tr key={idx}>
+                                    <Td fontSize="sm">
+                                      {getPurchaseItemDisplayName(item)}
+                                    </Td>
+                                    <Td fontSize="sm" isNumeric>
+                                      {item.quantity}
+                                    </Td>
+                                    <Td fontSize="sm" isNumeric>
+                                      {formatCurrency(item.unit_price)}
+                                    </Td>
+                                    <Td
+                                      fontSize="sm"
+                                      isNumeric
+                                      fontWeight="medium"
+                                    >
+                                      {formatCurrency(item.total_price)}
+                                    </Td>
+                                  </Tr>
+                                ),
+                              )}
                             </Tbody>
                           </Table>
                         </TableContainer>
                         <Flex justify="flex-end" mt={3}>
                           <Box textAlign="right">
-                            <Text fontSize="xs" color={textSecondary}>Net Sebelum Pajak</Text>
-                            <Text fontSize="md" fontWeight="bold" color={headingColor}>
-                              {formatCurrency(financeTaxPurchase?.net_before_tax || 0)}
+                            <Text fontSize="xs" color={textSecondary}>
+                              Net Sebelum Pajak
+                            </Text>
+                            <Text
+                              fontSize="md"
+                              fontWeight="bold"
+                              color={headingColor}
+                            >
+                              {formatCurrency(
+                                financeTaxPurchase?.net_before_tax || 0,
+                              )}
                             </Text>
                           </Box>
                         </Flex>
                       </Box>
 
                       {/* Editable: Tax Configuration */}
-                      <Box borderWidth="1px" borderColor={borderColor} borderRadius="lg" p={4}>
-                        <Text fontWeight="bold" mb={3} color={headingColor} fontSize="sm">
+                      <Box
+                        borderWidth="1px"
+                        borderColor={borderColor}
+                        borderRadius="lg"
+                        p={4}
+                      >
+                        <Text
+                          fontWeight="bold"
+                          mb={3}
+                          color={headingColor}
+                          fontSize="sm"
+                        >
                           Konfigurasi Pajak
                         </Text>
                         <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
@@ -6262,21 +8493,41 @@ const PurchasesPage: React.FC = () => {
                               type="number"
                               step="0.01"
                               value={financeTaxForm.ppn_rate}
-                              onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, ppn_rate: e.target.value }))}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  ppn_rate: e.target.value,
+                                }))
+                              }
                               _hover={{ borderColor: inputHoverBorder }}
-                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
                             />
-                            <FormHelperText fontSize="xs">Contoh: 11 untuk PPN 11%</FormHelperText>
+                            <FormHelperText fontSize="xs">
+                              Contoh: 11 untuk PPN 11%
+                            </FormHelperText>
                           </FormControl>
                           <FormControl>
-                            <FormLabel fontSize="sm">Pajak Tambahan Lainnya (Rp)</FormLabel>
+                            <FormLabel fontSize="sm">
+                              Pajak Tambahan Lainnya (Rp)
+                            </FormLabel>
                             <Input
                               type="number"
                               step="0.01"
                               value={financeTaxForm.other_tax_additions}
-                              onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, other_tax_additions: e.target.value }))}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  other_tax_additions: e.target.value,
+                                }))
+                              }
                               _hover={{ borderColor: inputHoverBorder }}
-                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
                             />
                           </FormControl>
                           <FormControl>
@@ -6285,9 +8536,17 @@ const PurchasesPage: React.FC = () => {
                               type="number"
                               step="0.01"
                               value={financeTaxForm.pph21_rate}
-                              onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, pph21_rate: e.target.value }))}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  pph21_rate: e.target.value,
+                                }))
+                              }
                               _hover={{ borderColor: inputHoverBorder }}
-                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
                             />
                           </FormControl>
                           <FormControl>
@@ -6296,92 +8555,211 @@ const PurchasesPage: React.FC = () => {
                               type="number"
                               step="0.01"
                               value={financeTaxForm.pph23_rate}
-                              onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, pph23_rate: e.target.value }))}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  pph23_rate: e.target.value,
+                                }))
+                              }
                               _hover={{ borderColor: inputHoverBorder }}
-                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
                             />
                           </FormControl>
                           <FormControl>
-                            <FormLabel fontSize="sm">Potongan Pajak Lainnya (Rp)</FormLabel>
+                            <FormLabel fontSize="sm">
+                              Potongan Pajak Lainnya (Rp)
+                            </FormLabel>
                             <Input
                               type="number"
                               step="0.01"
                               value={financeTaxForm.other_tax_deductions}
-                              onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, other_tax_deductions: e.target.value }))}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  other_tax_deductions: e.target.value,
+                                }))
+                              }
                               _hover={{ borderColor: inputHoverBorder }}
-                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
                             />
                           </FormControl>
                         </SimpleGrid>
                       </Box>
 
                       {/* Editable: Payment Configuration */}
-                      <Box borderWidth="1px" borderColor={borderColor} borderRadius="lg" p={4}>
-                        <Text fontWeight="bold" mb={3} color={headingColor} fontSize="sm">
+                      <Box
+                        borderWidth="1px"
+                        borderColor={borderColor}
+                        borderRadius="lg"
+                        p={4}
+                      >
+                        <Text
+                          fontWeight="bold"
+                          mb={3}
+                          color={headingColor}
+                          fontSize="sm"
+                        >
                           Metode Pembayaran
                         </Text>
                         <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                           <FormControl>
-                            <FormLabel fontSize="sm">Metode Pembayaran</FormLabel>
+                            <FormLabel fontSize="sm">
+                              Metode Pembayaran
+                            </FormLabel>
                             <Select
                               value={financeTaxForm.payment_method}
-                              onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, payment_method: e.target.value, bank_account_id: '', credit_account_id: '' }))}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  payment_method: e.target.value,
+                                  bank_account_id: "",
+                                  credit_account_id: "",
+                                }))
+                              }
                               _hover={{ borderColor: inputHoverBorder }}
-                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
                             >
-                              <option value="CREDIT">Kredit (Bayar Nanti)</option>
+                              <option value="CREDIT">
+                                Kredit (Bayar Nanti)
+                              </option>
                               <option value="CASH">Tunai</option>
-                              <option value="BANK_TRANSFER">Transfer Bank</option>
+                              <option value="BANK_TRANSFER">
+                                Transfer Bank
+                              </option>
                               <option value="CHECK">Cek/Giro</option>
                             </Select>
                           </FormControl>
 
-                          {(financeTaxForm.payment_method === 'CASH' || financeTaxForm.payment_method === 'BANK_TRANSFER' || financeTaxForm.payment_method === 'CHECK') && (
+                          {(financeTaxForm.payment_method === "CASH" ||
+                            financeTaxForm.payment_method === "BANK_TRANSFER" ||
+                            financeTaxForm.payment_method === "CHECK") && (
                             <FormControl isInvalid={isBalanceInsufficient()}>
-                              <FormLabel fontSize="sm">Akun Bank / Kas</FormLabel>
+                              <FormLabel fontSize="sm">
+                                Akun Bank / Kas
+                              </FormLabel>
                               <Select
                                 placeholder="Pilih Akun Bank/Kas"
                                 value={financeTaxForm.bank_account_id}
-                                onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, bank_account_id: e.target.value }))}
+                                onChange={(e) =>
+                                  setFinanceTaxForm((prev) => ({
+                                    ...prev,
+                                    bank_account_id: e.target.value,
+                                  }))
+                                }
                                 _hover={{ borderColor: inputHoverBorder }}
-                                _focus={{ borderColor: isBalanceInsufficient() ? 'red.500' : inputFocusBorder, boxShadow: isBalanceInsufficient() ? '0 0 0 1px red' : inputFocusShadow }}
-                                borderColor={isBalanceInsufficient() ? 'red.500' : undefined}
+                                _focus={{
+                                  borderColor: isBalanceInsufficient()
+                                    ? "red.500"
+                                    : inputFocusBorder,
+                                  boxShadow: isBalanceInsufficient()
+                                    ? "0 0 0 1px red"
+                                    : inputFocusShadow,
+                                }}
+                                borderColor={
+                                  isBalanceInsufficient()
+                                    ? "red.500"
+                                    : undefined
+                                }
                               >
-                                {getEligibleBankAccounts().map(account => {
+                                {getEligibleBankAccounts().map((account) => {
                                   const nativeBalance = account.balance ?? 0;
-                                  const bookBalance = getAccountBookBalance(account);
-                                  const totalPayment = calculateFinanceTaxTotal();
-                                  const isSufficient = bookBalance >= totalPayment;
+                                  const bookBalance =
+                                    getAccountBookBalance(account);
+                                  const totalPayment =
+                                    calculateFinanceTaxTotal();
+                                  const isSufficient =
+                                    bookBalance >= totalPayment;
                                   return (
-                                    <option key={account.id} value={account.id.toString()}>
-                                      {account.name} ({account.code}) - {account.currency} | Saldo: {formatAccountBalance(nativeBalance, account.currency)}{account.currency?.toUpperCase() !== 'IDR' ? ` | Nilai buku: ${formatCurrency(bookBalance)}` : ''}{!isSufficient ? ' [KURANG]' : ''}
+                                    <option
+                                      key={account.id}
+                                      value={account.id.toString()}
+                                    >
+                                      {account.name} ({account.code}) -{" "}
+                                      {account.currency} | Saldo:{" "}
+                                      {formatAccountBalance(
+                                        nativeBalance,
+                                        account.currency,
+                                      )}
+                                      {account.currency?.toUpperCase() !== "IDR"
+                                        ? ` | Nilai buku: ${formatCurrency(bookBalance)}`
+                                        : ""}
+                                      {!isSufficient ? " [KURANG]" : ""}
                                     </option>
                                   );
                                 })}
                               </Select>
 
                               {/* Show selected account balance info */}
-                              {financeTaxForm.bank_account_id && getSelectedBankAccount() && !isBalanceInsufficient() && (
-                                <Text fontSize="xs" color="green.600" mt={1} fontWeight="medium">
-                                  Saldo tersedia: {formatAccountBalance(getSelectedBankAccount()?.balance ?? 0, getSelectedBankAccount()?.currency)} (mencukupi)
-                                </Text>
-                              )}
+                              {financeTaxForm.bank_account_id &&
+                                getSelectedBankAccount() &&
+                                !isBalanceInsufficient() && (
+                                  <Text
+                                    fontSize="xs"
+                                    color="green.600"
+                                    mt={1}
+                                    fontWeight="medium"
+                                  >
+                                    Saldo tersedia:{" "}
+                                    {formatAccountBalance(
+                                      getSelectedBankAccount()?.balance ?? 0,
+                                      getSelectedBankAccount()?.currency,
+                                    )}{" "}
+                                    (mencukupi)
+                                  </Text>
+                                )}
                             </FormControl>
                           )}
 
                           {/* Insufficient Balance Warning */}
                           {isBalanceInsufficient() && (
-                            <Box gridColumn={{ md: 'span 2' }}>
-                              <Alert status="error" borderRadius="lg" variant="left-accent">
+                            <Box gridColumn={{ md: "span 2" }}>
+                              <Alert
+                                status="error"
+                                borderRadius="lg"
+                                variant="left-accent"
+                              >
                                 <AlertIcon />
                                 <Box flex="1">
-                                  <AlertTitle fontSize="sm">Saldo Tidak Mencukupi</AlertTitle>
+                                  <AlertTitle fontSize="sm">
+                                    Saldo Tidak Mencukupi
+                                  </AlertTitle>
                                   <AlertDescription fontSize="xs">
                                     <Text>
-                                      Saldo <strong>{getSelectedBankAccount()?.name}</strong> ({formatBankAccountSummary(getSelectedBankAccount())}) tidak mencukupi untuk pembayaran sebesar <strong>{formatCurrency(calculateFinanceTaxTotal())}</strong>.
+                                      Saldo{" "}
+                                      <strong>
+                                        {getSelectedBankAccount()?.name}
+                                      </strong>{" "}
+                                      (
+                                      {formatBankAccountSummary(
+                                        getSelectedBankAccount(),
+                                      )}
+                                      ) tidak mencukupi untuk pembayaran sebesar{" "}
+                                      <strong>
+                                        {formatCurrency(
+                                          calculateFinanceTaxTotal(),
+                                        )}
+                                      </strong>
+                                      .
                                     </Text>
                                     <Text mt={1}>
-                                      Kekurangan: <strong>{formatCurrency(calculateFinanceTaxTotal() - getAccountBookBalance(getSelectedBankAccount()))}</strong>
+                                      Kekurangan:{" "}
+                                      <strong>
+                                        {formatCurrency(
+                                          calculateFinanceTaxTotal() -
+                                            getAccountBookBalance(
+                                              getSelectedBankAccount(),
+                                            ),
+                                        )}
+                                      </strong>
                                     </Text>
                                   </AlertDescription>
                                 </Box>
@@ -6389,12 +8767,24 @@ const PurchasesPage: React.FC = () => {
 
                               {/* Recommended accounts */}
                               {getSufficientAccounts().length > 0 ? (
-                                <Box mt={3} p={3} bg="green.50" borderRadius="md" borderWidth="1px" borderColor="green.200">
-                                  <Text fontSize="xs" fontWeight="bold" color="green.700" mb={2}>
+                                <Box
+                                  mt={3}
+                                  p={3}
+                                  bg="green.50"
+                                  borderRadius="md"
+                                  borderWidth="1px"
+                                  borderColor="green.200"
+                                >
+                                  <Text
+                                    fontSize="xs"
+                                    fontWeight="bold"
+                                    color="green.700"
+                                    mb={2}
+                                  >
                                     Rekomendasi akun dengan saldo mencukupi:
                                   </Text>
                                   <VStack align="stretch" spacing={1}>
-                                    {getSufficientAccounts().map(account => (
+                                    {getSufficientAccounts().map((account) => (
                                       <Flex
                                         key={account.id}
                                         justify="space-between"
@@ -6405,14 +8795,34 @@ const PurchasesPage: React.FC = () => {
                                         borderWidth="1px"
                                         borderColor="green.100"
                                         cursor="pointer"
-                                        _hover={{ bg: 'green.50', borderColor: 'green.300' }}
-                                        onClick={() => setFinanceTaxForm(prev => ({ ...prev, bank_account_id: account.id.toString() }))}
+                                        _hover={{
+                                          bg: "green.50",
+                                          borderColor: "green.300",
+                                        }}
+                                        onClick={() =>
+                                          setFinanceTaxForm((prev) => ({
+                                            ...prev,
+                                            bank_account_id:
+                                              account.id.toString(),
+                                          }))
+                                        }
                                       >
                                         <Box>
-                                          <Text fontSize="xs" fontWeight="medium">{account.name} ({account.code})</Text>
-                                          <Text fontSize="xs" color="gray.500">{account.currency}</Text>
+                                          <Text
+                                            fontSize="xs"
+                                            fontWeight="medium"
+                                          >
+                                            {account.name} ({account.code})
+                                          </Text>
+                                          <Text fontSize="xs" color="gray.500">
+                                            {account.currency}
+                                          </Text>
                                         </Box>
-                                        <Text fontSize="xs" fontWeight="bold" color="green.600">
+                                        <Text
+                                          fontSize="xs"
+                                          fontWeight="bold"
+                                          color="green.600"
+                                        >
                                           {formatBankAccountSummary(account)}
                                         </Text>
                                       </Flex>
@@ -6420,28 +8830,52 @@ const PurchasesPage: React.FC = () => {
                                   </VStack>
                                 </Box>
                               ) : (
-                                <Alert status="warning" borderRadius="lg" mt={3} variant="left-accent">
+                                <Alert
+                                  status="warning"
+                                  borderRadius="lg"
+                                  mt={3}
+                                  variant="left-accent"
+                                >
                                   <AlertIcon />
                                   <AlertDescription fontSize="xs">
-                                    Tidak ada akun Bank/Kas yang memiliki saldo mencukupi ({formatCurrency(calculateFinanceTaxTotal())}). Pertimbangkan menggunakan metode <strong>Kredit (Bayar Nanti)</strong> atau tambahkan dana ke salah satu akun terlebih dahulu.
+                                    Tidak ada akun Bank/Kas yang memiliki saldo
+                                    mencukupi (
+                                    {formatCurrency(calculateFinanceTaxTotal())}
+                                    ). Pertimbangkan menggunakan metode{" "}
+                                    <strong>Kredit (Bayar Nanti)</strong> atau
+                                    tambahkan dana ke salah satu akun terlebih
+                                    dahulu.
                                   </AlertDescription>
                                 </Alert>
                               )}
                             </Box>
                           )}
 
-                          {financeTaxForm.payment_method === 'CREDIT' && (
+                          {financeTaxForm.payment_method === "CREDIT" && (
                             <FormControl>
-                              <FormLabel fontSize="sm">Akun Hutang (Liability)</FormLabel>
+                              <FormLabel fontSize="sm">
+                                Akun Hutang (Liability)
+                              </FormLabel>
                               <Select
                                 placeholder="Pilih Akun Hutang"
                                 value={financeTaxForm.credit_account_id}
-                                onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, credit_account_id: e.target.value }))}
+                                onChange={(e) =>
+                                  setFinanceTaxForm((prev) => ({
+                                    ...prev,
+                                    credit_account_id: e.target.value,
+                                  }))
+                                }
                                 _hover={{ borderColor: inputHoverBorder }}
-                                _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                                _focus={{
+                                  borderColor: inputFocusBorder,
+                                  boxShadow: inputFocusShadow,
+                                }}
                               >
-                                {creditAccounts.map(account => (
-                                  <option key={account.id} value={account.id.toString()}>
+                                {creditAccounts.map((account) => (
+                                  <option
+                                    key={account.id}
+                                    value={account.id.toString()}
+                                  >
                                     {account.name} ({account.code})
                                   </option>
                                 ))}
@@ -6450,21 +8884,34 @@ const PurchasesPage: React.FC = () => {
                           )}
 
                           <FormControl>
-                            <FormLabel fontSize="sm">Referensi Pembayaran</FormLabel>
+                            <FormLabel fontSize="sm">
+                              Referensi Pembayaran
+                            </FormLabel>
                             <Input
                               placeholder="No. Transfer / No. Cek"
                               value={financeTaxForm.payment_reference}
-                              onChange={(e) => setFinanceTaxForm(prev => ({ ...prev, payment_reference: e.target.value }))}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  payment_reference: e.target.value,
+                                }))
+                              }
                               _hover={{ borderColor: inputHoverBorder }}
-                              _focus={{ borderColor: inputFocusBorder, boxShadow: inputFocusShadow }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
                             />
                           </FormControl>
                         </SimpleGrid>
                       </Box>
-
                     </VStack>
                   </ModalBody>
-                  <ModalFooter borderTop="1px solid" borderColor={borderColor} pt={4}>
+                  <ModalFooter
+                    borderTop="1px solid"
+                    borderColor={borderColor}
+                    pt={4}
+                  >
                     <HStack spacing={3} w="full" justify="flex-end">
                       <Button
                         variant="ghost"
@@ -6474,21 +8921,26 @@ const PurchasesPage: React.FC = () => {
                         Batal
                       </Button>
                       <Button
-                        colorScheme={isBalanceInsufficient() ? 'red' : 'teal'}
+                        colorScheme={isBalanceInsufficient() ? "red" : "teal"}
                         onClick={() => handleSaveFinanceTax()}
                         isLoading={savingFinanceTax}
                         isDisabled={isBalanceInsufficient()}
                         loadingText="Menyimpan..."
                         leftIcon={<FiCheckCircle />}
-                        title={isBalanceInsufficient() ? 'Saldo akun bank/kas tidak mencukupi. Pilih akun lain atau gunakan metode Kredit.' : ''}
+                        title={
+                          isBalanceInsufficient()
+                            ? "Saldo akun bank/kas tidak mencukupi. Pilih akun lain atau gunakan metode Kredit."
+                            : ""
+                        }
                       >
-                        {isBalanceInsufficient() ? 'Saldo Tidak Mencukupi' : 'Simpan Konfigurasi'}
+                        {isBalanceInsufficient()
+                          ? "Saldo Tidak Mencukupi"
+                          : "Simpan Konfigurasi"}
                       </Button>
                     </HStack>
                   </ModalFooter>
                 </ModalContent>
               </Modal>
-
             </VStack>
           </Box>
         </SimpleLayout>

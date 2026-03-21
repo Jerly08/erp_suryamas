@@ -251,6 +251,11 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			PPHRate:             req.PPHRate,
 			PPHAmount:           req.PPHAmount,
 		}
+		snapshot, snapshotErr := loadCashBankSnapshot(tx, req.CashBankID)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		applyCashBankSnapshotToPayment(payment, snapshot)
 
 		// Generate payment code using vendor-style prefix (PAY-YYYY/MM-XXXX)
 		code, err := eps.generatePaymentCode(tx, req.Method, "VENDOR")
@@ -428,6 +433,11 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			PPHRate:             req.PPHRate,
 			PPHAmount:           req.PPHAmount,
 		}
+		snapshot, snapshotErr := loadCashBankSnapshot(tx, req.CashBankID)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		applyCashBankSnapshotToPayment(payment, snapshot)
 
 		code, err := eps.generatePaymentCode(tx, req.Method, "VENDOR")
 		if err != nil {
@@ -702,6 +712,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		return nil, fmt.Errorf("cannot find cash bank info in draft payment %s; please update and re-submit", payment.Code)
 	}
 
+	pendingDraftAllocations := models.HasPendingDraftAllocationsReference(payment.Reference)
 	var journalResult *PaymentJournalResult
 	response := &PaymentWithJournalResponse{
 		Success: false,
@@ -820,6 +831,10 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 
 		journalEntryID := uint(journalEntry.ID)
 		payment.JournalEntryID = &journalEntryID
+		allocations, err := eps.applyStoredDraftAllocations(tx, &payment, payment.Contact.Type, pendingDraftAllocations)
+		if err != nil {
+			return fmt.Errorf("failed to apply draft allocations: %w", err)
+		}
 		payment.Status = models.PaymentStatusCompleted
 
 		if err := tx.Save(&payment).Error; err != nil {
@@ -841,6 +856,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		response.JournalResult = journalResult
 		response.Contact = &payment.Contact
 		response.CashBank = cashBank
+		response.Allocations = allocations
 		response.Success = true
 		response.Message = fmt.Sprintf("Payment %s approved successfully", payment.Code)
 
@@ -856,23 +872,29 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 }
 
 // UpdateDraftPayment allows modifying fields of a payment that is in DRAFT status without creating journals
-func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint, req func(*models.Payment) error) (*models.Payment, error) {
+func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint, req func(tx *gorm.DB, p *models.Payment) error) (*models.Payment, error) {
 	var payment models.Payment
-	if err := eps.db.First(&payment, paymentID).Error; err != nil {
-		return nil, fmt.Errorf("payment not found: %w", err)
-	}
+	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&payment, paymentID).Error; err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
 
-	if payment.Status != models.PaymentStatusDraft {
-		return nil, fmt.Errorf("only payments in DRAFT status can be updated (current status: %s)", payment.Status)
-	}
+		if payment.Status != models.PaymentStatusDraft {
+			return fmt.Errorf("only payments in DRAFT status can be updated (current status: %s)", payment.Status)
+		}
 
-	// Apply updates from request
-	if err := req(&payment); err != nil {
-		return nil, fmt.Errorf("failed to apply updates: %w", err)
-	}
+		if err := req(tx, &payment); err != nil {
+			return fmt.Errorf("failed to apply updates: %w", err)
+		}
 
-	if err := eps.db.Save(&payment).Error; err != nil {
-		return nil, fmt.Errorf("failed to save updated draft payment: %w", err)
+		if err := tx.Save(&payment).Error; err != nil {
+			return fmt.Errorf("failed to save updated draft payment: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &payment, nil
@@ -1014,6 +1036,17 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 			Notes:               req.Notes,
 			Status:              status,
 		}
+		snapshot, snapshotErr := loadCashBankSnapshot(tx, cashBankID)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+		applyCashBankSnapshotToPayment(payment, snapshot)
+		hasRequestedAllocations := len(req.InvoiceAllocations) > 0 || len(req.BillAllocations) > 0 || req.TargetInvoiceID != nil || req.TargetBillID != nil
+		if req.SaveAsDraft && hasRequestedAllocations {
+			payment.Reference = models.MarkPendingDraftAllocationsReference(payment.Reference)
+		} else {
+			payment.Reference = models.ClearPendingDraftAllocationsReference(payment.Reference)
+		}
 
 		// Generate payment code
 		code, err := eps.generatePaymentCode(tx, req.Method, contact.Type)
@@ -1132,7 +1165,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		}
 
 		// Step 6: Create allocations if specified
-		allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type)
+		allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, !req.SaveAsDraft)
 		if err != nil {
 			return fmt.Errorf("failed to create allocations: %w", err)
 		}
@@ -1345,34 +1378,8 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 
 		var allocations []models.PaymentAllocation
 		if err := tx.Where("payment_id = ?", payment.ID).Find(&allocations).Error; err == nil {
-			for _, allocation := range allocations {
-				if allocation.InvoiceID == nil || *allocation.InvoiceID == 0 {
-					continue
-				}
-
-				var sale models.Sale
-				if err := tx.First(&sale, *allocation.InvoiceID).Error; err != nil {
-					return fmt.Errorf("failed to load sale %d during payment reversal: %w", *allocation.InvoiceID, err)
-				}
-
-				sale.PaidAmount -= allocation.AllocatedAmount
-				if sale.PaidAmount < 0 {
-					sale.PaidAmount = 0
-				}
-				sale.OutstandingAmount += allocation.AllocatedAmount
-				if sale.OutstandingAmount < 0 {
-					sale.OutstandingAmount = 0
-				}
-				if sale.OutstandingAmount > 0 && sale.Status == models.SaleStatusPaid {
-					sale.Status = models.SaleStatusInvoiced
-				}
-
-				if err := tx.Save(&sale).Error; err != nil {
-					return fmt.Errorf("failed to reverse sale outstanding for sale %d: %w", sale.ID, err)
-				}
-				if err := syncSalePaymentScheduleProgress(tx, &sale); err != nil {
-					return fmt.Errorf("failed to sync sale payment schedules during payment reversal: %w", err)
-				}
+			if err := eps.reversePaymentAllocationEffects(tx, allocations); err != nil {
+				return err
 			}
 		}
 
@@ -1386,6 +1393,10 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 		if cbTxErr != nil {
 			log.Printf("⚠️ Warning: Could not find original CashBankTransaction for payment %d: %v", payment.ID, cbTxErr)
 		} else {
+			guard := NewCashBankCurrencyGuard(eps.db)
+			if err := guard.EnforceAfterTransaction(tx, originalCBTx.CashBankID); err != nil {
+				return fmt.Errorf("failed to sync cash/bank state before reversal: %w", err)
+			}
 			var cashBank models.CashBank
 			if err := tx.First(&cashBank, originalCBTx.CashBankID).Error; err != nil {
 				log.Printf("⚠️ Warning: Could not find cash/bank account %d for reversal: %v", originalCBTx.CashBankID, err)
@@ -1393,10 +1404,21 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 				// The original movement amount is stored on the CashBankTransaction.
 				// To reverse, we simply negate it.
 				reverseMovement := -originalCBTx.Amount
+				reverseBookAmountIDR := -originalCBTx.BookAmountIDR
 				refType := "PAYMENT_REVERSAL"
 
 				newBalance := cashBank.Balance + reverseMovement
+				newBookBalanceIDR := cashBank.BookBalanceIDR + reverseBookAmountIDR
+				if !cashBank.IsForeignCurrency() {
+					newBookBalanceIDR = newBalance
+				}
 				cashBank.Balance = newBalance
+				if cashBank.IsForeignCurrency() {
+					cashBank.BookBalanceIDR = newBookBalanceIDR
+					if originalCBTx.ExchangeRate > 0 {
+						cashBank.LastExchangeRate = originalCBTx.ExchangeRate
+					}
+				}
 				if err := tx.Save(&cashBank).Error; err != nil {
 					return fmt.Errorf("failed to reverse cash/bank balance: %w", err)
 				}
@@ -1404,7 +1426,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 				// ✅ CRITICAL: Sync linked COA account balance after reversal
 				if cashBank.AccountID > 0 {
 					if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
-						newBalance, cashBank.AccountID).Error; err != nil {
+						cashBank.EffectiveBookBalanceIDR(), cashBank.AccountID).Error; err != nil {
 						log.Printf("⚠️ Warning: Failed to sync COA balance for GL account %d on reversal: %v", cashBank.AccountID, err)
 					} else {
 						log.Printf("🔄 Synced COA balance for GL account %d to %.2f (reversal)", cashBank.AccountID, newBalance)
@@ -1417,12 +1439,29 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 					ReferenceType:   refType,
 					ReferenceID:     payment.ID,
 					Amount:          reverseMovement,
+					Currency:        originalCBTx.Currency,
+					ExchangeRate:    originalCBTx.ExchangeRate,
+					BookAmountIDR:   reverseBookAmountIDR,
 					BalanceAfter:    newBalance,
 					TransactionDate: reversalDate,
 					Notes:           fmt.Sprintf("%s %s - Reversal: %s", refType, payment.Code, reason),
 				}
 				if err := tx.Create(txRow).Error; err != nil {
 					return fmt.Errorf("failed to create reversal cashbank transaction: %w", err)
+				}
+
+				if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+					return fmt.Errorf("failed to enforce cash/bank invariant after reversal: %w", err)
+				}
+
+				var syncedCashBank models.CashBank
+				if err := tx.First(&syncedCashBank, cashBank.ID).Error; err != nil {
+					return fmt.Errorf("failed to reload cash/bank after reversal: %w", err)
+				}
+				if math.Abs(txRow.BalanceAfter-syncedCashBank.Balance) > 0.01 {
+					if err := tx.Model(txRow).Update("balance_after", syncedCashBank.Balance).Error; err != nil {
+						return fmt.Errorf("failed to align reversal transaction balance_after: %w", err)
+					}
 				}
 
 				log.Printf("✅ Cash/Bank balance reversed for account %d: movement=%.2f, newBalance=%.2f", cashBank.ID, reverseMovement, newBalance)
@@ -1551,6 +1590,12 @@ func (eps *EnhancedPaymentServiceWithJournal) applyCashBankMovement(
 	date time.Time,
 ) error {
 	guard := NewCashBankCurrencyGuard(eps.db)
+	if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+		return fmt.Errorf("failed to sync cash/bank state before movement: %w", err)
+	}
+	if err := tx.First(cashBank, cashBank.ID).Error; err != nil {
+		return fmt.Errorf("reload cash bank before movement: %w", err)
+	}
 	normalizedCurrency := normalizeCashBankCurrency(cashBank.Currency)
 	nativeDelta := amount
 	bookDeltaIDR := amount
@@ -1829,12 +1874,220 @@ func (eps *EnhancedPaymentServiceWithJournal) calculateReceivableSettlementBookA
 	return totalSettlementBookIDR, nil
 }
 
+func (eps *EnhancedPaymentServiceWithJournal) applyStoredDraftAllocations(
+	tx *gorm.DB,
+	payment *models.Payment,
+	contactType string,
+	applyOutstanding bool,
+) ([]models.PaymentAllocation, error) {
+	var allocations []models.PaymentAllocation
+	if err := tx.Where("payment_id = ?", payment.ID).Find(&allocations).Error; err != nil {
+		return nil, fmt.Errorf("failed to load payment allocations: %w", err)
+	}
+
+	if !applyOutstanding {
+		return allocations, nil
+	}
+
+	for i := range allocations {
+		allocation := &allocations[i]
+
+		switch strings.ToUpper(strings.TrimSpace(contactType)) {
+		case "CUSTOMER":
+			if allocation.InvoiceID == nil || *allocation.InvoiceID == 0 {
+				continue
+			}
+
+			var sale models.Sale
+			if err := tx.First(&sale, *allocation.InvoiceID).Error; err != nil {
+				return nil, fmt.Errorf("invoice %d not found: %w", *allocation.InvoiceID, err)
+			}
+			if sale.CustomerID != payment.ContactID {
+				return nil, fmt.Errorf("invoice %d does not belong to this customer", sale.ID)
+			}
+			if err := eps.statusValidator.ValidatePaymentAllocation(sale.Status, sale.ID); err != nil {
+				return nil, err
+			}
+
+			appliedAmount := allocation.AllocatedAmount
+			if appliedAmount > sale.OutstandingAmount {
+				appliedAmount = sale.OutstandingAmount
+			}
+			if appliedAmount < 0 {
+				appliedAmount = 0
+			}
+			if appliedAmount != allocation.AllocatedAmount {
+				allocation.AllocatedAmount = appliedAmount
+				if err := tx.Save(allocation).Error; err != nil {
+					return nil, fmt.Errorf("failed to normalize invoice allocation: %w", err)
+				}
+			}
+			if appliedAmount == 0 {
+				continue
+			}
+			if err := eps.updateSaleOutstanding(tx, sale.ID, appliedAmount); err != nil {
+				return nil, fmt.Errorf("failed to apply invoice allocation: %w", err)
+			}
+
+		case "VENDOR":
+			if allocation.BillID == nil || *allocation.BillID == 0 {
+				continue
+			}
+
+			var purchase models.Purchase
+			if err := tx.First(&purchase, *allocation.BillID).Error; err != nil {
+				return nil, fmt.Errorf("bill %d not found: %w", *allocation.BillID, err)
+			}
+			if purchase.VendorID != payment.ContactID {
+				return nil, fmt.Errorf("bill %d does not belong to this vendor", purchase.ID)
+			}
+
+			appliedAmount := allocation.AllocatedAmount
+			if appliedAmount > purchase.OutstandingAmount {
+				appliedAmount = purchase.OutstandingAmount
+			}
+			if appliedAmount < 0 {
+				appliedAmount = 0
+			}
+			if appliedAmount != allocation.AllocatedAmount {
+				allocation.AllocatedAmount = appliedAmount
+				if err := tx.Save(allocation).Error; err != nil {
+					return nil, fmt.Errorf("failed to normalize bill allocation: %w", err)
+				}
+			}
+			if appliedAmount == 0 {
+				continue
+			}
+			if err := eps.updatePurchaseOutstanding(tx, purchase.ID, appliedAmount); err != nil {
+				return nil, fmt.Errorf("failed to apply bill allocation: %w", err)
+			}
+		}
+	}
+
+	return allocations, nil
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) SyncDraftStandardPaymentAllocations(
+	tx *gorm.DB,
+	payment *models.Payment,
+	req *PaymentWithJournalRequest,
+) error {
+	if tx == nil || payment == nil || req == nil {
+		return fmt.Errorf("draft allocation sync requires transaction, payment, and request")
+	}
+
+	hasAllocationPayload := req.InvoiceAllocations != nil || req.BillAllocations != nil || req.TargetInvoiceID != nil || req.TargetBillID != nil
+	if !hasAllocationPayload {
+		return nil
+	}
+
+	var contact models.Contact
+	if err := tx.Select("id", "type").First(&contact, payment.ContactID).Error; err != nil {
+		return fmt.Errorf("failed to load payment contact: %w", err)
+	}
+
+	var existingAllocations []models.PaymentAllocation
+	if err := tx.Where("payment_id = ?", payment.ID).Find(&existingAllocations).Error; err != nil {
+		return fmt.Errorf("failed to load existing draft allocations: %w", err)
+	}
+
+	if len(existingAllocations) > 0 && !models.HasPendingDraftAllocationsReference(payment.Reference) {
+		if err := eps.reversePaymentAllocationEffects(tx, existingAllocations); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Where("payment_id = ?", payment.ID).Delete(&models.PaymentAllocation{}).Error; err != nil {
+		return fmt.Errorf("failed to replace draft allocations: %w", err)
+	}
+
+	allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, false)
+	if err != nil {
+		return err
+	}
+
+	if len(allocations) > 0 {
+		payment.Reference = models.MarkPendingDraftAllocationsReference(payment.Reference)
+	} else {
+		payment.Reference = models.ClearPendingDraftAllocationsReference(payment.Reference)
+	}
+
+	return nil
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) reversePaymentAllocationEffects(
+	tx *gorm.DB,
+	allocations []models.PaymentAllocation,
+) error {
+	for _, allocation := range allocations {
+		if allocation.InvoiceID != nil && *allocation.InvoiceID > 0 {
+			var sale models.Sale
+			if err := tx.First(&sale, *allocation.InvoiceID).Error; err != nil {
+				return fmt.Errorf("failed to load sale %d during payment reversal: %w", *allocation.InvoiceID, err)
+			}
+
+			sale.PaidAmount -= allocation.AllocatedAmount
+			if sale.PaidAmount < 0 {
+				sale.PaidAmount = 0
+			}
+			sale.OutstandingAmount += allocation.AllocatedAmount
+			if sale.OutstandingAmount < 0 {
+				sale.OutstandingAmount = 0
+			}
+			if sale.OutstandingAmount > 0 && sale.Status == models.SaleStatusPaid {
+				sale.Status = models.SaleStatusInvoiced
+			}
+
+			if err := tx.Save(&sale).Error; err != nil {
+				return fmt.Errorf("failed to reverse sale outstanding for sale %d: %w", sale.ID, err)
+			}
+			if err := syncSalePaymentScheduleProgress(tx, &sale); err != nil {
+				return fmt.Errorf("failed to sync sale payment schedules during payment reversal: %w", err)
+			}
+			continue
+		}
+
+		if allocation.BillID != nil && *allocation.BillID > 0 {
+			var purchase models.Purchase
+			if err := tx.First(&purchase, *allocation.BillID).Error; err != nil {
+				return fmt.Errorf("failed to load purchase %d during payment reversal: %w", *allocation.BillID, err)
+			}
+
+			purchase.PaidAmount -= allocation.AllocatedAmount
+			if purchase.PaidAmount < 0 {
+				purchase.PaidAmount = 0
+			}
+			purchase.OutstandingAmount += allocation.AllocatedAmount
+			if purchase.OutstandingAmount < 0 {
+				purchase.OutstandingAmount = 0
+			}
+
+			switch {
+			case purchase.PaidAmount <= 0.01:
+				purchase.MatchingStatus = models.PurchaseMatchingPending
+			case purchase.OutstandingAmount <= 0.01:
+				purchase.MatchingStatus = models.PurchaseMatchingMatched
+				purchase.OutstandingAmount = 0
+			default:
+				purchase.MatchingStatus = models.PurchaseMatchingPartial
+			}
+
+			if err := tx.Save(&purchase).Error; err != nil {
+				return fmt.Errorf("failed to reverse purchase outstanding for purchase %d: %w", purchase.ID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 // createPaymentAllocations creates payment allocations to invoices/bills
 func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 	tx *gorm.DB,
 	payment *models.Payment,
 	req *PaymentWithJournalRequest,
 	contactType string,
+	applyOutstanding bool,
 ) ([]models.PaymentAllocation, error) {
 	var allocations []models.PaymentAllocation
 
@@ -1893,8 +2146,10 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 				allocations = append(allocations, allocation)
 
 				// Update sale outstanding
-				if err := eps.updateSaleOutstanding(tx, *alloc.InvoiceID, allocatedAmount); err != nil {
-					log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
+				if applyOutstanding {
+					if err := eps.updateSaleOutstanding(tx, *alloc.InvoiceID, allocatedAmount); err != nil {
+						log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
+					}
 				}
 
 				remainingAmount -= allocatedAmount
@@ -1925,8 +2180,10 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 
 			allocations = append(allocations, allocation)
 
-			if err := eps.updateSaleOutstanding(tx, *req.TargetInvoiceID, payment.Amount); err != nil {
-				log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
+			if applyOutstanding {
+				if err := eps.updateSaleOutstanding(tx, *req.TargetInvoiceID, payment.Amount); err != nil {
+					log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
+				}
 			}
 		}
 	} else if contactType == "VENDOR" {
@@ -1982,11 +2239,13 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 				allocations = append(allocations, allocation)
 
 				// 🔥 FIX: Update purchase outstanding
-				if err := eps.updatePurchaseOutstanding(tx, *alloc.BillID, allocatedAmount); err != nil {
-					log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
-					return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
+				if applyOutstanding {
+					if err := eps.updatePurchaseOutstanding(tx, *alloc.BillID, allocatedAmount); err != nil {
+						log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
+						return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
+					}
+					log.Printf("✅ Purchase outstanding updated for bill %d", *alloc.BillID)
 				}
-				log.Printf("✅ Purchase outstanding updated for bill %d", *alloc.BillID)
 
 				remainingAmount -= allocatedAmount
 				log.Printf("✅ Bill allocation %d complete. Remaining: %.2f", i+1, remainingAmount)
@@ -2006,9 +2265,11 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 
 			allocations = append(allocations, allocation)
 
-			if err := eps.updatePurchaseOutstanding(tx, *req.TargetBillID, payment.Amount); err != nil {
-				log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
-				return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
+			if applyOutstanding {
+				if err := eps.updatePurchaseOutstanding(tx, *req.TargetBillID, payment.Amount); err != nil {
+					log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
+					return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
+				}
 			}
 		}
 	}

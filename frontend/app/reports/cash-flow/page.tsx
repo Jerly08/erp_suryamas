@@ -5,10 +5,9 @@ import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/hooks/useTranslation';
 import UnifiedLayout from '@/components/layout/UnifiedLayout';
 import { ssotCashFlowReportService, SSOTCashFlowData } from '@/services/ssotCashFlowReportService';
-import { exportAndDownloadCashFlowPDF } from '@/utils/cashFlowExportClient';
-import { getImageUrl } from '@/utils/imageUrl';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
+import periodClosingService from '@/services/periodClosingService';
 import {
     Box,
     Heading,
@@ -230,11 +229,13 @@ const CashFlowPage: React.FC = () => {
     const loadClosedPeriods = async () => {
         setLoadingClosedPeriods(true);
         try {
-            const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-            if (response.data.success && response.data.data && Array.isArray(response.data.data)) {
-                const periods = buildUniqueClosedPeriods(response.data.data);
-                setClosedPeriods(periods);
-            }
+            const periods = await periodClosingService.getClosedPeriodsForFilter();
+            setClosedPeriods(periods.map((period) => ({
+                value: period.value,
+                label: period.label,
+                date: period.value,
+                start_date: period.period.start_date?.slice(0, 10),
+            })));
         } catch (error) {
             console.error('Failed to load closed periods:', error);
         } finally {
@@ -296,10 +297,10 @@ const CashFlowPage: React.FC = () => {
     };
 
     const handleExport = async (format: 'pdf' | 'csv') => {
-        if (!data) {
+        if (!startDate || !endDate) {
             toast({
                 title: t('reports.messages.error') || 'Error',
-                description: t('reports.messages.noDataToExport') || 'Tidak ada data untuk diekspor. Buat laporan terlebih dahulu.',
+                description: 'Pilih periode laporan terlebih dahulu.',
                 status: 'error',
                 duration: 3000,
                 isClosable: true,
@@ -308,86 +309,21 @@ const CashFlowPage: React.FC = () => {
         }
 
         try {
-            if (format === 'pdf') {
-                await exportAndDownloadCashFlowPDF(data, {
-                    companyName: companyInfo?.name || data.company?.name,
-                    filename: `Arus_Kas_${startDate}_to_${endDate}.pdf`,
-                    logoUrl: companyInfo?.logoPath || undefined,
-                    letterhead: {
-                        companyName: companyInfo?.name || data.company?.name,
-                        companyAddress: companyInfo?.address,
-                        companyPhone: companyInfo?.phone,
-                        companyEmail: companyInfo?.email,
-                        companyWebsite: companyInfo?.website,
-                        taxNumber: companyInfo?.taxNumber,
-                    },
-                });
-            } else {
-                // CSV export — enhanced with BOM, company header, and structured sections
-                const bom = '\uFEFF';
-                const rows: string[][] = [];
-                const op = data.operating_activities;
-                const inv = data.investing_activities;
-                const fin = data.financing_activities;
+            const result = await ssotCashFlowReportService.generateSSOTCashFlow({
+                start_date: startDate,
+                end_date: endDate,
+                format,
+            });
 
-                // Company header
-                rows.push([companyInfo?.name || data.company?.name || 'Perusahaan']);
-                if (companyInfo?.address) rows.push([companyInfo.address]);
-                rows.push([]);
-                rows.push(['LAPORAN ARUS KAS']);
-                rows.push([`Periode: ${startDate} s/d ${endDate}`]);
-                rows.push([`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}`]);
-                rows.push([]);
-
-                // Data table header
-                rows.push(['Kode Akun', 'Nama Akun', 'Jumlah']);
-                rows.push([]);
-
-                // Operating Activities
-                rows.push(['=== AKTIVITAS OPERASI ===', '', '']);
-                rows.push(['', 'Laba Bersih', String(op?.net_income || 0)]);
-                if ((op?.adjustments?.items || []).length > 0) {
-                    rows.push(['', 'Penyesuaian Non-Kas:', '']);
-                    (op?.adjustments?.items || []).forEach((i) => rows.push([i.account_code || '', `  ${i.account_name}`, String(i.amount)]));
-                    rows.push(['', 'Total Penyesuaian', String(op?.adjustments?.total_adjustments || 0)]);
-                }
-                if ((op?.working_capital_changes?.items || []).length > 0) {
-                    rows.push(['', 'Perubahan Modal Kerja:', '']);
-                    (op?.working_capital_changes?.items || []).forEach((i) => rows.push([i.account_code || '', `  ${i.account_name}`, String(i.amount)]));
-                    rows.push(['', 'Total Perubahan Modal Kerja', String(op?.working_capital_changes?.total_working_capital_changes || 0)]);
-                }
-                rows.push(['', 'Total Arus Kas Operasi', String(op?.total_operating_cash_flow || 0)]);
-                rows.push([]);
-
-                // Investing Activities
-                rows.push(['=== AKTIVITAS INVESTASI ===', '', '']);
-                (inv?.items || []).forEach((i) => rows.push([i.account_code || '', `  ${i.account_name}`, String(i.amount)]));
-                rows.push(['', 'Total Arus Kas Investasi', String(inv?.total_investing_cash_flow || 0)]);
-                rows.push([]);
-
-                // Financing Activities
-                rows.push(['=== AKTIVITAS PENDANAAN ===', '', '']);
-                (fin?.items || []).forEach((i) => rows.push([i.account_code || '', `  ${i.account_name}`, String(i.amount)]));
-                rows.push(['', 'Total Arus Kas Pendanaan', String(fin?.total_financing_cash_flow || 0)]);
-                rows.push([]);
-
-                // Summary
-                rows.push(['RINGKASAN', '', '']);
-                rows.push(['', 'Kas Awal Periode', String(data.cash_at_beginning || 0)]);
-                rows.push(['', 'Perubahan Bersih Kas', String(data.net_cash_flow || 0)]);
-                rows.push(['', 'Kas Akhir Periode', String(data.cash_at_end || 0)]);
-
-                const csv = bom + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                const url = window.URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `Arus_Kas_${startDate}_to_${endDate}.csv`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                window.URL.revokeObjectURL(url);
+            if (!(result instanceof Blob)) {
+                throw new Error(`Server did not return a ${format.toUpperCase()} file`);
             }
+
+            const extension = format === 'pdf' ? 'pdf' : 'csv';
+            await ssotCashFlowReportService.downloadCashFlowReport(
+                result,
+                `Arus_Kas_${startDate}_to_${endDate}.${extension}`
+            );
 
             toast({
                 title: t('reports.messages.success') || 'Ekspor Berhasil',
@@ -407,7 +343,6 @@ const CashFlowPage: React.FC = () => {
             });
         }
     };
-
     const formatCurrency = (amount: number | null | undefined) => {
         if (amount === null || amount === undefined || isNaN(Number(amount))) return 'Rp 0';
         return new Intl.NumberFormat('id-ID', {
@@ -681,6 +616,11 @@ const CashFlowPage: React.FC = () => {
                                     {t('reports.modal.loadHistory') || 'Muat Riwayat'}
                                 </Button>
                             </HStack>
+                            {!loadingClosedPeriods && closedPeriods.length === 0 && (
+                                <Text fontSize="xs" color={descriptionColor}>
+                                    Belum ada periode tutup final yang bisa dipakai untuk mode archive. Periode yang masih future-pending atau sudah reopen tidak ditampilkan.
+                                </Text>
+                            )}
 
                             <Divider />
 
@@ -780,6 +720,18 @@ const CashFlowPage: React.FC = () => {
                                 Nilai negatif sekarang ditampilkan sebagai <b>Kas Keluar</b> dan nilai positif sebagai <b>Kas Masuk</b>, jadi lebih mudah dibaca tanpa harus menebak arti tanda minus.
                             </Text>
                         </Box>
+
+                        {data.has_reconciliation_warning && (
+                            <Box bg={errorBg} p={4} borderRadius="md" border="1px solid" borderColor={errorBorderColor}>
+                                <Text fontSize="sm" fontWeight="semibold" color="red.600" mb={1}>
+                                    Perlu pengecekan rekonsiliasi arus kas
+                                </Text>
+                                <Text fontSize="sm" color={descriptionColor}>
+                                    Laporan ini menemukan selisih rekonsiliasi sebesar {formatCurrency(Math.abs(data.reconciliation_difference || 0))}.
+                                    Angka tidak disamarkan otomatis, jadi mohon cek jurnal dan akun kas/bank pada periode ini.
+                                </Text>
+                            </Box>
+                        )}
 
                         {/* Summary Statistics */}
                         <SimpleGrid columns={[1, 2, 4]} spacing={4}>

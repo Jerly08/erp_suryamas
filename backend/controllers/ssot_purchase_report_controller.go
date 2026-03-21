@@ -426,7 +426,21 @@ func (c *SSOTPurchaseReportController) ValidatePurchaseReport(ctx *gin.Context) 
 		"description":   "Sum of vendor amounts should equal summary total",
 	}
 
-	// Check 4: Payment amount consistency
+	// Check 4: Category totals consistency
+	categoryTotalAmount := 0.0
+	for _, category := range report.PurchasesByCategory {
+		categoryTotalAmount += category.TotalAmount
+	}
+	categoryTotalsValid := len(report.PurchasesByCategory) == 0 || abs(categoryTotalAmount-report.TotalAmount) <= 0.01
+	checks["category_totals"] = map[string]interface{}{
+		"valid":          categoryTotalsValid,
+		"category_total": categoryTotalAmount,
+		"summary_total":  report.TotalAmount,
+		"category_count": len(report.PurchasesByCategory),
+		"description":    "Sum of category amounts should equal summary total",
+	}
+
+	// Check 5: Payment amount consistency
 	paymentTotalAmount := report.PaymentAnalysis.CashAmount + report.PaymentAnalysis.CreditAmount
 	paymentAmountValid := paymentTotalAmount == 0 || abs(paymentTotalAmount-report.TotalAmount) <= 0.01
 	checks["payment_amounts"] = map[string]interface{}{
@@ -438,8 +452,20 @@ func (c *SSOTPurchaseReportController) ValidatePurchaseReport(ctx *gin.Context) 
 		"description":   "Cash amount + Credit amount should equal total amount",
 	}
 
+	// Check 6: Payment count consistency
+	paymentCountTotal := report.PaymentAnalysis.CashPurchases + report.PaymentAnalysis.CreditPurchases
+	paymentCountValid := paymentCountTotal == report.TotalPurchases
+	checks["payment_counts"] = map[string]interface{}{
+		"valid":         paymentCountValid,
+		"cash_count":    report.PaymentAnalysis.CashPurchases,
+		"credit_count":  report.PaymentAnalysis.CreditPurchases,
+		"count_total":   paymentCountTotal,
+		"summary_total": report.TotalPurchases,
+		"description":   "Cash purchases + Credit purchases should equal total purchases",
+	}
+
 	// Overall validation status
-	allValid := outstandingValid && percentageValid && vendorTotalsValid && paymentAmountValid
+	allValid := outstandingValid && percentageValid && vendorTotalsValid && categoryTotalsValid && paymentAmountValid && paymentCountValid
 	validationResults["overall_valid"] = allValid
 	validationResults["validation_score"] = map[string]interface{}{
 		"passed": func() int {
@@ -453,12 +479,18 @@ func (c *SSOTPurchaseReportController) ValidatePurchaseReport(ctx *gin.Context) 
 			if vendorTotalsValid {
 				count++
 			}
+			if categoryTotalsValid {
+				count++
+			}
 			if paymentAmountValid {
+				count++
+			}
+			if paymentCountValid {
 				count++
 			}
 			return count
 		}(),
-		"total": 4,
+		"total": 6,
 	}
 
 	ctx.JSON(http.StatusOK, validationResults)

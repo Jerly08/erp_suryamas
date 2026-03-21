@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"app-sistem-akuntansi/models"
 	"github.com/gin-gonic/gin"
@@ -21,20 +22,43 @@ func NewUnifiedClosingHistoryController(db *gorm.DB) *UnifiedClosingHistoryContr
 	}
 }
 
+func historyDayStart(date time.Time) time.Time {
+	return time.Date(date.In(time.Local).Year(), date.In(time.Local).Month(), date.In(time.Local).Day(), 0, 0, 0, 0, time.Local)
+}
+
+func isEffectiveClosedHistoryPeriod(period models.AccountingPeriod, now time.Time) bool {
+	if !period.IsClosed {
+		return false
+	}
+	return historyDayStart(period.EndDate).Before(historyDayStart(now))
+}
+
 // GetUnifiedClosingHistory returns combined history from all closing sources
 func (c *UnifiedClosingHistoryController) GetUnifiedClosingHistory(ctx *gin.Context) {
 	var history []map[string]interface{}
 
 	// 1. Prefer accounting_periods because it is the canonical history for period closing.
 	var accountingPeriods []models.AccountingPeriod
-	err := c.db.Where("deleted_at IS NULL AND (is_closed = ? OR reopen_count > 0 OR reopened_at IS NOT NULL)", true).
+	err := c.db.Where("deleted_at IS NULL AND is_closed = ?", true).
 		Order("end_date DESC").
-		Limit(20).
 		Find(&accountingPeriods).Error
 
 	if err == nil && len(accountingPeriods) > 0 {
-		fmt.Printf("[UnifiedClosingHistory] Found %d closed periods in accounting_periods\n", len(accountingPeriods))
+		filteredPeriods := make([]models.AccountingPeriod, 0, len(accountingPeriods))
+		now := time.Now()
 		for _, period := range accountingPeriods {
+			if !isEffectiveClosedHistoryPeriod(period, now) {
+				continue
+			}
+			filteredPeriods = append(filteredPeriods, period)
+		}
+
+		if len(filteredPeriods) > 20 {
+			filteredPeriods = filteredPeriods[:20]
+		}
+
+		fmt.Printf("[UnifiedClosingHistory] Found %d effective closed periods in accounting_periods\n", len(filteredPeriods))
+		for _, period := range filteredPeriods {
 			// Generate a code for display
 			periodCode := fmt.Sprintf("PC-%s", period.EndDate.Format("2006-01-02"))
 
@@ -61,14 +85,16 @@ func (c *UnifiedClosingHistoryController) GetUnifiedClosingHistory(ctx *gin.Cont
 				history[len(history)-1]["reopened_at"] = period.ReopenedAt
 			}
 		}
-		fmt.Printf("[UnifiedClosingHistory] Total history entries: %d\n", len(history))
+		if len(history) > 0 {
+			fmt.Printf("[UnifiedClosingHistory] Total history entries: %d\n", len(history))
 
-		ctx.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"data":    history,
-			"count":   len(history),
-		})
-		return
+			ctx.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data":    history,
+				"count":   len(history),
+			})
+			return
+		}
 	}
 
 	// 2. Fallback to SSOT journal entries for legacy data that has no accounting_period record yet.

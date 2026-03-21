@@ -92,21 +92,6 @@ func (pbc *ProjectBOMController) AddBOMToProject(c *gin.Context) {
 			}
 		}
 
-		// 4. Recalculate Project Total Budget
-		var project models.Project
-		if err := tx.First(&project, projectID).Error; err != nil {
-			return err
-		}
-
-		var totalProjectBudget float64
-		// Sum all ProjectBOMs for this project
-		tx.Model(&models.ProjectBOM{}).Where("project_id = ?", projectID).Select("COALESCE(SUM(total_cost), 0)").Scan(&totalProjectBudget)
-
-		project.TotalBudget = totalProjectBudget
-		if err := tx.Save(&project).Error; err != nil {
-			return err
-		}
-
 		return nil
 	})
 
@@ -140,20 +125,6 @@ func (pbc *ProjectBOMController) RemoveBOMFromProject(c *gin.Context) {
 			return err
 		}
 
-		// Recalculate Project Total Budget
-		var project models.Project
-		if err := tx.First(&project, projectID).Error; err != nil {
-			return err
-		}
-
-		var totalProjectBudget float64
-		tx.Model(&models.ProjectBOM{}).Where("project_id = ?", projectID).Select("COALESCE(SUM(total_cost), 0)").Scan(&totalProjectBudget)
-
-		project.TotalBudget = totalProjectBudget
-		if err := tx.Save(&project).Error; err != nil {
-			return err
-		}
-
 		return nil
 	})
 
@@ -162,5 +133,5 @@ func (pbc *ProjectBOMController) RemoveBOMFromProject(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "BOM removed from Project and budget updated"})
+	c.JSON(http.StatusOK, gin.H{"message": "BOM removed from Project"})
 }

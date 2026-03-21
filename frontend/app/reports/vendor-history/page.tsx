@@ -6,6 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import UnifiedLayout from '@/components/layout/UnifiedLayout';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
+import periodClosingService from '@/services/periodClosingService';
 import {
     Box, Heading, Text, Button, VStack, HStack, Card, CardBody, Icon, SimpleGrid,
     FormControl, FormLabel, Input, Select, Spinner, useToast, useColorModeValue,
@@ -173,10 +174,13 @@ const VendorHistoryPage: React.FC = () => {
     const loadClosedPeriods = async () => {
         setLoadingClosedPeriods(true);
         try {
-            const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-            if (response.data.success && Array.isArray(response.data.data)) {
-                setClosedPeriods(buildUniqueClosedPeriods(response.data.data));
-            }
+            const periods = await periodClosingService.getClosedPeriodsForFilter();
+            setClosedPeriods(periods.map((period) => ({
+                value: period.value,
+                label: period.label,
+                date: period.value,
+                start_date: period.period.start_date?.slice(0, 10),
+            })));
         } catch { /* ignore */ } finally { setLoadingClosedPeriods(false); }
     };
 
@@ -228,8 +232,13 @@ const VendorHistoryPage: React.FC = () => {
                 // Fallback CSV — enhanced with BOM, company header, and vendor info
                 const bom = '\uFEFF';
                 const rows: string[][] = [];
+                const purchaseRows = data.transactions.filter((tx: any) => tx.transaction_type === 'PURCHASE');
+                const paymentRows = data.transactions.filter((tx: any) => tx.transaction_type === 'PAYMENT');
+                const purchaseTotalAmount = purchaseRows.reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0);
+                const purchaseTotalPaid = purchaseRows.reduce((sum: number, tx: any) => sum + (tx.paid_amount || 0), 0);
+                const purchaseTotalOutstanding = purchaseRows.reduce((sum: number, tx: any) => sum + (tx.outstanding || 0), 0);
+                const paymentTotalAmount = paymentRows.reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0);
 
-                // Company header
                 rows.push([companyInfo?.name || 'Perusahaan']);
                 if (companyInfo?.address) rows.push([companyInfo.address]);
                 rows.push([]);
@@ -239,30 +248,44 @@ const VendorHistoryPage: React.FC = () => {
                 rows.push([`Dicetak: ${new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}`]);
                 rows.push([]);
 
-                // Summary
-                if (data.summary) {
-                    rows.push(['RINGKASAN']);
-                    rows.push(['Total Transaksi', String(data.summary.total_transactions || data.transactions.length)]);
-                    rows.push(['Total Jumlah', String(data.summary.total_amount || 0)]);
-                    rows.push(['Total Dibayar', String(data.summary.total_paid || 0)]);
-                    rows.push(['Total Sisa', String(data.summary.total_outstanding || 0)]);
+                rows.push(['RINGKASAN']);
+                rows.push(['Total Aktivitas', String(data.transactions.length)]);
+                rows.push(['Jumlah Pembelian', String(purchaseRows.length)]);
+                rows.push(['Jumlah Pembayaran', String(paymentRows.length)]);
+                rows.push(['Total Pembelian', String(purchaseTotalAmount)]);
+                rows.push(['Total Pembayaran', String(paymentTotalAmount)]);
+                rows.push(['Hutang Akhir', String(purchaseTotalOutstanding)]);
+                rows.push([]);
+
+                if (purchaseRows.length > 0) {
+                    rows.push(['DOKUMEN PEMBELIAN']);
+                    rows.push(['Tanggal', 'Kode', 'Deskripsi', 'Jumlah', 'Dibayar', 'Sisa', 'Status']);
+                    purchaseRows.forEach((tx: any) => rows.push([
+                        tx.date ? new Date(tx.date).toLocaleDateString('id-ID') : '-',
+                        tx.transaction_code,
+                        tx.description || '',
+                        String(tx.amount || 0),
+                        String(tx.paid_amount || 0),
+                        String(tx.outstanding || 0),
+                        tx.status,
+                    ]));
+                    rows.push(['', '', 'TOTAL PEMBELIAN', String(purchaseTotalAmount), String(purchaseTotalPaid), String(purchaseTotalOutstanding), '']);
                     rows.push([]);
                 }
 
-                // Data table
-                rows.push(['Tanggal', 'Tipe', 'Kode', 'Deskripsi', 'Jumlah', 'Dibayar', 'Sisa', 'Status']);
-                data.transactions.forEach((tx: any) => rows.push([
-                    tx.date ? new Date(tx.date).toLocaleDateString('id-ID') : '-',
-                    tx.transaction_type, tx.transaction_code, tx.description || '',
-                    String(tx.amount || 0), String(tx.paid_amount || 0), String(tx.outstanding || 0), tx.status
-                ]));
-
-                // Totals row
-                const totalAmt = data.transactions.reduce((s: number, tx: any) => s + (tx.amount || 0), 0);
-                const totalPaid = data.transactions.reduce((s: number, tx: any) => s + (tx.paid_amount || 0), 0);
-                const totalOut = data.transactions.reduce((s: number, tx: any) => s + (tx.outstanding || 0), 0);
-                rows.push([]);
-                rows.push(['', '', '', 'TOTAL', String(totalAmt), String(totalPaid), String(totalOut), '']);
+                if (paymentRows.length > 0) {
+                    rows.push(['PEMBAYARAN']);
+                    rows.push(['Tanggal', 'Kode', 'Deskripsi', 'Referensi', 'Jumlah', 'Status']);
+                    paymentRows.forEach((tx: any) => rows.push([
+                        tx.date ? new Date(tx.date).toLocaleDateString('id-ID') : '-',
+                        tx.transaction_code,
+                        tx.description || '',
+                        tx.reference || '',
+                        String(tx.amount || 0),
+                        tx.status,
+                    ]));
+                    rows.push(['', '', '', 'TOTAL PEMBAYARAN', String(paymentTotalAmount), '']);
+                }
 
                 const csv = bom + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -304,13 +327,12 @@ const VendorHistoryPage: React.FC = () => {
     };
 
     const getAnalytics = () => {
-        if (!data?.transactions) return { purchaseCount: 0, paymentCount: 0, billCount: 0, purchasesByMonth: [] as any[] };
-        let purchaseCount = 0, paymentCount = 0, billCount = 0;
+        if (!data?.transactions) return { purchaseCount: 0, paymentCount: 0, purchasesByMonth: [] as any[] };
+        let purchaseCount = 0, paymentCount = 0;
         const monthMap: { [key: string]: { month: string; amount: number; count: number } } = {};
         data.transactions.forEach((tx: any) => {
             if (tx.transaction_type === 'PURCHASE') purchaseCount++;
             else if (tx.transaction_type === 'PAYMENT') paymentCount++;
-            else if (tx.transaction_type === 'BILL') billCount++;
             if (tx.transaction_type === 'PURCHASE' && tx.date) {
                 const d = new Date(tx.date);
                 const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -321,11 +343,18 @@ const VendorHistoryPage: React.FC = () => {
             }
         });
         const purchasesByMonth = Object.entries(monthMap).sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v);
-        return { purchaseCount, paymentCount, billCount, purchasesByMonth };
+        return { purchaseCount, paymentCount, purchasesByMonth };
     };
 
     const analytics = data ? getAnalytics() : null;
-    const paymentProgress = data?.summary?.total_amount > 0 ? ((data.summary.total_paid / data.summary.total_amount) * 100) : 0;
+    const allTransactions = Array.isArray(data?.transactions) ? data.transactions : [];
+    const purchaseTransactions = allTransactions.filter((tx: any) => tx.transaction_type === 'PURCHASE');
+    const paymentTransactions = allTransactions.filter((tx: any) => tx.transaction_type === 'PAYMENT');
+    const purchaseTotalAmount = purchaseTransactions.reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0);
+    const purchaseTotalPaid = purchaseTransactions.reduce((sum: number, tx: any) => sum + (tx.paid_amount || 0), 0);
+    const purchaseTotalOutstanding = purchaseTransactions.reduce((sum: number, tx: any) => sum + (tx.outstanding || 0), 0);
+    const paymentTotalAmount = paymentTransactions.reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0);
+    const paymentProgress = purchaseTotalAmount > 0 ? ((purchaseTotalPaid / purchaseTotalAmount) * 100) : 0;
 
     return (
         <UnifiedLayout>
@@ -390,6 +419,11 @@ const VendorHistoryPage: React.FC = () => {
                                     {t('reports.modal.loadHistory') || 'Muat Riwayat'}
                                 </Button>
                             </HStack>
+                            {!loadingClosedPeriods && closedPeriods.length === 0 && (
+                                <Text fontSize="xs" color={descriptionColor}>
+                                    Belum ada periode tutup final yang bisa dipakai untuk mode archive. Periode yang masih future-pending atau sudah reopen tidak ditampilkan.
+                                </Text>
+                            )}
 
                             <Divider />
 
@@ -518,34 +552,32 @@ const VendorHistoryPage: React.FC = () => {
                         )}
 
                         {/* Summary Statistics */}
-                        {data.summary && (
-                            <SimpleGrid columns={[1, 2, 4]} spacing={4}>
-                                <Box bg={positiveStatBg} p={4} borderRadius="md" textAlign="center">
-                                    <Text fontSize="2xl" fontWeight="bold" color="green.600">{data.summary.total_transactions || 0}</Text>
-                                    <Text fontSize="sm" color={positiveStatTextColor}>Total Transaksi</Text>
-                                </Box>
-                                <Box bg={primaryStatBg} p={4} borderRadius="md" textAlign="center">
-                                    <Text fontSize="2xl" fontWeight="bold" color="orange.600">{formatCurrency(data.summary.total_amount)}</Text>
-                                    <Text fontSize="sm" color={primaryStatTextColor}>Total Pembelian</Text>
-                                </Box>
-                                <Box bg={accentStatBg} p={4} borderRadius="md" textAlign="center">
-                                    <Text fontSize="2xl" fontWeight="bold" color="purple.600">{formatCurrency(data.summary.total_paid)}</Text>
-                                    <Text fontSize="sm" color={accentStatTextColor}>Total Dibayar</Text>
-                                </Box>
-                                <Box bg={(data.summary.total_outstanding || 0) > 0 ? dangerStatBg : positiveStatBg} p={4} borderRadius="md" textAlign="center">
-                                    <Text fontSize="2xl" fontWeight="bold" color={(data.summary.total_outstanding || 0) > 0 ? "red.600" : "green.600"}>{formatCurrency(data.summary.total_outstanding)}</Text>
-                                    <Text fontSize="sm" color={(data.summary.total_outstanding || 0) > 0 ? dangerStatTextColor : positiveStatTextColor}>Hutang</Text>
-                                </Box>
-                            </SimpleGrid>
-                        )}
+                        <SimpleGrid columns={[1, 2, 4]} spacing={4}>
+                            <Box bg={positiveStatBg} p={4} borderRadius="md" textAlign="center">
+                                <Text fontSize="2xl" fontWeight="bold" color="green.600">{allTransactions.length}</Text>
+                                <Text fontSize="sm" color={positiveStatTextColor}>Total Aktivitas</Text>
+                            </Box>
+                            <Box bg={primaryStatBg} p={4} borderRadius="md" textAlign="center">
+                                <Text fontSize="2xl" fontWeight="bold" color="orange.600">{formatCurrency(purchaseTotalAmount)}</Text>
+                                <Text fontSize="sm" color={primaryStatTextColor}>Total Pembelian</Text>
+                            </Box>
+                            <Box bg={accentStatBg} p={4} borderRadius="md" textAlign="center">
+                                <Text fontSize="2xl" fontWeight="bold" color="purple.600">{formatCurrency(paymentTotalAmount)}</Text>
+                                <Text fontSize="sm" color={accentStatTextColor}>Total Pembayaran</Text>
+                            </Box>
+                            <Box bg={purchaseTotalOutstanding > 0 ? dangerStatBg : positiveStatBg} p={4} borderRadius="md" textAlign="center">
+                                <Text fontSize="2xl" fontWeight="bold" color={purchaseTotalOutstanding > 0 ? "red.600" : "green.600"}>{formatCurrency(purchaseTotalOutstanding)}</Text>
+                                <Text fontSize="sm" color={purchaseTotalOutstanding > 0 ? dangerStatTextColor : positiveStatTextColor}>Hutang</Text>
+                            </Box>
+                        </SimpleGrid>
 
                         {/* Payment Progress */}
-                        {data.summary && data.summary.total_amount > 0 && (
+                        {purchaseTotalAmount > 0 && (
                             <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
                                 <HStack justify="space-between" mb={2}>
                                     <HStack>
                                         <Badge colorScheme="teal" px={2} py={1} fontSize="sm">A</Badge>
-                                        <Text fontSize="md" fontWeight="bold" color={headingColor}>Efisiensi Pembayaran</Text>
+                                        <Text fontSize="md" fontWeight="bold" color={headingColor}>Pelunasan Pembelian</Text>
                                     </HStack>
                                     <Text fontSize="sm" fontWeight="bold" color={paymentProgress >= 100 ? 'green.600' : 'orange.600'}>
                                         {paymentProgress.toFixed(1)}%
@@ -553,8 +585,8 @@ const VendorHistoryPage: React.FC = () => {
                                 </HStack>
                                 <Progress value={paymentProgress} colorScheme={paymentProgress >= 100 ? 'green' : paymentProgress >= 50 ? 'orange' : 'red'} borderRadius="full" size="lg" hasStripe={paymentProgress < 100} isAnimated={paymentProgress < 100} />
                                 <HStack justify="space-between" mt={2}>
-                                    <Text fontSize="xs" color={descriptionColor}>Dibayar: {formatCurrency(data.summary.total_paid)}</Text>
-                                    <Text fontSize="xs" color={descriptionColor}>Total: {formatCurrency(data.summary.total_amount)}</Text>
+                                    <Text fontSize="xs" color={descriptionColor}>Terbayar di dokumen pembelian: {formatCurrency(purchaseTotalPaid)}</Text>
+                                    <Text fontSize="xs" color={descriptionColor}>Total pembelian: {formatCurrency(purchaseTotalAmount)}</Text>
                                 </HStack>
                             </Box>
                         )}
@@ -565,21 +597,17 @@ const VendorHistoryPage: React.FC = () => {
                                 <HStack justify="space-between" mb={3}>
                                     <HStack>
                                         <Badge colorScheme="purple" px={2} py={1} fontSize="sm">B</Badge>
-                                        <Text fontSize="md" fontWeight="bold" color={headingColor}>Rincian Jenis Transaksi</Text>
+                                        <Text fontSize="md" fontWeight="bold" color={headingColor}>Rincian Jenis Aktivitas</Text>
                                     </HStack>
                                 </HStack>
-                                <SimpleGrid columns={[1, 3]} spacing={3}>
+                                <SimpleGrid columns={[1, 2]} spacing={3}>
                                     <Box bg={primaryStatBg} p={3} borderRadius="md" textAlign="center">
                                         <Text fontSize="xl" fontWeight="bold" color="orange.600">{analytics.purchaseCount}</Text>
-                                        <Text fontSize="xs" color={primaryStatTextColor}>Pembelian</Text>
+                                        <Text fontSize="xs" color={primaryStatTextColor}>Dokumen Pembelian</Text>
                                     </Box>
                                     <Box bg={accentStatBg} p={3} borderRadius="md" textAlign="center">
                                         <Text fontSize="xl" fontWeight="bold" color="purple.600">{analytics.paymentCount}</Text>
                                         <Text fontSize="xs" color={accentStatTextColor}>Pembayaran</Text>
-                                    </Box>
-                                    <Box bg={summaryPanelBg} p={3} borderRadius="md" textAlign="center">
-                                        <Text fontSize="xl" fontWeight="bold" color="blue.600">{analytics.billCount}</Text>
-                                        <Text fontSize="xs" color={summaryPanelTextColor}>Tagihan</Text>
                                     </Box>
                                 </SimpleGrid>
                             </Box>
@@ -609,70 +637,141 @@ const VendorHistoryPage: React.FC = () => {
                             </Box>
                         )}
 
-                        {/* Transaction Table */}
-                        {data.transactions && data.transactions.length > 0 && (
-                            <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
-                                <HStack justify="space-between" mb={3}>
-                                    <HStack>
-                                        <Badge colorScheme="cyan" px={2} py={1} fontSize="sm">D</Badge>
-                                        <Text fontSize="md" fontWeight="bold" color={headingColor}>Daftar Transaksi</Text>
-                                    </HStack>
-                                    <Text fontSize="sm" color={descriptionColor}>{data.transactions.length} transaksi</Text>
-                                </HStack>
-                                <TableContainer maxH="500px" overflowY="auto">
-                                    <Table size="sm" variant="simple">
-                                        <Thead bg={tableHeaderBg} position="sticky" top={0} zIndex={1}>
-                                            <Tr>
-                                                <Th color={tableHeaderTextColor}>Tanggal</Th>
-                                                <Th color={tableHeaderTextColor}>Tipe</Th>
-                                                <Th color={tableHeaderTextColor}>Kode</Th>
-                                                <Th color={tableHeaderTextColor}>Deskripsi</Th>
-                                                <Th color={tableHeaderTextColor} isNumeric>Jumlah</Th>
-                                                <Th color={tableHeaderTextColor} isNumeric>Dibayar</Th>
-                                                <Th color={tableHeaderTextColor} isNumeric>Sisa</Th>
-                                                <Th color={tableHeaderTextColor}>Status</Th>
-                                                <Th color={tableHeaderTextColor} textAlign="center">Aksi</Th>
-                                            </Tr>
-                                        </Thead>
-                                        <Tbody>
-                                            {data.transactions.map((tx: any, idx: number) => (
-                                                <Tr key={idx} _hover={{ bg: tableHoverBg, cursor: 'pointer' }} onClick={() => fetchJournalDetail(tx)} title="Klik untuk melihat detail jurnal & kode akun">
-                                                    <Td fontSize="sm">{tx.date ? new Date(tx.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</Td>
-                                                    <Td><Badge colorScheme={getTypeColor(tx.transaction_type)} fontSize="xs">{getTypeLabel(tx.transaction_type)}</Badge></Td>
-                                                    <Td fontFamily="mono" fontSize="sm">{tx.transaction_code}</Td>
-                                                    <Td fontSize="sm" maxW="200px" isTruncated>{tx.description || '-'}</Td>
-                                                    <Td isNumeric fontWeight="bold" color="orange.700" fontSize="sm">{formatCurrency(tx.amount)}</Td>
-                                                    <Td isNumeric color="green.600" fontSize="sm">{formatCurrency(tx.paid_amount)}</Td>
-                                                    <Td isNumeric color={(tx.outstanding || 0) > 0 ? "red.600" : "green.600"} fontSize="sm">{formatCurrency(tx.outstanding)}</Td>
-                                                    <Td><Badge colorScheme={getStatusColor(tx.status)} fontSize="xs">{tx.status}</Badge></Td>
-                                                    <Td textAlign="center">
-                                                        <Tooltip label="Lihat detail jurnal & kode akun" fontSize="xs">
-                                                            <IconButton
-                                                                aria-label="Detail"
-                                                                icon={<FiEye />}
-                                                                size="xs"
-                                                                colorScheme="orange"
-                                                                variant="ghost"
-                                                                onClick={(e) => { e.stopPropagation(); fetchJournalDetail(tx); }}
-                                                            />
-                                                        </Tooltip>
-                                                    </Td>
-                                                </Tr>
-                                            ))}
-                                        </Tbody>
-                                        <Tfoot bg={tableHeaderBg} position="sticky" bottom={0}>
-                                            <Tr>
-                                                <Th color="white" colSpan={4} fontSize="sm">TOTAL</Th>
-                                                <Th color="white" isNumeric fontSize="sm">{formatCurrency(data.summary?.total_amount)}</Th>
-                                                <Th color="white" isNumeric fontSize="sm">{formatCurrency(data.summary?.total_paid)}</Th>
-                                                <Th color="white" isNumeric fontSize="sm">{formatCurrency(data.summary?.total_outstanding)}</Th>
-                                                <Th color="white"></Th>
-                                                <Th color="white"></Th>
-                                            </Tr>
-                                        </Tfoot>
-                                    </Table>
-                                </TableContainer>
-                            </Box>
+                        {/* Transaction Tables */}
+                        {allTransactions.length > 0 && (
+                            <VStack spacing={4} align="stretch">
+                                <Box bg={summaryPanelBg} p={4} borderRadius="md" border="1px" borderColor={summaryPanelBorder}>
+                                    <Text fontSize="sm" color={summaryPanelTextColor}>
+                                        Pembayaran ditampilkan sebagai aktivitas pelunasan hutang vendor dan tidak dihitung sebagai pembelian baru.
+                                    </Text>
+                                </Box>
+
+                                {purchaseTransactions.length > 0 && (
+                                    <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
+                                        <HStack justify="space-between" mb={3}>
+                                            <HStack>
+                                                <Badge colorScheme="orange" px={2} py={1} fontSize="sm">D</Badge>
+                                                <Text fontSize="md" fontWeight="bold" color={headingColor}>Dokumen Pembelian</Text>
+                                            </HStack>
+                                            <Text fontSize="sm" color={descriptionColor}>{purchaseTransactions.length} transaksi</Text>
+                                        </HStack>
+                                        <TableContainer maxH="500px" overflowY="auto">
+                                            <Table size="sm" variant="simple">
+                                                <Thead bg={tableHeaderBg} position="sticky" top={0} zIndex={1}>
+                                                    <Tr>
+                                                        <Th color={tableHeaderTextColor}>Tanggal</Th>
+                                                        <Th color={tableHeaderTextColor}>Tipe</Th>
+                                                        <Th color={tableHeaderTextColor}>Kode</Th>
+                                                        <Th color={tableHeaderTextColor}>Deskripsi</Th>
+                                                        <Th color={tableHeaderTextColor} isNumeric>Jumlah</Th>
+                                                        <Th color={tableHeaderTextColor} isNumeric>Dibayar</Th>
+                                                        <Th color={tableHeaderTextColor} isNumeric>Sisa</Th>
+                                                        <Th color={tableHeaderTextColor}>Status</Th>
+                                                        <Th color={tableHeaderTextColor} textAlign="center">Aksi</Th>
+                                                    </Tr>
+                                                </Thead>
+                                                <Tbody>
+                                                    {purchaseTransactions.map((tx: any, idx: number) => (
+                                                        <Tr key={idx} _hover={{ bg: tableHoverBg, cursor: 'pointer' }} onClick={() => fetchJournalDetail(tx)} title="Klik untuk melihat detail jurnal & kode akun">
+                                                            <Td fontSize="sm">{tx.date ? new Date(tx.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</Td>
+                                                            <Td><Badge colorScheme={getTypeColor(tx.transaction_type)} fontSize="xs">{getTypeLabel(tx.transaction_type)}</Badge></Td>
+                                                            <Td fontFamily="mono" fontSize="sm">{tx.transaction_code}</Td>
+                                                            <Td fontSize="sm" maxW="200px" isTruncated>{tx.description || '-'}</Td>
+                                                            <Td isNumeric fontWeight="bold" color="orange.700" fontSize="sm">{formatCurrency(tx.amount)}</Td>
+                                                            <Td isNumeric color="green.600" fontSize="sm">{formatCurrency(tx.paid_amount)}</Td>
+                                                            <Td isNumeric color={(tx.outstanding || 0) > 0 ? "red.600" : "green.600"} fontSize="sm">{formatCurrency(tx.outstanding)}</Td>
+                                                            <Td><Badge colorScheme={getStatusColor(tx.status)} fontSize="xs">{tx.status}</Badge></Td>
+                                                            <Td textAlign="center">
+                                                                <Tooltip label="Lihat detail jurnal & kode akun" fontSize="xs">
+                                                                    <IconButton
+                                                                        aria-label="Detail"
+                                                                        icon={<FiEye />}
+                                                                        size="xs"
+                                                                        colorScheme="orange"
+                                                                        variant="ghost"
+                                                                        onClick={(e) => { e.stopPropagation(); fetchJournalDetail(tx); }}
+                                                                    />
+                                                                </Tooltip>
+                                                            </Td>
+                                                        </Tr>
+                                                    ))}
+                                                </Tbody>
+                                                <Tfoot bg={tableHeaderBg} position="sticky" bottom={0}>
+                                                    <Tr>
+                                                        <Th color="white" colSpan={4} fontSize="sm">TOTAL PEMBELIAN</Th>
+                                                        <Th color="white" isNumeric fontSize="sm">{formatCurrency(purchaseTotalAmount)}</Th>
+                                                        <Th color="white" isNumeric fontSize="sm">{formatCurrency(purchaseTotalPaid)}</Th>
+                                                        <Th color="white" isNumeric fontSize="sm">{formatCurrency(purchaseTotalOutstanding)}</Th>
+                                                        <Th color="white"></Th>
+                                                        <Th color="white"></Th>
+                                                    </Tr>
+                                                </Tfoot>
+                                            </Table>
+                                        </TableContainer>
+                                    </Box>
+                                )}
+
+                                {paymentTransactions.length > 0 && (
+                                    <Box bg={cardBg} p={4} borderRadius="md" border="1px" borderColor={borderColor}>
+                                        <HStack justify="space-between" mb={3}>
+                                            <HStack>
+                                                <Badge colorScheme="purple" px={2} py={1} fontSize="sm">E</Badge>
+                                                <Text fontSize="md" fontWeight="bold" color={headingColor}>Pembayaran</Text>
+                                            </HStack>
+                                            <Text fontSize="sm" color={descriptionColor}>{paymentTransactions.length} transaksi</Text>
+                                        </HStack>
+                                        <TableContainer maxH="500px" overflowY="auto">
+                                            <Table size="sm" variant="simple">
+                                                <Thead bg={tableHeaderBg} position="sticky" top={0} zIndex={1}>
+                                                    <Tr>
+                                                        <Th color={tableHeaderTextColor}>Tanggal</Th>
+                                                        <Th color={tableHeaderTextColor}>Tipe</Th>
+                                                        <Th color={tableHeaderTextColor}>Kode</Th>
+                                                        <Th color={tableHeaderTextColor}>Deskripsi</Th>
+                                                        <Th color={tableHeaderTextColor}>Referensi</Th>
+                                                        <Th color={tableHeaderTextColor} isNumeric>Jumlah</Th>
+                                                        <Th color={tableHeaderTextColor}>Status</Th>
+                                                        <Th color={tableHeaderTextColor} textAlign="center">Aksi</Th>
+                                                    </Tr>
+                                                </Thead>
+                                                <Tbody>
+                                                    {paymentTransactions.map((tx: any, idx: number) => (
+                                                        <Tr key={idx} _hover={{ bg: tableHoverBg, cursor: 'pointer' }} onClick={() => fetchJournalDetail(tx)} title="Klik untuk melihat detail jurnal & kode akun">
+                                                            <Td fontSize="sm">{tx.date ? new Date(tx.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</Td>
+                                                            <Td><Badge colorScheme={getTypeColor(tx.transaction_type)} fontSize="xs">{getTypeLabel(tx.transaction_type)}</Badge></Td>
+                                                            <Td fontFamily="mono" fontSize="sm">{tx.transaction_code}</Td>
+                                                            <Td fontSize="sm" maxW="220px" isTruncated>{tx.description || '-'}</Td>
+                                                            <Td fontSize="sm">{tx.reference || '-'}</Td>
+                                                            <Td isNumeric fontWeight="bold" color="purple.700" fontSize="sm">{formatCurrency(tx.amount)}</Td>
+                                                            <Td><Badge colorScheme={getStatusColor(tx.status)} fontSize="xs">{tx.status}</Badge></Td>
+                                                            <Td textAlign="center">
+                                                                <Tooltip label="Lihat detail jurnal & kode akun" fontSize="xs">
+                                                                    <IconButton
+                                                                        aria-label="Detail"
+                                                                        icon={<FiEye />}
+                                                                        size="xs"
+                                                                        colorScheme="orange"
+                                                                        variant="ghost"
+                                                                        onClick={(e) => { e.stopPropagation(); fetchJournalDetail(tx); }}
+                                                                    />
+                                                                </Tooltip>
+                                                            </Td>
+                                                        </Tr>
+                                                    ))}
+                                                </Tbody>
+                                                <Tfoot bg={tableHeaderBg} position="sticky" bottom={0}>
+                                                    <Tr>
+                                                        <Th color="white" colSpan={5} fontSize="sm">TOTAL PEMBAYARAN</Th>
+                                                        <Th color="white" isNumeric fontSize="sm">{formatCurrency(paymentTotalAmount)}</Th>
+                                                        <Th color="white"></Th>
+                                                        <Th color="white"></Th>
+                                                    </Tr>
+                                                </Tfoot>
+                                            </Table>
+                                        </TableContainer>
+                                    </Box>
+                                )}
+                            </VStack>
                         )}
 
                         {/* Summary Box */}
@@ -687,25 +786,25 @@ const VendorHistoryPage: React.FC = () => {
                                         <Text fontSize="sm" fontWeight="semibold">{data.vendor?.name || '-'}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Transaksi:</Text>
-                                        <Text fontSize="sm" fontWeight="semibold">{data.summary?.total_transactions || 0} transaksi</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Aktivitas:</Text>
+                                        <Text fontSize="sm" fontWeight="semibold">{allTransactions.length} transaksi</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
                                         <Text fontSize="sm" color={summaryPanelTextColor}>Total Pembelian:</Text>
-                                        <Text fontSize="sm" fontWeight="semibold" color="orange.600">{formatCurrency(data.summary?.total_amount)}</Text>
+                                        <Text fontSize="sm" fontWeight="semibold" color="orange.600">{formatCurrency(purchaseTotalAmount)}</Text>
                                     </HStack>
                                 </VStack>
                                 <VStack spacing={2}>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Dibayar:</Text>
-                                        <Text fontSize="sm" fontWeight="semibold" color="green.600">{formatCurrency(data.summary?.total_paid)}</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Total Pembayaran:</Text>
+                                        <Text fontSize="sm" fontWeight="semibold" color="green.600">{formatCurrency(paymentTotalAmount)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
                                         <Text fontSize="sm" color={summaryPanelTextColor}>Hutang:</Text>
-                                        <Text fontSize="sm" fontWeight="semibold" color={(data.summary?.total_outstanding || 0) > 0 ? "red.600" : "green.600"}>{formatCurrency(data.summary?.total_outstanding)}</Text>
+                                        <Text fontSize="sm" fontWeight="semibold" color={purchaseTotalOutstanding > 0 ? "red.600" : "green.600"}>{formatCurrency(purchaseTotalOutstanding)}</Text>
                                     </HStack>
                                     <HStack justify="space-between" w="full">
-                                        <Text fontSize="sm" color={summaryPanelTextColor}>Efisiensi Pembayaran:</Text>
+                                        <Text fontSize="sm" color={summaryPanelTextColor}>Pelunasan Pembelian:</Text>
                                         <Badge colorScheme={paymentProgress >= 100 ? "green" : "orange"}>{paymentProgress.toFixed(1)}%</Badge>
                                     </HStack>
                                 </VStack>

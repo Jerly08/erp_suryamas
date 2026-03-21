@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,53 @@ type ProductController struct {
 	DB                     *gorm.DB
 	stockMonitoringService *services.StockMonitoringService
 	bomService             *services.BOMService
+}
+
+func normalizeProductForBusinessRules(product *models.Product) {
+	product.Code = strings.TrimSpace(product.Code)
+	product.Name = strings.TrimSpace(product.Name)
+
+	if product.IsAssembly {
+		product.IsService = false
+		product.WarehouseLocationID = nil
+		product.Stock = 0
+		product.MinStock = 0
+		product.MaxStock = 0
+		product.ReorderLevel = 0
+		product.PurchasePrice = 0
+		product.CostPrice = 0
+	}
+
+	if product.IsService {
+		product.WarehouseLocationID = nil
+		product.Stock = 0
+		product.MinStock = 0
+		product.MaxStock = 0
+		product.ReorderLevel = 0
+	}
+}
+
+func validateProductBusinessRules(product *models.Product) (string, string) {
+	if product.Stock < 0 {
+		return "stock", "Stock cannot be negative"
+	}
+	if product.MinStock < 0 {
+		return "min_stock", "Minimum stock cannot be negative"
+	}
+	if product.MaxStock < 0 {
+		return "max_stock", "Maximum stock cannot be negative"
+	}
+	if product.ReorderLevel < 0 {
+		return "reorder_level", "Reorder level cannot be negative"
+	}
+	if product.MaxStock > 0 && product.MinStock > product.MaxStock {
+		return "min_stock", "Minimum stock cannot be greater than maximum stock"
+	}
+	if product.MaxStock > 0 && product.ReorderLevel > product.MaxStock {
+		return "reorder_level", "Reorder level cannot be greater than maximum stock"
+	}
+
+	return "", ""
 }
 
 func NewProductController(db *gorm.DB, stockMonitoringService *services.StockMonitoringService, bomService *services.BOMService) *ProductController {
@@ -32,22 +80,43 @@ func NewProductController(db *gorm.DB, stockMonitoringService *services.StockMon
 func (pc *ProductController) GetProducts(c *gin.Context) {
 	var products []models.Product
 
-	query := pc.DB.Where("is_active = ?", true).Preload("Category").Preload("WarehouseLocation")
+	query := pc.DB.Model(&models.Product{}).Preload("Category").Preload("WarehouseLocation")
 
 	// Add search functionality
 	if search := c.Query("search"); search != "" {
-		query = query.Where("name ILIKE ? OR code ILIKE ?", "%"+search+"%", "%"+search+"%")
+		searchLike := "%" + search + "%"
+		query = query.Where("products.name ILIKE ? OR products.code ILIKE ? OR products.description ILIKE ?",
+			searchLike, searchLike, searchLike)
 	}
 
 	// Add category filter
 	if categoryID := c.Query("category"); categoryID != "" {
-		query = query.Where("category_id = ?", categoryID)
+		query = query.Where("products.category_id = ?", categoryID)
+	}
+
+	// Add warehouse location filter
+	if warehouseLocationID := c.Query("warehouse_location"); warehouseLocationID != "" {
+		query = query.Where("products.warehouse_location_id = ?", warehouseLocationID)
+	}
+
+	// Add status filter
+	switch strings.ToLower(strings.TrimSpace(c.Query("status"))) {
+	case "active":
+		query = query.Where("products.is_active = ?", true)
+	case "inactive":
+		query = query.Where("products.is_active = ?", false)
 	}
 
 	// Add is_assembly filter for Tab separation
 	if isAssemblyStr := c.Query("is_assembly"); isAssemblyStr != "" {
 		isAssembly, _ := strconv.ParseBool(isAssemblyStr)
-		query = query.Where("is_assembly = ?", isAssembly)
+		query = query.Where("products.is_assembly = ?", isAssembly)
+	}
+
+	sortBy := strings.ToLower(strings.TrimSpace(c.DefaultQuery("sort_by", "name")))
+	sortOrder := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("sort_order", "ASC")))
+	if sortOrder != "ASC" && sortOrder != "DESC" {
+		sortOrder = "ASC"
 	}
 
 	// Count total records before pagination
@@ -69,8 +138,28 @@ func (pc *ProductController) GetProducts(c *gin.Context) {
 
 	offset := (page - 1) * limit
 
+	switch sortBy {
+	case "code":
+		query = query.Order("products.code " + sortOrder)
+	case "stock":
+		query = query.Order("products.stock " + sortOrder)
+	case "sale_price":
+		query = query.Order("products.sale_price " + sortOrder)
+	case "purchase_price":
+		query = query.Order("products.purchase_price " + sortOrder)
+	case "cost_price":
+		query = query.Order("products.cost_price " + sortOrder)
+	case "category":
+		query = query.
+			Joins("LEFT JOIN product_categories ON product_categories.id = products.category_id").
+			Order("product_categories.name " + sortOrder + " NULLS LAST").
+			Order("products.name ASC")
+	default:
+		query = query.Order("products.name " + sortOrder)
+	}
+
 	// Fetch data with pagination
-	if err := query.Limit(limit).Offset(offset).Order("name ASC").Find(&products).Error; err != nil {
+	if err := query.Limit(limit).Offset(offset).Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
 		return
 	}
@@ -129,6 +218,11 @@ func (pc *ProductController) AdjustStock(c *gin.Context) {
 		return
 	}
 
+	if product.IsService || product.IsAssembly {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Stock adjustment is only allowed for stock-managed products"})
+		return
+	}
+
 	inventory := models.Inventory{
 		ProductID:       input.ProductID,
 		Type:            input.Type,
@@ -155,12 +249,8 @@ func (pc *ProductController) AdjustStock(c *gin.Context) {
 
 	// Check stock levels after adjustment and trigger notifications if needed
 	if pc.stockMonitoringService != nil {
-		if err := pc.stockMonitoringService.CheckSingleProductStock(input.ProductID); err != nil {
-			log.Printf("Failed to check stock levels for product %d: %v", input.ProductID, err)
-		}
-		// Also resolve any existing alerts if stock is now above threshold
-		if err := pc.stockMonitoringService.ResolveStockAlerts(); err != nil {
-			log.Printf("Failed to resolve stock alerts: %v", err)
+		if err := pc.stockMonitoringService.SyncProductAlerts(input.ProductID); err != nil {
+			log.Printf("Failed to sync stock alerts for product %d: %v", input.ProductID, err)
 		}
 	}
 
@@ -186,6 +276,11 @@ func (pc *ProductController) Opname(c *gin.Context) {
 		return
 	}
 
+	if product.IsService || product.IsAssembly {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Stock opname is only allowed for stock-managed products"})
+		return
+	}
+
 	inventory := models.Inventory{
 		ProductID:       input.ProductID,
 		Type:            models.InventoryTypeIn,
@@ -208,12 +303,8 @@ func (pc *ProductController) Opname(c *gin.Context) {
 
 	// Check stock levels after opname and trigger notifications if needed
 	if pc.stockMonitoringService != nil {
-		if err := pc.stockMonitoringService.CheckSingleProductStock(input.ProductID); err != nil {
-			log.Printf("Failed to check stock levels for product %d: %v", input.ProductID, err)
-		}
-		// Also resolve any existing alerts if stock is now above threshold
-		if err := pc.stockMonitoringService.ResolveStockAlerts(); err != nil {
-			log.Printf("Failed to resolve stock alerts: %v", err)
+		if err := pc.stockMonitoringService.SyncProductAlerts(input.ProductID); err != nil {
+			log.Printf("Failed to sync stock alerts for product %d: %v", input.ProductID, err)
 		}
 	}
 
@@ -229,6 +320,15 @@ func (pc *ProductController) CreateProduct(c *gin.Context) {
 
 	// ✅ VALIDATE PRICES - Prevent unreasonable values
 	// Maximum reasonable price: 10 Billion (10,000,000,000)
+	normalizeProductForBusinessRules(&product)
+	if field, message := validateProductBusinessRules(&product); field != "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": message,
+			"field": field,
+		})
+		return
+	}
+
 	const maxReasonablePrice = 10000000000.0
 
 	// ✅ AUTO-SET: If cost_price is 0, default to purchase_price
@@ -338,6 +438,14 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	normalizeProductForBusinessRules(&updateData)
+	if field, message := validateProductBusinessRules(&updateData); field != "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": message,
+			"field": field,
+		})
+		return
+	}
 
 	// ✅ VALIDATE PRICES - Prevent unreasonable values
 	// Maximum reasonable price: 10 Billion (10,000,000,000)
@@ -417,11 +525,6 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		}
 	}
 
-	// Make sure service products don't have a warehouse assigned
-	if updateData.IsService {
-		updateData.WarehouseLocationID = nil
-	}
-
 	// Capture the old prices to check if they've changed
 	oldPurchasePrice := product.PurchasePrice
 	oldCostPrice := product.CostPrice
@@ -433,7 +536,7 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 		"code", "name", "description", "category_id", "warehouse_location_id",
 		"brand", "model", "unit", "purchase_price", "cost_price", "sale_price",
 		"pricing_tier", "stock", "min_stock", "max_stock", "reorder_level",
-		"barcode", "sku", "weight", "dimensions", "is_active", "is_service",
+		"barcode", "sku", "weight", "dimensions", "is_active", "is_service", "is_assembly",
 		"taxable", "image_path", "notes", "default_expense_account_id",
 	}
 	if err := pc.DB.Model(&product).Select(updateFields).Updates(updateData).Error; err != nil {
@@ -449,13 +552,9 @@ func (pc *ProductController) UpdateProduct(c *gin.Context) {
 
 	// Check stock levels after update and trigger notifications if needed
 	if pc.stockMonitoringService != nil {
-		if err := pc.stockMonitoringService.CheckSingleProductStock(uint(id)); err != nil {
+		if err := pc.stockMonitoringService.SyncProductAlerts(uint(id)); err != nil {
 			// Log error but don't fail the update
-			log.Printf("Failed to check stock levels for product %d: %v", id, err)
-		}
-		// Also resolve any existing alerts if stock is now above threshold
-		if err := pc.stockMonitoringService.ResolveStockAlerts(); err != nil {
-			log.Printf("Failed to resolve stock alerts: %v", err)
+			log.Printf("Failed to sync stock alerts for product %d: %v", id, err)
 		}
 	}
 

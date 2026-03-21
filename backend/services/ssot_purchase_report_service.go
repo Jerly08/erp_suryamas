@@ -186,17 +186,17 @@ type purchaseBaseSummary struct {
 // getPurchaseSummary gets basic purchase statistics from purchases table (primary source)
 func (s *SSOTPurchaseReportService) getPurchaseSummary(ctx context.Context, startDate, endDate time.Time, projectID *uint) (*purchaseBaseSummary, error) {
 	// Use purchases table paid_amount field which is accurately maintained by payment system
-	query := `
+	query := fmt.Sprintf(`
 		SELECT 
 			COUNT(p.id) as total_count,
-			COUNT(CASE WHEN p.status = 'COMPLETED' OR p.outstanding_amount = 0 THEN 1 END) as completed_count,
+			COUNT(CASE WHEN COALESCE(p.outstanding_amount, 0) <= 0.01 THEN 1 END) as completed_count,
 			COALESCE(SUM(p.total_amount), 0) as total_amount,
 			COALESCE(SUM(p.paid_amount), 0) as total_paid
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
-	`
+		  AND %s
+	`, models.PurchaseOperationalReportWhereClause("p"))
 
 	args := []interface{}{startDate, endDate}
 	if projectID != nil {
@@ -216,7 +216,7 @@ func (s *SSOTPurchaseReportService) getPurchaseSummary(ctx context.Context, star
 // getPurchasesByVendor gets purchase summary grouped by vendor - using purchases table as source
 func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, startDate, endDate time.Time, projectID *uint) ([]VendorPurchaseSummary, error) {
 	// Use purchases table paid_amount field for accurate payment tracking
-	query := `
+	query := fmt.Sprintf(`
 		SELECT 
 			p.vendor_id as vendor_id,
 			COALESCE(c.name, 'Unknown Vendor') as vendor_name,
@@ -230,19 +230,19 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 				ELSE 'CREDIT'
 			END as payment_method,
 			CASE 
-				WHEN bool_and(p.outstanding_amount = 0 OR p.status = 'COMPLETED')
-				THEN 'COMPLETED'
-				WHEN bool_or(p.paid_amount > 0)
+				WHEN COALESCE(SUM(p.outstanding_amount), 0) <= 0.01
+				THEN 'PAID'
+				WHEN COALESCE(SUM(p.paid_amount), 0) > 0
 				THEN 'PARTIAL'
-				ELSE 'PENDING'
+				ELSE 'UNPAID'
 			END as status,
 			string_agg(DISTINCT p.code, ', ') as descriptions
 		FROM purchases p
 		LEFT JOIN contacts c ON c.id = p.vendor_id
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
-	`
+		  AND %s
+	`, models.PurchaseOperationalReportWhereClause("p"))
 
 	args := []interface{}{startDate, endDate}
 	if projectID != nil {
@@ -309,9 +309,13 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 
 	log.Printf("Valid vendors found: %d out of %d total groups", validVendorCount, len(vendors))
 
-	// Fetch items for each vendor using SSOT journal source_id
+	// Fetch items for each vendor using vendor_id to avoid mixing contacts with the same name
 	for i := range result {
-		items, err := s.getPurchaseItemsFromSSOT(ctx, startDate, endDate, result[i].VendorName, projectID)
+		if result[i].VendorID == 0 {
+			continue
+		}
+
+		items, err := s.getPurchaseItemsFromSSOT(ctx, startDate, endDate, result[i].VendorID, projectID)
 		if err != nil {
 			log.Printf("Warning: Failed to get items for vendor %s: %v", result[i].VendorName, err)
 			continue
@@ -325,10 +329,9 @@ func (s *SSOTPurchaseReportService) getPurchasesByVendor(ctx context.Context, st
 	return result, nil
 }
 
-// getPurchaseItemsFromSSOT gets detailed items purchased - using purchases table directly
-func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context, startDate, endDate time.Time, vendorName string, projectID *uint) ([]PurchaseItemDetail, error) {
-	// FIX: Query from purchases table directly, not from journal
-	query := `
+// getPurchaseItemsFromSSOT gets detailed items purchased - using purchases table directly.
+func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context, startDate, endDate time.Time, vendorID uint64, projectID *uint) ([]PurchaseItemDetail, error) {
+	query := fmt.Sprintf(`
 		SELECT 
 			COALESCE(pi.product_id, 0) as product_id,
 			COALESCE(prod.code, 'N/A') as product_code,
@@ -346,11 +349,11 @@ func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context
 		WHERE pur.date BETWEEN ? AND ?
 		  AND pur.deleted_at IS NULL
 		  AND pi.deleted_at IS NULL
-		  AND v.name = ?
-		  AND (pur.status = 'APPROVED' OR pur.status = 'COMPLETED' OR pur.status = 'POSTED' OR pur.status = 'PAID' OR pur.status = 'LUNAS' OR pur.approval_status = 'APPROVED')
-	`
+		  AND pur.vendor_id = ?
+		  AND %s
+	`, models.PurchaseOperationalReportWhereClause("pur"))
 
-	args := []interface{}{startDate, endDate, vendorName}
+	args := []interface{}{startDate, endDate, vendorID}
 	if projectID != nil {
 		query += " AND pur.project_id = ?"
 		args = append(args, *projectID)
@@ -365,14 +368,14 @@ func (s *SSOTPurchaseReportService) getPurchaseItemsFromSSOT(ctx context.Context
 		return nil, fmt.Errorf("failed to query purchase items from SSOT: %w", err)
 	}
 
-	log.Printf("🔍 Query items for vendor '%s': found %d items", vendorName, len(items))
+	log.Printf("Loaded %d purchase report items for vendor_id=%d", len(items), vendorID)
 	return items, nil
 }
 
 // getPurchasesByMonth gets purchase summary grouped by month - using purchases table
 func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, startDate, endDate time.Time, projectID *uint) ([]MonthlyPurchaseSummary, error) {
 	// Use purchases table paid_amount field for accurate payment tracking
-	query := `
+	query := fmt.Sprintf(`
 		SELECT 
 			EXTRACT(YEAR FROM p.date) as year,
 			EXTRACT(MONTH FROM p.date) as month,
@@ -382,8 +385,8 @@ func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, sta
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
-	`
+		  AND %s
+	`, models.PurchaseOperationalReportWhereClause("p"))
 
 	args := []interface{}{startDate, endDate}
 	if projectID != nil {
@@ -437,47 +440,84 @@ func (s *SSOTPurchaseReportService) getPurchasesByMonth(ctx context.Context, sta
 	return result, nil
 }
 
-// getPurchasesByCategory gets purchase summary grouped by account category - fallback to inventory
+// getPurchasesByCategory gets purchase summary grouped by posted purchase journal debits.
+// This keeps mixed-category purchases split by their actual journal allocation instead of
+// forcing the whole purchase into a single debit account bucket.
 func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, startDate, endDate time.Time, projectID *uint) ([]CategoryPurchaseSummary, error) {
-	// Use a subquery to get one category per purchase (picking the first debit account),
-	// preventing row fan-out from multiple journal lines per purchase.
-	// Use p.total_amount consistently (matching the summary query).
-	query := `
-		SELECT
-			COALESCE(cat.account_code, '1301') as account_code,
-			COALESCE(cat.account_name, 'Inventory') as account_name,
-			CASE
-				WHEN cat.account_code LIKE '13%' THEN 'Inventory'
-				WHEN cat.account_code LIKE '15%' THEN 'Fixed Assets'
-				WHEN cat.account_code LIKE '6%' THEN 'Expenses'
-				ELSE 'Inventory'
-			END as category_name,
-			COUNT(p.id) as total_purchases,
-			COALESCE(SUM(p.total_amount), 0) as total_amount
-		FROM purchases p
-		LEFT JOIN LATERAL (
-			SELECT a.code as account_code, a.name as account_name
-			FROM unified_journal_ledger sje
-			JOIN unified_journal_lines sjl ON sjl.journal_id = sje.id AND sjl.debit_amount > 0
-			JOIN accounts a ON a.id = sjl.account_id AND a.code NOT LIKE '21%'
-			WHERE sje.source_id = p.id AND sje.source_type = 'PURCHASE' AND sje.deleted_at IS NULL
-			ORDER BY sjl.debit_amount DESC
-			LIMIT 1
-		) cat ON true
-		WHERE p.date BETWEEN ? AND ?
-		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
-	`
-
-	args := []interface{}{startDate, endDate}
+	projectFilter := ""
+	args := []interface{}{models.SSOTStatusPosted, startDate, endDate}
 	if projectID != nil {
-		query += " AND p.project_id = ?"
+		projectFilter = " AND p.project_id = ?"
 		args = append(args, *projectID)
 	}
-	query += `
-		GROUP BY cat.account_code, cat.account_name
+	args = append(args, startDate, endDate)
+	if projectID != nil {
+		args = append(args, *projectID)
+	}
+
+	query := fmt.Sprintf(`
+		WITH categorized_lines AS (
+			SELECT
+				p.id as purchase_id,
+				COALESCE(a.code, '1301') as account_code,
+				COALESCE(a.name, 'Uncategorized Purchase') as account_name,
+				CASE
+					WHEN UPPER(TRIM(COALESCE(a.category, ''))) = 'CURRENT_ASSET' THEN 'Current Assets'
+					WHEN UPPER(TRIM(COALESCE(a.category, ''))) = 'FIXED_ASSET' THEN 'Fixed Assets'
+					WHEN UPPER(TRIM(COALESCE(a.category, ''))) = 'INTANGIBLE_ASSET' THEN 'Intangible Assets'
+					WHEN UPPER(TRIM(COALESCE(a.category, ''))) = 'INVESTMENT_ASSET' THEN 'Investment Assets'
+					WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'EXPENSE' THEN 'Expenses'
+					WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'ASSET' THEN 'Assets'
+					WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'LIABILITY' THEN 'Liabilities'
+					ELSE 'Other'
+				END as category_name,
+				sjl.debit_amount as amount
+			FROM purchases p
+			JOIN unified_journal_ledger sje
+				ON sje.source_id = p.id
+				AND sje.source_type = 'PURCHASE'
+				AND sje.status = ?
+				AND sje.deleted_at IS NULL
+			JOIN unified_journal_lines sjl
+				ON sjl.journal_id = sje.id
+				AND sjl.debit_amount > 0
+			JOIN accounts a
+				ON a.id = sjl.account_id
+				AND a.deleted_at IS NULL
+				AND a.code NOT LIKE '21%%'
+			WHERE p.date BETWEEN ? AND ?
+			  AND p.deleted_at IS NULL
+			  AND %s
+			  %s
+
+			UNION ALL
+
+			SELECT
+				p.id as purchase_id,
+				COALESCE(tax_account.code, '2102-002') as account_code,
+				COALESCE(tax_account.name, 'PPN Masukan') as account_name,
+				'Input Tax' as category_name,
+				p.tax_amount as amount
+			FROM purchases p
+			LEFT JOIN accounts tax_account
+				ON tax_account.code = '2102-002'
+				AND tax_account.deleted_at IS NULL
+			WHERE p.date BETWEEN ? AND ?
+			  AND p.deleted_at IS NULL
+			  AND COALESCE(p.tax_amount, 0) > 0.01
+			  AND %s
+			  %s
+		)
+		SELECT
+			account_code,
+			account_name,
+			category_name,
+			COUNT(DISTINCT purchase_id) as total_purchases,
+			COALESCE(SUM(amount), 0) as total_amount
+		FROM categorized_lines
+		GROUP BY account_code, account_name, category_name
 		ORDER BY total_amount DESC
-	`
+	`, models.PurchaseOperationalReportWhereClause("p"), projectFilter, models.PurchaseOperationalReportWhereClause("p"), projectFilter)
 
 	var categories []struct {
 		AccountCode    string  `json:"account_code"`
@@ -521,33 +561,34 @@ func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, 
 	return result, nil
 }
 
-// getPaymentAnalysis analyzes payment patterns in purchases - using purchases table
+// getPaymentAnalysis analyzes purchase mix by transaction method.
+// Counts and amounts are exclusive so the report cannot show more cash+credit
+// purchases than the total number of purchases.
 func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, startDate, endDate time.Time, projectID *uint) (PurchasePaymentAnalysis, error) {
-	// FIX: Use payment_method field from purchases table
-	query := `
+	query := fmt.Sprintf(`
 		SELECT 
 			COUNT(CASE 
-				WHEN p.payment_method IN ('CASH', 'BANK_TRANSFER')
+				WHEN UPPER(COALESCE(p.payment_method, '')) IN ('CASH', 'BANK_TRANSFER', 'TRANSFER', 'CHECK')
 				THEN 1 END) as cash_purchases,
 			COUNT(CASE 
-				WHEN p.payment_method NOT IN ('CASH', 'BANK_TRANSFER') OR p.payment_method IS NULL
+				WHEN UPPER(COALESCE(p.payment_method, 'CREDIT')) NOT IN ('CASH', 'BANK_TRANSFER', 'TRANSFER', 'CHECK')
 				THEN 1 END) as credit_purchases,
 			COALESCE(SUM(CASE 
-				WHEN p.payment_method IN ('CASH', 'BANK_TRANSFER')
+				WHEN UPPER(COALESCE(p.payment_method, '')) IN ('CASH', 'BANK_TRANSFER', 'TRANSFER', 'CHECK')
 				THEN p.total_amount
-				ELSE 0 
+				ELSE 0
 			END), 0) as cash_amount,
 			COALESCE(SUM(CASE 
-				WHEN p.payment_method NOT IN ('CASH', 'BANK_TRANSFER') OR p.payment_method IS NULL
+				WHEN UPPER(COALESCE(p.payment_method, 'CREDIT')) NOT IN ('CASH', 'BANK_TRANSFER', 'TRANSFER', 'CHECK')
 				THEN p.total_amount
-				ELSE 0 
+				ELSE 0
 			END), 0) as credit_amount,
 			COALESCE(AVG(p.total_amount), 0) as average_order_value
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
-	`
+		  AND %s
+	`, models.PurchaseOperationalReportWhereClause("p"))
 
 	args := []interface{}{startDate, endDate}
 	if projectID != nil {
@@ -591,15 +632,15 @@ func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, star
 // getTaxAnalysis analyzes tax information in purchases - using purchases table with tax fields
 func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDate, endDate time.Time, projectID *uint) (PurchaseTaxAnalysis, error) {
 	// FIX: Get tax from purchases table tax field, fallback to journal if needed
-	taxQuery := `
+	taxQuery := fmt.Sprintf(`
 		SELECT 
 			COALESCE(SUM(p.net_before_tax), 0) as total_taxable_amount,
 			COALESCE(SUM(p.tax_amount), 0) as total_tax_amount
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
-	`
+		  AND %s
+	`, models.PurchaseOperationalReportWhereClause("p"))
 
 	taxArgs := []interface{}{startDate, endDate}
 	if projectID != nil {
@@ -623,7 +664,7 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 	}
 
 	// Get monthly tax breakdown
-	monthlyTaxQuery := `
+	monthlyTaxQuery := fmt.Sprintf(`
 		SELECT 
 			EXTRACT(YEAR FROM p.date) as year,
 			EXTRACT(MONTH FROM p.date) as month,
@@ -631,8 +672,8 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
-		  AND (p.status = 'APPROVED' OR p.status = 'COMPLETED' OR p.status = 'POSTED' OR p.status = 'PAID' OR p.status = 'LUNAS' OR p.approval_status = 'APPROVED')
-	`
+		  AND %s
+	`, models.PurchaseOperationalReportWhereClause("p"))
 
 	monthlyTaxArgs := []interface{}{startDate, endDate}
 	if projectID != nil {

@@ -287,6 +287,11 @@ class ApprovalService {
     await api.put(API_ENDPOINTS.NOTIFICATIONS_MARK_READ(notificationId));
   }
 
+  // Delete notification
+  async deleteNotification(notificationId: number): Promise<void> {
+    await api.delete(API_ENDPOINTS.NOTIFICATIONS_DELETE(notificationId));
+  }
+
   // Get unread notification count
   async getUnreadNotificationCount(params: { type?: string; types?: string[] } = {}): Promise<{ count: number }> {
     const queryParams: Record<string, string> = {};

@@ -523,36 +523,33 @@ func (ers *EnhancedReportService) sortCustomersByRevenue(customerMap map[uint]*C
 
 // getSaleItemsForCustomer fetches detailed sale items for a specific customer
 func (ers *EnhancedReportService) getSaleItemsForCustomer(customerID uint, startDate, endDate time.Time, projectID *uint) ([]SaleItemDetail, error) {
-	query := `
-		SELECT 
-			COALESCE(si.product_id, 0) as product_id,
-			COALESCE(p.code, 'N/A') as product_code,
-			COALESCE(p.name, 'Unknown Product') as product_name,
-			si.quantity,
-			si.unit_price as unit_price,
-			si.line_total as total_price,
-			COALESCE(p.unit, 'pcs') as unit,
-			s.date as sale_date,
-			COALESCE(s.invoice_number, s.code, '') as invoice_number
-		FROM sales s
-		INNER JOIN sale_items si ON si.sale_id = s.id
-		LEFT JOIN products p ON p.id = si.product_id
-		WHERE s.customer_id = ?
-		  AND s.date BETWEEN ? AND ?
-		  AND s.deleted_at IS NULL
-		  AND si.deleted_at IS NULL
-		ORDER BY s.date DESC, si.id
-	`
+	var items []SaleItemDetail
+	query := ers.db.Table("sales AS s").
+		Select(`
+			COALESCE(si.product_id, 0) AS product_id,
+			COALESCE(p.code, 'N/A') AS product_code,
+			COALESCE(p.name, 'Unknown Product') AS product_name,
+			si.quantity AS quantity,
+			si.unit_price AS unit_price,
+			si.line_total AS total_price,
+			COALESCE(p.unit, 'pcs') AS unit,
+			s.date AS sale_date,
+			COALESCE(s.invoice_number, s.code, '') AS invoice_number
+		`).
+		Joins("INNER JOIN sale_items si ON si.sale_id = s.id").
+		Joins("LEFT JOIN products p ON p.id = si.product_id").
+		Where("s.customer_id = ?", customerID).
+		Where("s.date BETWEEN ? AND ?", startDate, endDate).
+		Where("s.status IN ?", models.SaleOperationalReportStatuses()).
+		Where("s.deleted_at IS NULL").
+		Where("si.deleted_at IS NULL").
+		Order("s.date DESC, si.id")
 
-	args := []interface{}{customerID, startDate, endDate}
 	if projectID != nil {
-		query = strings.Replace(query, "ORDER BY s.date DESC, si.id", "  AND s.project_id = ?\n\t\tORDER BY s.date DESC, si.id", 1)
-		args = append(args, *projectID)
+		query = query.Where("s.project_id = ?", *projectID)
 	}
 
-	var items []SaleItemDetail
-	err := ers.db.Raw(query, args...).Scan(&items).Error
-	if err != nil {
+	if err := query.Scan(&items).Error; err != nil {
 		return nil, fmt.Errorf("failed to query sale items: %w", err)
 	}
 
@@ -1056,7 +1053,7 @@ func (ers *EnhancedReportService) calculatePurchasesForPeriod(startDate, endDate
 	var total float64
 	if row := ers.db.Model(&models.Purchase{}).
 		Where("date BETWEEN ? AND ?", startDate, endDate).
-		Where("status IN ? OR approval_status = ?", []string{"APPROVED", "COMPLETED"}, "APPROVED").
+		Where("status <> ? AND (status IN ? OR approval_status = ?)", models.PurchaseStatusCancelled, models.PurchaseOperationalReportStatuses(), models.PurchaseApprovalApproved).
 		Select("COALESCE(SUM(total_amount), 0)").
 		Row(); row != nil {
 		if err := row.Scan(&total); err != nil {

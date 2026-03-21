@@ -54,3 +54,29 @@ func deriveReceivableSettlementBookAmount(payment *models.Payment) float64 {
 		return bankBookAmount
 	}
 }
+
+func classifyReceivableRealizedFX(bankBookAmountIDR, receivableSettlementBookAmountIDR float64) (float64, string) {
+	forexDiff := bankBookAmountIDR - receivableSettlementBookAmountIDR
+
+	if forexDiff > 0.005 {
+		return forexDiff, "GAIN"
+	}
+	if forexDiff < -0.005 {
+		return -forexDiff, "LOSS"
+	}
+
+	return 0, ""
+}
+
+func classifyPayableRealizedFX(bankBookAmountIDR, liabilitySettlementBookAmountIDR float64) (float64, string) {
+	forexDiff := bankBookAmountIDR - liabilitySettlementBookAmountIDR
+
+	if forexDiff > 0.005 {
+		return forexDiff, "LOSS"
+	}
+	if forexDiff < -0.005 {
+		return -forexDiff, "GAIN"
+	}
+
+	return 0, ""
+}

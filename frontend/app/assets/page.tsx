@@ -89,6 +89,7 @@ const AssetsPage = () => {
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('assets');
+  const canCreateOpeningAsset = canCreate && ['admin', 'finance'].includes((user?.role || '').toLowerCase());
 
   const [assets, setAssets] = useState<BackendAsset[]>([]);
   const [summary, setSummary] = useState<AssetsSummary | null>(null);
@@ -139,9 +140,7 @@ const AssetsPage = () => {
   const tooltipBg = useColorModeValue('gray.700', 'gray.700');
   const entryCardBg = useColorModeValue('white', 'whiteAlpha.50');
   const entryCardBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
-  const purchaseEntryBg = useColorModeValue('blue.50', 'blue.900');
   const openingEntryBg = useColorModeValue('green.50', 'green.900');
-  const purchaseEntryTextColor = useColorModeValue('blue.700', 'blue.100');
   const openingEntryTextColor = useColorModeValue('green.700', 'green.100');
   const depreciationRowHoverBg = useColorModeValue('purple.50', 'whiteAlpha.100');
   const openingAlertBg = useColorModeValue('green.50', 'green.900');
@@ -218,8 +217,6 @@ const AssetsPage = () => {
   const [fixedAssetAccounts, setFixedAssetAccounts] = useState<any[]>([]);
   const [depreciationAccounts, setDepreciationAccounts] = useState<any[]>([]);
   const [accumulatedDepreciationAccounts, setAccumulatedDepreciationAccounts] = useState<any[]>([]);
-  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
-  const [liabilityAccounts, setLiabilityAccounts] = useState<any[]>([]);
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
 
   // Form state
@@ -239,8 +236,6 @@ const AssetsPage = () => {
     serialNumber: '',
     condition: 'Good',
     openingAccumulatedDepreciation: 0,
-    entryType: 'purchase',
-    paymentMethod: 'CASH',
   });
 
   // Fetch assets from API
@@ -295,19 +290,15 @@ const AssetsPage = () => {
   const fetchAccounts = async () => {
     try {
       setIsLoadingAccounts(true);
-      const [fixedAssetAccountsRes, depreciationAccountsRes, accumDepAccountsRes, bankAccountsRes, liabilityAccountsRes] = await Promise.all([
+      const [fixedAssetAccountsRes, depreciationAccountsRes, accumDepAccountsRes] = await Promise.all([
         assetService.getFixedAssetAccounts(),
         assetService.getDepreciationExpenseAccounts(),
         assetService.getAccumulatedDepreciationAccounts(),
-        assetService.getBankAccounts(),
-        assetService.getLiabilityAccounts(),
       ]);
 
       setFixedAssetAccounts(fixedAssetAccountsRes.data || []);
       setDepreciationAccounts(depreciationAccountsRes.data || []);
       setAccumulatedDepreciationAccounts(accumDepAccountsRes.data || []);
-      setBankAccounts(bankAccountsRes.data || []);
-      setLiabilityAccounts(liabilityAccountsRes.data || []);
     } catch (error: any) {
       console.error('Error fetching accounts:', error);
       // Don't show error toast for accounts as it's not critical
@@ -442,12 +433,10 @@ const AssetsPage = () => {
         asset_account_id: formData.assetAccountId,
         depreciation_account_id: formData.depreciationAccountId,
         accumulated_depreciation_account_id: formData.accumulatedDepreciationAccountId,
-        opening_accumulated_depreciation: formData.entryType === 'opening'
-          ? (formData.openingAccumulatedDepreciation || 0)
-          : 0,
-        payment_method: formData.entryType === 'opening' ? 'SALDO_AWAL' : (formData.paymentMethod || 'CASH'),
-        payment_account_id: formData.entryType === 'purchase' && (formData.paymentMethod === 'CASH' || formData.paymentMethod === 'BANK') ? formData.paymentAccountId : undefined,
-        credit_account_id: formData.entryType === 'purchase' && formData.paymentMethod === 'CREDIT' ? formData.creditAccountId : undefined,
+        opening_accumulated_depreciation: formData.openingAccumulatedDepreciation || 0,
+        payment_method: 'SALDO_AWAL',
+        payment_account_id: undefined,
+        credit_account_id: undefined,
         user_id: currentUserId,
       };
 
@@ -566,8 +555,6 @@ const AssetsPage = () => {
       serialNumber: '',
       condition: 'Good',
       openingAccumulatedDepreciation: 0,
-      entryType: 'purchase',
-      paymentMethod: 'CASH',
     });
   };
 
@@ -582,9 +569,23 @@ const AssetsPage = () => {
 
   // Open modal for creating a new asset
   const handleCreate = () => {
+    if (!canCreateOpeningAsset) {
+      toast({
+        title: 'Akses dibatasi',
+        description: 'Pencatatan opening balance aset hanya tersedia untuk admin dan finance.',
+        status: 'warning',
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
     setSelectedAsset(null);
     resetForm();
     setIsModalOpen(true);
+  };
+
+  const handleOpenPurchases = () => {
+    window.location.href = '/purchases';
   };
 
   // Open modal for editing an existing asset
@@ -1332,13 +1333,15 @@ const AssetsPage = () => {
                 >
                   {t('assets.manageCategories')}
                 </Button>
-                <Button
-                  colorScheme="blue"
-                  leftIcon={<FiPlus />}
-                  onClick={handleCreate}
-                >
-                  {t('assets.addAsset')}
-                </Button>
+                {canCreateOpeningAsset && (
+                  <Button
+                    colorScheme="blue"
+                    leftIcon={<FiPlus />}
+                    onClick={handleCreate}
+                  >
+                    Record Opening Asset
+                  </Button>
+                )}
               </Flex>
             </Flex>
 
@@ -1347,6 +1350,36 @@ const AssetsPage = () => {
                 <AlertIcon />
                 <AlertTitle mr={2}>Error!</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <Alert status="info" mb={4} borderRadius="lg" alignItems={{ base: 'flex-start', md: 'center' }}>
+              <AlertIcon />
+              <Box flex="1">
+                <AlertTitle fontSize="sm">Pembelian aset baru dicatat dari modul Purchases</AlertTitle>
+                <AlertDescription fontSize="sm">
+                  Gunakan item type `ASSET` di Purchases agar vendor, hutang, payment, dan purchase report tetap konsisten.
+                  Halaman Assets sekarang difokuskan untuk pencatatan saldo awal aset saat migrasi awal, depresiasi, dan maintenance master aset.
+                </AlertDescription>
+              </Box>
+              <Button
+                mt={{ base: 3, md: 0 }}
+                ml={{ base: 0, md: 4 }}
+                size="sm"
+                variant="outline"
+                leftIcon={<FiExternalLink />}
+                onClick={handleOpenPurchases}
+              >
+                Buka Purchases
+              </Button>
+            </Alert>
+
+            {!canCreateOpeningAsset && (
+              <Alert status="warning" mb={4} borderRadius="lg">
+                <AlertIcon />
+                <AlertDescription fontSize="sm">
+                  Pencatatan opening balance aset dibatasi untuk role `admin` dan `finance`. Role lain tetap bisa melihat master aset dan histori depresiasi.
+                </AlertDescription>
               </Alert>
             )}
 
@@ -1590,7 +1623,7 @@ const AssetsPage = () => {
               <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor}>
                 <form onSubmit={handleSubmit}>
                   <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
-                    {selectedAsset?.id ? t('assets.editAsset') : t('assets.addAsset')}
+                    {selectedAsset?.id ? t('assets.editAsset') : 'Record Existing Asset (Opening Balance)'}
                   </ModalHeader>
                   <ModalCloseButton color={textColor} />
 
@@ -1603,7 +1636,7 @@ const AssetsPage = () => {
                           📝 {t('assets.form.manualAssetEntry')}
                         </AlertTitle>
                         <AlertDescription color={infoAlertTextColor} fontSize="xs" mt={1}>
-                          {t('assets.form.manualAssetEntryDescUpdated')}
+                          {t('assets.form.manualAssetEntryDescUpdated')} Fitur ini khusus aset yang sudah dimiliki sebelum go-live. Pembelian aset baru harus dicatat dari modul Purchases.
                         </AlertDescription>
                       </Box>
                     </Alert>
@@ -1655,7 +1688,7 @@ const AssetsPage = () => {
                             </FormControl>
                           </HStack>
 
-                          {formData.entryType === 'opening' && (
+                          {!selectedAsset?.id && (
                             <FormControl isInvalid={hasFieldError(validationErrors, 'openingAccumulatedDepreciation')}>
                               <FormLabel fontSize="sm" fontWeight="medium">Opening Accumulated Depreciation</FormLabel>
                               <CurrencyInput
@@ -1944,154 +1977,55 @@ const AssetsPage = () => {
                         </VStack>
                       </Box>
 
-                      {/* Entry Type & Payment Method Section - only for create mode */}
+                      {/* Asset Entry Scope Section - only for create mode */}
                       {!selectedAsset?.id && (
                       <Box w="full">
                         <Text fontSize="md" fontWeight="semibold" color={textColor} mb={4}>
-                          💳 {t('assets.form.entryType')}
+                          💳 Ruang Lingkup Pencatatan
                         </Text>
                         <VStack spacing={4}>
-                          {/* Entry Type Selection */}
-                          <FormControl>
-                            <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.entryType')}</FormLabel>
-                            <HStack spacing={4} w="full">
-                              <Box
-                                flex={1}
-                                p={3}
-                                borderWidth="2px"
-                                borderColor={formData.entryType === 'purchase' ? 'blue.500' : entryCardBorderColor}
-                                borderRadius="md"
-                                cursor="pointer"
-                                bg={formData.entryType === 'purchase' ? purchaseEntryBg : entryCardBg}
-                                onClick={() => {
-                                  handleInputChange('entryType', 'purchase');
-                                  handleInputChange('openingAccumulatedDepreciation', 0);
-                                  handleInputChange('paymentMethod', 'CASH');
-                                }}
-                                _hover={{ borderColor: 'blue.300' }}
-                              >
-                                <Text fontWeight="semibold" fontSize="sm">🛒 {t('assets.form.entryTypePurchase')}</Text>
-                                <Text fontSize="xs" color={formData.entryType === 'purchase' ? purchaseEntryTextColor : helperTextColor}>{t('assets.form.entryTypePurchaseDesc')}</Text>
-                              </Box>
-                              <Box
-                                flex={1}
-                                p={3}
-                                borderWidth="2px"
-                                borderColor={formData.entryType === 'opening' ? 'green.500' : entryCardBorderColor}
-                                borderRadius="md"
-                                cursor="pointer"
-                                bg={formData.entryType === 'opening' ? openingEntryBg : entryCardBg}
-                                onClick={() => {
-                                  handleInputChange('entryType', 'opening');
-                                  handleInputChange('paymentMethod', 'SALDO_AWAL');
-                                  handleInputChange('paymentAccountId', undefined);
-                                  handleInputChange('creditAccountId', undefined);
-                                }}
-                                _hover={{ borderColor: 'green.300' }}
-                              >
-                                <Text fontWeight="semibold" fontSize="sm">📦 {t('assets.form.entryTypeOpening')}</Text>
-                                <Text fontSize="xs" color={formData.entryType === 'opening' ? openingEntryTextColor : helperTextColor}>{t('assets.form.entryTypeOpeningDesc')}</Text>
-                              </Box>
-                            </HStack>
-                          </FormControl>
-
-                          {/* Payment Method - only for Purchase */}
-                          {formData.entryType === 'purchase' && (
-                            <>
-                              <FormControl>
-                                <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.paymentMethod')}</FormLabel>
-                                <Select
-                                  value={formData.paymentMethod || 'CASH'}
-                                  onChange={(e) => {
-                                    handleInputChange('paymentMethod', e.target.value);
-                                    handleInputChange('paymentAccountId', undefined);
-                                    handleInputChange('creditAccountId', undefined);
-                                  }}
-                                  size="md"
-                                  {...themedFieldStyles}
-                                >
-                                  <option value="CASH">{t('assets.form.paymentMethodCash')}</option>
-                                  <option value="BANK">{t('assets.form.paymentMethodBank')}</option>
-                                  <option value="CREDIT">{t('assets.form.paymentMethodCredit')}</option>
-                                </Select>
-                                <Text fontSize="xs" color={helperTextColor} mt={1}>
-                                  💡 {t('assets.form.paymentMethodNote')}
-                                </Text>
-                              </FormControl>
-
-                              {/* Cash/Bank Account Selection */}
-                              {(formData.paymentMethod === 'CASH' || formData.paymentMethod === 'BANK') && (
-                                <FormControl>
-                                  <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.paymentAccount')}</FormLabel>
-                                  <Select
-                                    value={formData.paymentAccountId ? String(formData.paymentAccountId) : ''}
-                                    onChange={(e) => handleInputChange('paymentAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
-                                    placeholder={t('assets.form.selectPaymentAccount')}
-                                    size="md"
-                                    isDisabled={isLoadingAccounts}
-                                    {...themedFieldStyles}
-                                  >
-                                    {bankAccounts
-                                      .filter((acc: any) => {
-                                        const type = (acc.type || '').toUpperCase();
-                                        if (formData.paymentMethod === 'CASH') return type === 'CASH';
-                                        if (formData.paymentMethod === 'BANK') return type === 'BANK';
-                                        return true;
-                                      })
-                                      .map((account: any) => (
-                                        <option key={account.id} value={String(account.account_id || account.id)}>
-                                          {account.display_name || `${account.code || ''} - ${account.name}`} ({account.balance_formatted || ''})
-                                        </option>
-                                      ))}
-                                  </Select>
-                                  <Alert status="info" mt={2} borderRadius="md" py={2}>
-                                    <AlertIcon boxSize="14px" />
-                                    <AlertDescription fontSize="xs">
-                                      {t('assets.form.purchaseJournalInfo')} {formData.paymentMethod === 'CASH' ? 'Kas' : 'Bank'}
-                                    </AlertDescription>
-                                  </Alert>
-                                </FormControl>
-                              )}
-
-                              {/* Credit/Liability Account Selection */}
-                              {formData.paymentMethod === 'CREDIT' && (
-                                <FormControl>
-                                  <FormLabel fontSize="sm" fontWeight="medium">{t('assets.form.creditAccount')}</FormLabel>
-                                  <Select
-                                    value={formData.creditAccountId ? String(formData.creditAccountId) : ''}
-                                    onChange={(e) => handleInputChange('creditAccountId', e.target.value ? parseInt(e.target.value) : undefined)}
-                                    placeholder={t('assets.form.selectCreditAccount')}
-                                    size="md"
-                                    isDisabled={isLoadingAccounts}
-                                    {...themedFieldStyles}
-                                  >
-                                    {(liabilityAccounts || []).filter((acc: any) => !acc.is_header && acc.is_active !== false).map((account: any) => (
-                                      <option key={account.id} value={String(account.id)}>
-                                        {account.code} - {account.name}
-                                      </option>
-                                    ))}
-                                  </Select>
-                                  <Alert status="info" mt={2} borderRadius="md" py={2}>
-                                    <AlertIcon boxSize="14px" />
-                                    <AlertDescription fontSize="xs">
-                                      {t('assets.form.purchaseJournalInfo')} Hutang Usaha
-                                    </AlertDescription>
-                                  </Alert>
-                                </FormControl>
-                              )}
-                            </>
-                          )}
+                          <HStack spacing={4} w="full" align="stretch">
+                            <Box
+                              flex={1}
+                              p={3}
+                              borderWidth="2px"
+                              borderColor={entryCardBorderColor}
+                              borderRadius="md"
+                              cursor="pointer"
+                              bg={entryCardBg}
+                              onClick={handleOpenPurchases}
+                              _hover={{ borderColor: 'blue.300' }}
+                            >
+                              <Text fontWeight="semibold" fontSize="sm">🛒 Catat di Purchases</Text>
+                              <Text fontSize="xs" color={helperTextColor}>
+                                Gunakan modul Purchases untuk aset baru agar vendor, hutang, payment, dan purchase report tetap konsisten.
+                              </Text>
+                            </Box>
+                            <Box
+                              flex={1}
+                              p={3}
+                              borderWidth="2px"
+                              borderColor="green.500"
+                              borderRadius="md"
+                              bg={openingEntryBg}
+                            >
+                              <Text fontWeight="semibold" fontSize="sm">📦 Record Existing Asset</Text>
+                              <Text fontSize="xs" color={openingEntryTextColor}>
+                                Form ini khusus untuk migrasi aset yang sudah dimiliki sebelum go-live sistem.
+                              </Text>
+                            </Box>
+                          </HStack>
 
                           {/* Opening Balance Info */}
-                          {formData.entryType === 'opening' && (
-                            <Alert status="success" borderRadius="md" bg={openingAlertBg} border="1px solid" borderColor={openingAlertBorder}>
-                              <AlertIcon />
-                              <Box>
-                                <Text fontWeight="semibold" fontSize="sm" color={openingAlertTitleColor}>{t('assets.form.openingJournalInfo')}</Text>
-                                <Text fontSize="xs" color={openingAlertTextColor}>{t('assets.form.openingBalanceNote')}</Text>
-                              </Box>
-                            </Alert>
-                          )}
+                          <Alert status="success" borderRadius="md" bg={openingAlertBg} border="1px solid" borderColor={openingAlertBorder}>
+                            <AlertIcon />
+                            <Box>
+                              <Text fontWeight="semibold" fontSize="sm" color={openingAlertTitleColor}>Jurnal Opening Balance</Text>
+                              <Text fontSize="xs" color={openingAlertTextColor}>
+                                Gunakan hanya untuk saldo awal aset saat migrasi. Setelah go-live, pembelian aset baru harus dibuat dari Purchases.
+                              </Text>
+                            </Box>
+                          </Alert>
                         </VStack>
                       </Box>
                       )}
@@ -2239,7 +2173,7 @@ const AssetsPage = () => {
                         isLoading={isSubmitting}
                         loadingText={selectedAsset?.id ? t('common.updating') : t('common.creating')}
                       >
-                        {selectedAsset?.id ? t('assets.updateAsset') : t('assets.createAsset')}
+                        {selectedAsset?.id ? t('assets.updateAsset') : 'Record Opening Asset'}
                       </Button>
                     </HStack>
                   </ModalFooter>

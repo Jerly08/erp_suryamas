@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -146,7 +146,6 @@ const ProductCatalog: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchProducts();
     fetchCategories();
     fetchWarehouseLocations();
   }, []);
@@ -158,7 +157,7 @@ const ProductCatalog: React.FC = () => {
 
   useEffect(() => {
     fetchProducts();
-  }, [searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, currentPage, tabIndex]);
+  }, [searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, sortBy, sortOrder, currentPage, tabIndex]);
 
   useEffect(() => {
     const notificationProductId = searchParams?.get('notificationProductId');
@@ -214,10 +213,14 @@ const ProductCatalog: React.FC = () => {
       const params: any = {
         page: currentPage,
         limit,
-        is_assembly: tabIndex === 1
+        is_assembly: tabIndex === 1,
+        sort_by: sortBy,
+        sort_order: sortOrder,
       };
       if (searchTerm) params.search = searchTerm;
       if (categoryFilter) params.category = categoryFilter;
+      if (warehouseLocationFilter) params.warehouse_location = warehouseLocationFilter;
+      if (statusFilter) params.status = statusFilter;
 
       const response = await ProductService.getProducts(params);
       setProducts(response.data || []);
@@ -267,10 +270,6 @@ const ProductCatalog: React.FC = () => {
     setSearchTerm(e.target.value);
   };
 
-  const handleSearch = () => {
-    fetchProducts();
-  };
-
   const handleAddProductClick = () => {
     if (!canCreate) return;
     setSelectedProduct(null);
@@ -278,18 +277,10 @@ const ProductCatalog: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSaveProduct = (product: Product) => {
-    if (selectedProduct) {
-      // Update existing product in list
-      setProducts(prevProducts =>
-        prevProducts.map(p => p.id === product.id ? product : p)
-      );
-    } else {
-      // Add new product to list
-      setProducts(prevProducts => [...prevProducts, product]);
-    }
+  const handleSaveProduct = (_product: Product) => {
     setIsModalOpen(false);
     setSelectedProduct(null);
+    void fetchProducts();
   };
 
   const handleCloseModal = () => {
@@ -314,7 +305,7 @@ const ProductCatalog: React.FC = () => {
 
     try {
       await ProductService.deleteProduct(product.id!);
-      setProducts(prevProducts => prevProducts.filter(p => p.id !== product.id));
+      void fetchProducts();
       toast({
         title: 'Product deleted successfully',
         status: 'success',
@@ -391,38 +382,6 @@ const ProductCatalog: React.FC = () => {
     if (!canCreate) return;
     onManagementModalOpen();
   };
-
-  // Filtered and sorted products using useMemo for performance
-
-  const filteredAndSortedProducts = useMemo(() => {
-    return products
-      .filter(product => {
-        const matchesSearch = searchTerm ?
-          product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          product.code.toLowerCase().includes(searchTerm.toLowerCase()) : true;
-        const matchesCategory = categoryFilter ?
-          product.category?.id === Number(categoryFilter) : true;
-        const matchesWarehouseLocation = warehouseLocationFilter ?
-          product.warehouse_location?.id === Number(warehouseLocationFilter) : true;
-        const matchesStatus = statusFilter ?
-          (statusFilter === 'active' ? product.is_active : !product.is_active) : true;
-        const matchesAssembly = !!product.is_assembly === (tabIndex === 1);
-        return matchesSearch && matchesCategory && matchesWarehouseLocation && matchesStatus && matchesAssembly;
-      })
-      .sort((a, b) => {
-        let comparison = 0;
-        if (sortBy === 'name' || sortBy === 'code' || sortBy === 'category') {
-          const aValue = sortBy === 'category' ? a.category?.name || '' : a[sortBy as keyof Product] as string;
-          const bValue = sortBy === 'category' ? b.category?.name || '' : b[sortBy as keyof Product] as string;
-          comparison = (aValue < bValue ? -1 : (aValue > bValue ? 1 : 0)) * (sortOrder === 'asc' ? 1 : -1);
-        } else if (sortBy === 'stock' || sortBy === 'sale_price') {
-          const aValue = a[sortBy as keyof Product] as number;
-          const bValue = b[sortBy as keyof Product] as number;
-          comparison = (aValue < bValue ? -1 : (aValue > bValue ? 1 : 0)) * (sortOrder === 'asc' ? 1 : -1);
-        }
-        return comparison;
-      });
-  }, [products, searchTerm, categoryFilter, warehouseLocationFilter, statusFilter, sortBy, sortOrder, tabIndex]);
 
   return (
     <SimpleLayout allowedRoles={['admin', 'inventory_manager', 'employee', 'finance', 'director']}>
@@ -600,7 +559,7 @@ const ProductCatalog: React.FC = () => {
 
           {/* Results Summary */}
           <Text fontSize="sm" color={mutedTextColor}>
-            {t('products.showing')} {filteredAndSortedProducts.length} dari {totalItems} {t('products.product')}
+            {t('products.showing')} {products.length} dari {totalItems} {t('products.product')}
             {(searchTerm || categoryFilter || warehouseLocationFilter || statusFilter) ? ` ${t('products.filtered')}` : ''}
           </Text>
         </Box>
@@ -622,7 +581,7 @@ const ProductCatalog: React.FC = () => {
               </Tr>
             </Thead>
             <Tbody>
-              {filteredAndSortedProducts.map((product) => (
+              {products.map((product) => (
                 <Tr key={product.id} _hover={{ bg: rowHoverBg }}>
                   <Td color={textColor} borderColor={borderColor}>{product.code}</Td>
                   <Td color={textColor} borderColor={borderColor}>{product.name}</Td>

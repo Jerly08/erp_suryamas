@@ -763,38 +763,43 @@ func (s *SSOTReportIntegrationService) generateVendorAnalysis(ctx context.Contex
 	// Query vendor transactions from SSOT journal entries with account information
 	type VendorJournalLine struct {
 		JournalID    uint64
-		AccountID    uint64
-		AccountCode  string
-		AccountName  string
-		Description  string
+		VendorID     uint64
+		VendorName   string
 		DebitAmount  decimal.Decimal
 		CreditAmount decimal.Decimal
 		EntryDate    time.Time
-		SourceID     *uint64
-		SourceType   string
 	}
 
 	var journalLines []VendorJournalLine
 	query := `
 		SELECT 
 			sjl.journal_id,
-			sjl.account_id,
-			a.code as account_code,
-			a.name as account_name,
-			sjl.description,
+			c.id as vendor_id,
+			c.name as vendor_name,
 			sjl.debit_amount,
 			sjl.credit_amount,
-			sje.entry_date,
-			sje.source_id,
-			sje.source_type
+			sje.entry_date
 		FROM unified_journal_lines sjl
 		JOIN unified_journal_ledger sje ON sje.id = sjl.journal_id
-		LEFT JOIN accounts a ON a.id = sjl.account_id
+		JOIN accounts a ON a.id = sjl.account_id
+		LEFT JOIN purchases p
+			ON sje.source_type = 'PURCHASE'
+			AND p.id = sje.source_id
+			AND p.deleted_at IS NULL
+		LEFT JOIN payments pay
+			ON sje.source_type IN ('PAYMENT', 'PURCHASE_PAYMENT')
+			AND pay.id = sje.source_id
+			AND pay.deleted_at IS NULL
+		LEFT JOIN contacts c
+			ON c.id = COALESCE(p.vendor_id, pay.contact_id)
+			AND c.type = 'VENDOR'
+			AND c.deleted_at IS NULL
 		WHERE sje.entry_date BETWEEN ? AND ?
 			AND sje.status = ?
 			AND sje.deleted_at IS NULL
-			AND a.code LIKE '2%'
-			AND sje.source_type IN ('PURCHASE', 'PAYMENT')
+			AND a.code LIKE '2101%'
+			AND sje.source_type IN ('PURCHASE', 'PAYMENT', 'PURCHASE_PAYMENT')
+			AND c.id IS NOT NULL
 		ORDER BY sje.entry_date, sjl.journal_id
 	`
 
@@ -805,29 +810,29 @@ func (s *SSOTReportIntegrationService) generateVendorAnalysis(ctx context.Contex
 
 	// Process journal lines to build vendor analysis
 	for _, line := range journalLines {
-		// Use SourceID as VendorID for purchase/payment transactions
-		if line.SourceID != nil && *line.SourceID > 0 {
-			vendorID := *line.SourceID
-			if _, exists := vendorStats[vendorID]; !exists {
-				vendorStats[vendorID] = &VendorDetail{
-					VendorID:            vendorID,
-					VendorName:          line.Description,
-					LastTransactionDate: line.EntryDate,
-				}
-			}
+		if line.VendorID == 0 {
+			continue
+		}
 
-			vendor := vendorStats[vendorID]
-			// For accounts payable: Credit increases payable (purchases), Debit decreases payable (payments)
-			if line.CreditAmount.GreaterThan(decimal.Zero) {
-				vendor.TotalPurchases = vendor.TotalPurchases.Add(line.CreditAmount)
-			} else if line.DebitAmount.GreaterThan(decimal.Zero) {
-				vendor.TotalPayments = vendor.TotalPayments.Add(line.DebitAmount)
+		if _, exists := vendorStats[line.VendorID]; !exists {
+			vendorStats[line.VendorID] = &VendorDetail{
+				VendorID:            line.VendorID,
+				VendorName:          line.VendorName,
+				LastTransactionDate: line.EntryDate,
 			}
+		}
 
-			// Update last transaction date
-			if line.EntryDate.After(vendor.LastTransactionDate) {
-				vendor.LastTransactionDate = line.EntryDate
-			}
+		vendor := vendorStats[line.VendorID]
+		// For accounts payable: Credit increases payable (purchases), Debit decreases payable (payments)
+		if line.CreditAmount.GreaterThan(decimal.Zero) {
+			vendor.TotalPurchases = vendor.TotalPurchases.Add(line.CreditAmount)
+		} else if line.DebitAmount.GreaterThan(decimal.Zero) {
+			vendor.TotalPayments = vendor.TotalPayments.Add(line.DebitAmount)
+		}
+
+		// Update last transaction date
+		if line.EntryDate.After(vendor.LastTransactionDate) {
+			vendor.LastTransactionDate = line.EntryDate
 		}
 	}
 
@@ -897,6 +902,11 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 			a.code as account_code,
 			a.name as account_name,
 			CASE 
+				WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'ASSET' THEN 'Asset'
+				WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'LIABILITY' THEN 'Liability'
+				WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'EQUITY' THEN 'Equity'
+				WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'REVENUE' THEN 'Revenue'
+				WHEN UPPER(TRIM(COALESCE(a.type, ''))) = 'EXPENSE' THEN 'Expense'
 				WHEN a.code LIKE '1%' THEN 'Asset'
 				WHEN a.code LIKE '2%' THEN 'Liability'
 				WHEN a.code LIKE '3%' THEN 'Equity'
@@ -916,8 +926,7 @@ func (s *SSOTReportIntegrationService) generateTrialBalance(ctx context.Context,
 		WHERE DATE(sje.entry_date) <= ?
 			AND sje.status = ?
 			AND sje.deleted_at IS NULL
-			AND UPPER(sje.source_type) != 'CLOSING'
-		GROUP BY sjl.account_id, a.code, a.name
+		GROUP BY sjl.account_id, a.code, a.name, a.type
 		ORDER BY a.code
 	`
 
@@ -1020,6 +1029,15 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 		GeneratedAt:    time.Now(),
 	}
 
+	if accountID != nil {
+		var selectedAccount models.Account
+		if err := s.db.WithContext(ctx).
+			Where("id = ? AND deleted_at IS NULL", *accountID).
+			First(&selectedAccount).Error; err == nil {
+			result.Account = selectedAccount
+		}
+	}
+
 	// Build query for general ledger
 	type ledgerRow struct {
 		JournalID    uint64
@@ -1062,7 +1080,6 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			WHERE sje.status = ?
 				AND DATE(sje.entry_date) BETWEEN ? AND ?
 				AND sje.deleted_at IS NULL
-				AND UPPER(sje.source_type) != 'CLOSING'
 				AND sjl.account_id = ?
 			ORDER BY sje.entry_date, sje.id, sjl.line_number
 		`
@@ -1088,7 +1105,6 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			WHERE sje.status = ? 
 				AND DATE(sje.entry_date) BETWEEN ? AND ?
 				AND sje.deleted_at IS NULL
-				AND UPPER(sje.source_type) != 'CLOSING'
 			ORDER BY sje.entry_date, sje.id, sjl.line_number
 		`
 		args = []interface{}{models.SSOTStatusPosted, startDate, endDate}
@@ -1141,6 +1157,8 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 			JournalCode:  row.EntryNumber,
 			Description:  row.Description,
 			Reference:    row.Reference,
+			AccountCode:  row.AccountCode,
+			AccountName:  row.AccountName,
 			DebitAmount:  debitAmt,
 			CreditAmount: creditAmt,
 			EntryType:    row.SourceType,
@@ -1261,11 +1279,15 @@ func (s *SSOTReportIntegrationService) generateGeneralLedger(ctx context.Context
 		return result.Transactions[i].DebitAmount > result.Transactions[j].DebitAmount
 	})
 
-	// Recalculate running balance after sorting
-	runningBalance := openingBalance
-	for i := range result.Transactions {
-		runningBalance = runningBalance.Add(decimal.NewFromFloat(result.Transactions[i].DebitAmount)).Sub(decimal.NewFromFloat(result.Transactions[i].CreditAmount))
-		result.Transactions[i].Balance = runningBalance.InexactFloat64()
+	// Recalculate running balance only for a single-account ledger.
+	// In all-accounts activity mode each entry should retain its own account balance,
+	// not a synthetic balance aggregated across unrelated accounts.
+	if accountID != nil {
+		runningBalance := openingBalance
+		for i := range result.Transactions {
+			runningBalance = runningBalance.Add(decimal.NewFromFloat(result.Transactions[i].DebitAmount)).Sub(decimal.NewFromFloat(result.Transactions[i].CreditAmount))
+			result.Transactions[i].Balance = runningBalance.InexactFloat64()
+		}
 	}
 
 	// Calculate enhanced UI metrics

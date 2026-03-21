@@ -887,6 +887,20 @@ func ensureStandardPurchaseApprovalWorkflow(db *gorm.DB) error {
 	result := db.Where("name = ? AND module = ?", "Standard Purchase Approval", "PURCHASE").First(&existingWorkflow)
 
 	if result.Error == nil {
+		updates := map[string]interface{}{}
+		if existingWorkflow.RequireDirector {
+			updates["require_director"] = false
+		}
+		if !existingWorkflow.RequireFinance {
+			updates["require_finance"] = true
+		}
+		if len(updates) > 0 {
+			if err := db.Model(&existingWorkflow).Updates(updates).Error; err != nil {
+				return fmt.Errorf("failed to normalize Standard Purchase Approval workflow: %v", err)
+			}
+			log.Println("✅ Standard Purchase Approval workflow normalized (Finance required, Director optional)")
+		}
+
 		// Check if workflow has steps
 		var stepCount int64
 		db.Model(&ApprovalStep{}).Where("workflow_id = ?", existingWorkflow.ID).Count(&stepCount)
@@ -912,7 +926,7 @@ func ensureStandardPurchaseApprovalWorkflow(db *gorm.DB) error {
 			MinAmount:       0,
 			MaxAmount:       999999999999,
 			IsActive:        true,
-			RequireDirector: true,
+			RequireDirector: false,
 			RequireFinance:  true,
 		}
 
@@ -2060,6 +2074,8 @@ func SyncAllSeededSequences(db *gorm.DB) error {
 		"invoice_types",
 		"module_permissions",
 		"cash_bank_transfers",
+		"component_templates",
+		"component_template_items",
 	}
 
 	for _, tableName := range tablesToSync {

@@ -24,6 +24,10 @@ func InitializeDatabase(db *gorm.DB) {
 		// Continue with initialization even if auto migration fails
 	}
 
+	if err := EnsureStockAlertNotificationUniqueness(db); err != nil {
+		log.Printf("âš ï¸  Stock alert uniqueness warning: %v", err)
+	}
+
 	// Seed initial data
 	SeedData(db)
 

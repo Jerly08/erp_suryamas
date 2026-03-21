@@ -132,8 +132,8 @@ export const API_ENDPOINTS = {
       PDF: '/api/v1/accounts/export/pdf',
       EXCEL: '/api/v1/accounts/export/excel',
     },
-    CATALOG: '/api/v1/accounts/catalog', // Public
-    CREDIT: '/api/v1/accounts/credit', // Public
+    CATALOG: '/api/v1/accounts/catalog', // Authenticated lookup
+    CREDIT: '/api/v1/accounts/credit', // Authenticated lookup
   },
 
   // SSOT posted-only COA balances
@@ -150,8 +150,8 @@ export const API_ENDPOINTS = {
   ACCOUNTS_IMPORT: '/api/v1/accounts/import',
   ACCOUNTS_EXPORT_PDF: '/api/v1/accounts/export/pdf',
   ACCOUNTS_EXPORT_EXCEL: '/api/v1/accounts/export/excel',
-  ACCOUNTS_CATALOG: '/api/v1/accounts/catalog', // Public
-  ACCOUNTS_CREDIT: '/api/v1/accounts/credit', // Public
+  ACCOUNTS_CATALOG: '/api/v1/accounts/catalog', // Authenticated lookup
+  ACCOUNTS_CREDIT: '/api/v1/accounts/credit', // Authenticated lookup
 
   // CASH_BANK endpoints aligned with backend routes under /api/v1
   CASH_BANK: {
@@ -376,6 +376,7 @@ export const API_ENDPOINTS = {
   NOTIFICATIONS_SUMMARY: '/api/v1/notifications/summary',
   NOTIFICATIONS_APPROVALS: '/api/v1/notifications/approvals',
   NOTIFICATIONS_BY_TYPE: (type: string) => `/api/v1/notifications/type/${type}`,
+  NOTIFICATIONS_DELETE: (id: number) => `/api/v1/notifications/${id}`,
   NOTIFICATIONS_MARK_READ: (id: number) => `/api/v1/notifications/${id}/read`,
   NOTIFICATIONS_UNREAD_COUNT: '/api/v1/notifications/unread-count',
 

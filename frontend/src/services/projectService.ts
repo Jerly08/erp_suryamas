@@ -1,5 +1,4 @@
 import api from './api';
-import { API_ENDPOINTS } from '@/config/api';
 
 export interface Project {
     id: number;
@@ -40,19 +39,18 @@ export interface ProjectUpdateRequest {
     status?: string;
     start_date?: string;
     end_date?: string;
+    clear_start_date?: boolean;
+    clear_end_date?: boolean;
     total_budget?: number;
     manager_id?: number;
 }
 
-// Ensure the endpoint exists in api.ts or config/api.ts
-// Assuming API_ENDPOINTS.PROJECTS='projects' or equivalent and api has baseURL defined.
-// Using explicit string for safety since it might not be exported in API_ENDPOINTS yet.
 const BASE_URL = '/api/v1/projects';
 
 export const projectService = {
     getAll: async (): Promise<Project[]> => {
         const response = await api.get(BASE_URL);
-        return response.data.data; // Assuming standard JSON response format with { data: [...] }
+        return response.data.data;
     },
 
     getById: async (id: number): Promise<Project> => {

@@ -3,6 +3,7 @@ package controllers
 import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/utils"
 	"net/http"
 	"strconv"
 
@@ -20,7 +21,7 @@ func NewProjectController(service services.ProjectService) *ProjectController {
 func (c *ProjectController) GetAll(ctx *gin.Context) {
 	projects, err := c.service.GetAllProjects()
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.respondError(ctx, err, "Failed to load projects")
 		return
 	}
 	ctx.JSON(http.StatusOK, gin.H{"data": projects})
@@ -36,7 +37,7 @@ func (c *ProjectController) GetByID(ctx *gin.Context) {
 
 	project, err := c.service.GetProjectByID(uint(id))
 	if err != nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "Project not found"})
+		c.respondError(ctx, err, "Failed to load project")
 		return
 	}
 
@@ -52,7 +53,7 @@ func (c *ProjectController) Create(ctx *gin.Context) {
 
 	project, err := c.service.CreateProject(req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.respondError(ctx, err, "Failed to create project")
 		return
 	}
 
@@ -75,7 +76,7 @@ func (c *ProjectController) Update(ctx *gin.Context) {
 
 	project, err := c.service.UpdateProject(uint(id), req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.respondError(ctx, err, "Failed to update project")
 		return
 	}
 
@@ -91,9 +92,19 @@ func (c *ProjectController) Delete(ctx *gin.Context) {
 	}
 
 	if err := c.service.DeleteProject(uint(id)); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.respondError(ctx, err, "Failed to delete project")
 		return
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "Project deleted successfully"})
+}
+
+func (c *ProjectController) respondError(ctx *gin.Context, err error, fallbackMessage string) {
+	if appErr := utils.GetAppError(err); appErr != nil {
+		ctx.JSON(appErr.StatusCode, appErr.ToErrorResponse(""))
+		return
+	}
+
+	internalErr := utils.NewInternalError(fallbackMessage, err)
+	ctx.JSON(internalErr.StatusCode, internalErr.ToErrorResponse(""))
 }

@@ -675,7 +675,16 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const estimatedForexDiff = type === 'payable'
     ? bankBookOutAmount - (watchedAmount || 0)
     : (watchedAmount || 0) - receivableSettlementBookAmount;
-  const estimatedForexType = estimatedForexDiff > 0.005 ? 'RUGI KURS' : estimatedForexDiff < -0.005 ? 'LABA KURS' : 'NETRAL';
+  const estimatedForexType =
+    estimatedForexDiff > 0.005
+      ? type === 'payable'
+        ? 'RUGI KURS'
+        : 'LABA KURS'
+      : estimatedForexDiff < -0.005
+        ? type === 'payable'
+          ? 'LABA KURS'
+          : 'RUGI KURS'
+        : 'NETRAL';
   const estimatedForexAmount = Math.abs(estimatedForexDiff);
 
   const autoAllocatePayment = () => {

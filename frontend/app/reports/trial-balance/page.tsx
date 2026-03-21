@@ -7,6 +7,7 @@ import UnifiedLayout from '@/components/layout/UnifiedLayout';
 import { ssotTrialBalanceService, SSOTTrialBalanceData } from '@/services/ssotTrialBalanceService';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
+import periodClosingService from '@/services/periodClosingService';
 import {
     Box, Heading, Text, Button, VStack, HStack, Card, CardBody, Icon, SimpleGrid,
     FormControl, FormLabel, Input, Select, Spinner, useToast, useColorModeValue,
@@ -140,10 +141,13 @@ const TrialBalancePage: React.FC = () => {
     const loadClosedPeriods = async () => {
         setLoadingClosedPeriods(true);
         try {
-            const response = await api.get(API_ENDPOINTS.FISCAL_CLOSING.HISTORY);
-            if (response.data.success && Array.isArray(response.data.data)) {
-                setClosedPeriods(buildUniqueClosedPeriods(response.data.data));
-            }
+            const periods = await periodClosingService.getClosedPeriodsForFilter();
+            setClosedPeriods(periods.map((period) => ({
+                value: period.value,
+                label: period.label,
+                date: period.value,
+                start_date: period.period.start_date?.slice(0, 10),
+            })));
         } catch { /* ignore */ } finally { setLoadingClosedPeriods(false); }
     };
 
@@ -171,8 +175,11 @@ const TrialBalancePage: React.FC = () => {
         try {
             if (format === 'pdf') {
                 await ssotTrialBalanceService.exportToPDF({ as_of_date: asOfDate });
-                toast({ title: 'Ekspor Berhasil', status: 'success', duration: 3000, isClosable: true });
             } else {
+                await ssotTrialBalanceService.exportToCSV({ as_of_date: asOfDate });
+            }
+            toast({ title: 'Ekspor Berhasil', status: 'success', duration: 3000, isClosable: true });
+            /* legacy client-side CSV export removed after backend CSV endpoint was fixed
                 // CSV: generate client-side (backend only returns JSON metadata for csv)
                 if (!data.accounts?.length) {
                     toast({ title: 'Error', description: 'Tidak ada data akun untuk diekspor', status: 'warning', duration: 3000, isClosable: true });
@@ -260,7 +267,7 @@ const TrialBalancePage: React.FC = () => {
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
                 toast({ title: 'Ekspor CSV Berhasil', status: 'success', duration: 3000, isClosable: true });
-            }
+            */
         } catch (err: any) {
             console.error('Export error:', err);
             toast({ title: 'Ekspor Gagal', description: err.message, status: 'error', duration: 5000, isClosable: true });
@@ -344,6 +351,11 @@ const TrialBalancePage: React.FC = () => {
                                     {t('reports.modal.loadHistory') || 'Muat Riwayat'}
                                 </Button>
                             </HStack>
+                            {!loadingClosedPeriods && closedPeriods.length === 0 && (
+                                <Text fontSize="xs" color={descriptionColor}>
+                                    Belum ada periode tutup final yang bisa dipakai untuk mode archive. Periode yang masih future-pending atau sudah reopen tidak ditampilkan.
+                                </Text>
+                            )}
 
                             <Divider />
 

@@ -6,6 +6,8 @@ import { useTheme } from '@/contexts/SimpleThemeContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import SimpleThemeToggle from '@/components/common/SimpleThemeToggle';
 import UnifiedNotifications from '@/components/notification/UnifiedNotifications';
+import { formatRoleForApproval } from '@/utils/roles';
+import { getUserDisplayName } from '@/utils/userDisplay';
 import {
   Flex,
   Text,
@@ -17,7 +19,6 @@ import {
   MenuButton,
   MenuList,
   MenuItem,
-  MenuDivider,
   Button,
   useColorMode,
   useColorModeValue,
@@ -34,6 +35,8 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { colorMode, setColorMode } = useColorMode();
+  const displayName = getUserDisplayName(user, { fallback: 'User', allowRoleFallback: false });
+  const roleLabel = formatRoleForApproval(user?.role);
   
   // Dynamic colors based on theme
   const bgColor = useColorModeValue('white', 'var(--bg-secondary)');
@@ -95,13 +98,13 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
           <Menu>
             <MenuButton as={Button} variant="ghost" rightIcon={<FiChevronDown />}>
               <HStack spacing={2}>
-                <Avatar size="sm" name={user.name} bg="brand.500" />
+                <Avatar size="sm" name={displayName} bg="brand.500" />
                 <VStack spacing={0} align="start" display={{ base: 'none', md: 'flex' }}>
                   <Text fontSize="sm" fontWeight="medium" color={textColor}>
-                    {user.name}
+                    {displayName}
                   </Text>
                   <Text fontSize="xs" color={subtextColor}>
-                    {user.role}
+                    {roleLabel}
                   </Text>
                 </VStack>
               </HStack>

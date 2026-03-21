@@ -22,6 +22,7 @@ import {
   Tabs,
   Text,
   useColorModeValue,
+  useToast,
   VStack,
 } from '@chakra-ui/react';
 import {
@@ -32,6 +33,7 @@ import {
   FiClock,
   FiPackage,
   FiShoppingCart,
+  FiTrash2,
   FiXCircle,
 } from 'react-icons/fi';
 import axios from 'axios';
@@ -90,6 +92,7 @@ const UnifiedNotifications: React.FC = () => {
   const { t, language } = useTranslation();
   const { user, token, isLoading, logout } = useAuth();
   const router = useRouter();
+  const toast = useToast();
   const [approvalNotifications, setApprovalNotifications] = useState<NotificationItem[]>([]);
   const [stockNotifications, setStockNotifications] = useState<NotificationItem[]>([]);
   const [stockAlerts, setStockAlerts] = useState<StockAlert[]>([]);
@@ -349,6 +352,48 @@ const UnifiedNotifications: React.FC = () => {
       setStockUnreadCount((prev) => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Failed to mark stock notification as read:', error);
+    }
+  };
+
+  const deleteApprovalNotification = async (notification: NotificationItem) => {
+    try {
+      await approvalService.deleteNotification(notification.id);
+      setApprovalNotifications((prev) =>
+        prev.filter((item) => item.id !== notification.id)
+      );
+      if (!notification.is_read) {
+        setApprovalUnreadCount((prev) => Math.max(0, prev - 1));
+      }
+    } catch (error) {
+      console.error('Failed to delete approval notification:', error);
+      toast({
+        title: 'Gagal menghapus notifikasi',
+        description: 'Notifikasi approval belum berhasil dihapus.',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  };
+
+  const deleteStockNotification = async (notification: NotificationItem) => {
+    try {
+      await approvalService.deleteNotification(notification.id);
+      setStockNotifications((prev) =>
+        prev.filter((item) => item.id !== notification.id)
+      );
+      if (!notification.is_read) {
+        setStockUnreadCount((prev) => Math.max(0, prev - 1));
+      }
+    } catch (error) {
+      console.error('Failed to delete stock notification:', error);
+      toast({
+        title: 'Gagal menghapus notifikasi',
+        description: 'Notifikasi stok belum berhasil dihapus.',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
     }
   };
 
@@ -641,7 +686,30 @@ const UnifiedNotifications: React.FC = () => {
               <Text fontSize="sm" fontWeight={notification.is_read ? 'normal' : 'semibold'} color={textColor}>
                 {notification.title}
               </Text>
-              {!notification.is_read && <Box w={2} h={2} bg={unreadApprovalDot} borderRadius="full" />}
+              <HStack spacing={1} align="center">
+                {!notification.is_read && <Box w={2} h={2} bg={unreadApprovalDot} borderRadius="full" />}
+                <Box
+                  as="span"
+                  aria-label="Hapus notifikasi"
+                  title="Hapus notifikasi"
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  w="22px"
+                  h="22px"
+                  borderRadius="md"
+                  color={mutedTextColor}
+                  cursor="pointer"
+                  _hover={{ bg: itemHoverBg, color: 'red.400' }}
+                  onClick={(event: React.MouseEvent<HTMLSpanElement>) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void deleteApprovalNotification(notification);
+                  }}
+                >
+                  <FiTrash2 />
+                </Box>
+              </HStack>
             </HStack>
 
             <HStack spacing={2} flexWrap="wrap">
@@ -877,7 +945,30 @@ const UnifiedNotifications: React.FC = () => {
                                     <Text fontSize="sm" fontWeight={notification.is_read ? 'normal' : 'semibold'} color={textColor}>
                                       {notification.title}
                                     </Text>
-                                    {!notification.is_read && <Box w={2} h={2} bg={unreadStockDot} borderRadius="full" />}
+                                    <HStack spacing={1} align="center">
+                                      {!notification.is_read && <Box w={2} h={2} bg={unreadStockDot} borderRadius="full" />}
+                                      <Box
+                                        as="span"
+                                        aria-label="Hapus notifikasi"
+                                        title="Hapus notifikasi"
+                                        display="inline-flex"
+                                        alignItems="center"
+                                        justifyContent="center"
+                                        w="22px"
+                                        h="22px"
+                                        borderRadius="md"
+                                        color={mutedTextColor}
+                                        cursor="pointer"
+                                        _hover={{ bg: itemHoverBg, color: 'red.400' }}
+                                        onClick={(event: React.MouseEvent<HTMLSpanElement>) => {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          void deleteStockNotification(notification);
+                                        }}
+                                      >
+                                        <FiTrash2 />
+                                      </Box>
+                                    </HStack>
                                   </HStack>
 
                                   <Text fontSize="xs" color={secondaryTextColor} noOfLines={2}>

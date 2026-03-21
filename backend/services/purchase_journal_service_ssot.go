@@ -282,7 +282,17 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 		}
 	// Credit purchases / payables
 	case strings.ToUpper(models.PurchasePaymentCredit), "KREDIT", "CREDIT", "HUTANG":
-		creditAccount, err = resolveByCode("2101-001") // Hutang Usaha - Lokal (Leaf)
+		if purchase.CreditAccountID != nil && *purchase.CreditAccountID > 0 {
+			var selectedAccount models.Account
+			if lookupErr := dbToUse.First(&selectedAccount, *purchase.CreditAccountID).Error; lookupErr == nil &&
+				!selectedAccount.IsHeader &&
+				strings.EqualFold(strings.TrimSpace(selectedAccount.Type), models.AccountTypeLiability) {
+				creditAccount = &selectedAccount
+			}
+		}
+		if creditAccount == nil {
+			creditAccount, err = resolveByCode("2101-001") // Hutang Usaha - Lokal (Leaf)
+		}
 
 		if err != nil {
 			return fmt.Errorf("payables account not found: %v", err)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -117,6 +118,73 @@ func nonSystemJournalSourceTypes() []string {
 		models.SSOTSourceTypeClosing,
 		models.SSOTSourceTypeReversal,
 	}
+}
+
+func currentClosingDayStart(now time.Time) time.Time {
+	return normalizeClosingDayStart(now.In(time.Local))
+}
+
+func getClosingEnvironment() string {
+	env := strings.ToLower(os.Getenv("ENV"))
+	if env == "" {
+		env = strings.ToLower(os.Getenv("GO_ENV"))
+	}
+	if env == "" {
+		env = strings.ToLower(os.Getenv("ENVIRONMENT"))
+	}
+	if env == "" {
+		env = "development"
+	}
+	return env
+}
+
+func allowSameDayPeriodClosing() bool {
+	if strings.EqualFold(os.Getenv("ALLOW_SAME_DAY_PERIOD_CLOSING"), "true") {
+		return true
+	}
+
+	switch getClosingEnvironment() {
+	case "development", "dev", "local":
+		return true
+	default:
+		return false
+	}
+}
+
+func isReopenedAccountingPeriod(period models.AccountingPeriod) bool {
+	return !period.IsClosed && (period.ReopenCount > 0 || period.ReopenedAt != nil || period.ReopeningJournalID != nil)
+}
+
+func isEffectiveClosedAccountingPeriod(period models.AccountingPeriod, now time.Time) bool {
+	if !period.IsClosed {
+		return false
+	}
+
+	closingDay := currentClosingDayStart(now)
+	periodEndDay := canonicalPeriodEndDate(period.EndDate)
+
+	if allowSameDayPeriodClosing() {
+		return !periodEndDay.After(closingDay)
+	}
+
+	return periodEndDay.Before(closingDay)
+}
+
+func uniqueNoteLines(lines []string) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+
+	result := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		if _, exists := seen[line]; exists {
+			continue
+		}
+		seen[line] = struct{}{}
+		result = append(result, line)
+	}
+	return result
 }
 
 func countOperationalJournalEntries(tx *gorm.DB, startDate, endDate time.Time) (int64, error) {
@@ -527,40 +595,74 @@ func (s *UnifiedPeriodClosingService) validateClosingWindow(tx *gorm.DB, startDa
 		return nil, nil, nil, fmt.Errorf("end_date must be on or after start_date")
 	}
 
-	var closedPeriods []models.AccountingPeriod
-	if err := tx.Where("is_closed = ? AND deleted_at IS NULL", true).Order("end_date DESC").Find(&closedPeriods).Error; err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to query closed periods: %v", err)
-	}
-	if len(closedPeriods) == 0 {
-		validationMessages = append(validationMessages, "First period closing - no previous closed period found.")
-		return validationMessages, blockingMessages, nil, nil
-	}
-
-	lastPeriod := closedPeriods[0]
-	expectedStart := nextClosingStartDate(lastPeriod.EndDate)
-	if !sameClosingDay(startDate, expectedStart) {
+	todayStart := currentClosingDayStart(time.Now())
+	if allowSameDayPeriodClosing() {
+		if normalizeClosingDayStart(endDate).After(todayStart) {
+			blockingMessages = append(blockingMessages,
+				fmt.Sprintf("End date must be on or before %s. Same-day period closing is enabled in test/development mode, but future dates are still not allowed.",
+					todayStart.Format("2006-01-02")))
+		}
+	} else if !normalizeClosingDayStart(endDate).Before(todayStart) {
 		blockingMessages = append(blockingMessages,
-			fmt.Sprintf("Start date must be %s based on the latest closed period, but got %s.",
-				expectedStart.Format("2006-01-02"), startDate.Format("2006-01-02")))
+			fmt.Sprintf("End date must be before %s. Period closing can only be executed after the selected period has fully ended.",
+				todayStart.Format("2006-01-02")))
 	}
 
-	if !normalizeClosingDayStart(endDate).After(canonicalPeriodEndDate(lastPeriod.EndDate)) {
-		blockingMessages = append(blockingMessages, "End date must be after last closing date.")
+	var periodRecords []models.AccountingPeriod
+	if err := tx.Where("deleted_at IS NULL").Order("end_date DESC, id DESC").Find(&periodRecords).Error; err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to query accounting periods: %v", err)
+	}
+	if len(periodRecords) == 0 {
+		validationMessages = append(validationMessages, "First period closing - no previous closed period found.")
+		validationMessages = append(validationMessages, blockingMessages...)
+		return validationMessages, blockingMessages, nil, nil
 	}
 
 	inputStart := normalizeClosingDayStart(startDate)
 	inputEnd := normalizeClosingDayStart(endDate)
-	for _, period := range closedPeriods {
+
+	latestPeriod := periodRecords[0]
+	if isReopenedAccountingPeriod(latestPeriod) {
+		expectedStart := canonicalPeriodStartDate(latestPeriod.StartDate)
+		expectedEnd := canonicalPeriodEndDate(latestPeriod.EndDate)
+		validationMessages = append(validationMessages,
+			fmt.Sprintf("Re-closing reopened period %s to %s.", expectedStart.Format("2006-01-02"), expectedEnd.Format("2006-01-02")))
+
+		if !inputStart.Equal(expectedStart) || !inputEnd.Equal(expectedEnd) {
+			blockingMessages = append(blockingMessages,
+				fmt.Sprintf("Latest period %s to %s was reopened. You must close the exact same period before closing a newer range.",
+					expectedStart.Format("2006-01-02"), expectedEnd.Format("2006-01-02")))
+		}
+	} else {
+		expectedStart := nextClosingStartDate(latestPeriod.EndDate)
+		if !sameClosingDay(startDate, expectedStart) {
+			blockingMessages = append(blockingMessages,
+				fmt.Sprintf("Start date must be %s based on the latest closed period, but got %s.",
+					expectedStart.Format("2006-01-02"), startDate.Format("2006-01-02")))
+		}
+
+		if !normalizeClosingDayStart(endDate).After(canonicalPeriodEndDate(latestPeriod.EndDate)) {
+			blockingMessages = append(blockingMessages, "End date must be after last closing date.")
+		}
+	}
+
+	for _, period := range periodRecords {
 		periodStart := canonicalPeriodStartDate(period.StartDate)
 		periodEnd := canonicalPeriodEndDate(period.EndDate)
+		if isReopenedAccountingPeriod(latestPeriod) &&
+			period.ID == latestPeriod.ID &&
+			inputStart.Equal(periodStart) &&
+			inputEnd.Equal(periodEnd) {
+			continue
+		}
 		if dateOnlyRangeOverlaps(inputStart, inputEnd, periodStart, periodEnd) {
-			blockingMessages = append(blockingMessages, "Selected period overlaps an already closed period.")
+			blockingMessages = append(blockingMessages, "Selected period overlaps an existing accounting period record.")
 			break
 		}
 	}
 
 	validationMessages = append(validationMessages, blockingMessages...)
-	return validationMessages, blockingMessages, &lastPeriod, nil
+	return validationMessages, blockingMessages, &latestPeriod, nil
 }
 
 // ExecutePeriodClosing performs period closing using unified journal system
@@ -584,7 +686,7 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 			return fmt.Errorf("retained earnings account (3102) not found: %v", err)
 		}
 
-		// 2. Get the last closed period (for logging & validation only)
+		// 2. Get the latest accounting period context (for logging & validation only)
 		//    Saldo yang ditutup tetap dihitung dari SSOT sampai endDate, sehingga tidak tergantung startDate,
 		//    dan tidak akan terjadi double-closing untuk periode sebelumnya.
 		var periodStartDate time.Time
@@ -592,6 +694,11 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 			// No previous closed periods, use the start_date provided
 			periodStartDate = startDate
 			log.Printf("[UNIFIED CLOSING] No previous closed periods found, using provided start date: %s", startDate.Format("2006-01-02"))
+		} else if isReopenedAccountingPeriod(*lastClosedPeriod) {
+			periodStartDate = canonicalPeriodStartDate(lastClosedPeriod.StartDate)
+			log.Printf("[UNIFIED CLOSING] Re-closing reopened period: %s to %s",
+				periodBoundaryDateString(lastClosedPeriod.StartDate, "start"),
+				periodBoundaryDateString(lastClosedPeriod.EndDate, "end"))
 		} else {
 			// Start from the day after last closed period
 			periodStartDate = nextClosingStartDate(lastClosedPeriod.EndDate)
@@ -1187,51 +1294,94 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 func (s *UnifiedPeriodClosingService) GetLastClosingInfo(ctx context.Context) (map[string]interface{}, error) {
 	tx := s.db.WithContext(ctx)
 
-	var lastPeriod models.AccountingPeriod
-	err := tx.Where("is_closed = ?", true).
-		Order("end_date DESC").
-		First(&lastPeriod).Error
+	var periods []models.AccountingPeriod
+	err := tx.Where("deleted_at IS NULL").
+		Order("end_date DESC, id DESC").
+		Find(&periods).Error
 
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// Belum pernah closing sama sekali → cari tanggal transaksi pertama dari SSOT
-			var count int64
-			if err := tx.Model(&models.SSOTJournalEntry{}).
-				Where("status = ? AND source_type NOT IN ?", models.SSOTStatusPosted, nonSystemJournalSourceTypes()).
-				Count(&count).Error; err != nil {
-				return nil, fmt.Errorf("failed to count transactions: %v", err)
-			}
-
-			resp := map[string]interface{}{
-				"has_previous_closing": false,
-			}
-
-			if count > 0 {
-				var earliestTxn time.Time
-				if err := tx.Model(&models.SSOTJournalEntry{}).
-					Where("status = ? AND source_type NOT IN ?", models.SSOTStatusPosted, nonSystemJournalSourceTypes()).
-					Select("MIN(entry_date)").
-					Scan(&earliestTxn).Error; err != nil {
-					return nil, fmt.Errorf("failed to query earliest transaction date: %v", err)
-				}
-				resp["period_start_date"] = earliestTxn.Format("2006-01-02")
-			}
-
-			return resp, nil
-		}
 		return nil, fmt.Errorf("failed to query last closing period: %v", err)
 	}
 
-	nextStart := nextClosingStartDate(lastPeriod.EndDate)
+	now := time.Now()
+	if len(periods) > 0 {
+		latest := periods[0]
 
-	return map[string]interface{}{
-		"has_previous_closing":   true,
-		"last_closing_date":      periodBoundaryDateString(lastPeriod.EndDate, "end"),
-		"next_start_date":        nextStart.Format("2006-01-02"),
-		"last_net_income":        lastPeriod.NetIncome,
-		"last_period_start_date": periodBoundaryDateString(lastPeriod.StartDate, "start"),
-		"last_period_end_date":   periodBoundaryDateString(lastPeriod.EndDate, "end"),
-	}, nil
+		if isReopenedAccountingPeriod(latest) {
+			return map[string]interface{}{
+				"has_previous_closing":   true,
+				"last_closing_date":      periodBoundaryDateString(latest.EndDate, "end"),
+				"next_start_date":        periodBoundaryDateString(latest.StartDate, "start"),
+				"last_net_income":        latest.NetIncome,
+				"last_period_start_date": periodBoundaryDateString(latest.StartDate, "start"),
+				"last_period_end_date":   periodBoundaryDateString(latest.EndDate, "end"),
+				"requires_reclose":       true,
+				"reopened_period_start":  periodBoundaryDateString(latest.StartDate, "start"),
+				"reopened_period_end":    periodBoundaryDateString(latest.EndDate, "end"),
+			}, nil
+		}
+
+		if latest.IsClosed && !isEffectiveClosedAccountingPeriod(latest, now) {
+			return map[string]interface{}{
+				"has_previous_closing":   true,
+				"last_closing_date":      periodBoundaryDateString(latest.EndDate, "end"),
+				"last_net_income":        latest.NetIncome,
+				"last_period_start_date": periodBoundaryDateString(latest.StartDate, "start"),
+				"last_period_end_date":   periodBoundaryDateString(latest.EndDate, "end"),
+				"future_closed_pending":  true,
+			}, nil
+		}
+
+		if isEffectiveClosedAccountingPeriod(latest, now) {
+			nextStart := nextClosingStartDate(latest.EndDate)
+			return map[string]interface{}{
+				"has_previous_closing":   true,
+				"last_closing_date":      periodBoundaryDateString(latest.EndDate, "end"),
+				"next_start_date":        nextStart.Format("2006-01-02"),
+				"last_net_income":        latest.NetIncome,
+				"last_period_start_date": periodBoundaryDateString(latest.StartDate, "start"),
+				"last_period_end_date":   periodBoundaryDateString(latest.EndDate, "end"),
+			}, nil
+		}
+	}
+
+	for _, period := range periods {
+		if isEffectiveClosedAccountingPeriod(period, now) {
+			nextStart := nextClosingStartDate(period.EndDate)
+			return map[string]interface{}{
+				"has_previous_closing":   true,
+				"last_closing_date":      periodBoundaryDateString(period.EndDate, "end"),
+				"next_start_date":        nextStart.Format("2006-01-02"),
+				"last_net_income":        period.NetIncome,
+				"last_period_start_date": periodBoundaryDateString(period.StartDate, "start"),
+				"last_period_end_date":   periodBoundaryDateString(period.EndDate, "end"),
+			}, nil
+		}
+	}
+
+	var count int64
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where("status = ? AND source_type NOT IN ?", models.SSOTStatusPosted, nonSystemJournalSourceTypes()).
+		Count(&count).Error; err != nil {
+		return nil, fmt.Errorf("failed to count transactions: %v", err)
+	}
+
+	resp := map[string]interface{}{
+		"has_previous_closing": false,
+	}
+
+	if count > 0 {
+		var earliestTxn time.Time
+		if err := tx.Model(&models.SSOTJournalEntry{}).
+			Where("status = ? AND source_type NOT IN ?", models.SSOTStatusPosted, nonSystemJournalSourceTypes()).
+			Select("MIN(entry_date)").
+			Scan(&earliestTxn).Error; err != nil {
+			return nil, fmt.Errorf("failed to query earliest transaction date: %v", err)
+		}
+		resp["period_start_date"] = earliestTxn.Format("2006-01-02")
+	}
+
+	return resp, nil
 }
 
 // IsDateInClosedPeriod checks if a given date falls within a closed period
@@ -1244,7 +1394,11 @@ func (s *UnifiedPeriodClosingService) IsDateInClosedPeriod(ctx context.Context, 
 	}
 
 	targetDate := normalizeClosingDayStart(date)
+	now := time.Now()
 	for _, period := range periods {
+		if !isEffectiveClosedAccountingPeriod(period, now) {
+			continue
+		}
 		start := canonicalPeriodStartDate(period.StartDate)
 		end := canonicalPeriodEndDate(period.EndDate)
 		if !targetDate.Before(start) && !targetDate.After(end) {
@@ -1268,8 +1422,12 @@ func (s *UnifiedPeriodClosingService) GetPeriodInfoForDate(ctx context.Context, 
 	}
 
 	targetDate := normalizeClosingDayStart(date)
+	now := time.Now()
 	var period *models.AccountingPeriod
 	for i := range periods {
+		if !isEffectiveClosedAccountingPeriod(periods[i], now) {
+			continue
+		}
 		start := canonicalPeriodStartDate(periods[i].StartDate)
 		end := canonicalPeriodEndDate(periods[i].EndDate)
 		if !targetDate.Before(start) && !targetDate.After(end) {
@@ -1492,30 +1650,36 @@ func (s *UnifiedPeriodClosingService) GetClosingHistory(ctx context.Context, lim
 	}
 
 	result := make([]map[string]interface{}, 0, len(periods))
+	now := time.Now()
 	for _, p := range periods {
-		noteLines := splitPeriodNoteLines(p.Notes)
+		noteLines := uniqueNoteLines(splitPeriodNoteLines(p.Notes))
+		effectiveClosed := isEffectiveClosedAccountingPeriod(p, now)
 		item := map[string]interface{}{
-			"id":                p.ID,
-			"start_date":        periodBoundaryDateString(p.StartDate, "start"),
-			"end_date":          periodBoundaryDateString(p.EndDate, "end"),
-			"description":       p.Description,
-			"is_closed":         p.IsClosed,
-			"status":            "CLOSED",
-			"is_locked":         p.IsLocked,
-			"total_revenue":     p.TotalRevenue,
-			"total_expense":     p.TotalExpense,
-			"net_income":        p.NetIncome,
-			"period_type":       p.PeriodType,
-			"account_count":     p.AccountCount,
-			"transaction_count": p.TransactionCount,
-			"reopen_count":      p.ReopenCount,
-			"notes":             p.Notes,
-			"note_lines":        noteLines,
-			"history_events":    buildPeriodHistoryEvents(p),
-			"can_reopen":        p.IsClosed && !p.IsLocked && p.ID == latestClosedPeriodID,
+			"id":                    p.ID,
+			"start_date":            periodBoundaryDateString(p.StartDate, "start"),
+			"end_date":              periodBoundaryDateString(p.EndDate, "end"),
+			"description":           p.Description,
+			"is_closed":             p.IsClosed,
+			"status":                "CLOSED",
+			"effective_closed":      effectiveClosed,
+			"future_closed_pending": p.IsClosed && !effectiveClosed,
+			"is_locked":             p.IsLocked,
+			"total_revenue":         p.TotalRevenue,
+			"total_expense":         p.TotalExpense,
+			"net_income":            p.NetIncome,
+			"period_type":           p.PeriodType,
+			"account_count":         p.AccountCount,
+			"transaction_count":     p.TransactionCount,
+			"reopen_count":          p.ReopenCount,
+			"notes":                 strings.Join(noteLines, "\n"),
+			"note_lines":            noteLines,
+			"history_events":        buildPeriodHistoryEvents(p),
+			"can_reopen":            p.IsClosed && !p.IsLocked && p.ID == latestClosedPeriodID,
 		}
 		if !p.IsClosed {
 			item["status"] = "REOPENED"
+		} else if !effectiveClosed {
+			item["status"] = "FUTURE_PENDING"
 		}
 
 		if p.ClosedAt != nil {

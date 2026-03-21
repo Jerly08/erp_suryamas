@@ -45,10 +45,11 @@ import SearchableSelect from '@/components/common/SearchableSelect';
 interface ProjectBOMListProps {
     projectId: number;
     canEdit: boolean;
-    onBudgetUpdated: () => void;
+    canGeneratePR: boolean;
+    onBudgetUpdated: () => Promise<void> | void;
 }
 
-const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onBudgetUpdated }) => {
+const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, canGeneratePR, onBudgetUpdated }) => {
     const [projectBOMs, setProjectBOMs] = useState<ProjectBOM[]>([]);
     const [availableBOMs, setAvailableBOMs] = useState<BOM[]>([]);
     const [bomOptions, setBomOptions] = useState<{ id: string | number; name: string }[]>([]);
@@ -95,7 +96,7 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
         if (canEdit) {
             fetchAvailableBOMs();
         }
-    }, [projectId]);
+    }, [projectId, canEdit]);
 
     const fetchProjectBOMs = async () => {
         try {
@@ -139,8 +140,8 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
             await projectBOMService.addBOMToProject(projectId, { bom_id: selectedBomId, quantity: unitQuantity });
             toast({ title: 'BOM added to project successfully', status: 'success' });
             onClose();
-            fetchProjectBOMs();
-            onBudgetUpdated();
+            await fetchProjectBOMs();
+            await onBudgetUpdated();
         } catch (error: any) {
             toast({
                 title: 'Failed to add BOM',
@@ -157,8 +158,8 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
         try {
             await projectBOMService.removeBOMFromProject(projectId, projectBomId);
             toast({ title: 'BOM removed successfully', status: 'success' });
-            fetchProjectBOMs();
-            onBudgetUpdated();
+            await fetchProjectBOMs();
+            await onBudgetUpdated();
         } catch (error: any) {
             toast({
                 title: 'Failed to remove BOM',
@@ -199,7 +200,7 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
             <Flex justify="space-between" align="center" mb={4}>
                 <Heading size="sm" color={textColor}>BOM Requirements</Heading>
                 <HStack spacing={2}>
-                    {canEdit && (
+                    {canGeneratePR && (
                         <Button
                             leftIcon={<FiShoppingCart />}
                             colorScheme="teal"
@@ -233,7 +234,7 @@ const ProjectBOMList: React.FC<ProjectBOMListProps> = ({ projectId, canEdit, onB
                 <AlertIcon />
                 <Box>
                     <AlertDescription fontSize="sm" color={textColor}>
-                        Adding BOMs automatically aggregates the material costs into the Project's True Budget limit. The <strong>Generate PR</strong> action will match aggregated requests against current Warehouse stock.
+                        BOM membantu estimasi kebutuhan material proyek. Anggaran proyek dapat diatur manual di tab informasi umum, sedangkan <strong>Generate PR</strong> akan mencocokkan kebutuhan material terhadap stok gudang saat ini.
                     </AlertDescription>
                 </Box>
             </Alert>

@@ -1,8 +1,11 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"app-sistem-akuntansi/models"
@@ -388,7 +391,8 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 
 	// Get sales transactions with InvoiceType preloaded
 	var sales []models.Sale
-	if err := c.db.Preload("InvoiceType").Where("customer_id = ? AND date BETWEEN ? AND ?", customerID, startDate, endDate).
+	if err := c.db.Preload("InvoiceType").
+		Where("customer_id = ? AND date BETWEEN ? AND ? AND status IN ?", customerID, startDate, endDate, models.SaleOperationalReportStatuses()).
 		Order("date DESC").Find(&sales).Error; err != nil {
 		return nil, err
 	}
@@ -420,42 +424,13 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 		summary.TotalOutstanding += (sale.TotalAmount - sale.PaidAmount)
 	}
 
-	// Get invoices (optional - skip if table doesn't exist)
-	var invoices []models.Invoice
-	if err := c.db.Where("customer_id = ? AND date BETWEEN ? AND ?",
-		customerID, startDate, endDate).
-		Order("date DESC").Find(&invoices).Error; err != nil {
-		// If invoices table doesn't exist, skip it (not critical)
-		// In most cases, sales table already contains this data
-		if err.Error() != "ERROR: relation \"invoices\" does not exist (SQLSTATE 42P01)" {
-			// Only return error if it's not a "table doesn't exist" error
-			return nil, err
-		}
-		// Log warning but continue
-		// Note: Invoices are typically managed through Sales module
-	} else {
-		// Process invoices only if table exists and query succeeds
-		for _, invoice := range invoices {
-			transaction := TransactionHistory{
-				TransactionID:   invoice.ID,
-				Date:            invoice.Date,
-				TransactionType: "INVOICE",
-				TransactionCode: invoice.Code,
-				Description:     "Customer Invoice",
-				Reference:       invoice.PaymentReference,
-				Amount:          invoice.TotalAmount,
-				PaidAmount:      invoice.PaidAmount,
-				Outstanding:     invoice.TotalAmount - invoice.PaidAmount,
-				Status:          invoice.Status,
-				DueDate:         &invoice.DueDate,
-			}
-			transactions = append(transactions, transaction)
-		}
-	}
+	// Customer history uses sales as the receivable document source of truth.
+	// Pulling invoices separately duplicates the same commercial event when legacy
+	// invoice rows exist, so we intentionally exclude that table here.
 
-	// Get payments
+	// Get effective payments only
 	var payments []models.Payment
-	if err := c.db.Where("contact_id = ? AND date BETWEEN ? AND ?", customerID, startDate, endDate).
+	if err := c.db.Where("contact_id = ? AND date BETWEEN ? AND ? AND status IN ?", customerID, startDate, endDate, models.PaymentEffectiveStatuses()).
 		Order("date DESC").Find(&payments).Error; err != nil {
 		return nil, err
 	}
@@ -491,6 +466,10 @@ func (c *ContactHistoryController) generateCustomerHistoryData(customerID uint, 
 			// Unallocated payments don't affect outstanding since they're not assigned to any sale
 		}
 	}
+
+	sort.SliceStable(transactions, func(i, j int) bool {
+		return transactions[i].Date.After(transactions[j].Date)
+	})
 
 	summary.TotalTransactions = len(transactions)
 
@@ -529,14 +508,16 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 		Email:   settings.CompanyEmail,
 	}
 
-	// Get purchase transactions
+	// Get purchase transactions that are operationally reportable.
 	var purchases []models.Purchase
-	if err := c.db.Where("vendor_id = ? AND date BETWEEN ? AND ?", vendorID, startDate, endDate).
+	if err := c.db.
+		Where("vendor_id = ? AND date BETWEEN ? AND ? AND "+models.PurchaseOperationalReportWhereClause(""), vendorID, startDate, endDate).
 		Order("date DESC").Find(&purchases).Error; err != nil {
 		return nil, err
 	}
 
 	for _, purchase := range purchases {
+		outstandingAmount := purchase.TotalAmount - purchase.PaidAmount
 		transaction := TransactionHistory{
 			TransactionID:   purchase.ID,
 			Date:            purchase.Date,
@@ -546,23 +527,24 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 			Reference:       purchase.PaymentReference,
 			Amount:          purchase.TotalAmount,
 			PaidAmount:      purchase.PaidAmount,
-			Outstanding:     purchase.TotalAmount - purchase.PaidAmount,
-			Status:          purchase.Status,
+			Outstanding:     outstandingAmount,
+			Status:          models.NormalizePurchaseSettlementStatus(purchase.Status, purchase.PaidAmount, outstandingAmount),
 			DueDate:         &purchase.DueDate,
 		}
 		transactions = append(transactions, transaction)
 
 		summary.TotalAmount += purchase.TotalAmount
 		summary.TotalPaid += purchase.PaidAmount
-		summary.TotalOutstanding += (purchase.TotalAmount - purchase.PaidAmount)
+		summary.TotalOutstanding += outstandingAmount
 	}
 
 	// Note: Bills for vendors are not stored separately in Invoice table
 	// They are tracked through Purchase model
 
-	// Get payments
+	// Get effective payments only.
 	var payments []models.Payment
-	if err := c.db.Where("contact_id = ? AND date BETWEEN ? AND ?", vendorID, startDate, endDate).
+	if err := c.db.
+		Where("contact_id = ? AND date BETWEEN ? AND ? AND status IN ?", vendorID, startDate, endDate, models.PaymentEffectiveStatuses()).
 		Order("date DESC").Find(&payments).Error; err != nil {
 		return nil, err
 	}
@@ -599,10 +581,15 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 		}
 	}
 
+	sort.SliceStable(transactions, func(i, j int) bool {
+		return transactions[i].Date.After(transactions[j].Date)
+	})
+
 	summary.TotalTransactions = len(transactions)
 
 	// Find first and last transaction dates
 	if len(transactions) > 0 {
+		// Transactions are already sorted by date DESC, so last is first, first is last
 		summary.LastTransaction = &transactions[0].Date
 		summary.FirstTransaction = &transactions[len(transactions)-1].Date
 	}
@@ -630,7 +617,7 @@ func (c *ContactHistoryController) generateVendorHistoryData(vendorID uint, star
 // @Failure 404 {object} map[string]string
 // @Router /api/v1/reports/transaction-journal-detail [get]
 func (c *ContactHistoryController) GetTransactionJournalDetail(ctx *gin.Context) {
-	sourceType := ctx.Query("source_type")
+	sourceType := strings.ToUpper(strings.TrimSpace(ctx.Query("source_type")))
 	sourceIDStr := ctx.Query("source_id")
 
 	if sourceType == "" || sourceIDStr == "" {
@@ -671,22 +658,104 @@ func (c *ContactHistoryController) GetTransactionJournalDetail(ctx *gin.Context)
 		Lines       []JournalLineDetail `json:"lines"`
 	}
 
-	// Look up journal entries from unified_journal_ledger
-	var journals []models.SSOTJournalEntry
-	if err := c.db.Where("source_type = ? AND source_id = ? AND deleted_at IS NULL", sourceType, sourceID).
-		Preload("Lines", func(db *gorm.DB) *gorm.DB {
-			return db.Order("line_number ASC")
-		}).
-		Preload("Lines.Account").
-		Order("entry_date DESC").
-		Find(&journals).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"message": "Failed to retrieve journal details",
-			"error":   err.Error(),
-		})
-		return
+	loadJournals := func(query *gorm.DB) ([]models.SSOTJournalEntry, error) {
+		var entries []models.SSOTJournalEntry
+		if err := query.
+			Preload("Lines", func(db *gorm.DB) *gorm.DB {
+				return db.Order("line_number ASC")
+			}).
+			Preload("Lines.Account").
+			Order("entry_date DESC").
+			Find(&entries).Error; err != nil {
+			return nil, err
+		}
+		return entries, nil
 	}
+
+	var journals []models.SSOTJournalEntry
+	seenJournalIDs := make(map[uint64]struct{})
+	appendUnique := func(entries []models.SSOTJournalEntry) {
+		for _, entry := range entries {
+			if _, exists := seenJournalIDs[entry.ID]; exists {
+				continue
+			}
+			seenJournalIDs[entry.ID] = struct{}{}
+			journals = append(journals, entry)
+		}
+	}
+
+	switch sourceType {
+	case "PAYMENT":
+		var salePaymentIDs []uint
+		if err := c.db.Model(&models.SalePayment{}).
+			Where("reference = ?", fmt.Sprintf("Payment ID: %d", sourceID)).
+			Pluck("id", &salePaymentIDs).Error; err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to resolve sales payment journal details",
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		if len(salePaymentIDs) > 0 {
+			directEntries, err := loadJournals(
+				c.db.Where("source_type = ? AND source_id = ? AND deleted_at IS NULL", "PAYMENT", sourceID),
+			)
+			if err != nil {
+				ctx.JSON(http.StatusInternalServerError, gin.H{
+					"status":  "error",
+					"message": "Failed to retrieve journal details",
+					"error":   err.Error(),
+				})
+				return
+			}
+			appendUnique(directEntries)
+
+			salesPaymentEntries, err := loadJournals(
+				c.db.Where("source_type = ? AND source_id IN ? AND deleted_at IS NULL", "SALES_PAYMENT", salePaymentIDs),
+			)
+			if err != nil {
+				ctx.JSON(http.StatusInternalServerError, gin.H{
+					"status":  "error",
+					"message": "Failed to retrieve journal details",
+					"error":   err.Error(),
+				})
+				return
+			}
+			appendUnique(salesPaymentEntries)
+		} else {
+			directEntries, err := loadJournals(
+				c.db.Where("source_type IN ? AND source_id = ? AND deleted_at IS NULL", []string{"PAYMENT", "PURCHASE_PAYMENT"}, sourceID),
+			)
+			if err != nil {
+				ctx.JSON(http.StatusInternalServerError, gin.H{
+					"status":  "error",
+					"message": "Failed to retrieve journal details",
+					"error":   err.Error(),
+				})
+				return
+			}
+			appendUnique(directEntries)
+		}
+	default:
+		exactEntries, err := loadJournals(
+			c.db.Where("source_type = ? AND source_id = ? AND deleted_at IS NULL", sourceType, sourceID),
+		)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Failed to retrieve journal details",
+				"error":   err.Error(),
+			})
+			return
+		}
+		appendUnique(exactEntries)
+	}
+
+	sort.SliceStable(journals, func(i, j int) bool {
+		return journals[i].EntryDate.After(journals[j].EntryDate)
+	})
 
 	if len(journals) > 0 {
 		var result []JournalDetail

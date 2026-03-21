@@ -803,7 +803,14 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 	payment, err := sc.paymentService.CreateReceivablePayment(paymentRequest, userID)
 	if err != nil {
 		log.Printf("Error in CreateReceivablePayment for sale %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{
+		statusCode := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "outstanding") ||
+			strings.Contains(err.Error(), "exchange rate") ||
+			strings.Contains(err.Error(), "cash/bank") ||
+			strings.Contains(err.Error(), "selected cash/bank account is inconsistent") {
+			statusCode = http.StatusBadRequest
+		}
+		c.JSON(statusCode, gin.H{
 			"success": false,
 			"error":   "Failed to create payment",
 			"details": err.Error(),
@@ -840,6 +847,7 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 		"updated_sale": gin.H{
 			"id":                 updatedSale.ID,
 			"status":             updatedSale.Status,
+			"settlement_status":  models.ResolveSaleSettlementStatus(updatedSale.Status, updatedSale.PaidAmount, updatedSale.OutstandingAmount),
 			"paid_amount":        updatedSale.PaidAmount,
 			"outstanding_amount": updatedSale.OutstandingAmount,
 		},
@@ -920,15 +928,14 @@ func (sc *SalesController) GetSaleReturns(c *gin.Context) {
 func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 	log.Printf("📊 Getting sales summary with filters")
 
+	status := c.Query("status")
+	customerID := c.Query("customer_id")
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
+	search := c.Query("search")
 
-	// Parse dates if provided
-	var startDate, endDate *time.Time
 	if startDateStr != "" {
-		if parsed, err := time.Parse("2006-01-02", startDateStr); err == nil {
-			startDate = &parsed
-		} else {
+		if _, err := time.Parse("2006-01-02", startDateStr); err != nil {
 			log.Printf("⚠️ Invalid start_date format: %s (expected: YYYY-MM-DD)", startDateStr)
 			utils.SendValidationError(c, "Invalid date format", map[string]string{
 				"start_date": "Date must be in YYYY-MM-DD format",
@@ -937,9 +944,7 @@ func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 		}
 	}
 	if endDateStr != "" {
-		if parsed, err := time.Parse("2006-01-02", endDateStr); err == nil {
-			endDate = &parsed
-		} else {
+		if _, err := time.Parse("2006-01-02", endDateStr); err != nil {
 			log.Printf("⚠️ Invalid end_date format: %s (expected: YYYY-MM-DD)", endDateStr)
 			utils.SendValidationError(c, "Invalid date format", map[string]string{
 				"end_date": "Date must be in YYYY-MM-DD format",
@@ -948,10 +953,19 @@ func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 		}
 	}
 
-	log.Printf("📅 Date filters: start=%v, end=%v", startDate, endDate)
+	filter := models.SalesFilter{
+		Status:     status,
+		CustomerID: customerID,
+		StartDate:  startDateStr,
+		EndDate:    endDateStr,
+		Search:     search,
+	}
+
+	log.Printf("📅 Summary filters: status=%s, customer=%s, start=%s, end=%s, search=%s",
+		filter.Status, filter.CustomerID, filter.StartDate, filter.EndDate, filter.Search)
 
 	// Get summary from service
-	summary, err := sc.salesServiceV2.GetSalesSummary(startDate, endDate)
+	summary, err := sc.salesServiceV2.GetSalesSummary(filter)
 	if err != nil {
 		log.Printf("❌ Failed to get sales summary: %v", err)
 		utils.SendInternalError(c, "Failed to retrieve sales summary", err.Error())

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"app-sistem-akuntansi/models"
@@ -279,8 +280,17 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 		})
 	} else {
 		// Credit purchase: credit AP (net of withholdings)
+		creditAccountID := accountIDs.AccountsPayableID
+		if purchase.CreditAccountID != nil && *purchase.CreditAccountID > 0 {
+			var selectedAccount models.Account
+			if err := adapter.db.Select("id", "type", "is_header").First(&selectedAccount, *purchase.CreditAccountID).Error; err == nil &&
+				!selectedAccount.IsHeader &&
+				strings.EqualFold(strings.TrimSpace(selectedAccount.Type), models.AccountTypeLiability) {
+				creditAccountID = uint64(selectedAccount.ID)
+			}
+		}
 		lines = append(lines, JournalLineRequest{
-			AccountID:    accountIDs.AccountsPayableID,
+			AccountID:    creditAccountID,
 			Description:  fmt.Sprintf("Accounts Payable - %s", purchase.Vendor.Name),
 			DebitAmount:  decimal.Zero,
 			CreditAmount: decimal.NewFromFloat(netAmount),
