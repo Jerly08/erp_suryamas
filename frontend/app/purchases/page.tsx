@@ -2296,7 +2296,9 @@ const PurchasesPage: React.FC = () => {
       // Use full account data for other roles or as fallback for EMPLOYEE
       try {
         const data = await accountService.getAccounts(token, "LIABILITY");
-        const list: GLAccount[] = Array.isArray(data) ? data : [];
+        const list: GLAccount[] = Array.isArray(data)
+          ? data.filter((account) => account.is_active && !account.is_header)
+          : [];
         console.log("Formatted credit accounts from regular endpoint:", list);
         setCreditAccounts(list);
       } catch (regularError: any) {
@@ -3347,7 +3349,11 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
-    if (formData.payment_method === "CREDIT" && !formData.credit_account_id) {
+    if (
+      isFinanceOrAdmin &&
+      formData.payment_method === "CREDIT" &&
+      !formData.credit_account_id
+    ) {
       toast({
         title: "Error",
         description: "Please select a liability account for credit purchases",
@@ -3358,7 +3364,11 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
-    if (formData.payment_method !== "CREDIT" && !formData.bank_account_id) {
+    if (
+      isFinanceOrAdmin &&
+      formData.payment_method !== "CREDIT" &&
+      !formData.bank_account_id
+    ) {
       toast({
         title: "Error",
         description: `Please select a ${formData.payment_method === "CASH" ? "cash" : "bank"} account for this payment method`,
@@ -3725,6 +3735,11 @@ const PurchasesPage: React.FC = () => {
     const actionProps = getActionButtonProps(purchase);
     const roleNorm = normalizeRole(user?.role as any);
     const purchaseStatus = (purchase.status || "").toUpperCase();
+    const financeCanConfigurePurchase =
+      (roleNorm === "admin" || roleNorm === "finance") &&
+      ((purchaseStatus === "DRAFT" && canCurrentUserActOnPurchase(purchase)) ||
+        purchaseStatus === "PENDING" ||
+        purchaseStatus === "PENDING_APPROVAL");
 
     return (
       <HStack spacing={2}>
@@ -3757,9 +3772,7 @@ const PurchasesPage: React.FC = () => {
         </Button>
 
         {/* Finance/Admin: Edit Tax & Payment button for PENDING purchases (read-only items) */}
-        {(purchaseStatus === "PENDING" ||
-          purchaseStatus === "PENDING_APPROVAL") &&
-          (roleNorm === "admin" || roleNorm === "finance") && (
+        {financeCanConfigurePurchase && (
             <Button
               size="sm"
               colorScheme="teal"

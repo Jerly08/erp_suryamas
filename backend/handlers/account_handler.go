@@ -386,8 +386,8 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 
 	catalog := make([]AccountCatalogItem, 0, len(accounts))
 	for _, account := range accounts {
-		// Only include active expense accounts
-		if account.IsActive {
+		// Catalog is used for transaction selection, so only active detail accounts
+		if account.IsActive && !account.IsHeader {
 			catalog = append(catalog, AccountCatalogItem{
 				ID:     account.ID,
 				Code:   account.Code,

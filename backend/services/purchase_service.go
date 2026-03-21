@@ -137,7 +137,12 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	fmt.Printf("✅ Vendor validation passed: %s (ID: %d)\n", vendor.Name, vendor.ID)
 
 	request.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(request.PaymentMethod)))
-	if err := s.validatePurchasePaymentConfiguration(request.PaymentMethod, request.BankAccountID, request.CreditAccountID); err != nil {
+	request.BankAccountID, request.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
+		request.PaymentMethod,
+		request.BankAccountID,
+		request.CreditAccountID,
+	)
+	if err != nil {
 		return nil, err
 	}
 
@@ -326,7 +331,12 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		purchase.PaymentReference = *request.PaymentReference
 	}
 
-	if err := s.validatePurchasePaymentConfiguration(purchase.PaymentMethod, purchase.BankAccountID, purchase.CreditAccountID); err != nil {
+	purchase.BankAccountID, purchase.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
+		purchase.PaymentMethod,
+		purchase.BankAccountID,
+		purchase.CreditAccountID,
+	)
+	if err != nil {
 		return nil, err
 	}
 
@@ -2185,6 +2195,102 @@ func (s *PurchaseService) validatePurchasePaymentConfiguration(paymentMethod str
 	}
 
 	return nil
+}
+
+func (s *PurchaseService) normalizePurchasePaymentConfiguration(paymentMethod string, bankAccountID *uint, creditAccountID *uint) (*uint, *uint, error) {
+	method := getPaymentMethod(strings.ToUpper(strings.TrimSpace(paymentMethod)))
+
+	switch method {
+	case models.PurchasePaymentCredit:
+		if creditAccountID == nil || *creditAccountID == 0 {
+			resolvedCreditAccountID, err := s.resolveDefaultPurchaseCreditAccountID()
+			if err != nil {
+				return nil, nil, err
+			}
+			creditAccountID = resolvedCreditAccountID
+		} else {
+			normalizedCreditAccountID, err := s.normalizeSelectedPurchaseCreditAccountID(creditAccountID)
+			if err != nil {
+				return nil, nil, err
+			}
+			creditAccountID = normalizedCreditAccountID
+		}
+		bankAccountID = nil
+	case models.PurchasePaymentCash, models.PurchasePaymentTransfer, models.PurchasePaymentCheck:
+		creditAccountID = nil
+	}
+
+	if err := s.validatePurchasePaymentConfiguration(method, bankAccountID, creditAccountID); err != nil {
+		return nil, nil, err
+	}
+
+	return bankAccountID, creditAccountID, nil
+}
+
+func (s *PurchaseService) resolveDefaultPurchaseCreditAccountID() (*uint, error) {
+	var account models.Account
+	if err := s.db.
+		Where("code = ? AND deleted_at IS NULL", "2101-001").
+		First(&account).Error; err == nil {
+		if !account.IsActive {
+			return nil, fmt.Errorf("default credit account 2101-001 is inactive")
+		}
+		if account.IsHeader {
+			return nil, fmt.Errorf("default credit account 2101-001 must be a detail account")
+		}
+		if strings.ToUpper(strings.TrimSpace(account.Type)) != models.AccountTypeLiability {
+			return nil, fmt.Errorf("default credit account 2101-001 must be a liability account")
+		}
+		accountID := account.ID
+		return &accountID, nil
+	}
+
+	resolver := NewAccountResolver(s.db)
+	resolvedAccount, err := resolver.GetAccount(AccountTypeAccountsPayable)
+	if err != nil {
+		return nil, fmt.Errorf("default credit account not found: %w", err)
+	}
+	if resolvedAccount == nil || resolvedAccount.ID == 0 {
+		return nil, fmt.Errorf("default credit account not found")
+	}
+	if !resolvedAccount.IsActive {
+		return nil, fmt.Errorf("default credit account is inactive")
+	}
+	if resolvedAccount.IsHeader {
+		return nil, fmt.Errorf("default credit account must be a detail account")
+	}
+	if strings.ToUpper(strings.TrimSpace(resolvedAccount.Type)) != models.AccountTypeLiability {
+		return nil, fmt.Errorf("default credit account must be a liability account")
+	}
+
+	accountID := resolvedAccount.ID
+	return &accountID, nil
+}
+
+func (s *PurchaseService) normalizeSelectedPurchaseCreditAccountID(creditAccountID *uint) (*uint, error) {
+	if creditAccountID == nil || *creditAccountID == 0 {
+		return creditAccountID, nil
+	}
+
+	var selectedAccount models.Account
+	if err := s.db.Select("id", "code", "type", "is_header", "is_active").First(&selectedAccount, *creditAccountID).Error; err != nil {
+		return nil, fmt.Errorf("credit account not found: %v", err)
+	}
+
+	if !selectedAccount.IsHeader {
+		return creditAccountID, nil
+	}
+
+	var childAccount models.Account
+	if err := s.db.
+		Where("parent_id = ? AND is_active = ? AND is_header = ? AND deleted_at IS NULL", selectedAccount.ID, true, false).
+		Order("code ASC").
+		First(&childAccount).Error; err != nil {
+		return nil, fmt.Errorf("selected credit account %s requires a detail child account", selectedAccount.Code)
+	}
+
+	childAccountID := childAccount.ID
+	return &childAccountID, nil
 }
 
 // getPPNRateFromPointer returns default PPN rate of 11% if nil, otherwise respects the provided value

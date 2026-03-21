@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type AssetServiceInterface interface {
@@ -698,7 +699,23 @@ func (s *AssetService) updateAccountBalances(tx *gorm.DB, journalEntry *models.J
 func (s *AssetService) GetAssetCategories() ([]models.AssetCategory, error) {
 	var categories []models.AssetCategory
 	err := s.db.Where("is_active = ?", true).Order("name ASC").Find(&categories).Error
-	return categories, err
+	if err != nil {
+		return nil, err
+	}
+
+	if len(categories) == 0 {
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			return s.ensureDefaultAssetCategories(tx)
+		}); err != nil {
+			return nil, err
+		}
+
+		if err := s.db.Where("is_active = ?", true).Order("name ASC").Find(&categories).Error; err != nil {
+			return nil, err
+		}
+	}
+
+	return categories, nil
 }
 
 // CreateAssetCategory creates a new asset category
@@ -723,6 +740,68 @@ func (s *AssetService) CreateAssetCategory(category *models.AssetCategory) error
 	}
 
 	return s.db.Create(category).Error
+}
+
+func (s *AssetService) ensureDefaultAssetCategories(tx *gorm.DB) error {
+	for _, category := range defaultAssetCategories() {
+		var existing models.AssetCategory
+		err := tx.Unscoped().
+			Where("code = ?", category.Code).
+			First(&existing).Error
+
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "code"}},
+				DoNothing: true,
+			}).Create(&category).Error; err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		default:
+			updates := map[string]interface{}{}
+			if strings.TrimSpace(existing.Name) == "" {
+				updates["name"] = category.Name
+			}
+			if strings.TrimSpace(existing.Code) == "" {
+				updates["code"] = category.Code
+			}
+			if strings.TrimSpace(existing.Description) == "" {
+				updates["description"] = category.Description
+			}
+			if !existing.IsActive {
+				updates["is_active"] = true
+			}
+			if existing.DeletedAt.Valid {
+				updates["deleted_at"] = nil
+			}
+			if len(updates) > 0 {
+				if err := tx.Unscoped().
+					Model(&models.AssetCategory{}).
+					Where("id = ?", existing.ID).
+					Updates(updates).Error; err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func defaultAssetCategories() []models.AssetCategory {
+	return []models.AssetCategory{
+		{Code: "FIXED", Name: "Fixed Asset", Description: "Long-term tangible assets used in business operations", IsActive: true},
+		{Code: "REAL", Name: "Real Estate", Description: "Land, buildings, and property assets", IsActive: true},
+		{Code: "COMP", Name: "Computer Equipment", Description: "Computers, servers, and IT hardware", IsActive: true},
+		{Code: "VEHICLE", Name: "Vehicle", Description: "Cars, trucks, and transportation assets", IsActive: true},
+		{Code: "OFFICE", Name: "Office Equipment", Description: "Office furniture, equipment, and supplies", IsActive: true},
+		{Code: "FURNITURE", Name: "Furniture", Description: "Furniture and fixtures", IsActive: true},
+		{Code: "IT", Name: "IT Infrastructure", Description: "Network equipment, software licenses", IsActive: true},
+		{Code: "MACHINE", Name: "Machinery", Description: "Manufacturing and industrial machinery", IsActive: true},
+		{Code: "LAND", Name: "Tanah", Description: "Tanah dan lahan", IsActive: true},
+	}
 }
 
 // isUniqueCodeError checks if the error is due to unique constraint violation on asset code
