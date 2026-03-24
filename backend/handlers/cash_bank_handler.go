@@ -243,9 +243,10 @@ func (h *CashBankHandler) GetTransactions(c *gin.Context) {
 
 	// Parse query parameters for filtering
 	filter := services.TransactionFilter{
-		Type:  c.Query("type"),
-		Page:  utils.ParseIntWithDefault(c.Query("page"), 1),
-		Limit: utils.ParseIntWithDefault(c.Query("limit"), 20),
+		Type:      c.Query("type"),
+		SortOrder: c.DefaultQuery("sort_order", "asc"),
+		Page:      utils.ParseIntWithDefault(c.Query("page"), 1),
+		Limit:     utils.ParseIntWithDefault(c.Query("limit"), 20),
 	}
 
 	// Parse date filters (inclusive end-date at end of day, Jakarta timezone)

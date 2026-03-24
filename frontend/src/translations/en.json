@@ -115,6 +115,11 @@
       "salesPayment": "Sales Payment",
       "purchasePayment": "Purchase Payment"
     },
+    "sort": {
+      "timeOrder": "Time Order",
+      "timeOldestFirst": "Oldest to newest",
+      "timeNewestFirst": "Newest to oldest"
+    },
     "item": "item",
     "items": "items",
     "filters": {
@@ -2819,7 +2824,7 @@
       "pending": "Pending",
       "completed": "Completed",
       "draft": "Draft",
-      "failed": "Failed",
+      "failed": "Cancelled",
       "allMethods": "All Methods",
       "cash": "Cash",
       "bankTransfer": "Bank Transfer",
@@ -2833,10 +2838,11 @@
       "pending": "PENDING",
       "completed": "COMPLETED",
       "draft": "DRAFT",
-      "failed": "FAILED"
+      "failed": "CANCELLED",
+      "cancelled": "CANCELLED"
     },
     "messages": {
-      "deleteSuccess": "Payment has been deleted successfully",
+      "deleteSuccess": "Payment has been cancelled and reversed successfully",
       "deleteError": "Failed to delete payment",
       "exportSuccess": "Payment report has been downloaded",
       "exportError": "Failed to export payment report",

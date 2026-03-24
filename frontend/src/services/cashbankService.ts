@@ -159,6 +159,7 @@ export interface TransactionFilter {
   limit?: number;
   start_date?: string;
   end_date?: string;
+  sort_order?: 'asc' | 'desc';
 }
 
 export interface TransactionResult {
@@ -404,6 +405,7 @@ class CashBankService {
       if (filter.limit) params.limit = filter.limit;
       if (filter.start_date) params.start_date = filter.start_date;
       if (filter.end_date) params.end_date = filter.end_date;
+      if (filter.sort_order) params.sort_order = filter.sort_order;
 
       const response = await api.get(API_ENDPOINTS.CASH_BANK.TRANSACTIONS(accountId), {
         params,

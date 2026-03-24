@@ -372,7 +372,8 @@ func (s *TaxPaymentService) GetPPNPaymentSummary(startDate, endDate time.Time) (
 
 	query := s.db.Model(&models.Payment{}).
 		Select("payment_type, SUM(amount) as total_amount, COUNT(*) as count").
-		Where("payment_type IN ?", []string{models.PaymentTypeTaxPPN, models.PaymentTypeTaxPPNInput, models.PaymentTypeTaxPPNOutput})
+		Where("payment_type IN ?", []string{models.PaymentTypeTaxPPN, models.PaymentTypeTaxPPNInput, models.PaymentTypeTaxPPNOutput}).
+		Where("status <> ?", models.PaymentStatusFailed)
 
 	if !startDate.IsZero() {
 		query = query.Where("date >= ?", startDate)

@@ -223,6 +223,90 @@ func (s *SalesServiceV2) enforceCashBankGuards(tx *gorm.DB, cashBankIDs map[uint
 	return nil
 }
 
+func (s *SalesServiceV2) reverseSaleCashBankMovement(tx *gorm.DB, referenceType string, referenceID uint, reason string) error {
+	var originalCBTx models.CashBankTransaction
+	if err := tx.Where("reference_type = ? AND reference_id = ? AND deleted_at IS NULL", referenceType, referenceID).
+		Order("id DESC").
+		First(&originalCBTx).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to load cash/bank transaction for %s #%d: %w", referenceType, referenceID, err)
+	}
+
+	guard := NewCashBankCurrencyGuard(s.db)
+	if err := guard.EnforceAfterTransaction(tx, originalCBTx.CashBankID); err != nil {
+		return fmt.Errorf("failed to sync cash/bank state before %s reversal: %w", referenceType, err)
+	}
+
+	var cashBank models.CashBank
+	if err := tx.First(&cashBank, originalCBTx.CashBankID).Error; err != nil {
+		return fmt.Errorf("failed to load cash/bank account %d for %s reversal: %w", originalCBTx.CashBankID, referenceType, err)
+	}
+
+	reverseMovement := -originalCBTx.Amount
+	reverseBookAmountIDR := -originalCBTx.BookAmountIDR
+	newBalance := cashBank.Balance + reverseMovement
+	newBookBalanceIDR := cashBank.BookBalanceIDR + reverseBookAmountIDR
+	if !cashBank.IsForeignCurrency() {
+		newBookBalanceIDR = newBalance
+	}
+
+	if newBalance < -0.01 {
+		return fmt.Errorf("%s cancellation would result in negative cash/bank native balance", referenceType)
+	}
+	if newBookBalanceIDR < -0.01 {
+		return fmt.Errorf("%s cancellation would result in negative cash/bank book balance", referenceType)
+	}
+
+	cashBank.Balance = newBalance
+	cashBank.BookBalanceIDR = newBookBalanceIDR
+	if cashBank.IsForeignCurrency() {
+		if originalCBTx.ExchangeRate > 0 {
+			cashBank.LastExchangeRate = originalCBTx.ExchangeRate
+		}
+	} else {
+		cashBank.LastExchangeRate = 1
+	}
+
+	if err := tx.Save(&cashBank).Error; err != nil {
+		return fmt.Errorf("failed to reverse cash/bank balance for %s #%d: %w", referenceType, referenceID, err)
+	}
+
+	if cashBank.AccountID > 0 {
+		if err := tx.Model(&models.Account{}).
+			Where("id = ? AND deleted_at IS NULL", cashBank.AccountID).
+			Updates(map[string]interface{}{
+				"balance":    cashBank.EffectiveBookBalanceIDR(),
+				"updated_at": time.Now(),
+			}).Error; err != nil {
+			return fmt.Errorf("failed to sync linked GL account for %s #%d reversal: %w", referenceType, referenceID, err)
+		}
+	}
+
+	reversalTx := &models.CashBankTransaction{
+		CashBankID:      cashBank.ID,
+		ReferenceType:   referenceType + "_REVERSAL",
+		ReferenceID:     referenceID,
+		Amount:          reverseMovement,
+		Currency:        originalCBTx.Currency,
+		ExchangeRate:    originalCBTx.ExchangeRate,
+		BookAmountIDR:   reverseBookAmountIDR,
+		BalanceAfter:    newBalance,
+		TransactionDate: time.Now(),
+		Notes:           fmt.Sprintf("%s reversal - %s", referenceType, reason),
+	}
+	if err := tx.Create(reversalTx).Error; err != nil {
+		return fmt.Errorf("failed to create cash/bank reversal transaction for %s #%d: %w", referenceType, referenceID, err)
+	}
+
+	if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+		return fmt.Errorf("failed to enforce cash/bank invariant after %s reversal: %w", referenceType, err)
+	}
+
+	return nil
+}
+
 func (s *SalesServiceV2) syncStockAlertsForProducts(productIDs map[uint]struct{}) {
 	if s.stockMonitoringService == nil || len(productIDs) == 0 {
 		return
@@ -1593,7 +1677,6 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 		return fmt.Errorf("sale not found")
 	}
 
-	// Guard: check if sale date is in a closed accounting period
 	if err := CheckClosedPeriod(s.db, sale.Date); err != nil {
 		tx.Rollback()
 		return err
@@ -1604,8 +1687,7 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 	sale.InternalNotes = fmt.Sprintf("Cancelled: %s", reason)
 	sale.UpdatedAt = time.Now()
 
-	// 1. Reset payment tracking amounts
-	log.Printf("💰 Resetting payment tracking for cancelled Sale #%d (Outstanding: %.2f→0, Paid: %.2f→0)",
+	log.Printf("Resetting payment tracking for cancelled Sale #%d (Outstanding: %.2f->0, Paid: %.2f->0)",
 		sale.ID, sale.OutstandingAmount, sale.PaidAmount)
 	sale.OutstandingAmount = 0
 	sale.PaidAmount = 0
@@ -1615,97 +1697,78 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 		return fmt.Errorf("failed to cancel sale: %v", err)
 	}
 
-	// 2. Remove SALES journal entries if they exist (for INVOICED/PAID status)
 	if s.salesJournalService.ShouldPostToJournal(oldStatus) {
-		// Delete V2 journal entries (source_type='SALES') — includes COA balance reversal
 		if err := s.salesJournalService.DeleteSalesJournal(sale.ID, tx); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to remove V2 journal entries: %v", err)
 		}
-		log.Printf("🗑️ Removed V2 SALES journal entries for cancelled Sale #%d", sale.ID)
+		log.Printf("Removed V2 SALES journal entries for cancelled Sale #%d", sale.ID)
 
-		// CRITICAL FIX: Also delete SSOT journal entries (source_type='SALE')
-		// The SSOT service uses 'SALE' (not 'SALES') as source_type
-		// Without this, Balance Sheet and Neraca Saldo would still show the cancelled sale
 		if s.salesJournalServiceSSOT != nil {
 			if err := s.salesJournalServiceSSOT.DeleteSalesJournal(sale.ID, tx); err != nil {
-				log.Printf("⚠️ Warning: Failed to remove SSOT journal entries for Sale #%d: %v", sale.ID, err)
-				// Continue - V2 journal was already cleaned up
+				log.Printf("Warning: Failed to remove SSOT journal entries for Sale #%d: %v", sale.ID, err)
 			} else {
-				log.Printf("🗑️ Removed SSOT SALE journal entries for cancelled Sale #%d", sale.ID)
+				log.Printf("Removed SSOT SALE journal entries for cancelled Sale #%d", sale.ID)
 			}
 		}
 	}
 
-	// 3. Remove SALES_PAYMENT journal entries (from ProcessPayment)
 	var salePayments []models.SalePayment
 	affectedCashBankIDs := make(map[uint]struct{})
 	if err := tx.Where("sale_id = ?", sale.ID).Find(&salePayments).Error; err == nil && len(salePayments) > 0 {
-		log.Printf("🗑️ Found %d payment records for cancelled Sale #%d, cleaning up...", len(salePayments), sale.ID)
+		log.Printf("Found %d payment records for cancelled Sale #%d, cleaning up...", len(salePayments), sale.ID)
 		for _, payment := range salePayments {
-			// Delete the payment journal entry (SALES_PAYMENT type)
 			sourceID := uint64(payment.ID)
 			var paymentJournal models.SSOTJournalEntry
 			if err := tx.Where("source_type = ? AND source_id = ?", "SALES_PAYMENT", sourceID).
 				First(&paymentJournal).Error; err == nil {
-				// Get journal lines for COA balance reversal
 				var journalLines []models.SSOTJournalLine
 				if err := tx.Where("journal_id = ?", paymentJournal.ID).Find(&journalLines).Error; err == nil {
 					for _, line := range journalLines {
-						// Reverse COA balance
 						negDebit := line.DebitAmount.Neg()
 						negCredit := line.CreditAmount.Neg()
 						if err := s.salesJournalService.updateAccountBalanceForPayment(tx, line.AccountID, negDebit, negCredit); err != nil {
-							log.Printf("⚠️ Warning: Failed to reverse COA balance for payment journal account %d: %v", line.AccountID, err)
+							log.Printf("Warning: Failed to reverse COA balance for payment journal account %d: %v", line.AccountID, err)
 						}
 						if err := s.salesJournalService.updateParentAccountBalances(tx, uint(line.AccountID)); err != nil {
-							log.Printf("⚠️ Warning: Failed to update parent balances for account %d: %v", line.AccountID, err)
+							log.Printf("Warning: Failed to update parent balances for account %d: %v", line.AccountID, err)
 						}
 					}
 				}
 
-				// Delete journal lines and entry
 				tx.Where("journal_id = ?", paymentJournal.ID).Delete(&models.SSOTJournalLine{})
 				tx.Delete(&paymentJournal)
-				log.Printf("🗑️ Deleted SALES_PAYMENT journal for payment #%d", payment.ID)
+				log.Printf("Deleted SALES_PAYMENT journal for payment #%d", payment.ID)
 			}
 
 			if payment.CashBankID != nil && *payment.CashBankID > 0 {
 				affectedCashBankIDs[*payment.CashBankID] = struct{}{}
 			}
-		}
 
-		// Soft-delete cash/bank transaction records for SALES_PAYMENT
-		if err := tx.Exec(`
-			UPDATE cash_bank_transactions 
-			SET deleted_at = CURRENT_TIMESTAMP
-			WHERE reference_type = 'SALES_PAYMENT' AND reference_id IN (
-				SELECT id FROM sale_payments WHERE sale_id = ?
-			) AND deleted_at IS NULL
-		`, sale.ID).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to soft-delete SALES_PAYMENT cash/bank transactions: %v", err)
+			if err := s.reverseSaleCashBankMovement(tx, "SALES_PAYMENT", payment.ID, fmt.Sprintf("Delete sale %s - %s", sale.Code, reason)); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to reverse SALES_PAYMENT cash/bank movement for payment #%d: %v", payment.ID, err)
+			}
+
+			payment.Status = "CANCELLED"
+			payment.Notes = strings.TrimSpace(payment.Notes + "\nCancelled because sale was deleted: " + reason)
+			if err := tx.Save(&payment).Error; err != nil {
+				tx.Rollback()
+				return fmt.Errorf("failed to mark sale payment #%d as cancelled: %v", payment.ID, err)
+			}
 		}
-		log.Printf("🗑️ Soft-deleted SALES_PAYMENT cash/bank transactions for Sale #%d", sale.ID)
 	}
 
-	// 4. Reverse cash/bank for immediate-payment sales (CASH/BANK auto-paid on invoice)
 	pm := strings.ToUpper(strings.TrimSpace(sale.PaymentMethodType))
 	if (oldStatus == "INVOICED" || oldStatus == "PAID") && (pm == "CASH" || strings.HasPrefix(pm, "BANK")) {
 		if sale.CashBankID != nil && *sale.CashBankID > 0 {
 			affectedCashBankIDs[*sale.CashBankID] = struct{}{}
 		}
 
-		// Soft-delete the SALE cash/bank transaction record
-		if err := tx.Exec(`
-			UPDATE cash_bank_transactions 
-			SET deleted_at = CURRENT_TIMESTAMP
-			WHERE reference_type = 'SALE' AND reference_id = ? AND deleted_at IS NULL
-		`, sale.ID).Error; err != nil {
+		if err := s.reverseSaleCashBankMovement(tx, "SALE", sale.ID, fmt.Sprintf("Delete sale %s - %s", sale.Code, reason)); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("failed to soft-delete SALE cash/bank transaction: %v", err)
+			return fmt.Errorf("failed to reverse SALE cash/bank movement: %v", err)
 		}
-		log.Printf("🗑️ Soft-deleted SALE cash/bank transaction for Sale #%d", sale.ID)
 	}
 
 	if err := s.enforceCashBankGuards(tx, affectedCashBankIDs); err != nil {
@@ -1713,46 +1776,42 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 		return err
 	}
 
-	// 5. Restore stock if needed
 	affectedProductIDs := make(map[uint]struct{})
 	if s.stockService != nil && (oldStatus == "INVOICED" || oldStatus == "PAID") {
 		for _, item := range sale.SaleItems {
 			if item.Product.IsService {
-				// Services don't need stock restoration
 				continue
 			}
 
 			if item.Product.IsAssembly {
-				// 🚀 AUTO-KITTING RESTORE LOGIC: Restore component stocks
 				var bom models.BOM
 				if err := tx.Preload("Items").Where("target_product_id = ?", item.ProductID).First(&bom).Error; err == nil {
 					for _, bomItem := range bom.Items {
 						requiredQty := int(bomItem.RequirementQuantity * float64(item.Quantity))
 						if requiredQty > 0 {
 							if err := s.stockService.RestoreStock(bomItem.ComponentProductID, requiredQty, tx); err != nil {
-								log.Printf("⚠️ Warning: Failed to restore stock for component %d of assembly %d: %v", bomItem.ComponentProductID, item.ProductID, err)
+								log.Printf("Warning: Failed to restore stock for component %d of assembly %d: %v", bomItem.ComponentProductID, item.ProductID, err)
 							} else {
 								affectedProductIDs[bomItem.ComponentProductID] = struct{}{}
 							}
 						}
 					}
-					log.Printf("✅ Kitting Restore: Component stocks restored for cancelled assembly %d (%s)", item.ProductID, item.Product.Name)
+					log.Printf("Kitting Restore: Component stocks restored for cancelled assembly %d (%s)", item.ProductID, item.Product.Name)
 				} else {
-					log.Printf("⚠️ Warning: BOM not found for assembly %d during stock restoration", item.ProductID)
+					log.Printf("Warning: BOM not found for assembly %d during stock restoration", item.ProductID)
 				}
 				continue
 			}
 
-			// Standard stock restoration
 			if err := s.stockService.RestoreStock(item.ProductID, item.Quantity, tx); err != nil {
-				log.Printf("⚠️ Warning: Failed to restore stock for product %d: %v", item.ProductID, err)
+				log.Printf("Warning: Failed to restore stock for product %d: %v", item.ProductID, err)
 			} else {
 				affectedProductIDs[item.ProductID] = struct{}{}
 			}
 		}
 	}
 
-	log.Printf("❌ Sale #%d cancelled (status: %s → CANCELLED) - Full accounting cleanup completed", sale.ID, oldStatus)
+	log.Printf("Sale #%d cancelled (status: %s -> CANCELLED) - Full accounting cleanup completed", sale.ID, oldStatus)
 
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %v", err)

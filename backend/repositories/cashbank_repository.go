@@ -4,6 +4,7 @@ import (
 	"app-sistem-akuntansi/models"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -83,7 +84,9 @@ func (r *CashBankRepository) Delete(id uint) error {
 
 // GetTransactions retrieves transactions for an account
 func (r *CashBankRepository) GetTransactions(accountID uint, filter TransactionFilter) (*TransactionResult, error) {
-	query := r.db.Model(&models.CashBankTransaction{}).Where("cash_bank_id = ?", accountID)
+	query := r.db.Model(&models.CashBankTransaction{}).
+		Where("cash_bank_id = ?", accountID).
+		Where("deleted_at IS NULL")
 
 	// Apply filters
 	if !filter.StartDate.IsZero() {
@@ -109,19 +112,48 @@ func (r *CashBankRepository) GetTransactions(accountID uint, filter TransactionF
 	if filter.Limit <= 0 {
 		filter.Limit = 20
 	}
+	if filter.SortOrder != "desc" {
+		filter.SortOrder = "asc"
+	}
 
 	offset := (filter.Page - 1) * filter.Limit
 
-	// Get paginated results
-	var transactions []models.CashBankTransaction
-	err := query.Order("created_at DESC, id DESC").
-		Limit(filter.Limit).
-		Offset(offset).
-		Find(&transactions).Error
+	// Fetch filtered rows first, then sort by effective transaction timestamp in Go.
+	// Some rows keep transaction_date as accounting date only, while created_at carries
+	// the actual operation time. Sorting by the effective timestamp keeps the timeline readable.
+	var allTransactions []models.CashBankTransaction
+	err := query.Order("id ASC").Find(&allTransactions).Error
 
 	if err != nil {
 		return nil, err
 	}
+
+	sort.SliceStable(allTransactions, func(i, j int) bool {
+		leftTime := effectiveCashBankTransactionTime(allTransactions[i])
+		rightTime := effectiveCashBankTransactionTime(allTransactions[j])
+
+		if leftTime.Equal(rightTime) {
+			if filter.SortOrder == "desc" {
+				return allTransactions[i].ID > allTransactions[j].ID
+			}
+			return allTransactions[i].ID < allTransactions[j].ID
+		}
+
+		if filter.SortOrder == "desc" {
+			return leftTime.After(rightTime)
+		}
+		return leftTime.Before(rightTime)
+	})
+
+	if offset > len(allTransactions) {
+		offset = len(allTransactions)
+	}
+	end := offset + filter.Limit
+	if end > len(allTransactions) {
+		end = len(allTransactions)
+	}
+
+	transactions := allTransactions[offset:end]
 
 	totalPages := int(math.Ceil(float64(total) / float64(filter.Limit)))
 
@@ -132,6 +164,27 @@ func (r *CashBankRepository) GetTransactions(accountID uint, filter TransactionF
 		Limit:      filter.Limit,
 		TotalPages: totalPages,
 	}, nil
+}
+
+func effectiveCashBankTransactionTime(tx models.CashBankTransaction) time.Time {
+	if !tx.TransactionDate.IsZero() && !tx.CreatedAt.IsZero() {
+		return time.Date(
+			tx.TransactionDate.Year(),
+			tx.TransactionDate.Month(),
+			tx.TransactionDate.Day(),
+			tx.CreatedAt.Hour(),
+			tx.CreatedAt.Minute(),
+			tx.CreatedAt.Second(),
+			tx.CreatedAt.Nanosecond(),
+			tx.CreatedAt.Location(),
+		)
+	}
+
+	if !tx.CreatedAt.IsZero() {
+		return tx.CreatedAt
+	}
+
+	return tx.TransactionDate
 }
 
 // CreateTransaction creates a new transaction record
@@ -336,6 +389,7 @@ type TransactionFilter struct {
 	StartDate time.Time `json:"start_date"`
 	EndDate   time.Time `json:"end_date"`
 	Type      string    `json:"type"`
+	SortOrder string    `json:"sort_order"`
 	Page      int       `json:"page"`
 	Limit     int       `json:"limit"`
 }

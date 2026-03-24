@@ -118,6 +118,11 @@
       "salesPayment": "Pembayaran Penjualan",
       "purchasePayment": "Pembayaran Pembelian"
     },
+    "sort": {
+      "timeOrder": "Urutan Waktu",
+      "timeOldestFirst": "Terlama ke terbaru",
+      "timeNewestFirst": "Terbaru ke terlama"
+    },
     "item": "item",
     "items": "item",
     "filters": {
@@ -2619,7 +2624,7 @@
       "pending": "Menunggu",
       "completed": "Selesai",
       "draft": "Draft",
-      "failed": "Gagal",
+      "failed": "Dibatalkan",
       "allMethods": "Semua Metode",
       "cash": "Tunai",
       "bankTransfer": "Transfer Bank",
@@ -2633,10 +2638,11 @@
       "pending": "MENUNGGU",
       "completed": "SELESAI",
       "draft": "DRAFT",
-      "failed": "GAGAL"
+      "failed": "DIBATALKAN",
+      "cancelled": "DIBATALKAN"
     },
     "messages": {
-      "deleteSuccess": "Pembayaran berhasil dihapus",
+      "deleteSuccess": "Pembayaran berhasil dibatalkan dan direversal",
       "deleteError": "Gagal menghapus pembayaran",
       "exportSuccess": "Laporan pembayaran berhasil diunduh",
       "exportError": "Gagal mengekspor laporan pembayaran",

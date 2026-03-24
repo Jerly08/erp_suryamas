@@ -111,6 +111,18 @@ const formatCurrency = (amount: number) => {
   }).format(amount);
 };
 
+const isCancelledPaymentStatus = (status: string) => {
+  const normalized = status.toUpperCase();
+  return normalized === 'FAILED' || normalized === 'CANCELLED' || normalized === 'REVERSED';
+};
+
+const getPaymentDisplayStatusKey = (status: string) => {
+  if (isCancelledPaymentStatus(status)) {
+    return 'cancelled';
+  }
+  return status.toLowerCase();
+};
+
 const PaymentsPage: React.FC = () => {
   const { token, user } = useAuth();
   const { t, language } = useTranslation();
@@ -143,7 +155,7 @@ const PaymentsPage: React.FC = () => {
     amount: 'Jumlah nominal pembayaran yang dilakukan',
     date: 'Tanggal pembayaran dilakukan',
     reference: 'Nomor referensi pembayaran (contoh: nomor transfer, nomor cek)',
-    status: 'Status pembayaran: Pending (menunggu), Completed (selesai), Failed (gagal)',
+    status: 'Status pembayaran: Pending (menunggu), Completed (selesai), Cancelled (dibatalkan)',
     bankAccount: 'Akun kas/bank yang digunakan untuk pembayaran',
     notes: 'Catatan atau keterangan tambahan untuk pembayaran ini',
     allocations: 'Alokasi pembayaran ke invoice atau purchase yang terkait',
@@ -344,7 +356,7 @@ const PaymentsPage: React.FC = () => {
     {
       header: t('payments.status'),
       accessor: (row: Payment) => {
-        const statusKey = row.status.toLowerCase();
+        const statusKey = getPaymentDisplayStatusKey(row.status);
         const translationKey = `payments.statuses.${statusKey}`;
         const statusLabel = t(translationKey);
         return (
@@ -391,7 +403,7 @@ const PaymentsPage: React.FC = () => {
                 <MenuDivider />
               </>
             )}
-            {canEdit && row.status !== 'COMPLETED' && !(row.payment_type?.startsWith('TAX_PPN') || row.code?.startsWith('SETOR-PPN')) && (
+            {canEdit && row.status !== 'COMPLETED' && !isCancelledPaymentStatus(row.status) && !(row.payment_type?.startsWith('TAX_PPN') || row.code?.startsWith('SETOR-PPN')) && (
               <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
                 {t('payments.edit')}
               </MenuItem>
@@ -402,7 +414,7 @@ const PaymentsPage: React.FC = () => {
             >
               {t('payments.exportPDF')}
             </MenuItem>
-            {canDelete && (
+            {canDelete && !isCancelledPaymentStatus(row.status) && (
               <>
                 <MenuDivider />
                 <MenuItem icon={<FiTrash2 />} color="red.500" onClick={() => handleDeletePayment(row)}>

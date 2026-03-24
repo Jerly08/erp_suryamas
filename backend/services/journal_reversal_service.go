@@ -186,14 +186,14 @@ func (s *JournalReversalService) createReversalEntry(
 
 	// Create reversal entry header
 	reversalEntry := &models.SSOTJournalEntry{
-		EntryNumber: s.generateReversalEntryNumber(original.EntryNumber),
+		EntryNumber: s.generateReversalEntryNumber(original),
 		SourceType:  "REVERSAL",
 		SourceID:    &original.ID,
-		SourceCode:  fmt.Sprintf("REV-%s", original.SourceCode),
+		SourceCode:  truncateString(fmt.Sprintf("REV-%s", original.SourceCode), 100),
 
 		EntryDate:   effectiveReversalDate,
 		Description: fmt.Sprintf("REVERSAL: %s", original.Description),
-		Reference:   fmt.Sprintf("Reversal of %s", original.EntryNumber),
+		Reference:   truncateString(fmt.Sprintf("Reversal of %s", original.EntryNumber), 200),
 		Notes:       fmt.Sprintf("Reason: %s\n%s", req.Reason, req.Notes),
 
 		TotalDebit:  original.TotalCredit, // Flip debit/credit
@@ -296,14 +296,29 @@ func (s *JournalReversalService) logReversalEvent(
 	return tx.Create(eventLog).Error
 }
 
-// generateReversalEntryNumber generates a unique entry number for reversal
-func (s *JournalReversalService) generateReversalEntryNumber(originalNumber string) string {
+// generateReversalEntryNumber generates a unique entry number for reversal.
+// The value must always fit unified_journal_ledger.entry_number (varchar(50)).
+func (s *JournalReversalService) generateReversalEntryNumber(original *models.SSOTJournalEntry) string {
 	timestamp := time.Now().Format("20060102150405")
-	return fmt.Sprintf("REV-%s-%s", originalNumber, timestamp)
+	if original == nil {
+		return truncateString(fmt.Sprintf("REV-%s", timestamp), 50)
+	}
+
+	return truncateString(fmt.Sprintf("REV-%d-%s", original.ID, timestamp), 50)
 }
 
 func generateUUID() string {
 	return uuid.NewString()
+}
+
+func truncateString(value string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen]
 }
 
 // GetReversalHistory returns all reversals for a journal entry

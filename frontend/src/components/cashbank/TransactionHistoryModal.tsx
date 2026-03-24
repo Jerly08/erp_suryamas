@@ -79,6 +79,43 @@ const formatIDRAmount = (amount?: number): string => `IDR ${(amount || 0).toLoca
   maximumFractionDigits: 2,
 })}`;
 
+const getTransactionEffectiveTimestamp = (transaction: CashBankTransaction): number => {
+  const accountingDate = new Date(transaction.transaction_date);
+  const createdAt = new Date(transaction.created_at);
+
+  if (!Number.isNaN(accountingDate.getTime()) && !Number.isNaN(createdAt.getTime())) {
+    return new Date(
+      accountingDate.getFullYear(),
+      accountingDate.getMonth(),
+      accountingDate.getDate(),
+      createdAt.getHours(),
+      createdAt.getMinutes(),
+      createdAt.getSeconds(),
+      createdAt.getMilliseconds(),
+    ).getTime();
+  }
+
+  if (!Number.isNaN(createdAt.getTime())) {
+    return createdAt.getTime();
+  }
+
+  return accountingDate.getTime();
+};
+
+const getTransactionDisplayDate = (transaction: CashBankTransaction): Date => {
+  const transactionDate = new Date(transaction.transaction_date);
+  if (!Number.isNaN(transactionDate.getTime())) {
+    return transactionDate;
+  }
+
+  return new Date(transaction.created_at);
+};
+
+const getTransactionDisplayTime = (transaction: CashBankTransaction): Date => {
+  const createdAt = new Date(transaction.created_at);
+  return !Number.isNaN(createdAt.getTime()) ? createdAt : new Date(transaction.transaction_date);
+};
+
 const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
   isOpen,
   onClose,
@@ -95,6 +132,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
     limit: 20,
     start_date: '',
     end_date: '',
+    sort_order: 'asc',
   });
 
   const toast = useToast();
@@ -144,7 +182,18 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
       setError(null);
 
       const result: TransactionResult = await cashbankService.getTransactionHistory(account.id, filters);
-      const transactionData = Array.isArray(result.data) ? result.data : [];
+      const transactionData = Array.isArray(result.data) ? [...result.data] : [];
+      const sortOrder = filters.sort_order === 'desc' ? 'desc' : 'asc';
+      transactionData.sort((left, right) => {
+        const leftTime = getTransactionEffectiveTimestamp(left);
+        const rightTime = getTransactionEffectiveTimestamp(right);
+
+        if (leftTime === rightTime) {
+          return sortOrder === 'desc' ? right.id - left.id : left.id - right.id;
+        }
+
+        return sortOrder === 'desc' ? rightTime - leftTime : leftTime - rightTime;
+      });
 
       setTransactions(transactionData);
       setCurrentPage(result.page || 1);
@@ -199,6 +248,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
       limit: 20,
       start_date: '',
       end_date: '',
+      sort_order: 'asc',
     });
   };
 
@@ -283,7 +333,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                 <Text fontSize="md" fontWeight="semibold" mb={4} color={sectionTitleColor}>
                   {t('common.filter')}
                 </Text>
-                <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4}>
+                <SimpleGrid columns={{ base: 1, md: 5 }} spacing={4}>
                   <FormControl>
                     <FormLabel fontSize="sm">{t('common.filters.startDate')}</FormLabel>
                     <Input
@@ -316,6 +366,18 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                       <option value={20}>20</option>
                       <option value={50}>50</option>
                       <option value={100}>100</option>
+                    </Select>
+                  </FormControl>
+                  <FormControl>
+                    <FormLabel fontSize="sm">{t('common.sort.timeOrder')}</FormLabel>
+                    <Select
+                      value={filters.sort_order || 'asc'}
+                      onChange={(e) => handleFilterChange('sort_order', e.target.value as 'asc' | 'desc')}
+                      size="sm"
+                      {...fieldStyles}
+                    >
+                      <option value="asc">{t('common.sort.timeOldestFirst')}</option>
+                      <option value="desc">{t('common.sort.timeNewestFirst')}</option>
                     </Select>
                   </FormControl>
                   <FormControl>
@@ -399,15 +461,17 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                         const typeInfo = formatTransactionType(transaction.reference_type);
                         const transactionCurrency = getCurrencyCode(transaction.currency || accountCurrency);
                         const isPositive = transaction.amount >= 0;
+                        const displayDate = getTransactionDisplayDate(transaction);
+                        const displayTime = getTransactionDisplayTime(transaction);
 
                         return (
                           <Tr key={transaction.id} _even={{ bg: tableRowStripeBg }}>
                             <Td>
                               <Text fontSize="sm" fontFamily="mono" color={textColor}>
-                                {new Date(transaction.transaction_date).toLocaleDateString('id-ID')}
+                                {displayDate.toLocaleDateString('id-ID')}
                               </Text>
                               <Text fontSize="xs" color={mutedTextColor}>
-                                {new Date(transaction.created_at).toLocaleTimeString('id-ID')}
+                                {displayTime.toLocaleTimeString('id-ID')}
                               </Text>
                             </Td>
                             <Td>

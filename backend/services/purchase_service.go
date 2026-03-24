@@ -87,7 +87,7 @@ func NewPurchaseService(
 	// Setup post-approval callback
 	if approvalService != nil {
 		approvalService.SetPostApprovalCallback(ps)
-		fmt.Printf("✅ Post-approval callback setup completed\n")
+		fmt.Printf("? Post-approval callback setup completed\n")
 	}
 
 	return ps
@@ -96,14 +96,14 @@ func NewPurchaseService(
 // Purchase CRUD Operations
 
 func (s *PurchaseService) GetPurchases(filter models.PurchaseFilter) (*PurchaseResult, error) {
-	fmt.Printf("ℹ Retrieving purchases with filter: Status=%s, VendorID=%v, Page=%d, Limit=%d\n",
+	fmt.Printf("? Retrieving purchases with filter: Status=%s, VendorID=%v, Page=%d, Limit=%d\n",
 		filter.Status, filter.VendorID, filter.Page, filter.Limit)
 	purchases, total, err := s.purchaseRepo.FindWithFilter(filter)
 	if err != nil {
-		fmt.Printf("❌ Failed to retrieve purchases: %v\n", err)
+		fmt.Printf("? Failed to retrieve purchases: %v\n", err)
 		return nil, fmt.Errorf("failed to retrieve purchases: %v", err)
 	}
-	fmt.Printf("✅ Retrieved %d purchases (total: %d)\n", len(purchases), total)
+	fmt.Printf("? Retrieved %d purchases (total: %d)\n", len(purchases), total)
 
 	totalPages := int(math.Ceil(float64(total) / float64(filter.Limit)))
 
@@ -117,13 +117,13 @@ func (s *PurchaseService) GetPurchases(filter models.PurchaseFilter) (*PurchaseR
 }
 
 func (s *PurchaseService) GetPurchaseByID(id uint) (*models.Purchase, error) {
-	fmt.Printf("ℹ Retrieving purchase by ID: %d\n", id)
+	fmt.Printf("? Retrieving purchase by ID: %d\n", id)
 	purchase, err := s.purchaseRepo.FindByID(id)
 	if err != nil {
-		fmt.Printf("❌ Failed to retrieve purchase %d: %v\n", id, err)
+		fmt.Printf("? Failed to retrieve purchase %d: %v\n", id, err)
 		return nil, fmt.Errorf("purchase not found (ID: %d): %v", id, err)
 	}
-	fmt.Printf("✅ Purchase %d retrieved: %s (Status: %s)\n", id, purchase.Code, purchase.Status)
+	fmt.Printf("? Purchase %d retrieved: %s (Status: %s)\n", id, purchase.Code, purchase.Status)
 	return purchase, nil
 }
 
@@ -131,10 +131,10 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	// Validate vendor exists
 	vendor, err := s.contactRepo.GetByID(request.VendorID)
 	if err != nil {
-		fmt.Printf("❌ Vendor validation failed for ID %d: %v\n", request.VendorID, err)
+		fmt.Printf("? Vendor validation failed for ID %d: %v\n", request.VendorID, err)
 		return nil, fmt.Errorf("vendor not found (ID: %d): %v", request.VendorID, err)
 	}
-	fmt.Printf("✅ Vendor validation passed: %s (ID: %d)\n", vendor.Name, vendor.ID)
+	fmt.Printf("? Vendor validation passed: %s (ID: %d)\n", vendor.Name, vendor.ID)
 
 	request.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(request.PaymentMethod)))
 	request.BankAccountID, request.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
@@ -149,11 +149,11 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	// Generate purchase code
 	code, err := s.generatePurchaseCode()
 	if err != nil {
-		fmt.Printf("❌ Failed to generate purchase code for vendor %d: %v\n", request.VendorID, err)
+		fmt.Printf("? Failed to generate purchase code for vendor %d: %v\n", request.VendorID, err)
 		return nil, fmt.Errorf("failed to generate purchase code: %v", err)
 	}
 
-	fmt.Printf("ℹ Creating purchase entity with code %s for vendor %d\n", code, request.VendorID)
+	fmt.Printf("? Creating purchase entity with code %s for vendor %d\n", code, request.VendorID)
 	// Create purchase entity
 	purchase := &models.Purchase{
 		Code:     code,
@@ -193,13 +193,13 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	purchase.ProjectID = request.ProjectID
 
 	// Calculate totals and create purchase items
-	fmt.Printf("ℹ Calculating purchase totals for %d items\n", len(request.Items))
+	fmt.Printf("? Calculating purchase totals for %d items\n", len(request.Items))
 	err = s.calculatePurchaseTotals(purchase, request.Items)
 	if err != nil {
-		fmt.Printf("❌ Failed to calculate purchase totals: %v\n", err)
+		fmt.Printf("? Failed to calculate purchase totals: %v\n", err)
 		return nil, fmt.Errorf("failed to calculate purchase totals: %v", err)
 	}
-	fmt.Printf("✅ Purchase totals calculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
+	fmt.Printf("? Purchase totals calculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
 
 	// INVOICE MATCHING: HARD BLOCK VALIDATION
 	// If this purchase is linked to a Purchase Request, validate against its estimated amount
@@ -225,7 +225,7 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		// Hard Block Rule: Tolerance 0%. Net Invoice must be <= PR Estimate.
 		if netPurchaseAmount > pr.TotalEstimatedAmount {
 			errMsg := fmt.Sprintf("HARD BLOCK: Base Invoice Amount (%.2f) exceeds Approved Purchase Request Amount (%.2f). Note: Taxes are excluded from this limit check. Please revise invoice or request a new PR.", netPurchaseAmount, pr.TotalEstimatedAmount)
-			fmt.Printf("❌ %s\n", errMsg)
+			fmt.Printf("? %s\n", errMsg)
 			return nil, errors.New(errMsg)
 		}
 
@@ -234,30 +234,30 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	}
 
 	// Determine approval basis and base amount for later use
-	fmt.Printf("ℹ Determining approval requirements for purchase with amount %.2f\n", purchase.TotalAmount)
+	fmt.Printf("? Determining approval requirements for purchase with amount %.2f\n", purchase.TotalAmount)
 	if s.approvalService != nil {
 		s.setApprovalBasisAndBase(purchase)
-		fmt.Printf("✅ Approval basis set: RequiresApproval=%t, ApprovalBase=%.2f\n", purchase.RequiresApproval, purchase.ApprovalBaseAmount)
+		fmt.Printf("? Approval basis set: RequiresApproval=%t, ApprovalBase=%.2f\n", purchase.RequiresApproval, purchase.ApprovalBaseAmount)
 	} else {
 		// For testing purposes, set default values
-		fmt.Printf("⚠ No approval service available, setting default values\n")
+		fmt.Printf("? No approval service available, setting default values\n")
 		purchase.RequiresApproval = false
 		purchase.ApprovalStatus = models.PurchaseApprovalNotRequired
 	}
 
 	// Save purchase, status will remain DRAFT
-	fmt.Printf("ℹ Saving purchase to database with status DRAFT\n")
+	fmt.Printf("? Saving purchase to database with status DRAFT\n")
 	createdPurchase, err := s.purchaseRepo.Create(purchase)
 	if err != nil {
-		fmt.Printf("❌ Failed to save purchase to database: %v\n", err)
+		fmt.Printf("? Failed to save purchase to database: %v\n", err)
 		return nil, fmt.Errorf("failed to save purchase to database: %v", err)
 	}
-	fmt.Printf("✅ Purchase %d saved successfully with code %s\n", createdPurchase.ID, createdPurchase.Code)
+	fmt.Printf("? Purchase %d saved successfully with code %s\n", createdPurchase.ID, createdPurchase.Code)
 
 	// NEW LOGIC: ALL purchases must go through approval workflow
-	// No more auto-approval for immediate payments - Employee → Finance workflow applies to all
-	fmt.Printf("📋 Purchase %s created (method: %s) - will go through approval workflow\n", purchase.Code, purchase.PaymentMethod)
-	fmt.Printf("💡 Status remains DRAFT until approval workflow is initiated\n")
+	// No more auto-approval for immediate payments - Employee ? Finance workflow applies to all
+	fmt.Printf("?? Purchase %s created (method: %s) - will go through approval workflow\n", purchase.Code, purchase.PaymentMethod)
+	fmt.Printf("?? Status remains DRAFT until approval workflow is initiated\n")
 
 	// Note: Bank balance validation and payment processing will happen AFTER approval
 	// This ensures proper approval control for all purchase types
@@ -266,20 +266,20 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 }
 
 func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateRequest, userID uint) (*models.Purchase, error) {
-	fmt.Printf("ℹ Starting purchase update for ID %d by user %d\n", id, userID)
+	fmt.Printf("? Starting purchase update for ID %d by user %d\n", id, userID)
 	purchase, err := s.purchaseRepo.FindByID(id)
 	if err != nil {
-		fmt.Printf("❌ Failed to find purchase %d for update: %v\n", id, err)
+		fmt.Printf("? Failed to find purchase %d for update: %v\n", id, err)
 		return nil, fmt.Errorf("purchase not found (ID: %d): %v", id, err)
 	}
 
 	// Check if purchase can be updated
-	fmt.Printf("ℹ Checking if purchase %d can be updated (current status: %s)\n", id, purchase.Status)
+	fmt.Printf("? Checking if purchase %d can be updated (current status: %s)\n", id, purchase.Status)
 	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending {
-		fmt.Printf("❌ Purchase %d cannot be updated in current status: %s\n", id, purchase.Status)
+		fmt.Printf("? Purchase %d cannot be updated in current status: %s\n", id, purchase.Status)
 		return nil, fmt.Errorf("purchase cannot be updated in current status: %s", purchase.Status)
 	}
-	fmt.Printf("✅ Purchase %d status validation passed for update\n", id)
+	fmt.Printf("? Purchase %d status validation passed for update\n", id)
 
 	// Update fields if provided
 	if request.VendorID != nil {
@@ -349,13 +349,13 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 
 	// Recalculate totals
-	fmt.Printf("ℹ Recalculating totals for updated purchase %d\n", id)
+	fmt.Printf("? Recalculating totals for updated purchase %d\n", id)
 	err = s.recalculatePurchaseTotals(purchase)
 	if err != nil {
-		fmt.Printf("❌ Failed to recalculate totals for purchase %d: %v\n", id, err)
+		fmt.Printf("? Failed to recalculate totals for purchase %d: %v\n", id, err)
 		return nil, fmt.Errorf("failed to recalculate purchase totals: %v", err)
 	}
-	fmt.Printf("✅ Purchase %d totals recalculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", id, purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
+	fmt.Printf("? Purchase %d totals recalculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", id, purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
 
 	// INVOICE MATCHING: HARD BLOCK VALIDATION FOR UPDATE
 	if purchase.PurchaseRequestID != nil {
@@ -370,7 +370,7 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		// Hard Block Rule
 		if netPurchaseAmount > pr.TotalEstimatedAmount {
 			errMsg := fmt.Sprintf("HARD BLOCK: Updated Base Invoice Amount (%.2f) exceeds Approved Purchase Request Amount (%.2f). Note: Taxes are excluded from this limit check. Update rejected.", netPurchaseAmount, pr.TotalEstimatedAmount)
-			fmt.Printf("❌ %s\n", errMsg)
+			fmt.Printf("? %s\n", errMsg)
 			return nil, errors.New(errMsg)
 		}
 		purchase.MatchingStatus = "MATCHED"
@@ -380,28 +380,28 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	s.setApprovalBasisAndBase(purchase)
 
 	// Save updated purchase
-	fmt.Printf("ℹ Saving updated purchase %d to database\n", id)
+	fmt.Printf("? Saving updated purchase %d to database\n", id)
 	updatedPurchase, err := s.purchaseRepo.Update(purchase)
 	if err != nil {
-		fmt.Printf("❌ Failed to save updated purchase %d: %v\n", id, err)
+		fmt.Printf("? Failed to save updated purchase %d: %v\n", id, err)
 		return nil, fmt.Errorf("failed to save updated purchase: %v", err)
 	}
-	fmt.Printf("✅ Purchase %d updated successfully\n", id)
+	fmt.Printf("? Purchase %d updated successfully\n", id)
 
 	return s.GetPurchaseByID(updatedPurchase.ID)
 }
 
 func (s *PurchaseService) DeletePurchase(id uint) error {
-	fmt.Printf("ℹ Starting purchase cancellation for ID %d (cancel instead of delete)\n", id)
+	fmt.Printf("? Starting purchase cancellation for ID %d (cancel instead of delete)\n", id)
 	purchase, err := s.purchaseRepo.FindByID(id)
 	if err != nil {
-		fmt.Printf("❌ Failed to find purchase %d for cancellation: %v\n", id, err)
+		fmt.Printf("? Failed to find purchase %d for cancellation: %v\n", id, err)
 		return fmt.Errorf("purchase not found (ID: %d): %v", id, err)
 	}
 
 	// If already cancelled, nothing to do
 	if purchase.Status == models.PurchaseStatusCancelled {
-		fmt.Printf("ℹ Purchase %d is already CANCELLED, nothing to do\n", id)
+		fmt.Printf("? Purchase %d is already CANCELLED, nothing to do\n", id)
 		return nil
 	}
 
@@ -413,18 +413,18 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 	// For non-DRAFT purchases that have been approved/completed/paid,
 	// perform full accounting reversal (stock, cash/bank, journal, project cost)
 	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending {
-		fmt.Printf("🔄 Purchase %d has status %s, performing full accounting reversal via OnPurchaseRejected\n", id, purchase.Status)
+		fmt.Printf("?? Purchase %d has status %s, performing full accounting reversal via OnPurchaseRejected\n", id, purchase.Status)
 		if err := s.OnPurchaseRejected(id); err != nil {
-			fmt.Printf("❌ Post-rejection cleanup failed for purchase %d: %v\n", id, err)
+			fmt.Printf("? Post-rejection cleanup failed for purchase %d: %v\n", id, err)
 			return fmt.Errorf("failed to reverse approved purchase %d before cancellation: %v", id, err)
 		} else {
-			fmt.Printf("✅ Full accounting reversal completed for purchase %d\n", id)
+			fmt.Printf("? Full accounting reversal completed for purchase %d\n", id)
 		}
 	} else {
-		fmt.Printf("✅ Purchase %d is in %s status, no accounting reversal needed\n", id, purchase.Status)
+		fmt.Printf("? Purchase %d is in %s status, no accounting reversal needed\n", id, purchase.Status)
 	}
 
-	// Set status to CANCELLED (do NOT soft-delete — maintain audit trail)
+	// Set status to CANCELLED (do NOT soft-delete - maintain audit trail)
 	now := time.Now()
 	purchase.Status = models.PurchaseStatusCancelled
 	purchase.ApprovalStatus = models.PurchaseApprovalRejected
@@ -434,11 +434,11 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 
 	_, err = s.purchaseRepo.Update(purchase)
 	if err != nil {
-		fmt.Printf("❌ Failed to update purchase %d status to CANCELLED: %v\n", id, err)
+		fmt.Printf("? Failed to update purchase %d status to CANCELLED: %v\n", id, err)
 		return fmt.Errorf("failed to cancel purchase: %v", err)
 	}
 
-	fmt.Printf("✅ Purchase %d cancelled successfully (status: CANCELLED, audit trail preserved)\n", id)
+	fmt.Printf("? Purchase %d cancelled successfully (status: CANCELLED, audit trail preserved)\n", id)
 	return nil
 }
 
@@ -463,42 +463,42 @@ func (s *PurchaseService) updateProjectCostForPurchase(purchase *models.Purchase
 // Approval Integration
 
 func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
-	fmt.Printf("ℹ Starting approval submission for purchase %d by user %d\n", id, userID)
+	fmt.Printf("? Starting approval submission for purchase %d by user %d\n", id, userID)
 	purchase, err := s.purchaseRepo.FindByID(id)
 	if err != nil {
-		fmt.Printf("❌ Failed to find purchase %d for approval submission: %v\n", id, err)
+		fmt.Printf("? Failed to find purchase %d for approval submission: %v\n", id, err)
 		return fmt.Errorf("purchase not found (ID: %d): %v", id, err)
 	}
 
-	fmt.Printf("ℹ Checking if purchase %d can be submitted for approval (current status: %s)\n", id, purchase.Status)
+	fmt.Printf("? Checking if purchase %d can be submitted for approval (current status: %s)\n", id, purchase.Status)
 	if purchase.Status != models.PurchaseStatusDraft {
-		fmt.Printf("❌ Purchase %d cannot be submitted for approval in current status: %s\n", id, purchase.Status)
+		fmt.Printf("? Purchase %d cannot be submitted for approval in current status: %s\n", id, purchase.Status)
 		return fmt.Errorf("only draft purchases can be submitted for approval, current status: %s", purchase.Status)
 	}
 
 	// Ensure approval base up-to-date
-	fmt.Printf("ℹ Setting approval basis for purchase %d (amount: %.2f)\n", id, purchase.TotalAmount)
+	fmt.Printf("? Setting approval basis for purchase %d (amount: %.2f)\n", id, purchase.TotalAmount)
 	s.setApprovalBasisAndBase(purchase)
 	// NEW LOGIC: Since all purchases now require approval, this should never auto-approve
 	requiresApproval := s.checkIfApprovalRequired(purchase.ApprovalBaseAmount)
-	fmt.Printf("ℹ Approval requirement check: RequiresApproval=%t, BaseAmount=%.2f\n", requiresApproval, purchase.ApprovalBaseAmount)
+	fmt.Printf("? Approval requirement check: RequiresApproval=%t, BaseAmount=%.2f\n", requiresApproval, purchase.ApprovalBaseAmount)
 
 	// With new logic, this should never be false, but adding safety check
 	if !requiresApproval {
-		fmt.Printf("⚠ WARNING: checkIfApprovalRequired returned false - this should not happen with new logic!\n")
-		fmt.Printf("🔄 Forcing approval requirement to maintain Employee → Finance workflow\n")
+		fmt.Printf("? WARNING: checkIfApprovalRequired returned false - this should not happen with new logic!\n")
+		fmt.Printf("?? Forcing approval requirement to maintain Employee ? Finance workflow\n")
 		requiresApproval = true
 		purchase.RequiresApproval = true
 	}
 
 	// Create approval request
-	fmt.Printf("ℹ Creating approval request for purchase %d\n", id)
+	fmt.Printf("? Creating approval request for purchase %d\n", id)
 	err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, purchase.UserID)
 	if err != nil {
-		fmt.Printf("❌ Failed to create approval request for purchase %d: %v\n", id, err)
+		fmt.Printf("? Failed to create approval request for purchase %d: %v\n", id, err)
 		return fmt.Errorf("failed to create approval request: %v", err)
 	}
-	fmt.Printf("✅ Approval request created for purchase %d\n", id)
+	fmt.Printf("? Approval request created for purchase %d\n", id)
 
 	// The approval workflow now starts from Employee step (step 1)
 	// When Employee submits, we immediately progress to the next step (Finance/Manager)
@@ -530,7 +530,7 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 			return fmt.Errorf("failed to auto-approve employee step: %v", result.Error)
 		}
 		if result.RowsAffected == 0 {
-			fmt.Printf("⚠️ No active pending step found to auto-approve for request %d\n", requestID)
+			fmt.Printf("?? No active pending step found to auto-approve for request %d\n", requestID)
 		}
 
 		// Step 2: Activate the next step (finance approval, step_order = 2)
@@ -542,7 +542,7 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 				s.db.Model(&models.ApprovalAction{}).
 					Where("request_id = ? AND step_id = ?", requestID, financeStep.ID).
 					Update("is_active", true)
-				fmt.Printf("✅ Finance approval step activated for request %d\n", requestID)
+				fmt.Printf("? Finance approval step activated for request %d\n", requestID)
 			}
 		}
 
@@ -555,7 +555,7 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 			Metadata:  "{}",
 		}
 		s.db.Create(&history)
-		fmt.Printf("✅ Employee submission step auto-approved for purchase %d\n", id)
+		fmt.Printf("? Employee submission step auto-approved for purchase %d\n", id)
 	}
 
 	// Update purchase status
@@ -637,7 +637,7 @@ func (s *PurchaseService) advanceRequesterSubmissionStep(purchase *models.Purcha
 		}
 	}
 
-	fmt.Printf("âœ… Request %d advanced from requester submission to %s step\n", approvalReq.ID, nextStep.StepName)
+	fmt.Printf("✅ Request %d advanced from requester submission to %s step\n", approvalReq.ID, nextStep.StepName)
 	return nil
 }
 
@@ -705,12 +705,12 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 				return nil, fmt.Errorf("failed to process purchase rejection: %v", err)
 			}
 
-			fmt.Printf("ðŸ”” Calling OnPurchaseRejected cleanup for purchase %d\n", purchaseID)
+			fmt.Printf("🔔 Calling OnPurchaseRejected cleanup for purchase %d\n", purchaseID)
 			cleanupErr := s.OnPurchaseRejected(purchaseID)
 			if cleanupErr != nil {
-				fmt.Printf("âš ï¸ Warning: Post-rejection cleanup failed for purchase %d: %v\n", purchaseID, cleanupErr)
+				fmt.Printf("⚠️ Warning: Post-rejection cleanup failed for purchase %d: %v\n", purchaseID, cleanupErr)
 			} else {
-				fmt.Printf("âœ… Post-rejection cleanup completed for purchase %d\n", purchaseID)
+				fmt.Printf("✅ Post-rejection cleanup completed for purchase %d\n", purchaseID)
 			}
 
 			result["message"] = "Purchase rejected"
@@ -767,14 +767,14 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 			fmt.Printf("Warning: Purchase %d rejected but no approval request ID found\n", purchaseID)
 		}
 
-		// 🚫 CRITICAL: Reverse all accounting effects (journal, stock, cash/bank, project cost)
-		fmt.Printf("🔔 Calling OnPurchaseRejected cleanup for purchase %d\n", purchaseID)
+		// ?? CRITICAL: Reverse all accounting effects (journal, stock, cash/bank, project cost)
+		fmt.Printf("?? Calling OnPurchaseRejected cleanup for purchase %d\n", purchaseID)
 		cleanupErr := s.OnPurchaseRejected(purchaseID)
 		if cleanupErr != nil {
-			fmt.Printf("⚠️ Warning: Post-rejection cleanup failed for purchase %d: %v\n", purchaseID, cleanupErr)
-			// Continue — rejection should still succeed even if cleanup has issues
+			fmt.Printf("?? Warning: Post-rejection cleanup failed for purchase %d: %v\n", purchaseID, cleanupErr)
+			// Continue - rejection should still succeed even if cleanup has issues
 		} else {
-			fmt.Printf("✅ Post-rejection cleanup completed for purchase %d\n", purchaseID)
+			fmt.Printf("? Post-rejection cleanup completed for purchase %d\n", purchaseID)
 		}
 
 		result["message"] = "Purchase rejected"
@@ -921,7 +921,7 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 		// Set outstanding amount to total amount (nothing paid yet)
 		purchase.OutstandingAmount = purchase.TotalAmount
 		purchase.PaidAmount = 0
-		fmt.Printf("💳 Initialized CREDIT purchase payment tracking: Total=%.2f, Outstanding=%.2f, Paid=%.2f\n",
+		fmt.Printf("?? Initialized CREDIT purchase payment tracking: Total=%.2f, Outstanding=%.2f, Paid=%.2f\n",
 			purchase.TotalAmount, purchase.OutstandingAmount, purchase.PaidAmount)
 	}
 
@@ -933,15 +933,15 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 	// NOTE: Stock updates, journal entries, and cash/bank balance updates
 	// are now handled by OnPurchaseApproved callback above
 
-	// ✅ FIXED: Call OnPurchaseApproved callback for complete post-approval processing
+	// ? FIXED: Call OnPurchaseApproved callback for complete post-approval processing
 	// This ensures cash bank transactions, stock updates, and journal entries are all handled correctly
-	fmt.Printf("🔔 Calling OnPurchaseApproved callback for purchase %d\n", purchaseID)
+	fmt.Printf("?? Calling OnPurchaseApproved callback for purchase %d\n", purchaseID)
 	err = s.OnPurchaseApproved(purchaseID)
 	if err != nil {
-		fmt.Printf("⚠️ Warning: Post-approval callback failed for purchase %d: %v\n", purchaseID, err)
+		fmt.Printf("?? Warning: Post-approval callback failed for purchase %d: %v\n", purchaseID, err)
 		// Continue processing, don't fail the entire approval
 	} else {
-		fmt.Printf("✅ Post-approval callback completed successfully for purchase %d\n", purchaseID)
+		fmt.Printf("? Post-approval callback completed successfully for purchase %d\n", purchaseID)
 	}
 
 	result["message"] = "Purchase approved successfully"
@@ -1059,7 +1059,7 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 		// Update purchase status to COMPLETED but do not change payment amounts
 		purchase.Status = models.PurchaseStatusCompleted
 		if _, upErr := s.purchaseRepo.Update(purchase); upErr != nil {
-			fmt.Printf("⚠️ Warning: Failed to update purchase status to COMPLETED after receipts: %v\n", upErr)
+			fmt.Printf("?? Warning: Failed to update purchase status to COMPLETED after receipts: %v\n", upErr)
 		}
 	}
 
@@ -1088,18 +1088,18 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 			// Find purchase item to compute amount
 			purchaseItem, err := s.purchaseRepo.GetPurchaseItemByID(itemReq.PurchaseItemID)
 			if err != nil {
-				fmt.Printf("⚠️ Capitalization skipped: cannot find purchase item %d: %v\n", itemReq.PurchaseItemID, err)
+				fmt.Printf("?? Capitalization skipped: cannot find purchase item %d: %v\n", itemReq.PurchaseItemID, err)
 				continue
 			}
 			// Compute capitalization amount (exclude VAT): unit_price * qty_received
 			capAmount := float64(itemReq.QuantityReceived) * purchaseItem.UnitPrice
 			if capAmount <= 0 {
-				fmt.Printf("ℹ️ Capitalization skipped for item %d: amount is 0\n", itemReq.PurchaseItemID)
+				fmt.Printf("?? Capitalization skipped for item %d: amount is 0\n", itemReq.PurchaseItemID)
 				continue
 			}
 			// SAFEGUARD: if purchase item booked to Inventory (expense_account_id == 0), skip capitalization to avoid double handling
 			if purchaseItem.ExpenseAccountID == 0 {
-				fmt.Printf("ℹ️ Capitalization disabled for inventory item %d. Skipping.\n", itemReq.PurchaseItemID)
+				fmt.Printf("?? Capitalization disabled for inventory item %d. Skipping.\n", itemReq.PurchaseItemID)
 				continue
 			}
 			// DOUBLE-POSTING PREVENTION: If the purchase item was already debited to a Fixed Asset account
@@ -1108,7 +1108,7 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 				var itemAccount models.Account
 				if accErr := s.db.First(&itemAccount, purchaseItem.ExpenseAccountID).Error; accErr == nil {
 					if strings.ToUpper(itemAccount.Category) == models.CategoryFixedAsset {
-						fmt.Printf("⏭️ Capitalization skipped for item %d: already debited to Fixed Asset account %s (%s) in purchase journal\n",
+						fmt.Printf("?? Capitalization skipped for item %d: already debited to Fixed Asset account %s (%s) in purchase journal\n",
 							itemReq.PurchaseItemID, itemAccount.Code, itemAccount.Name)
 						continue
 					}
@@ -1140,10 +1140,10 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 				ReferenceID:         createdReceipt.ID,
 			}
 			if err := s.assetCapitalizationSvc.Capitalize(capInput); err != nil {
-				fmt.Printf("⚠️ Failed to create capitalization journal for receipt item %d: %v\n", itemReq.PurchaseItemID, err)
+				fmt.Printf("?? Failed to create capitalization journal for receipt item %d: %v\n", itemReq.PurchaseItemID, err)
 				// Continue other items; do not fail receipt creation
 			} else {
-				fmt.Printf("✅ Capitalization journal created for receipt item %d (amount=%.2f)\n", itemReq.PurchaseItemID, capAmount)
+				fmt.Printf("? Capitalization journal created for receipt item %d (amount=%.2f)\n", itemReq.PurchaseItemID, capAmount)
 			}
 		}
 	}
@@ -1266,7 +1266,7 @@ func (s *PurchaseService) GetPurchaseReceipts(purchaseID uint) ([]models.Purchas
 	if err2 == nil && allReceived && purchase.Status != models.PurchaseStatusCompleted {
 		purchase.Status = models.PurchaseStatusCompleted
 		if _, upErr := s.purchaseRepo.Update(purchase); upErr != nil {
-			fmt.Printf("⚠️ Warning: Failed to set purchase %d to COMPLETED during receipt fetch: %v\n", purchaseID, upErr)
+			fmt.Printf("?? Warning: Failed to set purchase %d to COMPLETED during receipt fetch: %v\n", purchaseID, upErr)
 		}
 	}
 
@@ -1348,7 +1348,7 @@ func (s *PurchaseService) GenerateAllReceiptsPDF(purchaseID uint) ([]byte, *mode
 
 // OnPurchaseApproved implements PostApprovalCallback interface - handles business logic after purchase approval
 func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
-	fmt.Printf("📦 Starting post-approval processing for purchase %d\n", purchaseID)
+	fmt.Printf("?? Starting post-approval processing for purchase %d\n", purchaseID)
 
 	// Get the approved purchase
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
@@ -1356,46 +1356,46 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 		return fmt.Errorf("failed to get purchase for post-approval processing: %v", err)
 	}
 
-	fmt.Printf("💰 Processing approved purchase %s (method: %s, amount: %.2f)\n", purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
+	fmt.Printf("?? Processing approved purchase %s (method: %s, amount: %.2f)\n", purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
 
 	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
 		return err
 	}
 
 	// 1. Update product stock
-	fmt.Printf("🔄 Updating product stock for approved purchase %d\n", purchaseID)
+	fmt.Printf("?? Updating product stock for approved purchase %d\n", purchaseID)
 	affectedProductIDs, err := s.updateProductStockOnApproval(purchase)
 	if err != nil {
-		fmt.Printf("⚠️ Warning: Failed to update product stock: %v\n", err)
+		fmt.Printf("?? Warning: Failed to update product stock: %v\n", err)
 		// Continue processing even if stock update fails
 	} else {
-		fmt.Printf("✅ Successfully updated product stock\n")
+		fmt.Printf("? Successfully updated product stock\n")
 	}
 
 	// 2. Create journal entries - PRIORITIZE SSOT (no double posting)
-	fmt.Printf("🏗️ Creating journal entries for approved purchase %s (ONLY using SSOT)\n", purchase.Code)
+	fmt.Printf("??? Creating journal entries for approved purchase %s (ONLY using SSOT)\n", purchase.Code)
 
 	// Use SSOT service exclusively
 	if s.journalServiceSSOT != nil {
 		if err := s.journalServiceSSOT.CreatePurchaseJournal(purchase, nil); err != nil {
-			fmt.Printf("⚠️ Warning: SSOT journal creation failed: %v\n", err)
+			fmt.Printf("?? Warning: SSOT journal creation failed: %v\n", err)
 			// Continue processing - journal can be recreated later
 		} else {
-			fmt.Printf("✅ [SSOT] Created purchase journal entries for Balance Sheet integration\n")
+			fmt.Printf("? [SSOT] Created purchase journal entries for Balance Sheet integration\n")
 		}
 	} else {
 		// No SSOT service available
-		fmt.Printf("⚠️ SSOT journal service not available, skipping journal creation\n")
+		fmt.Printf("?? SSOT journal service not available, skipping journal creation\n")
 	}
 
 	// 3. Update cash/bank balance for immediate payment methods
 	if isImmediatePayment(purchase.PaymentMethod) {
-		fmt.Printf("💰 Updating cash/bank balance for immediate payment purchase\n")
+		fmt.Printf("?? Updating cash/bank balance for immediate payment purchase\n")
 		err = s.updateCashBankBalanceForPurchaseAtomic(purchase)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to update cash/bank balance: %v\n", err)
+			fmt.Printf("?? Warning: Failed to update cash/bank balance: %v\n", err)
 		} else {
-			fmt.Printf("✅ Successfully updated cash/bank balance\n")
+			fmt.Printf("? Successfully updated cash/bank balance\n")
 		}
 	}
 
@@ -1405,9 +1405,9 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 		purchase.PaidAmount = 0
 		_, err = s.purchaseRepo.Update(purchase)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to update credit purchase payment tracking: %v\n", err)
+			fmt.Printf("?? Warning: Failed to update credit purchase payment tracking: %v\n", err)
 		} else {
-			fmt.Printf("💳 Initialized credit purchase payment tracking\n")
+			fmt.Printf("?? Initialized credit purchase payment tracking\n")
 		}
 	} else {
 		// For immediate payment, mark as fully paid
@@ -1415,20 +1415,20 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 		purchase.OutstandingAmount = 0
 		_, err = s.purchaseRepo.Update(purchase)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to update immediate payment tracking: %v\n", err)
+			fmt.Printf("?? Warning: Failed to update immediate payment tracking: %v\n", err)
 		} else {
-			fmt.Printf("💵 Marked immediate payment as fully paid\n")
+			fmt.Printf("?? Marked immediate payment as fully paid\n")
 		}
 	}
 
 	// 5. Update Project Actual Cost (if linked to project)
 	if purchase.ProjectID != nil {
-		fmt.Printf("📈 Increasing project actual cost for approved purchase %d\n", purchaseID)
+		fmt.Printf("?? Increasing project actual cost for approved purchase %d\n", purchaseID)
 		err = s.updateProjectCostForPurchase(purchase, true)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to increase project actual cost: %v\n", err)
+			fmt.Printf("?? Warning: Failed to increase project actual cost: %v\n", err)
 		} else {
-			fmt.Printf("✅ Successfully increased project actual cost for project %d\n", *purchase.ProjectID)
+			fmt.Printf("? Successfully increased project actual cost for project %d\n", *purchase.ProjectID)
 		}
 	}
 
@@ -1438,16 +1438,16 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	s.autoCreateAssetsFromPurchase(purchase)
 
 	// 7. Auto-create Prepaid Expenses
-	fmt.Printf("⏳ Mengecek keberadaan item PREPAID untuk purchase %s\n", purchase.Code)
+	fmt.Printf("? Mengecek keberadaan item PREPAID untuk purchase %s\n", purchase.Code)
 	err = s.processPrepaidExpensesInPurchase(purchase)
 	if err != nil {
-		fmt.Printf("⚠️ Warning: Gagal memproses data Prepaid Expense: %v\n", err)
+		fmt.Printf("?? Warning: Gagal memproses data Prepaid Expense: %v\n", err)
 		// Tidak mereturn error agar approval parent tetap jalan
 	}
 
 	s.syncStockAlertsForProducts(affectedProductIDs)
 
-	fmt.Printf("✅ Post-approval processing completed for purchase %s\n", purchase.Code)
+	fmt.Printf("? Post-approval processing completed for purchase %s\n", purchase.Code)
 	return nil
 }
 
@@ -1511,10 +1511,10 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 					Status:        "PENDING",
 				}
 				if err := s.db.Create(&schedule).Error; err != nil {
-					fmt.Printf("⚠️ Gagal membuat schedule ke-%d untuk prepaid ID %d\n", i, prepaid.ID)
+					fmt.Printf("?? Gagal membuat schedule ke-%d untuk prepaid ID %d\n", i, prepaid.ID)
 				}
 			}
-			fmt.Printf("✅ Sukses membuat Prepaid Expense '%s' (%d Bulan) sebesar Rp %.2f\n", prepaidName, months, item.TotalPrice)
+			fmt.Printf("? Sukses membuat Prepaid Expense '%s' (%d Bulan) sebesar Rp %.2f\n", prepaidName, months, item.TotalPrice)
 		}
 	}
 	return nil
@@ -1545,7 +1545,7 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 			fmt.Sprintf("%%PurchaseItem:%d%%", item.ID),
 		).Count(&existingCount)
 		if existingCount > 0 {
-			fmt.Printf("ℹ️ Asset already exists for purchase item %d, skipping\n", item.ID)
+			fmt.Printf("?? Asset already exists for purchase item %d, skipping\n", item.ID)
 			continue
 		}
 
@@ -1614,7 +1614,7 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 		qty := item.Quantity
 		if qty <= 0 {
 			qty = 1
-			fmt.Printf("⚠️ Warning: Auto-fixing item.Quantity=0 for Asset '%s', forcing to Qty=1\n", assetName)
+			fmt.Printf("?? Warning: Auto-fixing item.Quantity=0 for Asset '%s', forcing to Qty=1\n", assetName)
 		}
 
 		// Create asset for each unit quantity
@@ -1653,11 +1653,11 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 			// Create asset via service (generates code automatically)
 			if err := assetService.CreateAsset(asset); err != nil {
 				// We don't continue out of the whole function, just print loud error to track!
-				fmt.Printf("🚨 🚨 🚨 [FATAL AUTO-ASSET] Failed to create Asset DB record '%s': %v\n", unitAssetName, err)
+				fmt.Printf("?? ?? ?? [FATAL AUTO-ASSET] Failed to create Asset DB record '%s': %v\n", unitAssetName, err)
 				continue
 			}
 
-			fmt.Printf("✅ [AUTO-ASSET] Created asset %s (%s) from purchase %s - Rp %.2f, useful life: %d years\n",
+			fmt.Printf("? [AUTO-ASSET] Created asset %s (%s) from purchase %s - Rp %.2f, useful life: %d years\n",
 				asset.Code, asset.Name, purchase.Code, asset.PurchasePrice, asset.UsefulLife)
 		}
 	}
@@ -1740,12 +1740,12 @@ func (s *PurchaseService) cleanupAutoCreatedAssetsFromPurchase(purchase *models.
 			}
 
 			cleanedAssets++
-			fmt.Printf("âœ… Auto-created asset %s cleaned up for purchase %s\n", asset.Code, purchase.Code)
+			fmt.Printf("✅ Auto-created asset %s cleaned up for purchase %s\n", asset.Code, purchase.Code)
 		}
 	}
 
 	if cleanedAssets > 0 {
-		fmt.Printf("âœ… Cleaned up %d auto-created assets for purchase %s\n", cleanedAssets, purchase.Code)
+		fmt.Printf("✅ Cleaned up %d auto-created assets for purchase %s\n", cleanedAssets, purchase.Code)
 	}
 
 	return nil
@@ -1754,14 +1754,14 @@ func (s *PurchaseService) cleanupAutoCreatedAssetsFromPurchase(purchase *models.
 // OnPurchaseRejected reverses all accounting effects when a purchase is rejected.
 // This handles cleanup for purchases that were previously approved (journal, stock, cash/bank, project cost).
 func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
-	fmt.Printf("🚫 Starting post-rejection cleanup for purchase %d\n", purchaseID)
+	fmt.Printf("?? Starting post-rejection cleanup for purchase %d\n", purchaseID)
 
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
 	if err != nil {
 		return fmt.Errorf("failed to get purchase for rejection cleanup: %v", err)
 	}
 
-	fmt.Printf("🔄 Cleaning up rejected purchase %s (method: %s, amount: %.2f)\n",
+	fmt.Printf("?? Cleaning up rejected purchase %s (method: %s, amount: %.2f)\n",
 		purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
 
 	// Guard: check if purchase date is in a closed accounting period
@@ -1770,26 +1770,26 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 	}
 
 	// 1. Reset payment tracking amounts
-	fmt.Printf("💰 Resetting payment tracking for rejected purchase %d\n", purchaseID)
+	fmt.Printf("?? Resetting payment tracking for rejected purchase %d\n", purchaseID)
 	oldOutstanding := purchase.OutstandingAmount
 	oldPaid := purchase.PaidAmount
 	purchase.OutstandingAmount = 0
 	purchase.PaidAmount = 0
 	_, err = s.purchaseRepo.Update(purchase)
 	if err != nil {
-		fmt.Printf("⚠️ Warning: Failed to reset payment tracking: %v\n", err)
+		fmt.Printf("?? Warning: Failed to reset payment tracking: %v\n", err)
 	} else {
-		fmt.Printf("✅ Payment tracking reset: Outstanding %.2f→0, Paid %.2f→0\n", oldOutstanding, oldPaid)
+		fmt.Printf("? Payment tracking reset: Outstanding %.2f?0, Paid %.2f?0\n", oldOutstanding, oldPaid)
 	}
 
 	// 2. Delete SSOT journal entries with COA balance reversal
-	fmt.Printf("📒 Removing SSOT journal entries for rejected purchase %d\n", purchaseID)
+	fmt.Printf("?? Removing SSOT journal entries for rejected purchase %d\n", purchaseID)
 	if s.journalServiceSSOT != nil {
 		// Use the SSOT journal service which properly reverses COA balances
 		if err := s.journalServiceSSOT.DeletePurchaseJournal(purchaseID, nil); err != nil {
-			fmt.Printf("⚠️ Warning: Failed to delete SSOT journal via service for purchase %d: %v\n", purchaseID, err)
+			fmt.Printf("?? Warning: Failed to delete SSOT journal via service for purchase %d: %v\n", purchaseID, err)
 		} else {
-			fmt.Printf("✅ SSOT journal entries deleted with COA reversal for purchase %d\n", purchaseID)
+			fmt.Printf("? SSOT journal entries deleted with COA reversal for purchase %d\n", purchaseID)
 		}
 	}
 
@@ -1798,7 +1798,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		Model(&models.SSOTJournalEntry{}).
 		Where("source_type = 'PURCHASE' AND source_id = ? AND deleted_at IS NULL", purchaseID).
 		Update("deleted_at", time.Now()).Error; err != nil {
-		fmt.Printf("⚠️ Warning: Failed to soft-delete remaining SSOT journal entries: %v\n", err)
+		fmt.Printf("?? Warning: Failed to soft-delete remaining SSOT journal entries: %v\n", err)
 	}
 
 	// Also soft-delete any remaining unified_journal_lines
@@ -1810,22 +1810,22 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 			WHERE source_type = 'PURCHASE' AND source_id = ?
 		)
 	`, purchaseID).Error; err != nil {
-		fmt.Printf("⚠️ Warning: Failed to soft-delete remaining SSOT journal lines: %v\n", err)
+		fmt.Printf("?? Warning: Failed to soft-delete remaining SSOT journal lines: %v\n", err)
 	}
 
 	// 3. Remove any asset register records auto-created from this purchase
-	fmt.Printf("🏷️ Cleaning auto-created assets for rejected purchase %s\n", purchase.Code)
+	fmt.Printf("??? Cleaning auto-created assets for rejected purchase %s\n", purchase.Code)
 	if err := s.cleanupAutoCreatedAssetsFromPurchase(purchase); err != nil {
 		return err
 	}
 
 	// 4. Reverse product stock (subtract the quantities that were added on approval)
-	fmt.Printf("📦 Reversing product stock for rejected purchase %s\n", purchase.Code)
+	fmt.Printf("?? Reversing product stock for rejected purchase %s\n", purchase.Code)
 	affectedProductIDs := make(map[uint]struct{})
 	for _, item := range purchase.PurchaseItems {
 		// Skip ASSET items - they don't have inventory/stock
 		if item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset {
-			fmt.Printf("ℹ️ Skipping stock reversal for ASSET item '%s' (PurchaseItem:%d)\n", item.Description, item.ID)
+			fmt.Printf("?? Skipping stock reversal for ASSET item '%s' (PurchaseItem:%d)\n", item.Description, item.ID)
 			continue
 		}
 		// Skip items without ProductID
@@ -1835,40 +1835,40 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 
 		product, err := s.productRepo.FindByID(*item.ProductID)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Product %d not found for stock reversal: %v\n", *item.ProductID, err)
+			fmt.Printf("?? Warning: Product %d not found for stock reversal: %v\n", *item.ProductID, err)
 			continue
 		}
 
 		oldStock := product.Stock
 		product.Stock -= item.Quantity
 		if product.Stock < 0 {
-			fmt.Printf("⚠️ Warning: Stock for product %d would go negative (%d), setting to 0\n", product.ID, product.Stock)
+			fmt.Printf("?? Warning: Stock for product %d would go negative (%d), setting to 0\n", product.ID, product.Stock)
 			product.Stock = 0
 		}
 
 		err = s.productRepo.Update(context.Background(), product)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to reverse stock for product %d: %v\n", product.ID, err)
+			fmt.Printf("?? Warning: Failed to reverse stock for product %d: %v\n", product.ID, err)
 		} else {
 			affectedProductIDs[product.ID] = struct{}{}
-			fmt.Printf("✅ Product %d stock reversed: %d → %d\n", product.ID, oldStock, product.Stock)
+			fmt.Printf("? Product %d stock reversed: %d ? %d\n", product.ID, oldStock, product.Stock)
 		}
 	}
 
 	// 5. Reverse cash/bank balance for immediate payment purchases
 	if isImmediatePayment(purchase.PaymentMethod) && purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
-		fmt.Printf("💰 Restoring cash/bank balance for rejected immediate payment purchase\n")
+		fmt.Printf("?? Restoring cash/bank balance for rejected immediate payment purchase\n")
 
 		var cashBank models.CashBank
 		if err := s.db.First(&cashBank, *purchase.BankAccountID).Error; err != nil {
-			fmt.Printf("⚠️ Warning: Failed to find bank account %d for balance restoration: %v\n", *purchase.BankAccountID, err)
+			fmt.Printf("?? Warning: Failed to find bank account %d for balance restoration: %v\n", *purchase.BankAccountID, err)
 		} else {
 			restoreAmount := purchase.TotalAmount
 			exchangeRate := 1.0
 			if cashBank.IsForeignCurrency() {
 				nativeAmount, carryRate, calcErr := calculatePurchaseNativeOutflow(&cashBank, purchase.TotalAmount)
 				if calcErr != nil {
-					fmt.Printf("âš ï¸ Warning: Failed to calculate reversal native amount for %s: %v\n", cashBank.Name, calcErr)
+					fmt.Printf("⚠️ Warning: Failed to calculate reversal native amount for %s: %v\n", cashBank.Name, calcErr)
 				} else {
 					restoreAmount = nativeAmount
 					exchangeRate = carryRate
@@ -1880,9 +1880,9 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 			cashBank.Balance += restoreAmount // Add back (restore)
 
 			if err := s.db.Save(&cashBank).Error; err != nil {
-				fmt.Printf("⚠️ Warning: Failed to restore cash/bank balance: %v\n", err)
+				fmt.Printf("?? Warning: Failed to restore cash/bank balance: %v\n", err)
 			} else {
-				fmt.Printf("✅ Cash/bank balance restored: %s %.2f → %.2f (+%.2f)\n",
+				fmt.Printf("? Cash/bank balance restored: %s %.2f ? %.2f (+%.2f)\n",
 					cashBank.Name, oldBalance, cashBank.Balance, restoreAmount)
 			}
 
@@ -1901,36 +1901,32 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 			}
 
 			if err := s.db.Create(reversalTx).Error; err != nil {
-				fmt.Printf("⚠️ Warning: Failed to create reversal transaction record: %v\n", err)
+				fmt.Printf("?? Warning: Failed to create reversal transaction record: %v\n", err)
 			} else {
-				fmt.Printf("📝 Reversal cash/bank transaction record created: ID %d\n", reversalTx.ID)
+				fmt.Printf("?? Reversal cash/bank transaction record created: ID %d\n", reversalTx.ID)
 			}
-		}
 
-		// Soft-delete the original cash/bank transaction
-		if err := s.db.Exec(`
-			UPDATE cash_bank_transactions 
-			SET deleted_at = CURRENT_TIMESTAMP
-			WHERE reference_type = 'PURCHASE' AND reference_id = ? AND deleted_at IS NULL
-		`, purchaseID).Error; err != nil {
-			fmt.Printf("⚠️ Warning: Failed to soft-delete original cash/bank transaction: %v\n", err)
+			guard := NewCashBankCurrencyGuard(s.db)
+			if err := guard.EnforceAfterTransaction(nil, *purchase.BankAccountID); err != nil {
+				fmt.Printf("?? Warning: Failed to enforce cash/bank invariant after purchase reversal: %v\n", err)
+			}
 		}
 	}
 
 	// 6. Reverse project actual cost (if linked to a project)
 	if purchase.ProjectID != nil {
-		fmt.Printf("📉 Decreasing project actual cost for rejected purchase %d\n", purchaseID)
+		fmt.Printf("?? Decreasing project actual cost for rejected purchase %d\n", purchaseID)
 		err = s.updateProjectCostForPurchase(purchase, false) // false = decrease
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to decrease project actual cost: %v\n", err)
+			fmt.Printf("?? Warning: Failed to decrease project actual cost: %v\n", err)
 		} else {
-			fmt.Printf("✅ Project %d actual cost decreased by %.2f\n", *purchase.ProjectID, purchase.NetBeforeTax)
+			fmt.Printf("? Project %d actual cost decreased by %.2f\n", *purchase.ProjectID, purchase.NetBeforeTax)
 		}
 	}
 
 	s.syncStockAlertsForProducts(affectedProductIDs)
 
-	fmt.Printf("✅ Post-rejection cleanup completed for purchase %s\n", purchase.Code)
+	fmt.Printf("? Post-rejection cleanup completed for purchase %s\n", purchase.Code)
 	return nil
 }
 
@@ -1945,7 +1941,7 @@ func (s *PurchaseService) syncStockAlertsForProducts(productIDs map[uint]struct{
 	}
 
 	if err := s.stockMonitoringService.SyncProductAlerts(affectedProductIDs...); err != nil {
-		fmt.Printf("⚠️ Warning: Failed to sync stock alerts for %d products: %v\n", len(affectedProductIDs), err)
+		fmt.Printf("?? Warning: Failed to sync stock alerts for %d products: %v\n", len(affectedProductIDs), err)
 	}
 }
 
@@ -1953,7 +1949,7 @@ func (s *PurchaseService) syncStockAlertsForProducts(productIDs map[uint]struct{
 
 func (s *PurchaseService) checkIfApprovalRequired(amount float64) bool {
 	// NEW LOGIC: All purchases require approval regardless of amount
-	// This ensures Employee → Finance → (optional Director) workflow
+	// This ensures Employee ? Finance ? (optional Director) workflow
 	return true
 }
 
@@ -1972,7 +1968,7 @@ func (s *PurchaseService) createApprovalRequest(purchase *models.Purchase, prior
 	}
 
 	// Debug logging before creating approval request
-	fmt.Printf("🔍 Creating approval request for purchase %s\n", purchase.Code)
+	fmt.Printf("?? Creating approval request for purchase %s\n", purchase.Code)
 	fmt.Printf("   TotalAmount: %.2f\n", purchase.TotalAmount)
 	fmt.Printf("   ApprovalBaseAmount: %.2f\n", purchase.ApprovalBaseAmount)
 	fmt.Printf("   SubtotalBeforeDiscount: %.2f\n", purchase.SubtotalBeforeDiscount)
@@ -2640,40 +2636,40 @@ func calculatePurchaseNativeOutflow(cashBank *models.CashBank, bookAmountIDR flo
 
 // updateProductStockOnApproval updates product stock when purchase is approved
 func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase) (map[uint]struct{}, error) {
-	fmt.Printf("📦 Starting stock update for purchase %s with %d items\n", purchase.Code, len(purchase.PurchaseItems))
+	fmt.Printf("?? Starting stock update for purchase %s with %d items\n", purchase.Code, len(purchase.PurchaseItems))
 	affectedProductIDs := make(map[uint]struct{})
 
 	for _, item := range purchase.PurchaseItems {
 		// Skip ASSET items - they don't have inventory/stock
 		if item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset {
-			fmt.Printf("ℹ️ Skipping stock update for ASSET item '%s' (PurchaseItem:%d)\n", item.Description, item.ID)
+			fmt.Printf("?? Skipping stock update for ASSET item '%s' (PurchaseItem:%d)\n", item.Description, item.ID)
 			continue
 		}
 
 		// Skip items without ProductID (safety check)
 		if item.ProductID == nil || *item.ProductID == 0 {
-			fmt.Printf("ℹ️ Skipping stock update for item without ProductID (PurchaseItem:%d)\n", item.ID)
+			fmt.Printf("?? Skipping stock update for item without ProductID (PurchaseItem:%d)\n", item.ID)
 			continue
 		}
 
 		// Get current product data
 		product, err := s.productRepo.FindByID(*item.ProductID)
 		if err != nil {
-			fmt.Printf("❌ Error finding product %d: %v\n", *item.ProductID, err)
+			fmt.Printf("? Error finding product %d: %v\n", *item.ProductID, err)
 			continue // Skip this item but continue with others
 		}
 
 		if product.IsAssembly {
-			fmt.Printf("ℹ️ Skipping stock update for assembly product %d (%s)\n", product.ID, product.Name)
+			fmt.Printf("?? Skipping stock update for assembly product %d (%s)\n", product.ID, product.Name)
 			continue
 		}
 
 		if product.IsService {
-			fmt.Printf("ℹ️ Skipping stock update for service product %d (%s)\n", product.ID, product.Name)
+			fmt.Printf("?? Skipping stock update for service product %d (%s)\n", product.ID, product.Name)
 			continue
 		}
 
-		fmt.Printf("📋 Product %d (%s): Current stock = %d, Adding quantity = %d\n",
+		fmt.Printf("?? Product %d (%s): Current stock = %d, Adding quantity = %d\n",
 			product.ID, product.Name, product.Stock, item.Quantity)
 
 		// Update stock quantity (add purchased quantity)
@@ -2686,26 +2682,26 @@ func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase
 			totalValue := (float64(oldStock) * product.PurchasePrice) + (float64(item.Quantity) * item.UnitPrice)
 			totalQuantity := oldStock + item.Quantity
 			product.PurchasePrice = totalValue / float64(totalQuantity)
-			fmt.Printf("💰 Updated weighted average price: %.2f (was %.2f)\n",
+			fmt.Printf("?? Updated weighted average price: %.2f (was %.2f)\n",
 				product.PurchasePrice, (float64(oldStock)*product.PurchasePrice)/float64(oldStock))
 		} else {
 			// If no existing stock, use new price
 			product.PurchasePrice = item.UnitPrice
-			fmt.Printf("💰 Set new purchase price: %.2f\n", product.PurchasePrice)
+			fmt.Printf("?? Set new purchase price: %.2f\n", product.PurchasePrice)
 		}
 
 		// Save updated product
 		err = s.productRepo.Update(context.Background(), product)
 		if err != nil {
-			fmt.Printf("❌ Failed to update product %d stock: %v\n", product.ID, err)
+			fmt.Printf("? Failed to update product %d stock: %v\n", product.ID, err)
 			return affectedProductIDs, fmt.Errorf("failed to update stock for product %d: %v", product.ID, err)
 		}
 		affectedProductIDs[product.ID] = struct{}{}
 
-		fmt.Printf("✅ Product %d stock updated: %d → %d\n", product.ID, oldStock, product.Stock)
+		fmt.Printf("? Product %d stock updated: %d ? %d\n", product.ID, oldStock, product.Stock)
 	}
 
-	fmt.Printf("🎉 Stock update completed for purchase %s\n", purchase.Code)
+	fmt.Printf("?? Stock update completed for purchase %s\n", purchase.Code)
 	return affectedProductIDs, nil
 }
 
@@ -2730,7 +2726,7 @@ func (s *PurchaseService) createPaymentTrackingForCreditPurchase(purchase *model
 
 	// Verify purchase amounts are correctly set
 	if purchase.OutstandingAmount != purchase.TotalAmount {
-		fmt.Printf("🔧 Correcting purchase payment amounts: Outstanding=%.2f, should be %.2f\n",
+		fmt.Printf("?? Correcting purchase payment amounts: Outstanding=%.2f, should be %.2f\n",
 			purchase.OutstandingAmount, purchase.TotalAmount)
 
 		// Update purchase to have correct outstanding amount
@@ -2744,7 +2740,7 @@ func (s *PurchaseService) createPaymentTrackingForCreditPurchase(purchase *model
 		}
 	}
 
-	fmt.Printf("✅ Accounts payable tracking initialized for credit purchase %s: Outstanding=%.2f\n",
+	fmt.Printf("? Accounts payable tracking initialized for credit purchase %s: Outstanding=%.2f\n",
 		purchase.Code, purchase.TotalAmount)
 
 	return nil
@@ -2832,50 +2828,50 @@ func (s *PurchaseService) createVendorPaymentJournalEntries(tx *gorm.DB, payment
 // updateCashBankBalanceForPurchase updates cash/bank balance for immediate payment purchases
 // This function should be called AFTER successful journal entry creation
 func (s *PurchaseService) updateCashBankBalanceForPurchase(purchase *models.Purchase) error {
-	fmt.Printf("💰 Updating cash/bank balance for immediate payment purchase %s (method: %s, amount: %.2f)\n",
+	fmt.Printf("?? Updating cash/bank balance for immediate payment purchase %s (method: %s, amount: %.2f)\n",
 		purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
 
 	// Only update balance for immediate payment methods
 	if !isImmediatePayment(purchase.PaymentMethod) {
-		fmt.Printf("✅ Skipping cash/bank balance update for %s payment method\n", purchase.PaymentMethod)
+		fmt.Printf("? Skipping cash/bank balance update for %s payment method\n", purchase.PaymentMethod)
 		return nil // No balance update needed for credit purchases
 	}
 
-	// ✅ CRITICAL FIX: Determine cash/bank account with fallback
+	// ? CRITICAL FIX: Determine cash/bank account with fallback
 	var cashBankID uint
 
 	if purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
 		// Use specified bank account
 		cashBankID = *purchase.BankAccountID
-		fmt.Printf("ℹ️ Using specified bank account ID %d for balance update\n", cashBankID)
+		fmt.Printf("?? Using specified bank account ID %d for balance update\n", cashBankID)
 	} else {
-		// ✅ FALLBACK: Find default cash_bank account based on payment method
-		fmt.Printf("⚠️ No bank account specified, using fallback to default account\n")
+		// ? FALLBACK: Find default cash_bank account based on payment method
+		fmt.Printf("?? No bank account specified, using fallback to default account\n")
 
 		var defaultAccountCode string
 		method := strings.ToUpper(strings.TrimSpace(purchase.PaymentMethod))
 		if method == "CASH" || method == "TUNAI" {
 			defaultAccountCode = "1101" // Kas
 		} else {
-			defaultAccountCode = "1101" // Bank accounts are also under 1101 (KAS DAN SETARA KAS) header — specific bank is resolved via CashBank entity
+			defaultAccountCode = "1101" // Bank accounts are also under 1101 (KAS DAN SETARA KAS) header - specific bank is resolved via CashBank entity
 		}
 
 		// Find account by code
 		var account models.Account
 		if err := s.db.Where("code = ? AND deleted_at IS NULL", defaultAccountCode).First(&account).Error; err != nil {
-			fmt.Printf("❌ Default account %s not found: %v\n", defaultAccountCode, err)
+			fmt.Printf("? Default account %s not found: %v\n", defaultAccountCode, err)
 			return fmt.Errorf("default account %s not found: %v", defaultAccountCode, err)
 		}
 
 		// Find cash_bank linked to this account
 		var cashBank models.CashBank
 		if err := s.db.Where("account_id = ? AND deleted_at IS NULL", account.ID).First(&cashBank).Error; err != nil {
-			fmt.Printf("❌ Cash/Bank record for account %s not found: %v\n", defaultAccountCode, err)
+			fmt.Printf("? Cash/Bank record for account %s not found: %v\n", defaultAccountCode, err)
 			return fmt.Errorf("cash_bank record for account %s not found: %v", defaultAccountCode, err)
 		}
 
 		cashBankID = cashBank.ID
-		fmt.Printf("✅ Using fallback cash/bank: %s (ID: %d, Code: %s)\n", cashBank.Name, cashBankID, defaultAccountCode)
+		fmt.Printf("? Using fallback cash/bank: %s (ID: %d, Code: %s)\n", cashBank.Name, cashBankID, defaultAccountCode)
 
 		// Update purchase.BankAccountID for consistency
 		purchase.BankAccountID = &cashBankID
@@ -2884,14 +2880,14 @@ func (s *PurchaseService) updateCashBankBalanceForPurchase(purchase *models.Purc
 	// Get bank account details using determined cashBankID
 	var cashBank models.CashBank
 	if err := s.db.First(&cashBank, cashBankID).Error; err != nil {
-		fmt.Printf("❌ Failed to retrieve bank account %d: %v\n", cashBankID, err)
+		fmt.Printf("? Failed to retrieve bank account %d: %v\n", cashBankID, err)
 		return fmt.Errorf("bank account not found: %v", err)
 	}
-	fmt.Printf("📋 Bank account retrieved: %s (Current Balance: %.2f)\n", cashBank.Name, cashBank.Balance)
+	fmt.Printf("?? Bank account retrieved: %s (Current Balance: %.2f)\n", cashBank.Name, cashBank.Balance)
 
 	// Double-check balance is still sufficient (safety check)
 	if cashBank.Balance < purchase.TotalAmount {
-		fmt.Printf("❌ Insufficient balance during update: %s has %.2f but requires %.2f\n",
+		fmt.Printf("? Insufficient balance during update: %s has %.2f but requires %.2f\n",
 			cashBank.Name, cashBank.Balance, purchase.TotalAmount)
 		return fmt.Errorf("insufficient balance in %s. Available: %.2f, Required: %.2f",
 			cashBank.Name, cashBank.Balance, purchase.TotalAmount)
@@ -2903,10 +2899,10 @@ func (s *PurchaseService) updateCashBankBalanceForPurchase(purchase *models.Purc
 
 	// Save updated balance
 	if err := s.db.Save(&cashBank).Error; err != nil {
-		fmt.Printf("❌ Failed to update cash/bank balance: %v\n", err)
+		fmt.Printf("? Failed to update cash/bank balance: %v\n", err)
 		return fmt.Errorf("failed to update cash/bank balance: %v", err)
 	}
-	fmt.Printf("💰 Balance updated: %s %.2f → %.2f (decreased by %.2f)\n",
+	fmt.Printf("?? Balance updated: %s %.2f ? %.2f (decreased by %.2f)\n",
 		cashBank.Name, oldBalance, cashBank.Balance, purchase.TotalAmount)
 
 	// Create cash/bank transaction record for audit trail
@@ -2921,52 +2917,52 @@ func (s *PurchaseService) updateCashBankBalanceForPurchase(purchase *models.Purc
 	}
 
 	if err := s.db.Create(cashBankTransaction).Error; err != nil {
-		fmt.Printf("⚠️ Warning: Failed to create cash/bank transaction record: %v\n", err)
+		fmt.Printf("?? Warning: Failed to create cash/bank transaction record: %v\n", err)
 		// Don't fail the entire process for transaction record creation failure
 	} else {
-		fmt.Printf("📝 Cash/bank transaction record created: ID %d\n", cashBankTransaction.ID)
+		fmt.Printf("?? Cash/bank transaction record created: ID %d\n", cashBankTransaction.ID)
 	}
 
-	fmt.Printf("✅ Cash/bank balance update completed successfully for purchase %s\n", purchase.Code)
+	fmt.Printf("? Cash/bank balance update completed successfully for purchase %s\n", purchase.Code)
 	return nil
 }
 
 // validateBankBalanceForPurchase validates that bank account has sufficient balance for immediate payment purchases
 func (s *PurchaseService) validateBankBalanceForPurchase(purchase *models.Purchase) error {
-	fmt.Printf("ℹ Validating bank balance for purchase %s (method: %s, amount: %.2f)\n", purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
+	fmt.Printf("? Validating bank balance for purchase %s (method: %s, amount: %.2f)\n", purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)
 	// Only validate for immediate payment methods
 	if !isImmediatePayment(purchase.PaymentMethod) {
-		fmt.Printf("✅ Skipping bank balance validation for %s payment method\n", purchase.PaymentMethod)
+		fmt.Printf("? Skipping bank balance validation for %s payment method\n", purchase.PaymentMethod)
 		return nil // No validation needed for credit purchases
 	}
 
 	// Check if bank account is specified
-	fmt.Printf("ℹ Checking if bank account is specified for %s payment\n", purchase.PaymentMethod)
+	fmt.Printf("? Checking if bank account is specified for %s payment\n", purchase.PaymentMethod)
 	if purchase.BankAccountID == nil {
-		fmt.Printf("❌ Bank account ID is required but not provided for %s payment method\n", purchase.PaymentMethod)
+		fmt.Printf("? Bank account ID is required but not provided for %s payment method\n", purchase.PaymentMethod)
 		return fmt.Errorf("bank account is required for %s payment method", purchase.PaymentMethod)
 	}
-	fmt.Printf("✅ Bank account ID %d provided for validation\n", *purchase.BankAccountID)
+	fmt.Printf("? Bank account ID %d provided for validation\n", *purchase.BankAccountID)
 
 	// Get bank account details
-	fmt.Printf("ℹ Retrieving bank account details for ID %d\n", *purchase.BankAccountID)
+	fmt.Printf("? Retrieving bank account details for ID %d\n", *purchase.BankAccountID)
 	var cashBank models.CashBank
 	if err := s.db.First(&cashBank, *purchase.BankAccountID).Error; err != nil {
-		fmt.Printf("❌ Failed to retrieve bank account %d: %v\n", *purchase.BankAccountID, err)
+		fmt.Printf("? Failed to retrieve bank account %d: %v\n", *purchase.BankAccountID, err)
 		return fmt.Errorf("bank account not found: %v", err)
 	}
-	fmt.Printf("✅ Bank account retrieved: %s (Balance: %.2f)\n", cashBank.Name, cashBank.Balance)
+	fmt.Printf("? Bank account retrieved: %s (Balance: %.2f)\n", cashBank.Name, cashBank.Balance)
 
 	// Check if balance is sufficient
-	fmt.Printf("ℹ Checking balance sufficiency: Available=%.2f, Required=%.2f\n", cashBank.Balance, purchase.TotalAmount)
+	fmt.Printf("? Checking balance sufficiency: Available=%.2f, Required=%.2f\n", cashBank.Balance, purchase.TotalAmount)
 	if cashBank.Balance < purchase.TotalAmount {
-		fmt.Printf("❌ Insufficient balance: %s has %.2f but requires %.2f (shortfall: %.2f)\n",
+		fmt.Printf("? Insufficient balance: %s has %.2f but requires %.2f (shortfall: %.2f)\n",
 			cashBank.Name, cashBank.Balance, purchase.TotalAmount, purchase.TotalAmount-cashBank.Balance)
 		return fmt.Errorf("insufficient balance in %s. Available: %.2f, Required: %.2f",
 			cashBank.Name, cashBank.Balance, purchase.TotalAmount)
 	}
 
-	fmt.Printf("✅ Bank balance validation passed: %s has sufficient balance (%.2f >= %.2f)\n",
+	fmt.Printf("? Bank balance validation passed: %s has sufficient balance (%.2f >= %.2f)\n",
 		cashBank.Name, cashBank.Balance, purchase.TotalAmount)
 
 	return nil
@@ -2994,7 +2990,7 @@ func (s *PurchaseService) UpdatePurchasePaymentAmounts(purchaseID uint, paidAmou
 // createSSOTPurchaseJournalEntries creates journal entries using SSOT Journal System
 func (s *PurchaseService) createSSOTPurchaseJournalEntries(purchase *models.Purchase, userID uint) error {
 	if s.ssotJournalAdapter == nil {
-		fmt.Printf("⚠️ SSOT Journal Adapter not initialized, falling back to legacy journal system\n")
+		fmt.Printf("?? SSOT Journal Adapter not initialized, falling back to legacy journal system\n")
 		return s.createAndPostPurchaseJournalEntries(purchase, userID)
 	}
 
@@ -3002,11 +2998,11 @@ func (s *PurchaseService) createSSOTPurchaseJournalEntries(purchase *models.Purc
 	ctx := context.Background()
 	journalEntry, err := s.ssotJournalAdapter.CreatePurchaseJournalEntry(ctx, purchase, uint64(userID))
 	if err != nil {
-		fmt.Printf("⚠️ SSOT create failed (%v).\n", err)
+		fmt.Printf("?? SSOT create failed (%v).\n", err)
 		return fmt.Errorf("failed SSOT: %v", err)
 	}
 
-	fmt.Printf("✅ SSOT Journal Entry created: %s (ID: %d) for purchase %s\n",
+	fmt.Printf("? SSOT Journal Entry created: %s (ID: %d) for purchase %s\n",
 		journalEntry.EntryNumber, journalEntry.ID, purchase.Code)
 
 	return nil
@@ -3043,7 +3039,7 @@ func (s *PurchaseService) CreatePurchasePaymentJournal(
 	}
 
 	if s.ssotJournalAdapter == nil {
-		fmt.Printf("⚠️ SSOT Journal Adapter not initialized for payment journal\n")
+		fmt.Printf("?? SSOT Journal Adapter not initialized for payment journal\n")
 		return fmt.Errorf("SSOT journal adapter not available")
 	}
 
@@ -3064,7 +3060,7 @@ func (s *PurchaseService) CreatePurchasePaymentJournal(
 		return fmt.Errorf("failed to create payment journal entry: %v", err)
 	}
 
-	fmt.Printf("✅ Purchase payment journal entry created successfully for purchase %d\n", purchaseID)
+	fmt.Printf("? Purchase payment journal entry created successfully for purchase %d\n", purchaseID)
 	return nil
 }
 

@@ -618,6 +618,8 @@ class PaymentService {
       case 'DRAFT':
         return 'orange';
       case 'FAILED':
+      case 'CANCELLED':
+      case 'REVERSED':
         return 'red';
       default:
         return 'gray';

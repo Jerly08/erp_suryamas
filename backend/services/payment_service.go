@@ -1131,12 +1131,10 @@ func (s *PaymentService) DeletePayment(id uint, reason string, userID uint) erro
 
 	// Check if payment is already failed/cancelled
 	if payment.Status == models.PaymentStatusFailed {
-		// If already failed, just soft delete
-		if err := tx.Delete(&payment).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to delete payment: %v", err)
-		}
-		log.Printf("Deleted failed payment %d (no reversal needed)", id)
+		// Preserve failed/cancelled payments as audit trail, mirroring purchase/sales.
+		tx.Rollback()
+		log.Printf("Payment %d is already cancelled/failed; preserving audit trail", id)
+		return nil
 	} else {
 		// If payment is completed, we need to reverse it first
 		log.Printf("Canceling payment %d before deletion", id)
@@ -1145,12 +1143,9 @@ func (s *PaymentService) DeletePayment(id uint, reason string, userID uint) erro
 			return fmt.Errorf("failed to cancel payment before deletion: %v", err)
 		}
 
-		// Now soft delete the payment
-		if err := tx.Delete(&payment).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to delete payment after cancellation: %v", err)
-		}
-		log.Printf("Payment %d canceled and deleted successfully", id)
+		// Keep completed payments after reversal so payment history and tax remittance
+		// reports retain the audit trail, just like purchase/sales cancellation flows.
+		log.Printf("Payment %d canceled and preserved for audit trail", id)
 	}
 
 	return tx.Commit().Error
@@ -1242,80 +1237,18 @@ func (s *PaymentService) cancelPaymentTransaction(tx *gorm.DB, payment *models.P
 		}
 	}
 
-	// Reverse cash/bank transaction
-	var cashBankTx models.CashBankTransaction
-	if err := tx.Where("reference_type = ? AND reference_id = ?", "PAYMENT", payment.ID).First(&cashBankTx).Error; err == nil {
-		var cashBank models.CashBank
-		if err := tx.First(&cashBank, cashBankTx.CashBankID).Error; err == nil {
-			// Reverse the balance change
-			cashBank.Balance -= cashBankTx.Amount
-			tx.Save(&cashBank)
-		}
+	if err := s.reverseLinkedSSOTPaymentEntries(tx, payment.ID); err != nil {
+		return err
+	}
+
+	if err := s.reverseCashBankPaymentMovement(tx, payment, reason); err != nil {
+		return err
 	}
 
 	// Create reversal journal entries
 	if err := s.createReversalJournal(tx, payment, reason, userID); err != nil {
 		return err
 	}
-
-	// CRITICAL FIX: Reverse COA balances BEFORE soft-deleting SSOT journal entries
-	// This ensures accounts.balance (COA Tree View) is consistent after cancellation
-	var ssotEntries []models.SSOTJournalEntry
-	if err := tx.Where("source_type IN (?, ?) AND source_id = ? AND deleted_at IS NULL",
-		"PAYMENT", "PURCHASE_PAYMENT", payment.ID).Find(&ssotEntries).Error; err == nil {
-		for _, entry := range ssotEntries {
-			var journalLines []models.SSOTJournalLine
-			if err := tx.Where("journal_id = ? AND deleted_at IS NULL", entry.ID).Find(&journalLines).Error; err == nil {
-				for _, line := range journalLines {
-					// Reverse the COA balance: negate the original effect
-					var account models.Account
-					if err := tx.First(&account, line.AccountID).Error; err != nil {
-						log.Printf("⚠️ Warning: Account %d not found for COA reversal: %v", line.AccountID, err)
-						continue
-					}
-
-					debit := line.DebitAmount.InexactFloat64()
-					credit := line.CreditAmount.InexactFloat64()
-					var reverseChange float64
-
-					switch account.Type {
-					case "ASSET", "EXPENSE":
-						reverseChange = -(debit - credit) // Negate the original effect
-					case "LIABILITY", "EQUITY", "REVENUE":
-						reverseChange = -(credit - debit) // Negate the original effect
-					}
-
-					if err := tx.Model(&models.Account{}).Where("id = ?", line.AccountID).
-						UpdateColumn("balance", gorm.Expr("balance + ?", reverseChange)).Error; err != nil {
-						log.Printf("⚠️ Warning: Failed to reverse COA balance for account %d: %v", line.AccountID, err)
-					}
-				}
-				log.Printf("✅ Reversed COA balances for %d journal lines of payment %d (entry #%d)", len(journalLines), payment.ID, entry.ID)
-			}
-		}
-	}
-
-	// Soft-delete SSOT unified_journal_ledger entries linked to this payment
-	// This prevents the Balance Sheet and Neraca Saldo from counting cancelled payments
-	if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).
-		Model(&models.SSOTJournalEntry{}).
-		Where("source_type IN (?, ?) AND source_id = ?", "PAYMENT", "PURCHASE_PAYMENT", payment.ID).
-		Update("deleted_at", time.Now()).Error; err != nil {
-		log.Printf("Warning: failed to soft-delete SSOT journal entries for payment %d: %v", payment.ID, err)
-	}
-
-	// Also soft-delete any unified_journal_lines
-	if err := tx.Exec(`
-		UPDATE unified_journal_lines 
-		SET deleted_at = CURRENT_TIMESTAMP
-		WHERE deleted_at IS NULL AND journal_id IN (
-			SELECT id FROM unified_journal_ledger 
-			WHERE source_type IN ('PAYMENT', 'PURCHASE_PAYMENT') AND source_id = ?
-		)
-	`, payment.ID).Error; err != nil {
-		log.Printf("Warning: failed to soft-delete SSOT journal lines for payment %d: %v", payment.ID, err)
-	}
-
 	// Update payment status
 	payment.Status = models.PaymentStatusFailed
 	payment.Notes += fmt.Sprintf("\nCancelled on %s. Reason: %s", time.Now().Format("2006-01-02"), reason)
@@ -1323,11 +1256,202 @@ func (s *PaymentService) cancelPaymentTransaction(tx *gorm.DB, payment *models.P
 	return tx.Save(payment).Error
 }
 
+func (s *PaymentService) reverseLinkedSSOTPaymentEntries(tx *gorm.DB, paymentID uint) error {
+	var entryIDs []uint64
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where("source_type IN (?, ?) AND source_id = ? AND deleted_at IS NULL",
+			models.SSOTSourceTypePayment, "PURCHASE_PAYMENT", paymentID).
+		Pluck("id", &entryIDs).Error; err != nil {
+		return fmt.Errorf("failed to load SSOT journals for payment cancellation: %w", err)
+	}
+
+	if len(entryIDs) == 0 {
+		return nil
+	}
+
+	var accountIDs []uint64
+	if err := tx.Table("unified_journal_lines").
+		Where("journal_id IN ? AND deleted_at IS NULL", entryIDs).
+		Distinct("account_id").
+		Pluck("account_id", &accountIDs).Error; err != nil {
+		return fmt.Errorf("failed to load affected accounts for payment cancellation: %w", err)
+	}
+
+	now := time.Now()
+	if err := tx.Table("unified_journal_lines").
+		Where("journal_id IN ? AND deleted_at IS NULL", entryIDs).
+		Updates(map[string]interface{}{
+			"deleted_at": now,
+			"updated_at": now,
+		}).Error; err != nil {
+		return fmt.Errorf("failed to soft-delete SSOT journal lines for payment %d: %w", paymentID, err)
+	}
+
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where("id IN ? AND deleted_at IS NULL", entryIDs).
+		Updates(map[string]interface{}{
+			"deleted_at": now,
+			"updated_at": now,
+		}).Error; err != nil {
+		return fmt.Errorf("failed to soft-delete SSOT journal entries for payment %d: %w", paymentID, err)
+	}
+
+	if err := s.refreshAccountBalancesFromSSOT(tx, accountIDs); err != nil {
+		return err
+	}
+
+	log.Printf("INFO: Soft-deleted %d SSOT journal entries for payment %d and refreshed %d account balances", len(entryIDs), paymentID, len(accountIDs))
+	return nil
+}
+
+func (s *PaymentService) refreshAccountBalancesFromSSOT(tx *gorm.DB, accountIDs []uint64) error {
+	if len(accountIDs) == 0 {
+		return nil
+	}
+
+	seen := make(map[uint64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID == 0 {
+			continue
+		}
+		if _, exists := seen[accountID]; exists {
+			continue
+		}
+		seen[accountID] = struct{}{}
+
+		var account models.Account
+		if err := tx.First(&account, accountID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return fmt.Errorf("failed to load account %d for SSOT balance refresh: %w", accountID, err)
+		}
+
+		var totals struct {
+			TotalDebit  float64
+			TotalCredit float64
+		}
+		if err := tx.Table("unified_journal_lines AS ujl").
+			Joins("JOIN unified_journal_ledger AS uje ON uje.id = ujl.journal_id").
+			Where("ujl.account_id = ? AND ujl.deleted_at IS NULL AND uje.status = ? AND uje.deleted_at IS NULL", accountID, models.SSOTStatusPosted).
+			Select("COALESCE(SUM(ujl.debit_amount), 0) AS total_debit, COALESCE(SUM(ujl.credit_amount), 0) AS total_credit").
+			Scan(&totals).Error; err != nil {
+			return fmt.Errorf("failed to recalculate SSOT balance for account %d: %w", accountID, err)
+		}
+
+		newBalance := totals.TotalDebit - totals.TotalCredit
+		switch account.Type {
+		case models.AccountTypeLiability, models.AccountTypeEquity, models.AccountTypeRevenue:
+			newBalance = totals.TotalCredit - totals.TotalDebit
+		}
+
+		if err := tx.Model(&models.Account{}).
+			Where("id = ?", accountID).
+			Updates(map[string]interface{}{
+				"balance":    newBalance,
+				"updated_at": time.Now(),
+			}).Error; err != nil {
+			return fmt.Errorf("failed to update recalculated balance for account %d: %w", accountID, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *PaymentService) reverseCashBankPaymentMovement(tx *gorm.DB, payment *models.Payment, reason string) error {
+	var originalCBTx models.CashBankTransaction
+	if err := tx.Where("reference_id = ? AND reference_type IN ? AND deleted_at IS NULL",
+		payment.ID, []string{"PAYMENT", "PAYMENT_RECEIVED", "PAYMENT_MADE"}).
+		Order("id DESC").
+		First(&originalCBTx).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to load cash/bank transaction for payment %d: %w", payment.ID, err)
+	}
+
+	guard := NewCashBankCurrencyGuard(s.db)
+	if err := guard.EnforceAfterTransaction(tx, originalCBTx.CashBankID); err != nil {
+		return fmt.Errorf("failed to sync cash/bank state before payment cancellation: %w", err)
+	}
+
+	var cashBank models.CashBank
+	if err := tx.First(&cashBank, originalCBTx.CashBankID).Error; err != nil {
+		return fmt.Errorf("failed to load cash/bank account %d for payment cancellation: %w", originalCBTx.CashBankID, err)
+	}
+
+	reverseMovement := -originalCBTx.Amount
+	reverseBookAmountIDR := -originalCBTx.BookAmountIDR
+	newBalance := cashBank.Balance + reverseMovement
+	newBookBalanceIDR := cashBank.BookBalanceIDR + reverseBookAmountIDR
+	if !cashBank.IsForeignCurrency() {
+		newBookBalanceIDR = newBalance
+	}
+
+	if newBalance < -0.01 {
+		return fmt.Errorf("payment cancellation would result in negative cash/bank native balance")
+	}
+	if newBookBalanceIDR < -0.01 {
+		return fmt.Errorf("payment cancellation would result in negative cash/bank book balance")
+	}
+
+	cashBank.Balance = newBalance
+	cashBank.BookBalanceIDR = newBookBalanceIDR
+	if cashBank.IsForeignCurrency() {
+		if originalCBTx.ExchangeRate > 0 {
+			cashBank.LastExchangeRate = originalCBTx.ExchangeRate
+		}
+	} else {
+		cashBank.LastExchangeRate = 1
+	}
+
+	if err := tx.Save(&cashBank).Error; err != nil {
+		return fmt.Errorf("failed to reverse cash/bank balance for payment %d: %w", payment.ID, err)
+	}
+
+	if cashBank.AccountID > 0 {
+		if err := tx.Model(&models.Account{}).
+			Where("id = ? AND deleted_at IS NULL", cashBank.AccountID).
+			Updates(map[string]interface{}{
+				"balance":    cashBank.EffectiveBookBalanceIDR(),
+				"updated_at": time.Now(),
+			}).Error; err != nil {
+			return fmt.Errorf("failed to sync linked GL account for payment %d reversal: %w", payment.ID, err)
+		}
+	}
+
+	reversalTx := &models.CashBankTransaction{
+		CashBankID:      cashBank.ID,
+		ReferenceType:   "PAYMENT_REVERSAL",
+		ReferenceID:     payment.ID,
+		Amount:          reverseMovement,
+		Currency:        originalCBTx.Currency,
+		ExchangeRate:    originalCBTx.ExchangeRate,
+		BookAmountIDR:   reverseBookAmountIDR,
+		BalanceAfter:    newBalance,
+		TransactionDate: time.Now(),
+		Notes:           fmt.Sprintf("PAYMENT_REVERSAL %s - %s", payment.Code, reason),
+	}
+	if err := tx.Create(reversalTx).Error; err != nil {
+		return fmt.Errorf("failed to create cash/bank reversal transaction for payment %d: %w", payment.ID, err)
+	}
+
+	if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+		return fmt.Errorf("failed to enforce cash/bank invariant after payment cancellation: %w", err)
+	}
+
+	return nil
+}
+
 // createReversalJournal creates reversal journal entries
 func (s *PaymentService) createReversalJournal(tx *gorm.DB, payment *models.Payment, reason string, userID uint) error {
 	// Find original journal entry
 	var originalJournalEntry models.JournalEntry
 	if err := tx.Where("reference_type = ? AND reference_id = ?", models.JournalRefPayment, payment.ID).First(&originalJournalEntry).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("INFO: No legacy journal entry found for payment %d, skipping legacy reversal journal", payment.ID)
+			return nil
+		}
 		return err
 	}
 

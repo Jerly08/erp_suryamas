@@ -1155,6 +1155,7 @@ func (s *CashBankService) GetTransactions(accountID uint, filter TransactionFilt
 		StartDate: filter.StartDate,
 		EndDate:   filter.EndDate,
 		Type:      filter.Type,
+		SortOrder: filter.SortOrder,
 		Page:      filter.Page,
 		Limit:     filter.Limit,
 	}
@@ -1733,6 +1734,7 @@ type TransactionFilter struct {
 	StartDate time.Time `json:"start_date"`
 	EndDate   time.Time `json:"end_date"`
 	Type      string    `json:"type"`
+	SortOrder string    `json:"sort_order"`
 	Page      int       `json:"page"`
 	Limit     int       `json:"limit"`
 }

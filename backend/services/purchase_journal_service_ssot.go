@@ -508,46 +508,108 @@ func (s *PurchaseJournalServiceSSOT) DeletePurchaseJournal(purchaseID uint, tx *
 		dbToUse = tx
 	}
 
-	// Find journal entry
+	// Find root purchase journal entry
 	var entry models.SSOTJournalEntry
 	if err := dbToUse.Where("source_type = ? AND source_id = ?", "PURCHASE", purchaseID).First(&entry).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			log.Printf("⚠️ [SSOT] No journal found for Purchase #%d, nothing to delete", purchaseID)
+			log.Printf("INFO [SSOT] No journal found for Purchase #%d, nothing to delete", purchaseID)
 			return nil
 		}
 		return fmt.Errorf("failed to find journal entry: %v", err)
 	}
 
-	// CRITICAL FIX: Reverse COA balances before deleting journal lines
-	// This ensures accounts.balance (COA Tree View) is consistent after deletion
+	linkedEntries, err := s.collectLinkedJournalEntries(dbToUse, entry.ID)
+	if err != nil {
+		return fmt.Errorf("failed to collect linked journal entries: %v", err)
+	}
+	if len(linkedEntries) == 0 {
+		log.Printf("INFO [SSOT] No linked journal entries found for Purchase #%d, nothing to delete", purchaseID)
+		return nil
+	}
+
+	entryIDs := make([]uint64, 0, len(linkedEntries))
+	for _, linkedEntry := range linkedEntries {
+		entryIDs = append(entryIDs, linkedEntry.ID)
+	}
+
+	// Reverse the net balance impact of every linked entry before deletion.
 	var journalLines []models.SSOTJournalLine
-	if err := dbToUse.Where("journal_id = ?", entry.ID).Find(&journalLines).Error; err != nil {
-		log.Printf("⚠️ Warning: Failed to load journal lines for COA reversal: %v", err)
+	if err := dbToUse.Where("journal_id IN ?", entryIDs).Find(&journalLines).Error; err != nil {
+		log.Printf("WARNING [SSOT] Failed to load journal lines for COA reversal: %v", err)
 	} else {
 		for _, line := range journalLines {
-			// Negate debit/credit to reverse the effect on COA balances
 			negDebit := line.DebitAmount.Neg()
 			negCredit := line.CreditAmount.Neg()
 
 			if err := s.updateAccountBalance(dbToUse, line.AccountID, negDebit, negCredit); err != nil {
-				log.Printf("⚠️ Warning: Failed to reverse COA balance for account %d: %v", line.AccountID, err)
+				log.Printf("WARNING [SSOT] Failed to reverse COA balance for account %d: %v", line.AccountID, err)
 			}
 		}
-		log.Printf("✅ [SSOT] Reversed COA balances for %d journal lines of Purchase #%d", len(journalLines), purchaseID)
+		log.Printf("INFO [SSOT] Reversed COA balances for %d journal lines across %d journal entries of Purchase #%d", len(journalLines), len(entryIDs), purchaseID)
 	}
 
 	// Delete lines first (FK constraint)
-	if err := dbToUse.Where("journal_id = ?", entry.ID).Delete(&models.SSOTJournalLine{}).Error; err != nil {
+	if err := dbToUse.Where("journal_id IN ?", entryIDs).Delete(&models.SSOTJournalLine{}).Error; err != nil {
 		return fmt.Errorf("failed to delete journal lines: %v", err)
 	}
 
-	// Delete entry
-	if err := dbToUse.Delete(&entry).Error; err != nil {
-		return fmt.Errorf("failed to delete journal entry: %v", err)
+	// Delete all linked entries so manual reversals do not remain orphaned.
+	if err := dbToUse.Where("id IN ?", entryIDs).Delete(&models.SSOTJournalEntry{}).Error; err != nil {
+		return fmt.Errorf("failed to delete linked journal entries: %v", err)
 	}
 
-	log.Printf("✅ [SSOT] Deleted journal entry #%d and its lines for Purchase #%d (COA balances reversed)", entry.ID, purchaseID)
+	log.Printf("INFO [SSOT] Deleted %d linked journal entries and their lines for Purchase #%d (COA balances reversed)", len(entryIDs), purchaseID)
 	return nil
+}
+
+func (s *PurchaseJournalServiceSSOT) collectLinkedJournalEntries(db *gorm.DB, rootID uint64) ([]models.SSOTJournalEntry, error) {
+	queue := []uint64{rootID}
+	seen := make(map[uint64]struct{})
+	entries := make([]models.SSOTJournalEntry, 0)
+
+	for len(queue) > 0 {
+		currentID := queue[0]
+		queue = queue[1:]
+
+		if _, ok := seen[currentID]; ok {
+			continue
+		}
+
+		var entry models.SSOTJournalEntry
+		if err := db.Where("id = ? AND deleted_at IS NULL", currentID).First(&entry).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				continue
+			}
+			return nil, err
+		}
+
+		seen[currentID] = struct{}{}
+		entries = append(entries, entry)
+
+		if entry.ReversedBy != nil && *entry.ReversedBy > 0 {
+			queue = append(queue, *entry.ReversedBy)
+		}
+		if entry.ReversedFrom != nil && *entry.ReversedFrom > 0 {
+			queue = append(queue, *entry.ReversedFrom)
+		}
+
+		var relatedEntries []models.SSOTJournalEntry
+		if err := db.
+			Where("deleted_at IS NULL").
+			Where("(reversed_from = ? OR reversed_by = ? OR (source_type = ? AND source_id = ?))", currentID, currentID, models.SSOTSourceTypeReversal, currentID).
+			Find(&relatedEntries).Error; err != nil {
+			return nil, err
+		}
+
+		for _, relatedEntry := range relatedEntries {
+			if _, ok := seen[relatedEntry.ID]; ok {
+				continue
+			}
+			queue = append(queue, relatedEntry.ID)
+		}
+	}
+
+	return entries, nil
 }
 
 // PurchaseJournalLineRequest represents a request to create a purchase journal line
