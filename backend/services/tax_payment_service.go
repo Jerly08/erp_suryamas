@@ -17,6 +17,7 @@ import (
 type TaxPaymentService struct {
 	db                *gorm.DB
 	taxAccountService *TaxAccountService
+	taxAccountHelper  *TaxAccountHelper
 	journalService    *UnifiedJournalService
 }
 
@@ -25,6 +26,7 @@ func NewTaxPaymentService(db *gorm.DB) *TaxPaymentService {
 	return &TaxPaymentService{
 		db:                db,
 		taxAccountService: NewTaxAccountService(db),
+		taxAccountHelper:  NewTaxAccountHelper(db),
 		journalService:    NewUnifiedJournalService(db),
 	}
 }
@@ -80,39 +82,34 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 	}
 	log.Printf("📋 Cash/Bank Account: %s (ID: %d)", cashBank.Account.Name, cashBank.AccountID)
 
-	// Get PPN accounts from settings
-	settings, err := s.taxAccountService.GetSettings()
+	ppnMasukanAccount, err := s.taxAccountHelper.GetPurchaseInputVATAccount(tx)
 	if err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to get tax settings: %v", err)
-	}
-
-	// Validate both PPN accounts are configured
-	if settings.PurchaseInputVATAccountID == 0 {
-		tx.Rollback()
-		return nil, fmt.Errorf("PPN Masukan account not configured in tax settings")
-	}
-	if settings.SalesOutputVATAccountID == 0 {
-		tx.Rollback()
-		return nil, fmt.Errorf("PPN Keluaran account not configured in tax settings")
-	}
-
-	// Get PPN Masukan account from active tax settings
-	var ppnMasukanAccount models.Account
-	if err := tx.First(&ppnMasukanAccount, settings.PurchaseInputVATAccountID).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("PPN Masukan account not found: %v", err)
 	}
 
-	// Get PPN Keluaran account from active tax settings
-	var ppnKeluaranAccount models.Account
-	if err := tx.First(&ppnKeluaranAccount, settings.SalesOutputVATAccountID).Error; err != nil {
+	ppnKeluaranAccount, err := s.taxAccountHelper.GetSalesOutputVATAccount(tx)
+	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("PPN Keluaran account not found: %v", err)
 	}
 
+	ppnMasukanSignedBalance, err := s.resolveTaxAccountBalance(tx, ppnMasukanAccount)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to resolve PPN Masukan balance: %v", err)
+	}
+
 	log.Printf("📋 PPN Masukan: %s - %s (Balance: %.2f)", ppnMasukanAccount.Code, ppnMasukanAccount.Name, ppnMasukanAccount.Balance)
 	log.Printf("📋 PPN Keluaran: %s - %s (Balance: %.2f)", ppnKeluaranAccount.Code, ppnKeluaranAccount.Name, ppnKeluaranAccount.Balance)
+
+	ppnKeluaranSignedBalance, err := s.resolveTaxAccountBalance(tx, ppnKeluaranAccount)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to resolve PPN Keluaran balance: %v", err)
+	}
+
+	log.Printf("INFO [TaxPaymentService] Resolved PPN balances => Masukan: %s, Keluaran: %s", ppnMasukanSignedBalance.StringFixed(2), ppnKeluaranSignedBalance.StringFixed(2))
 
 	// Calculate PPN Terutang (PPN yang harus dibayar) using decimal for precision
 	// PPN Terutang = PPN Keluaran - PPN Masukan
@@ -124,12 +121,12 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 	//
 	// ⚠️ CRITICAL: All amounts use decimal.Decimal to avoid floating-point rounding
 	// errors that cause unbalanced journal entries (e.g., 0.04 difference).
-	ppnMasukanDec := decimal.NewFromFloat(ppnMasukanAccount.Balance).Abs()
-	ppnKeluaranDec := decimal.NewFromFloat(ppnKeluaranAccount.Balance).Abs()
+	ppnMasukanDec := ppnMasukanSignedBalance.Abs()
+	ppnKeluaranDec := ppnKeluaranSignedBalance.Abs()
 	ppnTerutangDec := ppnKeluaranDec.Sub(ppnMasukanDec)
 
 	log.Printf("📊 Calculated PPN Terutang: %s (Keluaran: %s [raw: %.2f] - Masukan: %s [raw: %.2f])",
-		ppnTerutangDec.StringFixed(2), ppnKeluaranDec.StringFixed(2), ppnKeluaranAccount.Balance, ppnMasukanDec.StringFixed(2), ppnMasukanAccount.Balance)
+		ppnTerutangDec.StringFixed(2), ppnKeluaranDec.StringFixed(2), ppnKeluaranSignedBalance.InexactFloat64(), ppnMasukanDec.StringFixed(2), ppnMasukanSignedBalance.InexactFloat64())
 
 	// Validate PPN Terutang
 	if ppnTerutangDec.LessThanOrEqual(decimal.Zero) {
@@ -203,7 +200,7 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 	// Debit PPN Keluaran (liability berkurang) - always include if > 0
 	if ppnKeluaranDebitDec.GreaterThan(decimal.Zero) {
 		journalLines = append(journalLines, JournalLineRequest{
-			AccountID:    uint64(settings.SalesOutputVATAccountID),
+			AccountID:    uint64(ppnKeluaranAccount.ID),
 			Description:  fmt.Sprintf("Setor PPN - %s", payment.Code),
 			DebitAmount:  ppnKeluaranDebitDec,
 			CreditAmount: decimal.Zero,
@@ -213,7 +210,7 @@ func (s *TaxPaymentService) CreatePPNPayment(req CreatePPNPaymentRequest, userID
 	// Credit PPN Masukan (asset berkurang - kompensasi) - only if > 0
 	if ppnMasukanCreditDec.GreaterThan(decimal.Zero) {
 		journalLines = append(journalLines, JournalLineRequest{
-			AccountID:    uint64(settings.PurchaseInputVATAccountID),
+			AccountID:    uint64(ppnMasukanAccount.ID),
 			Description:  fmt.Sprintf("Setor PPN - Kompensasi - %s", payment.Code),
 			DebitAmount:  decimal.Zero,
 			CreditAmount: ppnMasukanCreditDec,
@@ -415,6 +412,48 @@ func (s *TaxPaymentService) GetPPNPaymentSummary(startDate, endDate time.Time) (
 	return summary, nil
 }
 
+func (s *TaxPaymentService) resolveTaxAccountBalance(db *gorm.DB, account *models.Account) (decimal.Decimal, error) {
+	if account == nil {
+		return decimal.Zero, fmt.Errorf("tax account is nil")
+	}
+
+	dbToUse := s.db
+	if db != nil {
+		dbToUse = db
+	}
+
+	balanceExpr := "COALESCE(SUM(ujl.debit_amount - ujl.credit_amount), 0)"
+	switch strings.ToUpper(strings.TrimSpace(account.Type)) {
+	case models.AccountTypeLiability, models.AccountTypeEquity, models.AccountTypeRevenue:
+		balanceExpr = "COALESCE(SUM(ujl.credit_amount - ujl.debit_amount), 0)"
+	}
+
+	type ssotBalanceRow struct {
+		LineCount int64
+		Balance   float64
+	}
+
+	var row ssotBalanceRow
+	if err := dbToUse.Table("unified_journal_lines AS ujl").
+		Joins("JOIN unified_journal_ledger AS uje ON uje.id = ujl.journal_id").
+		Where("ujl.account_id = ? AND uje.status = ? AND uje.deleted_at IS NULL", account.ID, models.SSOTStatusPosted).
+		Select(fmt.Sprintf("COUNT(ujl.id) AS line_count, %s AS balance", balanceExpr)).
+		Scan(&row).Error; err != nil {
+		return decimal.Zero, fmt.Errorf("failed to calculate SSOT balance for account %s: %w", account.Code, err)
+	}
+
+	if row.LineCount > 0 {
+		ssotBalance := decimal.NewFromFloat(row.Balance)
+		if ssotBalance.Sub(decimal.NewFromFloat(account.Balance)).Abs().GreaterThan(decimal.NewFromFloat(0.01)) {
+			log.Printf("WARNING [TaxPaymentService] Using SSOT balance for account %s (%s): %s instead of stored balance %.2f",
+				account.Code, account.Name, ssotBalance.StringFixed(2), account.Balance)
+		}
+		return ssotBalance, nil
+	}
+
+	return decimal.NewFromFloat(account.Balance), nil
+}
+
 // GetPPNBalance retrieves current balance of PPN account (Masukan or Keluaran)
 func (s *TaxPaymentService) GetPPNBalance(ppnType string) (float64, error) {
 	// Validate PPN type
@@ -422,40 +461,31 @@ func (s *TaxPaymentService) GetPPNBalance(ppnType string) (float64, error) {
 		return 0, fmt.Errorf("ppn_type must be INPUT or OUTPUT")
 	}
 
-	// Get PPN account from settings
-	settings, err := s.taxAccountService.GetSettings()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get tax settings: %v", err)
-	}
-
-	var accountID uint
+	var (
+		account *models.Account
+		err     error
+	)
 	if ppnType == "INPUT" {
-		// PPN Masukan (Purchase VAT)
-		if settings.PurchaseInputVATAccountID == 0 {
-			return 0, fmt.Errorf("PPN Masukan account not configured in tax settings")
-		}
-		accountID = settings.PurchaseInputVATAccountID
+		account, err = s.taxAccountHelper.GetPurchaseInputVATAccount(nil)
 	} else {
-		// PPN Keluaran (Sales VAT)
-		if settings.SalesOutputVATAccountID == 0 {
-			return 0, fmt.Errorf("PPN Keluaran account not configured in tax settings")
-		}
-		accountID = settings.SalesOutputVATAccountID
+		account, err = s.taxAccountHelper.GetSalesOutputVATAccount(nil)
 	}
-
-	// Get account balance
-	var account models.Account
-	if err := s.db.First(&account, accountID).Error; err != nil {
-		return 0, fmt.Errorf("account not found: %v", err)
+	if err != nil {
+		return 0, err
 	}
 
 	// ⚠️ IMPORTANT: Always return absolute value of balance.
 	// PPN Masukan can be asset-based in the current configuration or negative in
 	// older contra-liability setups. Consumers expect the recoverable/owed amount
 	// as a positive number.
-	absBalance := decimal.NewFromFloat(account.Balance).Abs().InexactFloat64()
+	resolvedBalance, err := s.resolveTaxAccountBalance(nil, account)
+	if err != nil {
+		return 0, err
+	}
+
+	absBalance := resolvedBalance.Abs().InexactFloat64()
 	log.Printf("📊 PPN %s Balance: %.2f (raw: %.2f, Account: %s - %s, Type: %s)",
-		ppnType, absBalance, account.Balance, account.Code, account.Name, account.Type)
+		ppnType, absBalance, resolvedBalance.InexactFloat64(), account.Code, account.Name, account.Type)
 
 	return absBalance, nil
 }
