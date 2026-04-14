@@ -128,16 +128,17 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 
 		// Create purchase item
 		item := models.PurchaseItem{
-			ProductID:        itemReq.ProductID,
-			ItemType:         itemType,
-			IsFixedAsset:     isAssetItem,
-			Description:      itemReq.Description,
-			AssetCategoryID:  itemReq.AssetCategoryID,
-			Quantity:         itemReq.Quantity,
-			UnitPrice:        sanitizeFloat(clampNonNegative(itemReq.UnitPrice)),
-			Discount:         sanitizeFloat(clampNonNegative(itemReq.Discount)),
-			Tax:              sanitizeFloat(clampNonNegative(itemReq.Tax)),
-			ExpenseAccountID: itemReq.ExpenseAccountID,
+			ProductID:             itemReq.ProductID,
+			PurchaseRequestItemID: itemReq.PurchaseRequestItemID,
+			ItemType:              itemType,
+			IsFixedAsset:          isAssetItem,
+			Description:           itemReq.Description,
+			AssetCategoryID:       itemReq.AssetCategoryID,
+			Quantity:              itemReq.Quantity,
+			UnitPrice:             sanitizeFloat(clampNonNegative(itemReq.UnitPrice)),
+			Discount:              sanitizeFloat(clampNonNegative(itemReq.Discount)),
+			Tax:                   sanitizeFloat(clampNonNegative(itemReq.Tax)),
+			ExpenseAccountID:      itemReq.ExpenseAccountID,
 		}
 
 		// Calculate line totals with guards
@@ -378,16 +379,17 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 		}
 
 		item := models.PurchaseItem{
-			ProductID:        itemReq.ProductID,
-			ItemType:         itemType,
-			IsFixedAsset:     isAssetItem,
-			Description:      itemReq.Description,
-			AssetCategoryID:  itemReq.AssetCategoryID,
-			Quantity:         itemReq.Quantity,
-			UnitPrice:        itemReq.UnitPrice,
-			Discount:         itemReq.Discount,
-			Tax:              itemReq.Tax,
-			ExpenseAccountID: itemReq.ExpenseAccountID,
+			ProductID:             itemReq.ProductID,
+			PurchaseRequestItemID: itemReq.PurchaseRequestItemID,
+			ItemType:              itemType,
+			IsFixedAsset:          isAssetItem,
+			Description:           itemReq.Description,
+			AssetCategoryID:       itemReq.AssetCategoryID,
+			Quantity:              itemReq.Quantity,
+			UnitPrice:             itemReq.UnitPrice,
+			Discount:              itemReq.Discount,
+			Tax:                   itemReq.Tax,
+			ExpenseAccountID:      itemReq.ExpenseAccountID,
 		}
 
 		// Calculate totals

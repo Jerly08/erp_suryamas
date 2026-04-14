@@ -326,7 +326,7 @@ func (c *CashBankController) ProcessTransfer(ctx *gin.Context) {
 		return
 	}
 
-	transfer, err := c.cashBankService.ProcessTransfer(request, userID)
+	transfer, err := c.cashBankService.ProcessTransfer(request, userID, ctx.GetString("role"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Failed to process transfer",

@@ -32,6 +32,66 @@ func NewPurchaseController(purchaseService *services.PurchaseService, paymentSer
 	}
 }
 
+func (pc *PurchaseController) getAccessiblePurchase(c *gin.Context, purchaseID uint) (*models.Purchase, bool) {
+	purchase, err := pc.purchaseService.GetPurchaseByID(purchaseID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
+		return nil, false
+	}
+
+	if models.IsStaffRole(c.GetString("role")) && purchase.UserID != c.GetUint("user_id") {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Access denied: you can only access your own purchase data",
+			"code":  "INSUFFICIENT_PERMISSION",
+		})
+		return nil, false
+	}
+
+	return purchase, true
+}
+
+func (pc *PurchaseController) getAccessibleReceipt(c *gin.Context, receiptID uint) (*models.PurchaseReceipt, bool) {
+	var receipt models.PurchaseReceipt
+	if err := pc.db.Preload("Purchase").First(&receipt, receiptID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase receipt not found"})
+		return nil, false
+	}
+
+	if models.IsStaffRole(c.GetString("role")) && receipt.Purchase.UserID != c.GetUint("user_id") {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Access denied: you can only access your own purchase data",
+			"code":  "INSUFFICIENT_PERMISSION",
+		})
+		return nil, false
+	}
+
+	return &receipt, true
+}
+
+func (pc *PurchaseController) getAccessiblePurchaseDocument(c *gin.Context, documentID uint) (*models.PurchaseDocument, bool) {
+	var document models.PurchaseDocument
+	if err := pc.db.Preload("Purchase").First(&document, documentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase document not found"})
+		return nil, false
+	}
+
+	if models.IsStaffRole(c.GetString("role")) && document.Purchase.UserID != c.GetUint("user_id") {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Access denied: you can only access your own purchase data",
+			"code":  "INSUFFICIENT_PERMISSION",
+		})
+		return nil, false
+	}
+
+	return &document, true
+}
+
+func (pc *PurchaseController) applyStaffPurchaseScope(c *gin.Context, filter *models.PurchaseFilter) {
+	if models.IsStaffRole(c.GetString("role")) {
+		filter.UserID = c.GetUint("user_id")
+	}
+}
+
 // Purchase CRUD Operations
 
 // GetPurchases godoc
@@ -83,8 +143,9 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 		Limit:            limit,
 	}
 
-	// All roles can view all purchases in the list
-	// Edit/delete restrictions are enforced at individual operation endpoints
+	if models.IsStaffRole(c.GetString("role")) {
+		filter.UserID = c.MustGet("user_id").(uint)
+	}
 
 	result, err := pc.purchaseService.GetPurchases(filter)
 	if err != nil {
@@ -123,7 +184,7 @@ func (pc *PurchaseController) GetPurchase(c *gin.Context) {
 	// RBAC: Employee role can only view their own purchases
 	userRole, _ := c.Get("role")
 	userID, _ := c.Get("user_id")
-	if userRole != nil && userRole.(string) == models.RoleEmployee {
+	if userRole != nil && models.IsStaffRole(userRole.(string)) {
 		if userID != nil && purchase.UserID != userID.(uint) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error": "Access denied: You can only view your own purchase requests",
@@ -199,7 +260,7 @@ func (pc *PurchaseController) UpdatePurchase(c *gin.Context) {
 	// RBAC: Employee role can only update their own purchases
 	userRole, _ := c.Get("role")
 	userID := c.MustGet("user_id").(uint)
-	if userRole != nil && userRole.(string) == models.RoleEmployee {
+	if userRole != nil && models.IsStaffRole(userRole.(string)) {
 		purchase, err := pc.purchaseService.GetPurchaseByID(uint(id))
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
@@ -262,7 +323,7 @@ func (pc *PurchaseController) DeletePurchase(c *gin.Context) {
 	}
 
 	// RBAC: Employee role can only delete their own purchases
-	if userRole == models.RoleEmployee && purchase.UserID != userID {
+	if models.IsStaffRole(userRole) && purchase.UserID != userID {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": "Access denied: You can only delete your own purchase requests",
 			"code":  "INSUFFICIENT_PERMISSION",
@@ -310,6 +371,9 @@ func (pc *PurchaseController) SubmitForApproval(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
 		return
 	}
 
@@ -363,7 +427,7 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 
 	if purchase.Status == models.PurchaseStatusDraft {
 		roleNorm := strings.ToLower(strings.TrimSpace(userRole))
-		if roleNorm == "finance" || roleNorm == "admin" || roleNorm == "director" {
+		if models.IsFinanceManagerRole(roleNorm) || roleNorm == models.RoleAdmin || roleNorm == models.RoleDirector {
 			// Auto-submit the purchase for approval
 			if err := pc.purchaseService.SubmitForApproval(uint(id), userID); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{
@@ -497,6 +561,10 @@ func (pc *PurchaseController) CreatePurchaseReceipt(c *gin.Context) {
 		return
 	}
 
+	if _, ok := pc.getAccessiblePurchase(c, request.PurchaseID); !ok {
+		return
+	}
+
 	// Get user ID with proper error handling
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
@@ -565,6 +633,9 @@ func (pc *PurchaseController) GetPurchaseReceipts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
 		return
 	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
 
 	// Check if only completed receipts are requested
 	completedOnly := c.Query("completed_only") == "true"
@@ -597,6 +668,9 @@ func (pc *PurchaseController) GetReceiptPDF(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid receipt ID"})
 		return
 	}
+	if _, ok := pc.getAccessibleReceipt(c, uint(id)); !ok {
+		return
+	}
 
 	// Generate PDF
 	pdfBytes, receipt, err := pc.purchaseService.GenerateReceiptPDF(uint(id))
@@ -620,6 +694,9 @@ func (pc *PurchaseController) GetAllReceiptsPDF(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
 		return
 	}
 
@@ -647,6 +724,9 @@ func (pc *PurchaseController) UploadDocument(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
 		return
 	}
 
@@ -694,6 +774,9 @@ func (pc *PurchaseController) GetPurchaseDocuments(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
 		return
 	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
 
 	documents, err := pc.purchaseService.GetPurchaseDocuments(uint(id))
 	if err != nil {
@@ -709,6 +792,9 @@ func (pc *PurchaseController) DeleteDocument(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("document_id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid document ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchaseDocument(c, uint(id)); !ok {
 		return
 	}
 
@@ -730,6 +816,9 @@ func (pc *PurchaseController) GetPurchaseMatching(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
 		return
 	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
 
 	matching, err := pc.purchaseService.GetPurchaseMatching(uint(id))
 	if err != nil {
@@ -745,6 +834,9 @@ func (pc *PurchaseController) ValidateThreeWayMatching(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
 		return
 	}
 
@@ -791,6 +883,7 @@ func (pc *PurchaseController) GetPurchasesSummary(c *gin.Context) {
 		ApprovalStatus:   approvalStatus,
 		RequiresApproval: requiresApproval,
 	}
+	pc.applyStaffPurchaseScope(c, &filter)
 
 	summary, err := pc.purchaseService.GetPurchasesSummary(filter)
 	if err != nil {
@@ -806,6 +899,40 @@ func (pc *PurchaseController) GetVendorPurchaseSummary(c *gin.Context) {
 	vendorID, err := strconv.ParseUint(c.Param("vendor_id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid vendor ID"})
+		return
+	}
+
+	if models.IsStaffRole(c.GetString("role")) {
+		filter := models.PurchaseFilter{
+			VendorID: strconv.FormatUint(vendorID, 10),
+			Page:     1,
+			Limit:    1,
+		}
+		pc.applyStaffPurchaseScope(c, &filter)
+
+		result, err := pc.purchaseService.GetPurchases(filter)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		summary, err := pc.purchaseService.GetPurchasesSummary(filter)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		vendorName := ""
+		if len(result.Data) > 0 {
+			vendorName = result.Data[0].Vendor.Name
+		}
+
+		c.JSON(http.StatusOK, &models.VendorPurchaseSummary{
+			VendorID:    uint(vendorID),
+			VendorName:  vendorName,
+			TotalAmount: summary.TotalAmount,
+			TotalOrders: summary.TotalPurchases,
+		})
 		return
 	}
 
@@ -840,11 +967,11 @@ func (pc *PurchaseController) GetPendingApprovals(c *gin.Context) {
 	var filteredPurchases []models.Purchase
 	for _, purchase := range result.Data {
 		// Finance can approve all purchases
-		if userRole == "finance" || userRole == "admin" {
+		if models.IsFinanceManagerRole(userRole) || userRole == models.RoleAdmin {
 			filteredPurchases = append(filteredPurchases, purchase)
 		}
 		// Director can approve all purchases (removed amount restriction)
-		if userRole == "director" {
+		if userRole == models.RoleDirector {
 			filteredPurchases = append(filteredPurchases, purchase)
 		}
 	}
@@ -875,10 +1002,8 @@ func (pc *PurchaseController) GetPurchaseForPayment(c *gin.Context) {
 		return
 	}
 
-	// Get purchase with vendor details
-	purchase, err := pc.purchaseService.GetPurchaseByID(uint(purchaseID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
+	purchase, ok := pc.getAccessiblePurchase(c, uint(purchaseID))
+	if !ok {
 		return
 	}
 
@@ -929,6 +1054,9 @@ func (pc *PurchaseController) CreateIntegratedPayment(c *gin.Context) {
 	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(purchaseID)); !ok {
 		return
 	}
 
@@ -997,6 +1125,9 @@ func (pc *PurchaseController) GetPurchasePayments(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
 		return
 	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(purchaseID)); !ok {
+		return
+	}
 
 	payments, err := pc.purchaseService.GetPurchasePayments(uint(purchaseID))
 	if err != nil {
@@ -1012,6 +1143,10 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	purchase, ok := pc.getAccessiblePurchase(c, uint(purchaseID))
+	if !ok {
 		return
 	}
 
@@ -1064,16 +1199,6 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		paymentDate = time.Date(paymentDate.Year(), paymentDate.Month(), paymentDate.Day(), 0, 0, 0, 0, time.UTC)
 	}
 	log.Printf("Parsed payment date: %v", paymentDate)
-
-	// Get purchase details to validate and get vendor ID
-	purchase, err := pc.purchaseService.GetPurchaseByID(uint(purchaseID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":   "Purchase not found",
-			"details": err.Error(),
-		})
-		return
-	}
 
 	// Validate purchase status using the same payment-eligibility rule exposed to the UI.
 	if !models.IsPurchasePaymentEligible(purchase.Status, purchase.PaymentMethod, purchase.OutstandingAmount) {
@@ -1260,11 +1385,16 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 
 // Dashboard endpoint for purchases
 func (pc *PurchaseController) GetPurchaseDashboard(c *gin.Context) {
-	_ = c.MustGet("user_id").(uint) // userID not used in current implementation
 	userRole := c.MustGet("role").(string)
+	userID := c.MustGet("user_id").(uint)
+
+	summaryFilter := models.PurchaseFilter{}
+	if models.IsStaffRole(userRole) {
+		summaryFilter.UserID = userID
+	}
 
 	// Get summary
-	summary, err := pc.purchaseService.GetPurchasesSummary(models.PurchaseFilter{})
+	summary, err := pc.purchaseService.GetPurchasesSummary(summaryFilter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1275,6 +1405,9 @@ func (pc *PurchaseController) GetPurchaseDashboard(c *gin.Context) {
 		ApprovalStatus: models.PurchaseApprovalPending,
 		Page:           1,
 		Limit:          1000,
+	}
+	if models.IsStaffRole(userRole) {
+		pendingFilter.UserID = userID
 	}
 
 	pendingResult, err := pc.purchaseService.GetPurchases(pendingFilter)
@@ -1287,7 +1420,7 @@ func (pc *PurchaseController) GetPurchaseDashboard(c *gin.Context) {
 		"summary":       summary,
 		"pending_count": len(pendingResult.Data),
 		"user_role":     userRole,
-		"can_approve":   userRole == "finance" || userRole == "director" || userRole == "admin",
+		"can_approve":   models.IsFinanceManagerRole(userRole) || userRole == models.RoleDirector || userRole == models.RoleAdmin,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -1298,6 +1431,9 @@ func (pc *PurchaseController) GetPurchaseJournalEntries(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
 		return
 	}
 
@@ -1354,6 +1490,7 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 		Page:           1,
 		Limit:          10000, // Large limit for export
 	}
+	pc.applyStaffPurchaseScope(c, &filter)
 
 	// Get filtered purchases
 	result, err := pc.purchaseService.GetPurchases(filter)
@@ -1431,6 +1568,7 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 		Page:           1,
 		Limit:          10000, // Large limit for export
 	}
+	pc.applyStaffPurchaseScope(c, &filter)
 
 	// Get filtered purchases
 	result, err := pc.purchaseService.GetPurchases(filter)

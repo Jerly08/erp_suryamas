@@ -83,29 +83,31 @@ type Purchase struct {
 }
 
 type PurchaseItem struct {
-	ID               uint           `json:"id" gorm:"primaryKey"`
-	PurchaseID       uint           `json:"purchase_id" gorm:"not null;index"`
-	ProductID        *uint          `json:"product_id" gorm:"index"`
-	ItemType         string         `json:"item_type" gorm:"size:20;default:'INVENTORY'"` // INVENTORY, ASSET, PREPAID
-	IsFixedAsset     bool           `json:"is_fixed_asset" gorm:"default:false"`
-	Description      string         `json:"description" gorm:"type:text"`
-	AssetCategoryID  *uint          `json:"asset_category_id,omitempty" gorm:"index"`
-	AmortizationMonth int           `json:"amortization_month" gorm:"not null;default:0"` // Untuk tipe PREPAID
-	Quantity         int            `json:"quantity" gorm:"not null"`
-	UnitPrice        float64        `json:"unit_price" gorm:"type:decimal(15,2);default:0"`
-	TotalPrice       float64        `json:"total_price" gorm:"type:decimal(15,2);default:0"`
-	Discount         float64        `json:"discount" gorm:"type:decimal(15,2);default:0"`
-	Tax              float64        `json:"tax" gorm:"type:decimal(15,2);default:0"`
-	ExpenseAccountID uint           `json:"expense_account_id" gorm:"index"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                    uint           `json:"id" gorm:"primaryKey"`
+	PurchaseID            uint           `json:"purchase_id" gorm:"not null;index"`
+	ProductID             *uint          `json:"product_id" gorm:"index"`
+	PurchaseRequestItemID *uint          `json:"purchase_request_item_id" gorm:"index"`
+	ItemType              string         `json:"item_type" gorm:"size:20;default:'INVENTORY'"` // INVENTORY, ASSET, PREPAID
+	IsFixedAsset          bool           `json:"is_fixed_asset" gorm:"default:false"`
+	Description           string         `json:"description" gorm:"type:text"`
+	AssetCategoryID       *uint          `json:"asset_category_id,omitempty" gorm:"index"`
+	AmortizationMonth     int            `json:"amortization_month" gorm:"not null;default:0"` // Untuk tipe PREPAID
+	Quantity              int            `json:"quantity" gorm:"not null"`
+	UnitPrice             float64        `json:"unit_price" gorm:"type:decimal(15,2);default:0"`
+	TotalPrice            float64        `json:"total_price" gorm:"type:decimal(15,2);default:0"`
+	Discount              float64        `json:"discount" gorm:"type:decimal(15,2);default:0"`
+	Tax                   float64        `json:"tax" gorm:"type:decimal(15,2);default:0"`
+	ExpenseAccountID      uint           `json:"expense_account_id" gorm:"index"`
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
+	DeletedAt             gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Purchase       Purchase       `json:"purchase" gorm:"foreignKey:PurchaseID"`
-	Product        *Product       `json:"product,omitempty" gorm:"foreignKey:ProductID"`
-	ExpenseAccount Account        `json:"expense_account" gorm:"foreignKey:ExpenseAccountID"`
-	AssetCategory  *AssetCategory `json:"asset_category,omitempty" gorm:"foreignKey:AssetCategoryID"`
+	Purchase            Purchase             `json:"purchase" gorm:"foreignKey:PurchaseID"`
+	Product             *Product             `json:"product,omitempty" gorm:"foreignKey:ProductID"`
+	ExpenseAccount      Account              `json:"expense_account" gorm:"foreignKey:ExpenseAccountID"`
+	AssetCategory       *AssetCategory       `json:"asset_category,omitempty" gorm:"foreignKey:AssetCategoryID"`
+	PurchaseRequestItem *PurchaseRequestItem `json:"purchase_request_item,omitempty" gorm:"foreignKey:PurchaseRequestItemID"`
 }
 
 // PurchasePayment represents payments made for purchases (cross-reference with payments table)
@@ -244,17 +246,18 @@ type PurchaseUpdateRequest struct {
 }
 
 type PurchaseItemRequest struct {
-	ItemType          string  `json:"item_type"` // "INVENTORY", "ASSET", or "PREPAID"
-	IsFixedAsset      bool    `json:"is_fixed_asset"`
-	Description       string  `json:"description"`
-	AssetCategoryID   *uint   `json:"asset_category_id"`
-	AmortizationMonth int     `json:"amortization_month"` // Durasi bulan untuk PREPAID
-	ProductID         *uint   `json:"product_id"`
-	Quantity          int     `json:"quantity" binding:"required,min=1"`
-	UnitPrice         float64 `json:"unit_price" binding:"required,min=0"`
-	Discount          float64 `json:"discount"`
-	Tax               float64 `json:"tax"`
-	ExpenseAccountID  uint    `json:"expense_account_id"`
+	ItemType              string  `json:"item_type"` // "INVENTORY", "ASSET", or "PREPAID"
+	IsFixedAsset          bool    `json:"is_fixed_asset"`
+	Description           string  `json:"description"`
+	AssetCategoryID       *uint   `json:"asset_category_id"`
+	AmortizationMonth     int     `json:"amortization_month"` // Durasi bulan untuk PREPAID
+	ProductID             *uint   `json:"product_id"`
+	PurchaseRequestItemID *uint   `json:"purchase_request_item_id"`
+	Quantity              int     `json:"quantity" binding:"required,min=1"`
+	UnitPrice             float64 `json:"unit_price" binding:"required,min=0"`
+	Discount              float64 `json:"discount"`
+	Tax                   float64 `json:"tax"`
+	ExpenseAccountID      uint    `json:"expense_account_id"`
 }
 
 // Purchase Item Type Constants

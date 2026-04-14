@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -120,7 +121,7 @@ func (dc *DashboardController) GetAnalytics(c *gin.Context) {
 
 	// Only allow admin, finance-family, and director roles
 	userRoleLower := strings.ToLower(userRole)
-	if userRoleLower != "admin" && userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "director" {
+	if userRoleLower != "admin" && userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "finance_staff" && userRoleLower != "director" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to view analytics"})
 		return
 	}
@@ -155,7 +156,7 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 
 	// Only allow finance-family roles and admin
 	userRoleLower := strings.ToLower(userRole)
-	if userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "admin" {
+	if userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "finance_staff" && userRoleLower != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied - Finance role required"})
 		return
 	}
@@ -226,6 +227,185 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Finance dashboard data retrieved successfully",
 		"data":    financeData,
+	})
+}
+
+// GetFinanceStaffDashboardData returns an operational dashboard tailored for
+// finance staff responsibilities.
+func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	userRole := strings.ToLower(strings.TrimSpace(c.GetString("user_role")))
+
+	if userRole != "finance_staff" && userRole != "finance" && userRole != "finance_manager" && userRole != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied - Finance staff role required"})
+		return
+	}
+
+	dashboardData := make(map[string]interface{})
+
+	var pendingPurchaseRequestsCount int64
+	dc.DB.Model(&models.PurchaseRequest{}).
+		Where("status = ? AND current_approval_stage = ? AND deleted_at IS NULL", models.PRStatusPendingApproval, models.PRApprovalStageFinanceStaff).
+		Count(&pendingPurchaseRequestsCount)
+
+	var draftJournalsCount int64
+	dc.DB.Model(&models.JournalEntry{}).
+		Where("status = ? AND deleted_at IS NULL", models.JournalStatusDraft).
+		Count(&draftJournalsCount)
+
+	var unpaidPurchaseCount int64
+	dc.DB.Model(&models.Purchase{}).
+		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", []string{"APPROVED", "COMPLETED", "PAID"}).
+		Count(&unpaidPurchaseCount)
+
+	var pendingTransferRequestsCount int64
+	dc.DB.Table("cash_bank_transfers").
+		Where("user_id = ? AND status = ? AND deleted_at IS NULL", userID, services.TransferStatusPendingApproval).
+		Count(&pendingTransferRequestsCount)
+
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	var monthlyReviewedCount int64
+	dc.DB.Model(&models.PurchaseRequest{}).
+		Where("finance_staff_approved_by = ? AND finance_staff_approved_at >= ? AND deleted_at IS NULL", userID, startOfMonth).
+		Count(&monthlyReviewedCount)
+
+	var unreadNotificationsCount int64
+	dc.DB.Model(&models.Notification{}).
+		Where("user_id = ? AND is_read = false AND deleted_at IS NULL", userID).
+		Count(&unreadNotificationsCount)
+
+	var outstandingReceivables float64
+	dc.DB.Model(&models.Sale{}).
+		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", []string{"INVOICED", "OVERDUE"}).
+		Select("COALESCE(SUM(outstanding_amount), 0)").
+		Scan(&outstandingReceivables)
+
+	var outstandingPayables float64
+	dc.DB.Model(&models.Purchase{}).
+		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", []string{"APPROVED", "COMPLETED", "PAID"}).
+		Select("COALESCE(SUM(outstanding_amount), 0)").
+		Scan(&outstandingPayables)
+
+	var cashBankBalance float64
+	dc.DB.Model(&models.CashBank{}).
+		Where("is_active = true AND deleted_at IS NULL").
+		Select(`COALESCE(SUM(CASE WHEN UPPER(currency) = 'IDR' OR currency = '' THEN balance ELSE "book_balance_id_r" END), 0)`).
+		Scan(&cashBankBalance)
+
+	type pendingPurchaseRequestItem struct {
+		ID                   uint      `json:"id"`
+		PRNumber             string    `json:"pr_number"`
+		RequesterName        string    `json:"requester_name"`
+		Department           string    `json:"department"`
+		ProjectName          string    `json:"project_name"`
+		TotalEstimatedAmount float64   `json:"total_estimated_amount"`
+		CreatedAt            time.Time `json:"created_at"`
+	}
+
+	type recentTransferItem struct {
+		ID              uint      `json:"id"`
+		TransferNumber  string    `json:"transfer_number"`
+		Date            time.Time `json:"date"`
+		Amount          float64   `json:"amount"`
+		ConvertedAmount float64   `json:"converted_amount"`
+		Status          string    `json:"status"`
+		Reference       string    `json:"reference"`
+		RejectionReason string    `json:"rejection_reason"`
+		FromAccountName string    `json:"from_account_name"`
+		FromCurrency    string    `json:"from_currency"`
+		ToAccountName   string    `json:"to_account_name"`
+		ToCurrency      string    `json:"to_currency"`
+	}
+
+	type notificationItem struct {
+		ID        uint      `json:"id"`
+		Type      string    `json:"type"`
+		Title     string    `json:"title"`
+		Message   string    `json:"message"`
+		Priority  string    `json:"priority"`
+		IsRead    bool      `json:"is_read"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	var pendingPurchaseRequests []pendingPurchaseRequestItem
+	if err := dc.DB.Table("purchase_requests pr").
+		Select(`
+			pr.id,
+			pr.pr_number,
+			COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username, u.email) AS requester_name,
+			pr.department,
+			COALESCE(p.name, '-') AS project_name,
+			pr.total_estimated_amount,
+			pr.created_at
+		`).
+		Joins("LEFT JOIN users u ON u.id = pr.requester_id").
+		Joins("LEFT JOIN projects p ON p.id = pr.project_id").
+		Where("pr.status = ? AND pr.current_approval_stage = ? AND pr.deleted_at IS NULL", models.PRStatusPendingApproval, models.PRApprovalStageFinanceStaff).
+		Order("pr.created_at ASC").
+		Limit(5).
+		Scan(&pendingPurchaseRequests).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending purchase requests", "details": err.Error()})
+		return
+	}
+
+	var recentTransfers []recentTransferItem
+	if err := dc.DB.Table("cash_bank_transfers t").
+		Select(`
+			t.id,
+			t.transfer_number,
+			t.date,
+			t.amount,
+			t.converted_amount,
+			t.status,
+			t.reference,
+			t.rejection_reason,
+			COALESCE(f.name, '-') AS from_account_name,
+			COALESCE(f.currency, 'IDR') AS from_currency,
+			COALESCE(d.name, '-') AS to_account_name,
+			COALESCE(d.currency, 'IDR') AS to_currency
+		`).
+		Joins("LEFT JOIN cash_banks f ON f.id = t.from_account_id").
+		Joins("LEFT JOIN cash_banks d ON d.id = t.to_account_id").
+		Where("t.user_id = ? AND t.deleted_at IS NULL", userID).
+		Order("t.created_at DESC").
+		Limit(5).
+		Scan(&recentTransfers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch recent transfer requests", "details": err.Error()})
+		return
+	}
+
+	var recentNotifications []notificationItem
+	if err := dc.DB.Model(&models.Notification{}).
+		Select("id, type, title, message, priority, is_read, created_at").
+		Where("user_id = ? AND deleted_at IS NULL", userID).
+		Order("created_at DESC").
+		Limit(5).
+		Find(&recentNotifications).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch recent notifications", "details": err.Error()})
+		return
+	}
+
+	dashboardData["quick_stats"] = gin.H{
+		"pending_purchase_requests_count": pendingPurchaseRequestsCount,
+		"draft_journals_count":            draftJournalsCount,
+		"unpaid_purchase_count":           unpaidPurchaseCount,
+		"pending_transfer_requests_count": pendingTransferRequestsCount,
+		"monthly_reviewed_purchase_count": monthlyReviewedCount,
+		"unread_notifications_count":      unreadNotificationsCount,
+	}
+	dashboardData["snapshot"] = gin.H{
+		"outstanding_receivables": outstandingReceivables,
+		"outstanding_payables":    outstandingPayables,
+		"cash_bank_balance":       cashBankBalance,
+	}
+	dashboardData["pending_purchase_requests"] = pendingPurchaseRequests
+	dashboardData["recent_transfer_requests"] = recentTransfers
+	dashboardData["recent_notifications"] = recentNotifications
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Finance staff dashboard data retrieved successfully",
+		"data":    dashboardData,
 	})
 }
 

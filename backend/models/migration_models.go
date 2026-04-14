@@ -26,6 +26,12 @@ type CashBankTransferMigration struct {
 	Notes                    string  `gorm:"type:text"`
 	Status                   string  `gorm:"size:20;default:PENDING"`
 	UserID                   uint    `gorm:"not null;index"`
+	ApprovalRequired         bool    `gorm:"default:false"`
+	ApprovedBy               *uint   `gorm:"index"`
+	ApprovedAt               *time.Time
+	RejectedBy               *uint `gorm:"index"`
+	RejectedAt               *time.Time
+	RejectionReason          string `gorm:"type:text"`
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 	DeletedAt                gorm.DeletedAt `gorm:"index"`

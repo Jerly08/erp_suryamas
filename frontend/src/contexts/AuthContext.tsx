@@ -5,7 +5,7 @@ import { API_ENDPOINTS, API_BASE_URL } from '@/config/api';
 import { normalizeAuthUser } from '@/utils/userDisplay';
 
 // Define user type - backend sends lowercase roles
-export type UserRole = 'admin' | 'finance' | 'finance_manager' | 'inventory_manager' | 'director' | 'employee' | 'auditor' | 'operational_user';
+export type UserRole = 'admin' | 'finance' | 'finance_manager' | 'finance_staff' | 'inventory_manager' | 'director' | 'employee' | 'auditor' | 'operational_user';
 
 export interface User {
   id: string;

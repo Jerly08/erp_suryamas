@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import React from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import React from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Box,
   CloseButton,
@@ -18,11 +18,12 @@ import {
   Collapse,
   DrawerOverlay,
   DrawerCloseButton,
-} from '@chakra-ui/react';
+} from "@chakra-ui/react";
 import {
   FiTrendingUp,
   FiCompass,
-  FiStar, FiClock,
+  FiStar,
+  FiClock,
   FiBell,
   FiSettings,
   FiMenu,
@@ -37,12 +38,12 @@ import {
   FiBox,
   FiBriefcase,
   FiClipboard,
-} from 'react-icons/fi';
-import { useAuth } from '@/contexts/AuthContext';
-import { normalizeRole } from '@/utils/roles';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useTheme } from '@/contexts/SimpleThemeContext';
-import { usePermissions } from '@/hooks/usePermissions';
+} from "react-icons/fi";
+import { useAuth } from "@/contexts/AuthContext";
+import { normalizeRole } from "@/utils/roles";
+import { useTranslation } from "@/hooks/useTranslation";
+import { useTheme } from "@/contexts/SimpleThemeContext";
+import { usePermissions } from "@/hooks/usePermissions";
 
 // Menu structure - will be translated dynamically
 // companyType: 'SERVICE' | 'TRADING' | 'MANUFACTURING'
@@ -51,58 +52,212 @@ const getMenuGroups = (t, companyType) => {
   const ctLabel = (key, fallbackKey) => {
     if (companyType) {
       const translated = t(`companyType.${companyType}.${key}`);
-      if (!translated.startsWith('companyType.')) return translated;
+      if (!translated.startsWith("companyType.")) return translated;
     }
     return t(fallbackKey);
   };
 
   return [
     {
-      title: t('navigation.dashboard'),
+      title: t("navigation.dashboard"),
       items: [
-        { name: t('navigation.dashboard'), icon: FiHome, href: '/dashboard', module: null, permission: null, roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'DIRECTOR', 'EMPLOYEE'] },
-      ]
+        {
+          name: t("navigation.dashboard"),
+          icon: FiHome,
+          href: "/dashboard",
+          module: null,
+          permission: null,
+          roles: [
+            "ADMIN",
+            "FINANCE",
+            "FINANCE_STAFF",
+            "INVENTORY_MANAGER",
+            "DIRECTOR",
+            "EMPLOYEE",
+          ],
+        },
+      ],
     },
     {
-      title: t('navigation.sidebar.masterData'),
+      title: t("navigation.sidebar.masterData"),
       items: [
-        { name: t('navigation.accounts'), icon: FiFileText, href: '/accounts', module: 'accounts', permission: 'view', roles: ['ADMIN', 'FINANCE'] },
-        { name: ctLabel('products', 'Items & Benchmarks'), icon: FiLayers, href: '/products', module: 'products', permission: 'view', roles: ['ADMIN', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-        { name: 'Master BOMs', icon: FiBox, href: '/boms', module: 'boms', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-        { name: t('navigation.contacts'), icon: FiUsers, href: '/contacts', module: 'contacts', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-        { name: t('navigation.assets'), icon: FiStar, FiClock, href: '/assets', module: 'assets', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-        { name: 'Prepaid Expenses', icon: FiClock, href: '/prepaid-expenses', module: 'prepaid_expenses', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-        { name: 'Projects', icon: FiBriefcase, href: '/projects', module: 'projects', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-      ]
+        {
+          name: t("navigation.accounts"),
+          icon: FiFileText,
+          href: "/accounts",
+          module: "accounts",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE"],
+        },
+        {
+          name: ctLabel("products", "Items & Benchmarks"),
+          icon: FiLayers,
+          href: "/products",
+          module: "products",
+          permission: "view",
+          roles: ["ADMIN", "INVENTORY_MANAGER", "EMPLOYEE", "DIRECTOR"],
+        },
+        {
+          name: "Master BOMs",
+          icon: FiBox,
+          href: "/boms",
+          module: "boms",
+          permission: "view",
+          roles: [
+            "ADMIN",
+            "FINANCE",
+            "INVENTORY_MANAGER",
+            "EMPLOYEE",
+            "DIRECTOR",
+          ],
+        },
+        {
+          name: t("navigation.contacts"),
+          icon: FiUsers,
+          href: "/contacts",
+          module: "contacts",
+          permission: "view",
+          roles: [
+            "ADMIN",
+            "FINANCE",
+            "INVENTORY_MANAGER",
+            "EMPLOYEE",
+            "DIRECTOR",
+          ],
+        },
+        {
+          name: t("navigation.assets"),
+          icon: FiStar,
+          FiClock,
+          href: "/assets",
+          module: "assets",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR"],
+        },
+        {
+          name: "Prepaid Expenses",
+          icon: FiClock,
+          href: "/prepaid-expenses",
+          module: "prepaid_expenses",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR"],
+        },
+        {
+          name: "Projects",
+          icon: FiBriefcase,
+          href: "/projects",
+          module: "projects",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR"],
+        },
+      ],
     },
     {
-      title: t('navigation.sidebar.financial'),
+      title: t("navigation.sidebar.financial"),
       items: [
-        { name: 'Purchase Requests', icon: FiClipboard, href: '/purchase-requests', module: 'purchase_requests', permission: 'view', roles: ['ADMIN', 'FINANCE', 'EMPLOYEE', 'DIRECTOR'] },
-        { name: ctLabel('sales', 'navigation.sales'), icon: FiDollarSign, href: '/sales', module: 'sales', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR', 'EMPLOYEE'] },
-        { name: ctLabel('purchases', 'navigation.purchases'), icon: FiShoppingCart, href: '/purchases', module: 'purchases', permission: 'view', roles: ['ADMIN', 'FINANCE', 'INVENTORY_MANAGER', 'EMPLOYEE', 'DIRECTOR'] },
-        { name: t('navigation.payments'), icon: FiTrendingUp, href: '/payments', module: 'payments', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-        { name: t('navigation.cashBank'), icon: FiCompass, href: '/cash-bank', module: 'cash_bank', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-        { name: t('navigation.journal'), icon: FiFileText, href: '/journal', module: 'journal', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-      ]
+        {
+          name: "Purchase Requests",
+          icon: FiClipboard,
+          href: "/purchase-requests",
+          module: "purchase_requests",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "EMPLOYEE", "DIRECTOR"],
+        },
+        {
+          name: ctLabel("sales", "navigation.sales"),
+          icon: FiDollarSign,
+          href: "/sales",
+          module: "sales",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR", "EMPLOYEE"],
+        },
+        {
+          name: ctLabel("purchases", "navigation.purchases"),
+          icon: FiShoppingCart,
+          href: "/purchases",
+          module: "purchases",
+          permission: "view",
+          roles: [
+            "ADMIN",
+            "FINANCE",
+            "INVENTORY_MANAGER",
+            "EMPLOYEE",
+            "DIRECTOR",
+          ],
+        },
+        {
+          name: t("navigation.payments"),
+          icon: FiTrendingUp,
+          href: "/payments",
+          module: "payments",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR"],
+        },
+        {
+          name: t("navigation.cashBank"),
+          icon: FiCompass,
+          href: "/cash-bank",
+          module: "cash_bank",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR"],
+        },
+        {
+          name: t("navigation.journal"),
+          icon: FiFileText,
+          href: "/journal",
+          module: "journal",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR"],
+        },
+      ],
     },
     {
-      title: t('navigation.reports'),
+      title: t("navigation.reports"),
       items: [
-        { name: t('navigation.reports'), icon: FiBarChart, href: '/reports', module: 'reports', permission: 'view', roles: ['ADMIN', 'FINANCE', 'DIRECTOR'] },
-      ]
+        {
+          name: t("navigation.reports"),
+          icon: FiBarChart,
+          href: "/reports",
+          module: "reports",
+          permission: "view",
+          roles: ["ADMIN", "FINANCE", "DIRECTOR"],
+        },
+      ],
     },
     {
-      title: t('navigation.sidebar.system'),
+      title: t("navigation.sidebar.system"),
       items: [
-        { name: t('navigation.users'), icon: FiUser, href: '/users', module: 'users', permission: 'view', roles: ['ADMIN'] },
-        { name: t('navigation.settings'), icon: FiSettings, href: '/settings', module: 'settings', permission: 'view', roles: ['ADMIN'] },
-      ]
+        {
+          name: t("navigation.users"),
+          icon: FiUser,
+          href: "/users",
+          module: "users",
+          permission: "view",
+          roles: ["ADMIN"],
+        },
+        {
+          name: t("navigation.settings"),
+          icon: FiSettings,
+          href: "/settings",
+          module: "settings",
+          permission: "view",
+          roles: ["ADMIN"],
+        },
+      ],
     },
   ];
 };
 
-export default function Sidebar({ isOpen, onClose, display, width, collapsed, onToggleCollapse, variant, ...rest }) {
+export default function Sidebar({
+  isOpen,
+  onClose,
+  display,
+  width,
+  collapsed,
+  onToggleCollapse,
+  variant,
+  ...rest
+}) {
   const { user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
@@ -111,16 +266,16 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
   const { canView, canMenu, loading: permissionLoading } = usePermissions();
 
   // Get company type from user context
-  const companyType = user?.company_type || '';
+  const companyType = user?.company_type || "";
 
   // Get translated menu groups with company-type-specific labels
   const MenuGroups = getMenuGroups(t, companyType);
 
   // Filter menu groups based on user permissions and role
-  const userRoleNormalized = user ? normalizeRole(user.role) : '';
-  const filteredGroups = MenuGroups.map(group => ({
+  const userRoleNormalized = user ? normalizeRole(user.role) : "";
+  const filteredGroups = MenuGroups.map((group) => ({
     ...group,
-    items: group.items.filter(item => {
+    items: group.items.filter((item) => {
       if (!user) return false;
 
       // For modules with permission checking, use canMenu for menu visibility
@@ -130,18 +285,29 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
       }
 
       // For system pages (users, settings) and dashboard, use role-based checking
-      return item.roles.some(role => normalizeRole(role) === userRoleNormalized);
-    })
-  })).filter(group => group.items.length > 0);
+      return item.roles.some(
+        (role) => normalizeRole(role) === userRoleNormalized,
+      );
+    }),
+  })).filter((group) => group.items.length > 0);
 
   const SidebarContent = ({ onClose, ...rest }) => {
     // Theme-aware colors
-    const sidebarBg = useColorModeValue('white', 'var(--bg-primary)');
-    const sidebarBorder = useColorModeValue('gray.200', 'var(--border-color)');
-    const sidebarShadow = useColorModeValue('sm', 'var(--shadow)');
-    const closeButtonColor = useColorModeValue('gray.600', 'var(--text-secondary)');
-    const closeButtonHoverBg = useColorModeValue('gray.100', 'var(--bg-tertiary)');
-    const groupLabelColor = useColorModeValue('gray.500', 'var(--text-secondary)');
+    const sidebarBg = useColorModeValue("white", "var(--bg-primary)");
+    const sidebarBorder = useColorModeValue("gray.200", "var(--border-color)");
+    const sidebarShadow = useColorModeValue("sm", "var(--shadow)");
+    const closeButtonColor = useColorModeValue(
+      "gray.600",
+      "var(--text-secondary)",
+    );
+    const closeButtonHoverBg = useColorModeValue(
+      "gray.100",
+      "var(--bg-tertiary)",
+    );
+    const groupLabelColor = useColorModeValue(
+      "gray.500",
+      "var(--text-secondary)",
+    );
 
     return (
       <Box
@@ -149,30 +315,31 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
         bg={sidebarBg}
         borderRight="1px"
         borderRightColor={sidebarBorder}
-        w={{ base: 'full', md: width || 60 }}
+        w={{ base: "full", md: width || 60 }}
         pos="fixed"
         h="full"
         overflowY="auto"
         zIndex={1000}
         className="sidebar"
         boxShadow={sidebarShadow}
-        {...rest}>
+        {...rest}
+      >
         <Flex h="20" alignItems="center" mx="8" justifyContent="space-between">
           <Text
             fontSize="xl"
             fontFamily="Inter"
             fontWeight="bold"
-            color='var(--accent-color)'
+            color="var(--accent-color)"
             letterSpacing="tight"
           >
-            {t('navigation.sidebar.appTitle')}
+            {t("navigation.sidebar.appTitle")}
           </Text>
           <CloseButton
-            display={{ base: 'flex', md: 'none' }}
+            display={{ base: "flex", md: "none" }}
             onClick={onClose}
             color={closeButtonColor}
             _hover={{ bg: closeButtonHoverBg }}
-            aria-label={t('navigation.navbar.closeMenu')}
+            aria-label={t("navigation.navbar.closeMenu")}
           />
         </Flex>
 
@@ -191,7 +358,12 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
               {group.title}
             </Text>
             {group.items.map((link) => (
-              <NavItem key={link.name} icon={link.icon} href={link.href} isActive={pathname === link.href}>
+              <NavItem
+                key={link.name}
+                icon={link.icon}
+                href={link.href}
+                isActive={pathname === link.href}
+              >
                 {link.name}
               </NavItem>
             ))}
@@ -204,19 +376,22 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
   const NavItem = ({ icon, children, href, isActive, ...rest }) => {
     const handleClick = (e) => {
       e.preventDefault();
-      console.log('NavItem clicked:', href);
+      console.log("NavItem clicked:", href);
       router.push(href);
     };
 
     // Theme-aware colors for nav items
-    const activeBg = 'var(--accent-color)';
-    const activeColor = 'white';
-    const inactiveColor = useColorModeValue('gray.700', 'var(--text-secondary)');
-    const hoverBg = useColorModeValue('gray.100', 'var(--bg-tertiary)');
-    const hoverColor = useColorModeValue('gray.900', 'var(--text-primary)');
-    const iconColor = useColorModeValue('gray.500', 'var(--text-secondary)');
-    const iconActiveColor = 'white';
-    const iconHoverColor = useColorModeValue('gray.700', 'var(--text-primary)');
+    const activeBg = "var(--accent-color)";
+    const activeColor = "white";
+    const inactiveColor = useColorModeValue(
+      "gray.700",
+      "var(--text-secondary)",
+    );
+    const hoverBg = useColorModeValue("gray.100", "var(--bg-tertiary)");
+    const hoverColor = useColorModeValue("gray.900", "var(--text-primary)");
+    const iconColor = useColorModeValue("gray.500", "var(--text-secondary)");
+    const iconActiveColor = "white";
+    const iconHoverColor = useColorModeValue("gray.700", "var(--text-primary)");
 
     return (
       <Flex
@@ -228,28 +403,29 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
         role="group"
         cursor="pointer"
         className="sidebar-item"
-        bg={isActive ? activeBg : 'transparent'}
+        bg={isActive ? activeBg : "transparent"}
         color={isActive ? activeColor : inactiveColor}
         borderLeft="3px solid"
-        borderLeftColor={isActive ? 'var(--accent-color)' : 'transparent'}
+        borderLeftColor={isActive ? "var(--accent-color)" : "transparent"}
         _hover={{
-          bg: isActive ? 'var(--accent-color)' : hoverBg,
-          color: isActive ? 'white' : hoverColor,
-          transform: 'translateX(4px)',
+          bg: isActive ? "var(--accent-color)" : hoverBg,
+          color: isActive ? "white" : hoverColor,
+          transform: "translateX(4px)",
         }}
         transition="all 0.2s ease"
         fontWeight="medium"
         fontSize="sm"
         pointerEvents="auto"
         zIndex={10}
-        {...rest}>
+        {...rest}
+      >
         {icon && (
           <Icon
             mr="3"
             fontSize="18"
             color={isActive ? iconActiveColor : iconColor}
             _groupHover={{
-              color: isActive ? 'white' : iconHoverColor,
+              color: isActive ? "white" : iconHoverColor,
             }}
             as={icon}
             transition="all 0.2s ease"
@@ -260,7 +436,7 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
     );
   };
 
-  if (variant === 'drawer') {
+  if (variant === "drawer") {
     return (
       <Drawer
         autoFocus={false}
@@ -269,7 +445,8 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
         onClose={onClose}
         returnFocusOnClose={false}
         onOverlayClick={onClose}
-        size="full">
+        size="full"
+      >
         <DrawerOverlay />
         <DrawerContent>
           <SidebarContent onClose={onClose} />
@@ -278,10 +455,5 @@ export default function Sidebar({ isOpen, onClose, display, width, collapsed, on
     );
   }
 
-  return (
-    <SidebarContent
-      onClose={() => onClose}
-      display={display}
-    />
-  );
+  return <SidebarContent onClose={() => onClose} display={display} />;
 }

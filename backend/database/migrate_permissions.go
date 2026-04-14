@@ -47,7 +47,7 @@ func MigratePermissions(db *gorm.DB) error {
 		return err
 	}
 
-	modules := []string{"accounts", "products", "contacts", "assets", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings", "purchase_requests", "projects", "boms"}
+	modules := []string{"accounts", "products", "contacts", "assets", "prepaid_expenses", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings", "purchase_requests", "projects", "boms"}
 
 	for _, user := range users {
 		// Get default permissions based on role

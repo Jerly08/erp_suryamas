@@ -36,12 +36,13 @@
   },
   "currency_settings": {
     "base_currency": "IDR",
-    "supported_currencies": ["IDR", "USD", "EUR", "SGD"],
+    "supported_currencies": ["IDR", "USD", "CNY", "EUR", "SGD"],
     "exchange_rate_api": "https://api.exchangerate-api.com/v4/latest/",
     "decimal_places": 2,
     "currency_symbols": {
       "IDR": "Rp",
       "USD": "$",
+      "CNY": "¥",
       "EUR": "€",
       "SGD": "S$"
     }

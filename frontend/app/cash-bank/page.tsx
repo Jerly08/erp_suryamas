@@ -1,13 +1,13 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useModulePermissions } from '@/hooks/usePermissions';
-import ProtectedModule from '@/components/common/ProtectedModule';
-import SimpleLayout from '@/components/layout/SimpleLayout';
-import CompanyTypeGuard from '@/components/common/CompanyTypeGuard';
-import { DataTable } from '@/components/common/DataTable';
+import React, { useEffect, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useTranslation } from "@/hooks/useTranslation";
+import { useModulePermissions } from "@/hooks/usePermissions";
+import ProtectedModule from "@/components/common/ProtectedModule";
+import SimpleLayout from "@/components/layout/SimpleLayout";
+import CompanyTypeGuard from "@/components/common/CompanyTypeGuard";
+import { DataTable } from "@/components/common/DataTable";
 import {
   Box,
   Flex,
@@ -47,7 +47,6 @@ import {
   useColorModeValue,
   FormControl,
   FormLabel,
-  Input,
   Textarea,
   NumberInput,
   NumberInputField,
@@ -61,18 +60,38 @@ import {
   Th,
   Td,
   Divider,
-} from '@chakra-ui/react';
-import { FiPlus, FiDollarSign, FiCreditCard, FiEdit2, FiEye, FiArrowRight, FiTrendingUp, FiTrendingDown, FiMoreVertical, FiTrash2, FiRefreshCw, FiSettings, FiLock, FiUnlock } from 'react-icons/fi';
-import cashbankService, { CashBank, BalanceSummary, getAvailableBalance, getBookBalanceInIDR, FrozenHistory } from '@/services/cashbankService';
-import accountService from '@/services/accountService';
-import CashBankForm from '@/components/cashbank/CashBankForm';
-import DepositWithdrawalForm from '@/components/cashbank/DepositWithdrawalForm'; // Used for withdrawal only
-import DepositFormImproved from '@/components/cashbank/DepositFormImproved'; // New improved form for deposits
-import TransferForm from '@/components/cashbank/TransferForm';
-import TransactionHistoryModal from '@/components/cashbank/TransactionHistoryModal';
+} from "@chakra-ui/react";
+import {
+  FiPlus,
+  FiEdit2,
+  FiEye,
+  FiArrowRight,
+  FiTrendingUp,
+  FiTrendingDown,
+  FiMoreVertical,
+  FiTrash2,
+  FiRefreshCw,
+  FiSettings,
+  FiLock,
+  FiUnlock,
+} from "react-icons/fi";
+import cashbankService, {
+  CashBank,
+  BalanceSummary,
+  CashBankTransfer,
+  getAvailableBalance,
+  getBookBalanceInIDR,
+  FrozenHistory,
+} from "@/services/cashbankService";
+import accountService from "@/services/accountService";
+import CashBankForm from "@/components/cashbank/CashBankForm";
+import DepositWithdrawalForm from "@/components/cashbank/DepositWithdrawalForm"; // Used for withdrawal only
+import DepositFormImproved from "@/components/cashbank/DepositFormImproved"; // New improved form for deposits
+import TransferForm from "@/components/cashbank/TransferForm";
+import TransactionHistoryModal from "@/components/cashbank/TransactionHistoryModal";
 
 const getEffectiveBookRate = (account: CashBank): number => {
-  if ((account.currency || 'IDR').toUpperCase() === 'IDR') {
+  if ((account.currency || "IDR").toUpperCase() === "IDR") {
     return 1;
   }
 
@@ -83,26 +102,32 @@ const getEffectiveBookRate = (account: CashBank): number => {
     return derivedRate;
   }
 
-  return account.last_exchange_rate && account.last_exchange_rate > 0 ? account.last_exchange_rate : 1;
+  return account.last_exchange_rate && account.last_exchange_rate > 0
+    ? account.last_exchange_rate
+    : 1;
 };
 
 const getFrozenBalanceInIDR = (account: CashBank): number => {
   const frozenAmount = account.frozen_amount || 0;
-  return (account.currency || 'IDR').toUpperCase() === 'IDR'
+  return (account.currency || "IDR").toUpperCase() === "IDR"
     ? frozenAmount
     : frozenAmount * getEffectiveBookRate(account);
 };
 
 const getAvailableBalanceInIDR = (account: CashBank): number => {
   const availableBalance = getAvailableBalance(account);
-  return (account.currency || 'IDR').toUpperCase() === 'IDR'
+  return (account.currency || "IDR").toUpperCase() === "IDR"
     ? availableBalance
     : availableBalance * getEffectiveBookRate(account);
 };
 
-const formatIDRAmount = (amount: number): string => 'IDR ' + (amount || 0).toLocaleString('id-ID');
+const formatIDRAmount = (amount: number): string =>
+  "IDR " + (amount || 0).toLocaleString("id-ID");
 
-const getDeleteCashBankErrorMessage = (error: any, accountName: string): string => {
+const getDeleteCashBankErrorMessage = (
+  error: any,
+  accountName: string,
+): string => {
   const status = error?.response?.status;
   const errorData = error?.response?.data;
   const backendMessage =
@@ -113,7 +138,7 @@ const getDeleteCashBankErrorMessage = (error: any, accountName: string): string 
 
   if (status === 403) {
     const requiredPermission = errorData?.required_permission;
-    const moduleName = errorData?.module || 'cash_bank';
+    const moduleName = errorData?.module || "cash_bank";
     const roleName = errorData?.user_role;
 
     if (requiredPermission && moduleName) {
@@ -122,14 +147,17 @@ const getDeleteCashBankErrorMessage = (error: any, accountName: string): string 
         : `Anda tidak memiliki izin "${requiredPermission}" untuk modul "${moduleName}". Hubungi admin agar akses hapus akun diberikan.`;
     }
 
-    return backendMessage || `Anda tidak memiliki izin untuk menghapus akun "${accountName}". Hubungi admin jika akses ini memang diperlukan.`;
+    return (
+      backendMessage ||
+      `Anda tidak memiliki izin untuk menghapus akun "${accountName}". Hubungi admin jika akses ini memang diperlukan.`
+    );
   }
 
   if (status === 404) {
     return `Akun "${accountName}" sudah tidak ditemukan atau sudah dihapus. Silakan refresh data lalu coba lagi.`;
   }
 
-  if (typeof backendMessage === 'string' && backendMessage.trim()) {
+  if (typeof backendMessage === "string" && backendMessage.trim()) {
     return backendMessage;
   }
 
@@ -137,7 +165,75 @@ const getDeleteCashBankErrorMessage = (error: any, accountName: string): string 
 };
 
 const canUseDirectTransactions = (account: CashBank): boolean =>
-  account.is_active && !account.is_holding_account && account.allow_direct_transactions !== false;
+  account.is_active &&
+  !account.is_holding_account &&
+  account.allow_direct_transactions !== false;
+
+const normalizeUserRole = (role?: string | null): string =>
+  (role || "").trim().toLowerCase();
+
+const getTransferStatusColor = (status?: string): string => {
+  switch ((status || "").toUpperCase()) {
+    case "PENDING_APPROVAL":
+      return "orange";
+    case "COMPLETED":
+      return "green";
+    case "REJECTED":
+      return "red";
+    default:
+      return "gray";
+  }
+};
+
+const getTransferStatusLabel = (status?: string): string => {
+  switch ((status || "").toUpperCase()) {
+    case "PENDING_APPROVAL":
+      return "Menunggu Approval";
+    case "COMPLETED":
+      return "Approved";
+    case "REJECTED":
+      return "Rejected";
+    default:
+      return status || "-";
+  }
+};
+
+const getTransferActorName = (
+  actor?: {
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+  } | null,
+): string => {
+  if (!actor) {
+    return "-";
+  }
+
+  const fullName = [actor.first_name, actor.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  return fullName || actor.username || actor.email || "-";
+};
+
+const formatTransferAmountSummary = (transfer: CashBankTransfer): string => {
+  const sourceCurrency = (
+    transfer.from_account?.currency || "IDR"
+  ).toUpperCase();
+  const destinationCurrency = (
+    transfer.to_account?.currency || sourceCurrency
+  ).toUpperCase();
+  const sourceAmount = `${sourceCurrency} ${(transfer.amount || 0).toLocaleString("id-ID")}`;
+
+  if (sourceCurrency !== destinationCurrency) {
+    return `${sourceAmount} -> ${destinationCurrency} ${(transfer.converted_amount || 0).toLocaleString("id-ID")}`;
+  }
+
+  return sourceAmount;
+};
+
+const TRANSFER_PAGE_SIZE = 5;
 
 // Table columns for cash and bank accounts with COA standards
 const getAccountColumns = (
@@ -152,581 +248,698 @@ const getAccountColumns = (
   onFreeze?: (account: CashBank) => void,
   onUnfreeze?: (account: CashBank) => void,
   textColor?: string,
-  mutedTextColor?: string
+  mutedTextColor?: string,
 ) => [
-    {
-      header: t('cashBank.accountCode'),
-      accessor: ((row: CashBank) => (
-        <Box>
-          <Text fontFamily="mono" fontWeight="bold" fontSize="sm" color={textColor}>
-            {row.code}
-          </Text>
-          <Text fontSize="xs" color={mutedTextColor}>
-            {row.type} Account
-          </Text>
-        </Box>
-      )) as (row: CashBank) => React.ReactNode
-    },
-    {
-      header: t('cashBank.accountName'),
-      accessor: ((row: CashBank) => (
-        <Box>
-          <Text fontWeight="medium" fontSize="sm" color={textColor}>
-            {row.name}
-          </Text>
-          <Text fontSize="xs" color={mutedTextColor}>
-            {row.description || t('cashBank.noDescription')}
-          </Text>
-        </Box>
-      )) as (row: CashBank) => React.ReactNode
-    },
-    {
-      header: t('cashBank.accountType'),
-      accessor: ((row: CashBank) => (
-        <Box textAlign="center">
-          <Flex alignItems="center" gap={2} justifyContent="center" mb={1}>
-            <Text fontSize="lg">{row.type === 'CASH' ? '💵' : '🏦'}</Text>
-            <Badge
-              colorScheme={row.type === 'CASH' ? 'green' : 'blue'}
-              variant="solid"
-              size="sm"
-            >
-              {row.type}
-            </Badge>
-          </Flex>
-          <Text fontSize="xs" color={mutedTextColor}>
-            {row.type === 'CASH' ? t('cashBank.physicalMoney') : t('cashBank.bankAccount')}
-          </Text>
-        </Box>
-      )) as (row: CashBank) => React.ReactNode
-    },
-    {
-      header: t('cashBank.glAccount'),
-      accessor: ((row: CashBank) => {
-        if (row.account && row.account.code && row.account.name) {
-          return (
-            <Box>
-              <Flex alignItems="center" gap={2} mb={1}>
-                <Badge size="sm" colorScheme="blue" variant="outline">
-                  {row.account.code}
-                </Badge>
-                <Text fontSize="sm" fontWeight="medium" color="blue.600" noOfLines={1}>
-                  {row.account.name}
-                </Text>
-              </Flex>
-              <Flex alignItems="center" gap={1}>
-                <Text fontSize="xs" color="green.600">
-                  ✅ {t('cashBank.integratedWithCOA')}
-                </Text>
-                <Badge size="xs" colorScheme="green" variant="subtle">
-                  {t('cashBank.asset')}
-                </Badge>
-              </Flex>
-            </Box>
-          );
-        }
+  {
+    header: t("cashBank.accountCode"),
+    accessor: ((row: CashBank) => (
+      <Box>
+        <Text
+          fontFamily="mono"
+          fontWeight="bold"
+          fontSize="sm"
+          color={textColor}
+        >
+          {row.code}
+        </Text>
+        <Text fontSize="xs" color={mutedTextColor}>
+          {row.type} Account
+        </Text>
+      </Box>
+    )) as (row: CashBank) => React.ReactNode,
+  },
+  {
+    header: t("cashBank.accountName"),
+    accessor: ((row: CashBank) => (
+      <Box>
+        <Text fontWeight="medium" fontSize="sm" color={textColor}>
+          {row.name}
+        </Text>
+        <Text fontSize="xs" color={mutedTextColor}>
+          {row.description || t("cashBank.noDescription")}
+        </Text>
+      </Box>
+    )) as (row: CashBank) => React.ReactNode,
+  },
+  {
+    header: t("cashBank.accountType"),
+    accessor: ((row: CashBank) => (
+      <Box textAlign="center">
+        <Flex alignItems="center" gap={2} justifyContent="center" mb={1}>
+          <Text fontSize="lg">{row.type === "CASH" ? "💵" : "🏦"}</Text>
+          <Badge
+            colorScheme={row.type === "CASH" ? "green" : "blue"}
+            variant="solid"
+            size="sm"
+          >
+            {row.type}
+          </Badge>
+        </Flex>
+        <Text fontSize="xs" color={mutedTextColor}>
+          {row.type === "CASH"
+            ? t("cashBank.physicalMoney")
+            : t("cashBank.bankAccount")}
+        </Text>
+      </Box>
+    )) as (row: CashBank) => React.ReactNode,
+  },
+  {
+    header: t("cashBank.glAccount"),
+    accessor: ((row: CashBank) => {
+      if (row.account && row.account.code && row.account.name) {
         return (
           <Box>
             <Flex alignItems="center" gap={2} mb={1}>
-              <Badge size="sm" colorScheme="orange" variant="solid">
-                {t('cashBank.unlinked')}
+              <Badge size="sm" colorScheme="blue" variant="outline">
+                {row.account.code}
               </Badge>
-              <Text fontSize="sm" color="orange.700" fontWeight="medium">
-                {t('cashBank.noCOALink')}
+              <Text
+                fontSize="sm"
+                fontWeight="medium"
+                color="blue.600"
+                noOfLines={1}
+              >
+                {row.account.name}
               </Text>
             </Flex>
             <Flex alignItems="center" gap={1}>
-              <Text fontSize="xs" color="red.500">
-                ⚠️ {t('cashBank.requiresGLSetup')}
+              <Text fontSize="xs" color="green.600">
+                ✅ {t("cashBank.integratedWithCOA")}
               </Text>
+              <Badge size="xs" colorScheme="green" variant="subtle">
+                {t("cashBank.asset")}
+              </Badge>
             </Flex>
           </Box>
         );
-      }) as (row: CashBank) => React.ReactNode
-    },
-    {
-      header: t('cashBank.bankDetails'),
-      accessor: ((row: CashBank) => {
-        if (row.type === 'BANK') {
-          return (
-            <Box>
-              <Text fontWeight="medium" fontSize="sm" color="blue.600" mb={1}>
-                {row.bank_name || 'Unknown Bank'}
-              </Text>
-              <Text fontSize="xs" color={textColor} fontFamily="mono">
-                Account: {row.account_no || 'N/A'}
-              </Text>
-              {row.account_holder_name && (
-                <Text fontSize="xs" color={mutedTextColor}>
-                  Atas Nama: {row.account_holder_name}
-                </Text>
-              )}
-              {row.branch && (
-                <Text fontSize="xs" color={mutedTextColor}>
-                  Cabang: {row.branch}
-                </Text>
-              )}
-              {!row.account_holder_name && !row.branch && (
-                <Text fontSize="xs" color={mutedTextColor}>
-                  Electronic Banking
-                </Text>
-              )}
-            </Box>
-          );
-        }
+      }
+      return (
+        <Box>
+          <Flex alignItems="center" gap={2} mb={1}>
+            <Badge size="sm" colorScheme="orange" variant="solid">
+              {t("cashBank.unlinked")}
+            </Badge>
+            <Text fontSize="sm" color="orange.700" fontWeight="medium">
+              {t("cashBank.noCOALink")}
+            </Text>
+          </Flex>
+          <Flex alignItems="center" gap={1}>
+            <Text fontSize="xs" color="red.500">
+              ⚠️ {t("cashBank.requiresGLSetup")}
+            </Text>
+          </Flex>
+        </Box>
+      );
+    }) as (row: CashBank) => React.ReactNode,
+  },
+  {
+    header: t("cashBank.bankDetails"),
+    accessor: ((row: CashBank) => {
+      if (row.type === "BANK") {
         return (
           <Box>
-            <Text fontSize="sm" color="green.600" fontWeight="medium" mb={1}>
-              {t('cashBank.cashStorage')}
+            <Text fontWeight="medium" fontSize="sm" color="blue.600" mb={1}>
+              {row.bank_name || "Unknown Bank"}
             </Text>
-            <Text fontSize="xs" color={mutedTextColor}>
-              {t('cashBank.physicalCashManagement')}
+            <Text fontSize="xs" color={textColor} fontFamily="mono">
+              Account: {row.account_no || "N/A"}
             </Text>
-            <Text fontSize="xs" color={mutedTextColor}>
-              {t('cashBank.manualTransactions')}
-            </Text>
+            {row.account_holder_name && (
+              <Text fontSize="xs" color={mutedTextColor}>
+                Atas Nama: {row.account_holder_name}
+              </Text>
+            )}
+            {row.branch && (
+              <Text fontSize="xs" color={mutedTextColor}>
+                Cabang: {row.branch}
+              </Text>
+            )}
+            {!row.account_holder_name && !row.branch && (
+              <Text fontSize="xs" color={mutedTextColor}>
+                Electronic Banking
+              </Text>
+            )}
           </Box>
         );
-      }) as (row: CashBank) => React.ReactNode
-    },
-    {
-      header: t('cashBank.currentBalance'),
-      accessor: ((row: CashBank) => {
-        const nativeBalance = row.balance || 0;
-        const bookBalanceIDR = getBookBalanceInIDR(row);
-        const isNegative = nativeBalance < 0;
-        const balanceColor = isNegative ? 'red.500' : (nativeBalance > 0 ? 'green.600' : 'gray.500');
-        const hasFrozen = (row.frozen_amount || 0) > 0;
-        const availableBalance = getAvailableBalance(row);
-        const availableBalanceIDR = getAvailableBalanceInIDR(row);
-        const frozenBalanceIDR = getFrozenBalanceInIDR(row);
-        const isForeignCurrency = (row.currency || 'IDR').toUpperCase() !== 'IDR';
+      }
+      return (
+        <Box>
+          <Text fontSize="sm" color="green.600" fontWeight="medium" mb={1}>
+            {t("cashBank.cashStorage")}
+          </Text>
+          <Text fontSize="xs" color={mutedTextColor}>
+            {t("cashBank.physicalCashManagement")}
+          </Text>
+          <Text fontSize="xs" color={mutedTextColor}>
+            {t("cashBank.manualTransactions")}
+          </Text>
+        </Box>
+      );
+    }) as (row: CashBank) => React.ReactNode,
+  },
+  {
+    header: t("cashBank.currentBalance"),
+    accessor: ((row: CashBank) => {
+      const nativeBalance = row.balance || 0;
+      const bookBalanceIDR = getBookBalanceInIDR(row);
+      const isNegative = nativeBalance < 0;
+      const balanceColor = isNegative
+        ? "red.500"
+        : nativeBalance > 0
+          ? "green.600"
+          : "gray.500";
+      const hasFrozen = (row.frozen_amount || 0) > 0;
+      const availableBalance = getAvailableBalance(row);
+      const availableBalanceIDR = getAvailableBalanceInIDR(row);
+      const frozenBalanceIDR = getFrozenBalanceInIDR(row);
+      const isForeignCurrency = (row.currency || "IDR").toUpperCase() !== "IDR";
 
-        return (
-          <Box textAlign="right">
-            <Text
-              fontWeight="bold"
-              color={balanceColor}
-              fontSize="sm"
-              fontFamily="mono"
-            >
-              {row.currency} {Math.abs(nativeBalance).toLocaleString('id-ID')}
-              {isNegative && ' (Dr)'}
+      return (
+        <Box textAlign="right">
+          <Text
+            fontWeight="bold"
+            color={balanceColor}
+            fontSize="sm"
+            fontFamily="mono"
+          >
+            {row.currency} {Math.abs(nativeBalance).toLocaleString("id-ID")}
+            {isNegative && " (Dr)"}
+          </Text>
+          {isForeignCurrency && (
+            <Text fontSize="xs" color={mutedTextColor} mb={1}>
+              Ekv. Neraca: {formatIDRAmount(bookBalanceIDR)}
             </Text>
-            {isForeignCurrency && (
-              <Text fontSize="xs" color={mutedTextColor} mb={1}>
-                Ekv. Neraca: {formatIDRAmount(bookBalanceIDR)}
+          )}
+          {hasFrozen ? (
+            <>
+              <Text fontSize="xs" color="orange.500" fontFamily="mono" mt={1}>
+                Dana Terblokir: {row.currency}{" "}
+                {(row.frozen_amount || 0).toLocaleString("id-ID")}
               </Text>
-            )}
-            {hasFrozen ? (
-              <>
-                <Text fontSize="xs" color="orange.500" fontFamily="mono" mt={1}>
-                  Dana Terblokir: {row.currency} {(row.frozen_amount || 0).toLocaleString('id-ID')}
-                </Text>
-                {isForeignCurrency && (
-                  <Text fontSize="xs" color="orange.500">
-                    Ekv. IDR Terblokir: {formatIDRAmount(frozenBalanceIDR)}
-                  </Text>
-                )}
-                <Text fontSize="xs" color="green.600" fontWeight="bold" fontFamily="mono">
-                  Tersedia: {row.currency} {availableBalance.toLocaleString('id-ID')}
-                </Text>
-                {isForeignCurrency && (
-                  <Text fontSize="xs" color="green.600">
-                    Ekv. IDR Tersedia: {formatIDRAmount(availableBalanceIDR)}
-                  </Text>
-                )}
-              </>
-            ) : (
-              <Text fontSize="xs" color={mutedTextColor} mb={1}>
-                {isNegative ? t('cashBank.overdraft') : (nativeBalance > 0 ? t('cashBank.creditBalance') : t('cashBank.zeroBalance'))}
-              </Text>
-            )}
-            <HStack spacing={1} justifyContent="flex-end" mt={1}>
-              <Badge
-                size="xs"
-                colorScheme={isNegative ? 'red' : (nativeBalance > 0 ? 'green' : 'gray')}
-                variant="subtle"
-              >
-                {isNegative ? t('cashBank.overdraft').toUpperCase() : (nativeBalance > 0 ? t('cashBank.positive') : t('cashBank.zero'))}
-              </Badge>
               {isForeignCurrency && (
-                <Badge size="xs" colorScheme="blue" variant="outline">
-                  {row.currency}
-                </Badge>
+                <Text fontSize="xs" color="orange.500">
+                  Ekv. IDR Terblokir: {formatIDRAmount(frozenBalanceIDR)}
+                </Text>
               )}
-              {hasFrozen && (
-                <Badge size="xs" colorScheme="orange" variant="solid">
-                  TERBLOKIR
-                </Badge>
-              )}
-            </HStack>
-          </Box>
-        );
-      }) as (row: CashBank) => React.ReactNode
-    },
-    {
-      header: t('cashBank.status'),
-      accessor: ((row: CashBank) => {
-        const isHolding = Boolean(row.is_holding_account);
-        const allowDirectTransactions = row.allow_direct_transactions !== false;
-
-        return (
-          <Box textAlign="center">
-            <VStack spacing={1}>
-              <Badge
-                colorScheme={row.is_active ? 'green' : 'red'}
-                variant="solid"
+              <Text
+                fontSize="xs"
+                color="green.600"
+                fontWeight="bold"
+                fontFamily="mono"
               >
-                {row.is_active ? t('cashBank.active') : t('cashBank.inactive')}
-              </Badge>
-              {isHolding && (
-                <Badge colorScheme="orange" variant="subtle">
-                  HOLDING
-                </Badge>
+                Tersedia: {row.currency}{" "}
+                {availableBalance.toLocaleString("id-ID")}
+              </Text>
+              {isForeignCurrency && (
+                <Text fontSize="xs" color="green.600">
+                  Ekv. IDR Tersedia: {formatIDRAmount(availableBalanceIDR)}
+                </Text>
               )}
-              {!allowDirectTransactions && (
-                <Badge colorScheme="purple" variant="outline">
-                  NON OPERASIONAL
-                </Badge>
-              )}
-            </VStack>
-            <Text fontSize="xs" color={row.is_active ? 'green.600' : 'red.500'} mt={2}>
-              {row.is_active
-                ? (isHolding ? 'Holding account / transfer only' : t('cashBank.operational'))
-                : t('cashBank.suspended')}
+            </>
+          ) : (
+            <Text fontSize="xs" color={mutedTextColor} mb={1}>
+              {isNegative
+                ? t("cashBank.overdraft")
+                : nativeBalance > 0
+                  ? t("cashBank.creditBalance")
+                  : t("cashBank.zeroBalance")}
             </Text>
-          </Box>
-        );
-      }) as (row: CashBank) => React.ReactNode
-    },
-    {
-      header: t('cashBank.actions'),
-      accessor: ((row: CashBank) => {
-        const directTransactionsAllowed = canUseDirectTransactions(row);
+          )}
+          <HStack spacing={1} justifyContent="flex-end" mt={1}>
+            <Badge
+              size="xs"
+              colorScheme={
+                isNegative ? "red" : nativeBalance > 0 ? "green" : "gray"
+              }
+              variant="subtle"
+            >
+              {isNegative
+                ? t("cashBank.overdraft").toUpperCase()
+                : nativeBalance > 0
+                  ? t("cashBank.positive")
+                  : t("cashBank.zero")}
+            </Badge>
+            {isForeignCurrency && (
+              <Badge size="xs" colorScheme="blue" variant="outline">
+                {row.currency}
+              </Badge>
+            )}
+            {hasFrozen && (
+              <Badge size="xs" colorScheme="orange" variant="solid">
+                TERBLOKIR
+              </Badge>
+            )}
+          </HStack>
+        </Box>
+      );
+    }) as (row: CashBank) => React.ReactNode,
+  },
+  {
+    header: t("cashBank.status"),
+    accessor: ((row: CashBank) => {
+      const isHolding = Boolean(row.is_holding_account);
+      const allowDirectTransactions = row.allow_direct_transactions !== false;
 
-        return (
-          <Box>
-            <Menu>
-              <MenuButton
-                as={IconButton}
-                aria-label="Account actions"
-                icon={<FiMoreVertical />}
-                size="sm"
-                variant="ghost"
-                colorScheme="gray"
-              />
-              <MenuList>
+      return (
+        <Box textAlign="center">
+          <VStack spacing={1}>
+            <Badge
+              colorScheme={row.is_active ? "green" : "red"}
+              variant="solid"
+            >
+              {row.is_active ? t("cashBank.active") : t("cashBank.inactive")}
+            </Badge>
+            {isHolding && (
+              <Badge colorScheme="orange" variant="subtle">
+                HOLDING
+              </Badge>
+            )}
+            {!allowDirectTransactions && (
+              <Badge colorScheme="purple" variant="outline">
+                NON OPERASIONAL
+              </Badge>
+            )}
+          </VStack>
+          <Text
+            fontSize="xs"
+            color={row.is_active ? "green.600" : "red.500"}
+            mt={2}
+          >
+            {row.is_active
+              ? isHolding
+                ? "Holding account / transfer only"
+                : t("cashBank.operational")
+              : t("cashBank.suspended")}
+          </Text>
+        </Box>
+      );
+    }) as (row: CashBank) => React.ReactNode,
+  },
+  {
+    header: t("cashBank.actions"),
+    accessor: ((row: CashBank) => {
+      const directTransactionsAllowed = canUseDirectTransactions(row);
+
+      return (
+        <Box>
+          <Menu>
+            <MenuButton
+              as={IconButton}
+              aria-label="Account actions"
+              icon={<FiMoreVertical />}
+              size="sm"
+              variant="ghost"
+              colorScheme="gray"
+            />
+            <MenuList>
+              <MenuItem
+                icon={<FiEye />}
+                onClick={() => onView?.(row)}
+                fontSize="sm"
+              >
+                {t("cashBank.viewDetailsTransactions")}
+              </MenuItem>
+              <MenuItem
+                icon={<FiEdit2 />}
+                onClick={() => onEdit?.(row)}
+                fontSize="sm"
+              >
+                {t("cashBank.editAccountInfo")}
+              </MenuItem>
+              <MenuDivider />
+              <MenuItem
+                icon={<FiTrendingUp />}
+                onClick={() => onDeposit?.(row)}
+                color="green.600"
+                fontSize="sm"
+                isDisabled={!directTransactionsAllowed}
+              >
+                {t("cashBank.makeDeposit")}
+              </MenuItem>
+              <MenuItem
+                icon={<FiTrendingDown />}
+                onClick={() => onWithdraw?.(row)}
+                color="orange.600"
+                fontSize="sm"
+                isDisabled={!directTransactionsAllowed || row.balance <= 0}
+              >
+                {t("cashBank.makeWithdrawal")}
+              </MenuItem>
+              <MenuItem
+                icon={<FiArrowRight />}
+                onClick={() => onTransfer?.(row)}
+                color="blue.600"
+                fontSize="sm"
+                isDisabled={!row.is_active || row.balance <= 0}
+              >
+                {t("cashBank.transferFunds")}
+              </MenuItem>
+              <MenuDivider />
+              <MenuItem
+                icon={<FiTrash2 />}
+                onClick={() => onDelete?.(row)}
+                color="red.600"
+                fontSize="sm"
+                isDisabled={row.balance !== 0}
+              >
+                {t("cashBank.deleteAccount")}
+              </MenuItem>
+              <MenuDivider />
+              <MenuItem
+                icon={<FiLock />}
+                onClick={() => onFreeze?.(row)}
+                color="orange.600"
+                fontSize="sm"
+                isDisabled={!row.is_active || row.balance <= 0}
+              >
+                Blokir Dana
+              </MenuItem>
+              {(row.frozen_amount || 0) > 0 && (
                 <MenuItem
-                  icon={<FiEye />}
-                  onClick={() => onView?.(row)}
-                  fontSize="sm"
-                >
-                  {t('cashBank.viewDetailsTransactions')}
-                </MenuItem>
-                <MenuItem
-                  icon={<FiEdit2 />}
-                  onClick={() => onEdit?.(row)}
-                  fontSize="sm"
-                >
-                  {t('cashBank.editAccountInfo')}
-                </MenuItem>
-                <MenuDivider />
-                <MenuItem
-                  icon={<FiTrendingUp />}
-                  onClick={() => onDeposit?.(row)}
+                  icon={<FiUnlock />}
+                  onClick={() => onUnfreeze?.(row)}
                   color="green.600"
                   fontSize="sm"
+                >
+                  Buka Blokir Dana
+                </MenuItem>
+              )}
+            </MenuList>
+          </Menu>
+
+          {/* Quick Action Buttons */}
+          <HStack spacing={1} mt={2} justify="center">
+            <Tooltip label={t("cashBank.viewDetails")} fontSize="xs">
+              <IconButton
+                aria-label="View details"
+                icon={<FiEye />}
+                size="xs"
+                variant="ghost"
+                colorScheme="gray"
+                onClick={() => onView?.(row)}
+              />
+            </Tooltip>
+
+            <Tooltip label={t("cashBank.editAccount")} fontSize="xs">
+              <IconButton
+                aria-label="Edit account"
+                icon={<FiEdit2 />}
+                size="xs"
+                variant="ghost"
+                colorScheme="blue"
+                onClick={() => onEdit?.(row)}
+              />
+            </Tooltip>
+
+            {row.is_active && (
+              <Tooltip
+                label={
+                  directTransactionsAllowed
+                    ? t("cashBank.deposit")
+                    : "Direct deposit disabled for holding/non-operational accounts"
+                }
+                fontSize="xs"
+              >
+                <IconButton
+                  aria-label="Make deposit"
+                  icon={<FiTrendingUp />}
+                  size="xs"
+                  variant="ghost"
+                  colorScheme="green"
+                  onClick={() => onDeposit?.(row)}
                   isDisabled={!directTransactionsAllowed}
-                >
-                  {t('cashBank.makeDeposit')}
-                </MenuItem>
-                <MenuItem
-                  icon={<FiTrendingDown />}
-                  onClick={() => onWithdraw?.(row)}
-                  color="orange.600"
-                  fontSize="sm"
-                  isDisabled={!directTransactionsAllowed || row.balance <= 0}
-                >
-                  {t('cashBank.makeWithdrawal')}
-                </MenuItem>
-                <MenuItem
+                />
+              </Tooltip>
+            )}
+
+            {row.is_active && row.balance > 0 && (
+              <Tooltip label={t("cashBank.transfer")} fontSize="xs">
+                <IconButton
+                  aria-label="Transfer funds"
                   icon={<FiArrowRight />}
+                  size="xs"
+                  variant="ghost"
+                  colorScheme="orange"
                   onClick={() => onTransfer?.(row)}
-                  color="blue.600"
-                  fontSize="sm"
-                  isDisabled={!row.is_active || row.balance <= 0}
-                >
-                  {t('cashBank.transferFunds')}
-                </MenuItem>
-                <MenuDivider />
-                <MenuItem
-                  icon={<FiTrash2 />}
-                  onClick={() => onDelete?.(row)}
-                  color="red.600"
-                  fontSize="sm"
-                  isDisabled={row.balance !== 0}
-                >
-                  {t('cashBank.deleteAccount')}
-                </MenuItem>
-                <MenuDivider />
-                <MenuItem
-                  icon={<FiLock />}
-                  onClick={() => onFreeze?.(row)}
-                  color="orange.600"
-                  fontSize="sm"
-                  isDisabled={!row.is_active || row.balance <= 0}
-                >
-                  Blokir Dana
-                </MenuItem>
-                {(row.frozen_amount || 0) > 0 && (
-                  <MenuItem
-                    icon={<FiUnlock />}
-                    onClick={() => onUnfreeze?.(row)}
-                    color="green.600"
-                    fontSize="sm"
-                  >
-                    Buka Blokir Dana
-                  </MenuItem>
-                )}
-              </MenuList>
-            </Menu>
-
-            {/* Quick Action Buttons */}
-            <HStack spacing={1} mt={2} justify="center">
-              <Tooltip label={t('cashBank.viewDetails')} fontSize="xs">
-                <IconButton
-                  aria-label="View details"
-                  icon={<FiEye />}
-                  size="xs"
-                  variant="ghost"
-                  colorScheme="gray"
-                  onClick={() => onView?.(row)}
                 />
               </Tooltip>
-
-              <Tooltip label={t('cashBank.editAccount')} fontSize="xs">
-                <IconButton
-                  aria-label="Edit account"
-                  icon={<FiEdit2 />}
-                  size="xs"
-                  variant="ghost"
-                  colorScheme="blue"
-                  onClick={() => onEdit?.(row)}
-                />
-              </Tooltip>
-
-              {row.is_active && (
-                <Tooltip
-                  label={directTransactionsAllowed ? t('cashBank.deposit') : 'Direct deposit disabled for holding/non-operational accounts'}
-                  fontSize="xs"
-                >
-                  <IconButton
-                    aria-label="Make deposit"
-                    icon={<FiTrendingUp />}
-                    size="xs"
-                    variant="ghost"
-                    colorScheme="green"
-                    onClick={() => onDeposit?.(row)}
-                    isDisabled={!directTransactionsAllowed}
-                  />
-                </Tooltip>
-              )}
-
-              {row.is_active && row.balance > 0 && (
-                <Tooltip label={t('cashBank.transfer')} fontSize="xs">
-                  <IconButton
-                    aria-label="Transfer funds"
-                    icon={<FiArrowRight />}
-                    size="xs"
-                    variant="ghost"
-                    colorScheme="orange"
-                    onClick={() => onTransfer?.(row)}
-                  />
-                </Tooltip>
-              )}
-            </HStack>
-          </Box>
-        );
-      }) as (row: CashBank) => React.ReactNode
-    }
-  ];
+            )}
+          </HStack>
+        </Box>
+      );
+    }) as (row: CashBank) => React.ReactNode,
+  },
+];
 
 const CashBankPage: React.FC = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { t } = useTranslation();
   const toast = useToast();
   const { isOpen, onOpen, onClose } = useDisclosure();
 
   // Permission-based access control
-  const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('cash_bank');
+  const { canCreate, canEdit, canDelete, canExport } =
+    useModulePermissions("cash_bank");
 
   // Color mode values
-  const bg = useColorModeValue('white', 'gray.800');
-  const textColor = useColorModeValue('gray.800', 'white');
-  const mutedTextColor = useColorModeValue('gray.500', 'gray.400');
-  const modalContentBg = useColorModeValue('white', 'gray.800');
-  const modalFooterBg = useColorModeValue('gray.50', 'gray.700');
-  const borderColor = useColorModeValue('gray.200', 'gray.600');
-  const readOnlyBg = useColorModeValue('gray.50', 'gray.700');
+  const bg = useColorModeValue("white", "gray.800");
+  const textColor = useColorModeValue("gray.800", "white");
+  const mutedTextColor = useColorModeValue("gray.500", "gray.400");
+  const modalContentBg = useColorModeValue("white", "gray.800");
+  const modalFooterBg = useColorModeValue("gray.50", "gray.700");
+  const borderColor = useColorModeValue("gray.200", "gray.600");
+  const readOnlyBg = useColorModeValue("gray.50", "gray.700");
   const detailHeaderBg = useColorModeValue(
-    'linear-gradient(135deg, #3182ce 0%, #4299e1 100%)',
-    'linear-gradient(135deg, #1a365d 0%, #2b6cb0 100%)'
+    "linear-gradient(135deg, #3182ce 0%, #4299e1 100%)",
+    "linear-gradient(135deg, #1a365d 0%, #2b6cb0 100%)",
   );
   const detailHeroBg = useColorModeValue(
-    'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-    'linear-gradient(135deg, #1f4b99 0%, #0f7c8a 100%)'
+    "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)",
+    "linear-gradient(135deg, #1f4b99 0%, #0f7c8a 100%)",
   );
-  const detailSoftBadgeBg = useColorModeValue('whiteAlpha.300', 'whiteAlpha.200');
-  const detailSectionTitleColor = useColorModeValue('gray.800', 'gray.100');
-  const detailSectionBorderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
-  const detailSuccessPanelBg = useColorModeValue('green.50', 'rgba(72, 187, 120, 0.12)');
-  const detailSuccessPanelBorderColor = useColorModeValue('green.200', 'green.700');
-  const detailSuccessTextColor = useColorModeValue('green.700', 'green.200');
-  const detailWarningTextColor = useColorModeValue('orange.600', 'orange.300');
-  const detailPositiveColor = useColorModeValue('green.600', 'green.300');
-  const detailNegativeColor = useColorModeValue('red.600', 'red.300');
-  const detailNeutralColor = useColorModeValue('gray.600', 'gray.300');
+  const detailSoftBadgeBg = useColorModeValue(
+    "whiteAlpha.300",
+    "whiteAlpha.200",
+  );
+  const detailSectionTitleColor = useColorModeValue("gray.800", "gray.100");
+  const detailSectionBorderColor = useColorModeValue(
+    "gray.200",
+    "whiteAlpha.200",
+  );
+  const detailSuccessPanelBg = useColorModeValue(
+    "green.50",
+    "rgba(72, 187, 120, 0.12)",
+  );
+  const detailSuccessPanelBorderColor = useColorModeValue(
+    "green.200",
+    "green.700",
+  );
+  const detailSuccessTextColor = useColorModeValue("green.700", "green.200");
+  const detailWarningTextColor = useColorModeValue("orange.600", "orange.300");
+  const detailPositiveColor = useColorModeValue("green.600", "green.300");
+  const detailNegativeColor = useColorModeValue("red.600", "red.300");
+  const detailNeutralColor = useColorModeValue("gray.600", "gray.300");
 
   // Tooltip descriptions for cash bank page
   const tooltips = {
-    accountType: 'Tipe akun: Cash (kas tunai) untuk uang fisik, Bank (rekening bank) untuk rekening elektronik',
-    accountCode: 'Kode unik akun sesuai standar Chart of Accounts (COA)',
-    accountName: 'Nama akun kas/bank untuk identifikasi',
-    glAccount: 'Akun General Ledger yang terintegrasi untuk pencatatan otomatis di pembukuan',
-    balance: 'Saldo terkini akun kas/bank',
-    currency: 'Mata uang akun (IDR, USD, dll)',
-    bankName: 'Nama bank untuk akun bank',
-    accountNo: 'Nomor rekening bank',
-    accountHolder: 'Nama pemegang rekening',
-    branch: 'Cabang bank tempat rekening dibuka',
-    description: 'Deskripsi atau catatan tambahan untuk akun ini',
-    isActive: 'Status akun: Active (dapat digunakan) atau Inactive (tidak aktif)',
-    deposit: 'Tambah saldo akun dengan transaksi penerimaan uang (deposit)',
-    withdrawal: 'Kurangi saldo akun dengan transaksi pengeluaran uang (withdrawal)',
-    transfer: 'Transfer dana antar akun kas/bank internal',
-    reconcile: 'Rekonsiliasi saldo dengan catatan bank untuk memastikan keakuratan',
+    accountType:
+      "Tipe akun: Cash (kas tunai) untuk uang fisik, Bank (rekening bank) untuk rekening elektronik",
+    accountCode: "Kode unik akun sesuai standar Chart of Accounts (COA)",
+    accountName: "Nama akun kas/bank untuk identifikasi",
+    glAccount:
+      "Akun General Ledger yang terintegrasi untuk pencatatan otomatis di pembukuan",
+    balance: "Saldo terkini akun kas/bank",
+    currency: "Mata uang akun (IDR, USD, dll)",
+    bankName: "Nama bank untuk akun bank",
+    accountNo: "Nomor rekening bank",
+    accountHolder: "Nama pemegang rekening",
+    branch: "Cabang bank tempat rekening dibuka",
+    description: "Deskripsi atau catatan tambahan untuk akun ini",
+    isActive:
+      "Status akun: Active (dapat digunakan) atau Inactive (tidak aktif)",
+    deposit: "Tambah saldo akun dengan transaksi penerimaan uang (deposit)",
+    withdrawal:
+      "Kurangi saldo akun dengan transaksi pengeluaran uang (withdrawal)",
+    transfer: "Transfer dana antar akun kas/bank internal",
+    reconcile:
+      "Rekonsiliasi saldo dengan catatan bank untuk memastikan keakuratan",
   };
 
   const [accounts, setAccounts] = useState<CashBank[]>([]);
-  const [balanceSummary, setBalanceSummary] = useState<BalanceSummary | null>(null);
+  const [balanceSummary, setBalanceSummary] = useState<BalanceSummary | null>(
+    null,
+  );
+  const [transferRequests, setTransferRequests] = useState<CashBankTransfer[]>(
+    [],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<CashBank | null>(null);
-  const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
+  const [formMode, setFormMode] = useState<"create" | "edit">("create");
+  const [transferActionLoadingId, setTransferActionLoadingId] = useState<
+    number | null
+  >(null);
+  const [selectedTransferForDecision, setSelectedTransferForDecision] =
+    useState<CashBankTransfer | null>(null);
+  const [transferRejectReason, setTransferRejectReason] = useState("");
+  const [transferStatusFilter, setTransferStatusFilter] = useState<
+    "all" | "pending" | "completed" | "rejected"
+  >("all");
+  const [transferPage, setTransferPage] = useState(1);
 
   // Withdrawal form states (for withdrawal only)
-  const [transactionAccount, setTransactionAccount] = useState<CashBank | null>(null);
-  const [transactionMode, setTransactionMode] = useState<'withdrawal'>('withdrawal');
+  const [transactionAccount, setTransactionAccount] = useState<CashBank | null>(
+    null,
+  );
+  const [transactionMode, setTransactionMode] =
+    useState<"withdrawal">("withdrawal");
 
   const {
     isOpen: isDetailModalOpen,
     onOpen: onDetailModalOpen,
-    onClose: onDetailModalClose
+    onClose: onDetailModalClose,
   } = useDisclosure();
 
   const {
     isOpen: isTransactionModalOpen,
     onOpen: onTransactionModalOpen,
-    onClose: onTransactionModalClose
+    onClose: onTransactionModalClose,
   } = useDisclosure();
 
   const {
     isOpen: isTransferModalOpen,
     onOpen: onTransferModalOpen,
-    onClose: onTransferModalClose
+    onClose: onTransferModalClose,
+  } = useDisclosure();
+
+  const {
+    isOpen: isTransferRejectModalOpen,
+    onOpen: onTransferRejectModalOpen,
+    onClose: onTransferRejectModalClose,
   } = useDisclosure();
 
   const {
     isOpen: isTransactionHistoryModalOpen,
     onOpen: onTransactionHistoryModalOpen,
-    onClose: onTransactionHistoryModalClose
+    onClose: onTransactionHistoryModalClose,
   } = useDisclosure();
 
   const {
     isOpen: isDepositModalOpen,
     onOpen: onDepositModalOpen,
-    onClose: onDepositModalClose
+    onClose: onDepositModalClose,
   } = useDisclosure();
 
   const {
     isOpen: isReconcileModalOpen,
     onOpen: onReconcileModalOpen,
-    onClose: onReconcileModalClose
+    onClose: onReconcileModalClose,
   } = useDisclosure();
 
   // Deposit form states
   const [depositAccount, setDepositAccount] = useState<CashBank | null>(null);
 
   // Reconciliation states
-  const [reconcileAccount, setReconcileAccount] = useState<CashBank | null>(null);
+  const [reconcileAccount, setReconcileAccount] = useState<CashBank | null>(
+    null,
+  );
   const [reconciling, setReconciling] = useState(false);
 
   // Frozen fund states
   const {
     isOpen: isFreezeModalOpen,
     onOpen: onFreezeModalOpen,
-    onClose: onFreezeModalClose
+    onClose: onFreezeModalClose,
   } = useDisclosure();
   const [freezeAccount, setFreezeAccount] = useState<CashBank | null>(null);
-  const [freezeMode, setFreezeMode] = useState<'freeze' | 'unfreeze'>('freeze');
+  const [freezeMode, setFreezeMode] = useState<"freeze" | "unfreeze">("freeze");
   const [freezeAmount, setFreezeAmount] = useState<number>(0);
-  const [freezeReason, setFreezeReason] = useState<string>('');
+  const [freezeReason, setFreezeReason] = useState<string>("");
   const [freezeLoading, setFreezeLoading] = useState(false);
   const [frozenHistory, setFrozenHistory] = useState<FrozenHistory[]>([]);
+  const currentUserRole = normalizeUserRole(user?.role);
+  const canApproveTransferRequests =
+    currentUserRole === "admin" ||
+    currentUserRole === "finance" ||
+    currentUserRole === "finance_manager";
+  const requiresFinanceManagerApprovalForTransfer =
+    currentUserRole === "employee" ||
+    currentUserRole === "finance_staff" ||
+    currentUserRole === "staff";
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const [accountsData, summaryData, postedBalances] = await Promise.all([
-        cashbankService.getCashBankAccounts({ includeHolding: true }),
-        cashbankService.getBalanceSummary(),
-        accountService.getPostedCOABalances(token!)
-      ]);
+      const [accountsData, summaryData, postedBalances, transferData] =
+        await Promise.all([
+          cashbankService.getCashBankAccounts({ includeHolding: true }),
+          cashbankService.getBalanceSummary(),
+          accountService.getPostedCOABalances(token!),
+          cashbankService.getTransfers({ limit: 100 }),
+        ]);
 
       // Build map of COA posted-only raw balances by account_id
       const ssotMap = new Map<number, number>();
-      postedBalances.forEach((row: any) => ssotMap.set(row.account_id, row.raw_balance));
+      postedBalances.forEach((row: any) =>
+        ssotMap.set(row.account_id, row.raw_balance),
+      );
 
       // Merge posted-only balances into each cash/bank row (by linked GL account id)
       // IMPORTANT: Prefer real-time CashBank balance; only override with SSOT posted balance
       // when SSOT has a non-zero value. This avoids showing 0 right after a deposit/withdrawal
       // before the SSOT materialized view refreshes.
-      const merged = (Array.isArray(accountsData) ? accountsData : []).map((acc: CashBank) => {
-        const glId = acc.account_id || acc.account?.id;
-        if (glId && ssotMap.has(glId)) {
-          const ssotVal = ssotMap.get(glId)!;
-          if (typeof ssotVal === 'number' && Math.abs(ssotVal) > 0.0000001) {
-            const current = getBookBalanceInIDR(acc);
-            const diff = Math.abs(ssotVal - current);
-            const rel = current !== 0 ? diff / Math.abs(current) : 0;
-            if (diff <= 1 || rel <= 0.01) {
-              return (acc.currency || 'IDR').toUpperCase() === 'IDR'
-                ? { ...acc, balance: ssotVal }
-                : { ...acc, book_balance_idr: ssotVal };
+      const merged = (Array.isArray(accountsData) ? accountsData : []).map(
+        (acc: CashBank) => {
+          const glId = acc.account_id || acc.account?.id;
+          if (glId && ssotMap.has(glId)) {
+            const ssotVal = ssotMap.get(glId)!;
+            if (typeof ssotVal === "number" && Math.abs(ssotVal) > 0.0000001) {
+              const current = getBookBalanceInIDR(acc);
+              const diff = Math.abs(ssotVal - current);
+              const rel = current !== 0 ? diff / Math.abs(current) : 0;
+              if (diff <= 1 || rel <= 0.01) {
+                return (acc.currency || "IDR").toUpperCase() === "IDR"
+                  ? { ...acc, balance: ssotVal }
+                  : { ...acc, book_balance_idr: ssotVal };
+              }
             }
           }
-        }
-        return acc;
-      });
+          return acc;
+        },
+      );
 
       setAccounts(merged);
+      setTransferRequests(Array.isArray(transferData) ? transferData : []);
 
       // Recompute summary from merged to keep cards consistent
-      const total_cash = merged.filter(a => a.type === 'CASH').reduce((sum, a) => sum + getBookBalanceInIDR(a), 0);
-      const total_bank = merged.filter(a => a.type === 'BANK').reduce((sum, a) => sum + getBookBalanceInIDR(a), 0);
+      const total_cash = merged
+        .filter((a) => a.type === "CASH")
+        .reduce((sum, a) => sum + getBookBalanceInIDR(a), 0);
+      const total_bank = merged
+        .filter((a) => a.type === "BANK")
+        .reduce((sum, a) => sum + getBookBalanceInIDR(a), 0);
       const total_balance = total_cash + total_bank;
-      setBalanceSummary({ ...(summaryData || {}), total_cash, total_bank, total_balance, by_account: [], by_currency: {} } as any);
+      setBalanceSummary({
+        ...(summaryData || {}),
+        total_cash,
+        total_bank,
+        total_balance,
+        by_account: [],
+        by_currency: {},
+      } as any);
     } catch (err: any) {
-      console.error('Error fetching cash bank data:', err);
-      const errorMessage = err.response?.data?.details || err.message || 'Failed to fetch cash & bank data';
+      console.error("Error fetching cash bank data:", err);
+      const errorMessage =
+        err.response?.data?.details ||
+        err.message ||
+        "Failed to fetch cash & bank data";
       setError(errorMessage);
       toast({
-        title: 'Error',
+        title: "Error",
         description: errorMessage,
-        status: 'error',
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -743,13 +956,13 @@ const CashBankPage: React.FC = () => {
 
   const handleAddAccount = () => {
     setSelectedAccount(null);
-    setFormMode('create');
+    setFormMode("create");
     onOpen();
   };
 
   const handleEditAccount = (account: CashBank) => {
     setSelectedAccount(account);
-    setFormMode('edit');
+    setFormMode("edit");
     onOpen();
   };
 
@@ -761,9 +974,10 @@ const CashBankPage: React.FC = () => {
   const handleDeposit = (account: CashBank) => {
     if (!canUseDirectTransactions(account)) {
       toast({
-        title: 'Direct deposit disabled',
-        description: 'Akun holding atau non-operasional hanya boleh dipakai lewat transfer atau flow khusus jurnal.',
-        status: 'warning',
+        title: "Direct deposit disabled",
+        description:
+          "Akun holding atau non-operasional hanya boleh dipakai lewat transfer atau flow khusus jurnal.",
+        status: "warning",
         duration: 5000,
         isClosable: true,
       });
@@ -776,16 +990,17 @@ const CashBankPage: React.FC = () => {
   const handleWithdraw = (account: CashBank) => {
     if (!canUseDirectTransactions(account)) {
       toast({
-        title: 'Direct withdrawal disabled',
-        description: 'Akun holding atau non-operasional hanya boleh dipakai lewat transfer atau flow khusus jurnal.',
-        status: 'warning',
+        title: "Direct withdrawal disabled",
+        description:
+          "Akun holding atau non-operasional hanya boleh dipakai lewat transfer atau flow khusus jurnal.",
+        status: "warning",
         duration: 5000,
         isClosable: true,
       });
       return;
     }
     setTransactionAccount(account);
-    setTransactionMode('withdrawal');
+    setTransactionMode("withdrawal");
     onTransactionModalOpen();
   };
 
@@ -801,29 +1016,35 @@ const CashBankPage: React.FC = () => {
 
   const handleFreeze = (account: CashBank) => {
     setFreezeAccount(account);
-    setFreezeMode('freeze');
+    setFreezeMode("freeze");
     setFreezeAmount(0);
-    setFreezeReason('');
+    setFreezeReason("");
     // Load frozen history
-    cashbankService.getFrozenHistory(account.id).then(setFrozenHistory).catch(() => setFrozenHistory([]));
+    cashbankService
+      .getFrozenHistory(account.id)
+      .then(setFrozenHistory)
+      .catch(() => setFrozenHistory([]));
     onFreezeModalOpen();
   };
 
   const handleUnfreeze = (account: CashBank) => {
     setFreezeAccount(account);
-    setFreezeMode('unfreeze');
+    setFreezeMode("unfreeze");
     setFreezeAmount(0);
-    setFreezeReason('');
-    cashbankService.getFrozenHistory(account.id).then(setFrozenHistory).catch(() => setFrozenHistory([]));
+    setFreezeReason("");
+    cashbankService
+      .getFrozenHistory(account.id)
+      .then(setFrozenHistory)
+      .catch(() => setFrozenHistory([]));
     onFreezeModalOpen();
   };
 
   const handleFreezeSubmit = async () => {
     if (!freezeAccount || freezeAmount <= 0 || !freezeReason.trim()) {
       toast({
-        title: 'Data tidak lengkap',
-        description: 'Masukkan jumlah dan alasan pemblokiran/pembukaan blokir',
-        status: 'warning',
+        title: "Data tidak lengkap",
+        description: "Masukkan jumlah dan alasan pemblokiran/pembukaan blokir",
+        status: "warning",
         duration: 3000,
         isClosable: true,
       });
@@ -832,21 +1053,27 @@ const CashBankPage: React.FC = () => {
 
     try {
       setFreezeLoading(true);
-      if (freezeMode === 'freeze') {
-        await cashbankService.freezeAmount(freezeAccount.id, { amount: freezeAmount, reason: freezeReason });
+      if (freezeMode === "freeze") {
+        await cashbankService.freezeAmount(freezeAccount.id, {
+          amount: freezeAmount,
+          reason: freezeReason,
+        });
         toast({
-          title: 'Dana berhasil diblokir',
-          description: `${freezeAccount.currency} ${freezeAmount.toLocaleString('id-ID')} telah diblokir pada ${freezeAccount.name}`,
-          status: 'success',
+          title: "Dana berhasil diblokir",
+          description: `${freezeAccount.currency} ${freezeAmount.toLocaleString("id-ID")} telah diblokir pada ${freezeAccount.name}`,
+          status: "success",
           duration: 4000,
           isClosable: true,
         });
       } else {
-        await cashbankService.unfreezeAmount(freezeAccount.id, { amount: freezeAmount, reason: freezeReason });
+        await cashbankService.unfreezeAmount(freezeAccount.id, {
+          amount: freezeAmount,
+          reason: freezeReason,
+        });
         toast({
-          title: 'Blokir dana berhasil dibuka',
-          description: `${freezeAccount.currency} ${freezeAmount.toLocaleString('id-ID')} telah dibuka blokirnya pada ${freezeAccount.name}`,
-          status: 'success',
+          title: "Blokir dana berhasil dibuka",
+          description: `${freezeAccount.currency} ${freezeAmount.toLocaleString("id-ID")} telah dibuka blokirnya pada ${freezeAccount.name}`,
+          status: "success",
           duration: 4000,
           isClosable: true,
         });
@@ -854,11 +1081,18 @@ const CashBankPage: React.FC = () => {
       onFreezeModalClose();
       fetchData();
     } catch (error: any) {
-      const errMsg = error.response?.data?.details || error.response?.data?.message || error.message || 'Gagal memproses';
+      const errMsg =
+        error.response?.data?.details ||
+        error.response?.data?.message ||
+        error.message ||
+        "Gagal memproses";
       toast({
-        title: freezeMode === 'freeze' ? 'Gagal memblokir dana' : 'Gagal membuka blokir',
+        title:
+          freezeMode === "freeze"
+            ? "Gagal memblokir dana"
+            : "Gagal membuka blokir",
         description: errMsg,
-        status: 'error',
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -874,7 +1108,7 @@ const CashBankPage: React.FC = () => {
 
   const handleOpenReconciliationPage = () => {
     // Navigate to dedicated reconciliation page
-    window.open('/cash-bank-reconciliation', '_blank');
+    window.open("/cash-bank-reconciliation", "_blank");
     onReconcileModalClose();
   };
 
@@ -882,56 +1116,59 @@ const CashBankPage: React.FC = () => {
     try {
       setReconciling(true);
 
-      const response = await fetch('/api/v1/dashboard/finance', {
+      const response = await fetch("/api/v1/dashboard/finance", {
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
       });
 
-      if (!response.ok) throw new Error('Failed to check reconciliation status');
+      if (!response.ok)
+        throw new Error("Failed to check reconciliation status");
 
       const result = await response.json();
       const bankRecon = result.data.bank_reconciliation;
 
-      let statusMessage = '';
-      let statusColor: 'success' | 'warning' | 'error' | 'info' = 'info';
+      let statusMessage = "";
+      let statusColor: "success" | "warning" | "error" | "info" = "info";
 
       switch (bankRecon.status) {
-        case 'never_reconciled':
-          statusMessage = 'Bank reconciliation has never been performed. Please run reconciliation to ensure data accuracy.';
-          statusColor = 'error';
+        case "never_reconciled":
+          statusMessage =
+            "Bank reconciliation has never been performed. Please run reconciliation to ensure data accuracy.";
+          statusColor = "error";
           break;
-        case 'needs_attention':
+        case "needs_attention":
           statusMessage = `Bank reconciliation is overdue (${bankRecon.days_ago} days ago). Please perform reconciliation soon.`;
-          statusColor = 'warning';
+          statusColor = "warning";
           break;
-        case 'recent':
+        case "recent":
           statusMessage = `Bank reconciliation was performed ${bankRecon.days_ago} days ago. Status is acceptable.`;
-          statusColor = 'warning';
+          statusColor = "warning";
           break;
-        case 'up_to_date':
-          statusMessage = 'Bank reconciliation is up to date. All accounts are properly reconciled.';
-          statusColor = 'success';
+        case "up_to_date":
+          statusMessage =
+            "Bank reconciliation is up to date. All accounts are properly reconciled.";
+          statusColor = "success";
           break;
         default:
-          statusMessage = 'Reconciliation status is unknown. Please check manually.';
-          statusColor = 'info';
+          statusMessage =
+            "Reconciliation status is unknown. Please check manually.";
+          statusColor = "info";
       }
 
       toast({
-        title: 'Reconciliation Status',
+        title: "Reconciliation Status",
         description: statusMessage,
         status: statusColor,
         duration: 6000,
         isClosable: true,
       });
-
     } catch (error: any) {
       toast({
-        title: 'Status Check Failed',
-        description: error.message || 'Failed to check reconciliation status',
-        status: 'error',
+        title: "Status Check Failed",
+        description: error.message || "Failed to check reconciliation status",
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -944,34 +1181,128 @@ const CashBankPage: React.FC = () => {
     fetchData(); // Refresh data after successful transaction
   };
 
+  const handleApproveTransferRequest = async (transfer: CashBankTransfer) => {
+    try {
+      setTransferActionLoadingId(transfer.id);
+      await cashbankService.approveTransfer(transfer.id);
+      toast({
+        title: "Transfer disetujui",
+        description: `Transfer ${transfer.transfer_number} sudah diproses dan saldo akun sudah diperbarui.`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      fetchData();
+    } catch (approveError: any) {
+      const message =
+        approveError.response?.data?.details ||
+        approveError.message ||
+        "Gagal approve transfer";
+      toast({
+        title: "Approve transfer gagal",
+        description: message,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setTransferActionLoadingId(null);
+    }
+  };
+
+  const handleOpenRejectTransferModal = (transfer: CashBankTransfer) => {
+    setSelectedTransferForDecision(transfer);
+    setTransferRejectReason("");
+    onTransferRejectModalOpen();
+  };
+
+  const handleCloseRejectTransferModal = () => {
+    setSelectedTransferForDecision(null);
+    setTransferRejectReason("");
+    onTransferRejectModalClose();
+  };
+
+  const handleRejectTransferRequest = async () => {
+    if (!selectedTransferForDecision) {
+      return;
+    }
+
+    if (!transferRejectReason.trim()) {
+      toast({
+        title: "Alasan reject wajib diisi",
+        description:
+          "Masukkan alasan penolakan agar requester tahu apa yang perlu diperbaiki.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    try {
+      setTransferActionLoadingId(selectedTransferForDecision.id);
+      await cashbankService.rejectTransfer(
+        selectedTransferForDecision.id,
+        transferRejectReason.trim(),
+      );
+      toast({
+        title: "Transfer ditolak",
+        description: `Transfer ${selectedTransferForDecision.transfer_number} sudah ditandai rejected.`,
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      handleCloseRejectTransferModal();
+      fetchData();
+    } catch (rejectError: any) {
+      const message =
+        rejectError.response?.data?.details ||
+        rejectError.message ||
+        "Gagal reject transfer";
+      toast({
+        title: "Reject transfer gagal",
+        description: message,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setTransferActionLoadingId(null);
+    }
+  };
+
   const handleDelete = async (account: CashBank) => {
     if (account.balance !== 0) {
       toast({
-        title: t('cashBank.cannotDeleteAccount'),
-        description: t('cashBank.accountMustHaveZeroBalance'),
-        status: 'error',
+        title: t("cashBank.cannotDeleteAccount"),
+        description: t("cashBank.accountMustHaveZeroBalance"),
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
       return;
     }
 
-    if (window.confirm(`${t('cashBank.confirmDelete')} "${account.name}"? ${t('cashBank.cannotBeUndone')}`)) {
+    if (
+      window.confirm(
+        `${t("cashBank.confirmDelete")} "${account.name}"? ${t("cashBank.cannotBeUndone")}`,
+      )
+    ) {
       try {
         await cashbankService.deleteCashBankAccount(account.id);
         toast({
-          title: t('cashBank.accountDeleted'),
-          description: `${t('common.name')} "${account.name}" ${t('cashBank.accountDeletedSuccess')}`,
-          status: 'success',
+          title: t("cashBank.accountDeleted"),
+          description: `${t("common.name")} "${account.name}" ${t("cashBank.accountDeletedSuccess")}`,
+          status: "success",
           duration: 3000,
           isClosable: true,
         });
         fetchData();
       } catch (error: any) {
         toast({
-          title: t('cashBank.deleteFailed'),
+          title: t("cashBank.deleteFailed"),
           description: getDeleteCashBankErrorMessage(error, account.name),
-          status: 'error',
+          status: "error",
           duration: 5000,
           isClosable: true,
         });
@@ -989,9 +1320,9 @@ const CashBankPage: React.FC = () => {
       const result = await cashbankService.fixGLAccountLinks();
 
       toast({
-        title: t('cashBank.glAccountLinksFixed'),
-        description: `${t('cashBank.successfullyFixed')} ${result.fixed_count} ${t('cashBank.cashBankAccounts')}`,
-        status: 'success',
+        title: t("cashBank.glAccountLinksFixed"),
+        description: `${t("cashBank.successfullyFixed")} ${result.fixed_count} ${t("cashBank.cashBankAccounts")}`,
+        status: "success",
         duration: 5000,
         isClosable: true,
       });
@@ -1000,9 +1331,12 @@ const CashBankPage: React.FC = () => {
       fetchData();
     } catch (error: any) {
       toast({
-        title: t('cashBank.failedToFixGLLinks'),
-        description: error.response?.data?.details || error.message || t('cashBank.errorFixingGLLinks'),
-        status: 'error',
+        title: t("cashBank.failedToFixGLLinks"),
+        description:
+          error.response?.data?.details ||
+          error.message ||
+          t("cashBank.errorFixingGLLinks"),
+        status: "error",
         duration: 5000,
         isClosable: true,
       });
@@ -1013,8 +1347,52 @@ const CashBankPage: React.FC = () => {
 
   // Separate cash and bank accounts
   const safeAccounts = Array.isArray(accounts) ? accounts : [];
-  const cashAccounts = safeAccounts.filter(acc => acc.type === 'CASH' && acc.is_active);
-  const bankAccounts = safeAccounts.filter(acc => acc.type === 'BANK' && acc.is_active);
+  const safeTransferRequests = Array.isArray(transferRequests)
+    ? transferRequests
+    : [];
+  const pendingTransferApprovalCount = safeTransferRequests.filter(
+    (transfer) => transfer.status === "PENDING_APPROVAL",
+  ).length;
+  const approvedTransferCount = safeTransferRequests.filter(
+    (transfer) => transfer.status === "COMPLETED",
+  ).length;
+  const rejectedTransferCount = safeTransferRequests.filter(
+    (transfer) => transfer.status === "REJECTED",
+  ).length;
+  const filteredTransferRequests = safeTransferRequests.filter((transfer) => {
+    switch (transferStatusFilter) {
+      case "pending":
+        return transfer.status === "PENDING_APPROVAL";
+      case "completed":
+        return transfer.status === "COMPLETED";
+      case "rejected":
+        return transfer.status === "REJECTED";
+      default:
+        return true;
+    }
+  });
+  const transferTotalPages = Math.max(
+    1,
+    Math.ceil(filteredTransferRequests.length / TRANSFER_PAGE_SIZE),
+  );
+  const currentTransferPage = Math.min(transferPage, transferTotalPages);
+  const transferPageStartIndex = (currentTransferPage - 1) * TRANSFER_PAGE_SIZE;
+  const paginatedTransferRequests = filteredTransferRequests.slice(
+    transferPageStartIndex,
+    transferPageStartIndex + TRANSFER_PAGE_SIZE,
+  );
+  const currentTransferRangeStart =
+    filteredTransferRequests.length === 0 ? 0 : transferPageStartIndex + 1;
+  const currentTransferRangeEnd = Math.min(
+    transferPageStartIndex + TRANSFER_PAGE_SIZE,
+    filteredTransferRequests.length,
+  );
+  const cashAccounts = safeAccounts.filter(
+    (acc) => acc.type === "CASH" && acc.is_active,
+  );
+  const bankAccounts = safeAccounts.filter(
+    (acc) => acc.type === "BANK" && acc.is_active,
+  );
 
   // Get columns with handlers
   const accountColumns = getAccountColumns(
@@ -1029,7 +1407,7 @@ const CashBankPage: React.FC = () => {
     handleFreeze,
     handleUnfreeze,
     textColor,
-    mutedTextColor
+    mutedTextColor,
   );
 
   if (loading) {
@@ -1038,7 +1416,7 @@ const CashBankPage: React.FC = () => {
         <CompanyTypeGuard>
           <SimpleLayout>
             <Box>
-              <Text>{t('common.loading')}</Text>
+              <Text>{t("common.loading")}</Text>
             </Box>
           </SimpleLayout>
         </CompanyTypeGuard>
@@ -1054,14 +1432,14 @@ const CashBankPage: React.FC = () => {
             <VStack spacing={6} align="stretch">
               {/* Header */}
               <Flex justify="space-between" align="center" wrap="wrap" gap={4}>
-                <Heading size="lg">{t('cashBank.title')}</Heading>
+                <Heading size="lg">{t("cashBank.title")}</Heading>
                 <HStack spacing={3}>
                   <Button
                     colorScheme="blue"
                     leftIcon={<FiPlus />}
                     onClick={handleAddAccount}
                   >
-                    {t('common.add')} {t('accounts.title')}
+                    {t("common.add")} {t("accounts.title")}
                   </Button>
                 </HStack>
               </Flex>
@@ -1078,20 +1456,22 @@ const CashBankPage: React.FC = () => {
               <Alert status="info" mb={6} borderRadius="lg">
                 <AlertIcon />
                 <Box>
-                  <AlertTitle>{t('cashBank.chartOfAccountsIntegration')}</AlertTitle>
+                  <AlertTitle>
+                    {t("cashBank.chartOfAccountsIntegration")}
+                  </AlertTitle>
                   <AlertDescription>
                     <Text fontSize="sm" mb={2}>
-                      {t('cashBank.integrationDesc')}
+                      {t("cashBank.integrationDesc")}
                     </Text>
                     <Flex gap={4} alignItems="center" flexWrap="wrap">
                       <Text fontSize="xs" color="blue.600">
-                        🔄 {t('cashBank.autoCreatesGL')}
+                        🔄 {t("cashBank.autoCreatesGL")}
                       </Text>
                       <Text fontSize="xs" color="green.600">
-                        📋 {t('cashBank.linksToBalanceSheetShort')}
+                        📋 {t("cashBank.linksToBalanceSheetShort")}
                       </Text>
                       <Text fontSize="xs" color="purple.600">
-                        🔍 {t('cashBank.fullAuditTrailShort')}
+                        🔍 {t("cashBank.fullAuditTrailShort")}
                       </Text>
                       <Button
                         as="a"
@@ -1102,7 +1482,7 @@ const CashBankPage: React.FC = () => {
                         colorScheme="blue"
                         leftIcon={<Text fontSize="xs">🔗</Text>}
                       >
-                        {t('cashBank.viewChartOfAccounts')}
+                        {t("cashBank.viewChartOfAccounts")}
                       </Button>
                     </Flex>
                   </AlertDescription>
@@ -1111,18 +1491,30 @@ const CashBankPage: React.FC = () => {
 
               {/* COA Integration Status */}
               {safeAccounts.length > 0 && (
-                <Card mb={6} borderLeft="4px" borderLeftColor={safeAccounts.some(acc => !acc.account) ? 'orange.400' : 'green.400'}>
+                <Card
+                  mb={6}
+                  borderLeft="4px"
+                  borderLeftColor={
+                    safeAccounts.some((acc) => !acc.account)
+                      ? "orange.400"
+                      : "green.400"
+                  }
+                >
                   <CardBody>
                     <Flex justify="space-between" align="center">
                       <Box>
                         <Text fontSize="sm" fontWeight="medium" mb={1}>
-                          {safeAccounts.some(acc => !acc.account) ? `⚠️ ${t('cashBank.coaIntegrationStatusDesc')}` : `✅ ${t('cashBank.coaIntegrationStatusDesc')}`}
+                          {safeAccounts.some((acc) => !acc.account)
+                            ? `⚠️ ${t("cashBank.coaIntegrationStatusDesc")}`
+                            : `✅ ${t("cashBank.coaIntegrationStatusDesc")}`}
                         </Text>
                         <Text fontSize="xs" color="gray.600">
-                          {safeAccounts.filter(acc => acc.account).length} of {safeAccounts.length} {t('cashBank.accountsLinkedToCOA')}
+                          {safeAccounts.filter((acc) => acc.account).length} of{" "}
+                          {safeAccounts.length}{" "}
+                          {t("cashBank.accountsLinkedToCOA")}
                         </Text>
                       </Box>
-                      {safeAccounts.some(acc => !acc.account) && (
+                      {safeAccounts.some((acc) => !acc.account) && (
                         <Button
                           size="xs"
                           colorScheme="orange"
@@ -1130,7 +1522,7 @@ const CashBankPage: React.FC = () => {
                           onClick={handleFixGLLinks}
                           isLoading={loading}
                         >
-                          {t('cashBank.fixMissingLinks')}
+                          {t("cashBank.fixMissingLinks")}
                         </Button>
                       )}
                     </Flex>
@@ -1139,15 +1531,22 @@ const CashBankPage: React.FC = () => {
               )}
 
               {/* Summary Cards */}
-              <SimpleGrid columns={{ base: 1, md: 3, lg: 5 }} spacing={6} mb={8}>
+              <SimpleGrid
+                columns={{ base: 1, md: 3, lg: 5 }}
+                spacing={6}
+                mb={8}
+              >
                 <Card>
                   <CardBody>
                     <Stat>
-                      <StatLabel>{t('cashBank.totalBankBalance')}</StatLabel>
+                      <StatLabel>{t("cashBank.totalBankBalance")}</StatLabel>
                       <StatNumber color="blue.500">
-                        IDR {balanceSummary?.total_bank?.toLocaleString() || '0'}
+                        IDR{" "}
+                        {balanceSummary?.total_bank?.toLocaleString() || "0"}
                       </StatNumber>
-                      <StatHelpText>{bankAccounts.length} {t('cashBank.accounts')}</StatHelpText>
+                      <StatHelpText>
+                        {bankAccounts.length} {t("cashBank.accounts")}
+                      </StatHelpText>
                     </Stat>
                   </CardBody>
                 </Card>
@@ -1155,11 +1554,14 @@ const CashBankPage: React.FC = () => {
                 <Card>
                   <CardBody>
                     <Stat>
-                      <StatLabel>{t('cashBank.totalCashBalance')}</StatLabel>
+                      <StatLabel>{t("cashBank.totalCashBalance")}</StatLabel>
                       <StatNumber color="green.500">
-                        IDR {balanceSummary?.total_cash?.toLocaleString() || '0'}
+                        IDR{" "}
+                        {balanceSummary?.total_cash?.toLocaleString() || "0"}
                       </StatNumber>
-                      <StatHelpText>{cashAccounts.length} {t('cashBank.accounts')}</StatHelpText>
+                      <StatHelpText>
+                        {cashAccounts.length} {t("cashBank.accounts")}
+                      </StatHelpText>
                     </Stat>
                   </CardBody>
                 </Card>
@@ -1167,11 +1569,12 @@ const CashBankPage: React.FC = () => {
                 <Card>
                   <CardBody>
                     <Stat>
-                      <StatLabel>{t('cashBank.totalBalance')}</StatLabel>
+                      <StatLabel>{t("cashBank.totalBalance")}</StatLabel>
                       <StatNumber color="purple.500">
-                        IDR {balanceSummary?.total_balance?.toLocaleString() || '0'}
+                        IDR{" "}
+                        {balanceSummary?.total_balance?.toLocaleString() || "0"}
                       </StatNumber>
-                      <StatHelpText>{t('cashBank.combinedTotal')}</StatHelpText>
+                      <StatHelpText>{t("cashBank.combinedTotal")}</StatHelpText>
                     </Stat>
                   </CardBody>
                 </Card>
@@ -1181,9 +1584,21 @@ const CashBankPage: React.FC = () => {
                     <Stat>
                       <StatLabel color="orange.600">Dana Terblokir</StatLabel>
                       <StatNumber color="orange.500">
-                        IDR {safeAccounts.reduce((sum, acc) => sum + getFrozenBalanceInIDR(acc), 0).toLocaleString('id-ID')}
+                        IDR{" "}
+                        {safeAccounts
+                          .reduce(
+                            (sum, acc) => sum + getFrozenBalanceInIDR(acc),
+                            0,
+                          )
+                          .toLocaleString("id-ID")}
                       </StatNumber>
-                      <StatHelpText>{safeAccounts.filter(a => (a.frozen_amount || 0) > 0).length} akun terblokir</StatHelpText>
+                      <StatHelpText>
+                        {
+                          safeAccounts.filter((a) => (a.frozen_amount || 0) > 0)
+                            .length
+                        }{" "}
+                        akun terblokir
+                      </StatHelpText>
                     </Stat>
                   </CardBody>
                 </Card>
@@ -1193,7 +1608,13 @@ const CashBankPage: React.FC = () => {
                     <Stat>
                       <StatLabel color="green.600">Saldo Tersedia</StatLabel>
                       <StatNumber color="green.500">
-                        IDR {safeAccounts.reduce((sum, acc) => sum + getAvailableBalanceInIDR(acc), 0).toLocaleString('id-ID')}
+                        IDR{" "}
+                        {safeAccounts
+                          .reduce(
+                            (sum, acc) => sum + getAvailableBalanceInIDR(acc),
+                            0,
+                          )
+                          .toLocaleString("id-ID")}
                       </StatNumber>
                       <StatHelpText>Total yang bisa digunakan</StatHelpText>
                     </Stat>
@@ -1201,21 +1622,433 @@ const CashBankPage: React.FC = () => {
                 </Card>
               </SimpleGrid>
 
+              <Box mb={8}>
+                <Flex
+                  justify="space-between"
+                  align={{ base: "start", md: "center" }}
+                  gap={3}
+                  mb={4}
+                  wrap="wrap"
+                >
+                  <Box>
+                    <Heading size="md">Transfer Antar Bank</Heading>
+                    <Text fontSize="sm" color={mutedTextColor} mt={1}>
+                      {canApproveTransferRequests
+                        ? "Approve atau reject transfer yang dibuat staff dan finance staff langsung dari sini."
+                        : "Pantau status transfer antar bank yang Anda buat dari halaman cash & bank."}
+                    </Text>
+                  </Box>
+                  <HStack spacing={3}>
+                    <Badge
+                      colorScheme={
+                        pendingTransferApprovalCount > 0 ? "orange" : "gray"
+                      }
+                      px={3}
+                      py={1}
+                      borderRadius="full"
+                    >
+                      {pendingTransferApprovalCount} pending
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      leftIcon={<FiRefreshCw />}
+                      onClick={fetchData}
+                    >
+                      Refresh
+                    </Button>
+                  </HStack>
+                </Flex>
+
+                <Card>
+                  <CardBody p={0}>
+                    <Box
+                      px={5}
+                      py={4}
+                      borderBottom="1px solid"
+                      borderColor={borderColor}
+                      bg={readOnlyBg}
+                    >
+                      <SimpleGrid columns={{ base: 2, md: 4 }} spacing={3}>
+                        <Box
+                          p={3}
+                          borderRadius="lg"
+                          bg={bg}
+                          border="1px solid"
+                          borderColor={borderColor}
+                        >
+                          <Text fontSize="xs" color={mutedTextColor}>
+                            Total Request
+                          </Text>
+                          <Text fontSize="xl" fontWeight="bold">
+                            {safeTransferRequests.length}
+                          </Text>
+                        </Box>
+                        <Box
+                          p={3}
+                          borderRadius="lg"
+                          bg="orange.50"
+                          border="1px solid"
+                          borderColor="orange.200"
+                        >
+                          <Text fontSize="xs" color="orange.700">
+                            Pending
+                          </Text>
+                          <Text
+                            fontSize="xl"
+                            fontWeight="bold"
+                            color="orange.600"
+                          >
+                            {pendingTransferApprovalCount}
+                          </Text>
+                        </Box>
+                        <Box
+                          p={3}
+                          borderRadius="lg"
+                          bg="green.50"
+                          border="1px solid"
+                          borderColor="green.200"
+                        >
+                          <Text fontSize="xs" color="green.700">
+                            Approved
+                          </Text>
+                          <Text
+                            fontSize="xl"
+                            fontWeight="bold"
+                            color="green.600"
+                          >
+                            {approvedTransferCount}
+                          </Text>
+                        </Box>
+                        <Box
+                          p={3}
+                          borderRadius="lg"
+                          bg="red.50"
+                          border="1px solid"
+                          borderColor="red.200"
+                        >
+                          <Text fontSize="xs" color="red.700">
+                            Rejected
+                          </Text>
+                          <Text fontSize="xl" fontWeight="bold" color="red.600">
+                            {rejectedTransferCount}
+                          </Text>
+                        </Box>
+                      </SimpleGrid>
+
+                      <Flex
+                        mt={4}
+                        justify="space-between"
+                        align={{ base: "start", md: "center" }}
+                        gap={3}
+                        wrap="wrap"
+                      >
+                        <HStack spacing={2} flexWrap="wrap">
+                          <Button
+                            size="sm"
+                            variant={
+                              transferStatusFilter === "all"
+                                ? "solid"
+                                : "outline"
+                            }
+                            colorScheme="blue"
+                            onClick={() => {
+                              setTransferStatusFilter("all");
+                              setTransferPage(1);
+                            }}
+                          >
+                            Semua
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={
+                              transferStatusFilter === "pending"
+                                ? "solid"
+                                : "outline"
+                            }
+                            colorScheme="orange"
+                            onClick={() => {
+                              setTransferStatusFilter("pending");
+                              setTransferPage(1);
+                            }}
+                          >
+                            Pending
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={
+                              transferStatusFilter === "completed"
+                                ? "solid"
+                                : "outline"
+                            }
+                            colorScheme="green"
+                            onClick={() => {
+                              setTransferStatusFilter("completed");
+                              setTransferPage(1);
+                            }}
+                          >
+                            Approved
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={
+                              transferStatusFilter === "rejected"
+                                ? "solid"
+                                : "outline"
+                            }
+                            colorScheme="red"
+                            onClick={() => {
+                              setTransferStatusFilter("rejected");
+                              setTransferPage(1);
+                            }}
+                          >
+                            Rejected
+                          </Button>
+                        </HStack>
+
+                        <Text fontSize="sm" color={mutedTextColor}>
+                          Menampilkan {currentTransferRangeStart}-
+                          {currentTransferRangeEnd} dari{" "}
+                          {filteredTransferRequests.length} data
+                        </Text>
+                      </Flex>
+                    </Box>
+
+                    {filteredTransferRequests.length > 0 ? (
+                      <Box overflowX="auto">
+                        <Table size="sm" variant="simple">
+                          <Thead>
+                            <Tr>
+                              <Th>No Transfer</Th>
+                              <Th>Rute</Th>
+                              <Th>Nominal</Th>
+                              <Th>Requester</Th>
+                              <Th>Status</Th>
+                              <Th>Aksi</Th>
+                            </Tr>
+                          </Thead>
+                          <Tbody>
+                            {paginatedTransferRequests.map((transfer) => (
+                              <Tr key={transfer.id}>
+                                <Td>
+                                  <VStack align="start" spacing={0}>
+                                    <Text fontWeight="semibold">
+                                      {transfer.transfer_number}
+                                    </Text>
+                                    <Text fontSize="xs" color={mutedTextColor}>
+                                      {new Date(
+                                        transfer.date,
+                                      ).toLocaleDateString("id-ID")}
+                                    </Text>
+                                  </VStack>
+                                </Td>
+                                <Td>
+                                  <VStack align="start" spacing={0}>
+                                    <Text fontWeight="medium">
+                                      {transfer.from_account?.name ||
+                                        `Account #${transfer.from_account_id}`}
+                                    </Text>
+                                    <Text fontSize="xs" color={mutedTextColor}>
+                                      ke{" "}
+                                      {transfer.to_account?.name ||
+                                        `Account #${transfer.to_account_id}`}
+                                    </Text>
+                                  </VStack>
+                                </Td>
+                                <Td>
+                                  <VStack align="start" spacing={0}>
+                                    <Text fontWeight="medium">
+                                      {formatTransferAmountSummary(transfer)}
+                                    </Text>
+                                    {transfer.reference && (
+                                      <Text
+                                        fontSize="xs"
+                                        color={mutedTextColor}
+                                      >
+                                        Ref: {transfer.reference}
+                                      </Text>
+                                    )}
+                                  </VStack>
+                                </Td>
+                                <Td>
+                                  <VStack align="start" spacing={0}>
+                                    <Text>
+                                      {getTransferActorName(transfer.requester)}
+                                    </Text>
+                                    <Text fontSize="xs" color={mutedTextColor}>
+                                      {transfer.requester?.role || "-"}
+                                    </Text>
+                                  </VStack>
+                                </Td>
+                                <Td>
+                                  <VStack align="start" spacing={1}>
+                                    <Badge
+                                      colorScheme={getTransferStatusColor(
+                                        transfer.status,
+                                      )}
+                                    >
+                                      {getTransferStatusLabel(transfer.status)}
+                                    </Badge>
+                                    {transfer.approved_at && (
+                                      <Text
+                                        fontSize="xs"
+                                        color={mutedTextColor}
+                                      >
+                                        Approved by{" "}
+                                        {getTransferActorName(
+                                          transfer.approver,
+                                        )}{" "}
+                                        pada{" "}
+                                        {new Date(
+                                          transfer.approved_at,
+                                        ).toLocaleString("id-ID")}
+                                      </Text>
+                                    )}
+                                    {transfer.rejected_at && (
+                                      <Text
+                                        fontSize="xs"
+                                        color={mutedTextColor}
+                                      >
+                                        Rejected by{" "}
+                                        {getTransferActorName(
+                                          transfer.rejector,
+                                        )}{" "}
+                                        pada{" "}
+                                        {new Date(
+                                          transfer.rejected_at,
+                                        ).toLocaleString("id-ID")}
+                                      </Text>
+                                    )}
+                                    {transfer.rejection_reason && (
+                                      <Text fontSize="xs" color="red.500">
+                                        {transfer.rejection_reason}
+                                      </Text>
+                                    )}
+                                  </VStack>
+                                </Td>
+                                <Td>
+                                  {canApproveTransferRequests &&
+                                  transfer.status === "PENDING_APPROVAL" ? (
+                                    <HStack spacing={2}>
+                                      <Button
+                                        size="xs"
+                                        colorScheme="green"
+                                        onClick={() =>
+                                          handleApproveTransferRequest(transfer)
+                                        }
+                                        isLoading={
+                                          transferActionLoadingId ===
+                                          transfer.id
+                                        }
+                                      >
+                                        Approve
+                                      </Button>
+                                      <Button
+                                        size="xs"
+                                        variant="outline"
+                                        colorScheme="red"
+                                        onClick={() =>
+                                          handleOpenRejectTransferModal(
+                                            transfer,
+                                          )
+                                        }
+                                        isDisabled={
+                                          transferActionLoadingId ===
+                                          transfer.id
+                                        }
+                                      >
+                                        Reject
+                                      </Button>
+                                    </HStack>
+                                  ) : (
+                                    <Text fontSize="xs" color={mutedTextColor}>
+                                      {transfer.status === "PENDING_APPROVAL"
+                                        ? "Menunggu review finance manager"
+                                        : transfer.status === "REJECTED"
+                                          ? "Sudah ditolak"
+                                          : "Sudah diproses"}
+                                    </Text>
+                                  )}
+                                </Td>
+                              </Tr>
+                            ))}
+                          </Tbody>
+                        </Table>
+                      </Box>
+                    ) : (
+                      <Box px={6} py={8}>
+                        <Text color={mutedTextColor} textAlign="center">
+                          {safeTransferRequests.length === 0
+                            ? "Belum ada request transfer antar bank."
+                            : "Tidak ada transfer yang cocok dengan filter ini."}
+                        </Text>
+                      </Box>
+                    )}
+
+                    {filteredTransferRequests.length > 0 && (
+                      <Flex
+                        px={5}
+                        py={4}
+                        borderTop="1px solid"
+                        borderColor={borderColor}
+                        justify="space-between"
+                        align={{ base: "start", md: "center" }}
+                        gap={3}
+                        wrap="wrap"
+                      >
+                        <Text fontSize="sm" color={mutedTextColor}>
+                          Halaman {currentTransferPage} dari{" "}
+                          {transferTotalPages}
+                        </Text>
+                        <HStack spacing={2}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setTransferPage(
+                                Math.max(currentTransferPage - 1, 1),
+                              )
+                            }
+                            isDisabled={currentTransferPage <= 1}
+                          >
+                            Sebelumnya
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setTransferPage(
+                                Math.min(
+                                  currentTransferPage + 1,
+                                  transferTotalPages,
+                                ),
+                              )
+                            }
+                            isDisabled={
+                              currentTransferPage >= transferTotalPages
+                            }
+                          >
+                            Berikutnya
+                          </Button>
+                        </HStack>
+                      </Flex>
+                    )}
+                  </CardBody>
+                </Card>
+              </Box>
+
               {/* Bank Accounts Section */}
               <Box mb={8}>
                 <Flex justify="space-between" align="center" mb={4}>
-                  <Heading size="md">{t('cashBank.bankAccounts')}</Heading>
-                  <Button
-                    size="sm"
-                    leftIcon={<FiCreditCard />}
-                    colorScheme="blue"
-                    onClick={handleAddAccount}
-                  >
-                    {t('cashBank.addBankAccount')}
-                  </Button>
+                  <Heading size="md">{t("cashBank.bankAccounts")}</Heading>
                 </Flex>
                 {bankAccounts.length > 0 ? (
-                  <Box bg={bg} borderRadius="lg" overflow="hidden" boxShadow="sm">
+                  <Box
+                    bg={bg}
+                    borderRadius="lg"
+                    overflow="hidden"
+                    boxShadow="sm"
+                  >
                     <DataTable<CashBank>
                       columns={accountColumns}
                       data={bankAccounts}
@@ -1229,7 +2062,7 @@ const CashBankPage: React.FC = () => {
                   <Card>
                     <CardBody>
                       <Text color={mutedTextColor} textAlign="center" py={8}>
-                        {t('cashBank.noBankAccountsFound')}
+                        {t("cashBank.noBankAccountsFound")}
                       </Text>
                     </CardBody>
                   </Card>
@@ -1239,18 +2072,15 @@ const CashBankPage: React.FC = () => {
               {/* Cash Accounts Section */}
               <Box>
                 <Flex justify="space-between" align="center" mb={4}>
-                  <Heading size="md">{t('cashBank.cashAccounts')}</Heading>
-                  <Button
-                    size="sm"
-                    leftIcon={<FiDollarSign />}
-                    colorScheme="green"
-                    onClick={handleAddAccount}
-                  >
-                    {t('cashBank.addCashAccount')}
-                  </Button>
+                  <Heading size="md">{t("cashBank.cashAccounts")}</Heading>
                 </Flex>
                 {cashAccounts.length > 0 ? (
-                  <Box bg={bg} borderRadius="lg" overflow="hidden" boxShadow="sm">
+                  <Box
+                    bg={bg}
+                    borderRadius="lg"
+                    overflow="hidden"
+                    boxShadow="sm"
+                  >
                     <DataTable<CashBank>
                       columns={accountColumns}
                       data={cashAccounts}
@@ -1264,7 +2094,7 @@ const CashBankPage: React.FC = () => {
                   <Card>
                     <CardBody>
                       <Text color={mutedTextColor} textAlign="center" py={8}>
-                        {t('cashBank.noCashAccountsFound')}
+                        {t("cashBank.noCashAccountsFound")}
                       </Text>
                     </CardBody>
                   </Card>
@@ -1295,22 +2125,102 @@ const CashBankPage: React.FC = () => {
                 onClose={onTransferModalClose}
                 onSuccess={handleTransactionSuccess}
                 sourceAccount={transactionAccount}
+                requiresFinanceManagerApproval={
+                  requiresFinanceManagerApprovalForTransfer
+                }
               />
 
+              <Modal
+                isOpen={isTransferRejectModalOpen}
+                onClose={handleCloseRejectTransferModal}
+                size="lg"
+              >
+                <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(5px)" />
+                <ModalContent bg={modalContentBg}>
+                  <ModalHeader bg="red.500" color="white" borderTopRadius="md">
+                    Reject Transfer Request
+                  </ModalHeader>
+                  <ModalCloseButton color="white" />
+                  <ModalBody py={6}>
+                    <VStack spacing={4} align="stretch">
+                      <Box>
+                        <Text fontWeight="semibold">
+                          {selectedTransferForDecision?.transfer_number}
+                        </Text>
+                        <Text fontSize="sm" color={mutedTextColor}>
+                          {selectedTransferForDecision
+                            ? `${selectedTransferForDecision.from_account?.name || selectedTransferForDecision.from_account_id} -> ${selectedTransferForDecision.to_account?.name || selectedTransferForDecision.to_account_id}`
+                            : "-"}
+                        </Text>
+                        <Text fontSize="sm" color={mutedTextColor}>
+                          {selectedTransferForDecision
+                            ? formatTransferAmountSummary(
+                                selectedTransferForDecision,
+                              )
+                            : ""}
+                        </Text>
+                      </Box>
+                      <FormControl isRequired>
+                        <FormLabel>Alasan Reject</FormLabel>
+                        <Textarea
+                          value={transferRejectReason}
+                          onChange={(e) =>
+                            setTransferRejectReason(e.target.value)
+                          }
+                          placeholder="Contoh: saldo sumber diprioritaskan untuk pembayaran vendor minggu ini"
+                          rows={4}
+                        />
+                      </FormControl>
+                    </VStack>
+                  </ModalBody>
+                  <ModalFooter bg={modalFooterBg} borderBottomRadius="md">
+                    <Button
+                      variant="ghost"
+                      mr={3}
+                      onClick={handleCloseRejectTransferModal}
+                    >
+                      Batal
+                    </Button>
+                    <Button
+                      colorScheme="red"
+                      onClick={handleRejectTransferRequest}
+                      isLoading={
+                        selectedTransferForDecision
+                          ? transferActionLoadingId ===
+                            selectedTransferForDecision.id
+                          : false
+                      }
+                    >
+                      Reject Transfer
+                    </Button>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
               {/* Freeze/Unfreeze Modal */}
-              <Modal isOpen={isFreezeModalOpen} onClose={onFreezeModalClose} size="xl">
+              <Modal
+                isOpen={isFreezeModalOpen}
+                onClose={onFreezeModalClose}
+                size="xl"
+              >
                 <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(5px)" />
                 <ModalContent bg={modalContentBg}>
                   <ModalHeader
-                    bg={freezeMode === 'freeze' ? 'orange.500' : 'green.500'}
+                    bg={freezeMode === "freeze" ? "orange.500" : "green.500"}
                     color="white"
                     borderTopRadius="md"
                   >
                     <Flex alignItems="center" gap={3}>
-                      {freezeMode === 'freeze' ? <FiLock size={20} /> : <FiUnlock size={20} />}
+                      {freezeMode === "freeze" ? (
+                        <FiLock size={20} />
+                      ) : (
+                        <FiUnlock size={20} />
+                      )}
                       <VStack align="start" spacing={0}>
                         <Text fontSize="lg" fontWeight="bold">
-                          {freezeMode === 'freeze' ? 'Blokir Dana' : 'Buka Blokir Dana'}
+                          {freezeMode === "freeze"
+                            ? "Blokir Dana"
+                            : "Buka Blokir Dana"}
                         </Text>
                         <Text fontSize="sm" opacity={0.9}>
                           {freezeAccount?.name} ({freezeAccount?.code})
@@ -1328,32 +2238,65 @@ const CashBankPage: React.FC = () => {
                           <CardBody py={3}>
                             <SimpleGrid columns={2} spacing={3}>
                               <Box>
-                                <Text fontSize="xs" color={mutedTextColor}>Total Saldo</Text>
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Total Saldo
+                                </Text>
                                 <Text fontWeight="bold" fontFamily="mono">
-                                  {freezeAccount.currency} {freezeAccount.balance.toLocaleString('id-ID')}
-                                </Text>
-                              </Box>
-                              <Box>
-                                <Text fontSize="xs" color={mutedTextColor}>Dana Terblokir Saat Ini</Text>
-                                <Text fontWeight="bold" fontFamily="mono" color="orange.500">
-                                  {freezeAccount.currency} {(freezeAccount.frozen_amount || 0).toLocaleString('id-ID')}
-                                </Text>
-                              </Box>
-                              <Box>
-                                <Text fontSize="xs" color={mutedTextColor}>Saldo Tersedia</Text>
-                                <Text fontWeight="bold" fontFamily="mono" color="green.600">
-                                  {freezeAccount.currency} {getAvailableBalance(freezeAccount).toLocaleString('id-ID')}
+                                  {freezeAccount.currency}{" "}
+                                  {freezeAccount.balance.toLocaleString(
+                                    "id-ID",
+                                  )}
                                 </Text>
                               </Box>
                               <Box>
                                 <Text fontSize="xs" color={mutedTextColor}>
-                                  {freezeMode === 'freeze' ? 'Maks. Bisa Diblokir' : 'Maks. Bisa Dibuka'}
+                                  Dana Terblokir Saat Ini
                                 </Text>
-                                <Text fontWeight="bold" fontFamily="mono" color="blue.500">
-                                  {freezeAccount.currency} {freezeMode === 'freeze'
-                                    ? getAvailableBalance(freezeAccount).toLocaleString('id-ID')
-                                    : (freezeAccount.frozen_amount || 0).toLocaleString('id-ID')
-                                  }
+                                <Text
+                                  fontWeight="bold"
+                                  fontFamily="mono"
+                                  color="orange.500"
+                                >
+                                  {freezeAccount.currency}{" "}
+                                  {(
+                                    freezeAccount.frozen_amount || 0
+                                  ).toLocaleString("id-ID")}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Saldo Tersedia
+                                </Text>
+                                <Text
+                                  fontWeight="bold"
+                                  fontFamily="mono"
+                                  color="green.600"
+                                >
+                                  {freezeAccount.currency}{" "}
+                                  {getAvailableBalance(
+                                    freezeAccount,
+                                  ).toLocaleString("id-ID")}
+                                </Text>
+                              </Box>
+                              <Box>
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  {freezeMode === "freeze"
+                                    ? "Maks. Bisa Diblokir"
+                                    : "Maks. Bisa Dibuka"}
+                                </Text>
+                                <Text
+                                  fontWeight="bold"
+                                  fontFamily="mono"
+                                  color="blue.500"
+                                >
+                                  {freezeAccount.currency}{" "}
+                                  {freezeMode === "freeze"
+                                    ? getAvailableBalance(
+                                        freezeAccount,
+                                      ).toLocaleString("id-ID")
+                                    : (
+                                        freezeAccount.frozen_amount || 0
+                                      ).toLocaleString("id-ID")}
                                 </Text>
                               </Box>
                             </SimpleGrid>
@@ -1363,13 +2306,21 @@ const CashBankPage: React.FC = () => {
                         {/* Amount Input */}
                         <FormControl isRequired>
                           <FormLabel fontSize="sm">
-                            {freezeMode === 'freeze' ? 'Jumlah Dana yang Diblokir' : 'Jumlah Blokir yang Dibuka'}
+                            {freezeMode === "freeze"
+                              ? "Jumlah Dana yang Diblokir"
+                              : "Jumlah Blokir yang Dibuka"}
                           </FormLabel>
                           <NumberInput
-                            value={freezeAmount || ''}
-                            onChange={(_, val) => setFreezeAmount(isNaN(val) ? 0 : val)}
+                            value={freezeAmount || ""}
+                            onChange={(_, val) =>
+                              setFreezeAmount(isNaN(val) ? 0 : val)
+                            }
                             min={0}
-                            max={freezeMode === 'freeze' ? getAvailableBalance(freezeAccount) : (freezeAccount.frozen_amount || 0)}
+                            max={
+                              freezeMode === "freeze"
+                                ? getAvailableBalance(freezeAccount)
+                                : freezeAccount.frozen_amount || 0
+                            }
                           >
                             <NumberInputField placeholder="Masukkan jumlah" />
                             <NumberInputStepper>
@@ -1379,32 +2330,42 @@ const CashBankPage: React.FC = () => {
                           </NumberInput>
                           {freezeAmount > 0 && (
                             <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                              {freezeAccount.currency} {freezeAmount.toLocaleString('id-ID')}
+                              {freezeAccount.currency}{" "}
+                              {freezeAmount.toLocaleString("id-ID")}
                             </Text>
                           )}
-                          {freezeMode === 'freeze' && freezeAmount > getAvailableBalance(freezeAccount) && (
-                            <Text fontSize="xs" color="red.500" mt={1}>
-                              Jumlah melebihi saldo tersedia
-                            </Text>
-                          )}
-                          {freezeMode === 'unfreeze' && freezeAmount > (freezeAccount.frozen_amount || 0) && (
-                            <Text fontSize="xs" color="red.500" mt={1}>
-                              Jumlah melebihi dana terblokir
-                            </Text>
-                          )}
+                          {freezeMode === "freeze" &&
+                            freezeAmount >
+                              getAvailableBalance(freezeAccount) && (
+                              <Text fontSize="xs" color="red.500" mt={1}>
+                                Jumlah melebihi saldo tersedia
+                              </Text>
+                            )}
+                          {freezeMode === "unfreeze" &&
+                            freezeAmount >
+                              (freezeAccount.frozen_amount || 0) && (
+                              <Text fontSize="xs" color="red.500" mt={1}>
+                                Jumlah melebihi dana terblokir
+                              </Text>
+                            )}
                         </FormControl>
 
                         {/* Quick Amount Buttons */}
                         <HStack spacing={2} flexWrap="wrap">
-                          {[25, 50, 75, 100].map(pct => {
-                            const maxVal = freezeMode === 'freeze' ? getAvailableBalance(freezeAccount) : (freezeAccount.frozen_amount || 0);
-                            const val = Math.floor(maxVal * pct / 100);
+                          {[25, 50, 75, 100].map((pct) => {
+                            const maxVal =
+                              freezeMode === "freeze"
+                                ? getAvailableBalance(freezeAccount)
+                                : freezeAccount.frozen_amount || 0;
+                            const val = Math.floor((maxVal * pct) / 100);
                             return (
                               <Button
                                 key={pct}
                                 size="xs"
                                 variant="outline"
-                                colorScheme={freezeMode === 'freeze' ? 'orange' : 'green'}
+                                colorScheme={
+                                  freezeMode === "freeze" ? "orange" : "green"
+                                }
                                 onClick={() => setFreezeAmount(val)}
                               >
                                 {pct}%
@@ -1419,31 +2380,46 @@ const CashBankPage: React.FC = () => {
                           <Textarea
                             value={freezeReason}
                             onChange={(e) => setFreezeReason(e.target.value)}
-                            placeholder={freezeMode === 'freeze' ? 'Contoh: Dana ditahan untuk jaminan bank garansi' : 'Contoh: Jaminan bank garansi telah selesai'}
+                            placeholder={
+                              freezeMode === "freeze"
+                                ? "Contoh: Dana ditahan untuk jaminan bank garansi"
+                                : "Contoh: Jaminan bank garansi telah selesai"
+                            }
                             rows={2}
                           />
                         </FormControl>
 
                         {/* Preview */}
                         {freezeAmount > 0 && (
-                          <Alert status={freezeMode === 'freeze' ? 'warning' : 'success'} borderRadius="md">
+                          <Alert
+                            status={
+                              freezeMode === "freeze" ? "warning" : "success"
+                            }
+                            borderRadius="md"
+                          >
                             <AlertIcon />
                             <Box>
                               <AlertTitle fontSize="sm">
-                                {freezeMode === 'freeze' ? 'Setelah pemblokiran:' : 'Setelah pembukaan blokir:'}
+                                {freezeMode === "freeze"
+                                  ? "Setelah pemblokiran:"
+                                  : "Setelah pembukaan blokir:"}
                               </AlertTitle>
                               <AlertDescription fontSize="xs">
-                                Dana terblokir: {freezeAccount.currency} {(
-                                  freezeMode === 'freeze'
-                                    ? (freezeAccount.frozen_amount || 0) + freezeAmount
-                                    : (freezeAccount.frozen_amount || 0) - freezeAmount
-                                ).toLocaleString('id-ID')}
-                                {' | '}
-                                Saldo tersedia: {freezeAccount.currency} {(
-                                  freezeMode === 'freeze'
-                                    ? getAvailableBalance(freezeAccount) - freezeAmount
-                                    : getAvailableBalance(freezeAccount) + freezeAmount
-                                ).toLocaleString('id-ID')}
+                                Dana terblokir: {freezeAccount.currency}{" "}
+                                {(freezeMode === "freeze"
+                                  ? (freezeAccount.frozen_amount || 0) +
+                                    freezeAmount
+                                  : (freezeAccount.frozen_amount || 0) -
+                                    freezeAmount
+                                ).toLocaleString("id-ID")}
+                                {" | "}
+                                Saldo tersedia: {freezeAccount.currency}{" "}
+                                {(freezeMode === "freeze"
+                                  ? getAvailableBalance(freezeAccount) -
+                                    freezeAmount
+                                  : getAvailableBalance(freezeAccount) +
+                                    freezeAmount
+                                ).toLocaleString("id-ID")}
                               </AlertDescription>
                             </Box>
                           </Alert>
@@ -1453,30 +2429,57 @@ const CashBankPage: React.FC = () => {
                         {frozenHistory.length > 0 && (
                           <Box>
                             <Divider my={2} />
-                            <Text fontSize="sm" fontWeight="bold" mb={2}>Riwayat Blokir/Buka Blokir</Text>
+                            <Text fontSize="sm" fontWeight="bold" mb={2}>
+                              Riwayat Blokir/Buka Blokir
+                            </Text>
                             <Box maxH="150px" overflowY="auto">
                               <Table size="sm" variant="simple">
                                 <Thead>
                                   <Tr>
                                     <Th fontSize="xs">Tanggal</Th>
                                     <Th fontSize="xs">Aksi</Th>
-                                    <Th fontSize="xs" isNumeric>Jumlah</Th>
+                                    <Th fontSize="xs" isNumeric>
+                                      Jumlah
+                                    </Th>
                                     <Th fontSize="xs">Alasan</Th>
                                   </Tr>
                                 </Thead>
                                 <Tbody>
                                   {frozenHistory.slice(0, 10).map((h) => (
                                     <Tr key={h.id}>
-                                      <Td fontSize="xs">{new Date(h.created_at).toLocaleDateString('id-ID')}</Td>
+                                      <Td fontSize="xs">
+                                        {new Date(
+                                          h.created_at,
+                                        ).toLocaleDateString("id-ID")}
+                                      </Td>
                                       <Td>
-                                        <Badge size="xs" colorScheme={h.action === 'FREEZE' ? 'orange' : 'green'}>
-                                          {h.action === 'FREEZE' ? 'BLOKIR' : 'BUKA'}
+                                        <Badge
+                                          size="xs"
+                                          colorScheme={
+                                            h.action === "FREEZE"
+                                              ? "orange"
+                                              : "green"
+                                          }
+                                        >
+                                          {h.action === "FREEZE"
+                                            ? "BLOKIR"
+                                            : "BUKA"}
                                         </Badge>
                                       </Td>
-                                      <Td fontSize="xs" isNumeric fontFamily="mono">
-                                        {h.amount.toLocaleString('id-ID')}
+                                      <Td
+                                        fontSize="xs"
+                                        isNumeric
+                                        fontFamily="mono"
+                                      >
+                                        {h.amount.toLocaleString("id-ID")}
                                       </Td>
-                                      <Td fontSize="xs" maxW="150px" isTruncated>{h.reason}</Td>
+                                      <Td
+                                        fontSize="xs"
+                                        maxW="150px"
+                                        isTruncated
+                                      >
+                                        {h.reason}
+                                      </Td>
                                     </Tr>
                                   ))}
                                 </Tbody>
@@ -1493,28 +2496,37 @@ const CashBankPage: React.FC = () => {
                       Batal
                     </Button>
                     <Button
-                      colorScheme={freezeMode === 'freeze' ? 'orange' : 'green'}
+                      colorScheme={freezeMode === "freeze" ? "orange" : "green"}
                       onClick={handleFreezeSubmit}
                       isLoading={freezeLoading}
                       isDisabled={
                         freezeAmount <= 0 ||
-                        (freezeMode === 'freeze' && freezeAmount > getAvailableBalance(freezeAccount!)) ||
-                        (freezeMode === 'unfreeze' && freezeAmount > (freezeAccount?.frozen_amount || 0))
+                        (freezeMode === "freeze" &&
+                          freezeAmount > getAvailableBalance(freezeAccount!)) ||
+                        (freezeMode === "unfreeze" &&
+                          freezeAmount > (freezeAccount?.frozen_amount || 0))
                       }
-                      leftIcon={freezeMode === 'freeze' ? <FiLock /> : <FiUnlock />}
+                      leftIcon={
+                        freezeMode === "freeze" ? <FiLock /> : <FiUnlock />
+                      }
                     >
-                      {freezeMode === 'freeze' ? 'Blokir Dana' : 'Buka Blokir'}
+                      {freezeMode === "freeze" ? "Blokir Dana" : "Buka Blokir"}
                     </Button>
                   </ModalFooter>
                 </ModalContent>
               </Modal>
 
               {/* Account Details Modal */}
-              <Modal isOpen={isDetailModalOpen} onClose={onDetailModalClose} size="4xl" scrollBehavior="inside">
+              <Modal
+                isOpen={isDetailModalOpen}
+                onClose={onDetailModalClose}
+                size="4xl"
+                scrollBehavior="inside"
+              >
                 <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(10px)" />
                 <ModalContent
                   maxH="90vh"
-                  maxW={{ base: '95vw', md: '90vw', lg: '70vw' }}
+                  maxW={{ base: "95vw", md: "90vw", lg: "70vw" }}
                   mx={4}
                   bg={modalContentBg}
                   border="1px solid"
@@ -1537,7 +2549,7 @@ const CashBankPage: React.FC = () => {
                         borderRadius="full"
                         fontSize="2xl"
                       >
-                        {selectedAccount?.type === 'CASH' ? '💵' : '🏦'}
+                        {selectedAccount?.type === "CASH" ? "💵" : "🏦"}
                       </Box>
                       <VStack align="start" spacing={1}>
                         <Text fontSize="xl" fontWeight="bold">
@@ -1559,14 +2571,20 @@ const CashBankPage: React.FC = () => {
                             {selectedAccount?.code}
                           </Text>
                           <Badge
-                            bg={selectedAccount?.is_active ? 'green.500' : 'red.500'}
+                            bg={
+                              selectedAccount?.is_active
+                                ? "green.500"
+                                : "red.500"
+                            }
                             color="white"
                             px={2}
                             py={1}
                             borderRadius="md"
                             fontSize="xs"
                           >
-                            {selectedAccount?.is_active ? t('cashBank.active') : t('cashBank.inactive')}
+                            {selectedAccount?.is_active
+                              ? t("cashBank.active")
+                              : t("cashBank.inactive")}
                           </Badge>
                         </HStack>
                       </VStack>
@@ -1588,25 +2606,43 @@ const CashBankPage: React.FC = () => {
                         >
                           <CardBody p={6} textAlign="center">
                             <VStack spacing={4}>
-                              <Text fontSize="md" fontWeight="medium" opacity={0.9}>{t('cashBank.currentBalance')}</Text>
+                              <Text
+                                fontSize="md"
+                                fontWeight="medium"
+                                opacity={0.9}
+                              >
+                                {t("cashBank.currentBalance")}
+                              </Text>
                               <Text
                                 fontSize="3xl"
                                 fontWeight="bold"
                                 fontFamily="mono"
                                 letterSpacing="tight"
                               >
-                                {selectedAccount.currency} {Math.abs(selectedAccount.balance).toLocaleString('id-ID')}
+                                {selectedAccount.currency}{" "}
+                                {Math.abs(
+                                  selectedAccount.balance,
+                                ).toLocaleString("id-ID")}
                               </Text>
                               <Badge
-                                bg={selectedAccount.balance < 0 ? 'red.500' : selectedAccount.balance > 0 ? 'green.500' : 'gray.500'}
+                                bg={
+                                  selectedAccount.balance < 0
+                                    ? "red.500"
+                                    : selectedAccount.balance > 0
+                                      ? "green.500"
+                                      : "gray.500"
+                                }
                                 color="white"
                                 px={3}
                                 py={1}
                                 borderRadius="full"
                                 fontSize="sm"
                               >
-                                {selectedAccount.balance < 0 ? `⚠️ ${t('cashBank.overdraft')}` :
-                                  selectedAccount.balance > 0 ? `✅ ${t('cashBank.positive')}` : `➖ ${t('cashBank.zeroBalance')}`}
+                                {selectedAccount.balance < 0
+                                  ? `⚠️ ${t("cashBank.overdraft")}`
+                                  : selectedAccount.balance > 0
+                                    ? `✅ ${t("cashBank.positive")}`
+                                    : `➖ ${t("cashBank.zeroBalance")}`}
                               </Badge>
                             </VStack>
                           </CardBody>
@@ -1620,22 +2656,58 @@ const CashBankPage: React.FC = () => {
                             <Box>
                               <HStack spacing={3} mb={3}>
                                 <Text fontSize="xl">📋</Text>
-                                <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.accountInformation')}</Text>
+                                <Text
+                                  fontWeight="bold"
+                                  fontSize="lg"
+                                  color={detailSectionTitleColor}
+                                >
+                                  {t("cashBank.accountInformation")}
+                                </Text>
                               </HStack>
 
                               <VStack spacing={3} align="stretch">
                                 <Box>
-                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountCode')}</Text>
-                                  <Text fontWeight="bold" fontFamily="mono" bg={readOnlyBg} color={textColor} px={3} py={2} borderRadius="md">
+                                  <Text
+                                    fontSize="xs"
+                                    color={mutedTextColor}
+                                    mb={1}
+                                    textTransform="uppercase"
+                                    letterSpacing="wide"
+                                  >
+                                    {t("cashBank.accountCode")}
+                                  </Text>
+                                  <Text
+                                    fontWeight="bold"
+                                    fontFamily="mono"
+                                    bg={readOnlyBg}
+                                    color={textColor}
+                                    px={3}
+                                    py={2}
+                                    borderRadius="md"
+                                  >
                                     {selectedAccount.code}
                                   </Text>
                                 </Box>
                                 <Box>
-                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.currency')}</Text>
+                                  <Text
+                                    fontSize="xs"
+                                    color={mutedTextColor}
+                                    mb={1}
+                                    textTransform="uppercase"
+                                    letterSpacing="wide"
+                                  >
+                                    {t("cashBank.currency")}
+                                  </Text>
                                   <HStack spacing={2}>
-                                    <Text fontWeight="bold" color={textColor}>{selectedAccount.currency}</Text>
-                                    <Badge colorScheme="blue" variant="subtle" fontSize="xs">
-                                      {t('cashBank.indonesianRupiah')}
+                                    <Text fontWeight="bold" color={textColor}>
+                                      {selectedAccount.currency}
+                                    </Text>
+                                    <Badge
+                                      colorScheme="blue"
+                                      variant="subtle"
+                                      fontSize="xs"
+                                    >
+                                      {t("cashBank.indonesianRupiah")}
                                     </Badge>
                                   </HStack>
                                 </Box>
@@ -1643,36 +2715,119 @@ const CashBankPage: React.FC = () => {
                             </Box>
 
                             {/* Bank Details */}
-                            {selectedAccount.type === 'BANK' && (
+                            {selectedAccount.type === "BANK" && (
                               <Box>
                                 <HStack spacing={3} mb={3}>
                                   <Text fontSize="xl">🏦</Text>
-                                  <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.bankDetails')}</Text>
+                                  <Text
+                                    fontWeight="bold"
+                                    fontSize="lg"
+                                    color={detailSectionTitleColor}
+                                  >
+                                    {t("cashBank.bankDetails")}
+                                  </Text>
                                 </HStack>
 
                                 <VStack spacing={3} align="stretch">
                                   <Box>
-                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.bankName')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.bank_name ? textColor : detailWarningTextColor}>
-                                      {selectedAccount.bank_name || t('cashBank.bankNameNotSpecified')}
+                                    <Text
+                                      fontSize="xs"
+                                      color={mutedTextColor}
+                                      mb={1}
+                                      textTransform="uppercase"
+                                      letterSpacing="wide"
+                                    >
+                                      {t("cashBank.bankName")}
+                                    </Text>
+                                    <Text
+                                      bg={readOnlyBg}
+                                      px={3}
+                                      py={2}
+                                      borderRadius="md"
+                                      color={
+                                        selectedAccount.bank_name
+                                          ? textColor
+                                          : detailWarningTextColor
+                                      }
+                                    >
+                                      {selectedAccount.bank_name ||
+                                        t("cashBank.bankNameNotSpecified")}
                                     </Text>
                                   </Box>
                                   <Box>
-                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.accountNumber')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" fontFamily="mono" color={selectedAccount.account_no ? textColor : detailWarningTextColor}>
-                                      {selectedAccount.account_no || t('cashBank.accountNumberNotSpecified')}
+                                    <Text
+                                      fontSize="xs"
+                                      color={mutedTextColor}
+                                      mb={1}
+                                      textTransform="uppercase"
+                                      letterSpacing="wide"
+                                    >
+                                      {t("cashBank.accountNumber")}
+                                    </Text>
+                                    <Text
+                                      bg={readOnlyBg}
+                                      px={3}
+                                      py={2}
+                                      borderRadius="md"
+                                      fontFamily="mono"
+                                      color={
+                                        selectedAccount.account_no
+                                          ? textColor
+                                          : detailWarningTextColor
+                                      }
+                                    >
+                                      {selectedAccount.account_no ||
+                                        t("cashBank.accountNumberNotSpecified")}
                                     </Text>
                                   </Box>
                                   <Box>
-                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.atasNama')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.account_holder_name ? textColor : detailWarningTextColor}>
-                                      {selectedAccount.account_holder_name || t('cashBank.accountHolderNotSpecified')}
+                                    <Text
+                                      fontSize="xs"
+                                      color={mutedTextColor}
+                                      mb={1}
+                                      textTransform="uppercase"
+                                      letterSpacing="wide"
+                                    >
+                                      {t("cashBank.atasNama")}
+                                    </Text>
+                                    <Text
+                                      bg={readOnlyBg}
+                                      px={3}
+                                      py={2}
+                                      borderRadius="md"
+                                      color={
+                                        selectedAccount.account_holder_name
+                                          ? textColor
+                                          : detailWarningTextColor
+                                      }
+                                    >
+                                      {selectedAccount.account_holder_name ||
+                                        t("cashBank.accountHolderNotSpecified")}
                                     </Text>
                                   </Box>
                                   <Box>
-                                    <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.cabang')}</Text>
-                                    <Text bg={readOnlyBg} px={3} py={2} borderRadius="md" color={selectedAccount.branch ? textColor : detailWarningTextColor}>
-                                      {selectedAccount.branch || t('cashBank.branchNotSpecified')}
+                                    <Text
+                                      fontSize="xs"
+                                      color={mutedTextColor}
+                                      mb={1}
+                                      textTransform="uppercase"
+                                      letterSpacing="wide"
+                                    >
+                                      {t("cashBank.cabang")}
+                                    </Text>
+                                    <Text
+                                      bg={readOnlyBg}
+                                      px={3}
+                                      py={2}
+                                      borderRadius="md"
+                                      color={
+                                        selectedAccount.branch
+                                          ? textColor
+                                          : detailWarningTextColor
+                                      }
+                                    >
+                                      {selectedAccount.branch ||
+                                        t("cashBank.branchNotSpecified")}
                                     </Text>
                                   </Box>
                                 </VStack>
@@ -1686,7 +2841,13 @@ const CashBankPage: React.FC = () => {
                             <Box>
                               <HStack spacing={3} mb={3}>
                                 <Text fontSize="xl">📊</Text>
-                                <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.chartOfAccounts')}</Text>
+                                <Text
+                                  fontWeight="bold"
+                                  fontSize="lg"
+                                  color={detailSectionTitleColor}
+                                >
+                                  {t("cashBank.chartOfAccounts")}
+                                </Text>
                               </HStack>
 
                               {selectedAccount.account ? (
@@ -1697,28 +2858,57 @@ const CashBankPage: React.FC = () => {
                                   border="1px solid"
                                   borderColor={detailSuccessPanelBorderColor}
                                 >
-                                  <HStack justify="space-between" align="center" mb={2}>
-                                    <Badge colorScheme="blue" variant="solid" fontSize="sm" px={3} py={1}>
+                                  <HStack
+                                    justify="space-between"
+                                    align="center"
+                                    mb={2}
+                                  >
+                                    <Badge
+                                      colorScheme="blue"
+                                      variant="solid"
+                                      fontSize="sm"
+                                      px={3}
+                                      py={1}
+                                    >
                                       {selectedAccount.account.code}
                                     </Badge>
-                                    <Badge colorScheme="green" variant="solid" fontSize="xs" px={2} py={1}>
-                                      {t('cashBank.asset')}
+                                    <Badge
+                                      colorScheme="green"
+                                      variant="solid"
+                                      fontSize="xs"
+                                      px={2}
+                                      py={1}
+                                    >
+                                      {t("cashBank.asset")}
                                     </Badge>
                                   </HStack>
-                                  <Text fontWeight="bold" mb={1} color={textColor}>
+                                  <Text
+                                    fontWeight="bold"
+                                    mb={1}
+                                    color={textColor}
+                                  >
                                     {selectedAccount.account.name}
                                   </Text>
-                                  <Text fontSize="sm" color={detailSuccessTextColor}>
-                                    ✅ {t('cashBank.successfullyIntegrated')}
+                                  <Text
+                                    fontSize="sm"
+                                    color={detailSuccessTextColor}
+                                  >
+                                    ✅ {t("cashBank.successfullyIntegrated")}
                                   </Text>
                                 </Box>
                               ) : (
-                                <Alert status="warning" borderRadius="md" py={3}>
+                                <Alert
+                                  status="warning"
+                                  borderRadius="md"
+                                  py={3}
+                                >
                                   <AlertIcon boxSize={4} />
                                   <Box>
-                                    <AlertTitle fontSize="sm">{t('cashBank.coaIntegrationRequired')}</AlertTitle>
+                                    <AlertTitle fontSize="sm">
+                                      {t("cashBank.coaIntegrationRequired")}
+                                    </AlertTitle>
                                     <AlertDescription fontSize="xs">
-                                      {t('cashBank.linkAccountToCOA')}
+                                      {t("cashBank.linkAccountToCOA")}
                                     </AlertDescription>
                                   </Box>
                                 </Alert>
@@ -1729,33 +2919,75 @@ const CashBankPage: React.FC = () => {
                             <Box>
                               <HStack spacing={3} mb={3}>
                                 <Text fontSize="xl">📅</Text>
-                                <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.auditInformation')}</Text>
+                                <Text
+                                  fontWeight="bold"
+                                  fontSize="lg"
+                                  color={detailSectionTitleColor}
+                                >
+                                  {t("cashBank.auditInformation")}
+                                </Text>
                               </HStack>
 
                               <VStack spacing={3} align="stretch">
                                 <Box>
-                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.created')}</Text>
-                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} color={textColor} px={3} py={2} borderRadius="md">
-                                    {new Date(selectedAccount.created_at).toLocaleDateString('id-ID', {
-                                      weekday: 'long',
-                                      year: 'numeric',
-                                      month: 'long',
-                                      day: 'numeric',
-                                      hour: '2-digit',
-                                      minute: '2-digit'
+                                  <Text
+                                    fontSize="xs"
+                                    color={mutedTextColor}
+                                    mb={1}
+                                    textTransform="uppercase"
+                                    letterSpacing="wide"
+                                  >
+                                    {t("cashBank.created")}
+                                  </Text>
+                                  <Text
+                                    fontSize="sm"
+                                    fontFamily="mono"
+                                    bg={readOnlyBg}
+                                    color={textColor}
+                                    px={3}
+                                    py={2}
+                                    borderRadius="md"
+                                  >
+                                    {new Date(
+                                      selectedAccount.created_at,
+                                    ).toLocaleDateString("id-ID", {
+                                      weekday: "long",
+                                      year: "numeric",
+                                      month: "long",
+                                      day: "numeric",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
                                     })}
                                   </Text>
                                 </Box>
                                 <Box>
-                                  <Text fontSize="xs" color={mutedTextColor} mb={1} textTransform="uppercase" letterSpacing="wide">{t('cashBank.lastUpdated')}</Text>
-                                  <Text fontSize="sm" fontFamily="mono" bg={readOnlyBg} color={textColor} px={3} py={2} borderRadius="md">
-                                    {new Date(selectedAccount.updated_at).toLocaleDateString('id-ID', {
-                                      weekday: 'long',
-                                      year: 'numeric',
-                                      month: 'long',
-                                      day: 'numeric',
-                                      hour: '2-digit',
-                                      minute: '2-digit'
+                                  <Text
+                                    fontSize="xs"
+                                    color={mutedTextColor}
+                                    mb={1}
+                                    textTransform="uppercase"
+                                    letterSpacing="wide"
+                                  >
+                                    {t("cashBank.lastUpdated")}
+                                  </Text>
+                                  <Text
+                                    fontSize="sm"
+                                    fontFamily="mono"
+                                    bg={readOnlyBg}
+                                    color={textColor}
+                                    px={3}
+                                    py={2}
+                                    borderRadius="md"
+                                  >
+                                    {new Date(
+                                      selectedAccount.updated_at,
+                                    ).toLocaleDateString("id-ID", {
+                                      weekday: "long",
+                                      year: "numeric",
+                                      month: "long",
+                                      day: "numeric",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
                                     })}
                                   </Text>
                                 </Box>
@@ -1768,7 +3000,13 @@ const CashBankPage: React.FC = () => {
                         <Box>
                           <HStack spacing={3} mb={4}>
                             <Text fontSize="xl">⚡</Text>
-                            <Text fontWeight="bold" fontSize="lg" color={detailSectionTitleColor}>{t('cashBank.quickActions')}</Text>
+                            <Text
+                              fontWeight="bold"
+                              fontSize="lg"
+                              color={detailSectionTitleColor}
+                            >
+                              {t("cashBank.quickActions")}
+                            </Text>
                           </HStack>
 
                           <SimpleGrid columns={{ base: 2, md: 4 }} spacing={3}>
@@ -1782,7 +3020,7 @@ const CashBankPage: React.FC = () => {
                                 handleEditAccount(selectedAccount);
                               }}
                             >
-                              {t('cashBank.edit')}
+                              {t("cashBank.edit")}
                             </Button>
 
                             <Button
@@ -1796,7 +3034,7 @@ const CashBankPage: React.FC = () => {
                                 onTransactionHistoryModalOpen();
                               }}
                             >
-                              {t('cashBank.history')}
+                              {t("cashBank.history")}
                             </Button>
 
                             {selectedAccount.is_active && (
@@ -1810,24 +3048,25 @@ const CashBankPage: React.FC = () => {
                                   handleDeposit(selectedAccount);
                                 }}
                               >
-                                {t('cashBank.deposit')}
+                                {t("cashBank.deposit")}
                               </Button>
                             )}
 
-                            {selectedAccount.is_active && selectedAccount.balance > 0 && (
-                              <Button
-                                leftIcon={<FiArrowRight />}
-                                colorScheme="orange"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  onDetailModalClose();
-                                  handleTransfer(selectedAccount);
-                                }}
-                              >
-                                {t('cashBank.transfer')}
-                              </Button>
-                            )}
+                            {selectedAccount.is_active &&
+                              selectedAccount.balance > 0 && (
+                                <Button
+                                  leftIcon={<FiArrowRight />}
+                                  colorScheme="orange"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    onDetailModalClose();
+                                    handleTransfer(selectedAccount);
+                                  }}
+                                >
+                                  {t("cashBank.transfer")}
+                                </Button>
+                              )}
                           </SimpleGrid>
                         </Box>
                       </VStack>
@@ -1846,16 +3085,41 @@ const CashBankPage: React.FC = () => {
                     <HStack spacing={3} width="full" justify="space-between">
                       {/* Account Summary Info */}
                       {selectedAccount && (
-                        <Box flex="1" display={{ base: 'none', md: 'block' }}>
+                        <Box flex="1" display={{ base: "none", md: "block" }}>
                           <HStack spacing={4}>
                             <Text fontSize="sm" color={mutedTextColor}>
-                              {t('cashBank.balance')}: <Text as="span" fontWeight="bold" color={selectedAccount.balance < 0 ? detailNegativeColor : selectedAccount.balance > 0 ? detailPositiveColor : detailNeutralColor}>
-                                {selectedAccount.currency} {Math.abs(selectedAccount.balance).toLocaleString('id-ID')}
+                              {t("cashBank.balance")}:{" "}
+                              <Text
+                                as="span"
+                                fontWeight="bold"
+                                color={
+                                  selectedAccount.balance < 0
+                                    ? detailNegativeColor
+                                    : selectedAccount.balance > 0
+                                      ? detailPositiveColor
+                                      : detailNeutralColor
+                                }
+                              >
+                                {selectedAccount.currency}{" "}
+                                {Math.abs(
+                                  selectedAccount.balance,
+                                ).toLocaleString("id-ID")}
                               </Text>
                             </Text>
                             <Text fontSize="sm" color={mutedTextColor}>
-                              {t('cashBank.statusLabel')}: <Text as="span" fontWeight="bold" color={selectedAccount.is_active ? detailPositiveColor : detailNegativeColor}>
-                                {selectedAccount.is_active ? t('cashBank.active') : t('cashBank.inactive')}
+                              {t("cashBank.statusLabel")}:{" "}
+                              <Text
+                                as="span"
+                                fontWeight="bold"
+                                color={
+                                  selectedAccount.is_active
+                                    ? detailPositiveColor
+                                    : detailNegativeColor
+                                }
+                              >
+                                {selectedAccount.is_active
+                                  ? t("cashBank.active")
+                                  : t("cashBank.inactive")}
                               </Text>
                             </Text>
                           </HStack>
@@ -1867,10 +3131,10 @@ const CashBankPage: React.FC = () => {
                         <Button
                           variant="outline"
                           onClick={onDetailModalClose}
-                          size={{ base: 'sm', md: 'md' }}
+                          size={{ base: "sm", md: "md" }}
                           minW="80px"
                         >
-                          {t('cashBank.close')}
+                          {t("cashBank.close")}
                         </Button>
                         <Button
                           colorScheme="blue"
@@ -1879,10 +3143,10 @@ const CashBankPage: React.FC = () => {
                             onDetailModalClose();
                             handleEditAccount(selectedAccount!);
                           }}
-                          size={{ base: 'sm', md: 'md' }}
+                          size={{ base: "sm", md: "md" }}
                           minW="120px"
                         >
-                          {t('cashBank.editAccountButton')}
+                          {t("cashBank.editAccountButton")}
                         </Button>
                       </HStack>
                     </HStack>
@@ -1906,11 +3170,17 @@ const CashBankPage: React.FC = () => {
               />
 
               {/* Reconciliation Modal */}
-              <Modal isOpen={isReconcileModalOpen} onClose={onReconcileModalClose} size="lg">
+              <Modal
+                isOpen={isReconcileModalOpen}
+                onClose={onReconcileModalClose}
+                size="lg"
+              >
                 <ModalOverlay />
                 <ModalContent>
                   <ModalHeader>
-                    {reconcileAccount ? `Reconcile ${reconcileAccount.name}` : 'Bank Reconciliation Check'}
+                    {reconcileAccount
+                      ? `Reconcile ${reconcileAccount.name}`
+                      : "Bank Reconciliation Check"}
                   </ModalHeader>
                   <ModalCloseButton />
 
@@ -1919,16 +3189,21 @@ const CashBankPage: React.FC = () => {
                       <Alert status="info">
                         <AlertIcon />
                         <Box>
-                          <AlertTitle fontSize="sm">Bank Reconciliation Status</AlertTitle>
+                          <AlertTitle fontSize="sm">
+                            Bank Reconciliation Status
+                          </AlertTitle>
                           <AlertDescription fontSize="xs">
-                            Check the reconciliation status of your cash and bank accounts with the journal system.
+                            Check the reconciliation status of your cash and
+                            bank accounts with the journal system.
                           </AlertDescription>
                         </Box>
                       </Alert>
 
                       {reconcileAccount ? (
                         <Box p={4} bg="gray.50" borderRadius="md">
-                          <Text fontWeight="bold" mb={2}>{reconcileAccount.name}</Text>
+                          <Text fontWeight="bold" mb={2}>
+                            {reconcileAccount.name}
+                          </Text>
                           <HStack justify="space-between" mb={1}>
                             <Text fontSize="sm">Account Type:</Text>
                             <Text fontSize="sm" fontWeight="bold">
@@ -1938,25 +3213,39 @@ const CashBankPage: React.FC = () => {
                           <HStack justify="space-between" mb={1}>
                             <Text fontSize="sm">Current Balance:</Text>
                             <Text fontSize="sm" fontWeight="bold">
-                              {reconcileAccount.currency} {reconcileAccount.balance.toLocaleString('id-ID')}
+                              {reconcileAccount.currency}{" "}
+                              {reconcileAccount.balance.toLocaleString("id-ID")}
                             </Text>
                           </HStack>
                           <HStack justify="space-between">
                             <Text fontSize="sm">Status:</Text>
                             <Badge
-                              colorScheme={reconcileAccount.is_active ? 'green' : 'red'}
+                              colorScheme={
+                                reconcileAccount.is_active ? "green" : "red"
+                              }
                               variant="solid"
                               fontSize="xs"
                             >
-                              {reconcileAccount.is_active ? 'ACTIVE' : 'INACTIVE'}
+                              {reconcileAccount.is_active
+                                ? "ACTIVE"
+                                : "INACTIVE"}
                             </Badge>
                           </HStack>
                         </Box>
                       ) : (
-                        <Box p={4} bg="blue.50" borderRadius="md" borderLeft="4px" borderLeftColor="blue.400">
-                          <Text fontWeight="bold" mb={2} color="blue.800">Global Reconciliation Check</Text>
+                        <Box
+                          p={4}
+                          bg="blue.50"
+                          borderRadius="md"
+                          borderLeft="4px"
+                          borderLeftColor="blue.400"
+                        >
+                          <Text fontWeight="bold" mb={2} color="blue.800">
+                            Global Reconciliation Check
+                          </Text>
                           <Text fontSize="sm" color="blue.700">
-                            This will check the reconciliation status for all cash and bank accounts in your system.
+                            This will check the reconciliation status for all
+                            cash and bank accounts in your system.
                           </Text>
                         </Box>
                       )}
@@ -1964,9 +3253,15 @@ const CashBankPage: React.FC = () => {
                       <Alert status="warning" size="sm">
                         <AlertIcon />
                         <AlertDescription fontSize="xs">
-                          <Text fontWeight="bold" mb={1}>Action Required:</Text>
-                          To perform actual reconciliation, please use the dedicated
-                          <Text as="span" fontWeight="bold" color="blue.600"> Cash & Bank Reconciliation </Text>
+                          <Text fontWeight="bold" mb={1}>
+                            Action Required:
+                          </Text>
+                          To perform actual reconciliation, please use the
+                          dedicated
+                          <Text as="span" fontWeight="bold" color="blue.600">
+                            {" "}
+                            Cash & Bank Reconciliation{" "}
+                          </Text>
                           module which provides advanced reconciliation tools.
                         </AlertDescription>
                       </Alert>
@@ -2022,4 +3317,3 @@ const CashBankPage: React.FC = () => {
 };
 
 export default CashBankPage;
-

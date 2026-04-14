@@ -11,12 +11,12 @@ import (
 
 // AccountingConfig holds all accounting-related configurations
 type AccountingConfig struct {
-	DefaultAccounts  DefaultAccountMapping  `json:"default_accounts"`
-	TaxRates        TaxConfiguration       `json:"tax_rates"`
-	CurrencySettings CurrencyConfiguration  `json:"currency_settings"`
-	JournalSettings  JournalConfiguration   `json:"journal_settings"`
-	PeriodSettings   PeriodConfiguration    `json:"period_settings"`
-	AuditSettings    AuditConfiguration     `json:"audit_settings"`
+	DefaultAccounts  DefaultAccountMapping `json:"default_accounts"`
+	TaxRates         TaxConfiguration      `json:"tax_rates"`
+	CurrencySettings CurrencyConfiguration `json:"currency_settings"`
+	JournalSettings  JournalConfiguration  `json:"journal_settings"`
+	PeriodSettings   PeriodConfiguration   `json:"period_settings"`
+	AuditSettings    AuditConfiguration    `json:"audit_settings"`
 }
 
 // DefaultAccountMapping defines default account mappings for different transaction types
@@ -26,48 +26,48 @@ type DefaultAccountMapping struct {
 	Bank                    uint `json:"bank"`                     // Default: 1102
 	AccountsReceivable      uint `json:"accounts_receivable"`      // Default: 1201
 	Inventory               uint `json:"inventory"`                // Default: 1301
-	PPNReceivable          uint `json:"ppn_receivable"`           // Default: 1240 (PPN Masukan)
-	FixedAssets            uint `json:"fixed_assets"`             // Default: 1501
+	PPNReceivable           uint `json:"ppn_receivable"`           // Default: 1240 (PPN Masukan)
+	FixedAssets             uint `json:"fixed_assets"`             // Default: 1501
 	AccumulatedDepreciation uint `json:"accumulated_depreciation"` // Default: 1502
 
 	// Liability Accounts
-	AccountsPayable    uint `json:"accounts_payable"`     // Default: 2101
-	PPNPayable        uint `json:"ppn_payable"`          // Default: 2103
-	TaxPayable        uint `json:"tax_payable"`          // Default: 2103
-	AccruedExpenses   uint `json:"accrued_expenses"`     // Default: 2201
+	AccountsPayable uint `json:"accounts_payable"` // Default: 2101
+	PPNPayable      uint `json:"ppn_payable"`      // Default: 2103
+	TaxPayable      uint `json:"tax_payable"`      // Default: 2103
+	AccruedExpenses uint `json:"accrued_expenses"` // Default: 2201
 
 	// Equity Accounts
-	ShareCapital      uint `json:"share_capital"`        // Default: 3001
-	RetainedEarnings  uint `json:"retained_earnings"`    // Default: 3101
+	ShareCapital     uint `json:"share_capital"`     // Default: 3001
+	RetainedEarnings uint `json:"retained_earnings"` // Default: 3101
 
 	// Revenue Accounts
-	SalesRevenue      uint `json:"sales_revenue"`        // Default: 4101
-	ServiceRevenue    uint `json:"service_revenue"`      // Default: 4102
-	OtherIncome       uint `json:"other_income"`         // Default: 4901
+	SalesRevenue   uint `json:"sales_revenue"`   // Default: 4101
+	ServiceRevenue uint `json:"service_revenue"` // Default: 4102
+	OtherIncome    uint `json:"other_income"`    // Default: 4901
 
 	// Expense Accounts
-	COGS              uint `json:"cogs"`                 // Default: 5101
-	OperatingExpenses uint `json:"operating_expenses"`   // Default: 6001
+	COGS                uint `json:"cogs"`                 // Default: 5101
+	OperatingExpenses   uint `json:"operating_expenses"`   // Default: 6001
 	DepreciationExpense uint `json:"depreciation_expense"` // Default: 6201
-	InterestExpense   uint `json:"interest_expense"`     // Default: 7001
+	InterestExpense     uint `json:"interest_expense"`     // Default: 7001
 }
 
 // TaxConfiguration defines tax rates and settings
 type TaxConfiguration struct {
-	DefaultPPN     float64            `json:"default_ppn"`      // Default: 11.0
-	DefaultPPh21   float64            `json:"default_pph21"`    // Default: 5.0
-	DefaultPPh23   float64            `json:"default_pph23"`    // Default: 2.0
+	DefaultPPN     float64            `json:"default_ppn"`   // Default: 11.0
+	DefaultPPh21   float64            `json:"default_pph21"` // Default: 5.0
+	DefaultPPh23   float64            `json:"default_pph23"` // Default: 2.0
 	TaxRatesByType map[string]float64 `json:"tax_rates_by_type"`
 	TaxExemptions  []string           `json:"tax_exemptions"`
 }
 
 // CurrencyConfiguration defines currency settings
 type CurrencyConfiguration struct {
-	BaseCurrency     string            `json:"base_currency"`      // Default: IDR
-	SupportedCurrencies []string       `json:"supported_currencies"`
-	ExchangeRateAPI  string            `json:"exchange_rate_api"`
-	DecimalPlaces    int               `json:"decimal_places"`     // Default: 2
-	CurrencySymbols  map[string]string `json:"currency_symbols"`
+	BaseCurrency        string            `json:"base_currency"` // Default: IDR
+	SupportedCurrencies []string          `json:"supported_currencies"`
+	ExchangeRateAPI     string            `json:"exchange_rate_api"`
+	DecimalPlaces       int               `json:"decimal_places"` // Default: 2
+	CurrencySymbols     map[string]string `json:"currency_symbols"`
 }
 
 // JournalConfiguration defines journal entry settings
@@ -83,21 +83,21 @@ type JournalConfiguration struct {
 
 // PeriodConfiguration defines accounting period settings
 type PeriodConfiguration struct {
-	FiscalYearStart      int  `json:"fiscal_year_start"`       // Default: 1 (January)
-	AutoClosePeriods     bool `json:"auto_close_periods"`      // Default: false
-	WarnBeforeClose      bool `json:"warn_before_close"`       // Default: true
+	FiscalYearStart      int  `json:"fiscal_year_start"`        // Default: 1 (January)
+	AutoClosePeriods     bool `json:"auto_close_periods"`       // Default: false
+	WarnBeforeClose      bool `json:"warn_before_close"`        // Default: true
 	AllowPostToOldPeriod bool `json:"allow_post_to_old_period"` // Default: false
-	MaxOldPeriodMonths   int  `json:"max_old_period_months"`   // Default: 24
+	MaxOldPeriodMonths   int  `json:"max_old_period_months"`    // Default: 24
 }
 
 // AuditConfiguration defines audit settings
 type AuditConfiguration struct {
-	EnableAuditTrail      bool     `json:"enable_audit_trail"`       // Default: true
-	AuditJournalChanges   bool     `json:"audit_journal_changes"`    // Default: true
-	AuditAccountChanges   bool     `json:"audit_account_changes"`    // Default: true
-	RetentionPeriodDays   int      `json:"retention_period_days"`    // Default: 2555 (7 years)
-	SensitiveFields       []string `json:"sensitive_fields"`
-	ExcludeUsers          []uint   `json:"exclude_users"`
+	EnableAuditTrail    bool     `json:"enable_audit_trail"`    // Default: true
+	AuditJournalChanges bool     `json:"audit_journal_changes"` // Default: true
+	AuditAccountChanges bool     `json:"audit_account_changes"` // Default: true
+	RetentionPeriodDays int      `json:"retention_period_days"` // Default: 2555 (7 years)
+	SensitiveFields     []string `json:"sensitive_fields"`
+	ExcludeUsers        []uint   `json:"exclude_users"`
 }
 
 var (
@@ -190,14 +190,14 @@ func getDefaultConfig() *AccountingConfig {
 			Bank:                    1102,
 			AccountsReceivable:      1201,
 			Inventory:               1301,
-			PPNReceivable:          1240,
-			FixedAssets:            1501,
+			PPNReceivable:           1240,
+			FixedAssets:             1501,
 			AccumulatedDepreciation: 1502,
 
 			// Liability Accounts
 			AccountsPayable: 2101,
-			PPNPayable:     2103,
-			TaxPayable:     2103,
+			PPNPayable:      2103,
+			TaxPayable:      2103,
 			AccruedExpenses: 2201,
 
 			// Equity Accounts
@@ -210,32 +210,33 @@ func getDefaultConfig() *AccountingConfig {
 			OtherIncome:    4901,
 
 			// Expense Accounts
-			COGS:               5101,
-			OperatingExpenses:  6001,
+			COGS:                5101,
+			OperatingExpenses:   6001,
 			DepreciationExpense: 6201,
-			InterestExpense:    7001,
+			InterestExpense:     7001,
 		},
 		TaxRates: TaxConfiguration{
 			DefaultPPN:   11.0,
 			DefaultPPh21: 5.0,
 			DefaultPPh23: 2.0,
 			TaxRatesByType: map[string]float64{
-				"PPN":         11.0,
-				"PPh21":       5.0,
-				"PPh23":       2.0,
-				"PPh25":       25.0,
-				"PPh29":       29.0,
+				"PPN":   11.0,
+				"PPh21": 5.0,
+				"PPh23": 2.0,
+				"PPh25": 25.0,
+				"PPh29": 29.0,
 			},
 			TaxExemptions: []string{"medical", "education", "religious"},
 		},
 		CurrencySettings: CurrencyConfiguration{
 			BaseCurrency:        "IDR",
-			SupportedCurrencies: []string{"IDR", "USD", "EUR", "SGD"},
+			SupportedCurrencies: []string{"IDR", "USD", "CNY", "EUR", "SGD"},
 			ExchangeRateAPI:     "https://api.exchangerate-api.com/v4/latest/",
 			DecimalPlaces:       2,
 			CurrencySymbols: map[string]string{
 				"IDR": "Rp",
 				"USD": "$",
+				"CNY": "¥",
 				"EUR": "€",
 				"SGD": "S$",
 			},
@@ -270,7 +271,7 @@ func getDefaultConfig() *AccountingConfig {
 // GetDefaultAccountID returns the default account ID for a given account type
 func GetDefaultAccountID(accountType string) (uint, error) {
 	config := GetAccountingConfig()
-	
+
 	switch accountType {
 	case "cash":
 		return config.DefaultAccounts.Cash, nil
@@ -320,7 +321,7 @@ func GetDefaultAccountID(accountType string) (uint, error) {
 // GetDefaultTaxRate returns the default tax rate for a given tax type
 func GetDefaultTaxRate(taxType string) (float64, error) {
 	config := GetAccountingConfig()
-	
+
 	switch taxType {
 	case "PPN", "ppn":
 		return config.TaxRates.DefaultPPN, nil
@@ -399,26 +400,26 @@ func ValidateAccountConfiguration(db *models.Account) []string {
 	var errors []string
 
 	accountMappings := map[string]uint{
-		"Cash":                    config.DefaultAccounts.Cash,
-		"Bank":                    config.DefaultAccounts.Bank,
-		"Accounts Receivable":     config.DefaultAccounts.AccountsReceivable,
-		"Inventory":               config.DefaultAccounts.Inventory,
-		"PPN Receivable":          config.DefaultAccounts.PPNReceivable,
-		"Fixed Assets":            config.DefaultAccounts.FixedAssets,
+		"Cash":                     config.DefaultAccounts.Cash,
+		"Bank":                     config.DefaultAccounts.Bank,
+		"Accounts Receivable":      config.DefaultAccounts.AccountsReceivable,
+		"Inventory":                config.DefaultAccounts.Inventory,
+		"PPN Receivable":           config.DefaultAccounts.PPNReceivable,
+		"Fixed Assets":             config.DefaultAccounts.FixedAssets,
 		"Accumulated Depreciation": config.DefaultAccounts.AccumulatedDepreciation,
-		"Accounts Payable":        config.DefaultAccounts.AccountsPayable,
-		"PPN Payable":             config.DefaultAccounts.PPNPayable,
-		"Tax Payable":             config.DefaultAccounts.TaxPayable,
-		"Accrued Expenses":        config.DefaultAccounts.AccruedExpenses,
-		"Share Capital":           config.DefaultAccounts.ShareCapital,
-		"Retained Earnings":       config.DefaultAccounts.RetainedEarnings,
-		"Sales Revenue":           config.DefaultAccounts.SalesRevenue,
-		"Service Revenue":         config.DefaultAccounts.ServiceRevenue,
-		"Other Income":            config.DefaultAccounts.OtherIncome,
-		"COGS":                    config.DefaultAccounts.COGS,
-		"Operating Expenses":      config.DefaultAccounts.OperatingExpenses,
-		"Depreciation Expense":    config.DefaultAccounts.DepreciationExpense,
-		"Interest Expense":        config.DefaultAccounts.InterestExpense,
+		"Accounts Payable":         config.DefaultAccounts.AccountsPayable,
+		"PPN Payable":              config.DefaultAccounts.PPNPayable,
+		"Tax Payable":              config.DefaultAccounts.TaxPayable,
+		"Accrued Expenses":         config.DefaultAccounts.AccruedExpenses,
+		"Share Capital":            config.DefaultAccounts.ShareCapital,
+		"Retained Earnings":        config.DefaultAccounts.RetainedEarnings,
+		"Sales Revenue":            config.DefaultAccounts.SalesRevenue,
+		"Service Revenue":          config.DefaultAccounts.ServiceRevenue,
+		"Other Income":             config.DefaultAccounts.OtherIncome,
+		"COGS":                     config.DefaultAccounts.COGS,
+		"Operating Expenses":       config.DefaultAccounts.OperatingExpenses,
+		"Depreciation Expense":     config.DefaultAccounts.DepreciationExpense,
+		"Interest Expense":         config.DefaultAccounts.InterestExpense,
 	}
 
 	// TODO: Add actual database validation

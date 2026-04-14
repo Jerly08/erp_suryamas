@@ -23,6 +23,7 @@ type CashBankService struct {
 	db                    *gorm.DB
 	cashBankRepo          *repositories.CashBankRepository
 	accountRepo           repositories.AccountRepository
+	notificationService   *NotificationService
 	unifiedJournalService *UnifiedJournalService      // New SSOT dependency
 	sSOTJournalAdapter    *CashBankSSOTJournalAdapter // SSOT Integration
 }
@@ -37,11 +38,14 @@ func NewCashBankService(
 
 	// Initialize SSOT Journal Adapter
 	sSOTJournalAdapter := NewCashBankSSOTJournalAdapter(db)
+	notificationRepo := repositories.NewNotificationRepository(db)
+	notificationService := NewNotificationService(db, notificationRepo)
 
 	return &CashBankService{
 		db:                    db,
 		cashBankRepo:          cashBankRepo,
 		accountRepo:           accountRepo,
+		notificationService:   notificationService,
 		unifiedJournalService: unifiedJournalService,
 		sSOTJournalAdapter:    sSOTJournalAdapter,
 	}
@@ -54,7 +58,37 @@ const (
 	TransactionTypeTransfer       = "TRANSFER"
 	TransactionTypeAdjustment     = "ADJUSTMENT"
 	TransactionTypeOpeningBalance = "OPENING_BALANCE"
+
+	TransferStatusPendingApproval = "PENDING_APPROVAL"
+	TransferStatusCompleted       = "COMPLETED"
+	TransferStatusRejected        = "REJECTED"
 )
+
+func requiresFinanceManagerTransferApproval(role string) bool {
+	switch models.NormalizeRole(role) {
+	case models.RoleEmployee, models.RoleFinanceStaff, "staff":
+		return true
+	default:
+		return false
+	}
+}
+
+func canApproveCashBankTransfer(role string) bool {
+	return models.NormalizeRole(role) == models.RoleAdmin || models.IsFinanceManagerRole(role)
+}
+
+type transferExecutionPlan struct {
+	sourceAccount            *models.CashBank
+	destAccount              *models.CashBank
+	transferAmount           float64
+	exchangeRateUsed         float64
+	sourceBookAmountIDR      float64
+	sourceCarryRate          float64
+	destinationBookAmountIDR float64
+	destinationRate          float64
+	forexGainLossAmount      float64
+	forexGainLossType        string
+}
 
 // GetCashBankAccounts retrieves all cash and bank accounts
 func (s *CashBankService) GetCashBankAccounts(includeHolding ...bool) ([]models.CashBank, error) {
@@ -102,6 +136,9 @@ func (s *CashBankService) CreateCashBankAccount(request CashBankCreateRequest, u
 		allowDirectTransactions = *request.AllowDirectTransactions
 	}
 	if request.IsHoldingAccount && request.AllowDirectTransactions == nil {
+		allowDirectTransactions = false
+	}
+	if currency == "CNY" {
 		allowDirectTransactions = false
 	}
 	initialExchangeRate := request.OpeningExchangeRate
@@ -328,6 +365,11 @@ func (s *CashBankService) UpdateCashBankAccount(id uint, request CashBankUpdateR
 	log.Printf("[CASHBANK SERVICE UPDATE] BEFORE: ID=%d, AccountHolderName='%s', Branch='%s'",
 		id, cashBank.AccountHolderName, cashBank.Branch)
 
+	if strings.EqualFold(strings.TrimSpace(cashBank.Currency), "CNY") {
+		forcedFalse := false
+		request.AllowDirectTransactions = &forcedFalse
+	}
+
 	// Ensure account integrity using the database function
 	if err := database.EnsureCashBankAccountIntegrity(s.db, cashBank.ID); err != nil {
 		log.Printf("Warning: Failed to ensure cash bank account integrity for ID %d: %v", cashBank.ID, err)
@@ -411,13 +453,13 @@ func normalizeCashBankCurrency(currency string) string {
 	return normalized
 }
 
-func supportsUsdIdrTransfer(sourceCurrency, destinationCurrency string) bool {
+func supportsIdrForeignTransfer(sourceCurrency, destinationCurrency string) bool {
 	if sourceCurrency == destinationCurrency {
 		return true
 	}
 
-	return (sourceCurrency == "USD" && destinationCurrency == "IDR") ||
-		(sourceCurrency == "IDR" && destinationCurrency == "USD")
+	return (sourceCurrency == "IDR" && destinationCurrency != "IDR") ||
+		(sourceCurrency != "IDR" && destinationCurrency == "IDR")
 }
 
 func (s *CashBankService) resolveAppliedExchangeRate(account *models.CashBank, providedRate float64) (float64, error) {
@@ -686,56 +728,43 @@ func (s *CashBankService) createTransferSSOTJournalEntryWithTx(
 }
 
 // ProcessTransfer processes transfer between cash/bank accounts
-func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) (*CashBankTransfer, error) {
-	tx := s.db.Begin()
-	guard := NewCashBankCurrencyGuard(s.db)
-
+func (s *CashBankService) buildTransferExecutionPlan(tx *gorm.DB, request TransferRequest) (*transferExecutionPlan, error) {
 	if err := CheckClosedPeriod(tx, request.Date.ToTimeWithCurrentTime()); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
-	sourceAccount, err := s.cashBankRepo.FindByID(request.FromAccountID)
-	if err != nil {
-		tx.Rollback()
+	var sourceAccount models.CashBank
+	if err := tx.First(&sourceAccount, request.FromAccountID).Error; err != nil {
 		return nil, errors.New("source account not found")
 	}
 
-	destAccount, err := s.cashBankRepo.FindByID(request.ToAccountID)
-	if err != nil {
-		tx.Rollback()
+	var destAccount models.CashBank
+	if err := tx.First(&destAccount, request.ToAccountID).Error; err != nil {
 		return nil, errors.New("destination account not found")
 	}
 
 	if sourceAccount.ID == destAccount.ID {
-		tx.Rollback()
 		return nil, errors.New("source and destination accounts must be different")
 	}
 	if !sourceAccount.IsActive || !destAccount.IsActive {
-		tx.Rollback()
 		return nil, errors.New("both accounts must be active")
 	}
 
 	if err := database.EnsureCashBankAccountIntegrity(s.db, sourceAccount.ID); err != nil {
 		log.Printf("Warning: Failed to ensure source account integrity for ID %d: %v", sourceAccount.ID, err)
-		sourceAccount, err = s.cashBankRepo.FindByID(request.FromAccountID)
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to reload source account after integrity fix: %v", err)
+		if reloadErr := tx.First(&sourceAccount, request.FromAccountID).Error; reloadErr != nil {
+			return nil, fmt.Errorf("failed to reload source account after integrity fix: %v", reloadErr)
 		}
 	}
 
 	if err := database.EnsureCashBankAccountIntegrity(s.db, destAccount.ID); err != nil {
 		log.Printf("Warning: Failed to ensure destination account integrity for ID %d: %v", destAccount.ID, err)
-		destAccount, err = s.cashBankRepo.FindByID(request.ToAccountID)
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("failed to reload destination account after integrity fix: %v", err)
+		if reloadErr := tx.First(&destAccount, request.ToAccountID).Error; reloadErr != nil {
+			return nil, fmt.Errorf("failed to reload destination account after integrity fix: %v", reloadErr)
 		}
 	}
 
 	if sourceAccount.AvailableBalance() < request.Amount {
-		tx.Rollback()
 		if sourceAccount.FrozenAmount > 0 {
 			return nil, fmt.Errorf("saldo tersedia tidak cukup. Saldo tersedia: %.2f (Total: %.2f, Dana terblokir: %.2f)", sourceAccount.AvailableBalance(), sourceAccount.Balance, sourceAccount.FrozenAmount)
 		}
@@ -745,33 +774,29 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 	sourceCurrency := normalizeCashBankCurrency(sourceAccount.Currency)
 	destinationCurrency := normalizeCashBankCurrency(destAccount.Currency)
 	sameCurrency := sourceCurrency == destinationCurrency
-	if !supportsUsdIdrTransfer(sourceCurrency, destinationCurrency) {
-		tx.Rollback()
-		return nil, errors.New("different currency transfer is currently supported only between USD and IDR accounts")
+	if !supportsIdrForeignTransfer(sourceCurrency, destinationCurrency) {
+		return nil, errors.New("different currency transfer is currently supported only between IDR and one foreign-currency account")
 	}
 
 	transferAmount := request.Amount
 	exchangeRateUsed := 1.0
 	if !sameCurrency {
 		if request.ExchangeRate <= 0 {
-			tx.Rollback()
-			return nil, errors.New("exchange rate is required for USD/IDR transfers")
+			return nil, errors.New("exchange rate is required for IDR/foreign-currency transfers")
 		}
 		exchangeRateUsed = request.ExchangeRate
 		switch {
-		case sourceCurrency == "USD" && destinationCurrency == "IDR":
+		case sourceCurrency != "IDR" && destinationCurrency == "IDR":
 			transferAmount = request.Amount * exchangeRateUsed
-		case sourceCurrency == "IDR" && destinationCurrency == "USD":
+		case sourceCurrency == "IDR" && destinationCurrency != "IDR":
 			transferAmount = request.Amount / exchangeRateUsed
 		default:
-			tx.Rollback()
-			return nil, errors.New("unsupported USD/IDR transfer direction")
+			return nil, errors.New("unsupported IDR/foreign-currency transfer direction")
 		}
 	}
 
-	sourceBookAmountIDR, sourceCarryRate, err := s.calculateReductionBookAmount(sourceAccount, request.Amount)
+	sourceBookAmountIDR, sourceCarryRate, err := s.calculateReductionBookAmount(&sourceAccount, request.Amount)
 	if err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -781,7 +806,7 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 	forexGainLossType := ""
 	if !sameCurrency {
 		switch {
-		case sourceCurrency == "USD" && destinationCurrency == "IDR":
+		case sourceCurrency != "IDR" && destinationCurrency == "IDR":
 			destinationBookAmountIDR = transferAmount
 			forexGainLossAmount = destinationBookAmountIDR - sourceBookAmountIDR
 			if forexGainLossAmount > 0.005 {
@@ -789,7 +814,7 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 			} else if forexGainLossAmount < -0.005 {
 				forexGainLossType = "LOSS"
 			}
-		case sourceCurrency == "IDR" && destinationCurrency == "USD":
+		case sourceCurrency == "IDR" && destinationCurrency != "IDR":
 			destinationBookAmountIDR = request.Amount
 			destinationRate = exchangeRateUsed
 		}
@@ -797,6 +822,21 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 		destinationRate = sourceCarryRate
 	}
 
+	return &transferExecutionPlan{
+		sourceAccount:            &sourceAccount,
+		destAccount:              &destAccount,
+		transferAmount:           transferAmount,
+		exchangeRateUsed:         exchangeRateUsed,
+		sourceBookAmountIDR:      sourceBookAmountIDR,
+		sourceCarryRate:          sourceCarryRate,
+		destinationBookAmountIDR: destinationBookAmountIDR,
+		destinationRate:          destinationRate,
+		forexGainLossAmount:      forexGainLossAmount,
+		forexGainLossType:        forexGainLossType,
+	}, nil
+}
+
+func (s *CashBankService) createTransferRecordWithRetry(tx *gorm.DB, request TransferRequest, userID uint, status string, approvalRequired bool, plan *transferExecutionPlan) (*CashBankTransfer, error) {
 	var transfer *CashBankTransfer
 	for retryAttempt := 0; retryAttempt < 5; retryAttempt++ {
 		transfer = &CashBankTransfer{
@@ -805,16 +845,17 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 			ToAccountID:              request.ToAccountID,
 			Date:                     request.Date.ToTimeWithCurrentTime(),
 			Amount:                   request.Amount,
-			ExchangeRate:             exchangeRateUsed,
-			ConvertedAmount:          transferAmount,
-			SourceBookAmountIDR:      sourceBookAmountIDR,
-			DestinationBookAmountIDR: destinationBookAmountIDR,
-			ForexGainLossAmount:      forexGainLossAmount,
-			ForexGainLossType:        forexGainLossType,
+			ExchangeRate:             plan.exchangeRateUsed,
+			ConvertedAmount:          plan.transferAmount,
+			SourceBookAmountIDR:      plan.sourceBookAmountIDR,
+			DestinationBookAmountIDR: plan.destinationBookAmountIDR,
+			ForexGainLossAmount:      plan.forexGainLossAmount,
+			ForexGainLossType:        plan.forexGainLossType,
 			Reference:                request.Reference,
 			Notes:                    request.Notes,
-			Status:                   "COMPLETED",
+			Status:                   status,
 			UserID:                   userID,
+			ApprovalRequired:         approvalRequired,
 		}
 
 		if err := tx.Create(transfer).Error; err != nil {
@@ -826,40 +867,43 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 			if strings.Contains(err.Error(), "duplicate key value violates unique constraint") && strings.Contains(err.Error(), "cash_bank_transfers_pkey") {
 				log.Printf("Cash bank transfer ID sequence mismatch detected (attempt %d), syncing sequence and retrying...", retryAttempt+1)
 				if syncErr := s.syncCashBankTransferSequence(tx); syncErr != nil {
-					tx.Rollback()
 					return nil, fmt.Errorf("failed to sync cash bank transfer sequence: %v", syncErr)
 				}
 				time.Sleep(time.Millisecond * time.Duration(50*(retryAttempt+1)))
 				continue
 			}
-			tx.Rollback()
 			return nil, fmt.Errorf("failed to create transfer record: %v", err)
 		}
 		break
 	}
 
 	if transfer == nil || transfer.ID == 0 {
-		tx.Rollback()
 		return nil, errors.New("failed to create transfer after multiple attempts")
 	}
 
+	return transfer, nil
+}
+
+func (s *CashBankService) applyTransferExecution(tx *gorm.DB, transfer *CashBankTransfer, request TransferRequest, userID uint, plan *transferExecutionPlan) error {
+	guard := NewCashBankCurrencyGuard(s.db)
+	sourceAccount := plan.sourceAccount
+	destAccount := plan.destAccount
+
 	sourceAccount.Balance -= request.Amount
 	if sourceAccount.IsForeignCurrency() {
-		sourceAccount.BookBalanceIDR -= sourceBookAmountIDR
+		sourceAccount.BookBalanceIDR -= plan.sourceBookAmountIDR
 		if sourceAccount.BookBalanceIDR < 0 && sourceAccount.BookBalanceIDR > -0.01 {
 			sourceAccount.BookBalanceIDR = 0
 		}
-		if exchangeRateUsed > 0 {
-			sourceAccount.LastExchangeRate = exchangeRateUsed
+		if plan.exchangeRateUsed > 0 {
+			sourceAccount.LastExchangeRate = plan.exchangeRateUsed
 		}
 	}
 	if err := tx.Save(sourceAccount).Error; err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to update source account balance: %v", err)
+		return fmt.Errorf("failed to update source account balance: %v", err)
 	}
 	if err := s.syncCashBankBookBalanceToGL(tx, sourceAccount); err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to sync source GL balance: %v", err)
+		return fmt.Errorf("failed to sync source GL balance: %v", err)
 	}
 
 	sourceTx := &models.CashBankTransaction{
@@ -868,61 +912,346 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint) 
 		ReferenceID:     transfer.ID,
 		Amount:          -request.Amount,
 		Currency:        normalizeCashBankCurrency(sourceAccount.Currency),
-		ExchangeRate:    sourceCarryRate,
-		BookAmountIDR:   -sourceBookAmountIDR,
+		ExchangeRate:    plan.sourceCarryRate,
+		BookAmountIDR:   -plan.sourceBookAmountIDR,
 		BalanceAfter:    sourceAccount.Balance,
 		TransactionDate: request.Date.ToTimeWithCurrentTime(),
 		Notes:           fmt.Sprintf("Transfer to %s", destAccount.Name),
 	}
 	if err := tx.Create(sourceTx).Error; err != nil {
-		tx.Rollback()
-		return nil, err
+		return err
 	}
 
-	destAccount.Balance += transferAmount
+	destAccount.Balance += plan.transferAmount
 	if destAccount.IsForeignCurrency() {
-		destAccount.BookBalanceIDR += destinationBookAmountIDR
-		if destinationRate > 0 {
-			destAccount.LastExchangeRate = destinationRate
+		destAccount.BookBalanceIDR += plan.destinationBookAmountIDR
+		if plan.destinationRate > 0 {
+			destAccount.LastExchangeRate = plan.destinationRate
 		}
 	}
 	if err := tx.Save(destAccount).Error; err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to update destination account balance: %v", err)
+		return fmt.Errorf("failed to update destination account balance: %v", err)
 	}
 	if err := s.syncCashBankBookBalanceToGL(tx, destAccount); err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to sync destination GL balance: %v", err)
+		return fmt.Errorf("failed to sync destination GL balance: %v", err)
 	}
 
 	destTx := &models.CashBankTransaction{
 		CashBankID:      request.ToAccountID,
 		ReferenceType:   TransactionTypeTransfer,
 		ReferenceID:     transfer.ID,
-		Amount:          transferAmount,
+		Amount:          plan.transferAmount,
 		Currency:        normalizeCashBankCurrency(destAccount.Currency),
-		ExchangeRate:    destinationRate,
-		BookAmountIDR:   destinationBookAmountIDR,
+		ExchangeRate:    plan.destinationRate,
+		BookAmountIDR:   plan.destinationBookAmountIDR,
 		BalanceAfter:    destAccount.Balance,
 		TransactionDate: request.Date.ToTimeWithCurrentTime(),
 		Notes:           fmt.Sprintf("Transfer from %s", sourceAccount.Name),
 	}
 	if err := tx.Create(destTx).Error; err != nil {
+		return err
+	}
+
+	if err := s.createTransferSSOTJournalEntryWithTx(tx, transfer, sourceAccount, destAccount, plan.sourceBookAmountIDR, plan.destinationBookAmountIDR, plan.forexGainLossAmount, userID, request); err != nil {
+		return fmt.Errorf("failed to create SSOT transfer journal entry: %v", err)
+	}
+
+	if err := guard.EnforceAfterTransaction(tx, sourceAccount.ID, destAccount.ID); err != nil {
+		return fmt.Errorf("failed to enforce cash/bank currency invariant after transfer: %v", err)
+	}
+
+	return nil
+}
+
+func (s *CashBankService) buildTransferRequestFromRecord(transfer *CashBankTransfer) TransferRequest {
+	return TransferRequest{
+		FromAccountID: transfer.FromAccountID,
+		ToAccountID:   transfer.ToAccountID,
+		Date:          CustomDate(transfer.Date),
+		Amount:        transfer.Amount,
+		ExchangeRate:  transfer.ExchangeRate,
+		Reference:     transfer.Reference,
+		Notes:         transfer.Notes,
+	}
+}
+
+func (s *CashBankService) getTransferWithRelations(tx *gorm.DB, transferID uint) (*CashBankTransfer, error) {
+	var transfer CashBankTransfer
+	if err := tx.
+		Preload("FromAccount").
+		Preload("ToAccount").
+		Preload("Requester").
+		Preload("Approver").
+		Preload("Rejector").
+		First(&transfer, transferID).Error; err != nil {
+		return nil, err
+	}
+
+	return &transfer, nil
+}
+
+func (s *CashBankService) notifyTransferApprovalRequired(transfer *CashBankTransfer, plan *transferExecutionPlan) {
+	if s.notificationService == nil || s.notificationService.smartService == nil || transfer == nil || plan == nil {
+		return
+	}
+
+	err := s.notificationService.smartService.CreateSmartNotification(
+		models.NotificationTypeApprovalPending,
+		"Approval transfer antar bank",
+		fmt.Sprintf("Transfer %s dari %s ke %s menunggu approval finance manager.", transfer.TransferNumber, plan.sourceAccount.Name, plan.destAccount.Name),
+		map[string]interface{}{
+			"transfer_id":      transfer.ID,
+			"transfer_number":  transfer.TransferNumber,
+			"from_account_id":  transfer.FromAccountID,
+			"to_account_id":    transfer.ToAccountID,
+			"request_user_id":  transfer.UserID,
+			"amount":           transfer.Amount,
+			"converted_amount": transfer.ConvertedAmount,
+			"status":           transfer.Status,
+		},
+		transfer.Amount,
+		models.RoleFinance,
+		0,
+		"",
+	)
+	if err != nil {
+		log.Printf("Warning: failed to create transfer approval notification for %s: %v", transfer.TransferNumber, err)
+	}
+}
+
+func (s *CashBankService) notifyTransferDecision(transfer *CashBankTransfer, approved bool) {
+	if s.notificationService == nil || transfer == nil {
+		return
+	}
+
+	notificationType := models.NotificationTypeApprovalRejected
+	title := "Transfer ditolak"
+	message := fmt.Sprintf("Transfer %s ditolak oleh finance manager.", transfer.TransferNumber)
+	if approved {
+		notificationType = models.NotificationTypeApprovalApproved
+		title = "Transfer disetujui"
+		message = fmt.Sprintf("Transfer %s telah disetujui dan diproses.", transfer.TransferNumber)
+	} else if strings.TrimSpace(transfer.RejectionReason) != "" {
+		message = fmt.Sprintf("Transfer %s ditolak: %s", transfer.TransferNumber, transfer.RejectionReason)
+	}
+
+	err := s.notificationService.CreateApprovalNotification(
+		transfer.UserID,
+		notificationType,
+		title,
+		message,
+		map[string]interface{}{
+			"transfer_id":        transfer.ID,
+			"transfer_number":    transfer.TransferNumber,
+			"status":             transfer.Status,
+			"approved_by":        transfer.ApprovedBy,
+			"rejected_by":        transfer.RejectedBy,
+			"rejection_reason":   transfer.RejectionReason,
+			"from_account_id":    transfer.FromAccountID,
+			"to_account_id":      transfer.ToAccountID,
+			"converted_amount":   transfer.ConvertedAmount,
+			"source_book_amount": transfer.SourceBookAmountIDR,
+		},
+	)
+	if err != nil {
+		log.Printf("Warning: failed to create transfer decision notification for %s: %v", transfer.TransferNumber, err)
+	}
+}
+
+func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint, requesterRole string) (*CashBankTransfer, error) {
+	tx := s.db.Begin()
+	plan, err := s.buildTransferExecutionPlan(tx, request)
+	if err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	if err := s.createTransferSSOTJournalEntryWithTx(tx, transfer, sourceAccount, destAccount, sourceBookAmountIDR, destinationBookAmountIDR, forexGainLossAmount, userID, request); err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to create SSOT transfer journal entry: %v", err)
+	approvalRequired := requiresFinanceManagerTransferApproval(requesterRole)
+	status := TransferStatusCompleted
+	if approvalRequired {
+		status = TransferStatusPendingApproval
 	}
 
-	if err := guard.EnforceAfterTransaction(tx, sourceAccount.ID, destAccount.ID); err != nil {
+	transfer, err := s.createTransferRecordWithRetry(tx, request, userID, status, approvalRequired, plan)
+	if err != nil {
 		tx.Rollback()
-		return nil, fmt.Errorf("failed to enforce cash/bank currency invariant after transfer: %v", err)
+		return nil, err
 	}
 
-	return transfer, tx.Commit().Error
+	if approvalRequired {
+		if err := tx.Commit().Error; err != nil {
+			return nil, err
+		}
+
+		enrichedTransfer, err := s.getTransferWithRelations(s.db, transfer.ID)
+		if err == nil {
+			transfer = enrichedTransfer
+		}
+		s.notifyTransferApprovalRequired(transfer, plan)
+		return transfer, nil
+	}
+
+	if err := s.applyTransferExecution(tx, transfer, request, userID, plan); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	enrichedTransfer, err := s.getTransferWithRelations(s.db, transfer.ID)
+	if err == nil {
+		transfer = enrichedTransfer
+	}
+
+	return transfer, nil
+}
+
+func (s *CashBankService) GetTransfers(userID uint, role string, status string, limit int) ([]CashBankTransfer, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	query := s.db.
+		Model(&CashBankTransfer{}).
+		Preload("FromAccount").
+		Preload("ToAccount").
+		Preload("Requester").
+		Preload("Approver").
+		Preload("Rejector").
+		Order("created_at DESC").
+		Limit(limit)
+
+	if normalizedStatus := strings.TrimSpace(strings.ToUpper(status)); normalizedStatus != "" {
+		query = query.Where("status = ?", normalizedStatus)
+	}
+
+	if !canApproveCashBankTransfer(role) {
+		query = query.Where("user_id = ?", userID)
+	}
+
+	var transfers []CashBankTransfer
+	if err := query.Find(&transfers).Error; err != nil {
+		return nil, err
+	}
+
+	return transfers, nil
+}
+
+func (s *CashBankService) ApproveTransfer(transferID, approverID uint, approverRole string) (*CashBankTransfer, error) {
+	if !canApproveCashBankTransfer(approverRole) {
+		return nil, errors.New("you do not have permission to approve transfers")
+	}
+
+	tx := s.db.Begin()
+
+	var transfer CashBankTransfer
+	if err := tx.First(&transfer, transferID).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("transfer request not found")
+		}
+		return nil, err
+	}
+
+	if transfer.Status != TransferStatusPendingApproval {
+		tx.Rollback()
+		return nil, errors.New("transfer request has already been reviewed")
+	}
+
+	request := s.buildTransferRequestFromRecord(&transfer)
+	plan, err := s.buildTransferExecutionPlan(tx, request)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := s.applyTransferExecution(tx, &transfer, request, approverID, plan); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":                      TransferStatusCompleted,
+		"exchange_rate":               plan.exchangeRateUsed,
+		"converted_amount":            plan.transferAmount,
+		"source_book_amount_idr":      plan.sourceBookAmountIDR,
+		"destination_book_amount_idr": plan.destinationBookAmountIDR,
+		"forex_gain_loss_amount":      plan.forexGainLossAmount,
+		"forex_gain_loss_type":        plan.forexGainLossType,
+		"approved_by":                 approverID,
+		"approved_at":                 now,
+		"rejected_by":                 nil,
+		"rejected_at":                 nil,
+		"rejection_reason":            "",
+	}
+	if err := tx.Model(&transfer).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to update approved transfer status: %v", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	approvedTransfer, err := s.getTransferWithRelations(s.db, transfer.ID)
+	if err == nil {
+		s.notifyTransferDecision(approvedTransfer, true)
+		return approvedTransfer, nil
+	}
+
+	return &transfer, nil
+}
+
+func (s *CashBankService) RejectTransfer(transferID, approverID uint, approverRole string, reason string) (*CashBankTransfer, error) {
+	if !canApproveCashBankTransfer(approverRole) {
+		return nil, errors.New("you do not have permission to reject transfers")
+	}
+
+	tx := s.db.Begin()
+
+	var transfer CashBankTransfer
+	if err := tx.First(&transfer, transferID).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("transfer request not found")
+		}
+		return nil, err
+	}
+
+	if transfer.Status != TransferStatusPendingApproval {
+		tx.Rollback()
+		return nil, errors.New("transfer request has already been reviewed")
+	}
+
+	now := time.Now()
+	rejectionReason := strings.TrimSpace(reason)
+	updates := map[string]interface{}{
+		"status":           TransferStatusRejected,
+		"rejected_by":      approverID,
+		"rejected_at":      now,
+		"rejection_reason": rejectionReason,
+		"approved_by":      nil,
+		"approved_at":      nil,
+	}
+	if err := tx.Model(&transfer).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to update rejected transfer status: %v", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	rejectedTransfer, err := s.getTransferWithRelations(s.db, transfer.ID)
+	if err == nil {
+		s.notifyTransferDecision(rejectedTransfer, false)
+		return rejectedTransfer, nil
+	}
+
+	return &transfer, nil
 }
 
 // ProcessDeposit processes a deposit transaction
@@ -1441,19 +1770,18 @@ func (s *CashBankService) getAccountCategory(cashBankType string) string {
 }
 
 func (s *CashBankService) generateTransferNumber() string {
-	year := time.Now().Year()
-	month := time.Now().Month()
+	now := time.Now()
+	year := now.Year()
+	month := now.Month()
+	startOfMonth := time.Date(year, month, 1, 0, 0, 0, 0, now.Location())
+	startOfNextMonth := startOfMonth.AddDate(0, 1, 0)
 
 	// Get the count of transfers for this month with retry logic
 	var count int64
 	for retry := 0; retry < 5; retry++ {
-		err := s.db.Raw(`
-			SELECT COALESCE(COUNT(*), 0) 
-			FROM cash_bank_transfers 
-			WHERE EXTRACT(YEAR FROM created_at) = ? 
-			  AND EXTRACT(MONTH FROM created_at) = ?
-			  AND deleted_at IS NULL
-		`, year, month).Scan(&count).Error
+		err := s.db.Model(&CashBankTransfer{}).
+			Where("created_at >= ? AND created_at < ?", startOfMonth, startOfNextMonth).
+			Count(&count).Error
 
 		if err == nil {
 			break
@@ -1468,7 +1796,7 @@ func (s *CashBankService) generateTransferNumber() string {
 	count++
 
 	// Add microsecond timestamp to ensure uniqueness in case of concurrent requests
-	microsecond := time.Now().UnixMicro() % 10000
+	microsecond := now.UnixMicro() % 10000
 
 	return fmt.Sprintf("TRF/%04d/%02d/%04d-%04d", year, month, count, microsecond)
 }
@@ -1764,24 +2092,39 @@ type AccountBalance struct {
 }
 
 type CashBankTransfer struct {
-	ID                       uint   `gorm:"primaryKey"`
-	TransferNumber           string `gorm:"unique;not null;size:50"`
-	FromAccountID            uint   `gorm:"not null;index"`
-	ToAccountID              uint   `gorm:"not null;index"`
-	Date                     time.Time
-	Amount                   float64 `gorm:"type:decimal(15,2)"`
-	ExchangeRate             float64 `gorm:"type:decimal(12,6);default:1"`
-	ConvertedAmount          float64 `gorm:"type:decimal(15,2)"`
-	SourceBookAmountIDR      float64 `gorm:"type:decimal(20,2);default:0"`
-	DestinationBookAmountIDR float64 `gorm:"type:decimal(20,2);default:0"`
-	ForexGainLossAmount      float64 `gorm:"type:decimal(20,2);default:0"`
-	ForexGainLossType        string  `gorm:"size:10"`
-	Reference                string  `gorm:"size:100"`
-	Notes                    string  `gorm:"type:text"`
-	Status                   string  `gorm:"size:20"`
-	UserID                   uint    `gorm:"not null;index"`
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	ID                       uint            `gorm:"primaryKey" json:"id"`
+	TransferNumber           string          `gorm:"unique;not null;size:50" json:"transfer_number"`
+	FromAccountID            uint            `gorm:"not null;index" json:"from_account_id"`
+	ToAccountID              uint            `gorm:"not null;index" json:"to_account_id"`
+	Date                     time.Time       `json:"date"`
+	Amount                   float64         `gorm:"type:decimal(15,2)" json:"amount"`
+	ExchangeRate             float64         `gorm:"type:decimal(12,6);default:1" json:"exchange_rate"`
+	ConvertedAmount          float64         `gorm:"type:decimal(15,2)" json:"converted_amount"`
+	SourceBookAmountIDR      float64         `gorm:"type:decimal(20,2);default:0" json:"source_book_amount_idr"`
+	DestinationBookAmountIDR float64         `gorm:"type:decimal(20,2);default:0" json:"destination_book_amount_idr"`
+	ForexGainLossAmount      float64         `gorm:"type:decimal(20,2);default:0" json:"forex_gain_loss_amount"`
+	ForexGainLossType        string          `gorm:"size:10" json:"forex_gain_loss_type"`
+	Reference                string          `gorm:"size:100" json:"reference"`
+	Notes                    string          `gorm:"type:text" json:"notes"`
+	Status                   string          `gorm:"size:20" json:"status"`
+	UserID                   uint            `gorm:"not null;index" json:"user_id"`
+	ApprovalRequired         bool            `gorm:"default:false" json:"approval_required"`
+	ApprovedBy               *uint           `gorm:"index" json:"approved_by"`
+	ApprovedAt               *time.Time      `json:"approved_at"`
+	RejectedBy               *uint           `gorm:"index" json:"rejected_by"`
+	RejectedAt               *time.Time      `json:"rejected_at"`
+	RejectionReason          string          `gorm:"type:text" json:"rejection_reason"`
+	CreatedAt                time.Time       `json:"created_at"`
+	UpdatedAt                time.Time       `json:"updated_at"`
+	FromAccount              models.CashBank `gorm:"foreignKey:FromAccountID" json:"from_account,omitempty"`
+	ToAccount                models.CashBank `gorm:"foreignKey:ToAccountID" json:"to_account,omitempty"`
+	Requester                models.User     `gorm:"foreignKey:UserID" json:"requester,omitempty"`
+	Approver                 *models.User    `gorm:"foreignKey:ApprovedBy" json:"approver,omitempty"`
+	Rejector                 *models.User    `gorm:"foreignKey:RejectedBy" json:"rejector,omitempty"`
+}
+
+func (CashBankTransfer) TableName() string {
+	return "cash_bank_transfers"
 }
 
 type BankReconciliation struct {

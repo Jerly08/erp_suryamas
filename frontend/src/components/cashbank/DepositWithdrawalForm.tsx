@@ -46,6 +46,11 @@ import cashbankService, {
   getBookBalanceInIDR,
 } from '@/services/cashbankService';
 import { useTranslation } from '@/hooks/useTranslation';
+import {
+  getCashBankAmountPrecision,
+  isCashBankForeignCurrency,
+  normalizeCashBankCurrency,
+} from '@/utils/cashBankCurrency';
 
 type WithdrawalPurpose =
   | 'NON_OPERATING_EXPENSE'
@@ -112,11 +117,11 @@ const withdrawalPurposeOptions: Array<{
   },
 ];
 
-const getCurrencyCode = (account?: CashBank | null): string => (account?.currency || 'IDR').toUpperCase();
+const getCurrencyCode = (account?: CashBank | null): string => normalizeCashBankCurrency(account?.currency);
 
 const formatNativeAmount = (currency: string, amount: number): string => `${currency} ${Math.abs(amount || 0).toLocaleString('id-ID', {
-  minimumFractionDigits: currency === 'USD' ? 2 : 0,
-  maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  minimumFractionDigits: getCashBankAmountPrecision(currency),
+  maximumFractionDigits: getCashBankAmountPrecision(currency),
 })}`;
 
 const formatIDRAmount = (amount: number): string => `IDR ${(amount || 0).toLocaleString('id-ID', {
@@ -375,7 +380,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
   const bookImpactIDR = currencyCode === 'IDR' ? formData.amount : formData.amount * currentBookRate;
   const newBalance = account.balance - formData.amount;
   const newBookBalanceIDR = currentBookBalanceIDR - bookImpactIDR;
-  const isUsdAccount = currencyCode === 'USD';
+  const isForeignCurrencyAccount = isCashBankForeignCurrency(currencyCode);
   const selectedPurposeOption = withdrawalPurposeOptions.find(option => option.value === formData.purpose) || withdrawalPurposeOptions[0];
   const selectedTargetAccounts = getSelectedTargetAccounts();
   const selectedTargetAccount = selectedTargetAccounts.find(
@@ -464,7 +469,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
               </Box>
             </Box>
 
-            <Alert status={isUsdAccount ? 'info' : 'success'} borderRadius="md" alignItems="flex-start">
+            <Alert status={isForeignCurrencyAccount ? 'info' : 'success'} borderRadius="md" alignItems="flex-start">
               <AlertIcon mt={1} />
               <Box>
                 <Flex gap={2} mb={2} wrap="wrap">
@@ -472,12 +477,12 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                   <Badge colorScheme="green" variant="subtle">BOOK IDR</Badge>
                 </Flex>
                 <Text fontSize="sm" fontWeight="medium">
-                  {isUsdAccount
-                    ? 'Withdrawal USD memengaruhi saldo native dalam USD dan book value ledger dalam IDR.'
+                  {isForeignCurrencyAccount
+                    ? `Withdrawal ${currencyCode} memengaruhi saldo native dalam ${currencyCode} dan book value ledger dalam IDR.`
                     : 'Untuk akun IDR, saldo rekening dan nilai buku ledger berkurang dengan angka yang sama.'}
                 </Text>
                 <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                  {isUsdAccount
+                  {isForeignCurrencyAccount
                     ? 'Sistem memakai carrying rate buku saat ini untuk melepas nilai buku IDR, jadi modal ini tidak meminta kurs baru.'
                     : 'Sistem hanya mengizinkan pemakaian saldo tersedia, bukan saldo yang sedang dibekukan.'}
                 </Text>
@@ -506,7 +511,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                     value={formData.amount}
                     onChange={(_, value) => handleInputChange('amount', value || 0)}
                     min={0}
-                    precision={currencyCode === 'USD' ? 2 : 0}
+                    precision={getCashBankAmountPrecision(currencyCode)}
                   >
                     <NumberInputField fontFamily="mono" {...fieldStyles} />
                     <NumberInputStepper>
@@ -716,9 +721,9 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                     <Text fontSize="sm" mt={3} color={bodyTextColor}>
                       Ending book balance: {formatIDRAmount(newBookBalanceIDR)}
                     </Text>
-                    {currencyCode === 'USD' && (
+                    {isForeignCurrencyAccount && (
                       <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                        Carrying rate used for ledger release: 1 USD = {currentBookRate.toLocaleString('id-ID', {
+                        Carrying rate used for ledger release: 1 {currencyCode} = {currentBookRate.toLocaleString('id-ID', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 4,
                         })} IDR

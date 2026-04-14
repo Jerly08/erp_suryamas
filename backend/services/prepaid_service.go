@@ -18,6 +18,11 @@ type PrepaidService struct {
 	journalSvc *UnifiedJournalService
 }
 
+func normalizePrepaidDate(value time.Time) time.Time {
+	year, month, day := value.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
 func NewPrepaidService(db *gorm.DB, journalSvc *UnifiedJournalService) *PrepaidService {
 	return &PrepaidService{
 		db:         db,
@@ -82,6 +87,90 @@ func (s *PrepaidService) DeletePrepaid(id uint) error {
 func (s *PrepaidService) SetExpenseAccount(id uint, expenseAccountID uint) error {
 	return s.db.Model(&models.PrepaidExpense{}).Where("id = ?", id).
 		Update("expense_account_id", expenseAccountID).Error
+}
+
+// UpdateSchedule updates the scheduled date of a pending amortization schedule.
+func (s *PrepaidService) UpdateSchedule(prepaidID uint, scheduleID uint, scheduledDate time.Time) (*models.PrepaidSchedule, error) {
+	var updatedSchedule models.PrepaidSchedule
+	scheduledDate = normalizePrepaidDate(scheduledDate)
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var prepaid models.PrepaidExpense
+		if err := tx.First(&prepaid, prepaidID).Error; err != nil {
+			return err
+		}
+
+		if prepaid.Status != "ACTIVE" {
+			return errors.New("only ACTIVE prepaid expenses can be edited")
+		}
+
+		var schedule models.PrepaidSchedule
+		if err := tx.Where("prepaid_id = ?", prepaidID).First(&schedule, scheduleID).Error; err != nil {
+			return err
+		}
+
+		if schedule.Status != "PENDING" || schedule.JournalEntryID != nil {
+			return errors.New("only PENDING schedules can be edited")
+		}
+
+		if scheduledDate.Before(normalizePrepaidDate(prepaid.StartDate)) {
+			return errors.New("scheduled date cannot be earlier than prepaid start date")
+		}
+
+		var previousSchedule models.PrepaidSchedule
+		prevErr := tx.Where("prepaid_id = ? AND month_number < ?", prepaidID, schedule.MonthNumber).
+			Order("month_number desc").
+			First(&previousSchedule).Error
+		if prevErr == nil && scheduledDate.Before(normalizePrepaidDate(previousSchedule.ScheduledDate)) {
+			return errors.New("scheduled date cannot be earlier than the previous schedule")
+		}
+		if prevErr != nil && !errors.Is(prevErr, gorm.ErrRecordNotFound) {
+			return prevErr
+		}
+
+		var followingSchedules []models.PrepaidSchedule
+		if err := tx.Where("prepaid_id = ? AND month_number > ?", prepaidID, schedule.MonthNumber).
+			Order("month_number asc").
+			Find(&followingSchedules).Error; err != nil {
+			return err
+		}
+
+		for _, followingSchedule := range followingSchedules {
+			if followingSchedule.Status != "PENDING" || followingSchedule.JournalEntryID != nil {
+				return errors.New("cannot shift following schedules because one or more schedules are already locked")
+			}
+		}
+
+		schedule.ScheduledDate = scheduledDate
+		if err := tx.Save(&schedule).Error; err != nil {
+			return err
+		}
+
+		latestScheduledDate := schedule.ScheduledDate
+		for i := range followingSchedules {
+			monthOffset := followingSchedules[i].MonthNumber - schedule.MonthNumber
+			followingSchedules[i].ScheduledDate = normalizePrepaidDate(schedule.ScheduledDate.AddDate(0, monthOffset, 0))
+			if err := tx.Save(&followingSchedules[i]).Error; err != nil {
+				return err
+			}
+			latestScheduledDate = followingSchedules[i].ScheduledDate
+		}
+
+		if err := tx.Model(&models.PrepaidExpense{}).
+			Where("id = ?", prepaidID).
+			Update("end_date", normalizePrepaidDate(latestScheduledDate)).Error; err != nil {
+			return err
+		}
+
+		updatedSchedule = schedule
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &updatedSchedule, nil
 }
 
 // AmortizeSchedule executes one month of amortization (Debit Expense, Credit Prepaid Asset)

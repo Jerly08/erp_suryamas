@@ -50,6 +50,7 @@ import cashbankService, {
   TransactionFilter,
   TransactionResult,
 } from '@/services/cashbankService';
+import { getCashBankAmountPrecision, normalizeCashBankCurrency } from '@/utils/cashBankCurrency';
 
 interface TransactionHistoryModalProps {
   isOpen: boolean;
@@ -67,11 +68,11 @@ interface ApiErrorShape {
   message?: string;
 }
 
-const getCurrencyCode = (currency?: string): string => (currency || 'IDR').toUpperCase();
+const getCurrencyCode = (currency?: string): string => normalizeCashBankCurrency(currency);
 
 const formatNativeAmount = (currency: string, amount: number): string => `${currency} ${Math.abs(amount || 0).toLocaleString('id-ID', {
-  minimumFractionDigits: currency === 'USD' ? 2 : 0,
-  maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  minimumFractionDigits: getCashBankAmountPrecision(currency),
+  maximumFractionDigits: getCashBankAmountPrecision(currency),
 })}`;
 
 const formatIDRAmount = (amount?: number): string => `IDR ${(amount || 0).toLocaleString('id-ID', {
@@ -502,7 +503,7 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
                               {(transaction.exchange_rate || 0) > 0 ? (
                                 <Text fontSize="sm" fontFamily="mono" color={helperTextColor}>
                                   {(transaction.exchange_rate || 0).toLocaleString('id-ID', {
-                                    minimumFractionDigits: transactionCurrency === 'USD' ? 2 : 0,
+                                    minimumFractionDigits: getCashBankAmountPrecision(transactionCurrency),
                                     maximumFractionDigits: 6,
                                   })}
                                 </Text>

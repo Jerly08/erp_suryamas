@@ -38,6 +38,7 @@ import {
 } from '@chakra-ui/react';
 import { FiEye, FiEdit, FiTrash2, FiShield } from 'react-icons/fi';
 import UserPermissions from '@/components/users/UserPermissions';
+import { formatRoleForApproval } from '@/utils/roles';
 
 interface User {
   id: number;
@@ -394,7 +395,7 @@ const UsersPage: React.FC = () => {
   const columns: any[] = [
     { header: t('users.name'), accessor: 'full_name' },
     { header: t('users.email'), accessor: 'email' },
-    { header: t('users.role'), accessor: 'role' },
+    { header: t('users.role'), accessor: (user: User) => formatRoleForApproval(user.role) },
     { header: t('users.status'), accessor: 'status' },
     { header: t('users.created'), accessor: 'created_at_display' },
     {
@@ -619,9 +620,10 @@ const UsersPage: React.FC = () => {
                         _hover={{ borderColor: inputBorderColor }}
                         _focusVisible={fieldFocusStyles}
                       >
-                        <option value="employee">{t('users.roles.employee') || "Employee"}</option>
+                        <option value="employee">{t('users.roles.employee') || "Staff"}</option>
                         <option value="admin">{t('users.roles.admin') || "Administrator"}</option>
-                        <option value="finance">{t('users.roles.finance') || "Finance"}</option>
+                        <option value="finance">{t('users.roles.finance') || "Finance Manager"}</option>
+                        <option value="finance_staff">{t('users.roles.financeStaff') || "Finance Staff"}</option>
                         <option value="director">{t('users.roles.director') || "Director"}</option>
                         <option value="inventory_manager">{t('users.roles.inventoryManager') || "Inventory Manager"}</option>
                       </Select>
@@ -717,7 +719,7 @@ const UsersPage: React.FC = () => {
                     </Box>
                     <Box bg={detailCardBg} borderWidth="1px" borderColor={borderColor} borderRadius="md" p={4}>
                       <Text fontSize="sm" color={mutedTextColor} mb={1}>{t('users.role')}</Text>
-                      <Text color={textColor}>{viewUser.role}</Text>
+                      <Text color={textColor}>{formatRoleForApproval(viewUser.role)}</Text>
                     </Box>
                     <Box bg={detailCardBg} borderWidth="1px" borderColor={borderColor} borderRadius="md" p={4}>
                       <Text fontSize="sm" color={mutedTextColor} mb={1}>{t('users.status')}</Text>

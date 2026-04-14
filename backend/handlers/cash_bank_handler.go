@@ -35,6 +35,9 @@ func classifyCashBankTransactionError(err error) int {
 	switch {
 	case strings.Contains(errorText, "closed_period:"):
 		return http.StatusConflict
+	case strings.Contains(errorText, "permission to approve"),
+		strings.Contains(errorText, "permission to reject"):
+		return http.StatusForbidden
 	case strings.Contains(errorText, "not found"),
 		strings.Contains(errorText, "inactive"),
 		strings.Contains(errorText, "header account"),
@@ -44,6 +47,7 @@ func classifyCashBankTransactionError(err error) int {
 		strings.Contains(errorText, "saldo tersedia tidak cukup"),
 		strings.Contains(errorText, "amount must be greater than zero"),
 		strings.Contains(errorText, "exchange rate required"),
+		strings.Contains(errorText, "already been reviewed"),
 		strings.Contains(errorText, "counter account"),
 		strings.Contains(errorText, "target account"),
 		strings.Contains(errorText, "source account"):
@@ -219,18 +223,108 @@ func (h *CashBankHandler) ProcessTransfer(c *gin.Context) {
 		return
 	}
 
-	transfer, err := h.cashBankService.ProcessTransfer(request, userID.(uint))
+	role := c.GetString("role")
+
+	transfer, err := h.cashBankService.ProcessTransfer(request, userID.(uint), role)
 	if err != nil {
 		c.JSON(classifyCashBankTransactionError(err), utils.CreateErrorResponse("Failed to process transfer", err))
 		return
 	}
 
-	response := gin.H{
-		"transfer": transfer,
-		"message":  "Transfer processed successfully with SSOT journal entry",
+	message := "Transfer processed successfully with SSOT journal entry"
+	if transfer.Status == services.TransferStatusPendingApproval {
+		message = "Transfer submitted for finance manager approval"
 	}
 
-	c.JSON(http.StatusCreated, utils.SuccessResponse("Transfer processed successfully", response))
+	response := gin.H{
+		"transfer": transfer,
+		"message":  message,
+	}
+
+	c.JSON(http.StatusCreated, utils.SuccessResponse(message, response))
+}
+
+// GetTransfers handles GET /api/cash-bank/transfers
+func (h *CashBankHandler) GetTransfers(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, utils.CreateErrorResponse("User not authenticated", nil))
+		return
+	}
+
+	role := c.GetString("role")
+	status := c.Query("status")
+	limit := utils.ParseIntWithDefault(c.DefaultQuery("limit", "20"), 20)
+
+	transfers, err := h.cashBankService.GetTransfers(userID.(uint), role, status, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to retrieve transfer requests", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Transfer requests retrieved successfully", transfers))
+}
+
+// ApproveTransfer handles POST /api/cash-bank/transfers/:id/approve
+func (h *CashBankHandler) ApproveTransfer(c *gin.Context) {
+	transferID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid transfer ID", err))
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, utils.CreateErrorResponse("User not authenticated", nil))
+		return
+	}
+
+	role := c.GetString("role")
+	transfer, err := h.cashBankService.ApproveTransfer(uint(transferID), userID.(uint), role)
+	if err != nil {
+		c.JSON(classifyCashBankTransactionError(err), utils.CreateErrorResponse("Failed to approve transfer request", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Transfer request approved successfully", gin.H{
+		"transfer": transfer,
+		"message":  "Transfer approved successfully",
+	}))
+}
+
+// RejectTransfer handles POST /api/cash-bank/transfers/:id/reject
+func (h *CashBankHandler) RejectTransfer(c *gin.Context) {
+	transferID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid transfer ID", err))
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, utils.CreateErrorResponse("User not authenticated", nil))
+		return
+	}
+
+	var request struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil && !strings.Contains(strings.ToLower(err.Error()), "eof") {
+		c.JSON(http.StatusBadRequest, utils.CreateErrorResponse("Invalid request data", err))
+		return
+	}
+
+	role := c.GetString("role")
+	transfer, err := h.cashBankService.RejectTransfer(uint(transferID), userID.(uint), role, request.Reason)
+	if err != nil {
+		c.JSON(classifyCashBankTransactionError(err), utils.CreateErrorResponse("Failed to reject transfer request", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Transfer request rejected successfully", gin.H{
+		"transfer": transfer,
+		"message":  "Transfer rejected successfully",
+	}))
 }
 
 // GetTransactions handles GET /api/cash-bank/accounts/:id/transactions

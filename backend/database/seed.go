@@ -560,6 +560,18 @@ func seedRolePermissions(db *gorm.DB) {
 			"projects:read",
 			"purchase_requests:read", "purchase_requests:approve",
 		},
+		"finance_staff": {
+			"accounts:read",
+			"transactions:read", "transactions:create", "transactions:update",
+			"sales:read", "sales:create", "sales:update",
+			"purchases:read", "purchases:create", "purchases:update",
+			"reports:read",
+			"contacts:read",
+			"assets:read",
+			"boms:read",
+			"projects:read",
+			"purchase_requests:read", "purchase_requests:approve",
+		},
 		"director": {
 			"users:read",
 			"accounts:read",

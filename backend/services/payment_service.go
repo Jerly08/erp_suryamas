@@ -1772,16 +1772,19 @@ func (s *PaymentService) GetUnpaidInvoices(customerID uint) ([]OutstandingInvoic
 }
 
 // GetUnpaidBills gets outstanding bills for a vendor
-func (s *PaymentService) GetUnpaidBills(vendorID uint) ([]OutstandingBill, error) {
+func (s *PaymentService) GetUnpaidBills(vendorID uint, userID uint) ([]OutstandingBill, error) {
 	// Get purchases from purchase repository where vendor_id = vendorID and outstanding_amount > 0
 	// Use the same eligibility rule as purchase payment creation so the picker
 	// and transaction flow do not disagree on which bills are payable.
 	var purchases []models.Purchase
-	err := s.db.
+	query := s.db.
 		Where("vendor_id = ? AND outstanding_amount > ? AND deleted_at IS NULL", vendorID, 0).
 		Where("status IN ?", models.PurchasePaymentEligibleStatuses()).
-		Where("UPPER(payment_method) = ?", models.PurchasePaymentCredit).
-		Find(&purchases).Error
+		Where("UPPER(payment_method) = ?", models.PurchasePaymentCredit)
+	if userID > 0 {
+		query = query.Where("user_id = ?", userID)
+	}
+	err := query.Find(&purchases).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1837,14 +1840,14 @@ type OutstandingBill struct {
 }
 
 // GetPaymentSummary gets payment summary statistics
-func (s *PaymentService) GetPaymentSummary(startDate, endDate string) (*repositories.PaymentSummary, error) {
-	return s.paymentRepo.GetPaymentSummary(startDate, endDate)
+func (s *PaymentService) GetPaymentSummary(startDate, endDate string, userID uint) (*repositories.PaymentSummary, error) {
+	return s.paymentRepo.GetPaymentSummary(startDate, endDate, userID)
 }
 
 // GetPaymentAnalytics gets comprehensive payment analytics for dashboard
-func (s *PaymentService) GetPaymentAnalytics(startDate, endDate string) (*PaymentAnalytics, error) {
+func (s *PaymentService) GetPaymentAnalytics(startDate, endDate string, userID uint) (*PaymentAnalytics, error) {
 	// Get basic summary first
-	summary, err := s.paymentRepo.GetPaymentSummary(startDate, endDate)
+	summary, err := s.paymentRepo.GetPaymentSummary(startDate, endDate, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1853,6 +1856,7 @@ func (s *PaymentService) GetPaymentAnalytics(startDate, endDate string) (*Paymen
 	recentPayments, err := s.paymentRepo.GetPaymentsByDateRange(
 		time.Now().AddDate(0, 0, -30), // Last 30 days
 		time.Now(),
+		userID,
 	)
 	if err != nil {
 		return nil, err
@@ -1927,11 +1931,12 @@ type DailyTrend struct {
 // Export functions
 
 // ExportPaymentReportExcel generates an Excel report for payments
-func (s *PaymentService) ExportPaymentReportExcel(startDate, endDate, status, method string) ([]byte, string, error) {
+func (s *PaymentService) ExportPaymentReportExcel(startDate, endDate, status, method string, userID uint) ([]byte, string, error) {
 	// Create filter for payments
 	filter := repositories.PaymentFilter{
 		Status: status,
 		Method: method,
+		UserID: userID,
 		Page:   1,
 		Limit:  10000, // Get all payments for report
 	}
@@ -2172,11 +2177,12 @@ func (s *PaymentService) generatePaymentExcel(payments []models.Payment, startDa
 }
 
 // ExportPaymentReportPDF generates a PDF report for payments
-func (s *PaymentService) ExportPaymentReportPDF(startDate, endDate, status, method string) ([]byte, string, error) {
+func (s *PaymentService) ExportPaymentReportPDF(startDate, endDate, status, method string, userID uint) ([]byte, string, error) {
 	// Create filter for payments
 	filter := repositories.PaymentFilter{
 		Status: status,
 		Method: method,
+		UserID: userID,
 		Page:   1,
 		Limit:  1000, // Get all payments for report
 	}

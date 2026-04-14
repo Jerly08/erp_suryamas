@@ -512,15 +512,15 @@ func (s *ApprovalService) GetApprovalRequests(userID uint, userRole string, stat
 		Preload("Workflow").Preload("Requester").
 		Preload("ApprovalSteps.Step").Preload("ApprovalSteps.Approver")
 
-	// Normalize role to lower-case for consistent comparisons
-	userRoleNorm := strings.ToLower(strings.TrimSpace(userRole))
+	approvalRole := models.ApprovalRoleForUser(userRole)
+	approverRoles := models.WorkflowStepAssignableRoles(approvalRole)
 
 	// Filter by user permissions
-	if userRoleNorm != "admin" && userRoleNorm != "director" {
-		// Regular users can only see requests they created or need to approve (case-insensitive role match)
+	if !models.CanViewAllTransactionData(userRole) {
+		// Regular users can only see requests they created or need to approve.
 		query = query.Where(
-			"requester_id = ? OR id IN (SELECT DISTINCT request_id FROM approval_actions WHERE is_active = ? AND step_id IN (SELECT id FROM approval_steps WHERE LOWER(approver_role) = LOWER(?)))",
-			userID, true, userRoleNorm,
+			"requester_id = ? OR id IN (SELECT DISTINCT request_id FROM approval_actions WHERE is_active = ? AND step_id IN (SELECT id FROM approval_steps WHERE LOWER(approver_role) IN ?))",
+			userID, true, approverRoles,
 		)
 	}
 
@@ -547,12 +547,13 @@ func (s *ApprovalService) GetApprovalRequests(userID uint, userRole string, stat
 func (s *ApprovalService) GetPendingApprovals(userID uint, userRole string) ([]models.ApprovalRequest, error) {
 	var requests []models.ApprovalRequest
 
-	userRoleNorm := strings.ToLower(strings.TrimSpace(userRole))
+	approvalRole := models.ApprovalRoleForUser(userRole)
+	approverRoles := models.WorkflowStepAssignableRoles(approvalRole)
 
 	err := s.db.Preload("Workflow").Preload("Requester").
 		Preload("ApprovalSteps.Step").Preload("ApprovalSteps.Approver").
-		Where("status = ? AND id IN (SELECT request_id FROM approval_actions WHERE is_active = ? AND step_id IN (SELECT id FROM approval_steps WHERE LOWER(approver_role) = LOWER(?)))",
-			models.ApprovalStatusPending, true, userRoleNorm).
+		Where("status = ? AND id IN (SELECT request_id FROM approval_actions WHERE is_active = ? AND step_id IN (SELECT id FROM approval_steps WHERE LOWER(approver_role) IN ?))",
+			models.ApprovalStatusPending, true, approverRoles).
 		Order("created_at ASC").
 		Find(&requests).Error
 
@@ -609,36 +610,7 @@ func (s *ApprovalService) canUserApprove(userID uint, requiredRole string) bool 
 		return false
 	}
 
-	// Normalize roles to lower-case for comparison
-	userRole := strings.ToLower(strings.TrimSpace(user.Role))
-	reqRole := strings.ToLower(strings.TrimSpace(requiredRole))
-
-	// Admin can approve anything
-	if userRole == "admin" {
-		return true
-	}
-
-	// Employee can approve employee steps (when they submit the purchase)
-	if userRole == "employee" && reqRole == "employee" {
-		return true
-	}
-
-	// Manager can approve manager steps
-	if userRole == "manager" && reqRole == "manager" {
-		return true
-	}
-
-	// Director can approve director and finance steps
-	if userRole == "director" && (reqRole == "director" || reqRole == "finance") {
-		return true
-	}
-
-	// Finance can approve finance steps
-	if userRole == "finance" && reqRole == "finance" {
-		return true
-	}
-
-	return false
+	return models.WorkflowRoleMatchesUserRole(requiredRole, user.Role)
 }
 
 // getNextStep finds the next step in approval workflow
@@ -717,9 +689,14 @@ func (s *ApprovalService) notifyApprovers(request *models.ApprovalRequest, step 
 		return
 	}
 
-	// Get users with the required role (case-insensitive)
+	targetRoles := models.WorkflowStepAssignableRoles(step.ApproverRole)
+	if len(targetRoles) == 0 {
+		return
+	}
+
+	// Get users with the required role (case-insensitive, supports role aliases)
 	var users []models.User
-	s.db.Where("LOWER(role) = LOWER(?) AND is_active = ?", step.ApproverRole, true).Find(&users)
+	s.db.Where("LOWER(role) IN ? AND is_active = ?", targetRoles, true).Find(&users)
 
 	for _, user := range users {
 		// Check for duplicate notifications

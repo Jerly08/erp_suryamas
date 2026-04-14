@@ -106,6 +106,56 @@ func (ctrl *PrepaidController) SetExpenseAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Expense account updated successfully"})
 }
 
+// UpdateSchedule updates the scheduled date for a pending prepaid schedule.
+func (ctrl *PrepaidController) UpdateSchedule(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Prepaid ID format"})
+		return
+	}
+
+	scheduleIDParam := c.Param("schedule_id")
+	scheduleID, err := strconv.ParseUint(scheduleIDParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Schedule ID format"})
+		return
+	}
+
+	var req struct {
+		ScheduledDate string `json:"scheduled_date" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	scheduledDate, err := time.Parse("2006-01-02", req.ScheduledDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid scheduled_date format. Use YYYY-MM-DD"})
+		return
+	}
+
+	schedule, err := ctrl.prepaidSvc.UpdateSchedule(uint(id), uint(scheduleID), scheduledDate)
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "Prepaid schedule not found"})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Failed to update prepaid schedule",
+				"details": err.Error(),
+			})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Prepaid schedule updated successfully",
+		"data":    schedule,
+	})
+}
+
 // AmortizeSchedule executes one month of amortization
 func (ctrl *PrepaidController) AmortizeSchedule(c *gin.Context) {
 	idParam := c.Param("id")

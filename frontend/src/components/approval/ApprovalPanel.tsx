@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, VStack, HStack, Badge, Text, Spinner, Alert, AlertIcon, Divider, Button, Textarea, FormControl, FormLabel, FormHelperText, Checkbox, useToast, useColorModeValue } from '@chakra-ui/react';
 import { useApproval } from '@/hooks/useApproval';
 import { useAuth } from '@/contexts/AuthContext';
-import { normalizeRole, formatRoleForApproval } from '@/utils/roles';
+import { normalizeRole, formatRoleForApproval, isFinanceManagerRole, workflowRoleMatchesUserRole } from '@/utils/roles';
 import { getUserDisplayName } from '@/utils/userDisplay';
 
 interface ApprovalPanelProps {
@@ -116,7 +116,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
     fallback: 'Unknown User',
     allowRoleFallback: false,
   });
-  const isFinanceRole = normalizedRole === 'finance';
+  const isFinanceRole = isFinanceManagerRole(normalizedRole);
   const isPendingApproval = (approvalStatus || '').toUpperCase() === 'PENDING';
   const isNotStarted = (approvalStatus || '').toUpperCase() === 'NOT_STARTED';
   const isApproved = (approvalStatus || '').toUpperCase() === 'APPROVED';
@@ -146,8 +146,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
     if (isPendingApproval) {
       const financeAlreadyApproved = history.some((entry) => {
         if (entry.action !== 'APPROVED') return false;
-        const approverRole = normalizeRole(entry.user?.role || '');
-        return approverRole === 'finance';
+        return isFinanceManagerRole(entry.user?.role || '');
       });
 
       if (financeAlreadyApproved) {
@@ -172,7 +171,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
     if (!step.is_active || (step.status || '').toUpperCase() !== 'PENDING') return false;
     return (step.step?.step_name || '').toLowerCase().includes('escalated');
   });
-  const isUserTurn = normalizedRole === 'admin' || activeStep === normalizedRole;
+  const isUserTurn = normalizedRole === 'admin' || workflowRoleMatchesUserRole(activeStep, normalizedRole);
   const canUserAct = isUserTurn && canApprove && !isApproved && !isRejected;
   
   const shouldShowDirectorCheckbox = isFinanceRole && canUserAct && (isPendingApproval || isNotStarted);

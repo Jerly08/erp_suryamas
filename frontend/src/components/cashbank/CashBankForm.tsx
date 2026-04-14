@@ -48,6 +48,12 @@ import accountService from '@/services/accountService';
 import { useAuth } from '@/contexts/AuthContext';
 import { Account } from '@/types/account';
 import { roundUsdIdrRate } from '@/utils/exchangeRate';
+import {
+  CASH_BANK_CURRENCY_OPTIONS,
+  getCashBankAmountPrecision,
+  isCashBankForeignCurrency,
+  normalizeCashBankCurrency,
+} from '@/utils/cashBankCurrency';
 
 interface CashBankFormProps {
   isOpen: boolean;
@@ -88,16 +94,15 @@ interface CashBankFormData {
   allow_direct_transactions?: boolean;
 }
 
-const normalizeCurrencyCode = (value?: string): 'IDR' | 'USD' => {
-  return (value || 'IDR').toUpperCase() === 'USD' ? 'USD' : 'IDR';
-};
+const normalizeCurrencyCode = (value?: string): string => normalizeCashBankCurrency(value);
+const supportsDirectModuleTransactions = (currency?: string): boolean => normalizeCurrencyCode(currency) !== 'CNY';
 
-const parseOpeningBalanceInput = (value: string, currency: 'IDR' | 'USD'): number | undefined => {
+const parseOpeningBalanceInput = (value: string, currency: string): number | undefined => {
   if (!value.trim()) {
     return undefined;
   }
 
-  if (currency === 'IDR') {
+  if (!isCashBankForeignCurrency(currency)) {
     const digitsOnly = value.replace(/\D/g, '');
     return digitsOnly ? parseInt(digitsOnly, 10) : undefined;
   }
@@ -124,14 +129,16 @@ const parseOpeningBalanceInput = (value: string, currency: 'IDR' | 'USD'): numbe
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const formatOpeningBalanceDisplay = (value: number | undefined, currency: 'IDR' | 'USD'): string => {
+const formatOpeningBalanceDisplay = (value: number | undefined, currency: string): string => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return '';
   }
 
-  return new Intl.NumberFormat(currency === 'USD' ? 'en-US' : 'id-ID', {
-    minimumFractionDigits: currency === 'USD' ? 2 : 0,
-    maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  const precision = getCashBankAmountPrecision(currency);
+
+  return new Intl.NumberFormat(isCashBankForeignCurrency(currency) ? 'en-US' : 'id-ID', {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
   }).format(value);
 };
 
@@ -146,12 +153,12 @@ const formatIDRPreview = (value: number | undefined): string => {
   }).format(value)}`;
 };
 
-const formatUSDPreview = (value: number | undefined): string => {
+const formatForeignPreview = (currency: string, value: number | undefined): string => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return 'USD 0.00';
+    return `${currency} 0.00`;
   }
 
-  return `USD ${new Intl.NumberFormat('en-US', {
+  return `${currency} ${new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value)}`;
@@ -199,22 +206,22 @@ const getRateSourceMeta = (options: {
 
 type OpeningRateMode = 'api' | 'manual' | 'fallback';
 
-const getOpeningBalancePlaceholder = (currency: 'IDR' | 'USD'): string => {
-  return currency === 'USD' ? 'Contoh: 1,250.00' : 'Contoh: 1.000.000';
+const getOpeningBalancePlaceholder = (currency: string): string => {
+  return isCashBankForeignCurrency(currency) ? 'Contoh: 1,250.00' : 'Contoh: 1.000.000';
 };
 
-const getOpeningBalanceHelpText = (currency: 'IDR' | 'USD'): string => {
-  return currency === 'USD'
-    ? 'Masukkan saldo awal dalam USD. Jika ada sen, gunakan format seperti 1,250.50.'
+const getOpeningBalanceHelpText = (currency: string): string => {
+  return isCashBankForeignCurrency(currency)
+    ? `Masukkan saldo awal dalam ${currency}. Jika ada desimal, gunakan format seperti 1,250.50.`
     : 'Masukkan saldo awal dalam IDR. Tidak perlu menulis simbol Rp.';
 };
 
-const getOpeningBalanceAlertConfig = (currency: 'IDR' | 'USD') => {
-  if (currency === 'USD') {
+const getOpeningBalanceAlertConfig = (currency: string) => {
+  if (isCashBankForeignCurrency(currency)) {
     return {
       status: 'success' as const,
-      title: 'Input saldo awal dalam USD',
-      description: 'Nominal yang diketik di field ini adalah nilai asli rekening USD. Nilai buku IDR akan dihitung dari kurs saldo awal di bawah.',
+      title: `Input saldo awal dalam ${currency}`,
+      description: `Nominal yang diketik di field ini adalah nilai asli rekening ${currency}. Nilai buku IDR akan dihitung dari kurs saldo awal di bawah.`,
       badgeColorScheme: 'green' as const,
     };
   }
@@ -301,8 +308,9 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
   const watchedCurrency = watch('currency');
   const watchedHoldingAccount = watch('is_holding_account');
   const normalizedWatchedCurrency = normalizeCurrencyCode(watchedCurrency);
+  const directTransactionsSupported = supportsDirectModuleTransactions(normalizedWatchedCurrency);
   const openingBalanceAlert = getOpeningBalanceAlertConfig(normalizedWatchedCurrency);
-  const openingBookValuePreview = normalizedWatchedCurrency === 'USD'
+  const openingBookValuePreview = isCashBankForeignCurrency(normalizedWatchedCurrency)
     ? (watchedOpeningBalance || 0) * (watchedOpeningExchangeRate || 0)
     : (watchedOpeningBalance || 0);
   const roundedOpeningReferenceRate = roundUsdIdrRate(referenceRateInfo?.exchange_rate, 0);
@@ -311,6 +319,12 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
     hasReferenceRate: openingRateMode === 'api' && Boolean(referenceRateInfo),
     isManualOverride: openingRateMode === 'manual',
   });
+  const currencyOptions = CASH_BANK_CURRENCY_OPTIONS.some((option) => option.code === normalizedWatchedCurrency)
+    ? CASH_BANK_CURRENCY_OPTIONS
+    : [
+      ...CASH_BANK_CURRENCY_OPTIONS,
+      { code: normalizedWatchedCurrency, label: `${normalizedWatchedCurrency} - Existing currency` },
+    ];
 
   const updateOpeningRateMode = (nextMode: OpeningRateMode) => {
     openingRateModeRef.current = nextMode;
@@ -380,7 +394,22 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
   }, [token, isOpen, mode]);
 
   useEffect(() => {
-    if (!isOpen || mode !== 'create' || normalizedWatchedCurrency !== 'USD') {
+    if (!isOpen) {
+      return;
+    }
+
+    if (!directTransactionsSupported) {
+      setValue('allow_direct_transactions', false, { shouldDirty: true, shouldValidate: true });
+      return;
+    }
+
+    if (!watchedHoldingAccount) {
+      setValue('allow_direct_transactions', true, { shouldDirty: true, shouldValidate: true });
+    }
+  }, [directTransactionsSupported, isOpen, watchedHoldingAccount, setValue]);
+
+  useEffect(() => {
+    if (!isOpen || mode !== 'create' || !isCashBankForeignCurrency(normalizedWatchedCurrency)) {
       setReferenceRateInfo(null);
       setReferenceRateError(null);
       setLoadingReferenceRate(false);
@@ -394,7 +423,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       try {
         setLoadingReferenceRate(true);
         setReferenceRateError(null);
-        const reference = await cashbankService.getReferenceExchangeRate('USD', 'IDR');
+        const reference = await cashbankService.getReferenceExchangeRate(normalizedWatchedCurrency, 'IDR');
         if (cancelled) {
           return;
         }
@@ -459,7 +488,9 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
         account_id: account.account_id,
         source_account_id: undefined,
         is_holding_account: Boolean(account.is_holding_account),
-        allow_direct_transactions: account.allow_direct_transactions ?? !account.is_holding_account
+        allow_direct_transactions: supportsDirectModuleTransactions(account.currency)
+          ? (account.allow_direct_transactions ?? !account.is_holding_account)
+          : false
       });
       setOpeningBalanceDisplay('');
       updateOpeningRateMode('fallback');
@@ -519,9 +550,11 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
       const submitData: CashBankCreateRequest = {
         ...data,
         currency: normalizedCurrency,
-      opening_exchange_rate: normalizedCurrency === 'IDR' ? 1 : roundUsdIdrRate(data.opening_exchange_rate, 1),
+        opening_exchange_rate: normalizedCurrency === 'IDR' ? 1 : roundUsdIdrRate(data.opening_exchange_rate, 1),
         is_holding_account: Boolean(data.is_holding_account),
-        allow_direct_transactions: data.is_holding_account ? Boolean(data.allow_direct_transactions) : true,
+        allow_direct_transactions: !supportsDirectModuleTransactions(normalizedCurrency)
+          ? false
+          : (data.is_holding_account ? Boolean(data.allow_direct_transactions) : true),
       };
 
       if (mode === 'create') {
@@ -542,7 +575,9 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
           branch: data.branch,
           description: data.description,
           is_holding_account: Boolean(data.is_holding_account),
-          allow_direct_transactions: data.is_holding_account ? Boolean(data.allow_direct_transactions) : true,
+          allow_direct_transactions: !supportsDirectModuleTransactions(normalizedCurrency)
+            ? false
+            : (data.is_holding_account ? Boolean(data.allow_direct_transactions) : true),
         };
         await cashbankService.updateCashBankAccount(account.id, updateData);
         toast({
@@ -778,8 +813,11 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                               isDisabled={mode === 'edit'}
                               bg={mode === 'edit' ? readOnlyBg : undefined}
                             >
-                              <option value="IDR">IDR - Indonesian Rupiah</option>
-                              <option value="USD">USD - US Dollar</option>
+                              {currencyOptions.map((currencyOption) => (
+                                <option key={currencyOption.code} value={currencyOption.code}>
+                                  {currencyOption.label}
+                                </option>
+                              ))}
                             </Select>
                           )}
                         />
@@ -810,7 +848,10 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                             onChange={(e) => {
                               const checked = e.target.checked;
                               field.onChange(checked);
-                              setValue('allow_direct_transactions', checked ? false : true);
+                              setValue(
+                                'allow_direct_transactions',
+                                !directTransactionsSupported ? false : (checked ? false : true),
+                              );
                             }}
                             colorScheme="orange"
                           >
@@ -824,14 +865,27 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                     </FormControl>
 
                     <FormControl>
-                      <Checkbox {...register('allow_direct_transactions')} isDisabled={!watchedHoldingAccount} colorScheme="blue">
-                        Izinkan transaksi langsung di modul lain
-                      </Checkbox>
-                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                        {watchedHoldingAccount
-                          ? 'Biarkan nonaktif jika rekening ini hanya dipakai sebagai holding account dan transfer ke bank operasional.'
-                          : 'Untuk rekening non-holding, opsi ini selalu aktif.'}
-                      </Text>
+                      {directTransactionsSupported ? (
+                        <>
+                          <Checkbox {...register('allow_direct_transactions')} isDisabled={!watchedHoldingAccount} colorScheme="blue">
+                            Izinkan transaksi langsung di modul lain
+                          </Checkbox>
+                          <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                            {watchedHoldingAccount
+                              ? 'Biarkan nonaktif jika rekening ini hanya dipakai sebagai holding account dan transfer ke bank operasional.'
+                              : 'Untuk rekening non-holding, opsi ini selalu aktif.'}
+                          </Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text fontSize="sm" fontWeight="medium" color={textColor}>
+                            Transaksi modul lain tidak tersedia untuk CNY
+                          </Text>
+                          <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                            Rekening CNY otomatis disimpan tanpa akses transaksi langsung dari modul lain karena alur antar modul untuk CNY belum didukung.
+                          </Text>
+                        </>
+                      )}
                     </FormControl>
                   </SimpleGrid>
                 </CardBody>
@@ -946,7 +1000,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                               <Input
                                 placeholder={getOpeningBalancePlaceholder(normalizedWatchedCurrency)}
                                 value={openingBalanceDisplay}
-                                inputMode={normalizedWatchedCurrency === 'USD' ? 'decimal' : 'numeric'}
+                                inputMode={isCashBankForeignCurrency(normalizedWatchedCurrency) ? 'decimal' : 'numeric'}
                                 onChange={(e) => {
                                   const input = e.target.value;
                                   setOpeningBalanceDisplay(input);
@@ -1041,7 +1095,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                         />
                         <FormErrorMessage>{errors.opening_exchange_rate?.message}</FormErrorMessage>
                         <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                          Isi kurs 1 USD ke IDR. Kurs ini dipakai untuk menghitung nilai buku Rupiah yang masuk ke neraca saat saldo awal dibuat.
+                          {`Isi kurs 1 ${normalizedWatchedCurrency} ke IDR. Kurs ini dipakai untuk menghitung nilai buku Rupiah yang masuk ke neraca saat saldo awal dibuat.`}
                         </Text>
                         {referenceRateInfo && (
                           <Alert status="info" borderRadius="md" mt={3}>
@@ -1051,7 +1105,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                                 Kurs referensi API
                               </AlertTitle>
                               <AlertDescription fontSize="sm">
-                                Disarankan dari {referenceRateInfo.provider}: 1 USD = {formatIDRPreview(roundUsdIdrRate(referenceRateInfo.exchange_rate, 0))}.
+                                Disarankan dari {referenceRateInfo.provider}: 1 {normalizedWatchedCurrency} = {formatIDRPreview(roundUsdIdrRate(referenceRateInfo.exchange_rate, 0))}.
                                 Diambil {formatReferenceTimestamp(referenceRateInfo.fetched_at)} dan tetap bisa Anda ubah sebelum simpan.
                               </AlertDescription>
                             </Box>
@@ -1059,7 +1113,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                         )}
                         {loadingReferenceRate && (
                           <Text fontSize="xs" color={mutedTextColor} mt={2}>
-                            Mengambil kurs referensi USD/IDR dari API...
+                            {`Mengambil kurs referensi ${normalizedWatchedCurrency}/IDR dari API...`}
                           </Text>
                         )}
                         {referenceRateError && (
@@ -1071,7 +1125,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                           </Alert>
                         )}
                         <Text fontSize="xs" color={textColor} mt={1} fontWeight="medium">
-                          Preview kurs: 1 USD = {formatIDRPreview(watchedOpeningExchangeRate)}
+                          {`Preview kurs: 1 ${normalizedWatchedCurrency} = ${formatIDRPreview(watchedOpeningExchangeRate)}`}
                         </Text>
                         <HStack spacing={2} mt={2} align="center">
                           <Badge colorScheme={openingRateSource.colorScheme} variant="subtle">
@@ -1112,7 +1166,7 @@ const CashBankForm: React.FC<CashBankFormProps> = ({
                                 Estimasi nilai buku saldo awal
                               </AlertTitle>
                               <AlertDescription fontSize="sm">
-                                {formatUSDPreview(watchedOpeningBalance)} x {formatIDRPreview(watchedOpeningExchangeRate)} = {formatIDRPreview(openingBookValuePreview)}
+                                {formatForeignPreview(normalizedWatchedCurrency, watchedOpeningBalance)} x {formatIDRPreview(watchedOpeningExchangeRate)} = {formatIDRPreview(openingBookValuePreview)}
                               </AlertDescription>
                             </Box>
                           </Alert>

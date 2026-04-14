@@ -32,6 +32,7 @@ import {
   Divider,
 } from '@chakra-ui/react';
 import { FiRefreshCw, FiSave } from 'react-icons/fi';
+import { formatRoleForApproval } from '@/utils/roles';
 
 interface Permission {
   can_view: boolean;
@@ -241,6 +242,8 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
     switch (role.toLowerCase()) {
       case 'admin': return 'red';
       case 'finance': return 'purple';
+      case 'finance_manager': return 'purple';
+      case 'finance_staff': return 'orange';
       case 'inventory_manager': return 'blue';
       case 'director': return 'green';
       case 'employee': return 'gray';
@@ -259,7 +262,7 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
             <HStack>
               <Text>Manage Permissions for</Text>
               <Text fontWeight="bold">{user.full_name}</Text>
-              <Badge colorScheme={getRoleBadgeColor(user.role)}>{user.role}</Badge>
+              <Badge colorScheme={getRoleBadgeColor(user.role)}>{formatRoleForApproval(user.role)}</Badge>
             </HStack>
             <Text fontSize="sm" color="gray.600">
               Configure module-specific permissions for create, edit, delete, and other actions

@@ -48,6 +48,11 @@ import cashbankService, {
 } from '@/services/cashbankService';
 import { ErrorHandler } from '@/utils/errorHandler';
 import { roundUsdIdrRate } from '@/utils/exchangeRate';
+import {
+  getCashBankAmountPrecision,
+  isCashBankForeignCurrency,
+  normalizeCashBankCurrency,
+} from '@/utils/cashBankCurrency';
 
 interface DepositSourceAccounts {
   revenue: CashBankCounterpartyAccount[];
@@ -76,11 +81,11 @@ interface ApiErrorShape {
   message?: string;
 }
 
-const getCurrencyCode = (account?: CashBank | null): string => (account?.currency || 'IDR').toUpperCase();
+const getCurrencyCode = (account?: CashBank | null): string => normalizeCashBankCurrency(account?.currency);
 
 const formatNativeAmount = (currency: string, amount: number): string => `${currency} ${Math.abs(amount || 0).toLocaleString('id-ID', {
-  minimumFractionDigits: currency === 'USD' ? 2 : 0,
-  maximumFractionDigits: currency === 'USD' ? 2 : 0,
+  minimumFractionDigits: getCashBankAmountPrecision(currency),
+  maximumFractionDigits: getCashBankAmountPrecision(currency),
 })}`;
 
 const formatIDRAmount = (amount: number): string => `IDR ${(amount || 0).toLocaleString('id-ID', {
@@ -185,7 +190,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
 
   const toast = useToast();
   const currencyCode = getCurrencyCode(account);
-  const isUsdAccount = currencyCode === 'USD';
+  const isForeignCurrencyAccount = isCashBankForeignCurrency(currencyCode);
   const modalBg = useColorModeValue('white', 'gray.800');
   const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
   const modalFooterBg = useColorModeValue('gray.50', 'gray.900');
@@ -236,7 +241,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
   }, [isOpen, account, currencyCode]);
 
   useEffect(() => {
-    if (!isOpen || !account || !isUsdAccount) {
+    if (!isOpen || !account || !isForeignCurrencyAccount) {
       setReferenceRateInfo(null);
       setReferenceRateError(null);
       setLoadingReferenceRate(false);
@@ -249,7 +254,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
       try {
         setLoadingReferenceRate(true);
         setReferenceRateError(null);
-        const reference = await cashbankService.getReferenceExchangeRate('USD', 'IDR');
+        const reference = await cashbankService.getReferenceExchangeRate(currencyCode, 'IDR');
         if (cancelled) {
           return;
         }
@@ -269,7 +274,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
           return;
         }
 
-        console.error('Error loading USD/IDR reference rate for deposit:', fetchError);
+        console.error('Error loading foreign/IDR reference rate for deposit:', fetchError);
         setReferenceRateInfo(null);
         setReferenceRateError('Kurs referensi API belum tersedia. Form memakai kurs terakhir rekening atau input manual.');
       } finally {
@@ -284,7 +289,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, account, isUsdAccount]);
+  }, [isOpen, account, currencyCode, isForeignCurrencyAccount]);
 
   const loadDepositSourceAccounts = async () => {
     try {
@@ -399,8 +404,8 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
         throw new Error('Amount must be greater than zero');
       }
 
-      if (isUsdAccount && formData.exchange_rate <= 0) {
-        throw new Error('Exchange rate is required for USD deposits');
+      if (isForeignCurrencyAccount && formData.exchange_rate <= 0) {
+        throw new Error(`Exchange rate is required for ${currencyCode} deposits`);
       }
 
       if (requiresExplicitSourceAccount && !formData.source_account_id) {
@@ -411,7 +416,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
         account_id: Number(account.id),
         date: formData.date,
         amount: Number(formData.amount),
-        exchange_rate: isUsdAccount ? roundUsdIdrRate(formData.exchange_rate, 1) : 1,
+        exchange_rate: isForeignCurrencyAccount ? roundUsdIdrRate(formData.exchange_rate, 1) : 1,
         reference: formData.reference || '',
         notes: formData.notes || '',
       };
@@ -433,7 +438,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
         : formData.source_type === 'OWNER_EQUITY'
           ? 'Modal Disetor (Default)'
           : 'Akun lawan transaksi';
-      const depositBookAmountIDR = isUsdAccount ? formData.amount * formData.exchange_rate : formData.amount;
+      const depositBookAmountIDR = isForeignCurrencyAccount ? formData.amount * formData.exchange_rate : formData.amount;
 
       toast({
         title: 'Deposit Successful',
@@ -470,14 +475,14 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
 
   const handleClose = () => {
     setError(null);
-    setFormData({
-      date: new Date().toISOString().split('T')[0],
-      amount: 0,
-      exchange_rate: isUsdAccount ? roundUsdIdrRate(account?.last_exchange_rate, 1) : 1,
-      reference: '',
-      notes: '',
-      source_type: 'OWNER_EQUITY',
-      source_account_id: '',
+      setFormData({
+        date: new Date().toISOString().split('T')[0],
+        amount: 0,
+        exchange_rate: isForeignCurrencyAccount ? roundUsdIdrRate(account?.last_exchange_rate, 1) : 1,
+        reference: '',
+        notes: '',
+        source_type: 'OWNER_EQUITY',
+        source_account_id: '',
     });
     onClose();
   };
@@ -488,7 +493,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
 
   const newBalance = account.balance + formData.amount;
   const currentBookBalanceIDR = getBookBalanceInIDR(account);
-  const depositBookAmountIDR = isUsdAccount ? formData.amount * formData.exchange_rate : formData.amount;
+  const depositBookAmountIDR = isForeignCurrencyAccount ? formData.amount * formData.exchange_rate : formData.amount;
   const newBookBalanceIDR = currentBookBalanceIDR + depositBookAmountIDR;
   const selectedSourceOption = depositSourceOptions.find(option => option.value === formData.source_type) || depositSourceOptions[0];
   const selectedSourceAccounts = getSelectedSourceAccounts();
@@ -587,7 +592,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
               </Box>
             </Box>
 
-            <Alert status={isUsdAccount ? 'info' : 'success'} borderRadius="md" alignItems="flex-start">
+            <Alert status={isForeignCurrencyAccount ? 'info' : 'success'} borderRadius="md" alignItems="flex-start">
               <AlertIcon mt={1} />
               <Box>
                 <Flex gap={2} mb={2} wrap="wrap">
@@ -595,12 +600,12 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                   <Badge colorScheme="green" variant="subtle">BOOK IDR</Badge>
                 </Flex>
                 <Text fontSize="sm" fontWeight="medium">
-                  {isUsdAccount
-                    ? 'Akun USD menyimpan 2 angka: saldo rekening dalam USD dan nilai buku neraca dalam IDR.'
+                  {isForeignCurrencyAccount
+                    ? `Akun ${currencyCode} menyimpan 2 angka: saldo rekening dalam ${currencyCode} dan nilai buku neraca dalam IDR.`
                     : 'Untuk akun IDR, saldo rekening dan nilai buku neraca selalu sama.'}
                 </Text>
                 <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                  {isUsdAccount
+                  {isForeignCurrencyAccount
                     ? 'Kurs transaksi di bawah akan menentukan berapa nilai buku IDR yang diposting ke ledger.'
                     : 'Deposit IDR akan menambah saldo native dan nilai buku dengan angka yang sama.'}
                 </Text>
@@ -629,10 +634,10 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                     value={formData.amount}
                     onChange={(_, value) => handleInputChange('amount', value || 0)}
                     min={0}
-                    precision={isUsdAccount ? 2 : 0}
+                    precision={getCashBankAmountPrecision(currencyCode)}
                   >
                     <NumberInputField
-                      placeholder={isUsdAccount ? 'USD 0.00' : 'IDR 0'}
+                      placeholder={isForeignCurrencyAccount ? `${currencyCode} 0.00` : 'IDR 0'}
                       fontFamily="mono"
                       {...fieldStyles}
                     />
@@ -642,13 +647,13 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                     </NumberInputStepper>
                   </NumberInput>
                   <Text fontSize="xs" color={helperTextColor} mt={1}>
-                    Ini adalah nominal yang masuk ke rekening. Untuk akun USD, angka ini tetap dalam USD.
+                    {`Ini adalah nominal yang masuk ke rekening. Untuk akun ${currencyCode}, angka ini tetap dalam ${currencyCode}.`}
                   </Text>
                 </FormControl>
 
-                {isUsdAccount && (
+                {isForeignCurrencyAccount && (
                   <FormControl isRequired>
-                    <FormLabel>Exchange Rate (IDR per USD)</FormLabel>
+                    <FormLabel>{`Exchange Rate (IDR per ${currencyCode})`}</FormLabel>
                     <NumberInput
                       value={formData.exchange_rate}
                       onChange={(_, value) => handleInputChange('exchange_rate', roundUsdIdrRate(value, 0))}
@@ -667,10 +672,10 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                       </NumberInputStepper>
                     </NumberInput>
                     <Text fontSize="xs" color={helperTextColor} mt={1}>
-                      Masukkan berapa Rupiah untuk 1 USD. Nilai ini dipakai untuk menghitung posting book value ke ledger.
+                      {`Masukkan berapa Rupiah untuk 1 ${currencyCode}. Nilai ini dipakai untuk menghitung posting book value ke ledger.`}
                     </Text>
                     <Text fontSize="xs" color={helperTextColor} mt={1}>
-                      Contoh: jika setor `USD 100` dengan kurs `16,250`, maka nilai buku yang masuk adalah `IDR 1,625,000`.
+                      {`Contoh: jika setor \`${currencyCode} 100\` dengan kurs \`16,250\`, maka nilai buku yang masuk adalah \`IDR 1,625,000\`.`}
                     </Text>
                     {referenceRateInfo && (
                       <Alert status="info" borderRadius="md" mt={3}>
@@ -680,7 +685,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                             Kurs referensi API
                           </AlertTitle>
                           <AlertDescription fontSize="sm">
-                            Disarankan dari {referenceRateInfo.provider}: 1 USD = {formatIDRAmount(roundUsdIdrRate(referenceRateInfo.exchange_rate, 0))}.
+                            Disarankan dari {referenceRateInfo.provider}: 1 {currencyCode} = {formatIDRAmount(roundUsdIdrRate(referenceRateInfo.exchange_rate, 0))}.
                             Diambil {formatReferenceTimestamp(referenceRateInfo.fetched_at)} dan tetap bisa diubah sebelum posting.
                           </AlertDescription>
                         </Box>
@@ -688,7 +693,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                     )}
                     {loadingReferenceRate && (
                       <Text fontSize="xs" color={helperTextColor} mt={2}>
-                        Mengambil kurs referensi USD/IDR dari API...
+                        {`Mengambil kurs referensi ${currencyCode}/IDR dari API...`}
                       </Text>
                     )}
                     {referenceRateError && (
@@ -884,7 +889,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                 <Text fontSize="md" fontWeight="semibold" color={sectionTitleColor} mb={3}>
                   Deposit Preview
                 </Text>
-                <Alert status={isUsdAccount ? 'info' : 'success'} borderRadius="md">
+                <Alert status={isForeignCurrencyAccount ? 'info' : 'success'} borderRadius="md">
                   <AlertIcon />
                   <Box w="full">
                     <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
@@ -910,9 +915,9 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
                     <Text fontSize="sm" mt={3} color={bodyTextColor}>
                       Ending book balance: {formatIDRAmount(newBookBalanceIDR)}
                     </Text>
-                    {isUsdAccount && (
+                    {isForeignCurrencyAccount && (
                       <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                        Perhitungan: {formatNativeAmount('USD', formData.amount)} x {formData.exchange_rate.toLocaleString('id-ID', {
+                        Perhitungan: {formatNativeAmount(currencyCode, formData.amount)} x {formData.exchange_rate.toLocaleString('id-ID', {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 4,
                         })} = {formatIDRAmount(depositBookAmountIDR)}
@@ -936,7 +941,7 @@ const DepositFormImproved: React.FC<DepositFormImprovedProps> = ({
             loadingText="Processing deposit..."
             isDisabled={
               formData.amount <= 0
-              || (isUsdAccount && formData.exchange_rate <= 0)
+              || (isForeignCurrencyAccount && formData.exchange_rate <= 0)
               || (requiresExplicitSourceAccount && !formData.source_account_id)
             }
           >

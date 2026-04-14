@@ -223,6 +223,12 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 		return
 	}
 
+	normalizedRole := models.NormalizeRoleForStorage(req.Role)
+	if !models.IsValidUserRole(normalizedRole) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+		return
+	}
+
 	// Check if user already exists
 	var existingUser models.User
 	if err := uc.db.Where("username = ? OR email = ?", req.Username, req.Email).First(&existingUser).Error; err == nil {
@@ -236,7 +242,7 @@ func (uc *UserController) CreateUser(c *gin.Context) {
 		Email:      req.Email,
 		FirstName:  req.FirstName,
 		LastName:   req.LastName,
-		Role:       req.Role,
+		Role:       normalizedRole,
 		Phone:      req.Phone,
 		Department: req.Department,
 		Position:   req.Position,
@@ -309,9 +315,18 @@ func (uc *UserController) UpdateUser(c *gin.Context) {
 	if user.Role == models.RoleAdmin && user.IsActive {
 		nextRole := user.Role
 		if role, exists := updateData["role"]; exists {
-			if roleStr, ok := role.(string); ok && roleStr != "" {
-				nextRole = roleStr
+			roleStr, ok := role.(string)
+			if !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+				return
 			}
+			roleStr = models.NormalizeRoleForStorage(roleStr)
+			if !models.IsValidUserRole(roleStr) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+				return
+			}
+			updateData["role"] = roleStr
+			nextRole = roleStr
 		}
 
 		nextIsActive := user.IsActive
@@ -333,6 +348,22 @@ func (uc *UserController) UpdateUser(c *gin.Context) {
 				return
 			}
 		}
+	}
+
+	if role, exists := updateData["role"]; exists {
+		roleStr, ok := role.(string)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+			return
+		}
+
+		roleStr = models.NormalizeRoleForStorage(roleStr)
+		if !models.IsValidUserRole(roleStr) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+			return
+		}
+
+		updateData["role"] = roleStr
 	}
 
 	// Handle password update separately if provided

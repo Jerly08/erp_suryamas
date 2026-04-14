@@ -36,33 +36,36 @@ func (r *PaymentRepository) FindByID(id uint) (*models.Payment, error) {
 // FindWithFilter retrieves payments with filters
 func (r *PaymentRepository) FindWithFilter(filter PaymentFilter) (*PaymentResult, error) {
 	query := r.db.Model(&models.Payment{}).Preload("Contact").Preload("User")
-	
+
 	// Apply filters
 	if filter.ContactID > 0 {
 		query = query.Where("contact_id = ?", filter.ContactID)
 	}
-	
+	if filter.UserID > 0 {
+		query = query.Where("payments.user_id = ?", filter.UserID)
+	}
+
 	if !filter.StartDate.IsZero() {
 		query = query.Where("date >= ?", filter.StartDate)
 	}
-	
+
 	if !filter.EndDate.IsZero() {
 		query = query.Where("date <= ?", filter.EndDate)
 	}
-	
+
 	if filter.Status != "" {
 		query = query.Where("status = ?", filter.Status)
 	}
-	
+
 	if filter.Method != "" {
 		query = query.Where("method = ?", filter.Method)
 	}
-	
+
 	if filter.Type != "" {
 		// Type would be determined by reference type or other logic
 		query = query.Where("reference_type = ?", filter.Type)
 	}
-	
+
 	// Apply search filter - search in code, contact name, reference, notes
 	if filter.Search != "" {
 		searchTerm := "%" + filter.Search + "%"
@@ -70,11 +73,11 @@ func (r *PaymentRepository) FindWithFilter(filter PaymentFilter) (*PaymentResult
 			Where("payments.code ILIKE ? OR contacts.name ILIKE ? OR payments.reference ILIKE ? OR payments.notes ILIKE ?",
 				searchTerm, searchTerm, searchTerm, searchTerm)
 	}
-	
+
 	// Count total records
 	var total int64
 	query.Count(&total)
-	
+
 	// Apply pagination
 	if filter.Page <= 0 {
 		filter.Page = 1
@@ -82,22 +85,22 @@ func (r *PaymentRepository) FindWithFilter(filter PaymentFilter) (*PaymentResult
 	if filter.Limit <= 0 {
 		filter.Limit = 10
 	}
-	
+
 	offset := (filter.Page - 1) * filter.Limit
-	
+
 	// Get paginated results
 	var payments []models.Payment
 	err := query.Order("date DESC, id DESC").
 		Limit(filter.Limit).
 		Offset(offset).
 		Find(&payments).Error
-	
+
 	if err != nil {
 		return nil, err
 	}
-	
+
 	totalPages := int(math.Ceil(float64(total) / float64(filter.Limit)))
-	
+
 	return &PaymentResult{
 		Data:       payments,
 		Total:      total,
@@ -112,7 +115,7 @@ func (r *PaymentRepository) Create(payment *models.Payment) (*models.Payment, er
 	if err := r.db.Create(payment).Error; err != nil {
 		return nil, err
 	}
-	
+
 	// Reload with associations
 	return r.FindByID(payment.ID)
 }
@@ -122,7 +125,7 @@ func (r *PaymentRepository) Update(payment *models.Payment) (*models.Payment, er
 	if err := r.db.Save(payment).Error; err != nil {
 		return nil, err
 	}
-	
+
 	return r.FindByID(payment.ID)
 }
 
@@ -134,88 +137,97 @@ func (r *PaymentRepository) Delete(id uint) error {
 // GetPaymentsByContactID retrieves payments for a specific contact
 func (r *PaymentRepository) GetPaymentsByContactID(contactID uint, page, limit int) ([]models.Payment, error) {
 	offset := (page - 1) * limit
-	
+
 	var payments []models.Payment
 	err := r.db.Where("contact_id = ?", contactID).
 		Order("date DESC").
 		Limit(limit).
 		Offset(offset).
 		Find(&payments).Error
-	
+
 	return payments, err
 }
 
 // GetPaymentsByDateRange retrieves payments within date range
-func (r *PaymentRepository) GetPaymentsByDateRange(startDate, endDate time.Time) ([]models.Payment, error) {
+func (r *PaymentRepository) GetPaymentsByDateRange(startDate, endDate time.Time, userID uint) ([]models.Payment, error) {
 	var payments []models.Payment
-	err := r.db.Where("date BETWEEN ? AND ?", startDate, endDate).
+	query := r.db.Model(&models.Payment{})
+	if userID > 0 {
+		query = query.Where("payments.user_id = ?", userID)
+	}
+	err := query.Where("date BETWEEN ? AND ?", startDate, endDate).
 		Order("date DESC").
 		Find(&payments).Error
-	
+
 	return payments, err
 }
 
 // GetPaymentSummary gets payment summary statistics
-func (r *PaymentRepository) GetPaymentSummary(startDate, endDate string) (*PaymentSummary, error) {
+func (r *PaymentRepository) GetPaymentSummary(startDate, endDate string, userID uint) (*PaymentSummary, error) {
 	summary := &PaymentSummary{}
-	
+
 	// Parse dates
 	start, _ := time.Parse("2006-01-02", startDate)
 	end, _ := time.Parse("2006-01-02", endDate)
-	
+
+	baseQuery := r.db.Model(&models.Payment{})
+	if userID > 0 {
+		baseQuery = baseQuery.Where("payments.user_id = ?", userID)
+	}
+
 	// Total received (from customers)
-	r.db.Model(&models.Payment{}).
+	baseQuery.Session(&gorm.Session{}).
 		Joins("JOIN contacts ON payments.contact_id = contacts.id").
-		Where("contacts.type = ? AND payments.date BETWEEN ? AND ? AND payments.status = ?", 
+		Where("contacts.type = ? AND payments.date BETWEEN ? AND ? AND payments.status = ?",
 			"CUSTOMER", start, end, models.PaymentStatusCompleted).
 		Select("COALESCE(SUM(amount), 0) as total").
 		Scan(&summary.TotalReceived)
-	
+
 	// Total paid (to vendors)
-	r.db.Model(&models.Payment{}).
+	baseQuery.Session(&gorm.Session{}).
 		Joins("JOIN contacts ON payments.contact_id = contacts.id").
-		Where("contacts.type = ? AND payments.date BETWEEN ? AND ? AND payments.status = ?", 
+		Where("contacts.type = ? AND payments.date BETWEEN ? AND ? AND payments.status = ?",
 			"VENDOR", start, end, models.PaymentStatusCompleted).
 		Select("COALESCE(SUM(amount), 0) as total").
 		Scan(&summary.TotalPaid)
-	
+
 	// Payment method breakdown
 	var methodBreakdown []struct {
 		Method string
 		Total  float64
 	}
-	
-	r.db.Model(&models.Payment{}).
+
+	baseQuery.Session(&gorm.Session{}).
 		Where("date BETWEEN ? AND ? AND status = ?", start, end, models.PaymentStatusCompleted).
 		Select("method, SUM(amount) as total").
 		Group("method").
 		Scan(&methodBreakdown)
-	
+
 	summary.ByMethod = make(map[string]float64)
 	for _, item := range methodBreakdown {
 		summary.ByMethod[item.Method] = item.Total
 	}
-	
+
 	// Status counts
 	var statusCounts []struct {
 		Status string
 		Count  int64
 	}
-	
-	r.db.Model(&models.Payment{}).
+
+	baseQuery.Session(&gorm.Session{}).
 		Where("date BETWEEN ? AND ?", start, end).
 		Select("status, COUNT(*) as count").
 		Group("status").
 		Scan(&statusCounts)
-	
+
 	summary.StatusCounts = make(map[string]int64)
 	for _, item := range statusCounts {
 		summary.StatusCounts[item.Status] = item.Count
 	}
-	
+
 	// Calculate net flow (received - paid)
 	summary.NetFlow = summary.TotalReceived - summary.TotalPaid
-	
+
 	return summary, nil
 }
 
@@ -224,11 +236,11 @@ func (r *PaymentRepository) CountByMonth(year, month int) (int64, error) {
 	var count int64
 	startDate := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 	endDate := startDate.AddDate(0, 1, 0).Add(-time.Second)
-	
+
 	err := r.db.Model(&models.Payment{}).
 		Where("created_at BETWEEN ? AND ? AND deleted_at IS NULL", startDate, endDate).
 		Count(&count).Error
-	
+
 	return count, err
 }
 
@@ -237,12 +249,12 @@ func (r *PaymentRepository) CountByMonthAndPrefix(year, month int, prefix string
 	var count int64
 	startDate := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 	endDate := startDate.AddDate(0, 1, 0).Add(-time.Second)
-	
+
 	pattern := fmt.Sprintf("%s/%04d/%02d/%%", prefix, year, month)
 	err := r.db.Model(&models.Payment{}).
 		Where("created_at BETWEEN ? AND ? AND code LIKE ? AND deleted_at IS NULL", startDate, endDate, pattern).
 		Count(&count).Error
-	
+
 	return count, err
 }
 
@@ -250,7 +262,7 @@ func (r *PaymentRepository) CountByMonthAndPrefix(year, month int, prefix string
 func (r *PaymentRepository) CountJournalsByMonth(year, month int) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.JournalEntry{}).
-		Where("reference_type = ? AND EXTRACT(year FROM entry_date) = ? AND EXTRACT(month FROM entry_date) = ?", 
+		Where("reference_type = ? AND EXTRACT(year FROM entry_date) = ? AND EXTRACT(month FROM entry_date) = ?",
 			models.JournalRefPayment, year, month).
 		Count(&count).Error
 	return count, err
@@ -270,15 +282,16 @@ func (r *PaymentRepository) GetPaymentAllocations(paymentID uint) ([]models.Paym
 
 // DTOs
 type PaymentFilter struct {
-	ContactID  uint      `json:"contact_id"`
-	StartDate  time.Time `json:"start_date"`
-	EndDate    time.Time `json:"end_date"`
-	Status     string    `json:"status"`
-	Method     string    `json:"method"`
-	Type       string    `json:"type"`
-	Search     string    `json:"search"` // Search query for code, contact name, reference, notes
-	Page       int       `json:"page"`
-	Limit      int       `json:"limit"`
+	ContactID uint      `json:"contact_id"`
+	UserID    uint      `json:"user_id"`
+	StartDate time.Time `json:"start_date"`
+	EndDate   time.Time `json:"end_date"`
+	Status    string    `json:"status"`
+	Method    string    `json:"method"`
+	Type      string    `json:"type"`
+	Search    string    `json:"search"` // Search query for code, contact name, reference, notes
+	Page      int       `json:"page"`
+	Limit     int       `json:"limit"`
 }
 
 type PaymentResult struct {
@@ -296,4 +309,3 @@ type PaymentSummary struct {
 	ByMethod      map[string]float64 `json:"by_method"`
 	StatusCounts  map[string]int64   `json:"status_counts"`
 }
-

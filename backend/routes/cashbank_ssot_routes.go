@@ -60,6 +60,13 @@ func SetupCashBankSSOTRoutes(v1 *gin.RouterGroup, db *gorm.DB, jwtManager *middl
 			transactions.POST("/transfer", permMiddleware.CanCreate("cash_bank"), cashBankHandler.ProcessTransfer)
 		}
 
+		transfers := cashBankGroup.Group("/transfers")
+		{
+			transfers.GET("", permMiddleware.CanView("cash_bank"), cashBankHandler.GetTransfers)
+			transfers.POST("/:id/approve", permMiddleware.CanApprove("cash_bank"), cashBankHandler.ApproveTransfer)
+			transfers.POST("/:id/reject", permMiddleware.CanApprove("cash_bank"), cashBankHandler.RejectTransfer)
+		}
+
 		// Compatibility routes without /transactions prefix (as documented in Swagger)
 		cashBankGroup.POST("/deposit", permMiddleware.CanCreate("cash_bank"), cashBankHandler.ProcessDeposit)
 		cashBankGroup.POST("/withdrawal", permMiddleware.CanCreate("cash_bank"), cashBankHandler.ProcessWithdrawal)

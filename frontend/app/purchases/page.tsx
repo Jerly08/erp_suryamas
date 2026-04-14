@@ -81,6 +81,7 @@ import {
   Radio,
   RadioGroup,
   Stack,
+  Checkbox,
 } from "@chakra-ui/react";
 import {
   FiPlus,
@@ -104,6 +105,10 @@ import purchaseService, {
   PurchaseItem,
   PurchaseSummary,
 } from "@/services/purchaseService";
+import {
+  PurchaseRequest,
+  PurchaseRequestItem as PurchaseRequestLineItem,
+} from "@/services/purchaseRequestService";
 import SubmitApprovalButton from "@/components/purchase/SubmitApprovalButton";
 import { ApprovalPanel } from "@/components/approval/ApprovalPanel";
 import PurchasePaymentForm from "@/components/purchase/PurchasePaymentForm";
@@ -113,7 +118,12 @@ import accountService from "@/services/accountService";
 import { Account as GLAccount, AccountCatalogItem } from "@/types/account";
 import approvalService from "@/services/approvalService";
 import { assetService } from "@/services/assetService";
-import { normalizeRole } from "@/utils/roles";
+import {
+  isFinanceManagerRole,
+  isFinanceTeamRole,
+  normalizeRole,
+  workflowRoleMatchesUserRole,
+} from "@/utils/roles";
 import { useModulePermissions } from "@/hooks/usePermissions";
 import ProtectedModule from "@/components/common/ProtectedModule";
 import { useColorModeValue } from "@chakra-ui/react";
@@ -157,6 +167,7 @@ interface PurchaseFormData {
 
 interface PurchaseItemFormData {
   product_id: string;
+  purchase_request_item_id: string;
   quantity: string;
   unit_price: string;
   discount: string;
@@ -377,6 +388,7 @@ const createPurchaseItemFormData = (
   overrides: Partial<PurchaseItemFormData> = {},
 ): PurchaseItemFormData => ({
   product_id: "",
+  purchase_request_item_id: "",
   quantity: "1",
   unit_price: "0",
   discount: "0",
@@ -398,6 +410,7 @@ const mapPurchaseItemToFormData = (
 
   return createPurchaseItemFormData({
     product_id: item.product_id?.toString() || "",
+    purchase_request_item_id: item.purchase_request_item_id?.toString() || "",
     quantity: item.quantity?.toString() || "1",
     unit_price: item.unit_price?.toString() || "0",
     discount: item.discount?.toString() || "0",
@@ -411,6 +424,31 @@ const mapPurchaseItemToFormData = (
       itemType === "PREPAID" ? item.amortization_month?.toString() || "12" : "",
   });
 };
+
+const getSelectablePurchaseRequestItems = (
+  purchaseRequest?: PurchaseRequest | null,
+  currentPurchaseId?: number | null,
+) => {
+  return (purchaseRequest?.items || []).filter((item) => {
+    if (item.approval_status !== "APPROVED") return false;
+    if (!item.purchase_id) return true;
+    return currentPurchaseId != null && item.purchase_id === currentPurchaseId;
+  });
+};
+
+const mapPurchaseRequestItemToFormData = (
+  item: PurchaseRequestLineItem,
+  defaultExpenseAccountId: number | null,
+) =>
+  createPurchaseItemFormData({
+    product_id: item.product_id?.toString() || "",
+    purchase_request_item_id: item.id?.toString() || "",
+    quantity: item.quantity?.toString() || "1",
+    unit_price: item.estimated_price?.toString() || "0",
+    expense_account_id: defaultExpenseAccountId
+      ? defaultExpenseAccountId.toString()
+      : "",
+  });
 
 const getPurchaseItemDisplayName = (item: PurchaseItem) => {
   if (item.is_fixed_asset || item.item_type === "ASSET") {
@@ -744,7 +782,11 @@ const PurchasesPage: React.FC = () => {
   );
   const [selectedPurchaseForPayment, setSelectedPurchaseForPayment] =
     useState<Purchase | null>(null);
-  const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
+  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(
+    [],
+  );
+  const [selectedPurchaseRequestItemIds, setSelectedPurchaseRequestItemIds] =
+    useState<string[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [loadingPRs, setLoadingPRs] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
@@ -798,6 +840,14 @@ const PurchasesPage: React.FC = () => {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [assetCategories, setAssetCategories] = useState<any[]>([]);
   const [loadingAssetCategories, setLoadingAssetCategories] = useState(false);
+  const selectedPurchaseRequest =
+    purchaseRequests.find(
+      (pr) => pr.id.toString() === formData.purchase_request_id,
+    ) || null;
+  const selectablePurchaseRequestItems = getSelectablePurchaseRequestItems(
+    selectedPurchaseRequest,
+    selectedPurchase?.id ?? null,
+  );
 
   // Add Vendor Modal states
   const {
@@ -898,7 +948,8 @@ const PurchasesPage: React.FC = () => {
 
   // Role-based permissions (kept for approval workflow logic)
   const roleNorm = normalizeRole(user?.role as any);
-  const isFinanceOrAdmin = roleNorm === "admin" || roleNorm === "finance";
+  const isFinanceOperationalRole = isFinanceTeamRole(roleNorm);
+  const isFinanceOrAdmin = roleNorm === "admin" || isFinanceOperationalRole;
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport, canApprove } =
@@ -2145,8 +2196,9 @@ const PurchasesPage: React.FC = () => {
           : Array.isArray(data)
             ? data
             : [];
-        // Only show APPROVED PRs
-        setPurchaseRequests(prs.filter((pr: any) => pr.status === "APPROVED"));
+        setPurchaseRequests(
+          prs.filter((pr: PurchaseRequest) => pr.status === "APPROVED"),
+        );
       }
     } catch (err: any) {
       console.error("Error fetching PRs:", err);
@@ -3004,6 +3056,11 @@ const PurchasesPage: React.FC = () => {
       // Fetch detailed purchase data for editing
       const detailResponse = await purchaseService.getById(purchase.id);
       setSelectedPurchase(detailResponse);
+      setSelectedPurchaseRequestItemIds(
+        (detailResponse.purchase_items || [])
+          .map((item) => item.purchase_request_item_id?.toString() || "")
+          .filter(Boolean),
+      );
 
       // Set form data for editing
       setFormData({
@@ -3264,6 +3321,7 @@ const PurchasesPage: React.FC = () => {
       items: [],
     });
     setSelectedPurchase(null);
+    setSelectedPurchaseRequestItemIds([]);
     await fetchVendors(); // Load vendors for dropdown
     await fetchPurchaseRequests(); // Load Purchase Requests
     await fetchProjects(); // Load Projects
@@ -3432,6 +3490,9 @@ const PurchasesPage: React.FC = () => {
             ? parseInt(item.asset_category_id)
             : undefined,
           product_id: item.product_id ? parseInt(item.product_id) : undefined,
+          purchase_request_item_id: item.purchase_request_item_id
+            ? parseInt(item.purchase_request_item_id)
+            : undefined,
           amortization_month:
             item.item_type === "PREPAID"
               ? parseInt(item.amortization_month) || 0
@@ -3541,6 +3602,7 @@ const PurchasesPage: React.FC = () => {
 
       // Reset selected purchase so it treats it as NEW
       setSelectedPurchase(null);
+      setSelectedPurchaseRequestItemIds([]);
 
       // We can run these in parallel to speed up
       await Promise.all([
@@ -3580,7 +3642,8 @@ const PurchasesPage: React.FC = () => {
     const steps = purchase?.approval_request?.approval_steps || [];
     const activeStep =
       steps.find(
-        (step) => step.is_active && (step.status || "").toUpperCase() === "PENDING",
+        (step) =>
+          step.is_active && (step.status || "").toUpperCase() === "PENDING",
       ) ||
       steps.find((step) => (step.status || "").toUpperCase() === "PENDING");
 
@@ -3618,7 +3681,7 @@ const PurchasesPage: React.FC = () => {
     }
 
     if (purchaseStatus === "DRAFT") {
-      return roleNorm === "finance" || roleNorm === "director";
+      return isFinanceManagerRole(roleNorm) || roleNorm === "director";
     }
 
     const activeStep = getCurrentApprovalStepInfo(purchase);
@@ -3626,7 +3689,7 @@ const PurchasesPage: React.FC = () => {
       return false;
     }
 
-    return activeStep.approver_role === roleNorm;
+    return workflowRoleMatchesUserRole(activeStep.approver_role, roleNorm);
   };
 
   // Smart Action Button Logic
@@ -3640,7 +3703,7 @@ const PurchasesPage: React.FC = () => {
         ? status !== "APPROVED" &&
           status !== "REJECTED" &&
           purchaseStatus !== "CANCELLED"
-        : activeStep?.approver_role === roleNorm;
+        : workflowRoleMatchesUserRole(activeStep?.approver_role, roleNorm);
 
     // Completed states
     if (
@@ -3736,7 +3799,7 @@ const PurchasesPage: React.FC = () => {
     const roleNorm = normalizeRole(user?.role as any);
     const purchaseStatus = (purchase.status || "").toUpperCase();
     const financeCanConfigurePurchase =
-      (roleNorm === "admin" || roleNorm === "finance") &&
+      (roleNorm === "admin" || isFinanceOperationalRole) &&
       ((purchaseStatus === "DRAFT" && canCurrentUserActOnPurchase(purchase)) ||
         purchaseStatus === "PENDING" ||
         purchaseStatus === "PENDING_APPROVAL");
@@ -3773,21 +3836,21 @@ const PurchasesPage: React.FC = () => {
 
         {/* Finance/Admin: Edit Tax & Payment button for PENDING purchases (read-only items) */}
         {financeCanConfigurePurchase && (
-            <Button
-              size="sm"
-              colorScheme="teal"
-              variant="outline"
-              leftIcon={<FiEdit />}
-              onClick={() => handleFinanceTaxConfig(purchase)}
-              fontWeight="medium"
-              _hover={{
-                transform: "translateY(-1px)",
-                boxShadow: "md",
-              }}
-            >
-              Set Pajak & Pembayaran
-            </Button>
-          )}
+          <Button
+            size="sm"
+            colorScheme="teal"
+            variant="outline"
+            leftIcon={<FiEdit />}
+            onClick={() => handleFinanceTaxConfig(purchase)}
+            fontWeight="medium"
+            _hover={{
+              transform: "translateY(-1px)",
+              boxShadow: "md",
+            }}
+          >
+            Set Pajak & Pembayaran
+          </Button>
+        )}
 
         {/* Record Payment button for APPROVED or PAID CREDIT purchases with outstanding amount */}
         {(purchaseStatus === "APPROVED" ||
@@ -3795,7 +3858,7 @@ const PurchasesPage: React.FC = () => {
           purchaseStatus === "COMPLETED") &&
           purchaseService.canReceivePayment(purchase) &&
           (roleNorm === "admin" ||
-            roleNorm === "finance" ||
+            isFinanceOperationalRole ||
             roleNorm === "director") && (
             <Button
               size="sm"
@@ -3819,7 +3882,7 @@ const PurchasesPage: React.FC = () => {
           (roleNorm === "inventory_manager" ||
             roleNorm === "admin" ||
             roleNorm === "director" ||
-            roleNorm === "finance") &&
+            isFinanceOperationalRole) &&
           purchaseHasReceiptableItems(purchase) &&
           !fullyReceivedPurchases.has(purchase.id) && (
             <Button
@@ -3840,7 +3903,7 @@ const PurchasesPage: React.FC = () => {
 
         {/* View Receipts button only for purchases that can have goods receipts */}
         {(roleNorm === "admin" ||
-          roleNorm === "finance" ||
+          isFinanceOperationalRole ||
           roleNorm === "director" ||
           roleNorm === "inventory_manager" ||
           roleNorm === "employee") &&
@@ -3866,7 +3929,7 @@ const PurchasesPage: React.FC = () => {
           purchaseStatus === "PAID" ||
           purchaseStatus === "COMPLETED") &&
           (roleNorm === "admin" ||
-            roleNorm === "finance" ||
+            isFinanceOperationalRole ||
             roleNorm === "director") && (
             <Button
               size="sm"
@@ -3913,6 +3976,8 @@ const PurchasesPage: React.FC = () => {
             allowedRoles={[
               "admin",
               "finance",
+              "finance_manager",
+              "finance_staff",
               "inventory_manager",
               "employee",
               "director",
@@ -3934,6 +3999,8 @@ const PurchasesPage: React.FC = () => {
           allowedRoles={[
             "admin",
             "finance",
+            "finance_manager",
+            "finance_staff",
             "inventory_manager",
             "employee",
             "director",
@@ -4843,7 +4910,8 @@ const PurchasesPage: React.FC = () => {
                           purchaseId={selectedPurchase.id}
                           approvalStatus={selectedPurchase.approval_status}
                           approvalSteps={
-                            selectedPurchase.approval_request?.approval_steps || []
+                            selectedPurchase.approval_request?.approval_steps ||
+                            []
                           }
                           purchaseAmount={selectedPurchase.total_amount}
                           canApprove={canCurrentUserActOnPurchase(
@@ -5700,25 +5768,7 @@ const PurchasesPage: React.FC = () => {
                                     const selectedPr = purchaseRequests.find(
                                       (pr) => pr.id.toString() === selectedPrId,
                                     );
-
-                                    // Map PR items to form items
-                                    const prItems: PurchaseItemFormData[] = (
-                                      selectedPr?.items || []
-                                    ).map((item: any) => ({
-                                      ...createPurchaseItemFormData({
-                                        product_id:
-                                          item.product_id?.toString() || "",
-                                        quantity:
-                                          item.quantity?.toString() || "1",
-                                        unit_price:
-                                          item.estimated_price?.toString() ||
-                                          "0",
-                                        expense_account_id:
-                                          defaultExpenseAccountId
-                                            ? defaultExpenseAccountId.toString()
-                                            : "",
-                                      }),
-                                    }));
+                                    setSelectedPurchaseRequestItemIds([]);
 
                                     setFormData((prev) => ({
                                       ...prev,
@@ -5726,10 +5776,12 @@ const PurchasesPage: React.FC = () => {
                                       project_id: selectedPr?.project_id
                                         ? selectedPr.project_id.toString()
                                         : prev.project_id,
-                                      items:
-                                        prItems.length > 0
-                                          ? prItems
-                                          : prev.items,
+                                      items: selectedPrId
+                                        ? []
+                                        : prev.items.filter(
+                                            (item) =>
+                                              !item.purchase_request_item_id,
+                                          ),
                                       notes: selectedPr?.notes
                                         ? `Dari PR: ${selectedPr.pr_number}. ${selectedPr.notes}`
                                         : prev.notes,
@@ -5762,8 +5814,164 @@ const PurchasesPage: React.FC = () => {
                                 fontSize="xs"
                                 color={warningTextColor}
                               >
-                                Warning: Amount cannot exceed PR limit
+                                {selectedPurchaseRequest
+                                  ? `${selectablePurchaseRequestItems.length} item approved tersedia. Pilih item yang mau dibeli dulu, lalu muat ke form purchase.`
+                                  : "Warning: Amount cannot exceed PR limit"}
                               </FormHelperText>
+                              {selectedPurchaseRequest && (
+                                <Box
+                                  mt={3}
+                                  p={3}
+                                  borderWidth="1px"
+                                  borderColor={borderColor}
+                                  rounded="md"
+                                  bg={notesBoxBg}
+                                >
+                                  <Flex
+                                    justify="space-between"
+                                    align="center"
+                                    gap={2}
+                                    mb={3}
+                                    wrap="wrap"
+                                  >
+                                    <Box>
+                                      <Text fontSize="sm" fontWeight="semibold">
+                                        Item approved siap diproses
+                                      </Text>
+                                      <Text fontSize="xs" color={textSecondary}>
+                                        PR {selectedPurchaseRequest.pr_number}:
+                                        pilih item approved yang belum dipakai
+                                        di purchase lain.
+                                      </Text>
+                                    </Box>
+                                    <HStack spacing={2}>
+                                      <Button
+                                        size="xs"
+                                        variant="ghost"
+                                        onClick={() =>
+                                          setSelectedPurchaseRequestItemIds(
+                                            selectablePurchaseRequestItems.map(
+                                              (item) => item.id.toString(),
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        Pilih Semua
+                                      </Button>
+                                      <Button
+                                        size="xs"
+                                        variant="ghost"
+                                        onClick={() =>
+                                          setSelectedPurchaseRequestItemIds([])
+                                        }
+                                      >
+                                        Kosongkan
+                                      </Button>
+                                    </HStack>
+                                  </Flex>
+
+                                  {selectablePurchaseRequestItems.length ===
+                                  0 ? (
+                                    <Text fontSize="sm" color={textSecondary}>
+                                      Tidak ada item approved yang tersedia
+                                      untuk PR ini.
+                                    </Text>
+                                  ) : (
+                                    <>
+                                      <Stack
+                                        spacing={2}
+                                        maxH="180px"
+                                        overflowY="auto"
+                                      >
+                                        {selectablePurchaseRequestItems.map(
+                                          (item) => (
+                                            <Checkbox
+                                              key={item.id}
+                                              isChecked={selectedPurchaseRequestItemIds.includes(
+                                                item.id.toString(),
+                                              )}
+                                              onChange={(event) => {
+                                                const itemId =
+                                                  item.id.toString();
+                                                setSelectedPurchaseRequestItemIds(
+                                                  (prev) =>
+                                                    event.target.checked
+                                                      ? [...prev, itemId]
+                                                      : prev.filter(
+                                                          (value) =>
+                                                            value !== itemId,
+                                                        ),
+                                                );
+                                              }}
+                                            >
+                                              <Box>
+                                                <Text
+                                                  fontSize="sm"
+                                                  fontWeight="medium"
+                                                >
+                                                  {item.product?.code
+                                                    ? `${item.product.code} - `
+                                                    : ""}
+                                                  {item.product?.name ||
+                                                    `Product #${item.product_id}`}
+                                                </Text>
+                                                <Text
+                                                  fontSize="xs"
+                                                  color={textSecondary}
+                                                >
+                                                  Qty {item.quantity} | Budget{" "}
+                                                  {formatCurrency(
+                                                    item.total_estimated_price,
+                                                  )}
+                                                </Text>
+                                              </Box>
+                                            </Checkbox>
+                                          ),
+                                        )}
+                                      </Stack>
+                                      <Button
+                                        mt={3}
+                                        size="sm"
+                                        colorScheme="blue"
+                                        variant="outline"
+                                        onClick={() => {
+                                          const chosenItems =
+                                            selectablePurchaseRequestItems.filter(
+                                              (item) =>
+                                                selectedPurchaseRequestItemIds.includes(
+                                                  item.id.toString(),
+                                                ),
+                                            );
+
+                                          if (chosenItems.length === 0) {
+                                            toast({
+                                              title:
+                                                "Pilih minimal 1 item approved",
+                                              status: "warning",
+                                              duration: 3000,
+                                              isClosable: true,
+                                            });
+                                            return;
+                                          }
+
+                                          setFormData((prev) => ({
+                                            ...prev,
+                                            items: chosenItems.map((item) =>
+                                              mapPurchaseRequestItemToFormData(
+                                                item,
+                                                defaultExpenseAccountId,
+                                              ),
+                                            ),
+                                          }));
+                                        }}
+                                      >
+                                        Gunakan item terpilih (
+                                        {selectedPurchaseRequestItemIds.length})
+                                      </Button>
+                                    </>
+                                  )}
+                                </Box>
+                              )}
                             </FormControl>
 
                             <FormControl>

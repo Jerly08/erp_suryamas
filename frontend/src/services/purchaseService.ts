@@ -3,6 +3,7 @@ import { API_ENDPOINTS } from "@/config/api";
 
 export interface PurchaseItemRequest {
   product_id?: number;
+  purchase_request_item_id?: number;
   quantity: number;
   unit_price: number;
   discount?: number;
@@ -44,6 +45,7 @@ export interface PurchaseFilterParams {
 export interface PurchaseItem {
   id: number;
   product_id?: number | null;
+  purchase_request_item_id?: number | null;
   quantity: number;
   unit_price: number;
   discount: number;
@@ -59,6 +61,11 @@ export interface PurchaseItem {
     id: number;
     name: string;
     code: string;
+  };
+  purchase_request_item?: {
+    id: number;
+    purchase_request_id: number;
+    approval_status: string;
   };
 }
 

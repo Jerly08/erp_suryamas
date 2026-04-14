@@ -32,13 +32,16 @@ import {
   ModalBody,
   ModalCloseButton,
   Text,
+  FormControl,
+  FormLabel,
+  Input,
   VStack,
   HStack,
   Divider,
   Select,
   useColorModeValue
 } from '@chakra-ui/react';
-import { FiRefreshCw, FiEye, FiCheckCircle, FiXCircle, FiTrash2 } from 'react-icons/fi';
+import { FiRefreshCw, FiEye, FiCheckCircle, FiXCircle, FiTrash2, FiEdit2 } from 'react-icons/fi';
 import api from '@/services/api';
 
 interface PrepaidExpense {
@@ -88,11 +91,15 @@ export default function PrepaidExpensesPage() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const { isOpen: isTerminateOpen, onOpen: onTerminateOpen, onClose: onTerminateClose } = useDisclosure();
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure();
+  const { isOpen: isEditScheduleOpen, onOpen: onEditScheduleOpen, onClose: onEditScheduleClose } = useDisclosure();
   const [terminateType, setTerminateType] = useState('REFUND');
   const [destinationAccount, setDestinationAccount] = useState('');
   const [prepaidToTerminate, setPrepaidToTerminate] = useState<PrepaidExpense | null>(null);
   const [prepaidToDelete, setPrepaidToDelete] = useState<PrepaidExpense | null>(null);
   const [isDeleteSubmitting, setIsDeleteSubmitting] = useState(false);
+  const [scheduleToEdit, setScheduleToEdit] = useState<PrepaidSchedule | null>(null);
+  const [editScheduledDate, setEditScheduledDate] = useState('');
+  const [isScheduleSubmitting, setIsScheduleSubmitting] = useState(false);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
   const toast = useToast();
   const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
@@ -143,9 +150,11 @@ export default function PrepaidExpensesPage() {
     setSelectedPrepaid(prepaid);
     try {
       const response = await api.get(`/api/v1/prepaid/${prepaid.id}`);
-      setSchedules(response.data.data.schedules || []);
+      const prepaidData = response.data.data;
+      setSelectedPrepaid(prepaidData);
+      setSchedules(prepaidData.schedules || []);
       onOpen();
-    } catch (error: any) {
+    } catch {
       toast({
         title: 'Error',
         description: 'Gagal memuat jadwal amortisasi',
@@ -153,6 +162,16 @@ export default function PrepaidExpensesPage() {
         duration: 3000
       });
     }
+  };
+
+  const toDateInputValue = (dateString: string) => {
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+
+    const timezoneOffset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 10);
   };
 
   const handleAmortize = async (scheduleId: number) => {
@@ -261,6 +280,53 @@ export default function PrepaidExpensesPage() {
         status: 'error',
         duration: 5000
       });
+    }
+  };
+
+  const handleEditScheduleClick = (schedule: PrepaidSchedule) => {
+    setScheduleToEdit(schedule);
+    setEditScheduledDate(toDateInputValue(schedule.scheduled_date));
+    onEditScheduleOpen();
+  };
+
+  const handleUpdateScheduleSubmit = async () => {
+    if (!selectedPrepaid || !scheduleToEdit) return;
+    if (!editScheduledDate) {
+      toast({
+        title: 'Tanggal belum diisi',
+        description: 'Pilih tanggal jadwal amortisasi terlebih dahulu',
+        status: 'warning',
+        duration: 3000
+      });
+      return;
+    }
+
+    setIsScheduleSubmitting(true);
+    try {
+      await api.put(`/api/v1/prepaid/${selectedPrepaid.id}/schedules/${scheduleToEdit.id}`, {
+        scheduled_date: editScheduledDate
+      });
+
+      toast({
+        title: 'Sukses',
+        description: 'Jadwal prepaid expense berhasil diperbarui',
+        status: 'success',
+        duration: 3000
+      });
+
+      await loadPrepaidDetails(selectedPrepaid);
+      fetchPrepaids();
+      onEditScheduleClose();
+      setScheduleToEdit(null);
+    } catch (error: any) {
+      toast({
+        title: 'Gagal update jadwal',
+        description: error.response?.data?.details || error.response?.data?.error || 'Terjadi kesalahan sistem',
+        status: 'error',
+        duration: 5000
+      });
+    } finally {
+      setIsScheduleSubmitting(false);
     }
   };
 
@@ -443,9 +509,14 @@ export default function PrepaidExpensesPage() {
                     </Td>
                     <Td>
                       {sched.status === 'PENDING' && (
-                        <Button size="xs" colorScheme="purple" onClick={() => handleAmortize(sched.id)}>
-                          Eksekusi Jurnal
-                        </Button>
+                        <HStack spacing={2}>
+                          <Button size="xs" variant="outline" leftIcon={<Icon as={FiEdit2} />} onClick={() => handleEditScheduleClick(sched)}>
+                            Edit Jadwal
+                          </Button>
+                          <Button size="xs" colorScheme="purple" onClick={() => handleAmortize(sched.id)}>
+                            Eksekusi Jurnal
+                          </Button>
+                        </HStack>
                       )}
                     </Td>
                   </Tr>
@@ -456,6 +527,69 @@ export default function PrepaidExpensesPage() {
           </ModalBody>
           <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
              <Button onClick={onClose}>Tutup</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={isEditScheduleOpen}
+        onClose={() => {
+          if (isScheduleSubmitting) return;
+          onEditScheduleClose();
+          setScheduleToEdit(null);
+        }}
+      >
+        <ModalOverlay />
+        <ModalContent bg={modalBg} borderWidth="1px" borderColor={borderColor}>
+          <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={borderColor}>
+            Edit Jadwal Prepaid
+          </ModalHeader>
+          <ModalCloseButton color={textColor} isDisabled={isScheduleSubmitting} />
+          <ModalBody py={6}>
+            <VStack spacing={4} align="stretch">
+              <Box bg={panelBg} borderWidth="1px" borderColor={borderColor} borderRadius="md" p={4}>
+                <Text fontWeight="semibold" color={textColor}>
+                  {selectedPrepaid?.name}
+                </Text>
+                <Text fontSize="sm" color={mutedTextColor}>
+                  Jadwal bulan ke-{scheduleToEdit?.month_number}
+                </Text>
+              </Box>
+
+              <FormControl isRequired>
+                <FormLabel color={textColor}>Tanggal Jadwal Baru</FormLabel>
+                <Input
+                  type="date"
+                  value={editScheduledDate}
+                  onChange={(e) => setEditScheduledDate(e.target.value)}
+                  bg={inputBg}
+                  borderColor={inputBorderColor}
+                  color={textColor}
+                  _hover={{ borderColor: inputBorderColor }}
+                  _focusVisible={fieldFocusStyles}
+                />
+              </FormControl>
+
+              <Text fontSize="sm" color={mutedTextColor}>
+                Hanya jadwal yang masih pending yang bisa diubah. Saat tanggal ini disimpan, semua jadwal setelahnya akan ikut menyesuaikan otomatis per bulan.
+              </Text>
+            </VStack>
+          </ModalBody>
+          <ModalFooter bg={modalFooterBg} borderTopWidth="1px" borderColor={borderColor}>
+            <Button
+              variant="ghost"
+              mr={3}
+              onClick={() => {
+                onEditScheduleClose();
+                setScheduleToEdit(null);
+              }}
+              isDisabled={isScheduleSubmitting}
+            >
+              Batal
+            </Button>
+            <Button colorScheme="blue" onClick={handleUpdateScheduleSubmit} isLoading={isScheduleSubmitting}>
+              Simpan Jadwal
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

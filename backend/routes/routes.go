@@ -457,7 +457,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			dashboard := protected.Group("/dashboard")
 			{
 				dashboard.GET("/analytics", permMiddleware.CanView("reports"), dashboardController.GetAnalytics)
-				dashboard.GET("/finance", middleware.RoleRequired("admin", "finance", "finance_manager"), dashboardController.GetFinanceDashboardData)
+				dashboard.GET("/finance", middleware.RoleRequired("admin", "finance", "finance_manager", "finance_staff"), dashboardController.GetFinanceDashboardData)
+				dashboard.GET("/finance-staff", middleware.RoleRequired("admin", "finance", "finance_manager", "finance_staff"), dashboardController.GetFinanceStaffDashboardData)
 				dashboard.GET("/stock-alerts", middleware.RoleRequired("admin", "inventory_manager", "director"), dashboardController.GetStockAlertsBanner)
 				dashboard.POST("/stock-alerts/:id/dismiss", middleware.RoleRequired("admin", "inventory_manager"), dashboardController.DismissStockAlert)
 
@@ -708,8 +709,9 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchaseRequests.POST("", permMiddleware.CanCreate("purchase_requests"), purchaseRequestController.Create)
 
 				// Approval & Rejection workflows
-				purchaseRequests.PUT("/:id/approve", permMiddleware.CanApprove("purchase_requests"), purchaseRequestController.Approve)
-				purchaseRequests.PUT("/:id/reject", permMiddleware.CanApprove("purchase_requests"), purchaseRequestController.Reject)
+				purchaseRequests.PUT("/:id/review", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Review)
+				purchaseRequests.PUT("/:id/approve", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Approve)
+				purchaseRequests.PUT("/:id/reject", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Reject)
 			}
 
 			// Projects routes with permission checks
@@ -978,6 +980,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				prepaid.GET("/:id", permMiddleware.CanView("prepaid_expenses"), prepaidController.GetPrepaidByID)
 				prepaid.DELETE("/:id", permMiddleware.CanDelete("prepaid_expenses"), prepaidController.DeletePrepaid)
 				prepaid.PUT("/:id/account", permMiddleware.CanEdit("prepaid_expenses"), prepaidController.SetExpenseAccount)
+				prepaid.PUT("/:id/schedules/:schedule_id", permMiddleware.CanEdit("prepaid_expenses"), prepaidController.UpdateSchedule)
 				prepaid.POST("/:id/amortize/:schedule_id", permMiddleware.CanEdit("prepaid_expenses"), periodValidationMiddleware.ValidateTransactionPeriod(), prepaidController.AmortizeSchedule)
 				prepaid.POST("/:id/terminate", permMiddleware.CanEdit("prepaid_expenses"), periodValidationMiddleware.ValidateTransactionPeriod(), prepaidController.TerminatePrepaid)
 			}
@@ -1023,7 +1026,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// 🏁 Fiscal Year-End Closing routes (USING UNIFIED SYSTEM)
 			fiscalClosing := protected.Group("/fiscal-closing")
-			fiscalClosing.Use(middleware.RoleRequired("admin", "director", "finance")) // Finance can execute year-end closing
+			fiscalClosing.Use(middleware.RoleRequired("admin", "director", "finance", "finance_manager")) // Finance can execute year-end closing
 			{
 				// Use period closing for preview and execute (more flexible)
 				fiscalClosing.GET("/preview", periodClosingController.PreviewClosing)
@@ -1041,7 +1044,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// The rest of the operations require admin/finance roles
 			periodClosingAdmin := periodClosing.Group("")
-			periodClosingAdmin.Use(middleware.RoleRequired("admin", "director", "finance"))
+			periodClosingAdmin.Use(middleware.RoleRequired("admin", "director", "finance", "finance_manager"))
 			{
 				periodClosingAdmin.GET("/last-info", periodClosingController.GetLastClosingInfo) // Get last closing info
 				periodClosingAdmin.GET("/preview", periodClosingController.PreviewClosing)       // Preview period closing
@@ -1121,7 +1124,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			cogsController := controllers.NewCOGSController(db)
 			cogsRoutes := v1.Group("/cogs")
 			cogsRoutes.Use(jwtManager.AuthRequired())
-			cogsRoutes.Use(middleware.RoleRequired("finance", "admin", "director"))
+			cogsRoutes.Use(middleware.RoleRequired("finance", "finance_manager", "admin", "director"))
 			{
 				cogsRoutes.GET("/summary", cogsController.GetCOGSSummary)      // Get COGS summary for period
 				cogsRoutes.GET("/missing", cogsController.GetSalesWithoutCOGS) // Get sales without COGS entries

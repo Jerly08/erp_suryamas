@@ -1,23 +1,23 @@
 package models
 
 import (
-	"time"
 	"gorm.io/gorm"
+	"time"
 )
 
 // RefreshToken represents a refresh token in the database
 type RefreshToken struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	Token       string         `json:"token" gorm:"unique;not null;type:text"`
-	UserID      uint           `json:"user_id" gorm:"not null;index"`
-	ExpiresAt   time.Time      `json:"expires_at"`
-	IsRevoked   bool           `json:"is_revoked" gorm:"default:false"`
-	DeviceInfo  string         `json:"device_info" gorm:"size:500"`
-	IPAddress   string         `json:"ip_address" gorm:"size:45"`
-	UserAgent   string         `json:"user_agent" gorm:"type:text"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+	ID         uint           `json:"id" gorm:"primaryKey"`
+	Token      string         `json:"token" gorm:"unique;not null;type:text"`
+	UserID     uint           `json:"user_id" gorm:"not null;index"`
+	ExpiresAt  time.Time      `json:"expires_at"`
+	IsRevoked  bool           `json:"is_revoked" gorm:"default:false"`
+	DeviceInfo string         `json:"device_info" gorm:"size:500"`
+	IPAddress  string         `json:"ip_address" gorm:"size:45"`
+	UserAgent  string         `json:"user_agent" gorm:"type:text"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
 	User User `json:"user" gorm:"foreignKey:UserID"`
@@ -25,18 +25,18 @@ type RefreshToken struct {
 
 // UserSession represents an active user session
 type UserSession struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	SessionID   string         `json:"session_id" gorm:"unique;not null;size:255"`
-	UserID      uint           `json:"user_id" gorm:"not null;index"`
-	IPAddress   string         `json:"ip_address" gorm:"size:45"`
-	UserAgent   string         `json:"user_agent" gorm:"type:text"`
-	DeviceInfo  string         `json:"device_info" gorm:"size:500"`
-	LastActivity time.Time     `json:"last_activity"`
-	ExpiresAt   time.Time      `json:"expires_at"`
-	IsActive    bool           `json:"is_active" gorm:"default:true"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+	ID           uint           `json:"id" gorm:"primaryKey"`
+	SessionID    string         `json:"session_id" gorm:"unique;not null;size:255"`
+	UserID       uint           `json:"user_id" gorm:"not null;index"`
+	IPAddress    string         `json:"ip_address" gorm:"size:45"`
+	UserAgent    string         `json:"user_agent" gorm:"type:text"`
+	DeviceInfo   string         `json:"device_info" gorm:"size:500"`
+	LastActivity time.Time      `json:"last_activity"`
+	ExpiresAt    time.Time      `json:"expires_at"`
+	IsActive     bool           `json:"is_active" gorm:"default:true"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
 	User User `json:"user" gorm:"foreignKey:UserID"`
@@ -59,30 +59,30 @@ type BlacklistedToken struct {
 
 // AuthAttempt represents login attempts for security monitoring
 type AuthAttempt struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	Email       string         `json:"email" gorm:"size:100;index"`
-	Username    string         `json:"username" gorm:"size:50;index"`
-	IPAddress   string         `json:"ip_address" gorm:"size:45"`
-	UserAgent   string         `json:"user_agent" gorm:"type:text"`
-	Success     bool           `json:"success" gorm:"default:false"`
-	FailureReason string       `json:"failure_reason" gorm:"size:100"`
-	AttemptedAt time.Time      `json:"attempted_at"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+	ID            uint           `json:"id" gorm:"primaryKey"`
+	Email         string         `json:"email" gorm:"size:100;index"`
+	Username      string         `json:"username" gorm:"size:50;index"`
+	IPAddress     string         `json:"ip_address" gorm:"size:45"`
+	UserAgent     string         `json:"user_agent" gorm:"type:text"`
+	Success       bool           `json:"success" gorm:"default:false"`
+	FailureReason string         `json:"failure_reason" gorm:"size:100"`
+	AttemptedAt   time.Time      `json:"attempted_at"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 // RateLimitRecord represents rate limiting data
 type RateLimitRecord struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	IPAddress   string         `json:"ip_address" gorm:"unique;not null;size:45"`
-	Endpoint    string         `json:"endpoint" gorm:"size:100"`
-	Attempts    int            `json:"attempts" gorm:"default:0"`
-	WindowStart time.Time      `json:"window_start"`
-	BlockedUntil *time.Time    `json:"blocked_until"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+	ID           uint           `json:"id" gorm:"primaryKey"`
+	IPAddress    string         `json:"ip_address" gorm:"unique;not null;size:45"`
+	Endpoint     string         `json:"endpoint" gorm:"size:100"`
+	Attempts     int            `json:"attempts" gorm:"default:0"`
+	WindowStart  time.Time      `json:"window_start"`
+	BlockedUntil *time.Time     `json:"blocked_until"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 // Enhanced login/register request structures
@@ -176,6 +176,7 @@ const (
 	RoleAdmin            = "admin"
 	RoleFinance          = "finance"
 	RoleFinanceManager   = "finance_manager"
+	RoleFinanceStaff     = "finance_staff"
 	RoleDirector         = "director"
 	RoleInventoryManager = "inventory_manager"
 	RoleEmployee         = "employee"

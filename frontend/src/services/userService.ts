@@ -109,10 +109,12 @@ class UserService {
       'admin': 'Administrator',
       'manager': 'Manager',
       'accountant': 'Accountant',
-      'finance': 'Finance',
+      'finance': 'Finance Manager',
+      'finance_manager': 'Finance Manager',
+      'finance_staff': 'Finance Staff',
       'sales': 'Sales',
       'inventory': 'Inventory',
-      'employee': 'Employee'
+      'employee': 'Staff'
     };
     return labels[role] || role;
   }

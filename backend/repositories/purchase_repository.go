@@ -86,6 +86,7 @@ func (r *PurchaseRepository) FindByID(id uint) (*models.Purchase, error) {
 	err := r.db.Preload("Vendor").
 		Preload("User").
 		Preload("PurchaseItems.Product").
+		Preload("PurchaseItems.PurchaseRequestItem").
 		Preload("PurchaseItems.ExpenseAccount").
 		Preload("ApprovalRequest.Workflow").
 		Preload("ApprovalRequest.Requester").
@@ -119,6 +120,7 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 		Preload("Vendor").
 		Preload("User").
 		Preload("PurchaseItems.Product").
+		Preload("PurchaseItems.PurchaseRequestItem").
 		// Load approval request with all nested data for role-based filtering
 		Preload("ApprovalRequest").
 		Preload("ApprovalRequest.Workflow").

@@ -1,13 +1,13 @@
 package middleware
 
 import (
+	"app-sistem-akuntansi/models"
 	"fmt"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"log"
 	"net/http"
 	"time"
-	"app-sistem-akuntansi/models"
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type PermissionMiddleware struct {
@@ -55,33 +55,33 @@ func (pm *PermissionMiddleware) CheckModulePermission(module string, action stri
 			role = roleStr
 		}
 
-	// Debug logging
-	log.Printf("[PERMISSION DEBUG] UserID: %d, Role: %s, Module: %s, Action: %s", userID, role, module, action)
+		// Debug logging
+		log.Printf("[PERMISSION DEBUG] UserID: %d, Role: %s, Module: %s, Action: %s", userID, role, module, action)
 
-	// Check cache first
-	if cachedResult, found := pm.cache.Get(userID, module, action); found {
-		log.Printf("[PERMISSION CACHE] Cache hit for user %d, module %s, action %s: %v", userID, module, action, cachedResult)
-		if !cachedResult {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error": "You don't have permission to " + action + " " + module,
-				"required_permission": action,
-				"module": module,
-				"user_role": role,
-			})
-			c.Abort()
+		// Check cache first
+		if cachedResult, found := pm.cache.Get(userID, module, action); found {
+			log.Printf("[PERMISSION CACHE] Cache hit for user %d, module %s, action %s: %v", userID, module, action, cachedResult)
+			if !cachedResult {
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":               "You don't have permission to " + action + " " + module,
+					"required_permission": action,
+					"module":              module,
+					"user_role":           role,
+				})
+				c.Abort()
+				return
+			}
+			c.Next()
 			return
 		}
-		c.Next()
-		return
-	}
 
-	// Check if user has specific permission in database
-	var permission models.ModulePermissionRecord
-	err := pm.db.Where("user_id = ? AND module = ?", userID, module).First(&permission).Error
+		// Check if user has specific permission in database
+		var permission models.ModulePermissionRecord
+		err := pm.db.Where("user_id = ? AND module = ?", userID, module).First(&permission).Error
 
-	hasPermission := false
-		
-	if err == nil {
+		hasPermission := false
+
+		if err == nil {
 			// Permission record found, check specific action
 			log.Printf("[PERMISSION DEBUG] Found custom permission record for user %d, module %s", userID, module)
 			switch action {
@@ -129,19 +129,19 @@ func (pm *PermissionMiddleware) CheckModulePermission(module string, action stri
 			log.Printf("[PERMISSION DEBUG] Database error: %v", err)
 		}
 
-	log.Printf("[PERMISSION DEBUG] Final result - hasPermission: %v", hasPermission)
-	
-	// Store result in cache
-	pm.cache.Set(userID, module, action, hasPermission)
-	
-	if !hasPermission {
+		log.Printf("[PERMISSION DEBUG] Final result - hasPermission: %v", hasPermission)
+
+		// Store result in cache
+		pm.cache.Set(userID, module, action, hasPermission)
+
+		if !hasPermission {
 			log.Printf("[PERMISSION DEBUG] Access denied for user %d, role %s, module %s, action %s", userID, role, module, action)
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "You don't have permission to " + action + " " + module,
+				"error":               "You don't have permission to " + action + " " + module,
 				"required_permission": action,
-				"module": module,
-				"user_role": role,
-				"debug_info": fmt.Sprintf("UserID: %d, Role: %s", userID, role),
+				"module":              module,
+				"user_role":           role,
+				"debug_info":          fmt.Sprintf("UserID: %d, Role: %s", userID, role),
 			})
 			c.Abort()
 			return
@@ -176,4 +176,16 @@ func (pm *PermissionMiddleware) CanApprove(module string) gin.HandlerFunc {
 
 func (pm *PermissionMiddleware) CanExport(module string) gin.HandlerFunc {
 	return pm.CheckModulePermission(module, "export")
+}
+
+func (pm *PermissionMiddleware) CanReviewPurchaseRequests() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetString("role")
+		if models.CanReviewPurchaseRequests(role) {
+			c.Next()
+			return
+		}
+
+		pm.CheckModulePermission("purchase_requests", "approve")(c)
+	}
 }

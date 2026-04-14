@@ -202,16 +202,11 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	fmt.Printf("? Purchase totals calculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
 
 	// INVOICE MATCHING: HARD BLOCK VALIDATION
-	// If this purchase is linked to a Purchase Request, validate against its estimated amount
+	// If this purchase is linked to a Purchase Request, validate against the selected approved items.
 	if purchase.PurchaseRequestID != nil {
-		var pr models.PurchaseRequest
-		if err := s.db.First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
-			return nil, fmt.Errorf("linked purchase request not found: %v", err)
-		}
-
-		// Ensure the PR is approved
-		if pr.Status != "APPROVED" {
-			return nil, fmt.Errorf("cannot create purchase from unapproved request (Status: %s)", pr.Status)
+		pr, selectedApprovedBudget, err := s.validateLinkedPurchaseRequestSelection(purchase, false)
+		if err != nil {
+			return nil, err
 		}
 
 		// Inherit ProjectID from PR if the request didn't explicitly set one
@@ -222,9 +217,9 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		// Menghitung Base Net Amount (Subtotal - Diskon) tanpa PPN dan Pajak Lainnya
 		netPurchaseAmount := purchase.SubtotalBeforeDiscount - purchase.Discount
 
-		// Hard Block Rule: Tolerance 0%. Net Invoice must be <= PR Estimate.
-		if netPurchaseAmount > pr.TotalEstimatedAmount {
-			errMsg := fmt.Sprintf("HARD BLOCK: Base Invoice Amount (%.2f) exceeds Approved Purchase Request Amount (%.2f). Note: Taxes are excluded from this limit check. Please revise invoice or request a new PR.", netPurchaseAmount, pr.TotalEstimatedAmount)
+		// Hard Block Rule: Tolerance 0%. Net Invoice must be <= selected approved PR items budget.
+		if netPurchaseAmount > selectedApprovedBudget {
+			errMsg := fmt.Sprintf("HARD BLOCK: Base Invoice Amount (%.2f) exceeds selected approved Purchase Request budget (%.2f). Note: Taxes are excluded from this limit check. Please revise invoice or request a new PR approval.", netPurchaseAmount, selectedApprovedBudget)
 			fmt.Printf("? %s\n", errMsg)
 			return nil, errors.New(errMsg)
 		}
@@ -253,6 +248,11 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		return nil, fmt.Errorf("failed to save purchase to database: %v", err)
 	}
 	fmt.Printf("? Purchase %d saved successfully with code %s\n", createdPurchase.ID, createdPurchase.Code)
+
+	if err := s.syncLinkedPurchaseRequestItems(createdPurchase); err != nil {
+		fmt.Printf("? Failed to sync linked purchase request items for purchase %d: %v\n", createdPurchase.ID, err)
+		return nil, fmt.Errorf("failed to reserve linked purchase request items: %v", err)
+	}
 
 	// NEW LOGIC: ALL purchases must go through approval workflow
 	// No more auto-approval for immediate payments - Employee ? Finance workflow applies to all
@@ -359,17 +359,17 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 
 	// INVOICE MATCHING: HARD BLOCK VALIDATION FOR UPDATE
 	if purchase.PurchaseRequestID != nil {
-		var pr models.PurchaseRequest
-		if err := s.db.First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
-			return nil, fmt.Errorf("linked purchase request not found: %v", err)
+		_, selectedApprovedBudget, err := s.validateLinkedPurchaseRequestSelection(purchase, true)
+		if err != nil {
+			return nil, err
 		}
 
 		// Menghitung Base Net Amount (Subtotal - Diskon) tanpa PPN dan Pajak Lainnya
 		netPurchaseAmount := purchase.SubtotalBeforeDiscount - purchase.Discount
 
 		// Hard Block Rule
-		if netPurchaseAmount > pr.TotalEstimatedAmount {
-			errMsg := fmt.Sprintf("HARD BLOCK: Updated Base Invoice Amount (%.2f) exceeds Approved Purchase Request Amount (%.2f). Note: Taxes are excluded from this limit check. Update rejected.", netPurchaseAmount, pr.TotalEstimatedAmount)
+		if netPurchaseAmount > selectedApprovedBudget {
+			errMsg := fmt.Sprintf("HARD BLOCK: Updated Base Invoice Amount (%.2f) exceeds selected approved Purchase Request budget (%.2f). Note: Taxes are excluded from this limit check. Update rejected.", netPurchaseAmount, selectedApprovedBudget)
 			fmt.Printf("? %s\n", errMsg)
 			return nil, errors.New(errMsg)
 		}
@@ -387,6 +387,11 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		return nil, fmt.Errorf("failed to save updated purchase: %v", err)
 	}
 	fmt.Printf("? Purchase %d updated successfully\n", id)
+
+	if err := s.syncLinkedPurchaseRequestItems(updatedPurchase); err != nil {
+		fmt.Printf("? Failed to sync linked purchase request items for updated purchase %d: %v\n", id, err)
+		return nil, fmt.Errorf("failed to sync linked purchase request items: %v", err)
+	}
 
 	return s.GetPurchaseByID(updatedPurchase.ID)
 }
@@ -436,6 +441,11 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 	if err != nil {
 		fmt.Printf("? Failed to update purchase %d status to CANCELLED: %v\n", id, err)
 		return fmt.Errorf("failed to cancel purchase: %v", err)
+	}
+
+	if err := s.releaseLinkedPurchaseRequestItems(purchase); err != nil {
+		fmt.Printf("? Failed to release linked purchase request items for purchase %d: %v\n", id, err)
+		return fmt.Errorf("failed to release linked purchase request items: %v", err)
 	}
 
 	fmt.Printf("? Purchase %d cancelled successfully (status: CANCELLED, audit trail preserved)\n", id)
@@ -688,7 +698,7 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 
 	now := time.Now()
 	result := make(map[string]interface{})
-	userRoleNorm := strings.ToLower(strings.TrimSpace(userRole))
+	userRoleNorm := models.NormalizeRole(userRole)
 
 	if !approved {
 		rejectionComments := strings.TrimSpace(comments)
@@ -787,7 +797,7 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 	}
 
 	// Purchase is approved, check for escalation
-	if userRoleNorm == "finance" && escalateToDirector {
+	if models.IsFinanceManagerRole(userRoleNorm) && escalateToDirector {
 		// If no approval request exists (DRAFT status), create one
 		if purchase.ApprovalRequestID == nil {
 			err = s.createApprovalRequest(purchase, models.ApprovalPriorityNormal, purchase.UserID)

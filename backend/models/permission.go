@@ -55,8 +55,8 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	permissions := make(map[string]*ModulePermission)
 	modules := []string{"accounts", "products", "contacts", "assets", "prepaid_expenses", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings", "purchase_requests", "projects", "boms"}
 
-	switch role {
-	case "admin":
+	switch NormalizeRole(role) {
+	case RoleAdmin:
 		// Admin has full access to everything
 		for _, module := range modules {
 			permissions[module] = &ModulePermission{
@@ -69,7 +69,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 				CanMenu:    true,
 			}
 		}
-	case "finance", "finance_manager":
+	case RoleFinance, RoleFinanceManager:
 		// Finance and Finance Manager have full access to financial modules
 		financialModules := []string{"accounts", "payments", "cash_bank", "sales", "purchases", "journal", "purchase_requests", "projects", "boms", "prepaid_expenses"}
 		for _, module := range modules {
@@ -117,7 +117,84 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 				}
 			}
 		}
-	case "inventory_manager":
+	case RoleFinanceStaff:
+		operationalModules := []string{"sales", "purchases", "payments", "journal", "prepaid_expenses"}
+		viewOnlyMenuModules := []string{"accounts", "reports", "projects", "boms"}
+		for _, module := range modules {
+			switch {
+			case contains(operationalModules, module):
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  true,
+					CanEdit:    true,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  true,
+					CanMenu:    true,
+				}
+			case module == "cash_bank":
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  true,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  true,
+					CanMenu:    true,
+				}
+			case module == "purchase_requests":
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: true,
+					CanExport:  true,
+					CanMenu:    true,
+				}
+			case contains(viewOnlyMenuModules, module):
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  true,
+					CanMenu:    true,
+				}
+			case module == "products" || module == "contacts" || module == "assets":
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
+			case module == "users" || module == "settings":
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
+			default:
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
+			}
+		}
+	case RoleInventoryManager:
 		// Inventory manager has comprehensive access to inventory and related operations
 		coreInventoryModules := []string{"products", "purchases", "sales", "boms"}
 		supportingModules := []string{"contacts", "assets", "reports"}
@@ -181,7 +258,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 				}
 			}
 		}
-	case "employee":
+	case RoleEmployee:
 		// Employee has limited access
 		for _, module := range modules {
 			if module == "contacts" {
@@ -262,7 +339,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 				}
 			}
 		}
-	case "director":
+	case RoleDirector:
 		// Director has view, approve, and limited create/edit access
 		for _, module := range modules {
 			if module == "purchases" || module == "purchase_requests" || module == "sales" || module == "payments" || module == "cash_bank" || module == "journal" || module == "projects" || module == "boms" {

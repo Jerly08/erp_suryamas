@@ -1,14 +1,15 @@
 package controllers
 
 import (
-	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/services"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
-	
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -21,6 +22,17 @@ func NewPaymentController(paymentService *services.PaymentService) *PaymentContr
 	return &PaymentController{
 		paymentService: paymentService,
 	}
+}
+
+func restrictPaymentToOwnData(ctx *gin.Context) bool {
+	return models.IsStaffRole(ctx.GetString("role"))
+}
+
+func paymentScopedUserID(ctx *gin.Context) uint {
+	if restrictPaymentToOwnData(ctx) {
+		return ctx.GetUint("user_id")
+	}
+	return 0
 }
 
 // GetPayments godoc
@@ -45,7 +57,7 @@ func (c *PaymentController) GetPayments(ctx *gin.Context) {
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
 	contactID, _ := strconv.Atoi(ctx.Query("contact_id"))
-	
+
 	var startDate, endDate time.Time
 	if sd := ctx.Query("start_date"); sd != "" {
 		startDate, _ = time.Parse("2006-01-02", sd)
@@ -53,27 +65,30 @@ func (c *PaymentController) GetPayments(ctx *gin.Context) {
 	if ed := ctx.Query("end_date"); ed != "" {
 		endDate, _ = time.Parse("2006-01-02", ed)
 	}
-	
+
 	filter := repositories.PaymentFilter{
-		ContactID:  uint(contactID),
-		StartDate:  startDate,
-		EndDate:    endDate,
-		Status:     ctx.Query("status"),
-		Method:     ctx.Query("method"),
-		Search:     ctx.Query("search"),
-		Page:       page,
-		Limit:      limit,
+		ContactID: uint(contactID),
+		StartDate: startDate,
+		EndDate:   endDate,
+		Status:    ctx.Query("status"),
+		Method:    ctx.Query("method"),
+		Search:    ctx.Query("search"),
+		Page:      page,
+		Limit:     limit,
 	}
-	
+	if restrictPaymentToOwnData(ctx) {
+		filter.UserID = ctx.GetUint("user_id")
+	}
+
 	result, err := c.paymentService.GetPayments(filter)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve payments",
+			"error":   "Failed to retrieve payments",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, result)
 }
 
@@ -96,7 +111,7 @@ func (c *PaymentController) GetPaymentByID(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	payment, err := c.paymentService.GetPaymentByID(uint(id))
 	if err != nil {
 		ctx.JSON(http.StatusNotFound, gin.H{
@@ -104,7 +119,13 @@ func (c *PaymentController) GetPaymentByID(ctx *gin.Context) {
 		})
 		return
 	}
-	
+	if restrictPaymentToOwnData(ctx) && payment.UserID != ctx.GetUint("user_id") {
+		ctx.JSON(http.StatusForbidden, gin.H{
+			"error": "Access denied: you can only view your own payments",
+		})
+		return
+	}
+
 	ctx.JSON(http.StatusOK, payment)
 }
 
@@ -123,12 +144,12 @@ func (c *PaymentController) CreateReceivablePayment(ctx *gin.Context) {
 	var request services.PaymentCreateRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Get user ID from context (set by auth middleware)
 	userID := ctx.GetUint("user_id")
 	if userID == 0 {
@@ -137,16 +158,16 @@ func (c *PaymentController) CreateReceivablePayment(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	payment, err := c.paymentService.CreateReceivablePayment(request, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to create payment",
+			"error":   "Failed to create payment",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusCreated, payment)
 }
 
@@ -165,12 +186,12 @@ func (c *PaymentController) CreatePayablePayment(ctx *gin.Context) {
 	var request services.PaymentCreateRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Get user ID from context
 	userID := ctx.GetUint("user_id")
 	if userID == 0 {
@@ -179,16 +200,16 @@ func (c *PaymentController) CreatePayablePayment(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	payment, err := c.paymentService.CreatePayablePayment(request, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to create payment",
+			"error":   "Failed to create payment",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusCreated, payment)
 }
 
@@ -211,30 +232,41 @@ func (c *PaymentController) CancelPayment(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	var request struct {
 		Reason string `json:"reason" binding:"required"`
 	}
-	
+
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	userID := ctx.GetUint("user_id")
-	
+	if restrictPaymentToOwnData(ctx) {
+		payment, paymentErr := c.paymentService.GetPaymentByID(uint(id))
+		if paymentErr != nil {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+			return
+		}
+		if payment.UserID != userID {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "Access denied: you can only cancel your own payments"})
+			return
+		}
+	}
+
 	err = c.paymentService.CancelPayment(uint(id), request.Reason, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to cancel payment",
+			"error":   "Failed to cancel payment",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"message": "Payment cancelled successfully",
 	})
@@ -259,16 +291,16 @@ func (c *PaymentController) DeletePayment(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	var request struct {
 		Reason string `json:"reason"`
 	}
-	
+
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		// If no JSON body, use default reason
 		request.Reason = "Deleted by admin"
 	}
-	
+
 	userID := ctx.GetUint("user_id")
 	if userID == 0 {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
@@ -276,7 +308,18 @@ func (c *PaymentController) DeletePayment(ctx *gin.Context) {
 		})
 		return
 	}
-	
+	if restrictPaymentToOwnData(ctx) {
+		payment, paymentErr := c.paymentService.GetPaymentByID(uint(id))
+		if paymentErr != nil {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+			return
+		}
+		if payment.UserID != userID {
+			ctx.JSON(http.StatusForbidden, gin.H{"error": "Access denied: you can only delete your own payments"})
+			return
+		}
+	}
+
 	err = c.paymentService.DeletePayment(uint(id), request.Reason, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
@@ -285,7 +328,7 @@ func (c *PaymentController) DeletePayment(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"message": "Payment deleted successfully",
 	})
@@ -309,17 +352,17 @@ func (c *PaymentController) GetUnpaidInvoices(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Get unpaid invoices from payment service
 	invoices, err := c.paymentService.GetUnpaidInvoices(uint(customerID))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve unpaid invoices",
+			"error":   "Failed to retrieve unpaid invoices",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, invoices)
 }
 
@@ -341,17 +384,17 @@ func (c *PaymentController) GetUnpaidBills(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Get unpaid bills from payment service
-	bills, err := c.paymentService.GetUnpaidBills(uint(vendorID))
+	bills, err := c.paymentService.GetUnpaidBills(uint(vendorID), paymentScopedUserID(ctx))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve unpaid bills",
+			"error":   "Failed to retrieve unpaid bills",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, bills)
 }
 
@@ -369,24 +412,24 @@ func (c *PaymentController) GetUnpaidBills(ctx *gin.Context) {
 func (c *PaymentController) GetPaymentSummary(ctx *gin.Context) {
 	startDate := ctx.Query("start_date")
 	endDate := ctx.Query("end_date")
-	
+
 	if startDate == "" || endDate == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": "Start date and end date are required",
 		})
 		return
 	}
-	
+
 	// Get payment summary from service
-	summary, err := c.paymentService.GetPaymentSummary(startDate, endDate)
+	summary, err := c.paymentService.GetPaymentSummary(startDate, endDate, paymentScopedUserID(ctx))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve payment summary",
+			"error":   "Failed to retrieve payment summary",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, summary)
 }
 
@@ -404,24 +447,24 @@ func (c *PaymentController) GetPaymentSummary(ctx *gin.Context) {
 func (c *PaymentController) GetPaymentAnalytics(ctx *gin.Context) {
 	startDate := ctx.Query("start_date")
 	endDate := ctx.Query("end_date")
-	
+
 	if startDate == "" || endDate == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": "Start date and end date are required",
 		})
 		return
 	}
-	
+
 	// Get payment analytics from service
-	analytics, err := c.paymentService.GetPaymentAnalytics(startDate, endDate)
+	analytics, err := c.paymentService.GetPaymentAnalytics(startDate, endDate, paymentScopedUserID(ctx))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve payment analytics",
+			"error":   "Failed to retrieve payment analytics",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, analytics)
 }
 
@@ -444,7 +487,7 @@ func (c *PaymentController) ExportPaymentReportPDF(ctx *gin.Context) {
 	status := ctx.Query("status")
 	method := ctx.Query("method")
 
-	pdfData, filename, err := c.paymentService.ExportPaymentReportPDF(startDate, endDate, status, method)
+	pdfData, filename, err := c.paymentService.ExportPaymentReportPDF(startDate, endDate, status, method, paymentScopedUserID(ctx))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -470,6 +513,24 @@ func (c *PaymentController) ExportPaymentDetailPDF(ctx *gin.Context) {
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment ID"})
 		return
+	}
+
+	if restrictPaymentToOwnData(ctx) {
+		payment, paymentErr := c.paymentService.GetPaymentByID(uint(id))
+		if paymentErr != nil {
+			if errors.Is(paymentErr, gorm.ErrRecordNotFound) {
+				ctx.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+				return
+			}
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load payment", "details": paymentErr.Error()})
+			return
+		}
+		if payment.UserID != ctx.GetUint("user_id") {
+			ctx.JSON(http.StatusForbidden, gin.H{
+				"error": "Access denied: you can only view your own payments",
+			})
+			return
+		}
 	}
 
 	pdfData, filename, err := c.paymentService.ExportPaymentDetailPDF(uint(id))
@@ -506,7 +567,7 @@ func (c *PaymentController) ExportPaymentReportExcel(ctx *gin.Context) {
 	status := ctx.Query("status")
 	method := ctx.Query("method")
 
-	excelData, filename, err := c.paymentService.ExportPaymentReportExcel(startDate, endDate, status, method)
+	excelData, filename, err := c.paymentService.ExportPaymentReportExcel(startDate, endDate, status, method, paymentScopedUserID(ctx))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -522,33 +583,33 @@ func (c *PaymentController) ExportPaymentReportExcel(ctx *gin.Context) {
 // CreateSalesPayment creates payment specifically for sales invoices with pre-filled data
 func (c *PaymentController) CreateSalesPayment(ctx *gin.Context) {
 	var request struct {
-		SaleID        uint      `json:"sale_id" binding:"required"`
-		Amount        float64   `json:"amount" binding:"required,min=0"`
-		Date          time.Time `json:"date" binding:"required"`
-		Method        string    `json:"method" binding:"required"`
-		CashBankID    uint      `json:"cash_bank_id" binding:"required"`
-		Reference     string    `json:"reference"`
-		Notes         string    `json:"notes"`
+		SaleID     uint      `json:"sale_id" binding:"required"`
+		Amount     float64   `json:"amount" binding:"required,min=0"`
+		Date       time.Time `json:"date" binding:"required"`
+		Method     string    `json:"method" binding:"required"`
+		CashBankID uint      `json:"cash_bank_id" binding:"required"`
+		Reference  string    `json:"reference"`
+		Notes      string    `json:"notes"`
 	}
-	
+
 	if err := ctx.ShouldBindJSON(&request); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
+			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// First get sale details to validate and get customer ID
 	sale, err := c.paymentService.GetSaleByID(request.SaleID) // Need to add this method
 	if err != nil {
 		ctx.JSON(http.StatusNotFound, gin.H{
-			"error": "Sale not found",
+			"error":   "Sale not found",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Get user ID from context
 	userID := ctx.GetUint("user_id")
 	if userID == 0 {
@@ -557,16 +618,16 @@ func (c *PaymentController) CreateSalesPayment(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Create payment request for receivables
 	paymentRequest := services.PaymentCreateRequest{
-		ContactID:   sale.CustomerID,
-		CashBankID:  request.CashBankID,
-		Date:        request.Date,
-		Amount:      request.Amount,
-		Method:      request.Method,
-		Reference:   request.Reference,
-		Notes:       fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
+		ContactID:  sale.CustomerID,
+		CashBankID: request.CashBankID,
+		Date:       request.Date,
+		Amount:     request.Amount,
+		Method:     request.Method,
+		Reference:  request.Reference,
+		Notes:      fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
 		Allocations: []services.InvoiceAllocation{
 			{
 				InvoiceID: request.SaleID,
@@ -574,16 +635,16 @@ func (c *PaymentController) CreateSalesPayment(ctx *gin.Context) {
 			},
 		},
 	}
-	
+
 	payment, err := c.paymentService.CreateReceivablePayment(paymentRequest, userID)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to create payment",
+			"error":   "Failed to create payment",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusCreated, gin.H{
 		"payment": payment,
 		"message": "Payment created successfully for sales invoice",
@@ -599,24 +660,24 @@ func (c *PaymentController) GetSalesUnpaidInvoices(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Get unpaid invoices from payment service
 	invoices, err := c.paymentService.GetUnpaidInvoices(uint(customerID))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve unpaid invoices",
+			"error":   "Failed to retrieve unpaid invoices",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// Format for frontend consumption
 	response := gin.H{
 		"customer_id": customerID,
-		"invoices": invoices,
-		"count": len(invoices),
+		"invoices":    invoices,
+		"count":       len(invoices),
 	}
-	
+
 	ctx.JSON(http.StatusOK, response)
 }
 
@@ -637,28 +698,31 @@ func (c *PaymentController) GetRecentPayments(ctx *gin.Context) {
 			hours = parsed
 		}
 	}
-	
+
 	// Get all recent payments without filters
 	filter := repositories.PaymentFilter{
 		Page:  1,
 		Limit: 50, // Get up to 50 recent payments
 	}
-	
+	if restrictPaymentToOwnData(ctx) {
+		filter.UserID = ctx.GetUint("user_id")
+	}
+
 	result, err := c.paymentService.GetPayments(filter)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to retrieve payments",
+			"error":   "Failed to retrieve payments",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Recent payments from last %d hours", hours),
+		"message":        fmt.Sprintf("Recent payments from last %d hours", hours),
 		"total_payments": result.Total,
-		"payments": result.Data,
+		"payments":       result.Data,
 		"debug_info": gin.H{
-			"query_time": time.Now().Format("2006-01-02 15:04:05"),
+			"query_time":     time.Now().Format("2006-01-02 15:04:05"),
 			"filter_applied": filter,
 		},
 	})

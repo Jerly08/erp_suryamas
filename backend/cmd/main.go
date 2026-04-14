@@ -121,6 +121,9 @@ func main() {
 	// Align journal access so employees can submit drafts while finance approves/posts them.
 	database.JournalManualApprovalPermissionMigration(db)
 
+	// Align legacy finance staff module permissions with the latest operational defaults.
+	database.FinanceStaffDefaultPermissionMigration(db)
+
 	// Repair legacy reversal journals that became effective before the original journal date.
 	database.JournalReversalFutureDateAlignmentMigration(db)
 

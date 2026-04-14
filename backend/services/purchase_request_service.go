@@ -11,17 +11,21 @@ import (
 
 type PurchaseRequestService interface {
 	CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint) (*models.PurchaseRequest, error)
-	GetPurchaseRequests(department string, status string) ([]models.PurchaseRequest, error)
-	GetPurchaseRequestByID(id uint) (*models.PurchaseRequest, error)
-	ApprovePurchaseRequest(id uint, approverID uint) error
-	RejectPurchaseRequest(id uint, approverID uint, reason string) error
+	GetPurchaseRequests(userID uint, userRole string, department string, status string) ([]models.PurchaseRequest, error)
+	GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error)
+	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
+	ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error)
+	RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error)
 	DeletePurchaseRequest(id uint) error
+	SyncPurchaseRequestItemsWithPurchase(purchase *models.Purchase) error
+	ReleasePurchaseRequestItemsFromPurchase(purchase *models.Purchase) error
 }
 
 type purchaseRequestService struct {
 	repo                repositories.PurchaseRequestRepository
-	productRepo         *repositories.ProductRepository // Fix interface incompatibility by using concrete struct type pointer
+	productRepo         *repositories.ProductRepository
 	notificationService *NotificationService
+	db                  *gorm.DB
 }
 
 func NewPurchaseRequestService(db *gorm.DB, repo repositories.PurchaseRequestRepository, notificationService *NotificationService) PurchaseRequestService {
@@ -29,13 +33,13 @@ func NewPurchaseRequestService(db *gorm.DB, repo repositories.PurchaseRequestRep
 		repo:                repo,
 		productRepo:         repositories.NewProductRepository(db),
 		notificationService: notificationService,
+		db:                  db,
 	}
 }
 
 // Generate PR Number (Format: PR-YYYYMMDD-ID)
 func generatePRNumber(id uint) string {
 	now := time.Now()
-	// Pad ID to 4 digits
 	return fmt.Sprintf("PR-%s-%04d", now.Format("20060102"), id)
 }
 
@@ -43,24 +47,24 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 	var totalEstimatedAmount float64
 	var items []models.PurchaseRequestItem
 
-	// Validate items and calculate total from actual database Product Price
 	for _, rawItem := range payload.Items {
-		// Fetch product to validate existance and get current prices
 		product, err := s.productRepo.FindByID(rawItem.ProductID)
 		if err != nil {
 			return nil, fmt.Errorf("invalid product id: %d", rawItem.ProductID)
 		}
 
-		// Calculate items (Qty * Estimated Price)
 		totalItemEst := float64(rawItem.Quantity) * rawItem.EstimatedPrice
 		totalEstimatedAmount += totalItemEst
 
 		item := models.PurchaseRequestItem{
-			ProductID:           product.ID,
-			Quantity:            rawItem.Quantity,
-			EstimatedPrice:      rawItem.EstimatedPrice,
-			TotalEstimatedPrice: totalItemEst,
-			Notes:               rawItem.Notes,
+			ProductID:              product.ID,
+			Quantity:               rawItem.Quantity,
+			EstimatedPrice:         rawItem.EstimatedPrice,
+			TotalEstimatedPrice:    totalItemEst,
+			ApprovalStatus:         models.PRItemDecisionPending,
+			FinanceStaffDecision:   models.PRItemDecisionPending,
+			FinanceManagerDecision: models.PRItemDecisionPending,
+			Notes:                  rawItem.Notes,
 		}
 		items = append(items, item)
 	}
@@ -70,149 +74,431 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 		Department:           payload.Department,
 		ProjectID:            payload.ProjectID,
 		TotalEstimatedAmount: totalEstimatedAmount,
-		Status:               models.PRStatusPendingApproval, // Usually jumps state to finance, based on BRD
+		Status:               models.PRStatusPendingApproval,
+		CurrentApprovalStage: models.PRApprovalStageFinanceStaff,
 		Notes:                payload.Notes,
 		Items:                items,
 	}
 
-	// Create PR skeleton
 	if err := s.repo.Create(pr); err != nil {
 		return nil, err
 	}
 
-	// Update the PR number string now that we have the auto-increment DB ID
 	pr.PRNumber = generatePRNumber(pr.ID)
 	if err := s.repo.Update(pr); err != nil {
 		return nil, err
 	}
 
-	// Trigger smart notification
-	if s.notificationService != nil {
-		message := fmt.Sprintf("Purchase request %s needs approval (Amount: %s)",
-			pr.PRNumber, fmt.Sprintf("Rp %.2f", pr.TotalEstimatedAmount))
+	s.notifyPurchaseRequestCreated(pr)
 
-		err := s.notificationService.smartService.CreateSmartNotification(
-			models.NotificationTypeApprovalPending,
-			"Purchase Request Approval Required",
-			message,
-			map[string]interface{}{
-				"pr_id":        pr.ID,
-				"pr_number":    pr.PRNumber,
-				"total_amount": pr.TotalEstimatedAmount,
-				"department":   pr.Department,
-				"action_type":  "approval_required",
-			},
-			pr.TotalEstimatedAmount,
-			"finance", // target role
-			0,         // target userID (0 means all eligible)
-			pr.Department,
-		)
+	return s.repo.GetByID(pr.ID)
+}
 
-		if err != nil {
-			fmt.Printf("Failed to create PR notification: %v\n", err)
-		}
+func (s *purchaseRequestService) GetPurchaseRequests(userID uint, userRole string, department string, status string) ([]models.PurchaseRequest, error) {
+	var requesterID uint
+	if !models.CanViewAllTransactionData(userRole) {
+		requesterID = userID
 	}
 
-	return s.GetPurchaseRequestByID(pr.ID) // Return full struct with preloads
+	return s.repo.GetAll(department, status, requesterID)
 }
 
-func (s *purchaseRequestService) GetPurchaseRequests(department string, status string) ([]models.PurchaseRequest, error) {
-	return s.repo.GetAll(department, status)
-}
-
-func (s *purchaseRequestService) GetPurchaseRequestByID(id uint) (*models.PurchaseRequest, error) {
-	return s.repo.GetByID(id)
-}
-
-func (s *purchaseRequestService) ApprovePurchaseRequest(id uint, approverID uint) error {
+func (s *purchaseRequestService) GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error) {
 	pr, err := s.repo.GetByID(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if pr.Status != models.PRStatusPendingApproval && pr.Status != models.PRStatusDraft {
-		return fmt.Errorf("purchase request %s is already %s", pr.PRNumber, pr.Status)
+	if !models.CanViewAllTransactionData(userRole) && pr.RequesterID != userID {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	return pr, nil
+}
+
+func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error) {
+	pr, err := s.repo.GetByID(id)
+	if err != nil {
+		return "", err
+	}
+
+	stage, err := resolvePurchaseRequestReviewStage(pr, reviewerRole)
+	if err != nil {
+		return "", err
+	}
+
+	decisionByItemID, err := buildPurchaseRequestDecisionMap(payload.Items)
+	if err != nil {
+		return "", err
 	}
 
 	now := time.Now()
-	pr.Status = models.PRStatusApproved
-	pr.ApprovedBy = &approverID
-	pr.ApprovedAt = &now
 
-	err = s.repo.Update(pr)
-	if err != nil {
-		return err
-	}
-
-	// Trigger notification to request creator
-	if s.notificationService != nil {
-		s.notificationService.smartService.CreateSmartNotification(
-			models.NotificationTypeApprovalApproved,
-			"Purchase Request Approved",
-			fmt.Sprintf("Your purchase request %s has been approved", pr.PRNumber),
-			map[string]interface{}{
-				"pr_id":       pr.ID,
-				"pr_number":   pr.PRNumber,
-				"approved_at": pr.ApprovedAt,
-				"action_type": "approved",
-			},
-			pr.TotalEstimatedAmount,
-			"employee",     // Role
-			pr.RequesterID, // Specifically target the requester
-			"",
-		)
-	}
-
-	return nil
-}
-
-func (s *purchaseRequestService) RejectPurchaseRequest(id uint, approverID uint, reason string) error {
-	pr, err := s.repo.GetByID(id)
-	if err != nil {
-		return err
-	}
-
-	if pr.Status != models.PRStatusPendingApproval {
-		return fmt.Errorf("only pending purchase requests can be rejected")
-	}
-
-	pr.Status = models.PRStatusRejected
-	pr.RejectionReason = reason
-
-	err = s.repo.Update(pr)
-	if err != nil {
-		return err
-	}
-
-	// Trigger notification to request creator
-	if s.notificationService != nil {
-		message := fmt.Sprintf("Your purchase request %s has been rejected", pr.PRNumber)
-		if reason != "" {
-			message += fmt.Sprintf(". Reason: %s", reason)
+	switch stage {
+	case models.PRApprovalStageFinanceStaff:
+		for index := range pr.Items {
+			item := &pr.Items[index]
+			decision, exists := decisionByItemID[item.ID]
+			if !exists {
+				return "", fmt.Errorf("finance staff must decide every item before forwarding to finance manager")
+			}
+			item.FinanceStaffDecision = decision
 		}
 
-		s.notificationService.smartService.CreateSmartNotification(
-			models.NotificationTypeApprovalRejected,
-			"Purchase Request Rejected",
-			message,
-			map[string]interface{}{
-				"pr_id":       pr.ID,
-				"pr_number":   pr.PRNumber,
-				"rejected_at": time.Now(),
-				"reason":      reason,
-				"action_type": "rejected",
-			},
-			pr.TotalEstimatedAmount,
-			"employee",     // Role
-			pr.RequesterID, // Target requester directly
-			"",
-		)
+		pr.Status = models.PRStatusPendingApproval
+		pr.CurrentApprovalStage = models.PRApprovalStageFinanceManager
+		pr.FinanceStaffApprovedBy = &reviewerID
+		pr.FinanceStaffApprovedAt = &now
+		pr.RejectionReason = ""
+
+		if err := s.repo.Update(pr); err != nil {
+			return "", err
+		}
+
+		s.notifyFinanceManagerReview(pr)
+		return "Review finance staff berhasil dikirim ke finance manager", nil
+
+	case models.PRApprovalStageFinanceManager:
+		approvedCount := 0
+		rejectedCount := 0
+
+		for index := range pr.Items {
+			item := &pr.Items[index]
+			decision, exists := decisionByItemID[item.ID]
+			if !exists {
+				return "", fmt.Errorf("finance manager must decide every item before final approval")
+			}
+
+			item.FinanceManagerDecision = decision
+			item.ApprovalStatus = decision
+
+			switch decision {
+			case models.PRItemDecisionApproved:
+				approvedCount++
+			case models.PRItemDecisionRejected:
+				rejectedCount++
+				item.PurchaseID = nil
+				item.PurchasedAt = nil
+			}
+		}
+
+		pr.CurrentApprovalStage = models.PRApprovalStageFinalized
+		pr.FinanceManagerApprovedBy = &reviewerID
+		pr.FinanceManagerApprovedAt = &now
+
+		if approvedCount > 0 {
+			pr.Status = models.PRStatusApproved
+			pr.ApprovedBy = &reviewerID
+			pr.ApprovedAt = &now
+			pr.RejectionReason = payload.Reason
+		} else {
+			pr.Status = models.PRStatusRejected
+			pr.ApprovedBy = nil
+			pr.ApprovedAt = nil
+			if payload.Reason != "" {
+				pr.RejectionReason = payload.Reason
+			} else {
+				pr.RejectionReason = "Semua item ditolak oleh finance manager"
+			}
+		}
+
+		if err := s.repo.Update(pr); err != nil {
+			return "", err
+		}
+
+		s.notifyRequesterAfterFinalReview(pr, approvedCount, rejectedCount)
+
+		if approvedCount == 0 {
+			return "Purchase request ditolak seluruhnya oleh finance manager", nil
+		}
+
+		if rejectedCount > 0 {
+			return fmt.Sprintf("Final review selesai: %d item disetujui dan %d item ditolak", approvedCount, rejectedCount), nil
+		}
+
+		return "Purchase request disetujui seluruhnya oleh finance manager", nil
+
+	default:
+		return "", fmt.Errorf("purchase request %s is not in a reviewable stage", pr.PRNumber)
+	}
+}
+
+func (s *purchaseRequestService) ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error) {
+	pr, err := s.repo.GetByID(id)
+	if err != nil {
+		return "", err
 	}
 
-	return nil
+	payload := buildBulkPurchaseRequestReviewPayload(pr, models.PRItemDecisionApproved)
+	return s.ReviewPurchaseRequest(id, approverID, approverRole, payload)
+}
+
+func (s *purchaseRequestService) RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error) {
+	pr, err := s.repo.GetByID(id)
+	if err != nil {
+		return "", err
+	}
+
+	payload := buildBulkPurchaseRequestReviewPayload(pr, models.PRItemDecisionRejected)
+	payload.Reason = reason
+
+	return s.ReviewPurchaseRequest(id, approverID, approverRole, payload)
 }
 
 func (s *purchaseRequestService) DeletePurchaseRequest(id uint) error {
-	// Simple deletion logic as skeleton
 	return s.repo.Delete(id)
+}
+
+func (s *purchaseRequestService) SyncPurchaseRequestItemsWithPurchase(purchase *models.Purchase) error {
+	if purchase == nil || purchase.PurchaseRequestID == nil {
+		return nil
+	}
+
+	selectedItemIDs := make(map[uint]struct{})
+	for _, item := range purchase.PurchaseItems {
+		if item.PurchaseRequestItemID != nil {
+			selectedItemIDs[*item.PurchaseRequestItemID] = struct{}{}
+		}
+	}
+
+	if len(selectedItemIDs) == 0 {
+		return nil
+	}
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var pr models.PurchaseRequest
+		if err := tx.Preload("Items").First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
+			return err
+		}
+
+		now := time.Now()
+		for index := range pr.Items {
+			item := &pr.Items[index]
+
+			if item.PurchaseID != nil && *item.PurchaseID == purchase.ID {
+				if _, stillSelected := selectedItemIDs[item.ID]; !stillSelected {
+					item.PurchaseID = nil
+					item.PurchasedAt = nil
+				}
+			}
+
+			if _, shouldReserve := selectedItemIDs[item.ID]; shouldReserve {
+				if item.ApprovalStatus != models.PRItemDecisionApproved {
+					return fmt.Errorf("purchase request item %d is not approved", item.ID)
+				}
+				if item.PurchaseID != nil && *item.PurchaseID != purchase.ID {
+					return fmt.Errorf("purchase request item %d is already linked to another purchase", item.ID)
+				}
+				item.PurchaseID = &purchase.ID
+				item.PurchasedAt = &now
+			}
+		}
+
+		return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&pr).Error
+	})
+}
+
+func (s *purchaseRequestService) ReleasePurchaseRequestItemsFromPurchase(purchase *models.Purchase) error {
+	if purchase == nil || purchase.PurchaseRequestID == nil {
+		return nil
+	}
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var pr models.PurchaseRequest
+		if err := tx.Preload("Items").First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
+			return err
+		}
+
+		changed := false
+		for index := range pr.Items {
+			item := &pr.Items[index]
+			if item.PurchaseID != nil && *item.PurchaseID == purchase.ID {
+				item.PurchaseID = nil
+				item.PurchasedAt = nil
+				changed = true
+			}
+		}
+
+		if !changed {
+			return nil
+		}
+
+		return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&pr).Error
+	})
+}
+
+func resolvePurchaseRequestReviewStage(pr *models.PurchaseRequest, reviewerRole string) (string, error) {
+	if pr.Status != models.PRStatusPendingApproval && pr.Status != models.PRStatusDraft {
+		return "", fmt.Errorf("purchase request %s is already %s", pr.PRNumber, pr.Status)
+	}
+
+	stage := pr.CurrentApprovalStage
+	if stage == "" {
+		stage = models.PRApprovalStageFinanceStaff
+	}
+
+	roleNorm := models.NormalizeRole(reviewerRole)
+	if roleNorm == models.RoleAdmin {
+		return stage, nil
+	}
+
+	switch stage {
+	case models.PRApprovalStageFinanceStaff:
+		if models.IsFinanceStaffRole(roleNorm) {
+			return stage, nil
+		}
+		return "", fmt.Errorf("only finance staff can review purchase requests at the first stage")
+	case models.PRApprovalStageFinanceManager:
+		if models.IsFinanceManagerRole(roleNorm) {
+			return stage, nil
+		}
+		return "", fmt.Errorf("only finance manager can review purchase requests at the final stage")
+	default:
+		return "", fmt.Errorf("purchase request %s is not in a reviewable stage", pr.PRNumber)
+	}
+}
+
+func buildPurchaseRequestDecisionMap(items []models.PurchaseRequestReviewItemPayload) (map[uint]string, error) {
+	decisionByItemID := make(map[uint]string, len(items))
+
+	for _, item := range items {
+		if item.ItemID == 0 {
+			return nil, fmt.Errorf("item_id is required")
+		}
+
+		decision := normalizePurchaseRequestDecision(item.Decision)
+		if decision == "" {
+			return nil, fmt.Errorf("invalid decision for item %d", item.ItemID)
+		}
+		if _, exists := decisionByItemID[item.ItemID]; exists {
+			return nil, fmt.Errorf("duplicate decision submitted for item %d", item.ItemID)
+		}
+
+		decisionByItemID[item.ItemID] = decision
+	}
+
+	return decisionByItemID, nil
+}
+
+func buildBulkPurchaseRequestReviewPayload(pr *models.PurchaseRequest, decision string) models.PurchaseRequestReviewPayload {
+	payload := models.PurchaseRequestReviewPayload{
+		Items: make([]models.PurchaseRequestReviewItemPayload, 0, len(pr.Items)),
+	}
+
+	for _, item := range pr.Items {
+		payload.Items = append(payload.Items, models.PurchaseRequestReviewItemPayload{
+			ItemID:   item.ID,
+			Decision: decision,
+		})
+	}
+
+	return payload
+}
+
+func normalizePurchaseRequestDecision(decision string) string {
+	switch models.NormalizeRole(decision) {
+	case "approved", "approve":
+		return models.PRItemDecisionApproved
+	case "rejected", "reject":
+		return models.PRItemDecisionRejected
+	default:
+		return ""
+	}
+}
+
+func (s *purchaseRequestService) notifyPurchaseRequestCreated(pr *models.PurchaseRequest) {
+	if s.notificationService == nil {
+		return
+	}
+
+	message := fmt.Sprintf("Purchase request %s needs finance staff review (Amount: %s)",
+		pr.PRNumber, fmt.Sprintf("Rp %.2f", pr.TotalEstimatedAmount))
+
+	if err := s.notificationService.smartService.CreateSmartNotification(
+		models.NotificationTypeApprovalPending,
+		"Purchase Request Finance Staff Review",
+		message,
+		map[string]interface{}{
+			"pr_id":                  pr.ID,
+			"pr_number":              pr.PRNumber,
+			"total_amount":           pr.TotalEstimatedAmount,
+			"department":             pr.Department,
+			"current_approval_stage": pr.CurrentApprovalStage,
+			"action_type":            "finance_staff_review_required",
+		},
+		pr.TotalEstimatedAmount,
+		models.RoleFinanceStaff,
+		0,
+		pr.Department,
+	); err != nil {
+		fmt.Printf("Failed to create PR notification: %v\n", err)
+	}
+}
+
+func (s *purchaseRequestService) notifyFinanceManagerReview(pr *models.PurchaseRequest) {
+	if s.notificationService == nil {
+		return
+	}
+
+	if err := s.notificationService.smartService.CreateSmartNotification(
+		models.NotificationTypeApprovalPending,
+		"Purchase Request Final Approval Required",
+		fmt.Sprintf("Purchase request %s is ready for finance manager review", pr.PRNumber),
+		map[string]interface{}{
+			"pr_id":                  pr.ID,
+			"pr_number":              pr.PRNumber,
+			"total_amount":           pr.TotalEstimatedAmount,
+			"department":             pr.Department,
+			"current_approval_stage": pr.CurrentApprovalStage,
+			"action_type":            "finance_manager_review_required",
+		},
+		pr.TotalEstimatedAmount,
+		models.RoleFinance,
+		0,
+		pr.Department,
+	); err != nil {
+		fmt.Printf("Failed to create finance manager PR notification: %v\n", err)
+	}
+}
+
+func (s *purchaseRequestService) notifyRequesterAfterFinalReview(pr *models.PurchaseRequest, approvedCount int, rejectedCount int) {
+	if s.notificationService == nil {
+		return
+	}
+
+	title := "Purchase Request Approved"
+	message := fmt.Sprintf("Your purchase request %s has been approved", pr.PRNumber)
+	notificationType := models.NotificationTypeApprovalApproved
+
+	if approvedCount == 0 {
+		title = "Purchase Request Rejected"
+		message = fmt.Sprintf("Your purchase request %s has been rejected", pr.PRNumber)
+		notificationType = models.NotificationTypeApprovalRejected
+	} else if rejectedCount > 0 {
+		message = fmt.Sprintf("Your purchase request %s has been finalized: %d item approved, %d item rejected", pr.PRNumber, approvedCount, rejectedCount)
+	}
+
+	if pr.RejectionReason != "" {
+		message = fmt.Sprintf("%s. Reason: %s", message, pr.RejectionReason)
+	}
+
+	if err := s.notificationService.smartService.CreateSmartNotification(
+		notificationType,
+		title,
+		message,
+		map[string]interface{}{
+			"pr_id":          pr.ID,
+			"pr_number":      pr.PRNumber,
+			"approved_count": approvedCount,
+			"rejected_count": rejectedCount,
+			"approved_at":    pr.ApprovedAt,
+			"action_type":    "final_review_completed",
+		},
+		pr.TotalEstimatedAmount,
+		models.RoleEmployee,
+		pr.RequesterID,
+		"",
+	); err != nil {
+		fmt.Printf("Failed to create requester PR notification: %v\n", err)
+	}
 }

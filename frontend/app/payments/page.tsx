@@ -86,6 +86,7 @@ import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
 import ExpensePaymentForm from '@/components/payments/ExpensePaymentForm';
 import { exportPaymentsToPDF, exportPaymentDetailToPDF, PDFExportOptions } from '@/utils/pdfExport';
 import ExportButton from '@/components/common/ExportButton';
+import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 
 // Status type for filtering
 type PaymentStatusType = 'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT';
@@ -202,7 +203,8 @@ const PaymentsPage: React.FC = () => {
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('payments');
 
   // Check if current user is finance or admin
-  const isFinanceOrAdmin = user?.role === 'finance' || user?.role === 'admin';
+  const roleNorm = normalizeRole(user?.role);
+  const isFinanceOrAdmin = isFinanceManagerRole(roleNorm) || roleNorm === 'admin';
 
   // Approve DRAFT expense payment (finance only)
   const handleApproveExpensePayment = async (payment: Payment) => {
@@ -810,7 +812,7 @@ const PaymentsPage: React.FC = () => {
   if (loading && (!payments || payments.length === 0)) {
     return (
       <CompanyTypeGuard>
-        <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
+        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'director', 'employee', 'inventory_manager']}>
           <Box display="flex" justifyContent="center" alignItems="center" height="400px">
             <Spinner size="xl" thickness="4px" speed="0.65s" color="brand.500" />
             <Text ml={4} fontSize="lg">{t('payments.loading')}</Text>
@@ -823,7 +825,7 @@ const PaymentsPage: React.FC = () => {
   return (
     <ProtectedModule module="payments">
       <CompanyTypeGuard>
-        <SimpleLayout allowedRoles={['admin', 'finance', 'director', 'employee', 'inventory_manager']}>
+        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'director', 'employee', 'inventory_manager']}>
           <Box bg={bgColor} minH="100vh" p={6}>
             <VStack spacing={6} align="stretch">
               {/* Summary Cards */}

@@ -9,7 +9,7 @@ import (
 type PurchaseRequestRepository interface {
 	Create(pr *models.PurchaseRequest) error
 	GetByID(id uint) (*models.PurchaseRequest, error)
-	GetAll(department string, status string) ([]models.PurchaseRequest, error)
+	GetAll(department string, status string, requesterID uint) ([]models.PurchaseRequest, error)
 	Update(pr *models.PurchaseRequest) error
 	Delete(id uint) error
 }
@@ -32,14 +32,24 @@ func (r *purchaseRequestRepository) GetByID(id uint) (*models.PurchaseRequest, e
 		Preload("Project").
 		Preload("Items").
 		Preload("Items.Product").
+		Preload("Items.Purchase").
 		Preload("Approver").
+		Preload("FinanceStaffApprover").
+		Preload("FinanceManagerApprover").
 		First(&pr, id).Error
 	return &pr, err
 }
 
-func (r *purchaseRequestRepository) GetAll(department string, status string) ([]models.PurchaseRequest, error) {
+func (r *purchaseRequestRepository) GetAll(department string, status string, requesterID uint) ([]models.PurchaseRequest, error) {
 	var prs []models.PurchaseRequest
-	query := r.db.Preload("Requester").Preload("Project").Preload("Items").Preload("Items.Product")
+	query := r.db.Preload("Requester").
+		Preload("Project").
+		Preload("Items").
+		Preload("Items.Product").
+		Preload("Items.Purchase").
+		Preload("Approver").
+		Preload("FinanceStaffApprover").
+		Preload("FinanceManagerApprover")
 
 	if department != "" {
 		query = query.Where("department = ?", department)
@@ -47,14 +57,16 @@ func (r *purchaseRequestRepository) GetAll(department string, status string) ([]
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
+	if requesterID != 0 {
+		query = query.Where("requester_id = ?", requesterID)
+	}
 
 	err := query.Order("created_at desc").Find(&prs).Error
 	return prs, err
 }
 
 func (r *purchaseRequestRepository) Update(pr *models.PurchaseRequest) error {
-	// GORM's Save updates all fields, including associations if they are included
-	return r.db.Save(pr).Error
+	return r.db.Session(&gorm.Session{FullSaveAssociations: true}).Save(pr).Error
 }
 
 func (r *purchaseRequestRepository) Delete(id uint) error {

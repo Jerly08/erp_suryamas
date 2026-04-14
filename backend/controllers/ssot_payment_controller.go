@@ -26,6 +26,29 @@ func NewSSOTPaymentController(enhancedPaymentService *services.EnhancedPaymentSe
 	}
 }
 
+func (ctrl *SSOTPaymentController) getAccessiblePaymentResponse(c *gin.Context, paymentID uint) (*services.PaymentWithJournalResponse, bool) {
+	response, err := ctrl.enhancedPaymentService.GetPaymentWithJournal(paymentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "Payment not found",
+			"details": err.Error(),
+		})
+		return nil, false
+	}
+
+	if models.IsStaffRole(c.GetString("role")) {
+		userID := getSSOTUserIDFromContext(c)
+		if response.Payment == nil || response.Payment.UserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "Access denied: you can only view your own payments",
+			})
+			return nil, false
+		}
+	}
+
+	return response, true
+}
+
 // CreateReceivablePayment creates a customer payment with SSOT journal integration
 func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 	var req services.PaymentWithJournalRequest
@@ -51,7 +74,7 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 			role = strings.ToLower(rs)
 		}
 	}
-	isFinanceOrAdmin := role == "finance" || role == "admin"
+	isFinanceOrAdmin := models.IsFinanceManagerRole(role) || role == models.RoleAdmin
 	req.SaveAsDraft = !isFinanceOrAdmin
 
 	// Process payment using SSOT enhanced service
@@ -95,7 +118,7 @@ func (ctrl *SSOTPaymentController) CreatePayablePayment(c *gin.Context) {
 			role = strings.ToLower(rs)
 		}
 	}
-	isFinanceOrAdmin := role == "finance" || role == "admin"
+	isFinanceOrAdmin := models.IsFinanceManagerRole(role) || role == models.RoleAdmin
 	req.SaveAsDraft = !isFinanceOrAdmin
 
 	// Process payment using SSOT enhanced service
@@ -140,7 +163,7 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 			role = strings.ToLower(rs)
 		}
 	}
-	isFinanceOrAdmin := role == "finance" || role == "admin"
+	isFinanceOrAdmin := models.IsFinanceManagerRole(role) || role == models.RoleAdmin
 	req.SaveAsDraft = !isFinanceOrAdmin
 
 	payment, err := ctrl.enhancedPaymentService.CreateExpensePayment(&req)
@@ -178,6 +201,10 @@ func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
+	if !models.CanManageRequiredApprovals(c.GetString("role")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager or Admin can approve payments"})
+		return
+	}
 
 	payment, err := ctrl.enhancedPaymentService.ApproveExpensePayment(uint(paymentID), approverUserID)
 	if err != nil {
@@ -206,6 +233,10 @@ func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
 	approverUserID := getSSOTUserIDFromContext(c)
 	if approverUserID == 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	if !models.CanManageRequiredApprovals(c.GetString("role")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager or Admin can approve payments"})
 		return
 	}
 
@@ -258,6 +289,9 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 			"error":   "Invalid request data",
 			"details": err.Error(),
 		})
+		return
+	}
+	if _, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID)); !ok {
 		return
 	}
 
@@ -357,12 +391,8 @@ func (ctrl *SSOTPaymentController) GetPaymentWithJournal(c *gin.Context) {
 		return
 	}
 
-	response, err := ctrl.enhancedPaymentService.GetPaymentWithJournal(uint(paymentID))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":   "Payment not found",
-			"details": err.Error(),
-		})
+	response, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID))
+	if !ok {
 		return
 	}
 
@@ -406,6 +436,9 @@ func (ctrl *SSOTPaymentController) ReversePayment(c *gin.Context) {
 	}
 
 	userID := getSSOTUserIDFromContext(c)
+	if _, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID)); !ok {
+		return
+	}
 
 	response, err := ctrl.enhancedPaymentService.ReversePayment(uint(paymentID), request.Reason, reversalDate, userID)
 	if err != nil {
@@ -464,6 +497,10 @@ func (ctrl *SSOTPaymentController) GetAccountBalanceUpdates(c *gin.Context) {
 		return
 	}
 
+	if _, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID)); !ok {
+		return
+	}
+
 	updates, err := ctrl.enhancedPaymentService.GetAccountBalanceUpdates(uint(paymentID))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -516,6 +553,9 @@ func (ctrl *SSOTPaymentController) GetPayments(c *gin.Context) {
 		if t, err := time.Parse("2006-01-02", endDateStr); err == nil {
 			filter.EndDate = t
 		}
+	}
+	if models.IsStaffRole(c.GetString("role")) {
+		filter.UserID = getSSOTUserIDFromContext(c)
 	}
 
 	result, err := ctrl.enhancedPaymentService.ListPayments(filter)

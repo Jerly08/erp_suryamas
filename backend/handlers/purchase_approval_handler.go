@@ -86,7 +86,7 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 	if purchase.Status == models.PurchaseStatusDraft {
 		userRole, _ := utils.GetUserRoleFromToken(c)
 		roleNorm := strings.ToLower(strings.TrimSpace(userRole))
-		if roleNorm == "finance" || roleNorm == "admin" || roleNorm == "director" {
+		if models.IsFinanceManagerRole(roleNorm) || roleNorm == models.RoleAdmin || roleNorm == models.RoleDirector {
 			// Auto-submit the purchase for approval
 			if err := h.purchaseService.SubmitForApproval(uint(purchaseID), userID); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{
@@ -119,7 +119,7 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 	userRole, _ := utils.GetUserRoleFromToken(c)
 
 	// If finance role and escalate flag is set, handle escalation
-	if strings.ToLower(userRole) == "finance" && request.EscalateToDirector {
+	if models.IsFinanceManagerRole(userRole) && request.EscalateToDirector {
 		// Check if purchase is already approved
 		if purchase.ApprovalStatus == models.PurchaseApprovalApproved {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Purchase is already approved - cannot escalate"})
@@ -421,8 +421,6 @@ func (h *PurchaseApprovalHandler) filterPurchasesByApprovalAuthority(purchases [
 		return purchases
 	}
 
-	roleNorm := strings.ToLower(strings.TrimSpace(userRole))
-
 	var filtered []models.Purchase
 	for _, p := range purchases {
 		if p.ApprovalRequestID == nil || p.ApprovalRequest == nil {
@@ -432,7 +430,7 @@ func (h *PurchaseApprovalHandler) filterPurchasesByApprovalAuthority(purchases [
 		allowedByLocal := false
 		for _, act := range p.ApprovalRequest.ApprovalSteps {
 			if act.IsActive && act.Status == models.ApprovalStatusPending {
-				if strings.ToLower(strings.TrimSpace(act.Step.ApproverRole)) == roleNorm {
+				if models.WorkflowRoleMatchesUserRole(act.Step.ApproverRole, userRole) {
 					allowedByLocal = true
 					break
 				}
@@ -488,7 +486,7 @@ func (h *PurchaseApprovalHandler) GetApprovalStats(c *gin.Context) {
 	}
 
 	// Only admin, finance, director can see stats
-	if userRole != "admin" && userRole != "finance" && userRole != "director" {
+	if models.NormalizeRole(userRole) != models.RoleAdmin && !models.IsFinanceManagerRole(userRole) && models.NormalizeRole(userRole) != models.RoleDirector {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}

@@ -97,11 +97,14 @@ func (bpc *BOMProcurementController) GeneratePR(c *gin.Context) {
 				totalEstimatedAmount += itemTotal
 
 				prItems = append(prItems, models.PurchaseRequestItem{
-					ProductID:           product.ID,
-					Quantity:            int(math.Ceil(shortage)), // Round up to ensure enough is purchased (0.7 → 1)
-					EstimatedPrice:      itemEstimatedPrice,
-					TotalEstimatedPrice: itemTotal,
-					Notes:               "Auto-Procurement dari Project BOM: " + req.Notes,
+					ProductID:              product.ID,
+					Quantity:               int(math.Ceil(shortage)), // Round up to ensure enough is purchased (0.7 → 1)
+					EstimatedPrice:         itemEstimatedPrice,
+					TotalEstimatedPrice:    itemTotal,
+					ApprovalStatus:         models.PRItemDecisionPending,
+					FinanceStaffDecision:   models.PRItemDecisionPending,
+					FinanceManagerDecision: models.PRItemDecisionPending,
+					Notes:                  "Auto-Procurement dari Project BOM: " + req.Notes,
 				})
 			}
 		}
@@ -125,6 +128,7 @@ func (bpc *BOMProcurementController) GeneratePR(c *gin.Context) {
 			ProjectID:            &projectIDUint,
 			TotalEstimatedAmount: totalEstimatedAmount,
 			Status:               models.PRStatusPendingApproval, // Auto-generated PRs go directly to approval queue
+			CurrentApprovalStage: models.PRApprovalStageFinanceStaff,
 			Notes:                fmt.Sprintf("Auto-generated PR untuk Project: %s (dari BOM shortage)", project.Name),
 			Items:                prItems,
 		}
