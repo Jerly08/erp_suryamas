@@ -58,6 +58,7 @@ import closingHistoryService from '@/services/closingHistoryService';
 import { AccountCatalogItem } from '@/types/account';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import { useAuth } from '@/contexts/AuthContext';
+import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 
 const formatCashBankBalance = (amount: number, currency?: string) => {
   const normalizedCurrency = (currency || 'IDR').toUpperCase();
@@ -150,7 +151,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const { t } = useTranslation();
 
   // Check if user is finance or admin (will submit directly as COMPLETED)
-  const isFinanceOrAdmin = user?.role === 'finance' || user?.role === 'admin';
+  const userRole = normalizeRole(user?.role);
+  const isFinanceOrAdmin = userRole === 'admin' || isFinanceManagerRole(userRole);
 
   // Color mode values
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -519,10 +521,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         });
       } else {
         // Create new expense payment via unified PaymentService
-        await paymentService.createExpensePayment(payload);
+        const createdPayment = await paymentService.createExpensePayment(payload);
         toast({
           title: 'Success',
-          description: 'Expense payment has been created successfully',
+          description: createdPayment?.status === 'DRAFT'
+            ? 'Expense payment submitted for finance manager approval'
+            : 'Expense payment has been created successfully',
           status: 'success',
           duration: 3000,
         });
@@ -576,7 +580,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                 <Alert status="warning" borderRadius="md">
                   <AlertIcon />
                   <AlertDescription fontSize="sm">
-                    Pembayaran ini akan disimpan sebagai <strong>DRAFT</strong> dan perlu disetujui oleh Finance sebelum jurnal dibuat.
+                    Pembayaran ini akan disimpan sebagai <strong>DRAFT</strong> dan perlu disetujui oleh <strong>Finance Manager</strong> sebelum jurnal dibuat.
                   </AlertDescription>
                 </Alert>
               )}
@@ -1105,7 +1109,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               isDisabled={loadingAccounts || isDateClosed || checkingClosedPeriod}
               leftIcon={<FiDollarSign />}
             >
-              {isFinanceOrAdmin ? t('payments.form.createExpensePayment') : 'Submit sebagai Draft'}
+              {isFinanceOrAdmin ? t('payments.form.createExpensePayment') : 'Submit for Approval'}
             </Button>
           </ModalFooter>
         </form>

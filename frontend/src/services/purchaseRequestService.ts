@@ -25,6 +25,7 @@ export interface PurchaseRequestItem {
   approval_status: "PENDING" | "APPROVED" | "REJECTED";
   finance_staff_decision: "PENDING" | "APPROVED" | "REJECTED";
   finance_manager_decision: "PENDING" | "APPROVED" | "REJECTED";
+  director_decision: "PENDING" | "APPROVED" | "REJECTED";
   purchase_id?: number | null;
   purchased_at?: string | null;
   notes: string;
@@ -39,7 +40,11 @@ export interface PurchaseRequest {
   project_id: number | null;
   total_estimated_amount: number;
   status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "COMPLETED";
-  current_approval_stage?: "FINANCE_STAFF" | "FINANCE_MANAGER" | "FINALIZED";
+  current_approval_stage?:
+    | "FINANCE_STAFF"
+    | "FINANCE_MANAGER"
+    | "DIRECTOR"
+    | "FINALIZED";
   notes: string;
   approved_by: number | null;
   approved_at: string | null;
@@ -47,6 +52,8 @@ export interface PurchaseRequest {
   finance_staff_approved_at?: string | null;
   finance_manager_approved_by?: number | null;
   finance_manager_approved_at?: string | null;
+  director_approved_by?: number | null;
+  director_approved_at?: string | null;
   rejection_reason: string;
   created_at: string;
   updated_at: string;
@@ -54,6 +61,7 @@ export interface PurchaseRequest {
   approver?: User;
   finance_staff_approver?: User;
   finance_manager_approver?: User;
+  director_approver?: User;
   project?: {
     id: number;
     code: string;
@@ -88,6 +96,7 @@ export interface PurchaseRequestReviewItemPayload {
 export interface PurchaseRequestReviewPayload {
   items: PurchaseRequestReviewItemPayload[];
   reason?: string;
+  escalate_to_director?: boolean;
 }
 
 const BASE_URL = "/api/v1/purchase-requests";

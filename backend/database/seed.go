@@ -27,6 +27,7 @@ func SeedData(db *gorm.DB) {
 	}
 	EnsureOpeningBalanceEquityAccount(db)
 	// Note: FixAccountHierarchies not needed - SeedAccountsImproved handles parent relationships
+	// Ensure PPh-related tax asset accounts exist, including the Kredit Pajak PPh23 reclass account.
 
 	// ✅ CRITICAL: Ensure PPh prepaid tax accounts exist (required for sales with tax deductions)
 	// This migration is idempotent and safe to run on every startup

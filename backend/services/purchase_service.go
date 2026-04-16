@@ -1384,6 +1384,7 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 
 	// 2. Create journal entries - PRIORITIZE SSOT (no double posting)
 	fmt.Printf("??? Creating journal entries for approved purchase %s (ONLY using SSOT)\n", purchase.Code)
+	purchaseJournalCreated := false
 
 	// Use SSOT service exclusively
 	if s.journalServiceSSOT != nil {
@@ -1391,6 +1392,7 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 			fmt.Printf("?? Warning: SSOT journal creation failed: %v\n", err)
 			// Continue processing - journal can be recreated later
 		} else {
+			purchaseJournalCreated = true
 			fmt.Printf("? [SSOT] Created purchase journal entries for Balance Sheet integration\n")
 		}
 	} else {
@@ -1453,6 +1455,23 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	if err != nil {
 		fmt.Printf("?? Warning: Gagal memproses data Prepaid Expense: %v\n", err)
 		// Tidak mereturn error agar approval parent tetap jalan
+	}
+
+	// 8. Settle any open sales backorders now that inventory is available and the
+	// purchase journal has established the actual inventory cost.
+	if purchaseJournalCreated {
+		fmt.Printf("?? Settling sales backorders from approved purchase %s\n", purchase.Code)
+		backorderAffectedProductIDs, settlementErr := s.settleBackordersForApprovedPurchase(purchase)
+		if settlementErr != nil {
+			fmt.Printf("?? Warning: Failed to settle sales backorders for purchase %s: %v\n", purchase.Code, settlementErr)
+		} else {
+			for productID := range backorderAffectedProductIDs {
+				affectedProductIDs[productID] = struct{}{}
+			}
+			fmt.Printf("? Sales backorder settlement completed for purchase %s\n", purchase.Code)
+		}
+	} else {
+		fmt.Printf("?? Skipping sales backorder settlement for purchase %s because purchase journal was not posted\n", purchase.Code)
 	}
 
 	s.syncStockAlertsForProducts(affectedProductIDs)
@@ -1829,9 +1848,19 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		return err
 	}
 
-	// 4. Reverse product stock (subtract the quantities that were added on approval)
+	// 4. Reopen any sale backorders that had been settled by this purchase before
+	// we subtract the approved stock addition.
+	backorderAffectedProductIDs, backorderErr := s.reverseBackorderSettlementsForRejectedPurchase(purchase)
+	if backorderErr != nil {
+		return backorderErr
+	}
+
+	// 5. Reverse product stock (subtract the quantities that were added on approval)
 	fmt.Printf("?? Reversing product stock for rejected purchase %s\n", purchase.Code)
 	affectedProductIDs := make(map[uint]struct{})
+	for productID := range backorderAffectedProductIDs {
+		affectedProductIDs[productID] = struct{}{}
+	}
 	for _, item := range purchase.PurchaseItems {
 		// Skip ASSET items - they don't have inventory/stock
 		if item.IsFixedAsset || item.ItemType == models.PurchaseItemTypeAsset {
@@ -1865,7 +1894,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		}
 	}
 
-	// 5. Reverse cash/bank balance for immediate payment purchases
+	// 6. Reverse cash/bank balance for immediate payment purchases
 	if isImmediatePayment(purchase.PaymentMethod) && purchase.BankAccountID != nil && *purchase.BankAccountID > 0 {
 		fmt.Printf("?? Restoring cash/bank balance for rejected immediate payment purchase\n")
 
@@ -1923,7 +1952,7 @@ func (s *PurchaseService) OnPurchaseRejected(purchaseID uint) error {
 		}
 	}
 
-	// 6. Reverse project actual cost (if linked to a project)
+	// 7. Reverse project actual cost (if linked to a project)
 	if purchase.ProjectID != nil {
 		fmt.Printf("?? Decreasing project actual cost for rejected purchase %d\n", purchaseID)
 		err = s.updateProjectCostForPurchase(purchase, false) // false = decrease
@@ -2682,6 +2711,8 @@ func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase
 		fmt.Printf("?? Product %d (%s): Current stock = %d, Adding quantity = %d\n",
 			product.ID, product.Name, product.Stock, item.Quantity)
 
+		purchaseUnitCost := effectivePurchaseUnitCost(&item)
+
 		// Update stock quantity (add purchased quantity)
 		oldStock := product.Stock
 		product.Stock += item.Quantity
@@ -2689,16 +2720,20 @@ func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase
 		// Update cost price using weighted average if we have existing stock
 		if oldStock > 0 {
 			// Weighted average: (old_stock * old_price + new_qty * new_price) / total_qty
-			totalValue := (float64(oldStock) * product.PurchasePrice) + (float64(item.Quantity) * item.UnitPrice)
+			totalValue := (float64(oldStock) * product.PurchasePrice) + (float64(item.Quantity) * purchaseUnitCost)
 			totalQuantity := oldStock + item.Quantity
 			product.PurchasePrice = totalValue / float64(totalQuantity)
 			fmt.Printf("?? Updated weighted average price: %.2f (was %.2f)\n",
 				product.PurchasePrice, (float64(oldStock)*product.PurchasePrice)/float64(oldStock))
 		} else {
 			// If no existing stock, use new price
-			product.PurchasePrice = item.UnitPrice
+			product.PurchasePrice = purchaseUnitCost
 			fmt.Printf("?? Set new purchase price: %.2f\n", product.PurchasePrice)
 		}
+
+		// Keep cost_price aligned with the latest weighted purchase basis so sales
+		// can use it as estimated HPP for backorders.
+		product.CostPrice = product.PurchasePrice
 
 		// Save updated product
 		err = s.productRepo.Update(context.Background(), product)

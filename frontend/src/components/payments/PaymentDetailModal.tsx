@@ -27,7 +27,6 @@ import {
 import { FiFilePlus } from 'react-icons/fi';
 import { Payment, stripInternalPaymentReference } from '@/services/paymentService';
 import paymentService from '@/services/paymentService';
-import { exportPaymentDetailToPDF } from '../../utils/pdfExport';
 
 interface PaymentDetailModalProps {
   payment: Payment | null;
@@ -44,7 +43,6 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
   const modalBg = useColorModeValue('white', 'gray.800');
   const headerBg = useColorModeValue('gray.50', 'gray.700');
   const headingColor = useColorModeValue('gray.800', 'gray.100');
-  const textPrimary = useColorModeValue('gray.700', 'gray.200');
   const textSecondary = useColorModeValue('gray.500', 'gray.400');
   const borderColor = useColorModeValue('gray.200', 'gray.600');
   const tableBg = useColorModeValue('white', 'gray.700');
@@ -70,6 +68,10 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
     });
   };
 
+  const statusLabel = paymentService.getStatusLabel(payment.status);
+  const approvedBy = paymentService.getActorDisplayName(payment.approver);
+  const rejectedBy = paymentService.getActorDisplayName(payment.rejector);
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="xl">
       <ModalOverlay />
@@ -82,7 +84,7 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
               variant="subtle"
               fontSize="sm"
             >
-              {payment.status}
+              {statusLabel}
             </Badge>
           </Flex>
         </ModalHeader>
@@ -206,6 +208,37 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                       <Td fontWeight="medium">User ID:</Td>
                       <Td>{payment.user_id}</Td>
                     </Tr>
+                    {payment.approved_at && (
+                      <Tr>
+                        <Td fontWeight="medium">Approved By:</Td>
+                        <Td>
+                          <Flex direction="column">
+                            <Text>{approvedBy}</Text>
+                            <Text fontSize="sm" color={textSecondary}>
+                              {formatDateTime(payment.approved_at)}
+                            </Text>
+                          </Flex>
+                        </Td>
+                      </Tr>
+                    )}
+                    {payment.rejected_at && (
+                      <Tr>
+                        <Td fontWeight="medium">Rejected By:</Td>
+                        <Td>
+                          <Flex direction="column">
+                            <Text>{rejectedBy}</Text>
+                            <Text fontSize="sm" color={textSecondary}>
+                              {formatDateTime(payment.rejected_at)}
+                            </Text>
+                            {payment.rejection_reason && (
+                              <Text fontSize="sm" color="red.500">
+                                {payment.rejection_reason}
+                              </Text>
+                            )}
+                          </Flex>
+                        </Td>
+                      </Tr>
+                    )}
                   </Tbody>
                 </Table>
               </TableContainer>

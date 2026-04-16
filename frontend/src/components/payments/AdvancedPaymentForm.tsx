@@ -68,7 +68,7 @@ import periodClosingService from '@/services/periodClosingService';
 import AuthExpiredModal from '@/components/auth/AuthExpiredModal';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import { useAuth } from '@/contexts/AuthContext';
-import { normalizeRole } from '@/utils/roles';
+import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { roundUsdIdrRate } from '@/utils/exchangeRate';
 
 interface AdvancedPaymentFormProps {
@@ -405,7 +405,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 
   // Check if user has permission to create payments directly vs draft
   const userRole = normalizeRole(user?.role);
-  const isFinanceOrAdmin = userRole === 'admin' || userRole === 'finance' || userRole === 'director';
+  const isFinanceOrAdmin = userRole === 'admin' || userRole === 'director' || isFinanceManagerRole(userRole);
 
   // If modal is opened but user doesn't have at least 'employee' role, close it
   useEffect(() => {
@@ -861,9 +861,14 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         }
       }
 
+      const wasSubmittedForApproval = !initialData?.id && result?.status === 'DRAFT';
       toast({
         title: 'Success',
-        description: `${type === 'receivable' ? 'Receivable' : 'Payable'} payment created successfully`,
+        description: wasSubmittedForApproval
+          ? `${type === 'receivable' ? 'Receivable' : 'Payable'} payment submitted for finance manager approval`
+          : initialData?.id
+            ? 'Draft payment updated successfully'
+            : `${type === 'receivable' ? 'Receivable' : 'Payable'} payment created successfully`,
         status: 'success',
         duration: 3000,
       });
@@ -1026,7 +1031,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                         <Alert status="warning" borderRadius="md">
                           <AlertIcon />
                           <AlertDescription fontSize="sm">
-                            Pembayaran ini akan disimpan sebagai <strong>DRAFT</strong> dan perlu disetujui oleh Finance sebelum jurnal dibuat.
+                            Pembayaran ini akan disimpan sebagai <strong>DRAFT</strong> dan perlu disetujui oleh <strong>Finance Manager</strong> sebelum jurnal dibuat.
                           </AlertDescription>
                         </Alert>
                       )}
@@ -1502,7 +1507,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                       }
                     }
 
-                    return 'Create Payment';
+                    return isFinanceOrAdmin ? 'Create Payment' : 'Submit for Approval';
                   })()}
                 </Button>
               </HStack>

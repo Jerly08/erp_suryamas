@@ -56,6 +56,12 @@ type Product struct {
 	PurchaseItems     []PurchaseItem     `json:"-" gorm:"foreignKey:ProductID"`
 	Inventories       []Inventory        `json:"-" gorm:"foreignKey:ProductID"`
 	Variants          []ProductVariant   `json:"variants,omitempty" gorm:"foreignKey:ProductID"`
+
+	// Backorder monitoring fields are populated on-demand for product dashboards.
+	PendingBackorderQty   int `json:"pending_backorder_qty" gorm:"-"`
+	FulfilledBackorderQty int `json:"fulfilled_backorder_qty" gorm:"-"`
+	BackorderOrderCount   int `json:"backorder_order_count" gorm:"-"`
+	NetAvailableStock     int `json:"net_available_stock" gorm:"-"`
 }
 
 type ProductVariant struct {

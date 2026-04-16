@@ -40,7 +40,6 @@ import {
   StatLabel,
   StatNumber,
   StatHelpText,
-  StatArrow,
 } from '@chakra-ui/react';
 import {
   FiDollarSign,
@@ -221,16 +220,16 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
   const paymentMethod = payment.method || '-';
   const paymentNotes = payment.notes?.trim();
   const paymentReference = payment.reference?.trim();
+  const statusLabel = paymentService.getStatusLabel(payment.status);
+  const approverName = paymentService.getActorDisplayName(payment.approver);
+  const rejectorName = paymentService.getActorDisplayName(payment.rejector);
 
   const StatusBadge = ({ status }: { status: string }) => {
-    const colorScheme = status === 'COMPLETED' ? 'green' : 
-                       status === 'PENDING' ? 'yellow' : 
-                       status === 'FAILED' ? 'red' :
-                       status === 'REVERSED' ? 'purple' : 'gray';
+    const colorScheme = paymentService.getStatusColorScheme(status);
     
     return (
       <Badge colorScheme={colorScheme} variant="solid">
-        {status}
+        {paymentService.getStatusLabel(status)}
       </Badge>
     );
   };
@@ -262,7 +261,7 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
               <Spacer />
               <HStack>
                 <StatusBadge status={payment.status} />
-                {onEdit && payment.status !== 'REVERSED' && (
+                {onEdit && payment.status === 'DRAFT' && (
                   <Button size="sm" variant="outline" onClick={() => onEdit(paymentId)}>
                     Edit
                   </Button>
@@ -374,7 +373,35 @@ const PaymentDetailsView: React.FC<PaymentDetailsViewProps> = ({
                             {new Date(payment.updated_at).toLocaleString()}
                           </Text>
                         </Box>
+
+                        <Box>
+                          <Text fontWeight="medium" color={textPrimary}>Status</Text>
+                          <Text color={textSecondary}>{statusLabel}</Text>
+                        </Box>
                       </HStack>
+
+                      {payment.approved_at && (
+                        <Box>
+                          <Text fontWeight="medium" color={textPrimary}>Approval</Text>
+                          <Text color={textSecondary}>
+                            Approved by {approverName} pada {new Date(payment.approved_at).toLocaleString('id-ID')}
+                          </Text>
+                        </Box>
+                      )}
+
+                      {payment.rejected_at && (
+                        <Box>
+                          <Text fontWeight="medium" color={textPrimary}>Rejection</Text>
+                          <Text color={textSecondary}>
+                            Rejected by {rejectorName} pada {new Date(payment.rejected_at).toLocaleString('id-ID')}
+                          </Text>
+                          {payment.rejection_reason && (
+                            <Text color="red.500" fontSize="sm" mt={1}>
+                              {payment.rejection_reason}
+                            </Text>
+                          )}
+                        </Box>
+                      )}
                     </VStack>
                   </VStack>
                 </CardBody>

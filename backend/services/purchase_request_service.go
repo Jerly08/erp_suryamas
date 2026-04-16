@@ -10,7 +10,7 @@ import (
 )
 
 type PurchaseRequestService interface {
-	CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint) (*models.PurchaseRequest, error)
+	CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint, userRole string) (*models.PurchaseRequest, error)
 	GetPurchaseRequests(userID uint, userRole string, department string, status string) ([]models.PurchaseRequest, error)
 	GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error)
 	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
@@ -43,9 +43,10 @@ func generatePRNumber(id uint) string {
 	return fmt.Sprintf("PR-%s-%04d", now.Format("20060102"), id)
 }
 
-func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint) (*models.PurchaseRequest, error) {
+func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint, userRole string) (*models.PurchaseRequest, error) {
 	var totalEstimatedAmount float64
 	var items []models.PurchaseRequestItem
+	initialStage := resolveInitialPurchaseRequestStage(userRole)
 
 	for _, rawItem := range payload.Items {
 		product, err := s.productRepo.FindByID(rawItem.ProductID)
@@ -64,6 +65,7 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 			ApprovalStatus:         models.PRItemDecisionPending,
 			FinanceStaffDecision:   models.PRItemDecisionPending,
 			FinanceManagerDecision: models.PRItemDecisionPending,
+			DirectorDecision:       models.PRItemDecisionPending,
 			Notes:                  rawItem.Notes,
 		}
 		items = append(items, item)
@@ -75,7 +77,7 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 		ProjectID:            payload.ProjectID,
 		TotalEstimatedAmount: totalEstimatedAmount,
 		Status:               models.PRStatusPendingApproval,
-		CurrentApprovalStage: models.PRApprovalStageFinanceStaff,
+		CurrentApprovalStage: initialStage,
 		Notes:                payload.Notes,
 		Items:                items,
 	}
@@ -170,7 +172,11 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			}
 
 			item.FinanceManagerDecision = decision
-			item.ApprovalStatus = decision
+			if payload.EscalateToDirector {
+				item.ApprovalStatus = models.PRItemDecisionPending
+			} else {
+				item.ApprovalStatus = decision
+			}
 
 			switch decision {
 			case models.PRItemDecisionApproved:
@@ -182,9 +188,24 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			}
 		}
 
-		pr.CurrentApprovalStage = models.PRApprovalStageFinalized
 		pr.FinanceManagerApprovedBy = &reviewerID
 		pr.FinanceManagerApprovedAt = &now
+		if payload.EscalateToDirector {
+			pr.Status = models.PRStatusPendingApproval
+			pr.CurrentApprovalStage = models.PRApprovalStageDirector
+			pr.ApprovedBy = nil
+			pr.ApprovedAt = nil
+			pr.RejectionReason = ""
+
+			if err := s.repo.Update(pr); err != nil {
+				return "", err
+			}
+
+			s.notifyDirectorReview(pr)
+			return "Review finance manager berhasil dikirim ke director", nil
+		}
+
+		pr.CurrentApprovalStage = models.PRApprovalStageFinalized
 
 		if approvedCount > 0 {
 			pr.Status = models.PRStatusApproved
@@ -217,6 +238,66 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 		}
 
 		return "Purchase request disetujui seluruhnya oleh finance manager", nil
+
+	case models.PRApprovalStageDirector:
+		approvedCount := 0
+		rejectedCount := 0
+
+		for index := range pr.Items {
+			item := &pr.Items[index]
+			decision, exists := decisionByItemID[item.ID]
+			if !exists {
+				return "", fmt.Errorf("director must decide every item before final approval")
+			}
+
+			item.DirectorDecision = decision
+			item.ApprovalStatus = decision
+
+			switch decision {
+			case models.PRItemDecisionApproved:
+				approvedCount++
+			case models.PRItemDecisionRejected:
+				rejectedCount++
+				item.PurchaseID = nil
+				item.PurchasedAt = nil
+			}
+		}
+
+		pr.CurrentApprovalStage = models.PRApprovalStageFinalized
+		pr.DirectorApprovedBy = &reviewerID
+		pr.DirectorApprovedAt = &now
+
+		if approvedCount > 0 {
+			pr.Status = models.PRStatusApproved
+			pr.ApprovedBy = &reviewerID
+			pr.ApprovedAt = &now
+			pr.RejectionReason = payload.Reason
+		} else {
+			pr.Status = models.PRStatusRejected
+			pr.ApprovedBy = nil
+			pr.ApprovedAt = nil
+			if payload.Reason != "" {
+				pr.RejectionReason = payload.Reason
+			} else {
+				pr.RejectionReason = "Semua item ditolak oleh director"
+			}
+		}
+
+		if err := s.repo.Update(pr); err != nil {
+			return "", err
+		}
+
+		s.notifyRequesterAfterFinalReview(pr, approvedCount, rejectedCount)
+
+		if approvedCount == 0 {
+			return "Purchase request ditolak seluruhnya oleh director", nil
+		}
+
+		if rejectedCount > 0 {
+			return fmt.Sprintf("Final review director selesai: %d item disetujui dan %d item ditolak", approvedCount, rejectedCount), nil
+		}
+
+		return "Purchase request disetujui seluruhnya oleh director", nil
 
 	default:
 		return "", fmt.Errorf("purchase request %s is not in a reviewable stage", pr.PRNumber)
@@ -334,7 +415,7 @@ func resolvePurchaseRequestReviewStage(pr *models.PurchaseRequest, reviewerRole 
 
 	stage := pr.CurrentApprovalStage
 	if stage == "" {
-		stage = models.PRApprovalStageFinanceStaff
+		stage = resolveInitialPurchaseRequestStage(pr.Requester.Role)
 	}
 
 	roleNorm := models.NormalizeRole(reviewerRole)
@@ -352,10 +433,23 @@ func resolvePurchaseRequestReviewStage(pr *models.PurchaseRequest, reviewerRole 
 		if models.IsFinanceManagerRole(roleNorm) {
 			return stage, nil
 		}
-		return "", fmt.Errorf("only finance manager can review purchase requests at the final stage")
+		return "", fmt.Errorf("only finance manager can review purchase requests at the finance manager stage")
+	case models.PRApprovalStageDirector:
+		if roleNorm == models.RoleDirector {
+			return stage, nil
+		}
+		return "", fmt.Errorf("only director can review purchase requests at the director stage")
 	default:
 		return "", fmt.Errorf("purchase request %s is not in a reviewable stage", pr.PRNumber)
 	}
+}
+
+func resolveInitialPurchaseRequestStage(requesterRole string) string {
+	if models.IsFinanceManagerRole(requesterRole) {
+		return models.PRApprovalStageFinanceManager
+	}
+
+	return models.PRApprovalStageFinanceStaff
 }
 
 func buildPurchaseRequestDecisionMap(items []models.PurchaseRequestReviewItemPayload) (map[uint]string, error) {
@@ -411,6 +505,15 @@ func (s *purchaseRequestService) notifyPurchaseRequestCreated(pr *models.Purchas
 		return
 	}
 
+	switch pr.CurrentApprovalStage {
+	case models.PRApprovalStageFinanceManager:
+		s.notifyFinanceManagerReview(pr)
+		return
+	case models.PRApprovalStageDirector:
+		s.notifyDirectorReview(pr)
+		return
+	}
+
 	message := fmt.Sprintf("Purchase request %s needs finance staff review (Amount: %s)",
 		pr.PRNumber, fmt.Sprintf("Rp %.2f", pr.TotalEstimatedAmount))
 
@@ -458,6 +561,32 @@ func (s *purchaseRequestService) notifyFinanceManagerReview(pr *models.PurchaseR
 		pr.Department,
 	); err != nil {
 		fmt.Printf("Failed to create finance manager PR notification: %v\n", err)
+	}
+}
+
+func (s *purchaseRequestService) notifyDirectorReview(pr *models.PurchaseRequest) {
+	if s.notificationService == nil {
+		return
+	}
+
+	if err := s.notificationService.smartService.CreateSmartNotification(
+		models.NotificationTypeApprovalPending,
+		"Purchase Request Director Approval Required",
+		fmt.Sprintf("Purchase request %s is ready for director review", pr.PRNumber),
+		map[string]interface{}{
+			"pr_id":                  pr.ID,
+			"pr_number":              pr.PRNumber,
+			"total_amount":           pr.TotalEstimatedAmount,
+			"department":             pr.Department,
+			"current_approval_stage": pr.CurrentApprovalStage,
+			"action_type":            "director_review_required",
+		},
+		pr.TotalEstimatedAmount,
+		models.RoleDirector,
+		0,
+		pr.Department,
+	); err != nil {
+		fmt.Printf("Failed to create director PR notification: %v\n", err)
 	}
 }
 

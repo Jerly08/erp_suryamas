@@ -188,7 +188,7 @@ const getTransferStatusColor = (status?: string): string => {
 const getTransferStatusLabel = (status?: string): string => {
   switch ((status || "").toUpperCase()) {
     case "PENDING_APPROVAL":
-      return "Menunggu Approval";
+      return "Menunggu Finance Manager";
     case "COMPLETED":
       return "Approved";
     case "REJECTED":
@@ -1631,10 +1631,12 @@ const CashBankPage: React.FC = () => {
                   wrap="wrap"
                 >
                   <Box>
-                    <Heading size="md">Transfer Antar Bank</Heading>
+                    <Heading size="md">
+                      {canApproveTransferRequests ? "Approval Transfer Antar Bank" : "Transfer Antar Bank"}
+                    </Heading>
                     <Text fontSize="sm" color={mutedTextColor} mt={1}>
                       {canApproveTransferRequests
-                        ? "Approve atau reject transfer yang dibuat staff dan finance staff langsung dari sini."
+                        ? "Review transfer staff dan finance staff, lalu approve atau reject seperti alur approval purchase request."
                         : "Pantau status transfer antar bank yang Anda buat dari halaman cash & bank."}
                     </Text>
                   </Box>

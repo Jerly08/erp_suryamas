@@ -565,6 +565,8 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			log.Printf("ℹ️ [COGS] Service company detected, skipping COGS & Inventory entries entirely for Sale #%d", sale.ID)
 		} else {
 			var totalCOGS decimal.Decimal
+			var inventoryCOGS decimal.Decimal
+			var backorderCOGS decimal.Decimal
 			var cogsDetails []string
 
 			// Calculate total COGS from all sale items
@@ -586,14 +588,27 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 				}
 
 				// Calculate COGS: Quantity × Cost Price
+				estimatedUnitCost := item.EstimatedUnitCost
+				if estimatedUnitCost <= 0 {
+					estimatedUnitCost = item.Product.CostPrice
+				}
+
+				availableQty := item.AvailableQuantity
+				backorderQty := item.BackorderQuantity
+				if availableQty == 0 && backorderQty == 0 && item.Quantity > 0 {
+					availableQty = item.Quantity
+				}
+
 				itemCOGS := decimal.NewFromFloat(float64(item.Quantity)).
-					Mul(decimal.NewFromFloat(item.Product.CostPrice))
+					Mul(decimal.NewFromFloat(estimatedUnitCost))
 
 				if itemCOGS.IsZero() {
 					log.Printf("⚠️ Product '%s' (ID: %d) has zero cost price, COGS = 0",
 						item.Product.Name, item.Product.ID)
 				} else {
 					totalCOGS = totalCOGS.Add(itemCOGS)
+					inventoryCOGS = inventoryCOGS.Add(decimal.NewFromFloat(float64(availableQty) * estimatedUnitCost))
+					backorderCOGS = backorderCOGS.Add(decimal.NewFromFloat(float64(backorderQty) * estimatedUnitCost))
 					cogsDetails = append(cogsDetails, fmt.Sprintf("%s(Qty:%d×Rp%.0f)",
 						item.Product.Name, item.Quantity, item.Product.CostPrice))
 				}
@@ -604,10 +619,14 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			if !totalCOGS.IsZero() {
 				// Look up BOTH accounts first before adding any lines
 				// This prevents an imbalanced journal if one account is missing
-				cogsAccount, cogsErr := s.taxAccountHelper.GetCOGSAccount(dbToUse)
-				inventoryAccount, invErr := s.taxAccountHelper.GetInventoryAccount(dbToUse)
+				cogsAccount, inventoryAccount, clearingAccount, accountErr := resolveBackorderSettlementAccounts(dbToUse, s.taxAccountHelper)
+				var cogsErr error
+				var invErr error
+				if accountErr != nil {
+					cogsErr = accountErr
+				}
 
-				if cogsErr != nil {
+				if accountErr != nil {
 					log.Printf("⚠️ COGS account not found, skipping COGS/Inventory entries: %v", cogsErr)
 				} else if invErr != nil {
 					log.Printf("⚠️ Inventory account not found, skipping COGS/Inventory entries to maintain balance: %v", invErr)
@@ -620,12 +639,23 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 						Description:  fmt.Sprintf("HPP - %s", sale.InvoiceNumber),
 					})
 
-					lines = append(lines, SalesJournalLineRequest{
-						AccountID:    uint64(inventoryAccount.ID),
-						DebitAmount:  decimal.Zero,
-						CreditAmount: totalCOGS,
-						Description:  fmt.Sprintf("Pengurangan Persediaan - %s", sale.InvoiceNumber),
-					})
+					if !inventoryCOGS.IsZero() {
+						lines = append(lines, SalesJournalLineRequest{
+							AccountID:    uint64(inventoryAccount.ID),
+							DebitAmount:  decimal.Zero,
+							CreditAmount: inventoryCOGS,
+							Description:  fmt.Sprintf("Pengurangan Persediaan - %s", sale.InvoiceNumber),
+						})
+					}
+
+					if !backorderCOGS.IsZero() {
+						lines = append(lines, SalesJournalLineRequest{
+							AccountID:    uint64(clearingAccount.ID),
+							DebitAmount:  decimal.Zero,
+							CreditAmount: backorderCOGS,
+							Description:  fmt.Sprintf("Estimated HPP Backorder - %s", sale.InvoiceNumber),
+						})
+					}
 
 					log.Printf("💰 [COGS] Calculated COGS for Sale #%d: Rp %.2f (%d items: %s)",
 						sale.ID, totalCOGS.InexactFloat64(), len(cogsDetails),

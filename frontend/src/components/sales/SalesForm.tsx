@@ -2025,6 +2025,21 @@ const SalesForm: React.FC<SalesFormProps> = ({
                     </Alert>
                   )}
 
+                  {products.length > 0 && (
+                    <Alert
+                      status="info"
+                      mb={4}
+                      borderRadius="md"
+                      bg={alertBg}
+                      borderColor={alertBorderColor}
+                    >
+                      <AlertIcon />
+                      <AlertDescription fontSize="sm">
+                        Sales tetap bisa disimpan walau stok belum cukup. Selisih quantity akan dicatat sebagai backorder dan HPP sementara memakai harga estimasi terbaru.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   <Box
                     overflowX="auto"
                     border="1px"
@@ -2123,7 +2138,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                         key={product.id}
                                         value={product.id}
                                       >
-                                        {product.code} - {product.name}
+                                        {product.code} - {product.name} ({product.stock ?? 0} {product.unit})
                                       </option>
                                     ))}
                                   </Select>

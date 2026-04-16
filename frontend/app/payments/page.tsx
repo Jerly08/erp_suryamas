@@ -16,7 +16,6 @@ import {
   Button,
   Alert,
   AlertIcon,
-  AlertTitle,
   AlertDescription,
   Badge,
   Text,
@@ -29,7 +28,6 @@ import {
   FormControl,
   FormLabel,
   IconButton,
-  Tooltip,
   Spinner,
   Modal,
   ModalOverlay,
@@ -38,7 +36,6 @@ import {
   ModalFooter,
   ModalBody,
   ModalCloseButton,
-  useDisclosure,
   AlertDialog,
   AlertDialogBody,
   AlertDialogFooter,
@@ -60,6 +57,7 @@ import {
   MenuDivider,
   useToast,
   useColorModeValue,
+  Textarea,
 } from '@chakra-ui/react';
 import {
   FiPlus,
@@ -79,17 +77,16 @@ import {
   FiArrowRight,
   FiBriefcase
 } from 'react-icons/fi';
-import paymentService, { Payment, PaymentFilters, PaymentResult, PaymentCreateRequest } from '@/services/paymentService';
+import paymentService, { Payment, PaymentFilters } from '@/services/paymentService';
 import AdvancedPaymentForm from '@/components/payments/AdvancedPaymentForm';
 import PaymentDetailModal from '@/components/payments/PaymentDetailModal';
 import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
 import ExpensePaymentForm from '@/components/payments/ExpensePaymentForm';
-import { exportPaymentsToPDF, exportPaymentDetailToPDF, PDFExportOptions } from '@/utils/pdfExport';
-import ExportButton from '@/components/common/ExportButton';
+import { exportPaymentsToPDF, PDFExportOptions } from '@/utils/pdfExport';
 import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 
 // Status type for filtering
-type PaymentStatusType = 'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT';
+type PaymentStatusType = 'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED';
 
 // Payment method type for filtering
 type PaymentMethodType = 'ALL' | 'CASH' | 'BANK_TRANSFER' | 'CHECK' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'OTHER';
@@ -114,14 +111,7 @@ const formatCurrency = (amount: number) => {
 
 const isCancelledPaymentStatus = (status: string) => {
   const normalized = status.toUpperCase();
-  return normalized === 'FAILED' || normalized === 'CANCELLED' || normalized === 'REVERSED';
-};
-
-const getPaymentDisplayStatusKey = (status: string) => {
-  if (isCancelledPaymentStatus(status)) {
-    return 'cancelled';
-  }
-  return status.toLowerCase();
+  return normalized === 'FAILED' || normalized === 'CANCELLED' || normalized === 'REJECTED' || normalized === 'REVERSED';
 };
 
 const PaymentsPage: React.FC = () => {
@@ -196,7 +186,9 @@ const PaymentsPage: React.FC = () => {
   const [showPPNPayment, setShowPPNPayment] = useState(false);
   const [ppnPaymentType, setPPNPaymentType] = useState<'INPUT' | 'OUTPUT'>('OUTPUT');
   const [showExpensePayment, setShowExpensePayment] = useState(false);
-  const [approvingPaymentId, setApprovingPaymentId] = useState<number | null>(null);
+  const [paymentDecisionLoadingId, setPaymentDecisionLoadingId] = useState<number | null>(null);
+  const [selectedPaymentForRejection, setSelectedPaymentForRejection] = useState<Payment | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
 
   // Permission-based access control
@@ -206,10 +198,28 @@ const PaymentsPage: React.FC = () => {
   const roleNorm = normalizeRole(user?.role);
   const isFinanceOrAdmin = isFinanceManagerRole(roleNorm) || roleNorm === 'admin';
 
+  const getStatusBadgeLabel = (payment: Payment) => paymentService.getStatusLabel(payment.status);
+
+  const getStatusMetaText = (payment: Payment) => {
+    if (payment.status === 'DRAFT') {
+      return 'Menunggu approval finance manager';
+    }
+    if (payment.status === 'COMPLETED' && payment.approved_at) {
+      return `Approved by ${paymentService.getActorDisplayName(payment.approver)} pada ${paymentService.formatDateTime(payment.approved_at)}`;
+    }
+    if (payment.status === 'REJECTED' && payment.rejected_at) {
+      return `Rejected by ${paymentService.getActorDisplayName(payment.rejector)} pada ${paymentService.formatDateTime(payment.rejected_at)}`;
+    }
+    if (payment.status === 'PENDING') {
+      return 'Pending processing';
+    }
+    return '';
+  };
+
   // Approve DRAFT expense payment (finance only)
   const handleApproveExpensePayment = async (payment: Payment) => {
     if (!isFinanceOrAdmin) return;
-    setApprovingPaymentId(payment.id);
+    setPaymentDecisionLoadingId(payment.id);
     try {
       await paymentService.approveExpensePayment(payment.id);
       toast({
@@ -227,14 +237,14 @@ const PaymentsPage: React.FC = () => {
         duration: 5000,
       });
     } finally {
-      setApprovingPaymentId(null);
+      setPaymentDecisionLoadingId(null);
     }
   };
 
   // Approve DRAFT standard payment (finance only)
   const handleApproveStandardPayment = async (payment: Payment) => {
     if (!isFinanceOrAdmin) return;
-    setApprovingPaymentId(payment.id);
+    setPaymentDecisionLoadingId(payment.id);
     try {
       await paymentService.approveStandardPayment(payment.id);
       toast({
@@ -252,7 +262,52 @@ const PaymentsPage: React.FC = () => {
         duration: 5000,
       });
     } finally {
-      setApprovingPaymentId(null);
+      setPaymentDecisionLoadingId(null);
+    }
+  };
+
+  const handleOpenRejectPayment = (payment: Payment) => {
+    setSelectedPaymentForRejection(payment);
+    setRejectReason('');
+  };
+
+  const handleCloseRejectPayment = () => {
+    setSelectedPaymentForRejection(null);
+    setRejectReason('');
+  };
+
+  const handleRejectPayment = async () => {
+    if (!selectedPaymentForRejection) return;
+    if (!rejectReason.trim()) {
+      toast({
+        title: 'Alasan rejection wajib diisi',
+        description: 'Masukkan alasan agar requester tahu apa yang perlu diperbaiki.',
+        status: 'warning',
+        duration: 4000,
+      });
+      return;
+    }
+
+    setPaymentDecisionLoadingId(selectedPaymentForRejection.id);
+    try {
+      await paymentService.rejectPayment(selectedPaymentForRejection.id, rejectReason.trim());
+      toast({
+        title: 'Payment ditolak',
+        description: `Payment ${selectedPaymentForRejection.code} sudah direject oleh finance manager.`,
+        status: 'success',
+        duration: 4000,
+      });
+      handleCloseRejectPayment();
+      loadPayments();
+    } catch (err: any) {
+      toast({
+        title: 'Gagal reject payment',
+        description: err.message || 'Terjadi kesalahan saat reject payment',
+        status: 'error',
+        duration: 5000,
+      });
+    } finally {
+      setPaymentDecisionLoadingId(null);
     }
   };
 
@@ -358,13 +413,23 @@ const PaymentsPage: React.FC = () => {
     {
       header: t('payments.status'),
       accessor: (row: Payment) => {
-        const statusKey = getPaymentDisplayStatusKey(row.status);
-        const translationKey = `payments.statuses.${statusKey}`;
-        const statusLabel = t(translationKey);
+        const statusMeta = getStatusMetaText(row);
         return (
-          <Badge colorScheme={paymentService.getStatusColorScheme(row.status)} variant="subtle">
-            {statusLabel}
-          </Badge>
+          <VStack align="start" spacing={1}>
+            <Badge colorScheme={paymentService.getStatusColorScheme(row.status)} variant="subtle">
+              {getStatusBadgeLabel(row)}
+            </Badge>
+            {statusMeta ? (
+              <Text fontSize="xs" color={textSecondary}>
+                {statusMeta}
+              </Text>
+            ) : null}
+            {row.rejection_reason ? (
+              <Text fontSize="xs" color="red.500">
+                {row.rejection_reason}
+              </Text>
+            ) : null}
+          </VStack>
         );
       }
     },
@@ -390,7 +455,7 @@ const PaymentsPage: React.FC = () => {
                 <MenuItem
                   icon={<FiArrowRight />}
                   color="green.500"
-                  isDisabled={approvingPaymentId === row.id}
+                  isDisabled={paymentDecisionLoadingId === row.id}
                   onClick={() => {
                     // Route approval based on payment type
                     if (row.payment_type === 'EXPENSE') {
@@ -400,7 +465,15 @@ const PaymentsPage: React.FC = () => {
                     }
                   }}
                 >
-                  {approvingPaymentId === row.id ? 'Menyetujui...' : 'Setujui & Posting Jurnal'}
+                  {paymentDecisionLoadingId === row.id ? 'Menyetujui...' : 'Setujui & Posting Jurnal'}
+                </MenuItem>
+                <MenuItem
+                  icon={<FiTrash2 />}
+                  color="red.500"
+                  isDisabled={paymentDecisionLoadingId === row.id}
+                  onClick={() => handleOpenRejectPayment(row)}
+                >
+                  Reject Payment
                 </MenuItem>
                 <MenuDivider />
               </>
@@ -511,7 +584,7 @@ const PaymentsPage: React.FC = () => {
       const dataSource = allPayments.length > 0 ? allPayments : payments;
       const totalAmount = dataSource.reduce((sum, payment) => sum + payment.amount, 0);
       const completedPayments = dataSource.filter(p => p.status === 'COMPLETED');
-      const pendingPayments = dataSource.filter(p => p.status === 'PENDING');
+      const pendingPayments = dataSource.filter(p => p.status === 'PENDING' || p.status === 'DRAFT');
       const completedAmount = completedPayments.reduce((sum, payment) => sum + payment.amount, 0);
       const pendingAmount = pendingPayments.reduce((sum, payment) => sum + payment.amount, 0);
 
@@ -1015,6 +1088,7 @@ const PaymentsPage: React.FC = () => {
                       <option value="PENDING">{t('payments.filters.pending')}</option>
                       <option value="COMPLETED">{t('payments.filters.completed')}</option>
                       <option value="DRAFT">{t('payments.filters.draft')}</option>
+                      <option value="REJECTED">Rejected</option>
                       <option value="FAILED">{t('payments.filters.failed')}</option>
                     </Select>
 
@@ -1146,6 +1220,62 @@ const PaymentsPage: React.FC = () => {
                 </AlertDialogContent>
               </AlertDialogOverlay>
             </AlertDialog>
+
+            <Modal
+              isOpen={!!selectedPaymentForRejection}
+              onClose={handleCloseRejectPayment}
+              size="lg"
+            >
+              <ModalOverlay />
+              <ModalContent bg={cardBg}>
+                <ModalHeader color={headingColor}>Reject Payment</ModalHeader>
+                <ModalCloseButton />
+                <ModalBody>
+                  <VStack spacing={4} align="stretch">
+                    <Alert status="warning" borderRadius="md">
+                      <AlertIcon />
+                      <AlertDescription>
+                        Payment akan ditandai rejected dan tidak diposting ke jurnal. Isi alasan rejection agar requester bisa revisi dengan jelas.
+                      </AlertDescription>
+                    </Alert>
+                    {selectedPaymentForRejection && (
+                      <Box p={3} borderWidth="1px" borderColor={borderColor} borderRadius="md">
+                        <Text fontWeight="bold" color={headingColor}>{selectedPaymentForRejection.code}</Text>
+                        <Text fontSize="sm" color={textSecondary}>
+                          {formatCurrency(selectedPaymentForRejection.amount)} • {selectedPaymentForRejection.contact?.name || '-'}
+                        </Text>
+                      </Box>
+                    )}
+                    <FormControl isRequired>
+                      <FormLabel>Alasan Rejection</FormLabel>
+                      <Textarea
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        placeholder="Contoh: nominal belum sesuai invoice, rekening pembayaran salah, atau dokumen pendukung belum lengkap."
+                        rows={4}
+                      />
+                    </FormControl>
+                  </VStack>
+                </ModalBody>
+                <ModalFooter>
+                  <Button variant="ghost" mr={3} onClick={handleCloseRejectPayment}>
+                    Batal
+                  </Button>
+                  <Button
+                    colorScheme="red"
+                    onClick={handleRejectPayment}
+                    isLoading={
+                      selectedPaymentForRejection
+                        ? paymentDecisionLoadingId === selectedPaymentForRejection.id
+                        : false
+                    }
+                  >
+                    Reject Payment
+                  </Button>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+
             {/* Payment Detail Modal */}
             <PaymentDetailModal
               payment={selectedPayment}

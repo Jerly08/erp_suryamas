@@ -2,6 +2,15 @@ import api from './api';
 import { API_ENDPOINTS } from '../config/api';
 
 // Types - Updated to match backend Go struct
+export interface PaymentActor {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  role?: string;
+}
+
 export interface Payment {
   id: number;
   code: string;
@@ -24,11 +33,19 @@ export interface Payment {
   forex_gain_loss_type?: string;
   method: string;
   reference: string;
-  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REVERSED';
+  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED' | 'REVERSED';
   payment_type?: string; // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
   pph_type?: string;
   pph_rate?: number;
   pph_amount?: number;
+  approved_by?: number | null;
+  approved_at?: string | null;
+  rejected_by?: number | null;
+  rejected_at?: string | null;
+  rejection_reason?: string;
+  user?: PaymentActor;
+  approver?: PaymentActor | null;
+  rejector?: PaymentActor | null;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -617,6 +634,7 @@ class PaymentService {
         return 'yellow';
       case 'DRAFT':
         return 'orange';
+      case 'REJECTED':
       case 'FAILED':
       case 'CANCELLED':
       case 'REVERSED':
@@ -864,7 +882,7 @@ class PaymentService {
       });
 
       // Handle response format variations
-      return response.data?.data?.payment || response.data?.payment || response.data;
+      return response.data?.data?.payment || response.data?.data || response.data?.payment || response.data;
     } catch (error: any) {
       console.error('PaymentService - Error creating expense payment:', error);
 
@@ -915,6 +933,45 @@ class PaymentService {
       return response.data?.data || response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.details || error.response?.data?.error || 'Failed to approve payment');
+    }
+  }
+
+  async rejectPayment(paymentId: number, reason: string): Promise<Payment> {
+    try {
+      const response = await api.post(API_ENDPOINTS.PAYMENTS.SSOT.REJECT(paymentId), {
+        reason,
+      });
+      return response.data?.data || response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.details || error.response?.data?.error || 'Failed to reject payment');
+    }
+  }
+
+  getActorDisplayName(actor?: PaymentActor | null): string {
+    if (!actor) {
+      return '-';
+    }
+
+    const fullName = [actor.first_name, actor.last_name].filter(Boolean).join(' ').trim();
+    return fullName || actor.username || actor.email || `User #${actor.id}`;
+  }
+
+  getStatusLabel(status: string): string {
+    switch (status.toUpperCase()) {
+      case 'COMPLETED':
+        return 'Approved';
+      case 'PENDING':
+        return 'Pending';
+      case 'DRAFT':
+        return 'Menunggu Finance Manager';
+      case 'REJECTED':
+        return 'Rejected';
+      case 'FAILED':
+        return 'Failed';
+      case 'REVERSED':
+        return 'Reversed';
+      default:
+        return status;
     }
   }
 

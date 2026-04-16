@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Box,
+  Checkbox,
   Button,
   Flex,
   Heading,
@@ -12,6 +13,7 @@ import {
   InputGroup,
   InputLeftElement,
   Table,
+  TableContainer,
   Thead,
   Tbody,
   Tr,
@@ -80,7 +82,9 @@ export default function PurchaseRequestsPage() {
     (user as { department?: string } | null)?.department || "";
   const roleNorm = normalizeRole(user?.role);
   const canApprovePurchaseRequest =
-    roleNorm === "admin" || isFinanceTeamRole(roleNorm);
+    roleNorm === "admin" ||
+    roleNorm === "director" ||
+    isFinanceTeamRole(roleNorm);
 
   const {
     isOpen: isCreateOpen,
@@ -96,6 +100,8 @@ export default function PurchaseRequestsPage() {
   const [selectedRequest, setSelectedRequest] =
     useState<PurchaseRequest | null>(null);
   const [reviewReason, setReviewReason] = useState("");
+  const [reviewNeedsDirectorApproval, setReviewNeedsDirectorApproval] =
+    useState(false);
   const [reviewDecisions, setReviewDecisions] = useState<
     Record<number, "APPROVED" | "REJECTED" | "">
   >({});
@@ -249,6 +255,7 @@ export default function PurchaseRequestsPage() {
 
   const getStageLabel = (pr?: PurchaseRequest | null) => {
     const stage = getCurrentReviewStage(pr);
+    if (stage === "DIRECTOR") return "Menunggu Director";
     if (stage === "FINANCE_MANAGER") return "Menunggu Finance Manager";
     if (stage === "FINANCE_STAFF") return "Menunggu Finance Staff";
     return null;
@@ -260,7 +267,14 @@ export default function PurchaseRequestsPage() {
     if (roleNorm === "admin") return true;
     if (stage === "FINANCE_STAFF") return isFinanceStaffRole(roleNorm);
     if (stage === "FINANCE_MANAGER") return isFinanceManagerRole(roleNorm);
+    if (stage === "DIRECTOR") return roleNorm === "director";
     return false;
+  };
+
+  const canRequestDirectorApproval = (pr?: PurchaseRequest | null) => {
+    const stage = getCurrentReviewStage(pr);
+    if (stage !== "FINANCE_MANAGER") return false;
+    return roleNorm === "admin" || isFinanceManagerRole(roleNorm);
   };
 
   const getInitialReviewDecision = (
@@ -268,6 +282,25 @@ export default function PurchaseRequestsPage() {
     item: PurchaseRequestItem,
   ) => {
     const stage = getCurrentReviewStage(pr);
+    if (stage === "DIRECTOR") {
+      if (item.director_decision && item.director_decision !== "PENDING") {
+        return item.director_decision;
+      }
+      if (
+        item.finance_manager_decision &&
+        item.finance_manager_decision !== "PENDING"
+      ) {
+        return item.finance_manager_decision;
+      }
+      if (
+        item.finance_staff_decision &&
+        item.finance_staff_decision !== "PENDING"
+      ) {
+        return item.finance_staff_decision;
+      }
+      return "";
+    }
+
     if (stage === "FINANCE_MANAGER") {
       if (
         item.finance_manager_decision &&
@@ -301,6 +334,7 @@ export default function PurchaseRequestsPage() {
     });
     setReviewDecisions(nextDecisions);
     setReviewReason(pr.rejection_reason || "");
+    setReviewNeedsDirectorApproval(false);
   };
 
   const setAllReviewDecisions = (decision: "APPROVED" | "REJECTED") => {
@@ -337,6 +371,9 @@ export default function PurchaseRequestsPage() {
           decision: reviewDecisions[item.id] as "APPROVED" | "REJECTED",
         })),
         reason: reviewReason.trim() || undefined,
+        escalate_to_director:
+          canRequestDirectorApproval(selectedRequest) &&
+          reviewNeedsDirectorApproval,
       });
       toast({
         title: "Review PR berhasil dikirim",
@@ -827,28 +864,41 @@ export default function PurchaseRequestsPage() {
         </Modal>
 
         {/* MODAL VIEW / DETAILS */}
-        <Modal isOpen={isViewOpen} onClose={onViewClose} size="3xl">
+        <Modal
+          isOpen={isViewOpen}
+          onClose={onViewClose}
+          size="6xl"
+          scrollBehavior="inside"
+        >
           <ModalOverlay />
           <ModalContent
             bg={modalBg}
             borderWidth="1px"
             borderColor={borderColor}
+            maxW={{ base: "calc(100vw - 1rem)", xl: "1320px" }}
+            maxH="calc(100vh - 2rem)"
+            mx={2}
           >
             <ModalHeader
               display="flex"
               justifyContent="space-between"
-              alignItems="center"
+              alignItems={{ base: "flex-start", md: "center" }}
+              flexDirection={{ base: "column", md: "row" }}
+              gap={2}
+              pr={14}
               bg={modalHeaderBg}
               borderBottomWidth="1px"
               borderColor={borderColor}
             >
-              <Text>Detail Purchase Request: {selectedRequest?.pr_number}</Text>
-              <Box mr={6}>
+              <Text pr={2}>
+                Detail Purchase Request: {selectedRequest?.pr_number}
+              </Text>
+              <Box>
                 {selectedRequest && getStatusBadge(selectedRequest)}
               </Box>
             </ModalHeader>
             <ModalCloseButton color={textColor} />
-            <ModalBody pb={6}>
+            <ModalBody pb={6} overflowY="auto">
               {selectedRequest && (
                 <Grid
                   templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }}
@@ -930,6 +980,19 @@ export default function PurchaseRequestsPage() {
                       </Text>
                     </Box>
                   )}
+                  {selectedRequest.director_approver && (
+                    <Box>
+                      <Text fontSize="sm" color={mutedTextColor}>
+                        Review Director
+                      </Text>
+                      <Text fontWeight="medium" color="purple.600">
+                        {selectedRequest.director_approver.first_name}{" "}
+                        {selectedRequest.director_approver.last_name}
+                        {selectedRequest.director_approved_at &&
+                          ` pada ${new Date(selectedRequest.director_approved_at).toLocaleString()}`}
+                      </Text>
+                    </Box>
+                  )}
                   {selectedRequest.status === "APPROVED" &&
                     selectedRequest.approver && (
                       <Box>
@@ -982,99 +1045,129 @@ export default function PurchaseRequestsPage() {
                   </Badge>
                 </Flex>
               </Flex>
-              <Table variant="striped" size="sm" mb={4}>
-                <Thead>
-                  <Tr>
-                    <Th>Item (Benchmark)</Th>
-                    <Th isNumeric>Qty</Th>
-                    <Th isNumeric>Est. Harga Satuan</Th>
-                    <Th isNumeric>Total Est.</Th>
-                    <Th>Staff</Th>
-                    <Th>Manager</Th>
-                    <Th>Final</Th>
-                    <Th>Purchase</Th>
-                    {canCurrentUserReviewRequest(selectedRequest) && (
-                      <Th>Keputusan</Th>
-                    )}
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {selectedRequest?.items?.map((it) => (
-                    <Tr key={it.id}>
-                      <Td>
-                        <Text fontWeight="medium">{it.product?.name}</Text>
-                        {it.notes && (
-                          <Text fontSize="xs" color={mutedTextColor}>
-                            {it.notes}
-                          </Text>
+              <Box
+                borderWidth="1px"
+                borderColor={borderColor}
+                rounded="md"
+                overflow="hidden"
+                mb={4}
+              >
+                <TableContainer overflowX="auto">
+                  <Table variant="striped" size="sm" minW="1120px" mb={0}>
+                    <Thead>
+                      <Tr>
+                        <Th>Item (Benchmark)</Th>
+                        <Th isNumeric>Qty</Th>
+                        <Th isNumeric>Est. Harga Satuan</Th>
+                        <Th isNumeric>Total Est.</Th>
+                        <Th>Staff</Th>
+                        <Th>Manager</Th>
+                        <Th>Director</Th>
+                        <Th>Final</Th>
+                        <Th>Purchase</Th>
+                        {canCurrentUserReviewRequest(selectedRequest) && (
+                          <Th minW="210px">Keputusan</Th>
                         )}
-                      </Td>
-                      <Td isNumeric>{it.quantity}</Td>
-                      <Td isNumeric>{formatCurrency(it.estimated_price)}</Td>
-                      <Td isNumeric fontWeight="semibold">
-                        {formatCurrency(it.total_estimated_price)}
-                      </Td>
-                      <Td>{getDecisionBadge(it.finance_staff_decision)}</Td>
-                      <Td>{getDecisionBadge(it.finance_manager_decision)}</Td>
-                      <Td>{getDecisionBadge(it.approval_status)}</Td>
-                      <Td>
-                        {it.purchase_id ? (
-                          <Badge colorScheme="blue">Sudah Dipilih</Badge>
-                        ) : (
-                          <Badge colorScheme="gray">Belum Dipakai</Badge>
-                        )}
-                      </Td>
-                      {canCurrentUserReviewRequest(selectedRequest) && (
-                        <Td minW="180px">
-                          <Select
-                            size="sm"
-                            value={reviewDecisions[it.id] || ""}
-                            onChange={(e) =>
-                              setReviewDecisions((prev) => ({
-                                ...prev,
-                                [it.id]: e.target.value as
-                                  | "APPROVED"
-                                  | "REJECTED"
-                                  | "",
-                              }))
-                            }
-                            bg={inputBg}
-                            borderColor={inputBorderColor}
-                            color={textColor}
-                            _hover={{ borderColor: inputBorderColor }}
-                            _focusVisible={fieldFocusStyles}
+                      </Tr>
+                    </Thead>
+                    <Tbody>
+                      {selectedRequest?.items?.map((it) => (
+                        <Tr key={it.id}>
+                          <Td verticalAlign="top">
+                            <Text fontWeight="medium">{it.product?.name}</Text>
+                            {it.notes && (
+                              <Text fontSize="xs" color={mutedTextColor}>
+                                {it.notes}
+                              </Text>
+                            )}
+                          </Td>
+                          <Td isNumeric verticalAlign="top">
+                            {it.quantity}
+                          </Td>
+                          <Td isNumeric verticalAlign="top">
+                            {formatCurrency(it.estimated_price)}
+                          </Td>
+                          <Td
+                            isNumeric
+                            fontWeight="semibold"
+                            verticalAlign="top"
                           >
-                            <option value="">Pilih keputusan</option>
-                            <option value="APPROVED">Approve</option>
-                            <option value="REJECTED">Reject</option>
-                          </Select>
+                            {formatCurrency(it.total_estimated_price)}
+                          </Td>
+                          <Td verticalAlign="top">
+                            {getDecisionBadge(it.finance_staff_decision)}
+                          </Td>
+                          <Td verticalAlign="top">
+                            {getDecisionBadge(it.finance_manager_decision)}
+                          </Td>
+                          <Td verticalAlign="top">
+                            {getDecisionBadge(it.director_decision)}
+                          </Td>
+                          <Td verticalAlign="top">
+                            {getDecisionBadge(it.approval_status)}
+                          </Td>
+                          <Td verticalAlign="top">
+                            {it.purchase_id ? (
+                              <Badge colorScheme="blue">Sudah Dipilih</Badge>
+                            ) : (
+                              <Badge colorScheme="gray">Belum Dipakai</Badge>
+                            )}
+                          </Td>
+                          {canCurrentUserReviewRequest(selectedRequest) && (
+                            <Td verticalAlign="top">
+                              <Box minW="190px">
+                                <Select
+                                  size="sm"
+                                  value={reviewDecisions[it.id] || ""}
+                                  onChange={(e) =>
+                                    setReviewDecisions((prev) => ({
+                                      ...prev,
+                                      [it.id]: e.target.value as
+                                        | "APPROVED"
+                                        | "REJECTED"
+                                        | "",
+                                    }))
+                                  }
+                                  bg={inputBg}
+                                  borderColor={inputBorderColor}
+                                  color={textColor}
+                                  _hover={{ borderColor: inputBorderColor }}
+                                  _focusVisible={fieldFocusStyles}
+                                >
+                                  <option value="">Pilih keputusan</option>
+                                  <option value="APPROVED">Approve</option>
+                                  <option value="REJECTED">Reject</option>
+                                </Select>
+                              </Box>
+                            </Td>
+                          )}
+                        </Tr>
+                      ))}
+                      <Tr>
+                        <Td
+                          colSpan={
+                            canCurrentUserReviewRequest(selectedRequest) ? 9 : 8
+                          }
+                          textAlign="right"
+                          fontWeight="bold"
+                        >
+                          Total Pagu Request:
                         </Td>
-                      )}
-                    </Tr>
-                  ))}
-                  <Tr>
-                    <Td
-                      colSpan={
-                        canCurrentUserReviewRequest(selectedRequest) ? 8 : 7
-                      }
-                      textAlign="right"
-                      fontWeight="bold"
-                    >
-                      Total Pagu Request:
-                    </Td>
-                    <Td
-                      isNumeric
-                      fontWeight="bold"
-                      fontSize="md"
-                      color="blue.600"
-                    >
-                      {formatCurrency(
-                        selectedRequest?.total_estimated_amount || 0,
-                      )}
-                    </Td>
-                  </Tr>
-                </Tbody>
-              </Table>
+                        <Td
+                          isNumeric
+                          fontWeight="bold"
+                          fontSize="md"
+                          color="blue.600"
+                        >
+                          {formatCurrency(
+                            selectedRequest?.total_estimated_amount || 0,
+                          )}
+                        </Td>
+                      </Tr>
+                    </Tbody>
+                  </Table>
+                </TableContainer>
+              </Box>
 
               {selectedRequest?.notes && (
                 <Box mt={4}>
@@ -1095,12 +1188,25 @@ export default function PurchaseRequestsPage() {
               )}
 
               {canCurrentUserReviewRequest(selectedRequest) && (
-                <Box mt={4}>
-                  <Flex gap={2} mb={3} wrap="wrap">
+                <Box
+                  mt={4}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  rounded="md"
+                  p={4}
+                  bg={infoPanelBg}
+                >
+                  <Flex
+                    gap={2}
+                    mb={3}
+                    wrap="wrap"
+                    direction={{ base: "column", sm: "row" }}
+                  >
                     <Button
                       size="sm"
                       variant="outline"
                       colorScheme="green"
+                      w={{ base: "full", sm: "auto" }}
                       onClick={() => setAllReviewDecisions("APPROVED")}
                     >
                       Approve Semua
@@ -1109,6 +1215,7 @@ export default function PurchaseRequestsPage() {
                       size="sm"
                       variant="outline"
                       colorScheme="red"
+                      w={{ base: "full", sm: "auto" }}
                       onClick={() => setAllReviewDecisions("REJECTED")}
                     >
                       Reject Semua
@@ -1129,6 +1236,23 @@ export default function PurchaseRequestsPage() {
                       _placeholder={{ color: mutedTextColor }}
                     />
                   </FormControl>
+                  {canRequestDirectorApproval(selectedRequest) && (
+                    <Box mt={3}>
+                      <Checkbox
+                        isChecked={reviewNeedsDirectorApproval}
+                        onChange={(e) =>
+                          setReviewNeedsDirectorApproval(e.target.checked)
+                        }
+                        colorScheme="purple"
+                      >
+                        Minta approval director setelah review finance manager
+                      </Checkbox>
+                      <Text fontSize="sm" color={mutedTextColor} mt={1}>
+                        Jika dicentang, keputusan finance manager menjadi
+                        rekomendasi dan PR lanjut ke tahap director.
+                      </Text>
+                    </Box>
+                  )}
                 </Box>
               )}
             </ModalBody>
@@ -1138,19 +1262,33 @@ export default function PurchaseRequestsPage() {
               borderColor={borderColor}
             >
               {canCurrentUserReviewRequest(selectedRequest) ? (
-                <Flex w="full" justify="space-between" gap={2} wrap="wrap">
-                  <Button variant="ghost" onClick={onViewClose}>
+                <Flex
+                  w="full"
+                  justify="space-between"
+                  align={{ base: "stretch", md: "center" }}
+                  direction={{ base: "column-reverse", md: "row" }}
+                  gap={2}
+                >
+                  <Button
+                    variant="ghost"
+                    onClick={onViewClose}
+                    w={{ base: "full", md: "auto" }}
+                  >
                     Tutup
                   </Button>
                   <Button
                     colorScheme="blue"
                     onClick={handleReviewSubmit}
                     isLoading={isSubmitting}
+                    w={{ base: "full", md: "auto" }}
                   >
-                    {getCurrentReviewStage(selectedRequest) ===
-                    "FINANCE_MANAGER"
-                      ? "Kirim Final Review"
-                      : "Kirim Review Staff"}
+                    {getCurrentReviewStage(selectedRequest) === "FINANCE_STAFF"
+                      ? "Kirim Review Staff"
+                      : getCurrentReviewStage(selectedRequest) === "DIRECTOR"
+                        ? "Kirim Review Director"
+                        : reviewNeedsDirectorApproval
+                          ? "Kirim ke Director"
+                          : "Kirim Final Review"}
                   </Button>
                 </Flex>
               ) : (

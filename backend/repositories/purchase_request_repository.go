@@ -36,6 +36,7 @@ func (r *purchaseRequestRepository) GetByID(id uint) (*models.PurchaseRequest, e
 		Preload("Approver").
 		Preload("FinanceStaffApprover").
 		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
 		First(&pr, id).Error
 	return &pr, err
 }
@@ -49,7 +50,8 @@ func (r *purchaseRequestRepository) GetAll(department string, status string, req
 		Preload("Items.Purchase").
 		Preload("Approver").
 		Preload("FinanceStaffApprover").
-		Preload("FinanceManagerApprover")
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover")
 
 	if department != "" {
 		query = query.Where("department = ?", department)

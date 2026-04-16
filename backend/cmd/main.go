@@ -118,6 +118,9 @@ func main() {
 	// Seed database with initial data
 	database.SeedData(db)
 
+	// Ensure backorder clearing liability account exists for estimated sales HPP.
+	database.EnsureSalesBackorderClearingAccount(db)
+
 	// Align journal access so employees can submit drafts while finance approves/posts them.
 	database.JournalManualApprovalPermissionMigration(db)
 

@@ -87,8 +87,13 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 		return
 	}
 
+	message := "Receivable payment created successfully"
+	if response != nil && response.Payment != nil && response.Payment.Status == models.PaymentStatusDraft {
+		message = "Receivable payment submitted for finance manager approval"
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "Receivable payment created successfully",
+		"message": message,
 		"data":    response,
 	})
 }
@@ -131,8 +136,13 @@ func (ctrl *SSOTPaymentController) CreatePayablePayment(c *gin.Context) {
 		return
 	}
 
+	message := "Payable payment created successfully"
+	if response != nil && response.Payment != nil && response.Payment.Status == models.PaymentStatusDraft {
+		message = "Payable payment submitted for finance manager approval"
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "Payable payment created successfully",
+		"message": message,
 		"data":    response,
 	})
 }
@@ -177,8 +187,12 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 
 	statusCode := http.StatusCreated
 	message := "Expense payment created successfully"
-	if payment.Status == "DRAFT" {
+	if payment.Status == models.PaymentStatusDraft {
 		message = "Expense payment submitted as DRAFT — waiting for finance approval"
+	}
+
+	if payment.Status == models.PaymentStatusDraft {
+		message = "Expense payment submitted for finance manager approval"
 	}
 
 	c.JSON(statusCode, gin.H{
@@ -251,6 +265,51 @@ func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Payment approved and journal posted successfully",
+		"data":    payment,
+	})
+}
+
+// RejectPayment rejects a DRAFT payment request (finance manager/admin only)
+func (ctrl *SSOTPaymentController) RejectPayment(c *gin.Context) {
+	paymentIDStr := c.Param("id")
+	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment ID"})
+		return
+	}
+
+	var request struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	approverUserID := getSSOTUserIDFromContext(c)
+	if approverUserID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	if !models.CanManageRequiredApprovals(c.GetString("role")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager or Admin can reject payments"})
+		return
+	}
+
+	payment, err := ctrl.enhancedPaymentService.RejectPayment(uint(paymentID), approverUserID, request.Reason)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to reject payment",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Payment rejected successfully",
 		"data":    payment,
 	})
 }

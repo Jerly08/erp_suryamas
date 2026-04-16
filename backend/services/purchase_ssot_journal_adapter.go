@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -98,7 +99,8 @@ func (adapter *PurchaseSSOTJournalAdapter) GetPurchaseJournalEntries(
 	return resp.Data, nil
 }
 
-// GetPurchaseRelatedJournalEntries returns journals for PURCHASE and optionally PAYMENT linked to the purchase
+// GetPurchaseRelatedJournalEntries returns journals for PURCHASE and optionally PAYMENT
+// plus any purchase-linked ADJUSTMENT journals such as backorder HPP settlements.
 func (adapter *PurchaseSSOTJournalAdapter) GetPurchaseRelatedJournalEntries(
 	ctx context.Context,
 	purchaseID uint64,
@@ -108,22 +110,51 @@ func (adapter *PurchaseSSOTJournalAdapter) GetPurchaseRelatedJournalEntries(
 		return nil, fmt.Errorf("unified journal service not available")
 	}
 
-	var result []models.SSOTJournalEntry
+	journalByID := make(map[uint64]models.SSOTJournalEntry)
+	collectEntries := func(sourceType string) error {
+		filters := JournalFilters{
+			SourceType: sourceType,
+			SourceID:   &purchaseID,
+			Page:       1,
+			Limit:      200,
+		}
+		resp, err := adapter.unifiedJournalService.GetJournalEntries(filters)
+		if err != nil {
+			return err
+		}
+		for _, entry := range resp.Data {
+			journalByID[entry.ID] = entry
+		}
+		return nil
+	}
+
 	// 1) PURCHASE journals
-	purchaseFilters := JournalFilters{SourceType: models.SSOTSourceTypePurchase, SourceID: &purchaseID, Page: 1, Limit: 200}
-	if resp, err := adapter.unifiedJournalService.GetJournalEntries(purchaseFilters); err == nil {
-		result = append(result, resp.Data...)
-	} else {
+	if err := collectEntries(models.SSOTSourceTypePurchase); err != nil {
 		return nil, fmt.Errorf("failed to get purchase journals: %v", err)
 	}
 
 	// 2) PAYMENT journals (optional)
 	if includePayments {
-		paymentFilters := JournalFilters{SourceType: models.SSOTSourceTypePayment, SourceID: &purchaseID, Page: 1, Limit: 200}
-		if resp, err := adapter.unifiedJournalService.GetJournalEntries(paymentFilters); err == nil {
-			result = append(result, resp.Data...)
+		if err := collectEntries(models.SSOTSourceTypePayment); err != nil {
+			return nil, fmt.Errorf("failed to get purchase payment journals: %v", err)
 		}
 	}
+
+	// 3) ADJUSTMENT journals tied to the purchase, such as backorder HPP settlements.
+	if err := collectEntries(models.SSOTSourceTypeAdjustment); err != nil {
+		return nil, fmt.Errorf("failed to get purchase adjustment journals: %v", err)
+	}
+
+	result := make([]models.SSOTJournalEntry, 0, len(journalByID))
+	for _, entry := range journalByID {
+		result = append(result, entry)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].EntryDate.Equal(result[j].EntryDate) {
+			return result[i].ID > result[j].ID
+		}
+		return result[i].EntryDate.After(result[j].EntryDate)
+	})
 
 	return result, nil
 }

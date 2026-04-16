@@ -26,6 +26,8 @@ type PurchaseRequest struct {
 	FinanceStaffApprovedAt   *time.Time `json:"finance_staff_approved_at"`
 	FinanceManagerApprovedBy *uint      `json:"finance_manager_approved_by" gorm:"index"`
 	FinanceManagerApprovedAt *time.Time `json:"finance_manager_approved_at"`
+	DirectorApprovedBy       *uint      `json:"director_approved_by" gorm:"index"`
+	DirectorApprovedAt       *time.Time `json:"director_approved_at"`
 	RejectionReason          string     `json:"rejection_reason" gorm:"type:text"`
 
 	CreatedAt time.Time      `json:"created_at"`
@@ -39,6 +41,7 @@ type PurchaseRequest struct {
 	Approver               *User                 `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
 	FinanceStaffApprover   *User                 `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
 	FinanceManagerApprover *User                 `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User                 `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
 }
 
 // PurchaseRequestItem represents the details of items requested
@@ -52,6 +55,7 @@ type PurchaseRequestItem struct {
 	ApprovalStatus         string     `json:"approval_status" gorm:"size:20;default:'PENDING'"`
 	FinanceStaffDecision   string     `json:"finance_staff_decision" gorm:"size:20;default:'PENDING'"`
 	FinanceManagerDecision string     `json:"finance_manager_decision" gorm:"size:20;default:'PENDING'"`
+	DirectorDecision       string     `json:"director_decision" gorm:"size:20;default:'PENDING'"`
 	PurchaseID             *uint      `json:"purchase_id" gorm:"index"`
 	PurchasedAt            *time.Time `json:"purchased_at"`
 	Notes                  string     `json:"notes" gorm:"type:text"`
@@ -79,6 +83,7 @@ const (
 const (
 	PRApprovalStageFinanceStaff   = "FINANCE_STAFF"
 	PRApprovalStageFinanceManager = "FINANCE_MANAGER"
+	PRApprovalStageDirector       = "DIRECTOR"
 	PRApprovalStageFinalized      = "FINALIZED"
 )
 
@@ -110,6 +115,7 @@ type PurchaseRequestReviewItemPayload struct {
 }
 
 type PurchaseRequestReviewPayload struct {
-	Items  []PurchaseRequestReviewItemPayload `json:"items" binding:"required,min=1"`
-	Reason string                             `json:"reason"`
+	Items              []PurchaseRequestReviewItemPayload `json:"items" binding:"required,min=1"`
+	Reason             string                             `json:"reason"`
+	EscalateToDirector bool                               `json:"escalate_to_director"`
 }

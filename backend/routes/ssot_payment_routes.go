@@ -61,6 +61,7 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 		ssotPayments.POST("/expense", permissionMiddleware.CanCreate("payments"), ssotPaymentController.CreateExpensePayment)
 		ssotPayments.POST("/:id/approve-expense", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ApproveExpensePayment)
 		ssotPayments.POST("/:id/approve-standard", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ApproveStandardPayment)
+		ssotPayments.POST("/:id/reject", permissionMiddleware.CanEdit("payments"), ssotPaymentController.RejectPayment)
 		ssotPayments.PUT("/:id/draft", permissionMiddleware.CanEdit("payments"), ssotPaymentController.UpdateDraftPayment)
 		ssotPayments.GET("/:id", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentWithJournal)
 		ssotPayments.POST("/:id/reverse", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ReversePayment)
@@ -101,6 +102,8 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 	router.POST("/payments/:id/approve-expense", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ApproveExpensePayment)
 	// Alias for approve standard receivable/payable (finance only)
 	router.POST("/payments/:id/approve-standard", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ApproveStandardPayment)
+	// Alias for reject draft payment request (finance only)
+	router.POST("/payments/:id/reject", permissionMiddleware.CanEdit("payments"), ssotPaymentController.RejectPayment)
 
 	// Mark legacy payment routes as deprecated by adding a redirect route
 	legacyPayments := router.Group("/payments")

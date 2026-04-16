@@ -62,7 +62,8 @@ func IsStaffRole(role string) bool {
 }
 
 func CanReviewPurchaseRequests(role string) bool {
-	return NormalizeRole(role) == RoleAdmin || IsFinanceTeamRole(role)
+	roleNorm := NormalizeRole(role)
+	return roleNorm == RoleAdmin || roleNorm == RoleDirector || IsFinanceTeamRole(roleNorm)
 }
 
 // CanViewAllTransactionData controls whether a role can browse requests from all users.

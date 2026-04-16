@@ -164,6 +164,10 @@ func (pc *ProductController) GetProducts(c *gin.Context) {
 		return
 	}
 
+	if err := services.PopulateProductBackorderMetrics(pc.DB, products); err != nil {
+		log.Printf("Warning: failed to populate product backorder metrics: %v", err)
+	}
+
 	// Calculate total pages
 	totalPages := int((total + int64(limit) - 1) / int64(limit))
 
@@ -190,6 +194,10 @@ func (pc *ProductController) GetProduct(c *gin.Context) {
 	if err := pc.DB.Preload("Category").Preload("WarehouseLocation").First(&product, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 		return
+	}
+
+	if err := services.PopulateSingleProductBackorderMetrics(pc.DB, &product); err != nil {
+		log.Printf("Warning: failed to populate backorder metrics for product %d: %v", product.ID, err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

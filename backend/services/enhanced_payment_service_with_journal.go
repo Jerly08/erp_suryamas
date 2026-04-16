@@ -605,6 +605,12 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		journalEntryID := uint(journalResponse.ID)
 		payment.JournalEntryID = &journalEntryID
 		payment.Status = models.PaymentStatusCompleted
+		now := time.Now()
+		payment.ApprovedBy = &approverUserID
+		payment.ApprovedAt = &now
+		payment.RejectedBy = nil
+		payment.RejectedAt = nil
+		payment.RejectionReason = ""
 
 		if err := tx.Save(&payment).Error; err != nil {
 			return fmt.Errorf("failed to update payment after approval: %w", err)
@@ -836,6 +842,12 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 			return fmt.Errorf("failed to apply draft allocations: %w", err)
 		}
 		payment.Status = models.PaymentStatusCompleted
+		now := time.Now()
+		payment.ApprovedBy = &approverUserID
+		payment.ApprovedAt = &now
+		payment.RejectedBy = nil
+		payment.RejectedAt = nil
+		payment.RejectionReason = ""
 
 		if err := tx.Save(&payment).Error; err != nil {
 			return fmt.Errorf("failed to finalize payment approval: %w", err)
@@ -869,6 +881,53 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		return nil, err
 	}
 	return response, nil
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) RejectPayment(paymentID uint, approverUserID uint, reason string) (*models.Payment, error) {
+	rejectionReason := strings.TrimSpace(reason)
+	if rejectionReason == "" {
+		return nil, fmt.Errorf("rejection reason is required")
+	}
+
+	var payment models.Payment
+	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&payment, paymentID).Error; err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
+
+		if payment.Status != models.PaymentStatusDraft {
+			return fmt.Errorf("payment is not in DRAFT status (current: %s)", payment.Status)
+		}
+
+		now := time.Now()
+		payment.Status = models.PaymentStatusRejected
+		payment.Reference = models.StripInternalPaymentReference(payment.Reference)
+		payment.ApprovedBy = nil
+		payment.ApprovedAt = nil
+		payment.RejectedBy = &approverUserID
+		payment.RejectedAt = &now
+		payment.RejectionReason = rejectionReason
+
+		if err := tx.Save(&payment).Error; err != nil {
+			return fmt.Errorf("failed to reject payment: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := eps.db.
+		Preload("Contact").
+		Preload("User").
+		Preload("Approver").
+		Preload("Rejector").
+		First(&payment, paymentID).Error; err != nil {
+		return nil, fmt.Errorf("failed to reload rejected payment: %w", err)
+	}
+
+	return &payment, nil
 }
 
 // UpdateDraftPayment allows modifying fields of a payment that is in DRAFT status without creating journals
@@ -1257,7 +1316,12 @@ func (eps *EnhancedPaymentServiceWithJournal) PreviewPaymentJournal(req *Payment
 func (eps *EnhancedPaymentServiceWithJournal) GetPaymentWithJournal(paymentID uint) (*PaymentWithJournalResponse, error) {
 	// Get payment with relations
 	var payment models.Payment
-	if err := eps.db.Preload("Contact").Preload("User").First(&payment, paymentID).Error; err != nil {
+	if err := eps.db.
+		Preload("Contact").
+		Preload("User").
+		Preload("Approver").
+		Preload("Rejector").
+		First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}
 

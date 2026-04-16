@@ -16,6 +16,10 @@ export interface Product {
   sale_price: number;
   pricing_tier?: string;
   stock: number;
+  pending_backorder_qty?: number;
+  fulfilled_backorder_qty?: number;
+  backorder_order_count?: number;
+  net_available_stock?: number;
   min_stock: number;
   max_stock: number;
   reorder_level: number;

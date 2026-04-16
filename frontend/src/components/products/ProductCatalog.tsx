@@ -594,9 +594,16 @@ const ProductCatalog: React.FC = () => {
                           Tidak Perlu Stok (Auto-Kit)
                         </Text>
                       ) : (
-                        <Text fontWeight="bold" color={product.stock <= (product.min_stock || 0) ? "red.500" : stockTextColor}>
-                          {product.stock} {product.unit}
-                        </Text>
+                        <Box>
+                          <Text fontWeight="bold" color={product.stock <= (product.min_stock || 0) ? "red.500" : stockTextColor}>
+                            {product.stock} {product.unit}
+                          </Text>
+                          {!!product.pending_backorder_qty && product.pending_backorder_qty > 0 && (
+                            <Text fontSize="xs" color="orange.500">
+                              BO {product.pending_backorder_qty} | Net {product.net_available_stock ?? product.stock - product.pending_backorder_qty}
+                            </Text>
+                          )}
+                        </Box>
                       )}
                     </Td>
                   )}
@@ -898,10 +905,22 @@ const ProductCatalog: React.FC = () => {
                   {hasInventory && (
                     <Box mb={4}>
                       <Text fontSize="lg" fontWeight="bold" mb={2} color={sectionTitleColor}>{t('products.details.inventory')}</Text>
-                      <Grid templateColumns="repeat(4, 1fr)" gap={4}>
+                      <Grid templateColumns="repeat(6, 1fr)" gap={4}>
                         <Box>
                           <Text fontWeight="semibold" color={labelColor}>{t('products.details.currentStock')}</Text>
                           <Text fontSize="md" fontWeight="bold" color={textColor}>{detailProduct.stock}</Text>
+                        </Box>
+                        <Box>
+                          <Text fontWeight="semibold" color={labelColor}>Pending Backorder</Text>
+                          <Text fontSize="md" color={detailProduct.pending_backorder_qty ? 'orange.500' : textColor}>
+                            {detailProduct.pending_backorder_qty || 0}
+                          </Text>
+                        </Box>
+                        <Box>
+                          <Text fontWeight="semibold" color={labelColor}>Net Available</Text>
+                          <Text fontSize="md" fontWeight="bold" color={textColor}>
+                            {detailProduct.net_available_stock ?? detailProduct.stock}
+                          </Text>
                         </Box>
                         <Box>
                           <Text fontWeight="semibold" color={labelColor}>{t('products.details.minStock')}</Text>
@@ -914,6 +933,10 @@ const ProductCatalog: React.FC = () => {
                         <Box>
                           <Text fontWeight="semibold" color={labelColor}>{t('products.details.reorderLevel')}</Text>
                           <Text fontSize="md" color={textColor}>{detailProduct.reorder_level}</Text>
+                        </Box>
+                        <Box>
+                          <Text fontWeight="semibold" color={labelColor}>Open Orders</Text>
+                          <Text fontSize="md" color={textColor}>{detailProduct.backorder_order_count || 0}</Text>
                         </Box>
                       </Grid>
                     </Box>

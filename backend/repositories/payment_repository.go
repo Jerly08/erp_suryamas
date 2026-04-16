@@ -19,14 +19,24 @@ func NewPaymentRepository(db *gorm.DB) *PaymentRepository {
 // FindAll retrieves all payments
 func (r *PaymentRepository) FindAll() ([]models.Payment, error) {
 	var payments []models.Payment
-	err := r.db.Preload("Contact").Preload("User").Find(&payments).Error
+	err := r.db.
+		Preload("Contact").
+		Preload("User").
+		Preload("Approver").
+		Preload("Rejector").
+		Find(&payments).Error
 	return payments, err
 }
 
 // FindByID retrieves payment by ID
 func (r *PaymentRepository) FindByID(id uint) (*models.Payment, error) {
 	var payment models.Payment
-	err := r.db.Preload("Contact").Preload("User").First(&payment, id).Error
+	err := r.db.
+		Preload("Contact").
+		Preload("User").
+		Preload("Approver").
+		Preload("Rejector").
+		First(&payment, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +45,12 @@ func (r *PaymentRepository) FindByID(id uint) (*models.Payment, error) {
 
 // FindWithFilter retrieves payments with filters
 func (r *PaymentRepository) FindWithFilter(filter PaymentFilter) (*PaymentResult, error) {
-	query := r.db.Model(&models.Payment{}).Preload("Contact").Preload("User")
+	query := r.db.
+		Model(&models.Payment{}).
+		Preload("Contact").
+		Preload("User").
+		Preload("Approver").
+		Preload("Rejector")
 
 	// Apply filters
 	if filter.ContactID > 0 {

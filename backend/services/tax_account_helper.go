@@ -123,6 +123,11 @@ func (h *TaxAccountHelper) GetWithholdingTax23Account(tx *gorm.DB) (*models.Acco
 	return h.getAccountByCode(tx, "1105-002")
 }
 
+// GetPPh23TaxCreditAccount returns the dedicated PPh23 tax credit reclass account.
+func (h *TaxAccountHelper) GetPPh23TaxCreditAccount(tx *gorm.DB) (*models.Account, error) {
+	return h.getAccountByCode(tx, "1105-004")
+}
+
 // GetWithholdingTax25Account returns the configured PPh 25 account or fallback.
 func (h *TaxAccountHelper) GetWithholdingTax25Account(tx *gorm.DB) (*models.Account, error) {
 	settings, err := h.loadFreshSettings(tx)
