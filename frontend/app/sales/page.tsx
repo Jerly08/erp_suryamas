@@ -11,6 +11,7 @@ import EnhancedSalesTable from "@/components/sales/EnhancedSalesTable";
 import EnhancedStatsCards from "@/components/sales/EnhancedStatsCards";
 import SalesForm from "@/components/sales/SalesForm";
 import PaymentForm from "@/components/sales/PaymentForm";
+import PPh23SettlementForm from "@/components/sales/PPh23SettlementForm";
 import InvoiceTypeManagement from "@/components/invoicetype/InvoiceTypeManagement";
 import salesService, { Sale, SalesFilter } from "@/services/salesService";
 import {
@@ -99,6 +100,11 @@ const SalesPageContent: React.FC = () => {
     isOpen: isPaymentOpen,
     onOpen: onPaymentOpen,
     onClose: onPaymentClose,
+  } = useDisclosure();
+  const {
+    isOpen: isPPh23Open,
+    onOpen: onPPh23Open,
+    onClose: onPPh23Close,
   } = useDisclosure();
   const {
     isOpen: isInvoiceTypesOpen,
@@ -233,6 +239,11 @@ const SalesPageContent: React.FC = () => {
   const handlePayment = (sale: Sale) => {
     setState((prev) => ({ ...prev, selectedSale: sale }));
     onPaymentOpen();
+  };
+
+  const handlePPh23Settlement = (sale: Sale) => {
+    setState((prev) => ({ ...prev, selectedSale: sale }));
+    onPPh23Open();
   };
 
   // Handle delete sale
@@ -400,6 +411,12 @@ const SalesPageContent: React.FC = () => {
   // Handle payment save
   const handlePaymentSave = () => {
     onPaymentClose();
+    loadSales();
+    loadSalesSummary();
+  };
+
+  const handlePPh23Save = () => {
+    onPPh23Close();
     loadSales();
     loadSalesSummary();
   };
@@ -681,6 +698,7 @@ const SalesPageContent: React.FC = () => {
               : undefined
           }
           onPayment={canEdit ? handlePayment : undefined}
+          onPPh23Settlement={canEdit ? handlePPh23Settlement : undefined}
           onDelete={canDelete ? handleDelete : undefined}
           onDuplicate={canCreate ? handleDuplicate : undefined}
           onDownloadInvoice={handleDownloadInvoice}
@@ -714,6 +732,13 @@ const SalesPageContent: React.FC = () => {
         isOpen={isPaymentOpen}
         onClose={onPaymentClose}
         onSave={handlePaymentSave}
+        sale={state.selectedSale}
+      />
+
+      <PPh23SettlementForm
+        isOpen={isPPh23Open}
+        onClose={onPPh23Close}
+        onSave={handlePPh23Save}
         sale={state.selectedSale}
       />
 

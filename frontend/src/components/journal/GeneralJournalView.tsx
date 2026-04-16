@@ -48,15 +48,19 @@ import ManualEntryForm from "./ManualEntryForm";
 import JournalDetailModal from "./JournalDetailModal";
 import ExportButton from "@/components/common/ExportButton";
 import { formatAccountingDate } from "@/utils/accountingDate";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   exportGeneralJournalToPDF,
   exportGeneralJournalToCSV,
 } from "@/utils/journalExport";
 
+type JournalEntryMode = "MANUAL" | "ADJUSTMENT";
+
 export default function GeneralJournalView() {
   const { t } = useTranslation();
   const { canCreate, canEdit, canDelete, canExport, canApprove } =
     useModulePermissions("journal");
+  const { user } = useAuth();
   const toast = useToast();
   const textColor = useColorModeValue("gray.800", "gray.100");
   const mutedTextColor = useColorModeValue("gray.500", "gray.400");
@@ -88,7 +92,11 @@ export default function GeneralJournalView() {
   const [entries, setEntries] = useState<SSOTJournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [entryMode, setEntryMode] = useState<JournalEntryMode>("MANUAL");
   const [selectedEntry, setSelectedEntry] = useState<
+    SSOTJournalEntry | undefined
+  >(undefined);
+  const [adjustmentBaseEntry, setAdjustmentBaseEntry] = useState<
     SSOTJournalEntry | undefined
   >(undefined);
 
@@ -111,6 +119,15 @@ export default function GeneralJournalView() {
   const [totalEntries, setTotalEntries] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const pageSize = 100;
+  const normalizedRole = String(user?.role || "").toLowerCase();
+  const isFinanceStaff = normalizedRole === "finance_staff";
+  const isFinanceManagerApprover =
+    normalizedRole === "finance_manager" ||
+    normalizedRole === "finance" ||
+    normalizedRole === "admin";
+  const canManageAdjustmentDraft = isFinanceStaff || normalizedRole === "admin";
+  const canCreateAdjustment = canCreate && canManageAdjustmentDraft;
+  const canCreateManualEntry = canCreate && !isFinanceStaff;
 
   const getExportEntries = useCallback(async () => {
     return ssotJournalService.getAllJournalEntries({
@@ -279,13 +296,29 @@ export default function GeneralJournalView() {
   };
 
   const handleEdit = (entry: SSOTJournalEntry) => {
+    setEntryMode(entry.source_type === "ADJUSTMENT" ? "ADJUSTMENT" : "MANUAL");
+    setAdjustmentBaseEntry(undefined);
     setSelectedEntry(entry);
     setShowCreateForm(true);
   };
 
-  const handleView = (entry: SSOTJournalEntry) => {
+  const handleCreateAdjustment = (entry: SSOTJournalEntry) => {
+    setEntryMode("ADJUSTMENT");
+    setSelectedEntry(undefined);
+    setAdjustmentBaseEntry(entry);
+    setShowCreateForm(true);
+  };
+
+  const handleView = async (entry: SSOTJournalEntry) => {
     setViewEntry(entry);
     setIsViewModalOpen(true);
+
+    try {
+      const fullEntry = await ssotJournalService.getJournalEntry(entry.id);
+      setViewEntry(fullEntry);
+    } catch (error) {
+      console.error("Failed to fetch journal detail", error);
+    }
   };
 
   const formatCurrency = (val: number) => {
@@ -333,14 +366,20 @@ export default function GeneralJournalView() {
         <HStack mb={4} justify="space-between">
           <Heading size="md" color={textColor}>
             {selectedEntry
-              ? t("journal.editJournalEntry")
-              : t("journal.createManualEntry")}
+              ? entryMode === "ADJUSTMENT"
+                ? t("journal.editAdjustmentEntry")
+                : t("journal.editJournalEntry")
+              : entryMode === "ADJUSTMENT"
+                ? t("journal.createAdjustment")
+                : t("journal.createManualEntry")}
           </Heading>
           <Button
             variant="ghost"
             onClick={() => {
               setShowCreateForm(false);
               setSelectedEntry(undefined);
+              setAdjustmentBaseEntry(undefined);
+              setEntryMode("MANUAL");
             }}
           >
             {t("journal.backToList")}
@@ -348,14 +387,20 @@ export default function GeneralJournalView() {
         </HStack>
         <ManualEntryForm
           initialData={initialWithSafeRef}
+          baseEntry={adjustmentBaseEntry}
+          entryType={entryMode}
           onSuccess={() => {
             setShowCreateForm(false);
             setSelectedEntry(undefined);
+            setAdjustmentBaseEntry(undefined);
+            setEntryMode("MANUAL");
             fetchEntries();
           }}
           onCancel={() => {
             setShowCreateForm(false);
             setSelectedEntry(undefined);
+            setAdjustmentBaseEntry(undefined);
+            setEntryMode("MANUAL");
           }}
         />
       </Box>
@@ -371,7 +416,14 @@ export default function GeneralJournalView() {
       />
 
       <VStack spacing={4} align="stretch">
-        {canCreate && !canApprove && (
+        {canCreateAdjustment && (
+          <Alert status="info" borderRadius="md">
+            <AlertIcon />
+            {t("journal.adjustmentActionInfo")}
+          </Alert>
+        )}
+
+        {canCreate && !canApprove && !canCreateAdjustment && (
           <Alert status="info" borderRadius="md">
             <AlertIcon />
             Jurnal manual yang Anda buat akan disimpan sebagai draft dan perlu
@@ -454,11 +506,12 @@ export default function GeneralJournalView() {
                 size="sm"
               />
             )}
-            {canCreate && (
+            {canCreateManualEntry && (
               <Button
                 colorScheme="blue"
                 leftIcon={<FiPlus />}
                 onClick={() => {
+                  setEntryMode("MANUAL");
                   setSelectedEntry(undefined);
                   setShowCreateForm(true);
                 }}
@@ -658,17 +711,25 @@ export default function GeneralJournalView() {
                           }
                         >
                           {index === 0 && (
-                            <Badge
-                              colorScheme={
-                                entry.status === "POSTED"
-                                  ? "green"
-                                  : entry.status === "DRAFT"
-                                    ? "yellow"
-                                    : "red"
-                              }
-                            >
-                              {entry.status}
-                            </Badge>
+                            <VStack align="start" spacing={1}>
+                              <Badge
+                                colorScheme={
+                                  entry.status === "POSTED"
+                                    ? "green"
+                                    : entry.status === "DRAFT"
+                                      ? "yellow"
+                                      : "red"
+                                }
+                              >
+                                {entry.status}
+                              </Badge>
+                              {entry.source_type === "ADJUSTMENT" &&
+                                entry.status === "DRAFT" && (
+                                  <Text fontSize="xs" color={mutedTextColor}>
+                                    {t("journal.adjustmentPendingApproval")}
+                                  </Text>
+                                )}
+                            </VStack>
                           )}
                         </Td>
 
@@ -699,8 +760,21 @@ export default function GeneralJournalView() {
                                 >
                                   {t("journal.viewDetails")}
                                 </MenuItem>
-                                {entry.status === "DRAFT" && canApprove && (
-                                  <>
+                                {entry.status === "DRAFT" &&
+                                  canApprove &&
+                                  entry.source_type === "ADJUSTMENT" &&
+                                  isFinanceManagerApprover && (
+                                    <MenuItem
+                                      icon={<FiCheckCircle />}
+                                      onClick={() => handlePost(entry.id)}
+                                      _hover={{ bg: menuHoverBg }}
+                                    >
+                                      {t("journal.approveAdjustment")}
+                                    </MenuItem>
+                                  )}
+                                {entry.status === "DRAFT" &&
+                                  canApprove &&
+                                  entry.source_type !== "ADJUSTMENT" && (
                                     <MenuItem
                                       icon={<FiCheckCircle />}
                                       onClick={() => handlePost(entry.id)}
@@ -708,10 +782,11 @@ export default function GeneralJournalView() {
                                     >
                                       {t("journal.postVerify")}
                                     </MenuItem>
-                                  </>
-                                )}
-                                {entry.status === "DRAFT" && canEdit && (
-                                  <>
+                                  )}
+                                {entry.status === "DRAFT" &&
+                                  canEdit &&
+                                  (entry.source_type !== "ADJUSTMENT" ||
+                                    canManageAdjustmentDraft) && (
                                     <MenuItem
                                       icon={<FiEdit2 />}
                                       onClick={() => handleEdit(entry)}
@@ -719,18 +794,33 @@ export default function GeneralJournalView() {
                                     >
                                       {t("journal.edit")}
                                     </MenuItem>
-                                  </>
-                                )}
-                                {entry.status === "DRAFT" && canDelete && (
-                                  <MenuItem
-                                    icon={<FiTrash2 />}
-                                    onClick={() => handleDelete(entry.id)}
-                                    color="red.500"
-                                    _hover={{ bg: menuHoverBg }}
-                                  >
-                                    {t("journal.delete")}
-                                  </MenuItem>
-                                )}
+                                  )}
+                                {entry.status === "DRAFT" &&
+                                  canDelete &&
+                                  (entry.source_type !== "ADJUSTMENT" ||
+                                    canManageAdjustmentDraft) && (
+                                    <MenuItem
+                                      icon={<FiTrash2 />}
+                                      onClick={() => handleDelete(entry.id)}
+                                      color="red.500"
+                                      _hover={{ bg: menuHoverBg }}
+                                    >
+                                      {t("journal.delete")}
+                                    </MenuItem>
+                                  )}
+                                {entry.status === "POSTED" &&
+                                  canCreateAdjustment &&
+                                  !entry.reversed_by &&
+                                  entry.source_type !== "REVERSAL" &&
+                                  entry.source_type !== "ADJUSTMENT" && (
+                                    <MenuItem
+                                      icon={<FiPlus />}
+                                      onClick={() => handleCreateAdjustment(entry)}
+                                      _hover={{ bg: menuHoverBg }}
+                                    >
+                                      {t("journal.createAdjustment")}
+                                    </MenuItem>
+                                  )}
                                 {entry.status === "POSTED" && canApprove && (
                                   <Tooltip
                                     label="Membuat jurnal pembalik untuk membatalkan efek saldo dari jurnal ini. Histori jurnal asli tetap disimpan."

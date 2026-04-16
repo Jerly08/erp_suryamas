@@ -40,21 +40,46 @@ export default function JournalDetailModal({
 }: JournalDetailModalProps) {
   if (!entry) return null;
 
+  const formatRoleLabel = (role?: string) => {
+    switch (String(role || "").toLowerCase()) {
+      case "finance_staff":
+        return "Finance Staff";
+      case "finance_manager":
+      case "finance":
+        return "Finance Manager";
+      case "admin":
+        return "Admin";
+      default:
+        return "";
+    }
+  };
+
+  const sourceLabel =
+    entry.source_type === "ADJUSTMENT"
+      ? "Jurnal Adjustment"
+      : entry.source_type || "MANUAL";
+  const adjustedEntryLabel = entry.adjusted_entry
+    ? `${entry.adjusted_entry.entry_number}${entry.adjusted_entry.reference ? ` • ${entry.adjusted_entry.reference}` : ""}`
+    : entry.adjustment_of
+      ? `Journal #${entry.adjustment_of}`
+      : "";
+  const relatedAdjustments = entry.adjustment_entries || [];
+
   const createdByLabel = entry.creator
-    ? getUserDisplayName(entry.creator, {
+    ? `${getUserDisplayName(entry.creator, {
         fallback: `User #${entry.created_by}`,
         allowRoleFallback: false,
-      })
+      })}${formatRoleLabel(entry.creator.role) ? ` (${formatRoleLabel(entry.creator.role)})` : ""}`
     : `User #${entry.created_by}`;
 
   const postedByLabel =
     entry.posted_by == null
       ? "-"
       : entry.poster
-        ? getUserDisplayName(entry.poster, {
+        ? `${getUserDisplayName(entry.poster, {
             fallback: `User #${entry.posted_by}`,
             allowRoleFallback: false,
-          })
+          })}${formatRoleLabel(entry.poster.role) ? ` (${formatRoleLabel(entry.poster.role)})` : ""}`
         : `User #${entry.posted_by}`;
 
   const formatCurrency = (val: number) => {
@@ -133,7 +158,7 @@ export default function JournalDetailModal({
                   <Text fontSize="xs" color="gray.500">
                     Source
                   </Text>
-                  <Text>{entry.source_type || "MANUAL"}</Text>
+                  <Text>{sourceLabel}</Text>
                 </GridItem>
                 <GridItem colSpan={2}>
                   <Text fontSize="xs" color="gray.500">
@@ -141,6 +166,88 @@ export default function JournalDetailModal({
                   </Text>
                   <Text>{entry.description}</Text>
                 </GridItem>
+                {entry.adjustment_of && (
+                  <GridItem colSpan={2}>
+                    <Text fontSize="xs" color="gray.500">
+                      Adjustment Of
+                    </Text>
+                    <Box
+                      mt={1}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="orange.100"
+                    >
+                      <Text fontWeight="medium">{adjustedEntryLabel}</Text>
+                    </Box>
+                  </GridItem>
+                )}
+                {entry.source_type === "ADJUSTMENT" && (
+                  <GridItem colSpan={2}>
+                    <Text fontSize="xs" color="gray.500">
+                      Approval Flow
+                    </Text>
+                    <Box
+                      mt={1}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="orange.100"
+                    >
+                      <Text>
+                        Staff finance membuat draft adjustment dan finance
+                        manager melakukan approve/posting jurnal.
+                      </Text>
+                    </Box>
+                  </GridItem>
+                )}
+                {relatedAdjustments.length > 0 && (
+                  <GridItem colSpan={2}>
+                    <Text fontSize="xs" color="gray.500">
+                      Related Adjustments
+                    </Text>
+                    <VStack
+                      mt={1}
+                      spacing={2}
+                      align="stretch"
+                      bg="orange.50"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="orange.100"
+                      p={3}
+                    >
+                      {relatedAdjustments.map((adjustment) => (
+                        <HStack
+                          key={adjustment.id}
+                          justify="space-between"
+                          align="start"
+                        >
+                          <Box>
+                            <Text fontWeight="medium">
+                              {adjustment.entry_number}
+                            </Text>
+                            <Text fontSize="sm" color="gray.600">
+                              {adjustment.description}
+                            </Text>
+                          </Box>
+                          <Badge
+                            colorScheme={
+                              adjustment.status === "POSTED"
+                                ? "green"
+                                : adjustment.status === "DRAFT"
+                                  ? "yellow"
+                                  : "red"
+                            }
+                          >
+                            {adjustment.status}
+                          </Badge>
+                        </HStack>
+                      ))}
+                    </VStack>
+                  </GridItem>
+                )}
                 {entry.notes && (
                   <GridItem colSpan={2}>
                     <Text fontSize="xs" color="gray.500">
@@ -169,11 +276,12 @@ export default function JournalDetailModal({
                 {entry.posted_by && (
                   <GridItem>
                     <Text fontSize="xs" color="gray.500">
-                      Posted By
+                      {entry.source_type === "ADJUSTMENT"
+                        ? "Approved / Posted By"
+                        : "Posted By"}
                     </Text>
                     <Text>
-                      {postedByLabel}{" "}
-                      at {formatDateTime(entry.posted_at || "")}
+                      {postedByLabel} at {formatDateTime(entry.posted_at || "")}
                     </Text>
                   </GridItem>
                 )}

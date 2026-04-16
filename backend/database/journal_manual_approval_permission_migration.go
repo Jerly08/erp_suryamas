@@ -9,7 +9,10 @@ import (
 )
 
 // JournalManualApprovalPermissionMigration aligns journal access with the
-// manual-journal workflow: employees can submit drafts, while finance approves/posts.
+// latest workflow:
+// - employees can still submit manual journal drafts
+// - finance staff prepares draft journal adjustments
+// - finance manager/finance approves and posts journal drafts/adjustments
 func JournalManualApprovalPermissionMigration(db *gorm.DB) {
 	if db == nil {
 		return
@@ -19,6 +22,7 @@ func JournalManualApprovalPermissionMigration(db *gorm.DB) {
 		"employee":        models.GetDefaultPermissions("employee")["journal"],
 		"finance":         models.GetDefaultPermissions("finance")["journal"],
 		"finance_manager": models.GetDefaultPermissions("finance_manager")["journal"],
+		"finance_staff":   models.GetDefaultPermissions("finance_staff")["journal"],
 		"admin":           models.GetDefaultPermissions("admin")["journal"],
 		"director":        models.GetDefaultPermissions("director")["journal"],
 	}

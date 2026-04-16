@@ -690,6 +690,65 @@ func (sc *SalesController) CreateSalePayment(c *gin.Context) {
 	})
 }
 
+// SettleSalePPh23 posts the deferred PPh23 reclass journal after the invoice is fully paid.
+func (sc *SalesController) SettleSalePPh23(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.SendValidationError(c, "Invalid sale ID", map[string]string{
+			"id": "Sale ID must be a valid positive number",
+		})
+		return
+	}
+
+	var request models.SalePPh23SettlementRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		utils.SendValidationError(c, "Invalid PPh23 posting data", map[string]string{
+			"date": err.Error(),
+		})
+		return
+	}
+
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		utils.SendUnauthorized(c, "User not authenticated")
+		return
+	}
+
+	userID, ok := userIDValue.(uint)
+	if !ok {
+		utils.SendUnauthorized(c, "Invalid user authentication")
+		return
+	}
+
+	sale, err := sc.salesServiceV2.SettlePPh23(uint(id), request, userID)
+	if err != nil {
+		errorMsg := strings.TrimSpace(err.Error())
+
+		switch {
+		case strings.Contains(errorMsg, "sale not found"):
+			utils.SendNotFound(c, "Sale not found")
+		case strings.Contains(errorMsg, "CLOSED_PERIOD:"):
+			utils.SendBusinessRuleError(c, "Tanggal posting berada di periode yang sudah ditutup", map[string]interface{}{
+				"details": errorMsg,
+			})
+		case strings.Contains(errorMsg, "tidak memiliki PPh23"),
+			strings.Contains(errorMsg, "baru bisa dipost"),
+			strings.Contains(errorMsg, "sudah pernah dipost"),
+			strings.Contains(errorMsg, "dibatalkan"),
+			strings.Contains(errorMsg, "akun sumber PPh23"),
+			strings.Contains(errorMsg, "Kredit Pajak PPh23"):
+			utils.SendBusinessRuleError(c, "Posting PPh23 tidak dapat diproses", map[string]interface{}{
+				"details": errorMsg,
+			})
+		default:
+			utils.SendInternalError(c, "Failed to post PPh23", errorMsg)
+		}
+		return
+	}
+
+	utils.SendSuccess(c, "PPh23 posted successfully", sale)
+}
+
 // Integrated Payment Management - uses Payment Service for comprehensive payment tracking
 
 // CreateIntegratedPayment creates payment via Payment Management for better tracking

@@ -59,6 +59,10 @@ export interface Sale {
   pph21_amount?: number;
   pph23_rate?: number;
   pph23_amount?: number;
+  pph23_settlement_date?: string;
+  pph23_settlement_reference?: string;
+  pph23_settlement_notes?: string;
+  pph23_settlement_journal_entry_id?: number;
   other_tax_deductions?: number;
   total_tax: number;
   tax: number; // Backend legacy field
@@ -109,6 +113,19 @@ export interface SaleItem {
   pph_amount: number;
   total_tax: number;
   final_amount: number;
+  available_quantity?: number;
+  fulfilled_quantity?: number;
+  backorder_quantity?: number;
+  estimated_unit_cost?: number;
+  estimated_cogs_amount?: number;
+  actual_cogs_amount?: number;
+  cogs_variance_amount?: number;
+  fulfillment_status?:
+    | "SERVICE"
+    | "IN_STOCK"
+    | "PARTIAL_BACKORDER"
+    | "BACKORDERED"
+    | "FULFILLED";
   revenue_account_id?: number;
   tax_account_id?: number;
 
@@ -311,6 +328,12 @@ export interface SalePaymentRequest {
   notes?: string;
 }
 
+export interface SalePPh23SettlementRequest {
+  date: string;
+  reference?: string;
+  notes?: string;
+}
+
 export interface IntegratedSalePaymentResponse {
   success: boolean;
   status: string;
@@ -486,6 +509,19 @@ class SalesService {
       backendData,
     );
     return response.data;
+  }
+
+  async settleSalePPh23(
+    saleId: number,
+    data: SalePPh23SettlementRequest,
+  ): Promise<Sale> {
+    const response = await api.post(
+      API_ENDPOINTS.SALES_PPH23_SETTLEMENT(saleId),
+      data,
+    );
+    return response.data && response.data.data
+      ? response.data.data
+      : response.data;
   }
 
   // NEW: Integrated Payment Management endpoint

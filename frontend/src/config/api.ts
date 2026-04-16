@@ -106,6 +106,8 @@ export const API_ENDPOINTS = {
   SALES_INVOICE: (id: number) => `/api/v1/sales/${id}/invoice`,
   SALES_CANCEL: (id: number) => `/api/v1/sales/${id}/cancel`,
   SALES_PAYMENTS: (id: number) => `/api/v1/sales/${id}/payments`,
+  SALES_PPH23_SETTLEMENT: (id: number) =>
+    `/api/v1/sales/${id}/pph23/settlement`,
   SALES_FOR_PAYMENT: (id: number) => `/api/v1/sales/${id}/for-payment`,
   SALES_INTEGRATED_PAYMENT: (id: number) =>
     `/api/v1/sales/${id}/integrated-payment`,
@@ -275,6 +277,7 @@ export const API_ENDPOINTS = {
       EXPENSE: "/api/v1/payments/ssot/expense",
       GET_BY_ID: (id: number) => `/api/v1/payments/ssot/${id}`,
       REVERSE: (id: number) => `/api/v1/payments/ssot/${id}/reverse`,
+      REJECT: (id: number) => `/api/v1/payments/ssot/${id}/reject`,
       PREVIEW_JOURNAL: "/api/v1/payments/ssot/preview-journal",
       BALANCE_UPDATES: (id: number) =>
         `/api/v1/payments/ssot/${id}/balance-updates`,

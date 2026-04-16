@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -358,7 +359,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 	}
 
 	// Check if there are any stock issues
-	if stockValidation.HasInsufficient {
+	if false && stockValidation.HasInsufficient {
 		// Build detailed error message
 		var insufficientItems []string
 		for _, item := range stockValidation.Items {
@@ -372,7 +373,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		return nil, fmt.Errorf("stock tidak mencukupi:\n%s", strings.Join(insufficientItems, "\n"))
 	}
 
-	if stockValidation.HasZeroStock {
+	if false && stockValidation.HasZeroStock {
 		// Find zero stock items
 		var zeroStockItems []string
 		for _, item := range stockValidation.Items {
@@ -386,9 +387,9 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 	}
 
 	// Log warnings for low stock (but allow creation)
-	if stockValidation.HasMinStockAlerts || stockValidation.HasReorderAlerts {
+	if stockValidation.HasInsufficient || stockValidation.HasZeroStock || stockValidation.HasMinStockAlerts || stockValidation.HasReorderAlerts {
 		for _, item := range stockValidation.Items {
-			if item.Warning != "" && item.IsSufficient {
+			if item.Warning != "" {
 				log.Printf("⚠️ Stock warning for %s: %s", item.ProductName, item.Warning)
 			}
 		}
@@ -504,6 +505,14 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			}
 		}
 
+		var product models.Product
+		if err := tx.First(&product, itemRequest.ProductID).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to load product %d: %v", itemRequest.ProductID, err)
+		}
+
+		fulfillmentSnapshot := buildSaleItemFulfillmentSnapshot(&product, int(itemRequest.Quantity), product.Stock)
+
 		item := models.SaleItem{
 			ProductID:        itemRequest.ProductID,
 			ProductName:      itemRequest.ProductName,
@@ -532,6 +541,8 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 
 		item.TotalTax = item.PPNAmount + item.PPhAmount
 		item.FinalAmount = item.LineTotal + item.PPNAmount - item.PPhAmount
+
+		applySaleItemFulfillmentSnapshot(&item, fulfillmentSnapshot)
 
 		subtotal += item.LineTotal
 		sale.SaleItems = append(sale.SaleItems, item)
@@ -922,6 +933,14 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				}
 			}
 
+			var product models.Product
+			if err := tx.First(&product, itemRequest.ProductID).Error; err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to load product %d: %v", itemRequest.ProductID, err)
+			}
+
+			fulfillmentSnapshot := buildSaleItemFulfillmentSnapshot(&product, int(itemRequest.Quantity), product.Stock)
+
 			item := models.SaleItem{
 				SaleID:           sale.ID,
 				ProductID:        itemRequest.ProductID,
@@ -955,6 +974,8 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 
 			item.TotalTax = item.PPNAmount + item.PPhAmount
 			item.FinalAmount = item.LineTotal + item.PPNAmount - item.PPhAmount
+
+			applySaleItemFulfillmentSnapshot(&item, fulfillmentSnapshot)
 
 			subtotal += item.LineTotal
 			sale.SaleItems = append(sale.SaleItems, item)
@@ -1165,10 +1186,50 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 		return nil, fmt.Errorf("only DRAFT or CONFIRMED sales can be invoiced (current status: %s)", sale.Status)
 	}
 
+	log.Printf("ðŸ” Recalculating fulfillment snapshot before invoice for Sale #%d", sale.ID)
+	remainingProductStock := make(map[uint]int)
+	for idx := range sale.SaleItems {
+		item := &sale.SaleItems[idx]
+
+		var product models.Product
+		if err := tx.First(&product, item.ProductID).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to load product %d: %v", item.ProductID, err)
+		}
+
+		if _, exists := remainingProductStock[product.ID]; !exists {
+			remainingProductStock[product.ID] = product.Stock
+		}
+
+		availableQty := item.Quantity
+		if !product.IsService && !product.IsAssembly {
+			availableQty = minInt(item.Quantity, remainingProductStock[product.ID])
+			remainingProductStock[product.ID] -= availableQty
+		}
+
+		snapshot := buildSaleItemFulfillmentSnapshot(&product, item.Quantity, availableQty)
+		applySaleItemFulfillmentSnapshot(item, snapshot)
+
+		if err := tx.Model(&models.SaleItem{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
+			"available_quantity":    item.AvailableQuantity,
+			"fulfilled_quantity":    item.FulfilledQuantity,
+			"backorder_quantity":    item.BackorderQuantity,
+			"estimated_unit_cost":   item.EstimatedUnitCost,
+			"estimated_cogs_amount": item.EstimatedCOGSAmount,
+			"actual_cogs_amount":    item.ActualCOGSAmount,
+			"cogs_variance_amount":  item.COGSVarianceAmount,
+			"fulfillment_status":    item.FulfillmentStatus,
+			"updated_at":            time.Now(),
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to refresh fulfillment snapshot for sale item %d: %v", item.ID, err)
+		}
+	}
+
 	// ✅ VALIDATE STOCK BEFORE INVOICE (Early Check)
 	// Prevent transaction rollback in the middle of journal creation
 	log.Printf("🔍 Validating stock availability before invoice for Sale #%d", sale.ID)
-	for _, item := range sale.SaleItems {
+	for _, item := range []models.SaleItem{} {
 		var product models.Product
 		if err := tx.First(&product, item.ProductID).Error; err != nil {
 			tx.Rollback()
@@ -1422,28 +1483,33 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 				continue
 			}
 
+			if item.AvailableQuantity <= 0 {
+				log.Printf("â„¹ï¸ Product %d (%s) has no stock to reduce on invoice; qty %d kept as backorder", product.ID, product.Name, item.BackorderQuantity)
+				continue
+			}
+
 			// Check stock availability BEFORE reducing
-			if product.Stock < item.Quantity {
+			if false && product.Stock < item.Quantity {
 				tx.Rollback()
 				return nil, fmt.Errorf("stock tidak cukup untuk product '%s'. Tersedia: %d, Diminta: %d",
 					product.Name, product.Stock, item.Quantity)
 			}
 
 			// Check if stock is zero
-			if product.Stock == 0 {
+			if false && product.Stock == 0 {
 				tx.Rollback()
 				return nil, fmt.Errorf("product '%s' habis (stock = 0), tidak bisa dijual", product.Name)
 			}
 
 			// Reduce stock
-			if err := s.stockService.ReduceStock(item.ProductID, item.Quantity, tx); err != nil {
+			if err := s.stockService.ReduceStock(item.ProductID, item.AvailableQuantity, tx); err != nil {
 				tx.Rollback()
 				return nil, fmt.Errorf("gagal mengurangi stock untuk product '%s': %v", product.Name, err)
 			}
 			affectedProductIDs[item.ProductID] = struct{}{}
 
 			log.Printf("✅ Stock reduced for product %d (%s): %d → %d",
-				product.ID, product.Name, product.Stock, product.Stock-item.Quantity)
+				product.ID, product.Name, product.Stock, product.Stock-item.AvailableQuantity)
 		}
 	}
 
@@ -1660,6 +1726,116 @@ func (s *SalesServiceV2) ProcessPayment(saleID uint, paymentRequest models.SaleP
 	}
 
 	return payment, nil
+}
+
+func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23SettlementRequest, userID uint) (*models.Sale, error) {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var sale models.Sale
+	if err := tx.First(&sale, saleID).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("sale not found")
+	}
+
+	if sale.Status == models.SaleStatusCancelled {
+		tx.Rollback()
+		return nil, fmt.Errorf("penjualan yang dibatalkan tidak bisa dipost PPh23")
+	}
+
+	if sale.PPh23Amount <= 0 {
+		tx.Rollback()
+		return nil, fmt.Errorf("invoice ini tidak memiliki PPh23 untuk dipost")
+	}
+
+	if sale.OutstandingAmount > 0.005 {
+		tx.Rollback()
+		return nil, fmt.Errorf("PPh23 baru bisa dipost setelah invoice lunas")
+	}
+
+	if sale.PPh23SettlementJournalEntryID != nil || sale.PPh23SettlementDate != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("PPh23 untuk invoice ini sudah pernah dipost")
+	}
+
+	taxHelper := NewTaxAccountHelper(tx)
+
+	pph23PrepaidAccount, err := taxHelper.GetWithholdingTax23Account(tx)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("akun sumber PPh23 tidak ditemukan: %v", err)
+	}
+
+	pph23CreditAccount, err := taxHelper.GetPPh23TaxCreditAccount(tx)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("akun Kredit Pajak PPh23 tidak ditemukan: %v", err)
+	}
+
+	referenceNumber := strings.TrimSpace(sale.InvoiceNumber)
+	if referenceNumber == "" {
+		referenceNumber = strings.TrimSpace(sale.Code)
+	}
+
+	journalReference := strings.TrimSpace(request.Reference)
+	if journalReference == "" {
+		journalReference = fmt.Sprintf("PPH23-%s", referenceNumber)
+	}
+
+	journalService := NewUnifiedJournalService(tx)
+	journalRequest := &JournalEntryRequest{
+		EntryDate:   request.Date,
+		Reference:   journalReference,
+		Description: fmt.Sprintf("Posting PPh23 Sales - %s", referenceNumber),
+		Notes:       strings.TrimSpace(request.Notes),
+		SourceType:  models.SSOTSourceTypeAdjustment,
+		SourceID:    uint64(sale.ID),
+		AutoPost:    true,
+		CreatedBy:   uint64(userID),
+		Lines: []JournalLineRequest{
+			{
+				AccountID:    uint64(pph23CreditAccount.ID),
+				DebitAmount:  decimal.NewFromFloat(sale.PPh23Amount),
+				CreditAmount: decimal.Zero,
+				Description:  fmt.Sprintf("Kredit Pajak PPh23 - %s", referenceNumber),
+			},
+			{
+				AccountID:    uint64(pph23PrepaidAccount.ID),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: decimal.NewFromFloat(sale.PPh23Amount),
+				Description:  fmt.Sprintf("Reclass PPh23 Dibayar Dimuka - %s", referenceNumber),
+			},
+		},
+	}
+
+	journalEntry, err := journalService.CreateJournalEntryWithTx(tx, journalRequest)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to create PPh23 journal: %v", err)
+	}
+
+	journalEntryID := uint(journalEntry.ID)
+	settlementDate := request.Date
+	sale.PPh23SettlementDate = &settlementDate
+	sale.PPh23SettlementReference = journalReference
+	sale.PPh23SettlementNotes = strings.TrimSpace(request.Notes)
+	sale.PPh23SettlementJournalEntryID = &journalEntryID
+	sale.PPh23SettlementUserID = &userID
+
+	if err := tx.Save(&sale).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to update sale PPh23 settlement: %v", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit PPh23 settlement: %v", err)
+	}
+
+	return s.GetSaleByID(saleID)
 }
 
 // CancelSale cancels a sale
@@ -2067,16 +2243,16 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 			// Explicit hard alert when stock is 0
 			result.HasZeroStock = true
 			if warning == "" {
-				warning = "Stok 0: produk tidak bisa dijual"
+				warning = "Stok 0: qty akan dicatat penuh sebagai backorder"
 			} else {
-				warning = "Stok 0: produk tidak bisa dijual; " + warning
+				warning = "Stok 0: qty akan dicatat penuh sebagai backorder; " + warning
 			}
 		}
 		if !isSufficient {
 			if warning == "" {
-				warning = fmt.Sprintf("Stock tidak cukup. Tersedia %d, diminta %d", available, reqQty)
+				warning = fmt.Sprintf("Stock tidak cukup. Tersedia %d, diminta %d. Selisih akan dicatat sebagai backorder", available, reqQty)
 			} else {
-				warning += fmt.Sprintf("; stok tidak cukup (tersedia %d, diminta %d)", available, reqQty)
+				warning += fmt.Sprintf("; stok tidak cukup (tersedia %d, diminta %d) dan selisih akan dicatat sebagai backorder", available, reqQty)
 			}
 			result.HasInsufficient = true
 		}

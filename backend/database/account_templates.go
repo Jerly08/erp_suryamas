@@ -31,6 +31,7 @@ func GetStandardCOA(companyType string) []models.Account {
 		{Code: "1105-001", Name: "PPH 21 DIBAYAR DIMUKA", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true},
 		{Code: "1105-002", Name: "PPH 23 DIBAYAR DIMUKA", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true},
 		{Code: "1105-003", Name: "PPH FINAL DIBAYAR DIMUKA", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true},
+		{Code: "1105-004", Name: "KREDIT PAJAK PPH 23", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true},
 
 		{Code: "1200", Name: "ASET TIDAK LANCAR", Type: models.AccountTypeAsset, Category: models.CategoryFixedAsset, Level: 2, IsHeader: true, IsActive: true},
 		{Code: "1201", Name: "ASET TETAP", Type: models.AccountTypeAsset, Category: models.CategoryFixedAsset, Level: 3, IsHeader: true, IsActive: true},

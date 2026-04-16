@@ -750,6 +750,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				// Payment management
 				sales.GET("/:id/payments", rbacMgr.RequireAnyPermission("sales:view", "payments:view"), salesController.GetSalePayments)
 				sales.POST("/:id/payments", rbacMgr.RequireAnyPermission("sales:edit", "payments:create"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.CreateSalePayment)
+				sales.POST("/:id/pph23/settlement", rbacMgr.RequireAnyPermission("sales:edit", "sales:approve"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.SettleSalePPh23)
 
 				// Integrated Payment Management routes
 				sales.GET("/:id/for-payment", rbacMgr.RequireAnyPermission("sales:view", "payments:view"), salesController.GetSaleForPayment)

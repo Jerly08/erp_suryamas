@@ -50,6 +50,9 @@ type SSOTJournalEntry struct {
 	ReversedFrom   *uint64 `json:"reversed_from" gorm:"index"` // Points to original entry
 	ReversalReason string  `json:"reversal_reason" gorm:"type:text"`
 
+	// Adjustment Information
+	AdjustmentOf *uint64 `json:"adjustment_of" gorm:"index"` // Points to original journal being adjusted
+
 	// Audit Fields
 	CreatedBy uint64     `json:"created_by" gorm:"not null;index"`
 	CreatedAt time.Time  `json:"created_at" gorm:"not null;default:CURRENT_TIMESTAMP"`
@@ -57,11 +60,13 @@ type SSOTJournalEntry struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty" gorm:"index"`
 
 	// Relations
-	Lines         []SSOTJournalLine `json:"lines,omitempty" gorm:"foreignKey:JournalID;constraint:OnDelete:CASCADE"`
-	Creator       *User             `json:"creator,omitempty" gorm:"foreignKey:CreatedBy"`
-	Poster        *User             `json:"poster,omitempty" gorm:"foreignKey:PostedBy"`
-	ReversalEntry *SSOTJournalEntry `json:"reversal_entry,omitempty" gorm:"foreignKey:ReversedBy"`
-	ReversedEntry *SSOTJournalEntry `json:"reversed_entry,omitempty" gorm:"foreignKey:ReversedFrom"`
+	Lines             []SSOTJournalLine  `json:"lines,omitempty" gorm:"foreignKey:JournalID;constraint:OnDelete:CASCADE"`
+	Creator           *User              `json:"creator,omitempty" gorm:"foreignKey:CreatedBy"`
+	Poster            *User              `json:"poster,omitempty" gorm:"foreignKey:PostedBy"`
+	ReversalEntry     *SSOTJournalEntry  `json:"reversal_entry,omitempty" gorm:"foreignKey:ReversedBy"`
+	ReversedEntry     *SSOTJournalEntry  `json:"reversed_entry,omitempty" gorm:"foreignKey:ReversedFrom"`
+	AdjustedEntry     *SSOTJournalEntry  `json:"adjusted_entry,omitempty" gorm:"foreignKey:AdjustmentOf;references:ID"`
+	AdjustmentEntries []SSOTJournalEntry `json:"adjustment_entries,omitempty" gorm:"foreignKey:AdjustmentOf;references:ID"`
 }
 
 // SSOTJournalLine represents individual debit/credit lines in a unified journal entry
@@ -173,20 +178,20 @@ const (
 
 // SSOT Constants for source types
 const (
-	SSOTSourceTypeSale         = "SALE"
-	SSOTSourceTypePurchase     = "PURCHASE"
-	SSOTSourceTypePayment      = "PAYMENT"
-	SSOTSourceTypeCashBank     = "CASH_BANK"
-	SSOTSourceTypeAsset        = "ASSET"
-	SSOTSourceTypeManual       = "MANUAL"
-	SSOTSourceTypeOpening      = "OPENING"
-	SSOTSourceTypeClosing      = "CLOSING"
-	SSOTSourceTypeAdjustment   = "ADJUSTMENT"
-	SSOTSourceTypeTransfer     = "TRANSFER"
-	SSOTSourceTypeDepreciation          = "DEPRECIATION"
-	SSOTSourceTypeReversal              = "REVERSAL"
-	SSOTSourceTypePrepaidAmortization   = "PREPAID_AMORTIZATION"
-	SSOTSourceTypePrepaidTermination    = "PREPAID_TERMINATION"
+	SSOTSourceTypeSale                = "SALE"
+	SSOTSourceTypePurchase            = "PURCHASE"
+	SSOTSourceTypePayment             = "PAYMENT"
+	SSOTSourceTypeCashBank            = "CASH_BANK"
+	SSOTSourceTypeAsset               = "ASSET"
+	SSOTSourceTypeManual              = "MANUAL"
+	SSOTSourceTypeOpening             = "OPENING"
+	SSOTSourceTypeClosing             = "CLOSING"
+	SSOTSourceTypeAdjustment          = "ADJUSTMENT"
+	SSOTSourceTypeTransfer            = "TRANSFER"
+	SSOTSourceTypeDepreciation        = "DEPRECIATION"
+	SSOTSourceTypeReversal            = "REVERSAL"
+	SSOTSourceTypePrepaidAmortization = "PREPAID_AMORTIZATION"
+	SSOTSourceTypePrepaidTermination  = "PREPAID_TERMINATION"
 )
 
 // SSOT Constants for event types

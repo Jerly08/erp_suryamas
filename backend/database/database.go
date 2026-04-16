@@ -669,6 +669,7 @@ func AutoMigrate(db *gorm.DB) {
 		// Sales
 		&models.Sale{},
 		&models.SaleItem{},
+		&models.SaleBackorderAllocation{},
 		&models.SalePayment{},
 		&models.SaleReturn{},
 		&models.SaleReturnItem{},
@@ -904,6 +905,7 @@ func EnsureSSOTTables(db *gorm.DB) {
 			reversed_by    BIGINT,
 			reversed_from  BIGINT,
 			reversal_reason TEXT,
+			adjustment_of  BIGINT,
 			created_by     BIGINT NOT NULL,
 			created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -921,8 +923,13 @@ func EnsureSSOTTables(db *gorm.DB) {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='project_id') THEN
 				ALTER TABLE unified_journal_ledger ADD COLUMN project_id BIGINT;
 			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='adjustment_of') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN adjustment_of BIGINT;
+			END IF;
 		END $$;
 	`)
+
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_unified_journal_adjustment_of ON unified_journal_ledger(adjustment_of);`)
 
 	// unified_journal_lines
 	db.Exec(`

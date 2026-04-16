@@ -73,7 +73,20 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		// Finance and Finance Manager have full access to financial modules
 		financialModules := []string{"accounts", "payments", "cash_bank", "sales", "purchases", "journal", "purchase_requests", "projects", "boms", "prepaid_expenses"}
 		for _, module := range modules {
-			if contains(financialModules, module) {
+			if module == "journal" {
+				// SOP jurnal adjustment:
+				// finance manager/finance focuses on review + approval/posting,
+				// while draft creation is handled by finance staff.
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: true,
+					CanExport:  true,
+					CanMenu:    true,
+				}
+			} else if contains(financialModules, module) {
 				permissions[module] = &ModulePermission{
 					CanView:    true,
 					CanCreate:  true,
@@ -122,6 +135,18 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		viewOnlyMenuModules := []string{"accounts", "reports", "projects", "boms"}
 		for _, module := range modules {
 			switch {
+			case module == "journal":
+				// SOP jurnal adjustment:
+				// finance staff prepares the draft adjustment, but cannot approve/post it.
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  true,
+					CanEdit:    true,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  true,
+					CanMenu:    true,
+				}
 			case contains(operationalModules, module):
 				permissions[module] = &ModulePermission{
 					CanView:    true,

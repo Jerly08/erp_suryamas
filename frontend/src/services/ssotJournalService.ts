@@ -19,21 +19,29 @@ export interface SSOTJournalEntry {
   posted_by?: number;
   posted_at?: string;
   reversed_by?: number;
+  reversed_from?: number;
+  adjustment_of?: number;
   reversed_at?: string;
   created_at: string;
   updated_at: string;
   lines?: SSOTJournalLine[];
+  adjusted_entry?: SSOTJournalEntry;
+  adjustment_entries?: SSOTJournalEntry[];
+  reversed_entry?: SSOTJournalEntry;
+  reversal_entry?: SSOTJournalEntry;
   creator?: {
     id: number;
     username: string;
     first_name: string;
     last_name: string;
+    role?: string;
   };
   poster?: {
     id: number;
     username: string;
     first_name: string;
     last_name: string;
+    role?: string;
   };
 }
 
@@ -62,6 +70,8 @@ export interface CreateJournalRequest {
   description: string;
   reference?: string;
   notes?: string;
+  source_type?: string;
+  adjustment_of?: number;
   lines: Array<{
     account_id: number;
     description: string;

@@ -7,6 +7,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import UnifiedLayout from "@/components/layout/UnifiedLayout";
 import salesService, { Sale } from "@/services/salesService";
 import PaymentForm from "@/components/sales/PaymentForm";
+import PPh23SettlementForm from "@/components/sales/PPh23SettlementForm";
 import {
   Box,
   Heading,
@@ -60,6 +61,11 @@ const SaleDetailPage: React.FC = () => {
     isOpen: isPaymentOpen,
     onOpen: onPaymentOpen,
     onClose: onPaymentClose,
+  } = useDisclosure();
+  const {
+    isOpen: isPPh23Open,
+    onOpen: onPPh23Open,
+    onClose: onPPh23Close,
   } = useDisclosure();
 
   const [sale, setSale] = useState<Sale | null>(null);
@@ -180,7 +186,41 @@ const SaleDetailPage: React.FC = () => {
     loadSale(); // Reload to get updated payment status
   };
 
+  const handlePPh23Save = () => {
+    onPPh23Close();
+    loadSale();
+  };
+
   const displayStatus = sale?.settlement_status || sale?.status || "DRAFT";
+  const canPostPPh23 =
+    !!sale &&
+    (sale.pph23_amount || 0) > 0 &&
+    (sale.outstanding_amount || 0) <= 0.005 &&
+    !sale.pph23_settlement_date &&
+    sale.status !== "CANCELLED";
+  const pph23PostingStatus = !sale
+    ? "-"
+    : sale.pph23_settlement_date
+      ? `Sudah dipost ${salesService.formatDate(sale.pph23_settlement_date)}`
+      : (sale.pph23_amount || 0) <= 0
+        ? "Tidak ada PPh23"
+        : (sale.outstanding_amount || 0) > 0.005
+          ? "Menunggu pelunasan invoice"
+          : "Siap dipost";
+  const saleItems = sale?.sale_items || [];
+  const pendingBackorderQty = saleItems.reduce(
+    (sum, item) => sum + (item.backorder_quantity || 0),
+    0,
+  );
+  const fulfilledBackorderQty = saleItems.reduce(
+    (sum, item) =>
+      sum +
+      Math.max(
+        (item.fulfilled_quantity || 0) - (item.available_quantity || 0),
+        0,
+      ),
+    0,
+  );
 
   // Get status color
   const getStatusColor = (status: string) => {
@@ -312,6 +352,11 @@ const SaleDetailPage: React.FC = () => {
                     {t("sales.detail.recordPayment")}
                   </MenuItem>
                 )}
+                {canPostPPh23 && (
+                  <MenuItem icon={<FiCheck />} onClick={onPPh23Open}>
+                    Bayar PPh23
+                  </MenuItem>
+                )}
                 <MenuItem
                   icon={<FiEdit />}
                   onClick={() => router.push(`/sales?edit=${sale.id}`)}
@@ -421,6 +466,18 @@ const SaleDetailPage: React.FC = () => {
             <Heading size="md">{t("sales.detail.saleItems")}</Heading>
           </CardHeader>
           <CardBody>
+            {(pendingBackorderQty > 0 || fulfilledBackorderQty > 0) && (
+              <Alert
+                status={pendingBackorderQty > 0 ? "warning" : "success"}
+                mb={4}
+                borderRadius="md"
+              >
+                <AlertIcon />
+                {pendingBackorderQty > 0
+                  ? `${pendingBackorderQty} qty masih backorder. ${fulfilledBackorderQty} qty backorder sudah dipenuhi.`
+                  : `${fulfilledBackorderQty} qty backorder sudah dipenuhi oleh purchase berikutnya.`}
+              </Alert>
+            )}
             <TableContainer>
               <Table variant="simple">
                 <Thead>
@@ -428,6 +485,7 @@ const SaleDetailPage: React.FC = () => {
                     <Th>{t("sales.detail.product")}</Th>
                     <Th>{t("sales.detail.description")}</Th>
                     <Th isNumeric>{t("sales.detail.quantity")}</Th>
+                    <Th>Fulfillment</Th>
                     <Th isNumeric>{t("sales.detail.unitPrice")}</Th>
                     <Th isNumeric>{t("sales.detail.discount")}</Th>
                     <Th isNumeric>{t("sales.detail.total")}</Th>
@@ -445,6 +503,31 @@ const SaleDetailPage: React.FC = () => {
                         {item.description || t("sales.detail.noInvoiceNumber")}
                       </Td>
                       <Td isNumeric>{item.quantity || 0}</Td>
+                      <Td>
+                        <VStack align="start" spacing={1}>
+                          <Badge
+                            colorScheme={
+                              item.backorder_quantity &&
+                              item.backorder_quantity > 0
+                                ? "orange"
+                                : item.fulfillment_status === "FULFILLED"
+                                  ? "green"
+                                  : "green"
+                            }
+                            variant="subtle"
+                          >
+                            {item.backorder_quantity &&
+                            item.backorder_quantity > 0
+                              ? `${item.backorder_quantity} backorder`
+                              : item.fulfillment_status === "FULFILLED"
+                                ? "Backorder selesai"
+                                : "Ready stock"}
+                          </Badge>
+                          <Text fontSize="xs" color="gray.500">
+                            {`Available ${item.available_quantity || 0} | Fulfilled ${item.fulfilled_quantity || 0}`}
+                          </Text>
+                        </VStack>
+                      </Td>
                       <Td isNumeric>
                         {salesService.formatCurrency(item.unit_price || 0)}
                       </Td>
@@ -548,6 +631,33 @@ const SaleDetailPage: React.FC = () => {
                 </Flex>
               )}
 
+              {(sale.pph23_amount || 0) > 0 && (
+                <Flex justify="space-between">
+                  <Text color="orange.500">Status Posting PPh23:</Text>
+                  <Text fontWeight="medium" color="orange.500">
+                    {pph23PostingStatus}
+                  </Text>
+                </Flex>
+              )}
+
+              {!!sale.pph23_settlement_reference && (
+                <Flex justify="space-between" gap={4}>
+                  <Text color="orange.500">Referensi PPh23:</Text>
+                  <Text fontWeight="medium" color="orange.500" textAlign="end">
+                    {sale.pph23_settlement_reference}
+                  </Text>
+                </Flex>
+              )}
+
+              {!!sale.pph23_settlement_notes && (
+                <Flex justify="space-between" gap={4}>
+                  <Text color="orange.500">Catatan Posting PPh23:</Text>
+                  <Text fontWeight="medium" color="orange.500" textAlign="end">
+                    {sale.pph23_settlement_notes}
+                  </Text>
+                </Flex>
+              )}
+
               {/* Other Tax Deductions - only show if > 0 */}
               {(sale.other_tax_deductions || 0) > 0 && (
                 <Flex justify="space-between">
@@ -633,6 +743,12 @@ const SaleDetailPage: React.FC = () => {
         isOpen={isPaymentOpen}
         onClose={onPaymentClose}
         onSave={handlePaymentSave}
+        sale={sale}
+      />
+      <PPh23SettlementForm
+        isOpen={isPPh23Open}
+        onClose={onPPh23Close}
+        onSave={handlePPh23Save}
         sale={sale}
       />
     </UnifiedLayout>

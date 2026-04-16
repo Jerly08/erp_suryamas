@@ -49,29 +49,34 @@ type Sale struct {
 	TotalTaxAdditions float64 `json:"total_tax_additions" gorm:"type:decimal(15,2);default:0"` // Total penambahan
 
 	// Tax deductions (Pemotongan) - PPh, etc
-	PPh21Rate          float64        `json:"pph21_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 21 percentage
-	PPh21Amount        float64        `json:"pph21_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 21 amount
-	PPh23Rate          float64        `json:"pph23_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 23 percentage
-	PPh23Amount        float64        `json:"pph23_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 23 amount
-	OtherTaxDeductions float64        `json:"other_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Other tax deductions
-	TotalTaxDeductions float64        `json:"total_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Total pemotongan
-	PaymentTerms       string         `json:"payment_terms" gorm:"size:50"`
-	PaymentMethod      string         `json:"payment_method" gorm:"size:50"`
-	PaymentMethodType  string         `json:"payment_method_type" gorm:"size:20"` // CASH, BANK, CREDIT
-	CashBankID         *uint          `json:"cash_bank_id" gorm:"index"`
-	ShippingMethod     string         `json:"shipping_method" gorm:"size:50"`
-	ShippingCost       float64        `json:"shipping_cost" gorm:"type:decimal(15,2);default:0"`
-	ShippingTaxable    bool           `json:"shipping_taxable" gorm:"default:false"`
-	BillingAddress     string         `json:"billing_address" gorm:"type:text"`
-	ShippingAddress    string         `json:"shipping_address" gorm:"type:text"`
-	Status             string         `json:"status" gorm:"size:20"` // DRAFT, PENDING, CONFIRMED, CANCELLED
-	SettlementStatus   string         `json:"settlement_status" gorm:"-"`
-	Notes              string         `json:"notes" gorm:"type:text"`
-	InternalNotes      string         `json:"internal_notes" gorm:"type:text"`
-	Reference          string         `json:"reference" gorm:"size:100"`
-	CreatedAt          time.Time      `json:"created_at"`
-	UpdatedAt          time.Time      `json:"updated_at"`
-	DeletedAt          gorm.DeletedAt `json:"-" gorm:"index"`
+	PPh21Rate                     float64        `json:"pph21_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 21 percentage
+	PPh21Amount                   float64        `json:"pph21_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 21 amount
+	PPh23Rate                     float64        `json:"pph23_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 23 percentage
+	PPh23Amount                   float64        `json:"pph23_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 23 amount
+	OtherTaxDeductions            float64        `json:"other_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Other tax deductions
+	TotalTaxDeductions            float64        `json:"total_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Total pemotongan
+	PPh23SettlementDate           *time.Time     `json:"pph23_settlement_date" gorm:"index"`
+	PPh23SettlementReference      string         `json:"pph23_settlement_reference" gorm:"size:100"`
+	PPh23SettlementNotes          string         `json:"pph23_settlement_notes" gorm:"type:text"`
+	PPh23SettlementJournalEntryID *uint          `json:"pph23_settlement_journal_entry_id" gorm:"index"`
+	PPh23SettlementUserID         *uint          `json:"pph23_settlement_user_id" gorm:"index"`
+	PaymentTerms                  string         `json:"payment_terms" gorm:"size:50"`
+	PaymentMethod                 string         `json:"payment_method" gorm:"size:50"`
+	PaymentMethodType             string         `json:"payment_method_type" gorm:"size:20"` // CASH, BANK, CREDIT
+	CashBankID                    *uint          `json:"cash_bank_id" gorm:"index"`
+	ShippingMethod                string         `json:"shipping_method" gorm:"size:50"`
+	ShippingCost                  float64        `json:"shipping_cost" gorm:"type:decimal(15,2);default:0"`
+	ShippingTaxable               bool           `json:"shipping_taxable" gorm:"default:false"`
+	BillingAddress                string         `json:"billing_address" gorm:"type:text"`
+	ShippingAddress               string         `json:"shipping_address" gorm:"type:text"`
+	Status                        string         `json:"status" gorm:"size:20"` // DRAFT, PENDING, CONFIRMED, CANCELLED
+	SettlementStatus              string         `json:"settlement_status" gorm:"-"`
+	Notes                         string         `json:"notes" gorm:"type:text"`
+	InternalNotes                 string         `json:"internal_notes" gorm:"type:text"`
+	Reference                     string         `json:"reference" gorm:"size:100"`
+	CreatedAt                     time.Time      `json:"created_at"`
+	UpdatedAt                     time.Time      `json:"updated_at"`
+	DeletedAt                     gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
 	Customer         Contact               `json:"customer" gorm:"foreignKey:CustomerID"`
@@ -92,22 +97,30 @@ func (s *Sale) AfterFind(tx *gorm.DB) (err error) {
 }
 
 type SaleItem struct {
-	ID              uint    `json:"id" gorm:"primaryKey"`
-	SaleID          uint    `json:"sale_id" gorm:"not null;index"`
-	ProductID       uint    `json:"product_id" gorm:"not null;index"`
-	ProductName     string  `json:"product_name" gorm:"size:255;default:''"`
-	Description     string  `json:"description" gorm:"type:text"`
-	Location        string  `json:"location" gorm:"size:255"`
-	Quantity        int     `json:"quantity" gorm:"not null"`
-	UnitPrice       float64 `json:"unit_price" gorm:"type:decimal(15,2);default:0"`
-	DiscountPercent float64 `json:"discount_percent" gorm:"type:decimal(5,2);default:0"`
-	DiscountAmount  float64 `json:"discount_amount" gorm:"type:decimal(15,2);default:0"`
-	LineTotal       float64 `json:"line_total" gorm:"type:decimal(15,2);default:0"`
-	Taxable         bool    `json:"taxable" gorm:"default:true"`
-	PPNAmount       float64 `json:"ppn_amount" gorm:"type:decimal(15,2);default:0"`
-	PPhAmount       float64 `json:"pph_amount" gorm:"type:decimal(15,2);default:0"`
-	TotalTax        float64 `json:"total_tax" gorm:"type:decimal(15,2);default:0"`
-	FinalAmount     float64 `json:"final_amount" gorm:"type:decimal(15,2);default:0"`
+	ID                  uint    `json:"id" gorm:"primaryKey"`
+	SaleID              uint    `json:"sale_id" gorm:"not null;index"`
+	ProductID           uint    `json:"product_id" gorm:"not null;index"`
+	ProductName         string  `json:"product_name" gorm:"size:255;default:''"`
+	Description         string  `json:"description" gorm:"type:text"`
+	Location            string  `json:"location" gorm:"size:255"`
+	Quantity            int     `json:"quantity" gorm:"not null"`
+	UnitPrice           float64 `json:"unit_price" gorm:"type:decimal(15,2);default:0"`
+	DiscountPercent     float64 `json:"discount_percent" gorm:"type:decimal(5,2);default:0"`
+	DiscountAmount      float64 `json:"discount_amount" gorm:"type:decimal(15,2);default:0"`
+	LineTotal           float64 `json:"line_total" gorm:"type:decimal(15,2);default:0"`
+	Taxable             bool    `json:"taxable" gorm:"default:true"`
+	PPNAmount           float64 `json:"ppn_amount" gorm:"type:decimal(15,2);default:0"`
+	PPhAmount           float64 `json:"pph_amount" gorm:"type:decimal(15,2);default:0"`
+	TotalTax            float64 `json:"total_tax" gorm:"type:decimal(15,2);default:0"`
+	FinalAmount         float64 `json:"final_amount" gorm:"type:decimal(15,2);default:0"`
+	AvailableQuantity   int     `json:"available_quantity" gorm:"default:0"`
+	FulfilledQuantity   int     `json:"fulfilled_quantity" gorm:"default:0"`
+	BackorderQuantity   int     `json:"backorder_quantity" gorm:"default:0"`
+	EstimatedUnitCost   float64 `json:"estimated_unit_cost" gorm:"type:decimal(15,2);default:0"`
+	EstimatedCOGSAmount float64 `json:"estimated_cogs_amount" gorm:"type:decimal(15,2);default:0"`
+	ActualCOGSAmount    float64 `json:"actual_cogs_amount" gorm:"type:decimal(15,2);default:0"`
+	COGSVarianceAmount  float64 `json:"cogs_variance_amount" gorm:"type:decimal(15,2);default:0"`
+	FulfillmentStatus   string  `json:"fulfillment_status" gorm:"size:30;default:'IN_STOCK'"`
 	// Computed fields - these are calculated and should not be set directly
 	TotalPrice       float64        `json:"total_price" gorm:"type:decimal(15,2);default:0;->"` // Read-only: Same as LineTotal
 	Discount         float64        `json:"discount" gorm:"type:decimal(15,2);default:0;->"`    // Read-only: Legacy field
@@ -119,10 +132,11 @@ type SaleItem struct {
 	DeletedAt        gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Sale           Sale     `json:"-" gorm:"foreignKey:SaleID"` // Exclude to prevent circular reference
-	Product        Product  `json:"product" gorm:"foreignKey:ProductID"`
-	RevenueAccount Account  `json:"revenue_account" gorm:"foreignKey:RevenueAccountID"`
-	TaxAccount     *Account `json:"tax_account" gorm:"foreignKey:TaxAccountID"`
+	Sale           Sale                      `json:"-" gorm:"foreignKey:SaleID"` // Exclude to prevent circular reference
+	Product        Product                   `json:"product" gorm:"foreignKey:ProductID"`
+	RevenueAccount Account                   `json:"revenue_account" gorm:"foreignKey:RevenueAccountID"`
+	TaxAccount     *Account                  `json:"tax_account" gorm:"foreignKey:TaxAccountID"`
+	Allocations    []SaleBackorderAllocation `json:"allocations,omitempty" gorm:"foreignKey:SaleItemID"`
 }
 
 type SalePaymentSchedule struct {
@@ -148,6 +162,15 @@ const (
 	SaleTypeQuotation = "QUOTATION"
 	SaleTypeOrder     = "ORDER"
 	SaleTypeInvoice   = "INVOICE"
+)
+
+// Sale item fulfillment constants
+const (
+	SaleFulfillmentStatusService          = "SERVICE"
+	SaleFulfillmentStatusInStock          = "IN_STOCK"
+	SaleFulfillmentStatusPartialBackorder = "PARTIAL_BACKORDER"
+	SaleFulfillmentStatusBackordered      = "BACKORDERED"
+	SaleFulfillmentStatusFulfilled        = "FULFILLED"
 )
 
 // Sale Status Constants
@@ -402,6 +425,12 @@ type SalePaymentRequest struct {
 	Notes         string    `json:"notes"`
 	CashBankID    *uint     `json:"cash_bank_id"` // Add cashbank integration
 	AccountID     *uint     `json:"account_id"`   // Add account integration
+}
+
+type SalePPh23SettlementRequest struct {
+	Date      time.Time `json:"date" binding:"required"`
+	Reference string    `json:"reference"`
+	Notes     string    `json:"notes"`
 }
 
 type SaleReturnRequest struct {

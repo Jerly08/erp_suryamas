@@ -3,8 +3,10 @@ package controllers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
 	"github.com/gin-gonic/gin"
 )
@@ -46,6 +48,16 @@ func (c *UnifiedJournalController) CreateJournalEntry(ctx *gin.Context) {
 
 	// Set CreatedBy from context
 	req.CreatedBy = getJournalUserIDFromContext(ctx)
+	userRole := getJournalUserRoleFromContext(ctx)
+
+	if isAdjustmentSourceType(req.SourceType) && !canManageAdjustmentDraft(userRole) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff yang dapat membuat jurnal adjustment draft"})
+		return
+	}
+	if isAdjustmentSourceType(req.SourceType) && (req.AdjustmentOf == nil || *req.AdjustmentOf == 0) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Jurnal adjustment harus dibuat dari action jurnal asal"})
+		return
+	}
 
 	response, err := c.journalService.CreateJournalEntry(&req)
 	if err != nil {
@@ -235,6 +247,26 @@ func getJournalUserIDFromContext(ctx *gin.Context) uint64 {
 	return 1
 }
 
+func getJournalUserRoleFromContext(ctx *gin.Context) string {
+	if role := models.NormalizeRole(ctx.GetString("user_role")); role != "" {
+		return role
+	}
+
+	return models.NormalizeRole(ctx.GetString("role"))
+}
+
+func canManageAdjustmentDraft(role string) bool {
+	return role == models.RoleAdmin || models.IsFinanceStaffRole(role)
+}
+
+func canApproveAdjustment(role string) bool {
+	return role == models.RoleAdmin || models.IsFinanceManagerRole(role)
+}
+
+func isAdjustmentSourceType(sourceType string) bool {
+	return strings.EqualFold(strings.TrimSpace(sourceType), models.SSOTSourceTypeAdjustment)
+}
+
 // Request/Response types for specific endpoints
 type ReverseJournalRequest struct {
 	Description string `json:"description" binding:"required"`
@@ -269,6 +301,21 @@ func (c *UnifiedJournalController) UpdateJournalEntry(ctx *gin.Context) {
 
 	if req.EntryDate.IsZero() {
 		req.EntryDate = time.Now()
+	}
+
+	existingEntry, err := c.journalService.GetJournalEntry(id)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if isAdjustmentSourceType(existingEntry.SourceType) && !canManageAdjustmentDraft(getJournalUserRoleFromContext(ctx)) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff yang dapat mengubah draft jurnal adjustment"})
+		return
+	}
+	if isAdjustmentSourceType(existingEntry.SourceType) && existingEntry.AdjustmentOf != nil && req.AdjustmentOf != nil && *existingEntry.AdjustmentOf != *req.AdjustmentOf {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Referensi jurnal asal untuk adjustment tidak boleh diubah"})
+		return
 	}
 
 	response, err := c.journalService.UpdateJournalEntry(id, &req)
@@ -327,6 +374,18 @@ func (c *UnifiedJournalController) PostJournalEntry(ctx *gin.Context) {
 	}
 
 	userID := getJournalUserIDFromContext(ctx)
+	userRole := getJournalUserRoleFromContext(ctx)
+
+	existingEntry, err := c.journalService.GetJournalEntry(id)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if isAdjustmentSourceType(existingEntry.SourceType) && !canApproveAdjustment(userRole) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Jurnal adjustment hanya dapat di-approve oleh finance manager"})
+		return
+	}
 
 	response, err := c.journalService.PostJournalEntry(id, userID)
 	if err != nil {

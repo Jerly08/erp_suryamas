@@ -19,6 +19,7 @@ import {
   MenuDivider,
   IconButton,
   HStack,
+  VStack,
   Spinner,
   useColorModeValue,
   TableContainer,
@@ -51,6 +52,7 @@ interface SalesTableProps {
   onConfirm?: (sale: Sale) => void;
   onCancel?: (sale: Sale) => void;
   onPayment?: (sale: Sale) => void;
+  onPPh23Settlement?: (sale: Sale) => void;
   onDelete?: (sale: Sale) => void;
   onDownloadInvoice?: (sale: Sale) => void;
   onCreateReceipt?: (sale: Sale) => void;
@@ -70,6 +72,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
   onConfirm,
   onCancel,
   onPayment,
+  onPPh23Settlement,
   onDelete,
   onDownloadInvoice,
   onCreateReceipt,
@@ -97,6 +100,48 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
 
   const getDisplayStatus = (sale: Sale) =>
     sale.settlement_status || getWorkflowStatus(sale.status);
+
+  const getFulfillmentSummary = (sale: Sale) => {
+    const items = sale.sale_items || sale.items || [];
+    const pendingBackorder = items.reduce(
+      (sum, item) => sum + (item.backorder_quantity || 0),
+      0,
+    );
+    const fulfilledBackorder = items.reduce(
+      (sum, item) =>
+        sum +
+        Math.max(
+          (item.fulfilled_quantity || 0) - (item.available_quantity || 0),
+          0,
+        ),
+      0,
+    );
+
+    if (pendingBackorder > 0) {
+      return {
+        label: `${pendingBackorder} backorder`,
+        caption:
+          fulfilledBackorder > 0
+            ? `${fulfilledBackorder} qty sudah dipenuhi`
+            : "Menunggu pembelian/pemenuhan stok",
+        colorScheme: "orange" as const,
+      };
+    }
+
+    if (fulfilledBackorder > 0) {
+      return {
+        label: `Backorder selesai`,
+        caption: `${fulfilledBackorder} qty sudah dipenuhi`,
+        colorScheme: "green" as const,
+      };
+    }
+
+    return {
+      label: "Ready stock",
+      caption: "Semua qty tersedia saat invoicing",
+      colorScheme: "green" as const,
+    };
+  };
 
   // Get status label with translation
   const getStatusLabel = (sale: Sale) => {
@@ -236,6 +281,14 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                     borderColor={borderColor}
                     fontSize="xs"
                     fontWeight="bold"
+                  >
+                    Fulfillment
+                  </Th>
+                  <Th
+                    color={textColor}
+                    borderColor={borderColor}
+                    fontSize="xs"
+                    fontWeight="bold"
                     textAlign="center"
                   >
                     {t("common.actions").toUpperCase()}
@@ -246,6 +299,14 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                 {sales.map((sale, index) => {
                   const workflowStatus = getWorkflowStatus(sale.status);
                   const displayStatus = getDisplayStatus(sale);
+                  const fulfillment = getFulfillmentSummary(sale);
+                  const canPostPPh23 =
+                    !!onPPh23Settlement &&
+                    (sale.pph23_amount || 0) > 0 &&
+                    (sale.outstanding_amount || 0) <= 0.005 &&
+                    !sale.pph23_settlement_date &&
+                    workflowStatus !== "DRAFT" &&
+                    workflowStatus !== "CANCELLED";
 
                   return (
                     <Tr
@@ -314,6 +375,23 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                         >
                           {getStatusLabel(sale)}
                         </Badge>
+                      </Td>
+                      <Td borderColor={borderColor} py={3}>
+                        <VStack align="start" spacing={1}>
+                          <Badge
+                            colorScheme={fulfillment.colorScheme}
+                            variant="subtle"
+                            px={2}
+                            py={1}
+                            borderRadius="md"
+                            fontSize="xs"
+                          >
+                            {fulfillment.label}
+                          </Badge>
+                          <Text fontSize="xs" color={textColor}>
+                            {fulfillment.caption}
+                          </Text>
+                        </VStack>
                       </Td>
                       <Td
                         borderColor={borderColor}
@@ -420,6 +498,14 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                                   {t("purchases.payment.recordPayment")}
                                 </MenuItem>
                               )}
+                            {canEdit && canPostPPh23 && (
+                              <MenuItem
+                                icon={<FiCheck />}
+                                onClick={() => onPPh23Settlement(sale)}
+                              >
+                                Bayar PPh23
+                              </MenuItem>
+                            )}
                             {canEdit &&
                               workflowStatus !== "PAID" &&
                               workflowStatus !== "CANCELLED" &&

@@ -35,7 +35,10 @@ import { FiPlus, FiTrash2, FiSave } from "react-icons/fi";
 import { useTranslation } from "@/hooks/useTranslation";
 import { accountService } from "@/services/accountService";
 import cashbankService from "@/services/cashbankService";
-import { ssotJournalService } from "@/services/ssotJournalService";
+import {
+  ssotJournalService,
+  SSOTJournalEntry,
+} from "@/services/ssotJournalService";
 import { Account } from "@/types/account";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -151,15 +154,23 @@ interface ManualEntryFormData {
   lines: JournalLineForm[];
 }
 
+type JournalEntryMode = "MANUAL" | "ADJUSTMENT";
+
 interface ManualEntryFormProps {
   onSuccess: () => void;
   onCancel: () => void;
+  entryType?: JournalEntryMode;
+  baseEntry?: SSOTJournalEntry;
   initialData?: {
     id: number;
+    entry_number?: string;
     entry_date: string;
     reference: string;
     description: string;
     notes?: string;
+    source_type?: string;
+    adjustment_of?: number;
+    adjusted_entry?: SSOTJournalEntry;
     lines?: any[];
   };
 }
@@ -167,6 +178,8 @@ interface ManualEntryFormProps {
 export default function ManualEntryForm({
   onSuccess,
   onCancel,
+  entryType = "MANUAL",
+  baseEntry,
   initialData,
 }: ManualEntryFormProps) {
   const { t } = useTranslation();
@@ -201,8 +214,42 @@ export default function ManualEntryForm({
   >([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const isEmployeeJournalSubmitter =
-    (user?.role || "").toLowerCase() === "employee";
+  const normalizedRole = String(user?.role || "").toLowerCase();
+  const effectiveEntryType: JournalEntryMode =
+    initialData?.source_type === "ADJUSTMENT" ? "ADJUSTMENT" : entryType;
+  const isAdjustmentEntry = effectiveEntryType === "ADJUSTMENT";
+  const isEmployeeJournalSubmitter = normalizedRole === "employee";
+  const isFinanceStaffJournalSubmitter = normalizedRole === "finance_staff";
+  const relatedOriginalEntry =
+    baseEntry ||
+    initialData?.adjusted_entry ||
+    (initialData?.adjustment_of
+      ? ({
+          id: initialData.adjustment_of,
+          entry_number: `JE-${initialData.adjustment_of}`,
+          source_type: "MANUAL",
+          entry_date: initialData.entry_date,
+          description: "",
+          total_debit: 0,
+          total_credit: 0,
+          status: "POSTED",
+          is_balanced: true,
+          is_auto_generated: false,
+          created_by: 0,
+          created_at: initialData.entry_date,
+          updated_at: initialData.entry_date,
+        } as SSOTJournalEntry)
+      : undefined);
+  const effectiveAdjustmentOf =
+    relatedOriginalEntry?.id || initialData?.adjustment_of;
+  const defaultReference =
+    isAdjustmentEntry && baseEntry && !initialData
+      ? `ADJ-${baseEntry.entry_number}`
+      : initialData?.reference || "";
+  const defaultDescription =
+    isAdjustmentEntry && baseEntry && !initialData
+      ? `Adjustment of ${baseEntry.entry_number}`
+      : initialData?.description || "";
 
   const {
     register,
@@ -216,8 +263,8 @@ export default function ManualEntryForm({
       entry_date: initialData
         ? initialData.entry_date.split("T")[0]
         : new Date().toISOString().split("T")[0],
-      reference: initialData?.reference || "",
-      description: initialData?.description || "",
+      reference: defaultReference,
+      description: defaultDescription,
       notes: initialData?.notes || "",
       lines: initialData?.lines
         ? initialData.lines.map((l) => ({
@@ -418,6 +465,8 @@ export default function ManualEntryForm({
         description: data.description,
         reference: data.reference,
         notes: data.notes,
+        source_type: effectiveEntryType,
+        adjustment_of: effectiveAdjustmentOf,
         lines: formattedLines,
       };
 
@@ -433,9 +482,12 @@ export default function ManualEntryForm({
         await ssotJournalService.createJournalEntry(payload);
         toast({
           title: t("common.success"),
-          description: isEmployeeJournalSubmitter
-            ? "Draft jurnal berhasil disimpan. Finance akan memverifikasi dan memposting jurnal ini."
-            : t("journal.create_success"),
+          description:
+            isAdjustmentEntry && isFinanceStaffJournalSubmitter
+              ? t("journal.adjustmentCreateSuccess")
+              : isEmployeeJournalSubmitter
+                ? "Draft jurnal berhasil disimpan. Finance akan memverifikasi dan memposting jurnal ini."
+                : t("journal.create_success"),
           status: "success",
           duration: 3000,
         });
@@ -473,6 +525,21 @@ export default function ManualEntryForm({
   return (
     <Box as="form" onSubmit={handleSubmit(onSubmit)}>
       <VStack spacing={6} align="stretch">
+        {isAdjustmentEntry && (
+          <Alert status="info" borderRadius="md">
+            <AlertIcon />
+            <Box>
+              <Text>{t("journal.adjustmentDraftInfo")}</Text>
+              {relatedOriginalEntry && (
+                <Text fontSize="sm" mt={1}>
+                  {t("journal.adjustmentSourceInfo", {
+                    entryNumber: relatedOriginalEntry.entry_number,
+                  })}
+                </Text>
+              )}
+            </Box>
+          </Alert>
+        )}
         {isEmployeeJournalSubmitter && (
           <Alert status="info" borderRadius="md">
             <AlertIcon />
@@ -528,7 +595,9 @@ export default function ManualEntryForm({
                 <FormControl isRequired isInvalid={!!errors.reference}>
                   <FormLabel>Reference</FormLabel>
                   <Input
-                    placeholder="e.g. JE-001"
+                    placeholder={
+                      isAdjustmentEntry ? "e.g. ADJ-001" : "e.g. JE-001"
+                    }
                     {...register("reference", { required: true })}
                     {...fieldStyles}
                   />
@@ -540,7 +609,11 @@ export default function ManualEntryForm({
               <FormControl isRequired isInvalid={!!errors.description}>
                 <FormLabel>Description</FormLabel>
                 <Input
-                  placeholder="Journal description"
+                  placeholder={
+                    isAdjustmentEntry
+                      ? "Deskripsi jurnal adjustment"
+                      : "Journal description"
+                  }
                   {...register("description", { required: true })}
                   {...fieldStyles}
                 />
@@ -607,7 +680,10 @@ export default function ManualEntryForm({
                                 {...fieldStyles}
                               >
                                 {selectedLinkedAccount && (
-                                  <option value={selectedLinkedAccount.id} disabled>
+                                  <option
+                                    value={selectedLinkedAccount.id}
+                                    disabled
+                                  >
                                     {selectedLinkedAccount.code} -{" "}
                                     {selectedLinkedAccount.name} (Gunakan modul
                                     Cash & Bank)
@@ -621,9 +697,9 @@ export default function ManualEntryForm({
                               </Select>
                               {selectedLinkedAccount && (
                                 <Text fontSize="xs" color="orange.500" mt={1}>
-                                  Akun ini terhubung ke modul Cash & Bank.
-                                  Pilih akun lain atau catat transaksi lewat
-                                  Deposit, Withdrawal, atau Transfer.
+                                  Akun ini terhubung ke modul Cash & Bank. Pilih
+                                  akun lain atau catat transaksi lewat Deposit,
+                                  Withdrawal, atau Transfer.
                                 </Text>
                               )}
                             </>
@@ -751,10 +827,16 @@ export default function ManualEntryForm({
             }
           >
             {initialData
-              ? "Simpan Perubahan Draft"
-              : isEmployeeJournalSubmitter
-                ? "Simpan Draft"
-                : "Save Journal"}
+              ? isAdjustmentEntry
+                ? "Simpan Perubahan Adjustment"
+                : "Simpan Perubahan Draft"
+              : isAdjustmentEntry && isFinanceStaffJournalSubmitter
+                ? "Simpan Draft Adjustment"
+                : isEmployeeJournalSubmitter
+                  ? "Simpan Draft"
+                  : isAdjustmentEntry
+                    ? "Simpan Adjustment"
+                    : "Save Journal"}
           </Button>
         </HStack>
       </VStack>

@@ -9,11 +9,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// MigratePPhPrepaidAccounts ensures PPh prepaid tax accounts exist in the database
+// MigratePPhPrepaidAccounts ensures PPh-related tax asset accounts exist in the database
 // This is a critical migration because journal entries fail if these accounts don't exist
 // when sales have PPh deductions (PPh21, PPh23, PPh25)
 //
-// UPDATED: Uses standard COA codes 1105-001/002/003 instead of legacy 1114/1115/1116.
+// UPDATED: Uses standard COA codes 1105-001/002/003/004 instead of legacy 1114/1115/1116.
 // Also cleans up legacy duplicate accounts if they exist.
 func MigratePPhPrepaidAccounts(db *gorm.DB) error {
 	log.Println("🔧 [AUTO-MIGRATION] Checking PPh prepaid tax accounts...")
@@ -40,7 +40,7 @@ func MigratePPhPrepaidAccounts(db *gorm.DB) error {
 		}
 	}
 
-	// Step 2: Ensure standard PPh prepaid accounts exist under 1105 (PAJAK DIBAYAR DIMUKA)
+	// Step 2: Ensure standard PPh-related asset accounts exist under 1105 (PAJAK DIBAYAR DIMUKA)
 	// These codes match the standard COA template in account_templates.go
 	pphAccounts := []struct {
 		Code        string
@@ -64,6 +64,12 @@ func MigratePPhPrepaidAccounts(db *gorm.DB) error {
 			Code:        "1105-003",
 			Name:        "PPH PASAL 25 DIBAYAR DIMUKA",
 			Description: "Akun untuk mencatat PPh Pasal 25 yang dibayar sendiri (prepaid income tax)",
+			ParentCode:  "1105",
+		},
+		{
+			Code:        "1105-004",
+			Name:        "KREDIT PAJAK PPH 23",
+			Description: "Akun reclass untuk mencatat PPh Pasal 23 yang sudah dikonfirmasi dan dipost terpisah dari tanggal invoice",
 			ParentCode:  "1105",
 		},
 	}
