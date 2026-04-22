@@ -65,16 +65,11 @@ const (
 )
 
 func requiresFinanceManagerTransferApproval(role string) bool {
-	switch models.NormalizeRole(role) {
-	case models.RoleEmployee, models.RoleFinanceStaff, "staff":
-		return true
-	default:
-		return false
-	}
+	return !models.IsFinanceManagerRole(role)
 }
 
 func canApproveCashBankTransfer(role string) bool {
-	return models.NormalizeRole(role) == models.RoleAdmin || models.IsFinanceManagerRole(role)
+	return models.IsFinanceManagerRole(role)
 }
 
 type transferExecutionPlan struct {
@@ -2100,8 +2095,8 @@ type CashBankTransfer struct {
 	Amount                   float64         `gorm:"type:decimal(15,2)" json:"amount"`
 	ExchangeRate             float64         `gorm:"type:decimal(12,6);default:1" json:"exchange_rate"`
 	ConvertedAmount          float64         `gorm:"type:decimal(15,2)" json:"converted_amount"`
-	SourceBookAmountIDR      float64         `gorm:"type:decimal(20,2);default:0" json:"source_book_amount_idr"`
-	DestinationBookAmountIDR float64         `gorm:"type:decimal(20,2);default:0" json:"destination_book_amount_idr"`
+	SourceBookAmountIDR      float64         `gorm:"column:source_book_amount_idr;type:decimal(20,2);default:0" json:"source_book_amount_idr"`
+	DestinationBookAmountIDR float64         `gorm:"column:destination_book_amount_idr;type:decimal(20,2);default:0" json:"destination_book_amount_idr"`
 	ForexGainLossAmount      float64         `gorm:"type:decimal(20,2);default:0" json:"forex_gain_loss_amount"`
 	ForexGainLossType        string          `gorm:"size:10" json:"forex_gain_loss_type"`
 	Reference                string          `gorm:"size:100" json:"reference"`

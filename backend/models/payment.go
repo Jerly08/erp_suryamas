@@ -9,37 +9,43 @@ import (
 )
 
 type Payment struct {
-	ID                    uint       `json:"id" gorm:"primaryKey"`
-	Code                  string     `json:"code" gorm:"unique;not null;size:30"`
-	ContactID             uint       `json:"contact_id" gorm:"not null;index"`
-	UserID                uint       `json:"user_id" gorm:"not null;index"`
-	Date                  time.Time  `json:"date"`
-	Amount                float64    `json:"amount" gorm:"type:decimal(15,2);default:0"`
-	NativeAmount          float64    `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
-	Currency              string     `json:"currency" gorm:"size:5;default:'IDR';not null"`
-	ExchangeRate          float64    `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
-	BookAmountIDR         float64    `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
-	ForexGainLossAmount   float64    `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
-	ForexGainLossType     string     `json:"forex_gain_loss_type" gorm:"size:10"`
-	Method                string     `json:"method" gorm:"size:20"` // CASH, BANK_TRANSFER, CHECK, etc.
-	Reference             string     `json:"reference" gorm:"size:50"`
-	Status                string     `json:"status" gorm:"size:20"`             // DRAFT, COMPLETED, FAILED, REVERSED (PENDING is legacy transitional data)
-	PaymentType           string     `json:"payment_type" gorm:"size:30;index"` // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
-	ExpenseAccountID      *uint      `json:"expense_account_id" gorm:"index"`
-	CashBankID            *uint      `json:"cash_bank_id" gorm:"index"`
-	CashBankCode          string     `json:"cash_bank_code" gorm:"size:50"`
-	CashBankName          string     `json:"cash_bank_name" gorm:"size:120"`
-	CashBankCurrency      string     `json:"cash_bank_currency" gorm:"size:5"`
-	CashBankGLAccountID   *uint      `json:"cash_bank_gl_account_id" gorm:"index"`
-	CashBankGLAccountCode string     `json:"cash_bank_gl_account_code" gorm:"size:20"`
-	CashBankGLAccountName string     `json:"cash_bank_gl_account_name" gorm:"size:120"`
-	ApprovedBy            *uint      `json:"approved_by" gorm:"index"`
-	ApprovedAt            *time.Time `json:"approved_at"`
-	RejectedBy            *uint      `json:"rejected_by" gorm:"index"`
-	RejectedAt            *time.Time `json:"rejected_at"`
-	RejectionReason       string     `json:"rejection_reason" gorm:"type:text"`
-	Notes                 string     `json:"notes" gorm:"type:text"`
-	JournalEntryID        *uint      `json:"journal_entry_id" gorm:"index"` // Link to SSOT journal entry
+	ID                       uint       `json:"id" gorm:"primaryKey"`
+	Code                     string     `json:"code" gorm:"unique;not null;size:30"`
+	ContactID                uint       `json:"contact_id" gorm:"not null;index"`
+	UserID                   uint       `json:"user_id" gorm:"not null;index"`
+	Date                     time.Time  `json:"date"`
+	Amount                   float64    `json:"amount" gorm:"type:decimal(15,2);default:0"`
+	NativeAmount             float64    `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
+	Currency                 string     `json:"currency" gorm:"size:5;default:'IDR';not null"`
+	ExchangeRate             float64    `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
+	BookAmountIDR            float64    `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
+	ForexGainLossAmount      float64    `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
+	ForexGainLossType        string     `json:"forex_gain_loss_type" gorm:"size:10"`
+	Method                   string     `json:"method" gorm:"size:20"` // CASH, BANK_TRANSFER, CHECK, etc.
+	Reference                string     `json:"reference" gorm:"size:50"`
+	Status                   string     `json:"status" gorm:"size:20"`             // DRAFT, COMPLETED, FAILED, REVERSED (PENDING is legacy transitional data)
+	PaymentType              string     `json:"payment_type" gorm:"size:30;index"` // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
+	ExpenseAccountID         *uint      `json:"expense_account_id" gorm:"index"`
+	CashBankID               *uint      `json:"cash_bank_id" gorm:"index"`
+	CashBankCode             string     `json:"cash_bank_code" gorm:"size:50"`
+	CashBankName             string     `json:"cash_bank_name" gorm:"size:120"`
+	CashBankCurrency         string     `json:"cash_bank_currency" gorm:"size:5"`
+	CashBankGLAccountID      *uint      `json:"cash_bank_gl_account_id" gorm:"index"`
+	CashBankGLAccountCode    string     `json:"cash_bank_gl_account_code" gorm:"size:20"`
+	CashBankGLAccountName    string     `json:"cash_bank_gl_account_name" gorm:"size:120"`
+	ApprovalStage            string     `json:"approval_stage" gorm:"size:30;index"`
+	RequireDirectorApproval  bool       `json:"require_director_approval" gorm:"not null;default:false"`
+	FinanceManagerApprovedBy *uint      `json:"finance_manager_approved_by" gorm:"index"`
+	FinanceManagerApprovedAt *time.Time `json:"finance_manager_approved_at"`
+	DirectorApprovedBy       *uint      `json:"director_approved_by" gorm:"index"`
+	DirectorApprovedAt       *time.Time `json:"director_approved_at"`
+	ApprovedBy               *uint      `json:"approved_by" gorm:"index"`
+	ApprovedAt               *time.Time `json:"approved_at"`
+	RejectedBy               *uint      `json:"rejected_by" gorm:"index"`
+	RejectedAt               *time.Time `json:"rejected_at"`
+	RejectionReason          string     `json:"rejection_reason" gorm:"type:text"`
+	Notes                    string     `json:"notes" gorm:"type:text"`
+	JournalEntryID           *uint      `json:"journal_entry_id" gorm:"index"` // Link to SSOT journal entry
 	// PPh withholding tax fields (optional, only for expense payments with PPh)
 	PPHType   string         `json:"pph_type" gorm:"size:20"`                        // PPH_21, PPH_23, PPH_4_2, PPH_22
 	PPHRate   float64        `json:"pph_rate" gorm:"type:decimal(5,2);default:0"`    // e.g. 5.0 for 5%
@@ -49,10 +55,12 @@ type Payment struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Contact  Contact `json:"contact" gorm:"foreignKey:ContactID"`
-	User     User    `json:"user" gorm:"foreignKey:UserID"`
-	Approver *User   `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	Rejector *User   `json:"rejector,omitempty" gorm:"foreignKey:RejectedBy"`
+	Contact                Contact `json:"contact" gorm:"foreignKey:ContactID"`
+	User                   User    `json:"user" gorm:"foreignKey:UserID"`
+	FinanceManagerApprover *User   `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User   `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+	Approver               *User   `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	Rejector               *User   `json:"rejector,omitempty" gorm:"foreignKey:RejectedBy"`
 }
 
 // PaymentAllocation represents payment allocation to invoices or bills
@@ -72,12 +80,17 @@ type PaymentAllocation struct {
 
 // Payment Status Constants
 const (
-	PaymentStatusDraft     = "DRAFT"   // Submitted by staff/finance staff, waiting finance manager approval
-	PaymentStatusPending   = "PENDING" // Legacy transitional status kept for backward compatibility
+	PaymentStatusDraft     = "DRAFT"   // Waiting finance manager approval
+	PaymentStatusPending   = "PENDING" // Waiting director approval
 	PaymentStatusCompleted = "COMPLETED"
 	PaymentStatusRejected  = "REJECTED"
 	PaymentStatusFailed    = "FAILED"
 	PaymentStatusReversed  = "REVERSED"
+)
+
+const (
+	PaymentApprovalStageFinanceManager = "FINANCE_MANAGER"
+	PaymentApprovalStageDirector       = "DIRECTOR"
 )
 
 // Payment Method Constants

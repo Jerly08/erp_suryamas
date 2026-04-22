@@ -82,9 +82,7 @@ export default function PurchaseRequestsPage() {
     (user as { department?: string } | null)?.department || "";
   const roleNorm = normalizeRole(user?.role);
   const canApprovePurchaseRequest =
-    roleNorm === "admin" ||
-    roleNorm === "director" ||
-    isFinanceTeamRole(roleNorm);
+    roleNorm === "director" || isFinanceTeamRole(roleNorm);
 
   const {
     isOpen: isCreateOpen,
@@ -264,7 +262,6 @@ export default function PurchaseRequestsPage() {
   const canCurrentUserReviewRequest = (pr?: PurchaseRequest | null) => {
     const stage = getCurrentReviewStage(pr);
     if (!stage || !canApprovePurchaseRequest) return false;
-    if (roleNorm === "admin") return true;
     if (stage === "FINANCE_STAFF") return isFinanceStaffRole(roleNorm);
     if (stage === "FINANCE_MANAGER") return isFinanceManagerRole(roleNorm);
     if (stage === "DIRECTOR") return roleNorm === "director";
@@ -274,7 +271,7 @@ export default function PurchaseRequestsPage() {
   const canRequestDirectorApproval = (pr?: PurchaseRequest | null) => {
     const stage = getCurrentReviewStage(pr);
     if (stage !== "FINANCE_MANAGER") return false;
-    return roleNorm === "admin" || isFinanceManagerRole(roleNorm);
+    return isFinanceManagerRole(roleNorm);
   };
 
   const getInitialReviewDecision = (

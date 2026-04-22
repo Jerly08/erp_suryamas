@@ -66,13 +66,78 @@ interface TransferFormProps {
 
 interface ApiErrorShape {
   response?: {
+    status?: number;
     data?: {
       details?: string;
       message?: string;
+      error?: string;
+      required_permission?: string;
+      module?: string;
+      user_role?: string;
     };
   };
+  status?: number;
   message?: string;
 }
+
+const getTransferErrorMessage = (error: ApiErrorShape): string => {
+  const status = error.response?.status || error.status;
+  const errorData = error.response?.data;
+  const backendMessage =
+    errorData?.details ||
+    errorData?.error ||
+    errorData?.message ||
+    error.message;
+
+  if (status === 401) {
+    return "Sesi Anda sudah berakhir. Silakan login ulang lalu coba transfer lagi.";
+  }
+
+  if (status === 403) {
+    if (
+      errorData?.required_permission === "create" &&
+      errorData?.module === "cash_bank"
+    ) {
+      return "Anda belum memiliki izin untuk membuat transfer antar kas/bank. Hubungi admin atau finance manager untuk meminta akses Cash & Bank.";
+    }
+
+    if (
+      errorData?.required_permission === "approve" &&
+      errorData?.module === "cash_bank"
+    ) {
+      return "Transfer antar kas/bank hanya bisa di-approve oleh finance manager.";
+    }
+
+    return "Akses Anda belum cukup untuk memproses transfer antar kas/bank ini. Hubungi admin atau finance manager bila memang perlu akses tersebut.";
+  }
+
+  if (status === 400) {
+    if (
+      typeof backendMessage === "string" &&
+      backendMessage.toLowerCase().includes("insufficient balance")
+    ) {
+      return "Saldo tersedia di akun sumber tidak mencukupi untuk transfer ini.";
+    }
+
+    return (
+      backendMessage ||
+      "Data transfer belum valid. Periksa akun sumber, tujuan, tanggal, dan nominal transfer."
+    );
+  }
+
+  if (status === 422) {
+    return (
+      backendMessage ||
+      "Data transfer belum lengkap atau formatnya belum sesuai. Silakan cek kembali input Anda."
+    );
+  }
+
+  if (typeof backendMessage === "string" && backendMessage.trim()) {
+    return backendMessage;
+  }
+
+  return "Transfer gagal diproses. Silakan coba lagi atau hubungi tim IT jika masalah berlanjut.";
+};
 
 const getCurrencyCode = (account?: CashBank | null): string =>
   normalizeCashBankCurrency(account?.currency);
@@ -462,15 +527,18 @@ const TransferForm: React.FC<TransferFormProps> = ({
       onSuccess();
       onClose();
     } catch (submitError: unknown) {
-      console.error("Error processing transfer:", submitError);
       const normalizedError = submitError as ApiErrorShape;
-      const message =
-        normalizedError.response?.data?.details ||
-        normalizedError.message ||
-        t("cashBank.transferProcessFailed");
+      const status =
+        normalizedError.response?.status || normalizedError.status || 0;
+      const message = getTransferErrorMessage(normalizedError);
+
+      if (status === 0 || status >= 500) {
+        console.error("Error processing transfer:", submitError);
+      }
+
       setError(message);
       toast({
-        title: t("cashBank.transactionFailed"),
+        title: status === 403 ? "Akses transfer ditolak" : t("cashBank.transactionFailed"),
         description: message,
         status: "error",
         duration: 5000,
@@ -610,8 +678,8 @@ const TransferForm: React.FC<TransferFormProps> = ({
                   Transfer perlu approval finance manager
                 </AlertTitle>
                 <AlertDescription fontSize="sm">
-                  Transfer yang dibuat dari role staff atau finance staff akan
-                  masuk ke antrian approval dulu sebelum saldo berpindah.
+                  Transfer yang dibuat selain finance manager akan masuk ke
+                  antrian approval dulu sebelum saldo berpindah.
                 </AlertDescription>
               </Box>
             </Alert>

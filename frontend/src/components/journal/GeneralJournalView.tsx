@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   HStack,
+  Select,
   Table,
   Thead,
   Tbody,
@@ -118,24 +119,60 @@ export default function GeneralJournalView() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalEntries, setTotalEntries] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [sourceTypeFilter, setSourceTypeFilter] = useState("ALL");
+  const [pendingAdjustmentCount, setPendingAdjustmentCount] = useState(0);
+  const [pendingAdjustmentPreview, setPendingAdjustmentPreview] = useState<
+    SSOTJournalEntry[]
+  >([]);
   const pageSize = 100;
   const normalizedRole = String(user?.role || "").toLowerCase();
+  const isAdmin = normalizedRole === "admin";
   const isFinanceStaff = normalizedRole === "finance_staff";
   const isFinanceManagerApprover =
-    normalizedRole === "finance_manager" ||
-    normalizedRole === "finance" ||
-    normalizedRole === "admin";
-  const canManageAdjustmentDraft = isFinanceStaff || normalizedRole === "admin";
+    normalizedRole === "finance_manager" || normalizedRole === "finance";
+  const isDirectorApprover = normalizedRole === "director";
+  const canManageAdjustmentDraft = isFinanceStaff || isFinanceManagerApprover;
   const canCreateAdjustment = canCreate && canManageAdjustmentDraft;
-  const canCreateManualEntry = canCreate && !isFinanceStaff;
+  const canCreateManualEntry = canCreate && !isFinanceStaff && !isAdmin;
+  const canPostDraftEntry =
+    canApprove && (isFinanceManagerApprover || isDirectorApprover);
+  const canManageGeneralDraft =
+    canEdit && !isFinanceManagerApprover && !isDirectorApprover && !isAdmin;
+  const canDeleteGeneralDraft =
+    canDelete && !isFinanceManagerApprover && !isDirectorApprover && !isAdmin;
+  const canReverseJournalEntry = canApprove && isFinanceManagerApprover;
+
+  const isDirectorApprovalPending = useCallback((entry: SSOTJournalEntry) => {
+    return (
+      entry.status === "DRAFT" &&
+      !!entry.require_director_approval &&
+      String(entry.approval_stage || "").toUpperCase() === "DIRECTOR"
+    );
+  }, []);
+
+  const getDraftApprovalLabel = useCallback(
+    (entry: SSOTJournalEntry) => {
+      if (entry.status !== "DRAFT") {
+        return "";
+      }
+      if (isDirectorApprovalPending(entry)) {
+        return "Menunggu approval director";
+      }
+      return "Menunggu approval finance manager";
+    },
+    [isDirectorApprovalPending],
+  );
 
   const getExportEntries = useCallback(async () => {
     return ssotJournalService.getAllJournalEntries({
       start_date: startDate,
       end_date: endDate,
+      status: statusFilter,
+      source_type: sourceTypeFilter,
       search: searchTerm,
     });
-  }, [endDate, searchTerm, startDate]);
+  }, [endDate, searchTerm, sourceTypeFilter, startDate, statusFilter]);
 
   const handleExportPDF = async () => {
     try {
@@ -189,6 +226,8 @@ export default function GeneralJournalView() {
       const response = await ssotJournalService.getJournalEntries({
         start_date: startDate,
         end_date: endDate,
+        status: statusFilter,
+        source_type: sourceTypeFilter,
         search: searchTerm,
         page: currentPage,
         limit: pageSize,
@@ -207,11 +246,74 @@ export default function GeneralJournalView() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, endDate, pageSize, searchTerm, startDate, t, toast]);
+  }, [
+    currentPage,
+    endDate,
+    pageSize,
+    searchTerm,
+    sourceTypeFilter,
+    startDate,
+    statusFilter,
+    t,
+    toast,
+  ]);
 
   useEffect(() => {
     fetchEntries();
   }, [fetchEntries]);
+
+  useEffect(() => {
+    const loadPendingAdjustmentQueue = async () => {
+      if (!isDirectorApprover && !isFinanceManagerApprover && !canManageAdjustmentDraft) {
+        setPendingAdjustmentCount(0);
+        setPendingAdjustmentPreview([]);
+        return;
+      }
+
+      try {
+        const queueEntries = await ssotJournalService.getAllJournalEntries({
+          status: "DRAFT",
+          source_type: "ADJUSTMENT",
+        });
+        const filteredQueue = queueEntries.filter((entry) => {
+          const directorStage = isDirectorApprovalPending(entry);
+          if (isDirectorApprover) {
+            return directorStage;
+          }
+          if (isFinanceManagerApprover) {
+            return !directorStage;
+          }
+          return true;
+        });
+        setPendingAdjustmentCount(filteredQueue.length);
+        setPendingAdjustmentPreview(filteredQueue.slice(0, 5));
+      } catch (error) {
+        console.error("Failed to load pending adjustment queue", error);
+        setPendingAdjustmentCount(0);
+        setPendingAdjustmentPreview([]);
+      }
+    };
+
+    loadPendingAdjustmentQueue();
+  }, [
+    canManageAdjustmentDraft,
+    entries,
+    isDirectorApprovalPending,
+    isDirectorApprover,
+    isFinanceManagerApprover,
+  ]);
+
+  const focusPendingAdjustments = useCallback(
+    (reference?: string) => {
+      setCurrentPage(1);
+      setStartDate("");
+      setEndDate("");
+      setStatusFilter("DRAFT");
+      setSourceTypeFilter("ADJUSTMENT");
+      setSearchTerm(reference || "");
+    },
+    [setCurrentPage, setEndDate, setSearchTerm, setSourceTypeFilter, setStartDate, setStatusFilter],
+  );
 
   useEffect(() => {
     if (totalPages > 0 && currentPage > totalPages) {
@@ -219,16 +321,26 @@ export default function GeneralJournalView() {
     }
   }, [currentPage, totalPages]);
 
-  const handlePost = async (id: number) => {
+  const handlePost = async (
+    entry: SSOTJournalEntry,
+    options: { require_director_approval?: boolean } = {},
+  ) => {
     try {
-      await ssotJournalService.postJournalEntry(id);
+      const result = await ssotJournalService.postJournalEntry(entry.id, options);
+      const sentToDirector = result.status === "DRAFT" && isDirectorApprovalPending(result);
       toast({
         title: t("common.success"),
-        description: t("journal.post_success"),
+        description: sentToDirector
+          ? "Draft jurnal sudah disetujui finance manager dan dikirim ke director."
+          : t("journal.post_success"),
         status: "success",
         duration: 3000,
       });
-      fetchEntries();
+      if (sentToDirector) {
+        focusPendingAdjustments(result.reference || "");
+      } else {
+        fetchEntries();
+      }
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : t("journal.post_error");
@@ -389,11 +501,18 @@ export default function GeneralJournalView() {
           initialData={initialWithSafeRef}
           baseEntry={adjustmentBaseEntry}
           entryType={entryMode}
-          onSuccess={() => {
+          onSuccess={(savedEntry) => {
             setShowCreateForm(false);
             setSelectedEntry(undefined);
             setAdjustmentBaseEntry(undefined);
             setEntryMode("MANUAL");
+            if (
+              savedEntry?.source_type === "ADJUSTMENT" &&
+              savedEntry.status === "DRAFT"
+            ) {
+              focusPendingAdjustments(savedEntry.reference || "");
+              return;
+            }
             fetchEntries();
           }}
           onCancel={() => {
@@ -416,6 +535,96 @@ export default function GeneralJournalView() {
       />
 
       <VStack spacing={4} align="stretch">
+        {pendingAdjustmentCount > 0 &&
+          (isDirectorApprover ||
+            isFinanceManagerApprover ||
+            canManageAdjustmentDraft) && (
+            <Alert
+              status={
+                isDirectorApprover || isFinanceManagerApprover
+                  ? "warning"
+                  : "info"
+              }
+              borderRadius="md"
+              variant="left-accent"
+            >
+              <AlertIcon />
+              <Box flex="1">
+                <Text fontWeight="semibold">
+                  {isDirectorApprover
+                    ? `${pendingAdjustmentCount} jurnal adjustment menunggu approval director`
+                    : isFinanceManagerApprover
+                    ? `${pendingAdjustmentCount} jurnal adjustment menunggu approval finance manager`
+                    : `${pendingAdjustmentCount} jurnal adjustment masih menunggu approval finance manager`}
+                </Text>
+                <Text fontSize="sm" mt={1}>
+                  Queue approval memakai tanggal pembuatan draft, jadi jurnal
+                  yang dibackdate ke tanggal jurnal asal tetap akan muncul di
+                  sini sesuai tahap approval-nya.
+                </Text>
+                {pendingAdjustmentPreview.length > 0 && (
+                  <Text fontSize="sm" mt={2} color={mutedTextColor}>
+                    {pendingAdjustmentPreview
+                      .map((entry) => {
+                        const label =
+                          entry.entry_number ||
+                          entry.reference ||
+                          `Draft #${entry.id}`;
+                        return `${label} (${formatAccountingDate(
+                          entry.entry_date,
+                        )})`;
+                      })
+                      .join(", ")}
+                  </Text>
+                )}
+              </Box>
+              <HStack spacing={2} alignSelf="flex-start">
+                <Button
+                  size="sm"
+                  colorScheme={
+                    isDirectorApprover || isFinanceManagerApprover
+                      ? "orange"
+                      : "blue"
+                  }
+                  onClick={() => focusPendingAdjustments()}
+                >
+                  {isDirectorApprover
+                    ? "Lihat Approval Director"
+                    : isFinanceManagerApprover
+                    ? "Lihat Approval Adjustment"
+                    : "Lihat Draft Adjustment"}
+                </Button>
+                {(statusFilter !== "ALL" ||
+                  sourceTypeFilter !== "ALL" ||
+                  searchTerm !== "" ||
+                  startDate !==
+                    new Date(new Date().getFullYear(), 0, 1)
+                      .toISOString()
+                      .split("T")[0] ||
+                  endDate !== new Date().toISOString().split("T")[0]) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setCurrentPage(1);
+                      setStartDate(
+                        new Date(new Date().getFullYear(), 0, 1)
+                          .toISOString()
+                          .split("T")[0],
+                      );
+                      setEndDate(new Date().toISOString().split("T")[0]);
+                      setStatusFilter("ALL");
+                      setSourceTypeFilter("ALL");
+                      setSearchTerm("");
+                    }}
+                  >
+                    Reset Filter
+                  </Button>
+                )}
+              </HStack>
+            </Alert>
+          )}
+
         {canCreateAdjustment && (
           <Alert status="info" borderRadius="md">
             <AlertIcon />
@@ -480,6 +689,49 @@ export default function GeneralJournalView() {
                 placeholder={t("journal.table.ref")}
                 {...fieldStyles}
               />
+            </Box>
+            <Box>
+              <Text fontSize="xs" color={mutedTextColor} mb={1}>
+                Status
+              </Text>
+              <Select
+                value={statusFilter}
+                onChange={(e) => {
+                  setCurrentPage(1);
+                  setStatusFilter(e.target.value);
+                }}
+                size="sm"
+                width="140px"
+                {...fieldStyles}
+              >
+                <option value="ALL">Semua</option>
+                <option value="DRAFT">Draft</option>
+                <option value="POSTED">Posted</option>
+                <option value="REVERSED">Reversed</option>
+              </Select>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color={mutedTextColor} mb={1}>
+                Source
+              </Text>
+              <Select
+                value={sourceTypeFilter}
+                onChange={(e) => {
+                  setCurrentPage(1);
+                  setSourceTypeFilter(e.target.value);
+                }}
+                size="sm"
+                width="170px"
+                {...fieldStyles}
+              >
+                <option value="ALL">Semua</option>
+                <option value="ADJUSTMENT">Adjustment</option>
+                <option value="MANUAL">Manual</option>
+                <option value="SALE">Sale</option>
+                <option value="PURCHASE">Purchase</option>
+                <option value="PAYMENT">Payment</option>
+                <option value="REVERSAL">Reversal</option>
+              </Select>
             </Box>
             <Box alignSelf="flex-end">
               <Button
@@ -723,12 +975,11 @@ export default function GeneralJournalView() {
                               >
                                 {entry.status}
                               </Badge>
-                              {entry.source_type === "ADJUSTMENT" &&
-                                entry.status === "DRAFT" && (
-                                  <Text fontSize="xs" color={mutedTextColor}>
-                                    {t("journal.adjustmentPendingApproval")}
-                                  </Text>
-                                )}
+                              {entry.status === "DRAFT" && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  {getDraftApprovalLabel(entry)}
+                                </Text>
+                              )}
                             </VStack>
                           )}
                         </Td>
@@ -761,30 +1012,65 @@ export default function GeneralJournalView() {
                                   {t("journal.viewDetails")}
                                 </MenuItem>
                                 {entry.status === "DRAFT" &&
-                                  canApprove &&
+                                  canPostDraftEntry &&
                                   entry.source_type === "ADJUSTMENT" &&
+                                  !isDirectorApprovalPending(entry) &&
                                   isFinanceManagerApprover && (
                                     <MenuItem
                                       icon={<FiCheckCircle />}
-                                      onClick={() => handlePost(entry.id)}
+                                      onClick={() => handlePost(entry)}
                                       _hover={{ bg: menuHoverBg }}
                                     >
                                       {t("journal.approveAdjustment")}
                                     </MenuItem>
                                   )}
                                 {entry.status === "DRAFT" &&
-                                  canApprove &&
-                                  entry.source_type !== "ADJUSTMENT" && (
+                                  canPostDraftEntry &&
+                                  entry.source_type !== "ADJUSTMENT" &&
+                                  !isDirectorApprovalPending(entry) &&
+                                  isFinanceManagerApprover && (
                                     <MenuItem
                                       icon={<FiCheckCircle />}
-                                      onClick={() => handlePost(entry.id)}
+                                      onClick={() => handlePost(entry)}
                                       _hover={{ bg: menuHoverBg }}
                                     >
                                       {t("journal.postVerify")}
                                     </MenuItem>
                                   )}
                                 {entry.status === "DRAFT" &&
-                                  canEdit &&
+                                  canPostDraftEntry &&
+                                  !isDirectorApprovalPending(entry) &&
+                                  isFinanceManagerApprover &&
+                                  (entry.source_type === "ADJUSTMENT" ||
+                                    entry.source_type === "MANUAL" ||
+                                    !entry.source_type) && (
+                                    <MenuItem
+                                      icon={<FiPlus />}
+                                      onClick={() =>
+                                        handlePost(entry, {
+                                          require_director_approval: true,
+                                        })
+                                      }
+                                      _hover={{ bg: menuHoverBg }}
+                                    >
+                                      Kirim ke Director
+                                    </MenuItem>
+                                  )}
+                                {entry.status === "DRAFT" &&
+                                  canPostDraftEntry &&
+                                  isDirectorApprovalPending(entry) &&
+                                  isDirectorApprover && (
+                                    <MenuItem
+                                      icon={<FiCheckCircle />}
+                                      onClick={() => handlePost(entry)}
+                                      _hover={{ bg: menuHoverBg }}
+                                    >
+                                      Approve Director & Posting Jurnal
+                                    </MenuItem>
+                                  )}
+                                {entry.status === "DRAFT" &&
+                                  canManageGeneralDraft &&
+                                  !isDirectorApprovalPending(entry) &&
                                   (entry.source_type !== "ADJUSTMENT" ||
                                     canManageAdjustmentDraft) && (
                                     <MenuItem
@@ -796,7 +1082,8 @@ export default function GeneralJournalView() {
                                     </MenuItem>
                                   )}
                                 {entry.status === "DRAFT" &&
-                                  canDelete &&
+                                  canDeleteGeneralDraft &&
+                                  !isDirectorApprovalPending(entry) &&
                                   (entry.source_type !== "ADJUSTMENT" ||
                                     canManageAdjustmentDraft) && (
                                     <MenuItem
@@ -821,7 +1108,8 @@ export default function GeneralJournalView() {
                                       {t("journal.createAdjustment")}
                                     </MenuItem>
                                   )}
-                                {entry.status === "POSTED" && canApprove && (
+                                {entry.status === "POSTED" &&
+                                  canReverseJournalEntry && (
                                   <Tooltip
                                     label="Membuat jurnal pembalik untuk membatalkan efek saldo dari jurnal ini. Histori jurnal asli tetap disimpan."
                                     hasArrow

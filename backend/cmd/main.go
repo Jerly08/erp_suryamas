@@ -127,6 +127,15 @@ func main() {
 	// Align legacy finance staff module permissions with the latest operational defaults.
 	database.FinanceStaffDefaultPermissionMigration(db)
 
+	// Align employee/staff access for purchase request and payment request workflows.
+	database.EmployeeOperationalPermissionMigration(db)
+
+	// Align legacy cash bank transfer columns with the approval workflow payload.
+	database.CashBankTransferBookAmountColumnMigration(db)
+
+	// Align cash & bank approval access so bank transfer approvals stay with finance manager.
+	database.CashBankTransferApprovalPermissionMigration(db)
+
 	// Repair legacy reversal journals that became effective before the original journal date.
 	database.JournalReversalFutureDateAlignmentMigration(db)
 

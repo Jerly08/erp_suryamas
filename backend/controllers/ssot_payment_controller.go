@@ -67,15 +67,16 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 	userID := getSSOTUserIDFromContext(c)
 	req.UserID = userID
 
-	// Role check: if not finance or admin, save as DRAFT
+	// Only finance manager can post immediately; everyone else goes through draft approval.
 	role := ""
 	if r, exists := c.Get("role"); exists {
 		if rs, ok := r.(string); ok {
 			role = strings.ToLower(rs)
 		}
 	}
-	isFinanceOrAdmin := models.IsFinanceManagerRole(role) || role == models.RoleAdmin
-	req.SaveAsDraft = !isFinanceOrAdmin
+	isFinanceManager := models.IsFinanceManagerRole(role)
+	req.SaveAsDraft = !isFinanceManager
+	req.RequestedByFinanceManager = isFinanceManager
 
 	// Process payment using SSOT enhanced service
 	response, err := ctrl.enhancedPaymentService.CreatePaymentWithJournal(&req)
@@ -88,8 +89,12 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 	}
 
 	message := "Receivable payment created successfully"
-	if response != nil && response.Payment != nil && response.Payment.Status == models.PaymentStatusDraft {
-		message = "Receivable payment submitted for finance manager approval"
+	if response != nil && response.Payment != nil {
+		if response.Payment.Status == models.PaymentStatusDraft {
+			message = "Receivable payment submitted for finance manager approval"
+		} else if response.Payment.Status == models.PaymentStatusPending {
+			message = "Receivable payment submitted for director approval"
+		}
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -116,15 +121,16 @@ func (ctrl *SSOTPaymentController) CreatePayablePayment(c *gin.Context) {
 	userID := getSSOTUserIDFromContext(c)
 	req.UserID = userID
 
-	// Role check: if not finance or admin, save as DRAFT
+	// Only finance manager can post immediately; everyone else goes through draft approval.
 	role := ""
 	if r, exists := c.Get("role"); exists {
 		if rs, ok := r.(string); ok {
 			role = strings.ToLower(rs)
 		}
 	}
-	isFinanceOrAdmin := models.IsFinanceManagerRole(role) || role == models.RoleAdmin
-	req.SaveAsDraft = !isFinanceOrAdmin
+	isFinanceManager := models.IsFinanceManagerRole(role)
+	req.SaveAsDraft = !isFinanceManager
+	req.RequestedByFinanceManager = isFinanceManager
 
 	// Process payment using SSOT enhanced service
 	response, err := ctrl.enhancedPaymentService.CreatePaymentWithJournal(&req)
@@ -137,8 +143,12 @@ func (ctrl *SSOTPaymentController) CreatePayablePayment(c *gin.Context) {
 	}
 
 	message := "Payable payment created successfully"
-	if response != nil && response.Payment != nil && response.Payment.Status == models.PaymentStatusDraft {
-		message = "Payable payment submitted for finance manager approval"
+	if response != nil && response.Payment != nil {
+		if response.Payment.Status == models.PaymentStatusDraft {
+			message = "Payable payment submitted for finance manager approval"
+		} else if response.Payment.Status == models.PaymentStatusPending {
+			message = "Payable payment submitted for director approval"
+		}
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -166,15 +176,16 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	}
 	req.UserID = userID
 
-	// Role check: if not finance or admin, save as DRAFT
+	// Only finance manager can post immediately; everyone else goes through draft approval.
 	role := ""
 	if r, exists := c.Get("role"); exists {
 		if rs, ok := r.(string); ok {
 			role = strings.ToLower(rs)
 		}
 	}
-	isFinanceOrAdmin := models.IsFinanceManagerRole(role) || role == models.RoleAdmin
-	req.SaveAsDraft = !isFinanceOrAdmin
+	isFinanceManager := models.IsFinanceManagerRole(role)
+	req.SaveAsDraft = !isFinanceManager
+	req.RequestedByFinanceManager = isFinanceManager
 
 	payment, err := ctrl.enhancedPaymentService.CreateExpensePayment(&req)
 	if err != nil {
@@ -194,6 +205,9 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	if payment.Status == models.PaymentStatusDraft {
 		message = "Expense payment submitted for finance manager approval"
 	}
+	if payment.Status == models.PaymentStatusPending {
+		message = "Expense payment submitted for director approval"
+	}
 
 	c.JSON(statusCode, gin.H{
 		"message": message,
@@ -201,7 +215,7 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	})
 }
 
-// ApproveExpensePayment approves a DRAFT expense payment (finance/admin only)
+// ApproveExpensePayment approves a DRAFT expense payment (finance manager only)
 func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
 	paymentIDStr := c.Param("id")
 	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
@@ -215,12 +229,39 @@ func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	if !models.CanManageRequiredApprovals(c.GetString("role")) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager or Admin can approve payments"})
+
+	var request struct {
+		RequireDirectorApproval bool `json:"require_director_approval"`
+	}
+	_ = c.ShouldBindJSON(&request)
+
+	paymentResponse, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID))
+	if !ok {
 		return
 	}
 
-	payment, err := ctrl.enhancedPaymentService.ApproveExpensePayment(uint(paymentID), approverUserID)
+	roleNorm := models.NormalizeRole(c.GetString("role"))
+	payment := paymentResponse.Payment
+	if payment == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+		return
+	}
+
+	isDirectorApprovalStep := payment.Status == models.PaymentStatusPending &&
+		payment.RequireDirectorApproval &&
+		strings.EqualFold(payment.ApprovalStage, models.PaymentApprovalStageDirector)
+
+	if isDirectorApprovalStep {
+		if roleNorm != models.RoleDirector {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only Director can approve this payment at the director stage"})
+			return
+		}
+	} else if !models.CanManageRequiredApprovals(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can approve payments"})
+		return
+	}
+
+	approvedPayment, err := ctrl.enhancedPaymentService.ApproveExpensePayment(uint(paymentID), approverUserID, request.RequireDirectorApproval)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Failed to approve expense payment",
@@ -229,13 +270,18 @@ func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
 		return
 	}
 
+	message := "Expense payment approved and journal posted successfully"
+	if approvedPayment.Status == models.PaymentStatusPending {
+		message = "Expense payment approved by finance manager and sent to director"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Expense payment approved and journal posted successfully",
-		"data":    payment,
+		"message": message,
+		"data":    approvedPayment,
 	})
 }
 
-// ApproveStandardPayment approves a DRAFT receivable/payable payment (finance/admin only)
+// ApproveStandardPayment approves a DRAFT receivable/payable payment (finance manager only)
 func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
 	paymentIDStr := c.Param("id")
 	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
@@ -249,12 +295,39 @@ func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	if !models.CanManageRequiredApprovals(c.GetString("role")) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager or Admin can approve payments"})
+
+	var request struct {
+		RequireDirectorApproval bool `json:"require_director_approval"`
+	}
+	_ = c.ShouldBindJSON(&request)
+
+	paymentResponse, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID))
+	if !ok {
 		return
 	}
 
-	payment, err := ctrl.enhancedPaymentService.ApproveStandardPayment(uint(paymentID), approverUserID)
+	roleNorm := models.NormalizeRole(c.GetString("role"))
+	paymentRecord := paymentResponse.Payment
+	if paymentRecord == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+		return
+	}
+
+	isDirectorApprovalStep := paymentRecord.Status == models.PaymentStatusPending &&
+		paymentRecord.RequireDirectorApproval &&
+		strings.EqualFold(paymentRecord.ApprovalStage, models.PaymentApprovalStageDirector)
+
+	if isDirectorApprovalStep {
+		if roleNorm != models.RoleDirector {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only Director can approve this payment at the director stage"})
+			return
+		}
+	} else if !models.CanManageRequiredApprovals(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can approve payments"})
+		return
+	}
+
+	payment, err := ctrl.enhancedPaymentService.ApproveStandardPayment(uint(paymentID), approverUserID, request.RequireDirectorApproval)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Failed to approve standard payment",
@@ -263,13 +336,18 @@ func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
 		return
 	}
 
+	message := "Payment approved and journal posted successfully"
+	if payment != nil && payment.Payment != nil && payment.Payment.Status == models.PaymentStatusPending {
+		message = "Payment approved by finance manager and sent to director"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Payment approved and journal posted successfully",
+		"message": message,
 		"data":    payment,
 	})
 }
 
-// RejectPayment rejects a DRAFT payment request (finance manager/admin only)
+// RejectPayment rejects a DRAFT payment request (finance manager only)
 func (ctrl *SSOTPaymentController) RejectPayment(c *gin.Context) {
 	paymentIDStr := c.Param("id")
 	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
@@ -294,12 +372,33 @@ func (ctrl *SSOTPaymentController) RejectPayment(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	if !models.CanManageRequiredApprovals(c.GetString("role")) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager or Admin can reject payments"})
+	paymentResponse, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID))
+	if !ok {
 		return
 	}
 
-	payment, err := ctrl.enhancedPaymentService.RejectPayment(uint(paymentID), approverUserID, request.Reason)
+	roleNorm := models.NormalizeRole(c.GetString("role"))
+	payment := paymentResponse.Payment
+	if payment == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+		return
+	}
+
+	isDirectorApprovalStep := payment.Status == models.PaymentStatusPending &&
+		payment.RequireDirectorApproval &&
+		strings.EqualFold(payment.ApprovalStage, models.PaymentApprovalStageDirector)
+
+	if isDirectorApprovalStep {
+		if roleNorm != models.RoleDirector {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only Director can reject this payment at the director stage"})
+			return
+		}
+	} else if !models.CanManageRequiredApprovals(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can reject payments"})
+		return
+	}
+
+	rejectedPayment, err := ctrl.enhancedPaymentService.RejectPayment(uint(paymentID), approverUserID, request.Reason)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Failed to reject payment",
@@ -310,7 +409,7 @@ func (ctrl *SSOTPaymentController) RejectPayment(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Payment rejected successfully",
-		"data":    payment,
+		"data":    rejectedPayment,
 	})
 }
 

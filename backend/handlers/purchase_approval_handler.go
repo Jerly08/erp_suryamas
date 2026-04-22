@@ -416,9 +416,10 @@ func (h *PurchaseApprovalHandler) CreateApprovalWorkflow(c *gin.Context) {
 // Helper function to filter purchases based on active approval step's approver_role
 // Single source of truth: who can approve is determined by the active ApprovalWorkflow step.
 func (h *PurchaseApprovalHandler) filterPurchasesByApprovalAuthority(purchases []models.Purchase, userRole string, userID uint) []models.Purchase {
-	// Admins can see all pending approvals (superuser). Others are filtered by active step approver_role.
+	// Admin is not part of the purchase approval lane. Pending queues should stay with the
+	// currently assigned finance manager/director workflow step.
 	if strings.ToLower(strings.TrimSpace(userRole)) == "admin" {
-		return purchases
+		return nil
 	}
 
 	var filtered []models.Purchase

@@ -22,7 +22,10 @@ func newSalesPPh23TestDB(t *testing.T) *gorm.DB {
 		&models.User{},
 		&models.Contact{},
 		&models.Account{},
+		&models.CashBank{},
+		&models.CashBankTransaction{},
 		&models.Sale{},
+		&models.SalePayment{},
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 	); err != nil {
@@ -74,6 +77,14 @@ func seedSalesPPh23Fixture(t *testing.T, db *gorm.DB, outstandingAmount float64)
 
 	accounts := []models.Account{
 		{
+			Code:     "1102-001",
+			Name:     "PIUTANG USAHA",
+			Type:     models.AccountTypeAsset,
+			Category: models.CategoryCurrentAsset,
+			Level:    4,
+			IsActive: true,
+		},
+		{
 			Code:     "1105-002",
 			Name:     "PPH PASAL 23 DIBAYAR DIMUKA",
 			Type:     models.AccountTypeAsset,
@@ -119,6 +130,40 @@ func seedSalesPPh23Fixture(t *testing.T, db *gorm.DB, outstandingAmount float64)
 	}
 
 	return sale
+}
+
+func seedSalesPPh23CashBankFixture(t *testing.T, db *gorm.DB) models.CashBank {
+	t.Helper()
+
+	cashAccount := models.Account{
+		Code:     "1101-003",
+		Name:     "BANK GIRO",
+		Type:     models.AccountTypeAsset,
+		Category: models.CategoryCurrentAsset,
+		Level:    4,
+		IsActive: true,
+		Balance:  1000000,
+	}
+	if err := db.Create(&cashAccount).Error; err != nil {
+		t.Fatalf("seed cash account: %v", err)
+	}
+
+	cashBank := models.CashBank{
+		Code:             "BANK-001",
+		Name:             "Bank Operasional",
+		Type:             models.CashBankTypeBank,
+		AccountID:        cashAccount.ID,
+		Currency:         "IDR",
+		Balance:          1000000,
+		BookBalanceIDR:   1000000,
+		LastExchangeRate: 1,
+		IsActive:         true,
+	}
+	if err := db.Create(&cashBank).Error; err != nil {
+		t.Fatalf("seed cash bank: %v", err)
+	}
+
+	return cashBank
 }
 
 func TestSettlePPh23CreatesJournalAndUpdatesSale(t *testing.T) {
@@ -169,5 +214,166 @@ func TestSettlePPh23RequiresPaidInvoice(t *testing.T) {
 	}, 1)
 	if err == nil {
 		t.Fatalf("expected settle PPh23 to fail for unpaid invoice")
+	}
+}
+
+func TestAddLatePPh23ClosesOutstandingInvoice(t *testing.T) {
+	db := newSalesPPh23TestDB(t)
+	baseSale := seedSalesPPh23Fixture(t, db, 0)
+
+	sale := models.Sale{
+		Code:              "SAL-LATE-001",
+		CustomerID:        baseSale.CustomerID,
+		UserID:            baseSale.UserID,
+		Type:              models.SaleTypeInvoice,
+		Status:            models.SaleStatusInvoiced,
+		Date:              time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:           time.Date(2026, time.April, 30, 0, 0, 0, 0, time.UTC),
+		InvoiceNumber:     "INV-LATE-001",
+		TaxableAmount:     1000000,
+		Subtotal:          1000000,
+		TotalAmount:       1000000,
+		PaidAmount:        980000,
+		OutstandingAmount: 20000,
+	}
+	if err := db.Create(&sale).Error; err != nil {
+		t.Fatalf("seed late sale: %v", err)
+	}
+
+	service := &SalesServiceV2{db: db}
+	updatedSale, err := service.AddLatePPh23(sale.ID, models.SaleLatePPh23Request{
+		Date:      time.Date(2026, time.April, 16, 0, 0, 0, 0, time.UTC),
+		Amount:    20000,
+		Reference: "BUPOT-LATE-001",
+		Notes:     "Info konsultan pajak datang belakangan",
+	}, 1)
+	if err != nil {
+		t.Fatalf("expected add late PPh23 success, got %v", err)
+	}
+
+	if updatedSale.PPh23Amount != 20000 {
+		t.Fatalf("expected late PPh23 amount 20000, got %.2f", updatedSale.PPh23Amount)
+	}
+	if updatedSale.TotalAmount != 980000 {
+		t.Fatalf("expected updated total amount 980000, got %.2f", updatedSale.TotalAmount)
+	}
+	if updatedSale.OutstandingAmount != 0 {
+		t.Fatalf("expected outstanding amount 0, got %.2f", updatedSale.OutstandingAmount)
+	}
+	if updatedSale.Status != models.SaleStatusPaid {
+		t.Fatalf("expected status PAID, got %s", updatedSale.Status)
+	}
+	if updatedSale.PPh23SettlementJournalEntryID == nil {
+		t.Fatalf("expected late PPh23 journal entry to be saved")
+	}
+
+	var journal models.SSOTJournalEntry
+	if err := db.Preload("Lines").First(&journal, *updatedSale.PPh23SettlementJournalEntryID).Error; err != nil {
+		t.Fatalf("load late PPh23 journal: %v", err)
+	}
+	if len(journal.Lines) != 2 {
+		t.Fatalf("expected 2 journal lines for late PPh23, got %d", len(journal.Lines))
+	}
+}
+
+func TestAddLatePPh23OnPaidInvoiceCreatesPaymentCorrection(t *testing.T) {
+	db := newSalesPPh23TestDB(t)
+	baseSale := seedSalesPPh23Fixture(t, db, 0)
+	cashBank := seedSalesPPh23CashBankFixture(t, db)
+
+	sale := models.Sale{
+		Code:              "SAL-LATE-PAID",
+		CustomerID:        baseSale.CustomerID,
+		UserID:            baseSale.UserID,
+		Type:              models.SaleTypeInvoice,
+		Status:            models.SaleStatusPaid,
+		Date:              time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:           time.Date(2026, time.April, 30, 0, 0, 0, 0, time.UTC),
+		InvoiceNumber:     "INV-LATE-PAID",
+		TaxableAmount:     1000000,
+		Subtotal:          1000000,
+		TotalAmount:       1000000,
+		PaidAmount:        1000000,
+		OutstandingAmount: 0,
+		CashBankID:        &cashBank.ID,
+		PaymentMethod:     "BANK",
+		PaymentMethodType: "BANK",
+	}
+	if err := db.Create(&sale).Error; err != nil {
+		t.Fatalf("seed paid late sale: %v", err)
+	}
+
+	payment := models.SalePayment{
+		SaleID:                sale.ID,
+		Amount:                1000000,
+		NativeAmount:          1000000,
+		Currency:              "IDR",
+		ExchangeRate:          1,
+		BookAmountIDR:         1000000,
+		PaymentDate:           time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC),
+		PaymentMethod:         "BANK",
+		Reference:             "PAY-001",
+		CashBankID:            &cashBank.ID,
+		CashBankCode:          cashBank.Code,
+		CashBankName:          cashBank.Name,
+		CashBankCurrency:      "IDR",
+		CashBankGLAccountID:   &cashBank.AccountID,
+		CashBankGLAccountCode: "1101-003",
+		CashBankGLAccountName: "BANK GIRO",
+		UserID:                sale.UserID,
+		Status:                models.SalePaymentStatusCompleted,
+	}
+	if err := db.Create(&payment).Error; err != nil {
+		t.Fatalf("seed sale payment: %v", err)
+	}
+
+	service := &SalesServiceV2{db: db}
+	updatedSale, err := service.AddLatePPh23(sale.ID, models.SaleLatePPh23Request{
+		Date:      time.Date(2026, time.April, 16, 0, 0, 0, 0, time.UTC),
+		Amount:    20000,
+		Reference: "BUPOT-LATE-PAID",
+	}, 1)
+	if err != nil {
+		t.Fatalf("expected add late PPh23 on paid invoice success, got %v", err)
+	}
+
+	if updatedSale.TotalAmount != 980000 {
+		t.Fatalf("expected updated total amount 980000, got %.2f", updatedSale.TotalAmount)
+	}
+	if updatedSale.PaidAmount != 980000 {
+		t.Fatalf("expected updated paid amount 980000, got %.2f", updatedSale.PaidAmount)
+	}
+	if updatedSale.OutstandingAmount != 0 {
+		t.Fatalf("expected outstanding amount 0, got %.2f", updatedSale.OutstandingAmount)
+	}
+
+	var correctionPayments []models.SalePayment
+	if err := db.Where("sale_id = ? AND amount < 0", sale.ID).Find(&correctionPayments).Error; err != nil {
+		t.Fatalf("load correction payments: %v", err)
+	}
+	if len(correctionPayments) != 1 {
+		t.Fatalf("expected 1 correction payment, got %d", len(correctionPayments))
+	}
+	if correctionPayments[0].Amount != -20000 {
+		t.Fatalf("expected correction payment amount -20000, got %.2f", correctionPayments[0].Amount)
+	}
+
+	var cashBankAfter models.CashBank
+	if err := db.First(&cashBankAfter, cashBank.ID).Error; err != nil {
+		t.Fatalf("reload cash bank: %v", err)
+	}
+	if cashBankAfter.Balance != 980000 {
+		t.Fatalf("expected cash bank balance 980000, got %.2f", cashBankAfter.Balance)
+	}
+
+	var cashBankTransactions []models.CashBankTransaction
+	if err := db.Where("reference_type = ? AND reference_id = ?", "SALES_PAYMENT", correctionPayments[0].ID).Find(&cashBankTransactions).Error; err != nil {
+		t.Fatalf("load cash/bank correction transactions: %v", err)
+	}
+	if len(cashBankTransactions) != 1 {
+		t.Fatalf("expected 1 cash/bank correction transaction, got %d", len(cashBankTransactions))
+	}
+	if cashBankTransactions[0].Amount != -20000 {
+		t.Fatalf("expected cash/bank correction amount -20000, got %.2f", cashBankTransactions[0].Amount)
 	}
 }

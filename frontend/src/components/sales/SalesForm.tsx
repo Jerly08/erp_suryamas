@@ -74,6 +74,8 @@ import invoiceTypeService, { InvoiceType } from "@/services/invoiceTypeService";
 import ErrorHandler, { ParsedValidationError } from "@/utils/errorHandler";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useModulePermissions } from "@/hooks/usePermissions";
+import { isFinanceManagerRole, normalizeRole } from "@/utils/roles";
 
 interface SalesFormProps {
   isOpen: boolean;
@@ -152,6 +154,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const [products, setProducts] = useState<any[]>([]);
   const [salesPersons, setSalesPersons] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [defaultRevenueAccountId, setDefaultRevenueAccountId] = useState<
+    number | null
+  >(null);
+  const [defaultRevenueAccountLabel, setDefaultRevenueAccountLabel] =
+    useState("");
   const [cashBankAccounts, setCashBankAccounts] = useState<any[]>([]);
   const [invoiceTypes, setInvoiceTypes] = useState<InvoiceType[]>([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -205,12 +212,14 @@ const SalesForm: React.FC<SalesFormProps> = ({
     _focusVisible: fieldFocusStyles,
   };
 
-  // Check if user has permission to create/edit sales - using lowercase for consistency
-  const userRole = user?.role?.toLowerCase();
-  const canCreateSales =
-    userRole === "finance" || userRole === "director" || userRole === "admin";
-  const canEditSales =
-    userRole === "admin" || userRole === "finance" || userRole === "director";
+  const {
+    canCreate: canCreateSales,
+    canEdit: canEditSales,
+    loading: loadingSalesPermissions,
+  } = useModulePermissions("sales");
+  const { canView: canViewAccounts } = useModulePermissions("accounts");
+  const canSelectRevenueAccountFromCOA =
+    canViewAccounts || isFinanceManagerRole(normalizeRole(user?.role));
 
   // For new sales, check create permission; for editing, check edit permission
   const hasPermission = sale ? canEditSales : canCreateSales;
@@ -220,7 +229,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
 
   // If modal is opened but user doesn't have permission, close it and show error
   useEffect(() => {
-    if (isOpen && user && !hasPermission) {
+    if (isOpen && user && !loadingSalesPermissions && !hasPermission) {
       const action = sale ? "edit" : "create";
       toast({
         title: t("sales.messages.accessDenied"),
@@ -232,7 +241,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       });
       onClose();
     }
-  }, [isOpen, user, hasPermission, sale, toast, onClose]);
+  }, [isOpen, user, loadingSalesPermissions, hasPermission, sale, toast, onClose]);
 
   const {
     register,
@@ -315,7 +324,15 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const [discountType, setDiscountType] = useState<"percentage" | "amount">(
     "percentage",
   );
-  const shouldHideForm = !hasPermission && !!user;
+  const shouldHideForm = !loadingSalesPermissions && !hasPermission && !!user;
+
+  const resolveRevenueAccountId = (item: FormData["items"][number]) =>
+    item.revenue_account_id || defaultRevenueAccountId || 0;
+
+  const getRevenueAccountHelperText = () =>
+    defaultRevenueAccountLabel
+      ? `COA akan memakai default sistem: ${defaultRevenueAccountLabel}`
+      : "COA akan memakai default sistem saat sales disimpan.";
 
   useEffect(() => {
     if (isOpen) {
@@ -537,11 +554,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
           return result;
         })(),
 
-        // Load revenue accounts
+        // Load revenue accounts (catalog is enough for selector/default COA)
         (async () => {
           console.log("SalesForm: Loading revenue accounts...");
           const accountService = await import("@/services/accountService");
-          const result = await accountService.default.getAccounts(
+          const result = await accountService.default.getAccountCatalog(
             token,
             "REVENUE",
           );
@@ -646,22 +663,32 @@ const SalesForm: React.FC<SalesFormProps> = ({
         setSalesPersons([]);
       }
 
-      // Process accounts - ONLY show leaf accounts (is_header=false) that can receive journal postings
-      // Selecting a parent/header account causes backend to pick a random child, leading to wrong revenue classification
+      // Process accounts - catalog already returns lightweight detail rows for selector/default COA.
       if (
         accountsResult.status === "fulfilled" &&
         Array.isArray(accountsResult.value)
       ) {
-        const leafAccounts = accountsResult.value.filter(
-          (acc: { is_header?: boolean }) => !acc.is_header,
-        );
+        const revenueAccounts = accountsResult.value
+          .filter((acc: { active?: boolean }) => acc.active !== false)
+          .map((acc: { id: number; code: string; name: string }) => ({
+            id: acc.id,
+            code: acc.code,
+            name: acc.name,
+          }));
         console.log(
-          "SalesForm: Revenue accounts loaded (leaf only):",
-          leafAccounts.length,
-          "of",
-          accountsResult.value.length,
+          "SalesForm: Revenue accounts loaded:",
+          revenueAccounts.length,
         );
-        setAccounts(leafAccounts);
+        setAccounts(revenueAccounts);
+        if (revenueAccounts.length > 0) {
+          setDefaultRevenueAccountId(revenueAccounts[0].id);
+          setDefaultRevenueAccountLabel(
+            `${revenueAccounts[0].code} - ${revenueAccounts[0].name}`,
+          );
+        } else {
+          setDefaultRevenueAccountId(null);
+          setDefaultRevenueAccountLabel("");
+        }
       } else {
         console.warn(
           "Failed to load accounts:",
@@ -671,6 +698,8 @@ const SalesForm: React.FC<SalesFormProps> = ({
         );
         console.log("SalesForm: AccountsResult details:", accountsResult);
         setAccounts([]);
+        setDefaultRevenueAccountId(null);
+        setDefaultRevenueAccountLabel("");
       }
 
       // Process cash & bank accounts
@@ -962,6 +991,48 @@ const SalesForm: React.FC<SalesFormProps> = ({
     return watchItems[index]?.product_name?.trim() || "";
   };
 
+  const getItemFulfillmentPreview = (index: number) => {
+    const currentItem = watchItems[index];
+    if (!currentItem || !currentItem.product_id) {
+      return null;
+    }
+
+    const product = products.find((p) => p.id === currentItem.product_id);
+    if (!product || product.is_service || product.is_assembly) {
+      return null;
+    }
+
+    const requestedQty = Math.max(
+      0,
+      Math.floor(Number(currentItem.quantity) || 0),
+    );
+    if (requestedQty <= 0) {
+      return null;
+    }
+
+    const requestedBefore = watchItems
+      .slice(0, index)
+      .reduce((sum, item) => {
+        if (item.product_id !== currentItem.product_id) {
+          return sum;
+        }
+        return sum + Math.max(0, Math.floor(Number(item.quantity) || 0));
+      }, 0);
+
+    const remainingBefore = Math.max(
+      0,
+      Number(product.stock || 0) - requestedBefore,
+    );
+    const availableNow = Math.min(requestedQty, remainingBefore);
+    const futureFulfillmentQty = Math.max(0, requestedQty - availableNow);
+
+    return {
+      availableNow,
+      futureFulfillmentQty,
+      unit: product.unit || "qty",
+    };
+  };
+
   const calculateLineTotal = (item: any) => {
     const quantity = Number(item?.quantity) || 0;
     const unitPrice = Number(item?.unit_price) || 0;
@@ -1224,7 +1295,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
             hasItemFieldError = true;
           }
 
-          if (!item.revenue_account_id || item.revenue_account_id <= 0) {
+          if (
+            canSelectRevenueAccountFromCOA &&
+            (!item.revenue_account_id || item.revenue_account_id <= 0)
+          ) {
             setError(`items.${index}.revenue_account_id`, {
               type: "manual",
               message: "Pilih COA / Revenue Account untuk item ini",
@@ -1284,7 +1358,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             ),
             tax: 0,
             taxable: item.taxable !== false,
-            revenue_account_id: item.revenue_account_id || 0,
+            revenue_account_id: resolveRevenueAccountId(item),
           })),
         });
 
@@ -1436,7 +1510,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
               unit_price: item.unit_price,
               discount: item.discount_percent || 0,
               tax: 0,
-              revenue_account_id: item.revenue_account_id,
+              revenue_account_id: resolveRevenueAccountId(item),
               delete: item.delete || false,
             })),
           };
@@ -1507,7 +1581,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             ), // New field as percentage
             tax: 0, // Tax will be calculated by backend based on taxable flag
             taxable: item.taxable !== false, // Default to true if not specified
-            revenue_account_id: item.revenue_account_id || 0,
+            revenue_account_id: resolveRevenueAccountId(item),
           })),
         };
 
@@ -2035,7 +2109,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
                     >
                       <AlertIcon />
                       <AlertDescription fontSize="sm">
-                        Sales tetap bisa disimpan walau stok belum cukup. Selisih quantity akan dicatat sebagai backorder dan HPP sementara memakai harga estimasi terbaru.
+                        Jika qty melebihi stok, sales tetap bisa disimpan tetapi
+                        sistem akan menandainya sebagai future fulfillment.
+                        Qty yang tersedia tetap siap saat invoicing, sisanya
+                        menunggu pemenuhan stok/pembelian.
                       </AlertDescription>
                     </Alert>
                   )}
@@ -2332,6 +2409,47 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 <FormErrorMessage fontSize="xs">
                                   {errors.items?.[index]?.quantity?.message}
                                 </FormErrorMessage>
+                                {(() => {
+                                  const fulfillmentPreview =
+                                    getItemFulfillmentPreview(index);
+                                  if (!fulfillmentPreview) {
+                                    return null;
+                                  }
+
+                                  if (
+                                    fulfillmentPreview.futureFulfillmentQty > 0
+                                  ) {
+                                    return (
+                                      <Text
+                                        mt={1}
+                                        fontSize="xs"
+                                        color="orange.500"
+                                      >
+                                        Future fulfillment:{" "}
+                                        {fulfillmentPreview.availableNow}{" "}
+                                        {fulfillmentPreview.unit} ready stock,{" "}
+                                        {
+                                          fulfillmentPreview.futureFulfillmentQty
+                                        }{" "}
+                                        {fulfillmentPreview.unit} menunggu
+                                        stok.
+                                      </Text>
+                                    );
+                                  }
+
+                                  return (
+                                    <Text
+                                      mt={1}
+                                      fontSize="xs"
+                                      color={successTextColor}
+                                    >
+                                      Ready stock:{" "}
+                                      {fulfillmentPreview.availableNow}{" "}
+                                      {fulfillmentPreview.unit} tersedia saat
+                                      invoicing.
+                                    </Text>
+                                  );
+                                })()}
                               </FormControl>
                             </Td>
                             <Td>
@@ -2414,35 +2532,53 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                   !!errors.items?.[index]?.revenue_account_id
                                 }
                               >
-                                <Select
-                                  size="sm"
-                                  {...register(
-                                    `items.${index}.revenue_account_id`,
-                                    {
-                                      setValueAs: (value) =>
-                                        parseInt(value) || 0,
-                                      validate: (value) =>
-                                        Number(value ?? 0) > 0 ||
-                                        "Pilih COA / Revenue Account untuk item ini",
-                                      onChange: () =>
-                                        clearErrors(
-                                          `items.${index}.revenue_account_id`,
-                                        ),
-                                    },
-                                  )}
-                                  {...baseFieldStyles}
-                                  placeholder={t(
-                                    "common.placeholders.selectAccount",
-                                  )}
-                                  isDisabled={isInvoiced}
-                                >
-                                  <option value="">Pilih COA Pendapatan</option>
-                                  {accounts.map((account) => (
-                                    <option key={account.id} value={account.id}>
-                                      {account.code} - {account.name}
-                                    </option>
-                                  ))}
-                                </Select>
+                {canSelectRevenueAccountFromCOA ? (
+                  <Select
+                                    size="sm"
+                                    {...register(
+                                      `items.${index}.revenue_account_id`,
+                                      {
+                                        setValueAs: (value) =>
+                                          parseInt(value) || 0,
+                                        validate: (value) =>
+                                          Number(value ?? 0) > 0 ||
+                                          "Pilih COA / Revenue Account untuk item ini",
+                                        onChange: () =>
+                                          clearErrors(
+                                            `items.${index}.revenue_account_id`,
+                                          ),
+                                      },
+                                    )}
+                                    {...baseFieldStyles}
+                                    placeholder={t(
+                                      "common.placeholders.selectAccount",
+                                    )}
+                                    isDisabled={isInvoiced}
+                                  >
+                                    <option value="">Pilih COA Pendapatan</option>
+                                    {accounts.map((account) => (
+                                      <option key={account.id} value={account.id}>
+                                        {account.code} - {account.name}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                ) : (
+                                  <Box
+                                    px={3}
+                                    py={2}
+                                    borderWidth="1px"
+                                    borderColor={borderColor}
+                                    borderRadius="md"
+                                    bg={readOnlyBg}
+                                  >
+                                    <Text fontSize="xs" fontWeight="medium">
+                                      Default COA Sistem
+                                    </Text>
+                                    <Text fontSize="xs" color={textColor}>
+                                      {getRevenueAccountHelperText()}
+                                    </Text>
+                                  </Box>
+                                )}
                                 <FormErrorMessage fontSize="xs">
                                   {
                                     errors.items?.[index]?.revenue_account_id

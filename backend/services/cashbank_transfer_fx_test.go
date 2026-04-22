@@ -34,8 +34,40 @@ func setupCashBankTransferFXTestDB(t *testing.T) *gorm.DB {
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 	))
+	ensureCashBankTransferApprovalColumns(t, db)
 
 	return db
+}
+
+func ensureCashBankTransferApprovalColumns(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	type sqliteColumn struct {
+		Name string `gorm:"column:name"`
+	}
+
+	var columns []sqliteColumn
+	require.NoError(t, db.Raw("PRAGMA table_info(cash_bank_transfers)").Scan(&columns).Error)
+
+	existing := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		existing[column.Name] = struct{}{}
+	}
+
+	requiredColumns := map[string]string{
+		"source_book_amount_idr":      "REAL DEFAULT 0",
+		"destination_book_amount_idr": "REAL DEFAULT 0",
+	}
+
+	for columnName, columnType := range requiredColumns {
+		if _, found := existing[columnName]; found {
+			continue
+		}
+
+		require.NoError(t, db.Exec(
+			fmt.Sprintf("ALTER TABLE cash_bank_transfers ADD COLUMN %s %s", columnName, columnType),
+		).Error)
+	}
 }
 
 func seedTransferFXUserAndAccounts(t *testing.T, db *gorm.DB) (models.User, models.Account, models.Account, models.Account, models.Account) {
@@ -264,4 +296,157 @@ func TestProcessTransfer_FinanceStaffCreatesPendingApprovalRequestWithoutBalance
 		Where("source_type = ? AND source_code = ?", models.SSOTSourceTypeTransfer, transfer.TransferNumber).
 		Count(&journalCount).Error)
 	require.EqualValues(t, 0, journalCount)
+}
+
+func TestProcessTransfer_AdminCreatesPendingApprovalRequestWithoutBalanceMutation(t *testing.T) {
+	db := setupCashBankTransferFXTestDB(t)
+	_, sourceGL, destGL, _, _ := seedTransferFXUserAndAccounts(t, db)
+
+	requester := models.User{
+		Username:  "admin-transfer",
+		Email:     "admin-transfer@test.local",
+		Password:  "secret",
+		Role:      models.RoleAdmin,
+		FirstName: "Admin Transfer",
+		IsActive:  true,
+	}
+	require.NoError(t, db.Create(&requester).Error)
+
+	sourceCashBank := createCashBankForTransferTest(t, db, "BNK-IDR-020", "Bank Operasional", "IDR", sourceGL.ID, 500000, 0, 1)
+	destCashBank := createCashBankForTransferTest(t, db, "BNK-IDR-021", "Bank Cadangan", "IDR", destGL.ID, 100000, 0, 1)
+
+	service := NewCashBankService(db, repositories.NewCashBankRepository(db), repositories.NewAccountRepository(db))
+	request := TransferRequest{
+		FromAccountID: sourceCashBank.ID,
+		ToAccountID:   destCashBank.ID,
+		Date:          CustomDate(time.Date(2026, time.April, 12, 0, 0, 0, 0, time.UTC)),
+		Amount:        75000,
+		Reference:     "TRF-PENDING-ADMIN-001",
+		Notes:         "Admin tetap perlu approval finance manager",
+	}
+
+	transfer, err := service.ProcessTransfer(request, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.NotNil(t, transfer)
+	require.Equal(t, TransferStatusPendingApproval, transfer.Status)
+	require.True(t, transfer.ApprovalRequired)
+
+	var reloadedSource models.CashBank
+	require.NoError(t, db.First(&reloadedSource, sourceCashBank.ID).Error)
+	require.InDelta(t, 500000, reloadedSource.Balance, 0.01)
+
+	var reloadedDestination models.CashBank
+	require.NoError(t, db.First(&reloadedDestination, destCashBank.ID).Error)
+	require.InDelta(t, 100000, reloadedDestination.Balance, 0.01)
+}
+
+func TestApproveTransfer_AdminIsRejected(t *testing.T) {
+	db := setupCashBankTransferFXTestDB(t)
+	_, sourceGL, destGL, _, _ := seedTransferFXUserAndAccounts(t, db)
+
+	requester := models.User{
+		Username:  "finance-staff-approvals",
+		Email:     "finance-staff-approvals@test.local",
+		Password:  "secret",
+		Role:      models.RoleFinanceStaff,
+		FirstName: "Finance Staff",
+		IsActive:  true,
+	}
+	admin := models.User{
+		Username:  "admin-approver",
+		Email:     "admin-approver@test.local",
+		Password:  "secret",
+		Role:      models.RoleAdmin,
+		FirstName: "Admin Approver",
+		IsActive:  true,
+	}
+	require.NoError(t, db.Create(&requester).Error)
+	require.NoError(t, db.Create(&admin).Error)
+
+	sourceCashBank := createCashBankForTransferTest(t, db, "BNK-IDR-030", "Bank Operasional", "IDR", sourceGL.ID, 500000, 0, 1)
+	destCashBank := createCashBankForTransferTest(t, db, "BNK-IDR-031", "Bank Cadangan", "IDR", destGL.ID, 100000, 0, 1)
+
+	service := NewCashBankService(db, repositories.NewCashBankRepository(db), repositories.NewAccountRepository(db))
+	request := TransferRequest{
+		FromAccountID: sourceCashBank.ID,
+		ToAccountID:   destCashBank.ID,
+		Date:          CustomDate(time.Date(2026, time.April, 13, 0, 0, 0, 0, time.UTC)),
+		Amount:        80000,
+		Reference:     "TRF-PENDING-ADMIN-APPROVE-001",
+		Notes:         "Admin tidak boleh approve",
+	}
+
+	transfer, err := service.ProcessTransfer(request, requester.ID, requester.Role)
+	require.NoError(t, err)
+
+	approvedTransfer, err := service.ApproveTransfer(transfer.ID, admin.ID, admin.Role)
+	require.Nil(t, approvedTransfer)
+	require.EqualError(t, err, "you do not have permission to approve transfers")
+}
+
+func TestApproveTransfer_FinanceManagerApprovesPendingTransferAndMutatesBalances(t *testing.T) {
+	db := setupCashBankTransferFXTestDB(t)
+	_, sourceGL, destGL, _, _ := seedTransferFXUserAndAccounts(t, db)
+
+	requester := models.User{
+		Username:  "finance-staff-pending",
+		Email:     "finance-staff-pending@test.local",
+		Password:  "secret",
+		Role:      models.RoleFinanceStaff,
+		FirstName: "Finance Staff",
+		IsActive:  true,
+	}
+	approver := models.User{
+		Username:  "finance-manager-approver",
+		Email:     "finance-manager-approver@test.local",
+		Password:  "secret",
+		Role:      models.RoleFinanceManager,
+		FirstName: "Finance Manager",
+		IsActive:  true,
+	}
+	require.NoError(t, db.Create(&requester).Error)
+	require.NoError(t, db.Create(&approver).Error)
+
+	sourceCashBank := createCashBankForTransferTest(t, db, "BNK-IDR-040", "Bank Operasional", "IDR", sourceGL.ID, 500000, 0, 1)
+	destCashBank := createCashBankForTransferTest(t, db, "BNK-IDR-041", "Bank Cadangan", "IDR", destGL.ID, 100000, 0, 1)
+
+	service := NewCashBankService(db, repositories.NewCashBankRepository(db), repositories.NewAccountRepository(db))
+	request := TransferRequest{
+		FromAccountID: sourceCashBank.ID,
+		ToAccountID:   destCashBank.ID,
+		Date:          CustomDate(time.Date(2026, time.April, 14, 0, 0, 0, 0, time.UTC)),
+		Amount:        90000,
+		Reference:     "TRF-PENDING-FM-APPROVE-001",
+		Notes:         "Finance manager approve transfer",
+	}
+
+	transfer, err := service.ProcessTransfer(request, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Equal(t, TransferStatusPendingApproval, transfer.Status)
+
+	approvedTransfer, err := service.ApproveTransfer(transfer.ID, approver.ID, approver.Role)
+	require.NoError(t, err)
+	require.NotNil(t, approvedTransfer)
+	require.Equal(t, TransferStatusCompleted, approvedTransfer.Status)
+	require.NotNil(t, approvedTransfer.ApprovedBy)
+	require.Equal(t, approver.ID, *approvedTransfer.ApprovedBy)
+	require.NotNil(t, approvedTransfer.ApprovedAt)
+
+	var reloadedSource models.CashBank
+	require.NoError(t, db.First(&reloadedSource, sourceCashBank.ID).Error)
+	require.InDelta(t, 410000, reloadedSource.Balance, 0.01)
+
+	var reloadedDestination models.CashBank
+	require.NoError(t, db.First(&reloadedDestination, destCashBank.ID).Error)
+	require.InDelta(t, 190000, reloadedDestination.Balance, 0.01)
+
+	var transactions []models.CashBankTransaction
+	require.NoError(t, db.Where("reference_type = ? AND reference_id = ?", TransactionTypeTransfer, transfer.ID).Find(&transactions).Error)
+	require.Len(t, transactions, 2)
+
+	var journalCount int64
+	require.NoError(t, db.Model(&models.SSOTJournalEntry{}).
+		Where("source_type = ? AND source_code = ?", models.SSOTSourceTypeTransfer, transfer.TransferNumber).
+		Count(&journalCount).Error)
+	require.EqualValues(t, 1, journalCount)
 }

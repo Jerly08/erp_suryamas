@@ -121,6 +121,52 @@ func buildSaleItemFulfillmentSnapshot(product *models.Product, requestedQty int,
 	return snapshot
 }
 
+func currentRemainingSaleProductStock(product *models.Product, remainingProductStock map[uint]int) int {
+	if product == nil {
+		return 0
+	}
+	if product.IsService || product.IsAssembly {
+		return 0
+	}
+	if remainingProductStock == nil {
+		return maxInt(0, product.Stock)
+	}
+
+	if remainingQty, exists := remainingProductStock[product.ID]; exists {
+		return maxInt(0, remainingQty)
+	}
+
+	remainingQty := maxInt(0, product.Stock)
+	remainingProductStock[product.ID] = remainingQty
+	return remainingQty
+}
+
+func allocateSaleProductStock(product *models.Product, requestedQty int, remainingProductStock map[uint]int) int {
+	if requestedQty <= 0 {
+		return 0
+	}
+	if product == nil {
+		return 0
+	}
+	if product.IsService || product.IsAssembly {
+		return requestedQty
+	}
+
+	availableQty := currentRemainingSaleProductStock(product, remainingProductStock)
+	allocatedQty := minInt(requestedQty, availableQty)
+
+	if remainingProductStock != nil {
+		remainingProductStock[product.ID] = maxInt(0, availableQty-allocatedQty)
+	}
+
+	return allocatedQty
+}
+
+func buildSaleItemFulfillmentSnapshotWithRemainingStock(product *models.Product, requestedQty int, remainingProductStock map[uint]int) saleItemFulfillmentSnapshot {
+	availableQty := allocateSaleProductStock(product, requestedQty, remainingProductStock)
+	return buildSaleItemFulfillmentSnapshot(product, requestedQty, availableQty)
+}
+
 func applySaleItemFulfillmentSnapshot(item *models.SaleItem, snapshot saleItemFulfillmentSnapshot) {
 	if item == nil {
 		return

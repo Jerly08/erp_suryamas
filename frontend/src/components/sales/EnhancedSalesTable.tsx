@@ -116,14 +116,20 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
         ),
       0,
     );
+    const hasFutureFulfillment = items.some(
+      (item) =>
+        (item.backorder_quantity || 0) > 0 ||
+        item.fulfillment_status === "PARTIAL_BACKORDER" ||
+        item.fulfillment_status === "BACKORDERED",
+    );
 
-    if (pendingBackorder > 0) {
+    if (hasFutureFulfillment) {
       return {
-        label: `${pendingBackorder} backorder`,
+        label: "Future fulfillment",
         caption:
           fulfilledBackorder > 0
-            ? `${fulfilledBackorder} qty sudah dipenuhi`
-            : "Menunggu pembelian/pemenuhan stok",
+            ? `${pendingBackorder} qty menunggu stok, ${fulfilledBackorder} qty sudah terpenuhi`
+            : `${pendingBackorder} qty menunggu pemenuhan stok/pembelian`,
         colorScheme: "orange" as const,
       };
     }
@@ -300,6 +306,12 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                   const workflowStatus = getWorkflowStatus(sale.status);
                   const displayStatus = getDisplayStatus(sale);
                   const fulfillment = getFulfillmentSummary(sale);
+                  const canAddPPh23 =
+                    !!onPPh23Settlement &&
+                    (sale.pph23_amount || 0) <= 0 &&
+                    !sale.pph23_settlement_date &&
+                    workflowStatus !== "DRAFT" &&
+                    workflowStatus !== "CANCELLED";
                   const canPostPPh23 =
                     !!onPPh23Settlement &&
                     (sale.pph23_amount || 0) > 0 &&
@@ -491,19 +503,19 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                               sale.outstanding_amount > 0 &&
                               canEdit &&
                               onPayment && (
-                                <MenuItem
-                                  icon={<FiDollarSign />}
-                                  onClick={() => onPayment(sale)}
-                                >
-                                  {t("purchases.payment.recordPayment")}
-                                </MenuItem>
-                              )}
-                            {canEdit && canPostPPh23 && (
                               <MenuItem
-                                icon={<FiCheck />}
+                                icon={<FiDollarSign />}
+                                onClick={() => onPayment(sale)}
+                              >
+                                {t("purchases.payment.recordPayment")}
+                              </MenuItem>
+                              )}
+                            {canEdit && (canAddPPh23 || canPostPPh23) && (
+                              <MenuItem
+                                icon={canAddPPh23 ? <FiDollarSign /> : <FiCheck />}
                                 onClick={() => onPPh23Settlement(sale)}
                               >
-                                Bayar PPh23
+                                {canAddPPh23 ? "Tambah PPh23" : "Bayar PPh23"}
                               </MenuItem>
                             )}
                             {canEdit &&

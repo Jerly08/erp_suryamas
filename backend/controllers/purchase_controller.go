@@ -409,6 +409,14 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(uint)
 	userRole := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(userRole)
+
+	if roleNorm == models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Admin cannot approve purchases directly. Approval must be handled by the active finance manager/director workflow step.",
+		})
+		return
+	}
 
 	// SAFETY CHECK: Ensure purchase is not in DRAFT status
 	purchase, err := pc.purchaseService.GetPurchaseByID(uint(id))
@@ -426,8 +434,7 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 	}
 
 	if purchase.Status == models.PurchaseStatusDraft {
-		roleNorm := strings.ToLower(strings.TrimSpace(userRole))
-		if models.IsFinanceManagerRole(roleNorm) || roleNorm == models.RoleAdmin || roleNorm == models.RoleDirector {
+		if models.IsFinanceManagerRole(roleNorm) {
 			// Auto-submit the purchase for approval
 			if err := pc.purchaseService.SubmitForApproval(uint(id), userID); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{
@@ -443,7 +450,7 @@ func (pc *PurchaseController) ApprovePurchase(c *gin.Context) {
 			}
 		} else {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":           "Cannot approve DRAFT purchase - please submit for approval first",
+				"error":           "Draft purchase must be submitted for finance manager approval first",
 				"current_status":  purchase.Status,
 				"required_action": "Use 'Submit for Approval' button first",
 			})
@@ -496,6 +503,14 @@ func (pc *PurchaseController) RejectPurchase(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(uint)
 	userRole := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(userRole)
+
+	if roleNorm == models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Admin cannot reject purchases directly. Rejection must be handled by the active finance manager/director workflow step.",
+		})
+		return
+	}
 
 	// Parse request body to get comments
 	var request struct {
@@ -966,8 +981,8 @@ func (pc *PurchaseController) GetPendingApprovals(c *gin.Context) {
 	// Filter based on user role - in a real app, this would be more sophisticated
 	var filteredPurchases []models.Purchase
 	for _, purchase := range result.Data {
-		// Finance can approve all purchases
-		if models.IsFinanceManagerRole(userRole) || userRole == models.RoleAdmin {
+		// Finance manager can approve finance-step purchases
+		if models.IsFinanceManagerRole(userRole) {
 			filteredPurchases = append(filteredPurchases, purchase)
 		}
 		// Director can approve all purchases (removed amount restriction)
@@ -1420,7 +1435,7 @@ func (pc *PurchaseController) GetPurchaseDashboard(c *gin.Context) {
 		"summary":       summary,
 		"pending_count": len(pendingResult.Data),
 		"user_role":     userRole,
-		"can_approve":   models.IsFinanceManagerRole(userRole) || userRole == models.RoleDirector || userRole == models.RoleAdmin,
+		"can_approve":   models.IsFinanceManagerRole(userRole) || userRole == models.RoleDirector,
 	}
 
 	c.JSON(http.StatusOK, response)

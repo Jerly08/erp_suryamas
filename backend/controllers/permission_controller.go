@@ -18,6 +18,27 @@ func NewPermissionController(db *gorm.DB) *PermissionController {
 	return &PermissionController{db: db}
 }
 
+func workflowManagedPermissionForRole(role string, module string, current *models.ModulePermission) *models.ModulePermission {
+	return models.EnforceWorkflowManagedModulePermission(role, module, current)
+}
+
+func enforceWorkflowManagedPermissions(role string, permMap map[string]*models.ModulePermission) {
+	if permMap == nil {
+		return
+	}
+
+	permMap["journal"] = workflowManagedPermissionForRole(
+		role,
+		"journal",
+		permMap["journal"],
+	)
+	permMap["cash_bank"] = workflowManagedPermissionForRole(
+		role,
+		"cash_bank",
+		permMap["cash_bank"],
+	)
+}
+
 // GetUserPermissions retrieves permissions for a specific user
 func (pc *PermissionController) GetUserPermissions(c *gin.Context) {
 	userID := c.Param("userId")
@@ -57,6 +78,7 @@ func (pc *PermissionController) GetUserPermissions(c *gin.Context) {
 			CanMenu:    perm.CanMenu,
 		}
 	}
+	enforceWorkflowManagedPermissions(user.Role, permMap)
 
 	response := models.UserPermission{
 		UserID:      uint(id),
@@ -99,6 +121,15 @@ func (pc *PermissionController) UpdateUserPermissions(c *gin.Context) {
 	// Use raw SQL UPSERT to handle all constraint cases atomically.
 	// This avoids any soft-delete / unique-index conflicts entirely.
 	for module, perm := range request.Permissions {
+		effectivePermission := workflowManagedPermissionForRole(
+			user.Role,
+			module,
+			perm,
+		)
+		if effectivePermission == nil {
+			effectivePermission = perm
+		}
+
 		err := pc.db.Exec(`
 			INSERT INTO module_permissions
 				(user_id, module, can_view, can_create, can_edit, can_delete, can_approve, can_export, can_menu, created_at, updated_at, deleted_at)
@@ -116,8 +147,13 @@ func (pc *PermissionController) UpdateUserPermissions(c *gin.Context) {
 				updated_at  = NOW(),
 				deleted_at  = NULL
 		`, id, module,
-			perm.CanView, perm.CanCreate, perm.CanEdit, perm.CanDelete,
-			perm.CanApprove, perm.CanExport, perm.CanMenu,
+			effectivePermission.CanView,
+			effectivePermission.CanCreate,
+			effectivePermission.CanEdit,
+			effectivePermission.CanDelete,
+			effectivePermission.CanApprove,
+			effectivePermission.CanExport,
+			effectivePermission.CanMenu,
 		).Error
 
 		if err != nil {
@@ -161,6 +197,7 @@ func (pc *PermissionController) GetAllUsersPermissions(c *gin.Context) {
 				CanMenu:    perm.CanMenu,
 			}
 		}
+		enforceWorkflowManagedPermissions(user.Role, permMap)
 
 		userPerm := models.UserPermission{
 			UserID:      user.ID,
@@ -208,16 +245,25 @@ func (pc *PermissionController) ResetToDefaultPermissions(c *gin.Context) {
 
 	// Create default permissions
 	for module, perm := range defaultPerms {
+		effectivePermission := workflowManagedPermissionForRole(
+			user.Role,
+			module,
+			perm,
+		)
+		if effectivePermission == nil {
+			effectivePermission = perm
+		}
+
 		permission := models.ModulePermissionRecord{
 			UserID:     uint(id),
 			Module:     module,
-			CanView:    perm.CanView,
-			CanCreate:  perm.CanCreate,
-			CanEdit:    perm.CanEdit,
-			CanDelete:  perm.CanDelete,
-			CanApprove: perm.CanApprove,
-			CanExport:  perm.CanExport,
-			CanMenu:    perm.CanMenu,
+			CanView:    effectivePermission.CanView,
+			CanCreate:  effectivePermission.CanCreate,
+			CanEdit:    effectivePermission.CanEdit,
+			CanDelete:  effectivePermission.CanDelete,
+			CanApprove: effectivePermission.CanApprove,
+			CanExport:  effectivePermission.CanExport,
+			CanMenu:    effectivePermission.CanMenu,
 		}
 
 		if err := tx.Create(&permission).Error; err != nil {
@@ -289,6 +335,7 @@ func (pc *PermissionController) GetMyPermissions(c *gin.Context) {
 			CanMenu:    perm.CanMenu,
 		}
 	}
+	enforceWorkflowManagedPermissions(user.Role, permMap)
 
 	response := models.UserPermission{
 		UserID:      uint(id),
@@ -350,6 +397,28 @@ func (pc *PermissionController) CheckUserPermission(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check permission"})
 			return
 		}
+	}
+
+	if enforcedPermission := workflowManagedPermissionForRole(
+		c.GetString("role"),
+		module,
+		&models.ModulePermission{
+			CanView:    permission.CanView,
+			CanCreate:  permission.CanCreate,
+			CanEdit:    permission.CanEdit,
+			CanDelete:  permission.CanDelete,
+			CanApprove: permission.CanApprove,
+			CanExport:  permission.CanExport,
+			CanMenu:    permission.CanMenu,
+		},
+	); enforcedPermission != nil {
+		permission.CanView = enforcedPermission.CanView
+		permission.CanCreate = enforcedPermission.CanCreate
+		permission.CanEdit = enforcedPermission.CanEdit
+		permission.CanDelete = enforcedPermission.CanDelete
+		permission.CanApprove = enforcedPermission.CanApprove
+		permission.CanExport = enforcedPermission.CanExport
+		permission.CanMenu = enforcedPermission.CanMenu
 	}
 
 	// Check specific action

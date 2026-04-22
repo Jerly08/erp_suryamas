@@ -39,6 +39,7 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
+  Checkbox,
   Switch,
   Card,
   CardBody,
@@ -89,6 +90,7 @@ interface PaymentFormData {
   method: string;
   reference: string;
   notes: string;
+  require_director_approval: boolean;
   auto_allocate: boolean;
 }
 
@@ -405,7 +407,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 
   // Check if user has permission to create payments directly vs draft
   const userRole = normalizeRole(user?.role);
-  const isFinanceOrAdmin = userRole === 'admin' || userRole === 'director' || isFinanceManagerRole(userRole);
+  const isFinanceManagerSubmitter = isFinanceManagerRole(userRole);
+  const canRequestDirectorApproval = isFinanceManagerRole(userRole);
 
   // If modal is opened but user doesn't have at least 'employee' role, close it
   useEffect(() => {
@@ -434,6 +437,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     defaultValues: {
       date: new Date().toISOString().split('T')[0],
       method: 'BANK_TRANSFER',
+      require_director_approval: false,
       auto_allocate: false,
       exchange_rate: undefined,
     }
@@ -483,6 +487,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
           method: initialData.method || 'BANK_TRANSFER',
           reference: stripInternalPaymentReference(initialData.reference),
           notes: initialData.notes || '',
+          require_director_approval: !!initialData.require_director_approval,
           auto_allocate: false,
         });
         // Load outstanding items for this contact
@@ -777,6 +782,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
+        require_director_approval: !!data.require_director_approval,
       };
 
       // Add allocations
@@ -866,6 +872,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         title: 'Success',
         description: wasSubmittedForApproval
           ? `${type === 'receivable' ? 'Receivable' : 'Payable'} payment submitted for finance manager approval`
+          : !initialData?.id && result?.status === 'PENDING'
+            ? `${type === 'receivable' ? 'Receivable' : 'Payable'} payment submitted for director approval`
           : initialData?.id
             ? 'Draft payment updated successfully'
             : `${type === 'receivable' ? 'Receivable' : 'Payable'} payment created successfully`,
@@ -1027,7 +1035,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                   <TabPanel px={0}>
                     <VStack spacing={6} align="stretch">
                       {/* Draft warning for non-finance roles */}
-                      {!isFinanceOrAdmin && (
+                      {!isFinanceManagerSubmitter && (
                         <Alert status="warning" borderRadius="md">
                           <AlertIcon />
                           <AlertDescription fontSize="sm">
@@ -1347,6 +1355,17 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                             />
                           </FormControl>
 
+                          {canRequestDirectorApproval && !initialData?.id && (
+                            <FormControl mt={4}>
+                              <Checkbox {...register('require_director_approval')} colorScheme="blue">
+                                Minta approval Director
+                              </Checkbox>
+                              <Text fontSize="sm" color="gray.500" mt={1}>
+                                Jika dicentang, payment ini tidak langsung diposting jurnal dan akan masuk ke approval Director.
+                              </Text>
+                            </FormControl>
+                          )}
+
                           {outstandingItems.length > 0 && (
                             <FormControl mt={4}>
                               <HStack>
@@ -1507,7 +1526,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                       }
                     }
 
-                    return isFinanceOrAdmin ? 'Create Payment' : 'Submit for Approval';
+                    return isFinanceManagerSubmitter ? 'Create Payment' : 'Submit for Approval';
                   })()}
                 </Button>
               </HStack>

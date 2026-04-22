@@ -422,7 +422,11 @@ class CashBankService {
       const response = await api.post(API_ENDPOINTS.CASH_BANK.TRANSFER, data);
       return response.data?.data ?? response.data;
     } catch (error) {
-      console.error("Error processing transfer:", error);
+      const normalizedError = error as ApiServiceErrorShape;
+      const status = normalizedError?.response?.status;
+      if (!status || status >= 500) {
+        console.error("Error processing transfer:", error);
+      }
       throw error;
     }
   }

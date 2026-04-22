@@ -29,6 +29,7 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
+  Checkbox,
   useColorModeValue,
   Tooltip,
   Icon,
@@ -59,6 +60,7 @@ import { AccountCatalogItem } from '@/types/account';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import { useAuth } from '@/contexts/AuthContext';
 import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
+import { useModulePermissions } from '@/hooks/usePermissions';
 
 const formatCashBankBalance = (amount: number, currency?: string) => {
   const normalizedCurrency = (currency || 'IDR').toUpperCase();
@@ -121,6 +123,7 @@ interface ExpensePaymentFormData {
   reference: string;
   notes: string;
   description: string;
+  require_director_approval: boolean;
   enable_pph: boolean;
   pph_type: string;
   pph_rate: number;
@@ -149,10 +152,14 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const { token, user } = useAuth();
   const toast = useToast();
   const { t } = useTranslation();
+  const { canView: canViewAccounts } = useModulePermissions('accounts');
 
-  // Check if user is finance or admin (will submit directly as COMPLETED)
+  // Finance manager can submit directly; other roles go through approval.
   const userRole = normalizeRole(user?.role);
-  const isFinanceOrAdmin = userRole === 'admin' || isFinanceManagerRole(userRole);
+  const isFinanceManagerSubmitter = isFinanceManagerRole(userRole);
+  const canRequestDirectorApproval = isFinanceManagerRole(userRole);
+  const canSelectExpenseAccountFromCOA =
+    canViewAccounts || isFinanceManagerSubmitter;
 
   // Color mode values
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -169,6 +176,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const [contacts, setContacts] = useState<SelectContact[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
   const [liabilityAccounts, setLiabilityAccounts] = useState<AccountCatalogItem[]>([]);
+  const [defaultExpenseAccountId, setDefaultExpenseAccountId] = useState<number | null>(null);
+  const [defaultExpenseAccountLabel, setDefaultExpenseAccountLabel] = useState('');
   const [cashBanks, setCashBanks] = useState<CashBank[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [checkingClosedPeriod, setCheckingClosedPeriod] = useState(false);
@@ -193,6 +202,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       reference: '',
       notes: '',
       description: '',
+      require_director_approval: false,
       enable_pph: false,
       pph_type: '',
       pph_rate: 0,
@@ -294,7 +304,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     if (isOpen && token) {
       loadData();
     }
-  }, [isOpen, token]);
+  }, [isOpen, token, canSelectExpenseAccountFromCOA]);
 
   // Populate form when editing an existing payment
   useEffect(() => {
@@ -316,6 +326,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       setValue('reference', stripInternalPaymentReference(parsedReference.userReference));
       if (initialData.notes) setValue('notes', initialData.notes);
       if (initialData.description) setValue('description', initialData.description);
+      setValue('require_director_approval', Boolean(initialData.require_director_approval));
       if (initialData.pph_type) setValue('pph_type', initialData.pph_type);
       if (typeof initialData.pph_rate === 'number') setValue('pph_rate', initialData.pph_rate);
       setValue('enable_pph', Boolean(initialData.pph_type || initialData.pph_amount));
@@ -330,6 +341,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         reference: '',
         notes: '',
         description: '',
+        require_director_approval: false,
         enable_pph: false,
         pph_type: '',
         pph_rate: 0,
@@ -453,11 +465,27 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     try {
       // Load expense accounts
       const expenseData = await accountService.getAccountCatalog(token, 'EXPENSE');
-      setExpenseAccounts(expenseData.filter(acc => acc.active));
+      const activeExpenseAccounts = expenseData.filter(acc => acc.active);
 
       // Load liability accounts
       const liabilityData = await accountService.getAccountCatalog(token, 'LIABILITY');
-      setLiabilityAccounts(liabilityData.filter(acc => acc.active));
+      const activeLiabilityAccounts = liabilityData.filter(acc => acc.active);
+
+      const fallbackExpenseAccount =
+        activeExpenseAccounts[0] || activeLiabilityAccounts[0] || null;
+      setDefaultExpenseAccountId(fallbackExpenseAccount?.id || null);
+      setDefaultExpenseAccountLabel(
+        fallbackExpenseAccount
+          ? `${fallbackExpenseAccount.code} - ${fallbackExpenseAccount.name}`
+          : '',
+      );
+
+      setExpenseAccounts(
+        canSelectExpenseAccountFromCOA ? activeExpenseAccounts : [],
+      );
+      setLiabilityAccounts(
+        canSelectExpenseAccountFromCOA ? activeLiabilityAccounts : [],
+      );
 
       // Load cash/bank accounts that can be used for payments
       const cashBankData = await cashbankService.getPaymentAccounts();
@@ -479,6 +507,23 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (
+      isOpen &&
+      !canSelectExpenseAccountFromCOA &&
+      defaultExpenseAccountId &&
+      (!selectedAccountId || Number(selectedAccountId) <= 0)
+    ) {
+      setValue('expense_account_id', defaultExpenseAccountId);
+    }
+  }, [
+    isOpen,
+    canSelectExpenseAccountFromCOA,
+    defaultExpenseAccountId,
+    selectedAccountId,
+    setValue,
+  ]);
+
   const onSubmit = async (data: ExpensePaymentFormData) => {
     setLoading(true);
     try {
@@ -492,7 +537,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
       const payload: any = {
         contact_id: data.contact_id ? Number(data.contact_id) : 0,
-        expense_account_id: Number(data.expense_account_id),
+        expense_account_id: Number(data.expense_account_id || defaultExpenseAccountId || 0),
         cash_bank_id: Number(data.cash_bank_id),
         date: data.date,
         amount: data.amount,
@@ -505,6 +550,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
           `Payment for ${selectedAccount?.code || ''} ${selectedAccount?.name || 'Expense'}`.trim(),
         description: data.description || selectedAccount?.name || 'Expense Payment',
         auto_create_journal: true,
+        require_director_approval: !!data.require_director_approval,
         pph_type: data.enable_pph ? data.pph_type : '',
         pph_rate: data.enable_pph ? data.pph_rate : 0,
         pph_amount: data.enable_pph ? pphAmount : 0,
@@ -526,7 +572,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
           title: 'Success',
           description: createdPayment?.status === 'DRAFT'
             ? 'Expense payment submitted for finance manager approval'
-            : 'Expense payment has been created successfully',
+            : createdPayment?.status === 'PENDING'
+              ? 'Expense payment submitted for director approval'
+              : 'Expense payment has been created successfully',
           status: 'success',
           duration: 3000,
         });
@@ -576,7 +624,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               </Alert>
 
               {/* Draft warning for non-finance roles */}
-              {!isFinanceOrAdmin && (
+              {!isFinanceManagerSubmitter && (
                 <Alert status="warning" borderRadius="md">
                   <AlertIcon />
                   <AlertDescription fontSize="sm">
@@ -626,7 +674,10 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                   </FormControl>
 
                   {/* Expense/Liability Account Selection */}
-                  <FormControl isInvalid={!!errors.expense_account_id} isRequired>
+                  <FormControl
+                    isInvalid={!!errors.expense_account_id}
+                    isRequired={canSelectExpenseAccountFromCOA}
+                  >
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiBookOpen} />
@@ -639,8 +690,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <Controller
                       name="expense_account_id"
                       control={control}
-                      rules={{ required: t('payments.form.accountRequired') }}
-                      render={({ field }) => (
+                      rules={{
+                        required: canSelectExpenseAccountFromCOA
+                          ? t('payments.form.accountRequired')
+                          : false,
+                      }}
+                      render={({ field }) => (canSelectExpenseAccountFromCOA ? (
                         <Select
                           {...field}
                           placeholder={t('payments.form.selectAccount')}
@@ -671,11 +726,29 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                             </>
                           )}
                         </Select>
-                      )}
+                      ) : (
+                        <Box
+                          borderWidth="1px"
+                          borderColor={borderColor}
+                          borderRadius="md"
+                          p={3}
+                          bg={selectedAccountBg}
+                        >
+                          <Text fontSize="sm" fontWeight="semibold">
+                            Default COA Sistem
+                          </Text>
+                          <Text fontSize="sm" color={textColor}>
+                            {defaultExpenseAccountLabel ||
+                              'Akun beban default sistem akan dipakai saat payment disimpan.'}
+                          </Text>
+                        </Box>
+                      ))}
                     />
                     <FormErrorMessage>{errors.expense_account_id?.message}</FormErrorMessage>
                     <FormHelperText color={textColor}>
-                      Gunakan akun beban untuk pembayaran langsung, atau akun kewajiban bila pelunasan perlu mengurangi liability tertentu.
+                      {canSelectExpenseAccountFromCOA
+                        ? 'Gunakan akun beban untuk pembayaran langsung, atau akun kewajiban bila pelunasan perlu mengurangi liability tertentu.'
+                        : 'User ini tidak memilih COA manual. Sistem akan memakai akun beban default.'}
                     </FormHelperText>
                   </FormControl>
 
@@ -1072,6 +1145,17 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       rows={3}
                     />
                   </FormControl>
+
+                  {canRequestDirectorApproval && !initialData?.id && (
+                    <FormControl>
+                      <Checkbox {...register('require_director_approval')} colorScheme="blue">
+                        Minta approval Director
+                      </Checkbox>
+                      <FormHelperText color={textColor}>
+                        Jika dicentang, payment ini akan masuk ke approval Director sebelum jurnal diposting.
+                      </FormHelperText>
+                    </FormControl>
+                  )}
                 </>
               )}
 
@@ -1104,12 +1188,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
             </Button>
             <Button
               type="submit"
-              colorScheme={isFinanceOrAdmin ? 'blue' : 'orange'}
+              colorScheme={isFinanceManagerSubmitter ? 'blue' : 'orange'}
               isLoading={loading}
               isDisabled={loadingAccounts || isDateClosed || checkingClosedPeriod}
               leftIcon={<FiDollarSign />}
             >
-              {isFinanceOrAdmin ? t('payments.form.createExpensePayment') : 'Submit for Approval'}
+              {isFinanceManagerSubmitter ? t('payments.form.createExpensePayment') : 'Submit for Approval'}
             </Button>
           </ModalFooter>
         </form>

@@ -89,6 +89,7 @@ import DepositWithdrawalForm from "@/components/cashbank/DepositWithdrawalForm";
 import DepositFormImproved from "@/components/cashbank/DepositFormImproved"; // New improved form for deposits
 import TransferForm from "@/components/cashbank/TransferForm";
 import TransactionHistoryModal from "@/components/cashbank/TransactionHistoryModal";
+import { isFinanceManagerRole } from "@/utils/roles";
 
 const getEffectiveBookRate = (account: CashBank): number => {
   if ((account.currency || "IDR").toUpperCase() === "IDR") {
@@ -168,9 +169,6 @@ const canUseDirectTransactions = (account: CashBank): boolean =>
   account.is_active &&
   !account.is_holding_account &&
   account.allow_direct_transactions !== false;
-
-const normalizeUserRole = (role?: string | null): string =>
-  (role || "").trim().toLowerCase();
 
 const getTransferStatusColor = (status?: string): string => {
   switch ((status || "").toUpperCase()) {
@@ -857,15 +855,9 @@ const CashBankPage: React.FC = () => {
   const [freezeReason, setFreezeReason] = useState<string>("");
   const [freezeLoading, setFreezeLoading] = useState(false);
   const [frozenHistory, setFrozenHistory] = useState<FrozenHistory[]>([]);
-  const currentUserRole = normalizeUserRole(user?.role);
-  const canApproveTransferRequests =
-    currentUserRole === "admin" ||
-    currentUserRole === "finance" ||
-    currentUserRole === "finance_manager";
+  const canApproveTransferRequests = isFinanceManagerRole(user?.role);
   const requiresFinanceManagerApprovalForTransfer =
-    currentUserRole === "employee" ||
-    currentUserRole === "finance_staff" ||
-    currentUserRole === "staff";
+    !canApproveTransferRequests;
 
   const fetchData = async () => {
     try {
@@ -1636,7 +1628,7 @@ const CashBankPage: React.FC = () => {
                     </Heading>
                     <Text fontSize="sm" color={mutedTextColor} mt={1}>
                       {canApproveTransferRequests
-                        ? "Review transfer staff dan finance staff, lalu approve atau reject seperti alur approval purchase request."
+                        ? "Review transfer antar bank yang diajukan selain finance manager sebelum saldo dipindahkan."
                         : "Pantau status transfer antar bank yang Anda buat dari halaman cash & bank."}
                     </Text>
                   </Box>

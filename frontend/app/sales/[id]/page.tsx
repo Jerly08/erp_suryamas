@@ -192,6 +192,14 @@ const SaleDetailPage: React.FC = () => {
   };
 
   const displayStatus = sale?.settlement_status || sale?.status || "DRAFT";
+  const canAddPPh23 =
+    !!sale &&
+    (sale.pph23_amount || 0) <= 0 &&
+    !sale.pph23_settlement_date &&
+    sale.status !== "DRAFT" &&
+    sale.status !== "PENDING" &&
+    sale.status !== "CONFIRMED" &&
+    sale.status !== "CANCELLED";
   const canPostPPh23 =
     !!sale &&
     (sale.pph23_amount || 0) > 0 &&
@@ -202,8 +210,10 @@ const SaleDetailPage: React.FC = () => {
     ? "-"
     : sale.pph23_settlement_date
       ? `Sudah dipost ${salesService.formatDate(sale.pph23_settlement_date)}`
-      : (sale.pph23_amount || 0) <= 0
-        ? "Tidak ada PPh23"
+      : canAddPPh23
+        ? "Belum ditambahkan"
+        : (sale.pph23_amount || 0) <= 0
+          ? "Tidak ada PPh23"
         : (sale.outstanding_amount || 0) > 0.005
           ? "Menunggu pelunasan invoice"
           : "Siap dipost";
@@ -352,9 +362,9 @@ const SaleDetailPage: React.FC = () => {
                     {t("sales.detail.recordPayment")}
                   </MenuItem>
                 )}
-                {canPostPPh23 && (
+                {(canAddPPh23 || canPostPPh23) && (
                   <MenuItem icon={<FiCheck />} onClick={onPPh23Open}>
-                    Bayar PPh23
+                    {canAddPPh23 ? "Tambah PPh23" : "Bayar PPh23"}
                   </MenuItem>
                 )}
                 <MenuItem
@@ -631,7 +641,7 @@ const SaleDetailPage: React.FC = () => {
                 </Flex>
               )}
 
-              {(sale.pph23_amount || 0) > 0 && (
+              {(canAddPPh23 || (sale.pph23_amount || 0) > 0) && (
                 <Flex justify="space-between">
                   <Text color="orange.500">Status Posting PPh23:</Text>
                   <Text fontWeight="medium" color="orange.500">

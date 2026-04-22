@@ -12,19 +12,52 @@ import (
 // latest workflow:
 // - employees can still submit manual journal drafts
 // - finance staff prepares draft journal adjustments
-// - finance manager/finance approves and posts journal drafts/adjustments
+// - finance manager/finance can submit their own journals or route them to director
+// - finance manager/finance approves and posts staff journal drafts/adjustments
 func JournalManualApprovalPermissionMigration(db *gorm.DB) {
 	if db == nil {
 		return
 	}
 
 	roleConfigs := map[string]*models.ModulePermission{
-		"employee":        models.GetDefaultPermissions("employee")["journal"],
-		"finance":         models.GetDefaultPermissions("finance")["journal"],
-		"finance_manager": models.GetDefaultPermissions("finance_manager")["journal"],
-		"finance_staff":   models.GetDefaultPermissions("finance_staff")["journal"],
-		"admin":           models.GetDefaultPermissions("admin")["journal"],
-		"director":        models.GetDefaultPermissions("director")["journal"],
+		"employee": models.GetDefaultPermissions("employee")["journal"],
+		"finance": {
+			CanView:    true,
+			CanCreate:  true,
+			CanEdit:    false,
+			CanDelete:  false,
+			CanApprove: true,
+			CanExport:  true,
+			CanMenu:    true,
+		},
+		"finance_manager": {
+			CanView:    true,
+			CanCreate:  true,
+			CanEdit:    false,
+			CanDelete:  false,
+			CanApprove: true,
+			CanExport:  true,
+			CanMenu:    true,
+		},
+		"finance_staff": {
+			CanView:    true,
+			CanCreate:  true,
+			CanEdit:    true,
+			CanDelete:  false,
+			CanApprove: false,
+			CanExport:  true,
+			CanMenu:    true,
+		},
+		"admin": {
+			CanView:    true,
+			CanCreate:  false,
+			CanEdit:    false,
+			CanDelete:  false,
+			CanApprove: false,
+			CanExport:  true,
+			CanMenu:    true,
+		},
+		"director": models.GetDefaultPermissions("director")["journal"],
 	}
 
 	for role, permission := range roleConfigs {

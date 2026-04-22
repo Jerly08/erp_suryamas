@@ -37,7 +37,7 @@ func IsValidUserRole(role string) bool {
 }
 
 func CanManageRequiredApprovals(role string) bool {
-	return NormalizeRole(role) == RoleAdmin || IsFinanceManagerRole(role)
+	return IsFinanceManagerRole(role)
 }
 
 func IsFinanceManagerRole(role string) bool {
@@ -63,7 +63,7 @@ func IsStaffRole(role string) bool {
 
 func CanReviewPurchaseRequests(role string) bool {
 	roleNorm := NormalizeRole(role)
-	return roleNorm == RoleAdmin || roleNorm == RoleDirector || IsFinanceTeamRole(roleNorm)
+	return roleNorm == RoleDirector || IsFinanceTeamRole(roleNorm)
 }
 
 // CanViewAllTransactionData controls whether a role can browse requests from all users.
@@ -87,10 +87,6 @@ func ApprovalRoleForUser(role string) string {
 
 // WorkflowRoleMatchesUserRole checks whether a user role can satisfy a workflow step.
 func WorkflowRoleMatchesUserRole(workflowRole string, userRole string) bool {
-	if NormalizeRole(userRole) == RoleAdmin {
-		return true
-	}
-
 	requiredRole := NormalizeRole(workflowRole)
 	switch requiredRole {
 	case RoleFinance:

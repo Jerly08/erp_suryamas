@@ -31,7 +31,7 @@ type EnhancedPaymentServiceWithJournal struct {
 // Contact is optional — for bulk payments like salaries, no specific contact is needed.
 type ExpensePaymentRequest struct {
 	ContactID         uint      `json:"contact_id"`
-	ExpenseAccountID  uint      `json:"expense_account_id" binding:"required"`
+	ExpenseAccountID  uint      `json:"expense_account_id"`
 	CashBankID        uint      `json:"cash_bank_id" binding:"required"`
 	Date              time.Time `json:"date" binding:"required"`
 	Amount            float64   `json:"amount" binding:"required,min=0.01"`
@@ -46,6 +46,10 @@ type ExpensePaymentRequest struct {
 	// SaveAsDraft = true means save payment with status DRAFT without creating journal.
 	// Used when submitted by employee role; finance must approve later.
 	SaveAsDraft bool `json:"save_as_draft"`
+	// RequireDirectorApproval routes the payment to director after finance manager review.
+	RequireDirectorApproval bool `json:"require_director_approval"`
+	// RequestedByFinanceManager is set by controller to enable finance-manager-specific routing.
+	RequestedByFinanceManager bool `json:"-"`
 
 	// PPh withholding tax fields (optional)
 	PPHType   string  `json:"pph_type"`   // PPH_21, PPH_23, PPH_4_2, PPH_22, or empty
@@ -95,9 +99,10 @@ type PaymentWithJournalRequest struct {
 	Notes        string    `json:"notes"`
 
 	// Journal integration options
-	AutoCreateJournal bool `json:"auto_create_journal" default:"true"`
-	PreviewJournal    bool `json:"preview_journal" default:"false"`
-	SaveAsDraft       bool `json:"save_as_draft"` // DRAFT mode for employee submissions
+	AutoCreateJournal       bool `json:"auto_create_journal" default:"true"`
+	PreviewJournal          bool `json:"preview_journal" default:"false"`
+	SaveAsDraft             bool `json:"save_as_draft"` // DRAFT mode for employee submissions
+	RequireDirectorApproval bool `json:"require_director_approval"`
 
 	// Allocation options (single target - legacy)
 	TargetInvoiceID *uint `json:"target_invoice_id,omitempty"`
@@ -109,6 +114,8 @@ type PaymentWithJournalRequest struct {
 
 	// User context
 	UserID uint `json:"user_id"`
+	// RequestedByFinanceManager is injected by controller to bypass finance-staff lane.
+	RequestedByFinanceManager bool `json:"-"`
 }
 
 // AllocationItem represents a single allocation to an invoice or bill
@@ -152,6 +159,43 @@ type expensePaymentCalculation struct {
 	ForexGainLossType   string
 }
 
+func isPaymentDirectorApprovalPending(payment *models.Payment) bool {
+	if payment == nil {
+		return false
+	}
+
+	return payment.Status == models.PaymentStatusPending &&
+		payment.RequireDirectorApproval &&
+		strings.EqualFold(strings.TrimSpace(payment.ApprovalStage), models.PaymentApprovalStageDirector)
+}
+
+func routePaymentToDirector(tx *gorm.DB, payment *models.Payment, financeManagerUserID uint) error {
+	if payment == nil {
+		return fmt.Errorf("payment is required")
+	}
+
+	now := time.Now()
+	payment.Status = models.PaymentStatusPending
+	payment.RequireDirectorApproval = true
+	payment.ApprovalStage = models.PaymentApprovalStageDirector
+	payment.Reference = models.MarkPendingDraftAllocationsReference(payment.Reference)
+	payment.FinanceManagerApprovedBy = &financeManagerUserID
+	payment.FinanceManagerApprovedAt = &now
+	payment.DirectorApprovedBy = nil
+	payment.DirectorApprovedAt = nil
+	payment.ApprovedBy = nil
+	payment.ApprovedAt = nil
+	payment.RejectedBy = nil
+	payment.RejectedAt = nil
+	payment.RejectionReason = ""
+
+	if err := tx.Save(payment).Error; err != nil {
+		return fmt.Errorf("failed to route payment to director approval: %w", err)
+	}
+
+	return nil
+}
+
 // CreateExpensePayment creates a direct expense payment (Expense/Liability from COA) with SSOT journal integration.
 // It records a row in payments table (PaymentTypeExpense) AND posts a journal entry:
 //
@@ -169,9 +213,6 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 	if req.CashBankID == 0 {
 		return nil, fmt.Errorf("cash/bank account ID is required")
 	}
-	if req.ExpenseAccountID == 0 {
-		return nil, fmt.Errorf("expense account ID is required")
-	}
 	if req.UserID == 0 {
 		return nil, fmt.Errorf("user ID is required")
 	}
@@ -185,9 +226,16 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 	if req.Description == "" {
 		req.Description = "Expense Payment"
 	}
+	if req.ExpenseAccountID == 0 {
+		defaultExpenseAccountID, err := findDefaultExpenseAccountID(eps.db)
+		if err != nil {
+			return nil, fmt.Errorf("expense account ID is required: %w", err)
+		}
+		req.ExpenseAccountID = uint(defaultExpenseAccountID)
+	}
 
 	// DRAFT MODE: save payment without creating journal — for employee role submissions
-	if req.SaveAsDraft {
+	if req.SaveAsDraft || (req.RequestedByFinanceManager && req.RequireDirectorApproval) {
 		return eps.createExpensePaymentDraft(req)
 	}
 
@@ -229,27 +277,44 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		}
 
 		// Build payment model (cash out, treated similar to PAY prefix)
+		var financeManagerApprovedBy *uint
+		var financeManagerApprovedAt *time.Time
+		var approvedBy *uint
+		var approvedAt *time.Time
+		if req.RequestedByFinanceManager {
+			now := time.Now()
+			financeManagerApprovedBy = &req.UserID
+			financeManagerApprovedAt = &now
+			approvedBy = &req.UserID
+			approvedAt = &now
+		}
+
 		payment = &models.Payment{
-			ContactID:           req.ContactID,
-			UserID:              req.UserID,
-			Date:                req.Date,
-			Amount:              req.Amount,
-			NativeAmount:        calculation.NativeCashOut,
-			Currency:            calculation.NormalizedCurrency,
-			ExchangeRate:        calculation.AppliedExchangeRate,
-			BookAmountIDR:       calculation.BankBookOutIDR,
-			ForexGainLossAmount: calculation.ForexGainLossAmount,
-			ForexGainLossType:   calculation.ForexGainLossType,
-			Method:              req.Method,
-			ExpenseAccountID:    &req.ExpenseAccountID,
-			CashBankID:          &req.CashBankID,
-			Reference:           req.Reference,
-			Status:              models.PaymentStatusCompleted,
-			PaymentType:         models.PaymentTypeExpense,
-			Notes:               fmt.Sprintf("%s [Contact: %s]", req.Notes, contactName),
-			PPHType:             req.PPHType,
-			PPHRate:             req.PPHRate,
-			PPHAmount:           req.PPHAmount,
+			ContactID:                req.ContactID,
+			UserID:                   req.UserID,
+			Date:                     req.Date,
+			Amount:                   req.Amount,
+			NativeAmount:             calculation.NativeCashOut,
+			Currency:                 calculation.NormalizedCurrency,
+			ExchangeRate:             calculation.AppliedExchangeRate,
+			BookAmountIDR:            calculation.BankBookOutIDR,
+			ForexGainLossAmount:      calculation.ForexGainLossAmount,
+			ForexGainLossType:        calculation.ForexGainLossType,
+			Method:                   req.Method,
+			ExpenseAccountID:         &req.ExpenseAccountID,
+			CashBankID:               &req.CashBankID,
+			Reference:                req.Reference,
+			Status:                   models.PaymentStatusCompleted,
+			RequireDirectorApproval:  false,
+			FinanceManagerApprovedBy: financeManagerApprovedBy,
+			FinanceManagerApprovedAt: financeManagerApprovedAt,
+			ApprovedBy:               approvedBy,
+			ApprovedAt:               approvedAt,
+			PaymentType:              models.PaymentTypeExpense,
+			Notes:                    fmt.Sprintf("%s [Contact: %s]", req.Notes, contactName),
+			PPHType:                  req.PPHType,
+			PPHRate:                  req.PPHRate,
+			PPHAmount:                req.PPHAmount,
 		}
 		snapshot, snapshotErr := loadCashBankSnapshot(tx, req.CashBankID)
 		if snapshotErr != nil {
@@ -375,8 +440,8 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 	return payment, nil
 }
 
-// createExpensePaymentDraft saves an expense payment with status DRAFT without creating a journal.
-// Called when employee submits; finance must approve via ApproveExpensePayment.
+// createExpensePaymentDraft saves an expense payment without creating a journal.
+// It supports both finance-manager review drafts and director-pending submissions.
 func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *ExpensePaymentRequest) (*models.Payment, error) {
 	var payment *models.Payment
 
@@ -411,27 +476,43 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			return err
 		}
 
+		status := models.PaymentStatusDraft
+		approvalStage := models.PaymentApprovalStageFinanceManager
+		var financeManagerApprovedBy *uint
+		var financeManagerApprovedAt *time.Time
+		if req.RequestedByFinanceManager && req.RequireDirectorApproval {
+			status = models.PaymentStatusPending
+			approvalStage = models.PaymentApprovalStageDirector
+			now := time.Now()
+			financeManagerApprovedBy = &req.UserID
+			financeManagerApprovedAt = &now
+		}
+
 		payment = &models.Payment{
-			ContactID:           req.ContactID,
-			UserID:              req.UserID,
-			Date:                req.Date,
-			Amount:              req.Amount,
-			NativeAmount:        calculation.NativeCashOut,
-			Currency:            calculation.NormalizedCurrency,
-			ExchangeRate:        calculation.AppliedExchangeRate,
-			BookAmountIDR:       calculation.BankBookOutIDR,
-			ForexGainLossAmount: calculation.ForexGainLossAmount,
-			ForexGainLossType:   calculation.ForexGainLossType,
-			Method:              req.Method,
-			ExpenseAccountID:    &req.ExpenseAccountID,
-			CashBankID:          &req.CashBankID,
-			Reference:           req.Reference,
-			Status:              models.PaymentStatusDraft,
-			PaymentType:         models.PaymentTypeExpense,
-			Notes:               fmt.Sprintf("%s [Contact: %s] [Beban: %s] [CashBank: %s]", req.Notes, contactName, expenseAccount.Name, cashBank.Name),
-			PPHType:             req.PPHType,
-			PPHRate:             req.PPHRate,
-			PPHAmount:           req.PPHAmount,
+			ContactID:                req.ContactID,
+			UserID:                   req.UserID,
+			Date:                     req.Date,
+			Amount:                   req.Amount,
+			NativeAmount:             calculation.NativeCashOut,
+			Currency:                 calculation.NormalizedCurrency,
+			ExchangeRate:             calculation.AppliedExchangeRate,
+			BookAmountIDR:            calculation.BankBookOutIDR,
+			ForexGainLossAmount:      calculation.ForexGainLossAmount,
+			ForexGainLossType:        calculation.ForexGainLossType,
+			Method:                   req.Method,
+			ExpenseAccountID:         &req.ExpenseAccountID,
+			CashBankID:               &req.CashBankID,
+			Reference:                req.Reference,
+			Status:                   status,
+			ApprovalStage:            approvalStage,
+			RequireDirectorApproval:  req.RequireDirectorApproval,
+			FinanceManagerApprovedBy: financeManagerApprovedBy,
+			FinanceManagerApprovedAt: financeManagerApprovedAt,
+			PaymentType:              models.PaymentTypeExpense,
+			Notes:                    fmt.Sprintf("%s [Contact: %s] [Beban: %s] [CashBank: %s]", req.Notes, contactName, expenseAccount.Name, cashBank.Name),
+			PPHType:                  req.PPHType,
+			PPHRate:                  req.PPHRate,
+			PPHAmount:                req.PPHAmount,
 		}
 		snapshot, snapshotErr := loadCashBankSnapshot(tx, req.CashBankID)
 		if snapshotErr != nil {
@@ -449,8 +530,8 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			return fmt.Errorf("failed to create draft expense payment: %w", err)
 		}
 
-		log.Printf("📝 Expense payment saved as DRAFT: ID=%d, Code=%s, Amount=%.2f, ExpenseAcc=%s",
-			payment.ID, payment.Code, req.Amount, expenseAccount.Name)
+		log.Printf("Expense payment saved for approval: ID=%d, Code=%s, Status=%s, Amount=%.2f, ExpenseAcc=%s",
+			payment.ID, payment.Code, payment.Status, req.Amount, expenseAccount.Name)
 		return nil
 	})
 
@@ -460,16 +541,16 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 	return payment, nil
 }
 
-// ApproveExpensePayment approves a DRAFT expense payment: creates the SSOT journal and updates status to COMPLETED.
-// Only finance/admin role should call this.
-func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID uint, approverUserID uint) (*models.Payment, error) {
+// ApproveExpensePayment processes expense payment approval.
+// Finance manager can either post directly or route to director; director finalizes routed payments.
+func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID uint, approverUserID uint, requireDirectorApproval bool) (*models.Payment, error) {
 	var payment models.Payment
 	if err := eps.db.First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}
 
-	if payment.Status != models.PaymentStatusDraft {
-		return nil, fmt.Errorf("payment is not in DRAFT status (current: %s)", payment.Status)
+	if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) {
+		return nil, fmt.Errorf("payment is not awaiting approval (current: %s)", payment.Status)
 	}
 	if payment.PaymentType != models.PaymentTypeExpense {
 		return nil, fmt.Errorf("only expense payments can be approved via this endpoint")
@@ -501,6 +582,11 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 	}
 
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		directorFinalApproval := isPaymentDirectorApprovalPending(&payment)
+		if payment.Status == models.PaymentStatusDraft && (payment.RequireDirectorApproval || requireDirectorApproval) {
+			return routePaymentToDirector(tx, &payment, approverUserID)
+		}
+
 		cashBank, err := eps.cashBankRepo.FindByID(cashBankID)
 		if err != nil {
 			return fmt.Errorf("cash/bank account not found: %w", err)
@@ -606,6 +692,14 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		payment.JournalEntryID = &journalEntryID
 		payment.Status = models.PaymentStatusCompleted
 		now := time.Now()
+		payment.ApprovalStage = ""
+		if directorFinalApproval {
+			payment.DirectorApprovedBy = &approverUserID
+			payment.DirectorApprovedAt = &now
+		} else {
+			payment.FinanceManagerApprovedBy = &approverUserID
+			payment.FinanceManagerApprovedAt = &now
+		}
 		payment.ApprovedBy = &approverUserID
 		payment.ApprovedAt = &now
 		payment.RejectedBy = nil
@@ -688,16 +782,16 @@ func (eps *EnhancedPaymentServiceWithJournal) calculateExpensePaymentAmounts(cas
 	}
 }
 
-// ApproveStandardPayment approves a DRAFT receivable/payable payment: creates the SSOT journal and updates status to COMPLETED.
-// Only finance/admin role should call this.
-func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID uint, approverUserID uint) (*PaymentWithJournalResponse, error) {
+// ApproveStandardPayment processes receivable/payable approval routing.
+// Finance manager can route to director; director finalizes routed approvals.
+func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID uint, approverUserID uint, requireDirectorApproval bool) (*PaymentWithJournalResponse, error) {
 	var payment models.Payment
-	if err := eps.db.Preload("Contact").Preload("User").First(&payment, paymentID).Error; err != nil {
+	if err := eps.db.Preload("Contact").Preload("User").Preload("FinanceManagerApprover").Preload("DirectorApprover").First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}
 
-	if payment.Status != models.PaymentStatusDraft {
-		return nil, fmt.Errorf("payment is not in DRAFT status (current: %s)", payment.Status)
+	if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) {
+		return nil, fmt.Errorf("payment is not awaiting approval (current: %s)", payment.Status)
 	}
 	if payment.PaymentType == models.PaymentTypeExpense || strings.HasPrefix(payment.PaymentType, "TAX_PPN") {
 		return nil, fmt.Errorf("only receivable/payable payments can be approved via this endpoint")
@@ -725,6 +819,11 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 	}
 
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		directorFinalApproval := isPaymentDirectorApprovalPending(&payment)
+		if payment.Status == models.PaymentStatusDraft && (payment.RequireDirectorApproval || requireDirectorApproval) {
+			return routePaymentToDirector(tx, &payment, approverUserID)
+		}
+
 		cashBank, err := eps.cashBankRepo.FindByID(cashBankID)
 		if err != nil {
 			return fmt.Errorf("cash/bank account not found: %w", err)
@@ -843,6 +942,14 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		}
 		payment.Status = models.PaymentStatusCompleted
 		now := time.Now()
+		payment.ApprovalStage = ""
+		if directorFinalApproval {
+			payment.DirectorApprovedBy = &approverUserID
+			payment.DirectorApprovedAt = &now
+		} else {
+			payment.FinanceManagerApprovedBy = &approverUserID
+			payment.FinanceManagerApprovedAt = &now
+		}
 		payment.ApprovedBy = &approverUserID
 		payment.ApprovedAt = &now
 		payment.RejectedBy = nil
@@ -895,13 +1002,18 @@ func (eps *EnhancedPaymentServiceWithJournal) RejectPayment(paymentID uint, appr
 			return fmt.Errorf("payment not found: %w", err)
 		}
 
-		if payment.Status != models.PaymentStatusDraft {
-			return fmt.Errorf("payment is not in DRAFT status (current: %s)", payment.Status)
+		if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) {
+			return fmt.Errorf("payment is not awaiting approval (current: %s)", payment.Status)
 		}
 
 		now := time.Now()
 		payment.Status = models.PaymentStatusRejected
 		payment.Reference = models.StripInternalPaymentReference(payment.Reference)
+		payment.ApprovalStage = ""
+		payment.FinanceManagerApprovedBy = nil
+		payment.FinanceManagerApprovedAt = nil
+		payment.DirectorApprovedBy = nil
+		payment.DirectorApprovedAt = nil
 		payment.ApprovedBy = nil
 		payment.ApprovedAt = nil
 		payment.RejectedBy = &approverUserID
@@ -921,6 +1033,8 @@ func (eps *EnhancedPaymentServiceWithJournal) RejectPayment(paymentID uint, appr
 	if err := eps.db.
 		Preload("Contact").
 		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
 		Preload("Approver").
 		Preload("Rejector").
 		First(&payment, paymentID).Error; err != nil {
@@ -1073,27 +1187,53 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 
 		// Step 4: Create payment record
 		status := models.PaymentStatusCompleted
-		if req.SaveAsDraft {
+		approvalStage := ""
+		var financeManagerApprovedBy *uint
+		var financeManagerApprovedAt *time.Time
+		var approvedBy *uint
+		var approvedAt *time.Time
+		approvalPending := req.SaveAsDraft
+		if req.RequestedByFinanceManager && req.RequireDirectorApproval {
+			status = models.PaymentStatusPending
+			approvalStage = models.PaymentApprovalStageDirector
+			approvalPending = true
+			now := time.Now()
+			financeManagerApprovedBy = &req.UserID
+			financeManagerApprovedAt = &now
+		} else if req.SaveAsDraft {
 			status = models.PaymentStatusDraft
+			approvalStage = models.PaymentApprovalStageFinanceManager
+		} else if req.RequestedByFinanceManager {
+			now := time.Now()
+			financeManagerApprovedBy = &req.UserID
+			financeManagerApprovedAt = &now
+			approvedBy = &req.UserID
+			approvedAt = &now
 		}
 		cashBankID := req.CashBankID
 
 		payment = &models.Payment{
-			ContactID:           req.ContactID,
-			UserID:              req.UserID,
-			Date:                req.Date,
-			Amount:              req.Amount,
-			NativeAmount:        nativeAmount,
-			Currency:            normalizedCurrency,
-			ExchangeRate:        exchangeRate,
-			BookAmountIDR:       bookAmountIDR,
-			ForexGainLossAmount: forexGainLossAmount,
-			ForexGainLossType:   forexGainLossType,
-			Method:              req.Method,
-			CashBankID:          &cashBankID,
-			Reference:           req.Reference,
-			Notes:               req.Notes,
-			Status:              status,
+			ContactID:                req.ContactID,
+			UserID:                   req.UserID,
+			Date:                     req.Date,
+			Amount:                   req.Amount,
+			NativeAmount:             nativeAmount,
+			Currency:                 normalizedCurrency,
+			ExchangeRate:             exchangeRate,
+			BookAmountIDR:            bookAmountIDR,
+			ForexGainLossAmount:      forexGainLossAmount,
+			ForexGainLossType:        forexGainLossType,
+			Method:                   req.Method,
+			CashBankID:               &cashBankID,
+			Reference:                req.Reference,
+			Notes:                    req.Notes,
+			Status:                   status,
+			ApprovalStage:            approvalStage,
+			RequireDirectorApproval:  req.RequireDirectorApproval,
+			FinanceManagerApprovedBy: financeManagerApprovedBy,
+			FinanceManagerApprovedAt: financeManagerApprovedAt,
+			ApprovedBy:               approvedBy,
+			ApprovedAt:               approvedAt,
 		}
 		snapshot, snapshotErr := loadCashBankSnapshot(tx, cashBankID)
 		if snapshotErr != nil {
@@ -1101,7 +1241,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		}
 		applyCashBankSnapshotToPayment(payment, snapshot)
 		hasRequestedAllocations := len(req.InvoiceAllocations) > 0 || len(req.BillAllocations) > 0 || req.TargetInvoiceID != nil || req.TargetBillID != nil
-		if req.SaveAsDraft && hasRequestedAllocations {
+		if approvalPending && hasRequestedAllocations {
 			payment.Reference = models.MarkPendingDraftAllocationsReference(payment.Reference)
 		} else {
 			payment.Reference = models.ClearPendingDraftAllocationsReference(payment.Reference)
@@ -1123,7 +1263,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 
 		// Step 5: Create SSOT journal entry directly (bypass disabled PaymentJournalFactory)
 		// Only create journal if AutoCreateJournal is true AND SaveAsDraft is false
-		if req.AutoCreateJournal && !req.SaveAsDraft {
+		if req.AutoCreateJournal && !approvalPending {
 			var journalLines []JournalLineRequest
 			var journalDescription string
 			bankBookAmount := payment.BookAmountIDR
@@ -1224,14 +1364,14 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		}
 
 		// Step 6: Create allocations if specified
-		allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, !req.SaveAsDraft)
+		allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, !approvalPending)
 		if err != nil {
 			return fmt.Errorf("failed to create allocations: %w", err)
 		}
 
 		// Step 7: Update payment status
 		// Already handled during creation if SaveAsDraft is true
-		if !req.SaveAsDraft {
+		if !approvalPending {
 			payment.Status = models.PaymentStatusCompleted
 			if err := tx.Save(payment).Error; err != nil {
 				return fmt.Errorf("failed to finalize payment: %w", err)
@@ -1242,7 +1382,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		// IMPORTANT: We only update cash_banks and insert a transaction record if NOT DRAFT.
 		// We DO NOT create another journal here to avoid double-posting because the SSOT journal above
 		// already debits/credits the GL bank account.
-		if !req.SaveAsDraft {
+		if !approvalPending {
 			if err := eps.applyCashBankMovement(tx, cashBank, contact.Type, req.Amount, payment, req.Date); err != nil {
 				return fmt.Errorf("failed to update Cash & Bank balances: %w", err)
 			}
@@ -1319,6 +1459,8 @@ func (eps *EnhancedPaymentServiceWithJournal) GetPaymentWithJournal(paymentID ui
 	if err := eps.db.
 		Preload("Contact").
 		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
 		Preload("Approver").
 		Preload("Rejector").
 		First(&payment, paymentID).Error; err != nil {

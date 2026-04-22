@@ -22,6 +22,10 @@ func NewPermissionMiddleware(db *gorm.DB) *PermissionMiddleware {
 	}
 }
 
+func workflowManagedModulePermission(role string, module string) *models.ModulePermission {
+	return models.GetJournalWorkflowPermission(role)
+}
+
 // CheckModulePermission checks if user has specific permission for a module
 func (pm *PermissionMiddleware) CheckModulePermission(module string, action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -53,6 +57,41 @@ func (pm *PermissionMiddleware) CheckModulePermission(module string, action stri
 		role := ""
 		if roleStr, ok := roleInterface.(string); ok {
 			role = roleStr
+		}
+
+		if workflowPermission := workflowManagedModulePermission(role, module); workflowPermission != nil {
+			hasPermission := false
+			switch action {
+			case "view":
+				hasPermission = workflowPermission.CanView
+			case "create":
+				hasPermission = workflowPermission.CanCreate
+			case "edit":
+				hasPermission = workflowPermission.CanEdit
+			case "delete":
+				hasPermission = workflowPermission.CanDelete
+			case "approve":
+				hasPermission = workflowPermission.CanApprove
+			case "export":
+				hasPermission = workflowPermission.CanExport
+			default:
+				hasPermission = false
+			}
+
+			pm.cache.Set(userID, module, action, hasPermission)
+			if !hasPermission {
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":               "You don't have permission to " + action + " " + module,
+					"required_permission": action,
+					"module":              module,
+					"user_role":           role,
+				})
+				c.Abort()
+				return
+			}
+
+			c.Next()
+			return
 		}
 
 		// Debug logging
@@ -186,6 +225,9 @@ func (pm *PermissionMiddleware) CanReviewPurchaseRequests() gin.HandlerFunc {
 			return
 		}
 
-		pm.CheckModulePermission("purchase_requests", "approve")(c)
+		c.JSON(403, gin.H{
+			"error": "Only finance staff, finance manager, or director can review purchase requests",
+		})
+		c.Abort()
 	}
 }

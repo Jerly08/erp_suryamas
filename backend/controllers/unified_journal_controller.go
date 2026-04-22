@@ -49,9 +49,13 @@ func (c *UnifiedJournalController) CreateJournalEntry(ctx *gin.Context) {
 	// Set CreatedBy from context
 	req.CreatedBy = getJournalUserIDFromContext(ctx)
 	userRole := getJournalUserRoleFromContext(ctx)
+	req.RequestedByFinanceManager = models.IsFinanceManagerRole(userRole)
+	if requiresJournalApprovalWorkflow(req.SourceType, req.AdjustmentOf) && req.RequestedByFinanceManager && !req.RequireDirectorApproval {
+		req.AutoPost = true
+	}
 
 	if isAdjustmentSourceType(req.SourceType) && !canManageAdjustmentDraft(userRole) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff yang dapat membuat jurnal adjustment draft"})
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff atau finance manager yang dapat membuat jurnal adjustment"})
 		return
 	}
 	if isAdjustmentSourceType(req.SourceType) && (req.AdjustmentOf == nil || *req.AdjustmentOf == 0) {
@@ -256,15 +260,37 @@ func getJournalUserRoleFromContext(ctx *gin.Context) string {
 }
 
 func canManageAdjustmentDraft(role string) bool {
-	return role == models.RoleAdmin || models.IsFinanceStaffRole(role)
+	return models.IsFinanceStaffRole(role) || models.IsFinanceManagerRole(role)
 }
 
 func canApproveAdjustment(role string) bool {
-	return role == models.RoleAdmin || models.IsFinanceManagerRole(role)
+	return models.IsFinanceManagerRole(role) || models.NormalizeRole(role) == models.RoleDirector
 }
 
 func isAdjustmentSourceType(sourceType string) bool {
 	return strings.EqualFold(strings.TrimSpace(sourceType), models.SSOTSourceTypeAdjustment)
+}
+
+func requiresJournalApprovalWorkflow(sourceType string, adjustmentOf *uint64) bool {
+	normalizedSourceType := strings.ToUpper(strings.TrimSpace(sourceType))
+	switch normalizedSourceType {
+	case "", models.SSOTSourceTypeManual:
+		return true
+	case models.SSOTSourceTypeAdjustment:
+		return adjustmentOf != nil && *adjustmentOf != 0
+	default:
+		return false
+	}
+}
+
+func isJournalDirectorApprovalPending(entry *models.SSOTJournalEntry) bool {
+	if entry == nil {
+		return false
+	}
+
+	return entry.Status == models.SSOTStatusDraft &&
+		entry.RequireDirectorApproval &&
+		strings.EqualFold(strings.TrimSpace(entry.ApprovalStage), models.SSOTApprovalStageDirector)
 }
 
 // Request/Response types for specific endpoints
@@ -310,7 +336,7 @@ func (c *UnifiedJournalController) UpdateJournalEntry(ctx *gin.Context) {
 	}
 
 	if isAdjustmentSourceType(existingEntry.SourceType) && !canManageAdjustmentDraft(getJournalUserRoleFromContext(ctx)) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff yang dapat mengubah draft jurnal adjustment"})
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff atau finance manager yang dapat mengubah draft jurnal adjustment"})
 		return
 	}
 	if isAdjustmentSourceType(existingEntry.SourceType) && existingEntry.AdjustmentOf != nil && req.AdjustmentOf != nil && *existingEntry.AdjustmentOf != *req.AdjustmentOf {
@@ -373,6 +399,11 @@ func (c *UnifiedJournalController) PostJournalEntry(ctx *gin.Context) {
 		return
 	}
 
+	var req struct {
+		RequireDirectorApproval bool `json:"require_director_approval"`
+	}
+	_ = ctx.ShouldBindJSON(&req)
+
 	userID := getJournalUserIDFromContext(ctx)
 	userRole := getJournalUserRoleFromContext(ctx)
 
@@ -382,8 +413,32 @@ func (c *UnifiedJournalController) PostJournalEntry(ctx *gin.Context) {
 		return
 	}
 
-	if isAdjustmentSourceType(existingEntry.SourceType) && !canApproveAdjustment(userRole) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Jurnal adjustment hanya dapat di-approve oleh finance manager"})
+	requiresApprovalWorkflow := requiresJournalApprovalWorkflow(existingEntry.SourceType, existingEntry.AdjustmentOf)
+	directorApprovalPending := isJournalDirectorApprovalPending(existingEntry)
+
+	if requiresApprovalWorkflow {
+		if directorApprovalPending {
+			if models.NormalizeRole(userRole) != models.RoleDirector {
+				ctx.JSON(http.StatusForbidden, gin.H{"error": "Jurnal ini sedang menunggu approval director"})
+				return
+			}
+		} else {
+			if !models.IsFinanceManagerRole(userRole) {
+				ctx.JSON(http.StatusForbidden, gin.H{"error": "Draft jurnal ini hanya dapat dipost oleh finance manager"})
+				return
+			}
+			if req.RequireDirectorApproval {
+				response, err := c.journalService.SendJournalEntryToDirector(id, userID)
+				if err != nil {
+					ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				ctx.JSON(http.StatusOK, response)
+				return
+			}
+		}
+	} else if isAdjustmentSourceType(existingEntry.SourceType) && !canApproveAdjustment(userRole) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Jurnal adjustment hanya dapat di-approve oleh finance manager atau director sesuai tahap approval"})
 		return
 	}
 

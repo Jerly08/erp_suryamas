@@ -38,7 +38,6 @@ export const approvalRoleForUser = (role?: string | null): string => {
 export const workflowRoleMatchesUserRole = (workflowRole?: string | null, userRole?: string | null): boolean => {
   const normalizedUserRole = normalizeRole(userRole);
   if (!normalizedUserRole) return false;
-  if (normalizedUserRole === 'admin') return true;
 
   const normalizedWorkflowRole = normalizeRole(workflowRole);
   if (normalizedWorkflowRole === 'finance') {
@@ -49,7 +48,7 @@ export const workflowRoleMatchesUserRole = (workflowRole?: string | null, userRo
 };
 
 export const canManageRequiredApprovals = (role?: string | null): boolean => {
-  return normalizeRole(role) === 'admin' || isFinanceManagerRole(role);
+  return isFinanceManagerRole(role);
 };
 
 export const isRoleAllowed = (allowedRoles: (string | null | undefined)[] = [], role?: string | null): boolean => {

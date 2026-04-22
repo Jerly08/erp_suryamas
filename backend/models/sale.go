@@ -433,6 +433,14 @@ type SalePPh23SettlementRequest struct {
 	Notes     string    `json:"notes"`
 }
 
+type SaleLatePPh23Request struct {
+	Date      time.Time `json:"date" binding:"required"`
+	Amount    float64   `json:"amount"`
+	Rate      *float64  `json:"rate"`
+	Reference string    `json:"reference"`
+	Notes     string    `json:"notes"`
+}
+
 type SaleReturnRequest struct {
 	SaleID      uint                    `json:"sale_id" binding:"required"`
 	ReturnDate  time.Time               `json:"return_date" binding:"required"`

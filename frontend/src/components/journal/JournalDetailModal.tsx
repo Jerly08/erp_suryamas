@@ -47,6 +47,8 @@ export default function JournalDetailModal({
       case "finance_manager":
       case "finance":
         return "Finance Manager";
+      case "director":
+        return "Director";
       case "admin":
         return "Admin";
       default:
@@ -81,6 +83,23 @@ export default function JournalDetailModal({
             allowRoleFallback: false,
           })}${formatRoleLabel(entry.poster.role) ? ` (${formatRoleLabel(entry.poster.role)})` : ""}`
         : `User #${entry.posted_by}`;
+
+  const financeManagerApprovedLabel =
+    entry.finance_manager_approved_by == null
+      ? "-"
+      : entry.finance_manager_approver
+        ? `${getUserDisplayName(entry.finance_manager_approver, {
+            fallback: `User #${entry.finance_manager_approved_by}`,
+            allowRoleFallback: false,
+          })}${formatRoleLabel(entry.finance_manager_approver.role) ? ` (${formatRoleLabel(entry.finance_manager_approver.role)})` : ""}`
+        : `User #${entry.finance_manager_approved_by}`;
+
+  const approvalStageLabel =
+    entry.status !== "DRAFT"
+      ? "-"
+      : String(entry.approval_stage || "").toUpperCase() === "DIRECTOR"
+        ? "Menunggu Director"
+        : "Menunggu Finance Manager";
 
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat("id-ID", {
@@ -197,9 +216,20 @@ export default function JournalDetailModal({
                       borderColor="orange.100"
                     >
                       <Text>
-                        Staff finance membuat draft adjustment dan finance
-                        manager melakukan approve/posting jurnal.
+                        Finance staff atau finance manager dapat membuat draft
+                        adjustment. Finance manager melakukan review awal, dan
+                        jika diminta maka director akan melakukan approval
+                        final sebelum jurnal diposting.
                       </Text>
+                      <Text mt={2} fontSize="sm">
+                        Tahap saat ini: {approvalStageLabel}
+                      </Text>
+                      {entry.finance_manager_approved_at && (
+                        <Text mt={1} fontSize="sm">
+                          Finance Manager: {financeManagerApprovedLabel} pada{" "}
+                          {formatDateTime(entry.finance_manager_approved_at)}
+                        </Text>
+                      )}
                     </Box>
                   </GridItem>
                 )}

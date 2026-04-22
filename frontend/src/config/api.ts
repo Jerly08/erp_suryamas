@@ -106,6 +106,7 @@ export const API_ENDPOINTS = {
   SALES_INVOICE: (id: number) => `/api/v1/sales/${id}/invoice`,
   SALES_CANCEL: (id: number) => `/api/v1/sales/${id}/cancel`,
   SALES_PAYMENTS: (id: number) => `/api/v1/sales/${id}/payments`,
+  SALES_PPH23_ADD: (id: number) => `/api/v1/sales/${id}/pph23`,
   SALES_PPH23_SETTLEMENT: (id: number) =>
     `/api/v1/sales/${id}/pph23/settlement`,
   SALES_FOR_PAYMENT: (id: number) => `/api/v1/sales/${id}/for-payment`,

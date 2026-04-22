@@ -6,6 +6,7 @@ import {
   Button,
   FormControl,
   FormLabel,
+  FormHelperText,
   Input,
   VStack,
   HStack,
@@ -28,6 +29,7 @@ import {
   Divider,
   InputGroup,
   InputLeftAddon,
+  Checkbox,
   useColorModeValue,
 } from "@chakra-ui/react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
@@ -157,7 +159,7 @@ interface ManualEntryFormData {
 type JournalEntryMode = "MANUAL" | "ADJUSTMENT";
 
 interface ManualEntryFormProps {
-  onSuccess: () => void;
+  onSuccess: (entry?: SSOTJournalEntry) => void;
   onCancel: () => void;
   entryType?: JournalEntryMode;
   baseEntry?: SSOTJournalEntry;
@@ -170,6 +172,7 @@ interface ManualEntryFormProps {
     notes?: string;
     source_type?: string;
     adjustment_of?: number;
+    require_director_approval?: boolean;
     adjusted_entry?: SSOTJournalEntry;
     lines?: any[];
   };
@@ -220,6 +223,11 @@ export default function ManualEntryForm({
   const isAdjustmentEntry = effectiveEntryType === "ADJUSTMENT";
   const isEmployeeJournalSubmitter = normalizedRole === "employee";
   const isFinanceStaffJournalSubmitter = normalizedRole === "finance_staff";
+  const isFinanceManagerJournalSubmitter =
+    normalizedRole === "finance_manager" || normalizedRole === "finance";
+  const [requireDirectorApproval, setRequireDirectorApproval] = useState(
+    Boolean(initialData?.require_director_approval),
+  );
   const relatedOriginalEntry =
     baseEntry ||
     initialData?.adjusted_entry ||
@@ -279,6 +287,10 @@ export default function ManualEntryForm({
           ],
     },
   });
+
+  useEffect(() => {
+    setRequireDirectorApproval(Boolean(initialData?.require_director_approval));
+  }, [initialData?.id, initialData?.require_director_approval]);
 
   const { fields, append, remove } = useFieldArray({
     control,
@@ -467,11 +479,25 @@ export default function ManualEntryForm({
         notes: data.notes,
         source_type: effectiveEntryType,
         adjustment_of: effectiveAdjustmentOf,
+        require_director_approval:
+          isFinanceManagerJournalSubmitter && !initialData?.id
+            ? requireDirectorApproval
+            : false,
+        requested_by_finance_manager:
+          !initialData?.id && isFinanceManagerJournalSubmitter,
+        auto_post:
+          !initialData?.id &&
+          isFinanceManagerJournalSubmitter &&
+          !requireDirectorApproval,
         lines: formattedLines,
       };
 
+      let savedEntry: SSOTJournalEntry;
       if (initialData?.id) {
-        await ssotJournalService.updateJournalEntry(initialData.id, payload);
+        savedEntry = await ssotJournalService.updateJournalEntry(
+          initialData.id,
+          payload,
+        );
         toast({
           title: t("common.success"),
           description: t("journal.update_success"),
@@ -479,11 +505,17 @@ export default function ManualEntryForm({
           duration: 3000,
         });
       } else {
-        await ssotJournalService.createJournalEntry(payload);
+        savedEntry = await ssotJournalService.createJournalEntry(payload);
         toast({
           title: t("common.success"),
           description:
-            isAdjustmentEntry && isFinanceStaffJournalSubmitter
+            savedEntry?.status === "DRAFT" &&
+            savedEntry?.approval_stage === "DIRECTOR"
+              ? "Draft jurnal berhasil dikirim ke director untuk approval final."
+              : savedEntry?.status === "POSTED" &&
+                  isFinanceManagerJournalSubmitter
+                ? "Jurnal berhasil diposting oleh finance manager."
+                : isAdjustmentEntry && isFinanceStaffJournalSubmitter
               ? t("journal.adjustmentCreateSuccess")
               : isEmployeeJournalSubmitter
                 ? "Draft jurnal berhasil disimpan. Finance akan memverifikasi dan memposting jurnal ini."
@@ -493,7 +525,7 @@ export default function ManualEntryForm({
         });
       }
 
-      onSuccess();
+      onSuccess(savedEntry);
     } catch (error: any) {
       console.error("Submit error:", error);
       const message =
@@ -629,6 +661,24 @@ export default function ManualEntryForm({
                   {...fieldStyles}
                 />
               </FormControl>
+              {isFinanceManagerJournalSubmitter && !initialData?.id && (
+                <FormControl>
+                  <Checkbox
+                    isChecked={requireDirectorApproval}
+                    onChange={(event) =>
+                      setRequireDirectorApproval(event.target.checked)
+                    }
+                    colorScheme="blue"
+                  >
+                    Minta approval Director
+                  </Checkbox>
+                  <FormHelperText>
+                    Jika dicentang, jurnal akan disimpan sebagai draft approval
+                    director. Jika tidak, finance manager dapat langsung
+                    memposting jurnal ini.
+                  </FormHelperText>
+                </FormControl>
+              )}
             </VStack>
           </CardBody>
         </Card>
@@ -832,6 +882,10 @@ export default function ManualEntryForm({
                 : "Simpan Perubahan Draft"
               : isAdjustmentEntry && isFinanceStaffJournalSubmitter
                 ? "Simpan Draft Adjustment"
+                : isFinanceManagerJournalSubmitter && requireDirectorApproval
+                  ? "Kirim ke Director"
+                  : isFinanceManagerJournalSubmitter
+                    ? "Post Journal"
                 : isEmployeeJournalSubmitter
                   ? "Simpan Draft"
                   : isAdjustmentEntry

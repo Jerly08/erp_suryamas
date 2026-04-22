@@ -419,10 +419,6 @@ func resolvePurchaseRequestReviewStage(pr *models.PurchaseRequest, reviewerRole 
 	}
 
 	roleNorm := models.NormalizeRole(reviewerRole)
-	if roleNorm == models.RoleAdmin {
-		return stage, nil
-	}
-
 	switch stage {
 	case models.PRApprovalStageFinanceStaff:
 		if models.IsFinanceStaffRole(roleNorm) {

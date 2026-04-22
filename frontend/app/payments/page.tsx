@@ -194,15 +194,25 @@ const PaymentsPage: React.FC = () => {
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('payments');
 
-  // Check if current user is finance or admin
+  // Approval actors
   const roleNorm = normalizeRole(user?.role);
-  const isFinanceOrAdmin = isFinanceManagerRole(roleNorm) || roleNorm === 'admin';
+  const isFinanceManagerApprover = isFinanceManagerRole(roleNorm);
+  const isDirectorApprover = roleNorm === 'director';
 
   const getStatusBadgeLabel = (payment: Payment) => paymentService.getStatusLabel(payment.status);
 
   const getStatusMetaText = (payment: Payment) => {
     if (payment.status === 'DRAFT') {
       return 'Menunggu approval finance manager';
+    }
+    if (payment.status === 'PENDING' && payment.require_director_approval) {
+      const financeManagerName = paymentService.getActorDisplayName(
+        payment.finance_manager_approver || payment.approver,
+      );
+      if (payment.finance_manager_approved_at) {
+        return `Menunggu approval director. Finance Manager ${financeManagerName} sudah approve pada ${paymentService.formatDateTime(payment.finance_manager_approved_at)}.`;
+      }
+      return 'Menunggu approval director';
     }
     if (payment.status === 'COMPLETED' && payment.approved_at) {
       return `Approved by ${paymentService.getActorDisplayName(payment.approver)} pada ${paymentService.formatDateTime(payment.approved_at)}`;
@@ -217,14 +227,16 @@ const PaymentsPage: React.FC = () => {
   };
 
   // Approve DRAFT expense payment (finance only)
-  const handleApproveExpensePayment = async (payment: Payment) => {
-    if (!isFinanceOrAdmin) return;
+  const handleApproveExpensePayment = async (payment: Payment, requireDirectorApproval = false) => {
+    if (!isFinanceManagerApprover && !isDirectorApprover) return;
     setPaymentDecisionLoadingId(payment.id);
     try {
-      await paymentService.approveExpensePayment(payment.id);
+      const result = await paymentService.approveExpensePayment(payment.id, requireDirectorApproval);
       toast({
-        title: 'Pembayaran Disetujui',
-        description: `Pembayaran ${payment.code} telah disetujui dan jurnal telah dibuat.`,
+        title: result?.status === 'PENDING' ? 'Dikirim ke Director' : 'Pembayaran Disetujui',
+        description: result?.status === 'PENDING'
+          ? `Pembayaran ${payment.code} sudah disetujui finance manager dan dikirim ke director.`
+          : `Pembayaran ${payment.code} telah disetujui dan jurnal telah dibuat.`,
         status: 'success',
         duration: 4000,
       });
@@ -242,14 +254,16 @@ const PaymentsPage: React.FC = () => {
   };
 
   // Approve DRAFT standard payment (finance only)
-  const handleApproveStandardPayment = async (payment: Payment) => {
-    if (!isFinanceOrAdmin) return;
+  const handleApproveStandardPayment = async (payment: Payment, requireDirectorApproval = false) => {
+    if (!isFinanceManagerApprover && !isDirectorApprover) return;
     setPaymentDecisionLoadingId(payment.id);
     try {
-      await paymentService.approveStandardPayment(payment.id);
+      const result = await paymentService.approveStandardPayment(payment.id, requireDirectorApproval);
       toast({
-        title: 'Pembayaran Disetujui',
-        description: `Pembayaran ${payment.code} telah disetujui dan jurnal telah diposting.`,
+        title: result?.status === 'PENDING' ? 'Dikirim ke Director' : 'Pembayaran Disetujui',
+        description: result?.status === 'PENDING'
+          ? `Pembayaran ${payment.code} sudah disetujui finance manager dan dikirim ke director.`
+          : `Pembayaran ${payment.code} telah disetujui dan jurnal telah diposting.`,
         status: 'success',
         duration: 4000,
       });
@@ -291,9 +305,14 @@ const PaymentsPage: React.FC = () => {
     setPaymentDecisionLoadingId(selectedPaymentForRejection.id);
     try {
       await paymentService.rejectPayment(selectedPaymentForRejection.id, rejectReason.trim());
+      const rejectedByDirector =
+        selectedPaymentForRejection.status === 'PENDING' &&
+        selectedPaymentForRejection.require_director_approval;
       toast({
         title: 'Payment ditolak',
-        description: `Payment ${selectedPaymentForRejection.code} sudah direject oleh finance manager.`,
+        description: rejectedByDirector
+          ? `Payment ${selectedPaymentForRejection.code} sudah direject oleh director.`
+          : `Payment ${selectedPaymentForRejection.code} sudah direject oleh finance manager.`,
         status: 'success',
         duration: 4000,
       });
@@ -448,8 +467,8 @@ const PaymentsPage: React.FC = () => {
             <MenuItem icon={<FiEye />} onClick={() => handleViewPayment(row)}>
               {t('payments.viewDetails')}
             </MenuItem>
-            {/* Approve button: only for DRAFT payments and finance/admin */}
-            {isFinanceOrAdmin && row.status === 'DRAFT' && (
+            {/* Finance manager approval lane */}
+            {isFinanceManagerApprover && row.status === 'DRAFT' && (
               <>
                 <MenuDivider />
                 <MenuItem
@@ -466,6 +485,49 @@ const PaymentsPage: React.FC = () => {
                   }}
                 >
                   {paymentDecisionLoadingId === row.id ? 'Menyetujui...' : 'Setujui & Posting Jurnal'}
+                </MenuItem>
+                <MenuItem
+                  icon={<FiArrowRight />}
+                  color="blue.500"
+                  isDisabled={paymentDecisionLoadingId === row.id}
+                  onClick={() => {
+                    if (row.payment_type === 'EXPENSE') {
+                      handleApproveExpensePayment(row, true);
+                    } else {
+                      handleApproveStandardPayment(row, true);
+                    }
+                  }}
+                >
+                  {paymentDecisionLoadingId === row.id ? 'Mengirim...' : 'Setujui & Kirim ke Director'}
+                </MenuItem>
+                <MenuItem
+                  icon={<FiTrash2 />}
+                  color="red.500"
+                  isDisabled={paymentDecisionLoadingId === row.id}
+                  onClick={() => handleOpenRejectPayment(row)}
+                >
+                  Reject Payment
+                </MenuItem>
+                <MenuDivider />
+              </>
+            )}
+            {/* Director approval lane */}
+            {isDirectorApprover && row.status === 'PENDING' && row.require_director_approval && (
+              <>
+                <MenuDivider />
+                <MenuItem
+                  icon={<FiArrowRight />}
+                  color="green.500"
+                  isDisabled={paymentDecisionLoadingId === row.id}
+                  onClick={() => {
+                    if (row.payment_type === 'EXPENSE') {
+                      handleApproveExpensePayment(row);
+                    } else {
+                      handleApproveStandardPayment(row);
+                    }
+                  }}
+                >
+                  {paymentDecisionLoadingId === row.id ? 'Menyetujui...' : 'Approve Director & Posting Jurnal'}
                 </MenuItem>
                 <MenuItem
                   icon={<FiTrash2 />}

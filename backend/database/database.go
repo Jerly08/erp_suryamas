@@ -926,10 +926,23 @@ func EnsureSSOTTables(db *gorm.DB) {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='adjustment_of') THEN
 				ALTER TABLE unified_journal_ledger ADD COLUMN adjustment_of BIGINT;
 			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='approval_stage') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN approval_stage VARCHAR(30);
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='require_director_approval') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN require_director_approval BOOLEAN NOT NULL DEFAULT FALSE;
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='finance_manager_approved_by') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN finance_manager_approved_by BIGINT;
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='finance_manager_approved_at') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN finance_manager_approved_at TIMESTAMPTZ;
+			END IF;
 		END $$;
 	`)
 
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_unified_journal_adjustment_of ON unified_journal_ledger(adjustment_of);`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_unified_journal_approval_stage ON unified_journal_ledger(approval_stage);`)
 
 	// unified_journal_lines
 	db.Exec(`

@@ -67,7 +67,7 @@ interface UserPermissionsProps {
 }
 
 const modules = [
-  { key: 'accounts', label: 'Accounts', description: 'Chart of Accounts & Accounting', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
+  { key: 'accounts', label: 'Accounts / COA', description: 'Chart of Accounts (COA) access. Centang View untuk mengizinkan pilih COA manual di Purchase, Sales, dan Payment.', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
   { key: 'products', label: 'Products', description: 'Product & Inventory Management', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
   { key: 'boms', label: 'Master BOMs', description: 'Bill of Materials Templates', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
   { key: 'projects', label: 'Projects', description: 'Project Management & Budgets', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
@@ -285,6 +285,7 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
                   Permissions control what actions users can perform in each module.
                   View permission is required for all other permissions to work.
                   Menu permission controls whether users can access the module through navigation menus.
+                  Accounts / COA permission controls whether finance staff can manually choose Chart of Accounts in Purchase, Sales, and Expense Payment forms. Finance manager tetap bisa mengakses COA agar approval tidak terblokir.
                 </Text>
               </Alert>
 

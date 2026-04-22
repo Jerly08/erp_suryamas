@@ -38,12 +38,20 @@ export interface Payment {
   pph_type?: string;
   pph_rate?: number;
   pph_amount?: number;
+  approval_stage?: 'FINANCE_MANAGER' | 'DIRECTOR' | '';
+  require_director_approval?: boolean;
+  finance_manager_approved_by?: number | null;
+  finance_manager_approved_at?: string | null;
+  director_approved_by?: number | null;
+  director_approved_at?: string | null;
   approved_by?: number | null;
   approved_at?: string | null;
   rejected_by?: number | null;
   rejected_at?: string | null;
   rejection_reason?: string;
   user?: PaymentActor;
+  finance_manager_approver?: PaymentActor | null;
+  director_approver?: PaymentActor | null;
   approver?: PaymentActor | null;
   rejector?: PaymentActor | null;
   notes: string;
@@ -90,6 +98,7 @@ export interface PaymentCreateRequest {
   method: string;
   reference?: string;
   notes?: string;
+  require_director_approval?: boolean;
   allocations?: PaymentAllocation[];
   bill_allocations?: BillAllocation[];
 }
@@ -203,6 +212,7 @@ class PaymentService {
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
+        require_director_approval: !!data.require_director_approval,
         auto_create_journal: true,
         preview_journal: false,
         // 🔥 FIX: Send full invoice_allocations array, not just single target_invoice_id
@@ -272,6 +282,7 @@ class PaymentService {
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
+        require_director_approval: !!data.require_director_approval,
         auto_create_journal: true,
         preview_journal: false,
         // 🔥 FIX: Send full bill_allocations array, not just single target_bill_id
@@ -340,6 +351,7 @@ class PaymentService {
         reference: data.reference || '',
         notes: data.notes || '',
         description: data.description || '',
+        require_director_approval: !!data.require_director_approval,
         pph_type: data.pph_type || '',
         pph_rate: data.pph_rate || 0,
         pph_amount: data.pph_amount || 0,
@@ -868,6 +880,7 @@ class PaymentService {
         description: data.description || 'Expense Payment',
         payment_type: 'EXPENSE',
         auto_create_journal: data.auto_create_journal ?? true,
+        require_director_approval: !!data.require_director_approval,
         pph_type: data.pph_type || '',
         pph_rate: data.pph_rate || 0,
         pph_amount: data.pph_amount || 0,
@@ -917,9 +930,11 @@ class PaymentService {
   }
 
   // Approve a DRAFT expense payment (finance/admin only)
-  async approveExpensePayment(paymentId: number): Promise<Payment> {
+  async approveExpensePayment(paymentId: number, requireDirectorApproval: boolean = false): Promise<Payment> {
     try {
-      const response = await api.post(`${this.getSSOTPaymentBase()}/${paymentId}/approve-expense`, {});
+      const response = await api.post(`${this.getSSOTPaymentBase()}/${paymentId}/approve-expense`, {
+        require_director_approval: requireDirectorApproval,
+      });
       return response.data?.data || response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.details || error.response?.data?.error || 'Failed to approve expense payment');
@@ -927,9 +942,11 @@ class PaymentService {
   }
 
   // Approve a DRAFT standard payment (receivable/payable) (finance/admin only)
-  async approveStandardPayment(paymentId: number): Promise<Payment> {
+  async approveStandardPayment(paymentId: number, requireDirectorApproval: boolean = false): Promise<Payment> {
     try {
-      const response = await api.post(`${this.getSSOTPaymentBase()}/${paymentId}/approve-standard`, {});
+      const response = await api.post(`${this.getSSOTPaymentBase()}/${paymentId}/approve-standard`, {
+        require_director_approval: requireDirectorApproval,
+      });
       return response.data?.data || response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.details || error.response?.data?.error || 'Failed to approve payment');
@@ -1155,6 +1172,7 @@ export interface ExpensePaymentRequest {
   notes?: string;
   description?: string;
   auto_create_journal?: boolean;
+  require_director_approval?: boolean;
   // PPh withholding tax (optional)
   pph_type?: string;   // PPH_21, PPH_23, PPH_4_2, PPH_22
   pph_rate?: number;   // e.g. 2 for 2%

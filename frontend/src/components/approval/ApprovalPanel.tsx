@@ -171,7 +171,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
     if (!step.is_active || (step.status || '').toUpperCase() !== 'PENDING') return false;
     return (step.step?.step_name || '').toLowerCase().includes('escalated');
   });
-  const isUserTurn = normalizedRole === 'admin' || workflowRoleMatchesUserRole(activeStep, normalizedRole);
+  const isUserTurn = workflowRoleMatchesUserRole(activeStep, normalizedRole);
   const canUserAct = isUserTurn && canApprove && !isApproved && !isRejected;
   
   const shouldShowDirectorCheckbox = isFinanceRole && canUserAct && (isPendingApproval || isNotStarted);

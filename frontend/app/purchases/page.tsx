@@ -954,6 +954,119 @@ const PurchasesPage: React.FC = () => {
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport, canApprove } =
     useModulePermissions("purchases");
+  const { canView: canViewAccounts } = useModulePermissions("accounts");
+  const canSelectAccountFromCOA =
+    canViewAccounts || isFinanceManagerRole(roleNorm);
+
+  const getDefaultPurchaseItemAccount = useCallback(
+    (itemType?: string) => {
+      const normalizedType = (itemType || "INVENTORY").toUpperCase();
+      const matchAccount = (predicate: (account: GLAccount) => boolean) =>
+        expenseAccounts.find((account) => predicate(account));
+
+      if (normalizedType === "ASSET") {
+        const fixedAssetAccount = matchAccount((account) => {
+          const code = account.code || "";
+          const name = (account.name || "").toLowerCase();
+          return (
+            (code.startsWith("15") && code.length >= 4) ||
+            ["1501", "1502", "1503", "1504", "1505", "1509"].includes(code) ||
+            name.includes("fixed asset") ||
+            name.includes("asset tetap") ||
+            name.includes("peralatan") ||
+            name.includes("mesin") ||
+            name.includes("printer") ||
+            name.includes("komputer") ||
+            name.includes("equipment") ||
+            name.includes("furniture") ||
+            name.includes("kendaraan") ||
+            name.includes("bangunan") ||
+            name.includes("gedung")
+          );
+        });
+        if (fixedAssetAccount) {
+          return fixedAssetAccount;
+        }
+      }
+
+      if (normalizedType === "PREPAID") {
+        const prepaidAccount = matchAccount((account) => {
+          const code = account.code || "";
+          const name = (account.name || "").toLowerCase();
+          const isPrepaidAsset =
+            code.startsWith("1104") ||
+            code.startsWith("1105") ||
+            code.startsWith("1106") ||
+            code.startsWith("1107") ||
+            code.startsWith("1108") ||
+            code.startsWith("1109") ||
+            name.includes("prepaid") ||
+            name.includes("dibayar dimuka") ||
+            name.includes("uang muka") ||
+            name.includes("bayar dimuka") ||
+            name.includes("sewa dibayar") ||
+            name.includes("asuransi dibayar");
+          const isOtherCurrentAsset =
+            code.startsWith("11") &&
+            code.length >= 4 &&
+            !code.startsWith("1101") &&
+            !code.startsWith("1102") &&
+            !code.startsWith("1103");
+          return isPrepaidAsset || isOtherCurrentAsset;
+        });
+        if (prepaidAccount) {
+          return prepaidAccount;
+        }
+      }
+
+      const inventoryOrExpenseAccount = matchAccount((account) => {
+        const code = account.code || "";
+        const name = (account.name || "").toLowerCase();
+        const isInventory =
+          code.startsWith("1103") || name.includes("persediaan");
+        if (isInventory) {
+          return true;
+        }
+
+        return isServiceCompany && String(account.type || "").toUpperCase() === "EXPENSE";
+      });
+
+      if (inventoryOrExpenseAccount) {
+        return inventoryOrExpenseAccount;
+      }
+
+      if (defaultExpenseAccountId) {
+        return (
+          expenseAccounts.find((account) => account.id === defaultExpenseAccountId) ||
+          null
+        );
+      }
+
+      return expenseAccounts[0] || null;
+    },
+    [defaultExpenseAccountId, expenseAccounts, isServiceCompany],
+  );
+
+  const getDefaultPurchaseItemAccountId = useCallback(
+    (itemType?: string) => getDefaultPurchaseItemAccount(itemType)?.id || null,
+    [getDefaultPurchaseItemAccount],
+  );
+
+  const getDefaultPurchaseItemAccountLabel = useCallback(
+    (itemType?: string) => {
+      const account = getDefaultPurchaseItemAccount(itemType);
+      return account ? `${account.code} - ${account.name}` : "default sistem";
+    },
+    [getDefaultPurchaseItemAccount],
+  );
+
+  const resolvePurchaseItemExpenseAccountId = useCallback(
+    (item: PurchaseItemFormData) =>
+      item.expense_account_id
+        ? parseInt(item.expense_account_id, 10)
+        : getDefaultPurchaseItemAccountId(item.item_type) || undefined,
+    [getDefaultPurchaseItemAccountId],
+  );
 
   // Fetch system settings for default tax rate
   useEffect(() => {
@@ -3377,12 +3490,12 @@ const PurchasesPage: React.FC = () => {
         // Prepaid items require: description, expense_account_id, quantity, amortization month
         return (
           !item.description?.trim() ||
-          !item.expense_account_id ||
+          !resolvePurchaseItemExpenseAccountId(item) ||
           amortizationMonth <= 0
         );
       }
       // Inventory items require: product_id, quantity, expense_account_id
-      return !item.product_id || !item.expense_account_id;
+      return !item.product_id || !resolvePurchaseItemExpenseAccountId(item);
     });
 
     if (invalidItems.length > 0) {
@@ -3408,6 +3521,7 @@ const PurchasesPage: React.FC = () => {
     }
 
     if (
+      canSelectAccountFromCOA &&
       isFinanceOrAdmin &&
       formData.payment_method === "CREDIT" &&
       !formData.credit_account_id
@@ -3501,9 +3615,7 @@ const PurchasesPage: React.FC = () => {
           unit_price: parseFloat(item.unit_price),
           discount: parseFloat(item.discount) || 0,
           tax: parseFloat(item.tax) || 0,
-          expense_account_id: item.expense_account_id
-            ? parseInt(item.expense_account_id)
-            : undefined,
+          expense_account_id: resolvePurchaseItemExpenseAccountId(item),
         })),
       };
 
@@ -3676,12 +3788,8 @@ const PurchasesPage: React.FC = () => {
       return false;
     }
 
-    if (roleNorm === "admin") {
-      return true;
-    }
-
     if (purchaseStatus === "DRAFT") {
-      return isFinanceManagerRole(roleNorm) || roleNorm === "director";
+      return isFinanceManagerRole(roleNorm);
     }
 
     const activeStep = getCurrentApprovalStepInfo(purchase);
@@ -3698,11 +3806,11 @@ const PurchasesPage: React.FC = () => {
     const status = (purchase.approval_status || "").toUpperCase();
     const purchaseStatus = (purchase.status || "").toUpperCase();
     const activeStep = getCurrentApprovalStepInfo(purchase);
+    const canActOnDraftApproval =
+      purchaseStatus === "DRAFT" && canCurrentUserActOnPurchase(purchase);
     const isUserTurn =
-      roleNorm === "admin"
-        ? status !== "APPROVED" &&
-          status !== "REJECTED" &&
-          purchaseStatus !== "CANCELLED"
+      purchaseStatus === "DRAFT"
+        ? canActOnDraftApproval
         : workflowRoleMatchesUserRole(activeStep?.approver_role, roleNorm);
 
     // Completed states
@@ -3719,36 +3827,23 @@ const PurchasesPage: React.FC = () => {
       };
     }
 
+    if (purchaseStatus === "DRAFT" && !canActOnDraftApproval) {
+      return {
+        text: "Submit for Approval",
+        icon: <FiAlertCircle />,
+        colorScheme: "blue",
+        variant: "solid",
+      };
+    }
+
     // User's turn to act
     if (isUserTurn) {
-      if (roleNorm === "employee" && purchaseStatus === "DRAFT") {
-        return {
-          text: "Submit for Approval",
-          icon: <FiAlertCircle />,
-          colorScheme: "blue",
-          variant: "solid",
-        };
-      }
-
       // Show appropriate text based on escalation
       const actionText = activeStep?.is_escalated
         ? "Action Required (Escalated)"
         : "Action Required";
       return {
         text: actionText,
-        icon: <FiAlertCircle />,
-        colorScheme: "orange",
-        variant: "solid",
-      };
-    }
-
-    if (
-      purchaseStatus === "DRAFT" &&
-      canCurrentUserActOnPurchase(purchase) &&
-      roleNorm !== "employee"
-    ) {
-      return {
-        text: "Action Required",
         icon: <FiAlertCircle />,
         colorScheme: "orange",
         variant: "solid",
@@ -3813,9 +3908,8 @@ const PurchasesPage: React.FC = () => {
           colorScheme={actionProps.colorScheme}
           leftIcon={actionProps.icon}
           onClick={() => {
-            // Handle special case for employee submitting draft purchase
+            // Draft purchases should be submitted first by non-approver roles.
             if (
-              roleNorm === "employee" &&
               purchaseStatus === "DRAFT" &&
               actionProps.text === "Submit for Approval"
             ) {
@@ -5553,38 +5647,56 @@ const PurchasesPage: React.FC = () => {
 
                             {/* Credit Account dropdown for Credit payment */}
                             {formData.payment_method === "CREDIT" && (
-                              <FormControl isRequired>
+                              <FormControl isRequired={canSelectAccountFromCOA}>
                                 <FormLabel fontSize="sm" fontWeight="medium">
                                   Liability Account
                                 </FormLabel>
-                                <Select
-                                  value={formData.credit_account_id}
-                                  onChange={(e) =>
-                                    setFormData({
-                                      ...formData,
-                                      credit_account_id: e.target.value,
-                                    })
-                                  }
-                                  size="sm"
-                                  disabled={loadingCreditAccounts}
-                                  placeholder={
-                                    loadingCreditAccounts
-                                      ? "Loading accounts..."
-                                      : "Select liability account"
-                                  }
-                                >
-                                  {creditAccounts.map((account) => (
-                                    <option
-                                      key={account.id}
-                                      value={account.id?.toString()}
-                                    >
-                                      {account.code} - {account.name}
-                                    </option>
-                                  ))}
-                                </Select>
+                                {canSelectAccountFromCOA ? (
+                                  <Select
+                                    value={formData.credit_account_id}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        credit_account_id: e.target.value,
+                                      })
+                                    }
+                                    size="sm"
+                                    disabled={loadingCreditAccounts}
+                                    placeholder={
+                                      loadingCreditAccounts
+                                        ? "Loading accounts..."
+                                        : "Select liability account"
+                                    }
+                                  >
+                                    {creditAccounts.map((account) => (
+                                      <option
+                                        key={account.id}
+                                        value={account.id?.toString()}
+                                      >
+                                        {account.code} - {account.name}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                ) : (
+                                  <Box
+                                    p={3}
+                                    borderWidth="1px"
+                                    borderColor={inputBorderColor}
+                                    borderRadius="md"
+                                    bg={inputBg}
+                                  >
+                                    <Text fontSize="xs" fontWeight="semibold">
+                                      Default Liability COA
+                                    </Text>
+                                    <Text fontSize="xs" color={textSecondary}>
+                                      Hutang usaha default sistem akan dipakai saat purchase disimpan.
+                                    </Text>
+                                  </Box>
+                                )}
                                 <FormHelperText fontSize="xs">
-                                  Required: Select liability account for
-                                  tracking credit purchases
+                                  {canSelectAccountFromCOA
+                                    ? "Required: Select liability account for tracking credit purchases"
+                                    : "COA liability opsional untuk user ini. Sistem akan memakai akun default."}
                                 </FormHelperText>
                               </FormControl>
                             )}
@@ -6334,7 +6446,8 @@ const PurchasesPage: React.FC = () => {
                                         verticalAlign="top"
                                         pt={3}
                                       >
-                                        {item.item_type === "ASSET" ? (
+                                        {item.item_type === "ASSET" &&
+                                        canSelectAccountFromCOA ? (
                                           /* === ASSET MODE: Input Deskripsi + Kategori Aset === */
                                           <VStack spacing={2} align="stretch">
                                             <Input
@@ -6418,7 +6531,8 @@ const PurchasesPage: React.FC = () => {
                                               dengan status PENDING
                                             </Badge>
                                           </VStack>
-                                        ) : item.item_type === "PREPAID" ? (
+                                        ) : item.item_type === "PREPAID" &&
+                                          canSelectAccountFromCOA ? (
                                           /* === PREPAID MODE: Input Deskripsi + Durasi Amortisasi === */
                                           <VStack spacing={2} align="stretch">
                                             <Input
@@ -6876,7 +6990,8 @@ const PurchasesPage: React.FC = () => {
                                               }
                                             />
                                           </Box>
-                                        ) : canListExpenseAccounts ? (
+                                        ) : canListExpenseAccounts &&
+                                          canSelectAccountFromCOA ? (
                                           <Box maxW="240px">
                                             <SearchableSelect
                                               options={expenseAccounts.map(
@@ -6910,48 +7025,31 @@ const PurchasesPage: React.FC = () => {
                                             />
                                           </Box>
                                         ) : (
-                                          <FormControl>
-                                            <NumberInput
-                                              min={1}
-                                              value={
-                                                item.expense_account_id ||
-                                                (defaultExpenseAccountId
-                                                  ? defaultExpenseAccountId.toString()
-                                                  : "")
-                                              }
-                                              onChange={(v) => {
-                                                const items = [
-                                                  ...formData.items,
-                                                ];
-                                                items[index] = {
-                                                  ...items[index],
-                                                  expense_account_id:
-                                                    v.toString(),
-                                                };
-                                                setFormData({
-                                                  ...formData,
-                                                  items,
-                                                });
-                                              }}
-                                              maxW="240px"
-                                              size="sm"
+                                          <Box
+                                            maxW="240px"
+                                            p={3}
+                                            borderWidth="1px"
+                                            borderColor={inputBorderColor}
+                                            borderRadius="md"
+                                            bg={inputBg}
+                                          >
+                                            <Text
+                                              fontSize="xs"
+                                              fontWeight="semibold"
+                                              color={inputTextColor}
                                             >
-                                              <NumberInputField
-                                                placeholder="Account ID"
-                                                fontSize="sm"
-                                                bg={inputBg}
-                                                color={inputTextColor}
-                                                borderColor={inputBorderColor}
-                                                _hover={{
-                                                  borderColor: inputHoverBorder,
-                                                }}
-                                                _focusVisible={fieldFocusStyles}
-                                                _placeholder={{
-                                                  color: inputPlaceholderColor,
-                                                }}
-                                              />
-                                            </NumberInput>
-                                          </FormControl>
+                                              Default COA Sistem
+                                            </Text>
+                                            <Text
+                                              fontSize="xs"
+                                              color={textSecondary}
+                                              mt={1}
+                                            >
+                                              {getDefaultPurchaseItemAccountLabel(
+                                                item.item_type,
+                                              )}
+                                            </Text>
+                                          </Box>
                                         )}
                                       </Td>
 
@@ -7636,38 +7734,56 @@ const PurchasesPage: React.FC = () => {
 
                               {/* Credit Account dropdown for Credit payment */}
                               {formData.payment_method === "CREDIT" && (
-                                <FormControl isRequired>
+                                <FormControl isRequired={canSelectAccountFromCOA}>
                                   <FormLabel fontSize="sm" fontWeight="medium">
                                     Liability Account
                                   </FormLabel>
-                                  <Select
-                                    value={formData.credit_account_id}
-                                    onChange={(e) =>
-                                      setFormData({
-                                        ...formData,
-                                        credit_account_id: e.target.value,
-                                      })
-                                    }
-                                    size="sm"
-                                    disabled={loadingCreditAccounts}
-                                    placeholder={
-                                      loadingCreditAccounts
-                                        ? "Loading accounts..."
-                                        : "Select liability account"
-                                    }
-                                  >
-                                    {creditAccounts.map((account) => (
-                                      <option
-                                        key={account.id}
-                                        value={account.id?.toString()}
-                                      >
-                                        {account.code} - {account.name}
-                                      </option>
-                                    ))}
-                                  </Select>
+                                  {canSelectAccountFromCOA ? (
+                                    <Select
+                                      value={formData.credit_account_id}
+                                      onChange={(e) =>
+                                        setFormData({
+                                          ...formData,
+                                          credit_account_id: e.target.value,
+                                        })
+                                      }
+                                      size="sm"
+                                      disabled={loadingCreditAccounts}
+                                      placeholder={
+                                        loadingCreditAccounts
+                                          ? "Loading accounts..."
+                                          : "Select liability account"
+                                      }
+                                    >
+                                      {creditAccounts.map((account) => (
+                                        <option
+                                          key={account.id}
+                                          value={account.id?.toString()}
+                                        >
+                                          {account.code} - {account.name}
+                                        </option>
+                                      ))}
+                                    </Select>
+                                  ) : (
+                                    <Box
+                                      p={3}
+                                      borderWidth="1px"
+                                      borderColor={inputBorderColor}
+                                      borderRadius="md"
+                                      bg={inputBg}
+                                    >
+                                      <Text fontSize="xs" fontWeight="semibold">
+                                        Default Liability COA
+                                      </Text>
+                                      <Text fontSize="xs" color={textSecondary}>
+                                        Hutang usaha default sistem akan dipakai saat purchase disimpan.
+                                      </Text>
+                                    </Box>
+                                  )}
                                   <FormHelperText fontSize="xs">
-                                    Required: Select liability account for
-                                    tracking credit purchases
+                                    {canSelectAccountFromCOA
+                                      ? "Required: Select liability account for tracking credit purchases"
+                                      : "COA liability opsional untuk user ini. Sistem akan memakai akun default."}
                                   </FormHelperText>
                                 </FormControl>
                               )}

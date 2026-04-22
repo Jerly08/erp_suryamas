@@ -107,7 +107,7 @@ func (c *PurchaseRequestController) Review(ctx *gin.Context) {
 
 	role := ctx.GetString("role")
 	if !models.CanReviewPurchaseRequests(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, finance manager, director, or admin can review purchase requests"})
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, finance manager, or director can review purchase requests"})
 		return
 	}
 
@@ -136,7 +136,7 @@ func (c *PurchaseRequestController) Approve(ctx *gin.Context) {
 	}
 	role := ctx.GetString("role")
 	if !models.CanReviewPurchaseRequests(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, finance manager, director, or admin can approve purchase requests"})
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, finance manager, or director can approve purchase requests"})
 		return
 	}
 
@@ -174,7 +174,7 @@ func (c *PurchaseRequestController) Reject(ctx *gin.Context) {
 	}
 	role := ctx.GetString("role")
 	if !models.CanReviewPurchaseRequests(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, finance manager, director, or admin can reject purchase requests"})
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, finance manager, or director can reject purchase requests"})
 		return
 	}
 

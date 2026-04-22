@@ -467,6 +467,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 	var subtotal float64 = 0
 	var totalPPN float64 = 0
 	var totalPPH float64 = 0
+	remainingProductStock := make(map[uint]int)
 
 	// Process sale items
 	for _, itemRequest := range request.Items {
@@ -482,12 +483,17 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 
 		revenueAccountID := itemRequest.RevenueAccountID
 		if revenueAccountID == 0 {
-			tx.Rollback()
-			return nil, fmt.Errorf("revenue account / COA wajib dipilih untuk item '%s'", normalizeSaleItemProductName(&itemRequest))
+			defaultRevenueAccountID, err := findDefaultRevenueAccountID(tx)
+			if err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("revenue account / COA wajib dipilih untuk item '%s': %v", normalizeSaleItemProductName(&itemRequest), err)
+			}
+			revenueAccountID = defaultRevenueAccountID
+			log.Printf("[CreateSale] Item '%s' uses default revenue account ID=%d", normalizeSaleItemProductName(&itemRequest), revenueAccountID)
 		}
 
 		// Redirect header account to its leaf child when needed.
-		if revenueAccountID != 0 {
+		if false && revenueAccountID != 0 {
 			var revAcc models.Account
 			if err := tx.First(&revAcc, revenueAccountID).Error; err == nil && revAcc.IsHeader {
 				log.Printf("⚠️ Revenue account %s (ID=%d) is a HEADER, redirecting to leaf child", revAcc.Code, revAcc.ID)
@@ -505,13 +511,20 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			}
 		}
 
+		normalizedRevenueAccountID, err := normalizeToDetailRevenueAccountID(tx, revenueAccountID)
+		if err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("revenue account / COA item tidak valid untuk '%s': %v", normalizeSaleItemProductName(&itemRequest), err)
+		}
+		revenueAccountID = normalizedRevenueAccountID
+
 		var product models.Product
 		if err := tx.First(&product, itemRequest.ProductID).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to load product %d: %v", itemRequest.ProductID, err)
 		}
 
-		fulfillmentSnapshot := buildSaleItemFulfillmentSnapshot(&product, int(itemRequest.Quantity), product.Stock)
+		fulfillmentSnapshot := buildSaleItemFulfillmentSnapshotWithRemainingStock(&product, int(itemRequest.Quantity), remainingProductStock)
 
 		item := models.SaleItem{
 			ProductID:        itemRequest.ProductID,
@@ -896,6 +909,7 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		var subtotal float64 = 0
 		var totalPPN float64 = 0
 		var totalPPH float64 = 0
+		remainingProductStock := make(map[uint]int)
 		sale.SaleItems = []models.SaleItem{}
 
 		for _, itemRequest := range request.Items {
@@ -911,11 +925,16 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 
 			revenueAccountID := itemRequest.RevenueAccountID
 			if revenueAccountID == 0 {
-				tx.Rollback()
-				return nil, fmt.Errorf("revenue account / COA wajib dipilih untuk item '%s'", normalizeSaleItemProductName(&itemRequest))
+				defaultRevenueAccountID, err := findDefaultRevenueAccountID(tx)
+				if err != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("revenue account / COA wajib dipilih untuk item '%s': %v", normalizeSaleItemProductName(&itemRequest), err)
+				}
+				revenueAccountID = defaultRevenueAccountID
+				log.Printf("[UpdateSale] Item '%s' uses default revenue account ID=%d", normalizeSaleItemProductName(&itemRequest), revenueAccountID)
 			}
 
-			if revenueAccountID != 0 {
+			if false && revenueAccountID != 0 {
 				var revAcc models.Account
 				if err := tx.First(&revAcc, revenueAccountID).Error; err == nil && revAcc.IsHeader {
 					log.Printf("⚠️ [UpdateSale] Revenue account %s (ID=%d) is a HEADER, redirecting to leaf", revAcc.Code, revAcc.ID)
@@ -933,13 +952,20 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				}
 			}
 
+			normalizedRevenueAccountID, err := normalizeToDetailRevenueAccountID(tx, revenueAccountID)
+			if err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("revenue account / COA item tidak valid untuk '%s': %v", normalizeSaleItemProductName(&itemRequest), err)
+			}
+			revenueAccountID = normalizedRevenueAccountID
+
 			var product models.Product
 			if err := tx.First(&product, itemRequest.ProductID).Error; err != nil {
 				tx.Rollback()
 				return nil, fmt.Errorf("failed to load product %d: %v", itemRequest.ProductID, err)
 			}
 
-			fulfillmentSnapshot := buildSaleItemFulfillmentSnapshot(&product, int(itemRequest.Quantity), product.Stock)
+			fulfillmentSnapshot := buildSaleItemFulfillmentSnapshotWithRemainingStock(&product, int(itemRequest.Quantity), remainingProductStock)
 
 			item := models.SaleItem{
 				SaleID:           sale.ID,
@@ -1197,17 +1223,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 			return nil, fmt.Errorf("failed to load product %d: %v", item.ProductID, err)
 		}
 
-		if _, exists := remainingProductStock[product.ID]; !exists {
-			remainingProductStock[product.ID] = product.Stock
-		}
-
-		availableQty := item.Quantity
-		if !product.IsService && !product.IsAssembly {
-			availableQty = minInt(item.Quantity, remainingProductStock[product.ID])
-			remainingProductStock[product.ID] -= availableQty
-		}
-
-		snapshot := buildSaleItemFulfillmentSnapshot(&product, item.Quantity, availableQty)
+		snapshot := buildSaleItemFulfillmentSnapshotWithRemainingStock(&product, item.Quantity, remainingProductStock)
 		applySaleItemFulfillmentSnapshot(item, snapshot)
 
 		if err := tx.Model(&models.SaleItem{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
@@ -2169,6 +2185,8 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 		prodMap[p.ID] = p
 	}
 
+	remainingProductStock := make(map[uint]int)
+
 	for _, it := range req.Items {
 		manualName := normalizeSaleItemProductName(&it)
 		if it.ProductID == 0 && manualName != "" {
@@ -2230,7 +2248,7 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 			continue
 		}
 
-		available := p.Stock
+		available := currentRemainingSaleProductStock(&p, remainingProductStock)
 		reqQty := int(it.Quantity)
 		isSufficient := available >= reqQty
 		lowStock := available <= p.MinStock && p.MinStock > 0
@@ -2292,6 +2310,8 @@ func (s *SalesServiceV2) ValidateStockForCreate(req models.StockValidationReques
 			IsZeroStock:      isZeroStock,
 			Warning:          warning,
 		})
+
+		allocateSaleProductStock(&p, reqQty, remainingProductStock)
 	}
 
 	return result, nil

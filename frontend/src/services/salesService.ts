@@ -334,6 +334,14 @@ export interface SalePPh23SettlementRequest {
   notes?: string;
 }
 
+export interface SaleLatePPh23Request {
+  date: string;
+  amount?: number;
+  rate?: number;
+  reference?: string;
+  notes?: string;
+}
+
 export interface IntegratedSalePaymentResponse {
   success: boolean;
   status: string;
@@ -519,6 +527,16 @@ class SalesService {
       API_ENDPOINTS.SALES_PPH23_SETTLEMENT(saleId),
       data,
     );
+    return response.data && response.data.data
+      ? response.data.data
+      : response.data;
+  }
+
+  async addLateSalePPh23(
+    saleId: number,
+    data: SaleLatePPh23Request,
+  ): Promise<Sale> {
+    const response = await api.post(API_ENDPOINTS.SALES_PPH23_ADD(saleId), data);
     return response.data && response.data.data
       ? response.data.data
       : response.data;

@@ -13,6 +13,10 @@ export interface SSOTJournalEntry {
   total_debit: number;
   total_credit: number;
   status: "DRAFT" | "POSTED" | "REVERSED";
+  approval_stage?: "FINANCE_MANAGER" | "DIRECTOR" | "";
+  require_director_approval?: boolean;
+  finance_manager_approved_by?: number;
+  finance_manager_approved_at?: string;
   is_balanced: boolean;
   is_auto_generated: boolean;
   created_by: number;
@@ -30,6 +34,13 @@ export interface SSOTJournalEntry {
   reversed_entry?: SSOTJournalEntry;
   reversal_entry?: SSOTJournalEntry;
   creator?: {
+    id: number;
+    username: string;
+    first_name: string;
+    last_name: string;
+    role?: string;
+  };
+  finance_manager_approver?: {
     id: number;
     username: string;
     first_name: string;
@@ -72,6 +83,9 @@ export interface CreateJournalRequest {
   notes?: string;
   source_type?: string;
   adjustment_of?: number;
+  require_director_approval?: boolean;
+  requested_by_finance_manager?: boolean;
+  auto_post?: boolean;
   lines: Array<{
     account_id: number;
     description: string;
@@ -267,10 +281,11 @@ class SSOTJournalService {
   }
 
   // Post journal entry
-  async postJournalEntry(id: number): Promise<SSOTJournalEntry> {
+  async postJournalEntry(id: number, options: { require_director_approval?: boolean } = {}): Promise<SSOTJournalEntry> {
     const response = await fetch(API_ENDPOINTS.JOURNALS.POST(id), {
       method: "PUT",
       headers: this.getAuthHeaders(),
+      body: JSON.stringify(options),
     });
 
     if (!response.ok) {

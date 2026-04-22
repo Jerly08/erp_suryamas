@@ -22,6 +22,8 @@ func (r *PaymentRepository) FindAll() ([]models.Payment, error) {
 	err := r.db.
 		Preload("Contact").
 		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
 		Preload("Approver").
 		Preload("Rejector").
 		Find(&payments).Error
@@ -34,6 +36,8 @@ func (r *PaymentRepository) FindByID(id uint) (*models.Payment, error) {
 	err := r.db.
 		Preload("Contact").
 		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
 		Preload("Approver").
 		Preload("Rejector").
 		First(&payment, id).Error
@@ -49,6 +53,8 @@ func (r *PaymentRepository) FindWithFilter(filter PaymentFilter) (*PaymentResult
 		Model(&models.Payment{}).
 		Preload("Contact").
 		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
 		Preload("Approver").
 		Preload("Rejector")
 
