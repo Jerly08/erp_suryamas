@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     restart: unless-stopped
     networks:
       - erp_network
@@ -34,7 +34,7 @@ services:
       - ENABLE_SWAGGER=${ENABLE_SWAGGER:-false}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
-      - "8084:8080"
+      - "127.0.0.1:8084:8080"
     depends_on:
       - db
     restart: unless-stopped
