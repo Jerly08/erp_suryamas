@@ -55,7 +55,9 @@ type SSOTJournalEntry struct {
 	ReversalReason string  `json:"reversal_reason" gorm:"type:text"`
 
 	// Adjustment Information
-	AdjustmentOf *uint64 `json:"adjustment_of" gorm:"index"` // Points to original journal being adjusted
+	AdjustmentOf            *uint64 `json:"adjustment_of" gorm:"index"` // Points to original journal being adjusted
+	AdjustmentCategoryCode  string  `json:"adjustment_category_code" gorm:"size:60;index"`
+	AdjustmentCategoryLabel string  `json:"adjustment_category_label" gorm:"size:160"`
 
 	// Audit Fields
 	CreatedBy uint64     `json:"created_by" gorm:"not null;index"`
@@ -72,6 +74,16 @@ type SSOTJournalEntry struct {
 	ReversedEntry          *SSOTJournalEntry  `json:"reversed_entry,omitempty" gorm:"foreignKey:ReversedFrom"`
 	AdjustedEntry          *SSOTJournalEntry  `json:"adjusted_entry,omitempty" gorm:"foreignKey:AdjustmentOf;references:ID"`
 	AdjustmentEntries      []SSOTJournalEntry `json:"adjustment_entries,omitempty" gorm:"foreignKey:AdjustmentOf;references:ID"`
+
+	// Adjustment requirement mapping fields are computed from the approved
+	// client categories and are not stored in DB.
+	AdjustmentRequired           bool   `json:"adjustment_required" gorm:"-"`
+	AdjustmentCompleted          bool   `json:"adjustment_completed" gorm:"-"`
+	AdjustmentRequirementCode    string `json:"adjustment_requirement_code" gorm:"-"`
+	AdjustmentRequirementLabel   string `json:"adjustment_requirement_label" gorm:"-"`
+	AdjustmentRequirementCOA     string `json:"adjustment_requirement_coa" gorm:"-"`
+	AdjustmentRequirementReason  string `json:"adjustment_requirement_reason" gorm:"-"`
+	AdjustmentRequirementTagline string `json:"adjustment_requirement_tagline" gorm:"-"`
 }
 
 // SSOTJournalLine represents individual debit/credit lines in a unified journal entry

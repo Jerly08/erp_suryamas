@@ -63,6 +63,8 @@ export interface Sale {
   pph23_settlement_reference?: string;
   pph23_settlement_notes?: string;
   pph23_settlement_journal_entry_id?: number;
+  pph_paid_amount?: number;
+  pph_payment_status?: "PAID" | "UNPAID" | "PARTIAL_PAID" | "NONE";
   other_tax_deductions?: number;
   total_tax: number;
   tax: number; // Backend legacy field
@@ -254,6 +256,7 @@ export interface SaleItemRequest {
   location?: string;
   quantity: number;
   unit_price: number;
+  estimated_unit_cost?: number;
   discount?: number; // Legacy field - will be mapped to discount_percent
   discount_percent?: number; // New field to match backend
   tax?: number; // Legacy field
@@ -302,6 +305,7 @@ export interface SaleItemUpdateRequest {
   location?: string;
   quantity: number;
   unit_price: number;
+  estimated_unit_cost?: number;
   discount?: number; // Legacy field - will be mapped to discount_percent
   discount_percent?: number; // New field to match backend
   tax?: number; // Legacy field

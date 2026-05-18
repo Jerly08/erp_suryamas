@@ -49,9 +49,16 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
   const [loading, setLoading] = useState(false);
+  const currentPPh23Amount = sale?.pph23_amount || 0;
+  const hasExistingPPh23 = currentPPh23Amount > 0.005;
   const isLateAddMode =
     !!sale &&
-    (sale.pph23_amount || 0) <= 0 &&
+    !hasExistingPPh23 &&
+    !sale.pph23_settlement_date &&
+    sale.status !== "CANCELLED";
+  const canAdjustExistingPPh23 =
+    !!sale &&
+    hasExistingPPh23 &&
     !sale.pph23_settlement_date &&
     sale.status !== "CANCELLED";
   const isInvoiceSettled = (sale?.outstanding_amount || 0) <= 0.005;
@@ -96,17 +103,35 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
       setLoading(true);
 
       let updatedSale: Sale;
-      if (isLateAddMode) {
-        const numericAmount = Number(amount);
-        const numericRate = Number(rate);
+      const numericAmount = Number(amount);
+      const numericRate = Number(rate);
+      const hasAmountInput =
+        amount.trim() !== "" && !Number.isNaN(numericAmount) && numericAmount > 0;
+      const hasRateInput =
+        rate.trim() !== "" && !Number.isNaN(numericRate) && numericRate > 0;
+      const shouldPostLateOrAdjustment =
+        isLateAddMode || (canAdjustExistingPPh23 && (hasAmountInput || hasRateInput));
 
-        if ((!amount || Number.isNaN(numericAmount) || numericAmount <= 0) &&
-            (!rate || Number.isNaN(numericRate) || numericRate <= 0)) {
+      if (shouldPostLateOrAdjustment) {
+        if (isLateAddMode && !hasAmountInput && !hasRateInput) {
           toast({
             title: "Nominal atau tarif wajib diisi",
             description: "Isi nominal PPh23 atau tarif PPh23 agar sistem bisa memproses jurnal susulan.",
             status: "error",
             duration: 4000,
+          });
+          return;
+        }
+        if (
+          canAdjustExistingPPh23 &&
+          hasAmountInput &&
+          numericAmount <= currentPPh23Amount
+        ) {
+          toast({
+            title: "Nominal final belum lebih besar",
+            description: `Nominal PPh23 final harus lebih besar dari PPh23 yang sudah tercatat (${salesService.formatCurrency(currentPPh23Amount)}).`,
+            status: "error",
+            duration: 5000,
           });
           return;
         }
@@ -116,10 +141,10 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
           reference: reference.trim(),
           notes: notes.trim(),
         };
-        if (!Number.isNaN(numericAmount) && numericAmount > 0) {
+        if (hasAmountInput) {
           payload.amount = numericAmount;
         }
-        if (!Number.isNaN(numericRate) && numericRate > 0) {
+        if (hasRateInput) {
           payload.rate = numericRate;
         }
 
@@ -140,14 +165,20 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
       toast({
         title: isLateAddMode
           ? "PPh23 susulan berhasil ditambahkan"
-          : "PPh23 berhasil dipost",
+          : shouldPostLateOrAdjustment
+            ? "Koreksi PPh23 berhasil dipost"
+            : "PPh23 berhasil dipost",
         description: effectiveDate
           ? isLateAddMode
             ? `PPh23 susulan berhasil dipost pada ${effectiveDate}.`
-            : `Jurnal reclass PPh23 berhasil dipost pada ${effectiveDate}.`
+            : shouldPostLateOrAdjustment
+              ? `Koreksi kurang bayar PPh23 berhasil dipost pada ${effectiveDate}.`
+              : `Jurnal reclass PPh23 berhasil dipost pada ${effectiveDate}.`
           : isLateAddMode
             ? "PPh23 susulan berhasil dipost."
-            : "Jurnal reclass PPh23 berhasil dipost.",
+            : shouldPostLateOrAdjustment
+              ? "Koreksi kurang bayar PPh23 berhasil dipost."
+              : "Jurnal reclass PPh23 berhasil dipost.",
         status: "success",
         duration: 4000,
       });
@@ -164,6 +195,8 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
       toast({
         title: isLateAddMode
           ? "Gagal menambahkan PPh23"
+          : amount.trim() !== "" || rate.trim() !== ""
+            ? "Gagal koreksi PPh23"
           : "Gagal mempost PPh23",
         description: errorMessage,
         status: "error",
@@ -179,7 +212,11 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
       <ModalOverlay />
       <ModalContent>
         <ModalHeader>
-          {isLateAddMode ? "Tambah PPh23 Susulan" : "Posting PPh23"}
+          {isLateAddMode
+            ? "Tambah PPh23 Susulan"
+            : canAdjustExistingPPh23
+              ? "Posting / Koreksi PPh23"
+              : "Posting PPh23"}
         </ModalHeader>
         <ModalCloseButton />
 
@@ -190,7 +227,9 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                 <Text fontSize="sm" color="gray.600">
                   {isLateAddMode
                     ? "Gunakan form ini saat invoice awalnya belum diisi PPh23, lalu bukti potong / info dari konsultan pajak baru diterima belakangan."
-                    : "Gunakan form ini untuk mempost jurnal susulan PPh23 setelah invoice lunas dan bukti potong sudah diterima dari konsultan pajak."}
+                    : canAdjustExistingPPh23
+                      ? "Gunakan form ini untuk mempost PPh23 saat bukti potong diterima. Jika ada kurang bayar, isi nominal atau tarif final yang lebih besar dari PPh23 saat ini."
+                      : "Gunakan form ini untuk mempost jurnal susulan PPh23 setelah invoice lunas dan bukti potong sudah diterima dari konsultan pajak."}
                 </Text>
 
                 <Box
@@ -218,8 +257,14 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                       Nilai Invoice Saat Ini:{" "}
                       {salesService.formatCurrency(sale.total_amount || 0)}
                     </Text>
-                    {isLateAddMode ? (
+                    {(isLateAddMode || canAdjustExistingPPh23) ? (
                       <>
+                        {canAdjustExistingPPh23 && (
+                          <Text fontSize="sm">
+                            PPh23 Tercatat Saat Ini:{" "}
+                            {salesService.formatCurrency(currentPPh23Amount)}
+                          </Text>
+                        )}
                         <Text fontSize="sm">
                           Outstanding Saat Ini:{" "}
                           {salesService.formatCurrency(
@@ -228,7 +273,7 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                         </Text>
                         <Text fontSize="sm" color="orange.500">
                           {isInvoiceSettled
-                            ? "Invoice sudah lunas. Sistem akan koreksi payment/kas-bank dulu, lalu mempost PPh23 final pada tanggal yang dipilih."
+                            ? "Invoice sudah lunas. Jika ada tambahan PPh23, sistem akan koreksi payment/kas-bank dulu, lalu mempost PPh23 final pada tanggal yang dipilih."
                             : "Invoice belum sepenuhnya lunas. Sistem akan mempost PPh23 final jika nilai PPh23 yang diinput menutup sisa piutang invoice."}
                         </Text>
                       </>
@@ -264,10 +309,14 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                   </FormHelperText>
                 </FormControl>
 
-                {isLateAddMode && (
+                {(isLateAddMode || canAdjustExistingPPh23) && (
                   <>
                     <FormControl>
-                      <FormLabel>Nominal PPh23</FormLabel>
+                      <FormLabel>
+                        {canAdjustExistingPPh23
+                          ? "Nominal PPh23 Final"
+                          : "Nominal PPh23"}
+                      </FormLabel>
                       <Input
                         type="number"
                         min={0}
@@ -277,13 +326,18 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                         placeholder="Contoh: 2000000"
                       />
                       <FormHelperText>
-                        Isi nominal jika nilai PPh23 sudah diketahui dari
-                        bukti potong atau konsultan pajak.
+                        {canAdjustExistingPPh23
+                          ? "Opsional. Isi hanya jika bukti potong menunjukkan PPh23 final lebih besar dari nilai yang tercatat."
+                          : "Isi nominal jika nilai PPh23 sudah diketahui dari bukti potong atau konsultan pajak."}
                       </FormHelperText>
                     </FormControl>
 
                     <FormControl>
-                      <FormLabel>Tarif PPh23</FormLabel>
+                      <FormLabel>
+                        {canAdjustExistingPPh23
+                          ? "Tarif PPh23 Final"
+                          : "Tarif PPh23"}
+                      </FormLabel>
                       <Input
                         type="number"
                         min={0}
@@ -293,8 +347,9 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                         placeholder="Contoh: 2"
                       />
                       <FormHelperText>
-                        Opsional. Jika nominal belum diisi, sistem akan hitung
-                        otomatis dari DPP pajak invoice ini.
+                        {canAdjustExistingPPh23
+                          ? "Opsional. Jika nominal final belum diisi, sistem menghitung nominal final dari DPP pajak invoice ini."
+                          : "Opsional. Jika nominal belum diisi, sistem akan hitung otomatis dari DPP pajak invoice ini."}
                       </FormHelperText>
                     </FormControl>
                   </>
@@ -327,7 +382,11 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
               Batal
             </Button>
             <Button colorScheme="blue" type="submit" isLoading={loading}>
-              {isLateAddMode ? "Tambah & Posting PPh23" : "Posting PPh23"}
+              {isLateAddMode
+                ? "Tambah & Posting PPh23"
+                : canAdjustExistingPPh23
+                  ? "Posting / Koreksi PPh23"
+                  : "Posting PPh23"}
             </Button>
           </ModalFooter>
         </form>

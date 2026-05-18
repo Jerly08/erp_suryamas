@@ -84,6 +84,7 @@ import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
 import ExpensePaymentForm from '@/components/payments/ExpensePaymentForm';
 import { exportPaymentsToPDF, PDFExportOptions } from '@/utils/pdfExport';
 import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
+import { getPaymentPPhStatus } from '@/utils/taxPaymentStatus';
 
 // Status type for filtering
 type PaymentStatusType = 'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED';
@@ -447,6 +448,31 @@ const PaymentsPage: React.FC = () => {
               <Text fontSize="xs" color="red.500">
                 {row.rejection_reason}
               </Text>
+            ) : null}
+          </VStack>
+        );
+      }
+    },
+    {
+      header: 'Status PPh',
+      accessor: (row: Payment) => {
+        const pphStatus = getPaymentPPhStatus(row);
+        return (
+          <VStack align="start" spacing={1}>
+            <Badge colorScheme={pphStatus.colorScheme} variant="subtle">
+              {pphStatus.label}
+            </Badge>
+            {pphStatus.totalAmount > 0 ? (
+              <>
+                <Text fontSize="xs" color={textSecondary}>
+                  PPh: {formatCurrency(pphStatus.totalAmount)}
+                </Text>
+                {pphStatus.outstandingAmount > 0 ? (
+                  <Text fontSize="xs" color="orange.500">
+                    Sisa: {formatCurrency(pphStatus.outstandingAmount)}
+                  </Text>
+                ) : null}
+              </>
             ) : null}
           </VStack>
         );
@@ -947,7 +973,7 @@ const PaymentsPage: React.FC = () => {
   if (loading && (!payments || payments.length === 0)) {
     return (
       <CompanyTypeGuard>
-        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'director', 'employee', 'inventory_manager']}>
+        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'accounting', 'director', 'employee', 'inventory_manager']}>
           <Box display="flex" justifyContent="center" alignItems="center" height="400px">
             <Spinner size="xl" thickness="4px" speed="0.65s" color="brand.500" />
             <Text ml={4} fontSize="lg">{t('payments.loading')}</Text>
@@ -960,7 +986,7 @@ const PaymentsPage: React.FC = () => {
   return (
     <ProtectedModule module="payments">
       <CompanyTypeGuard>
-        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'director', 'employee', 'inventory_manager']}>
+        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'accounting', 'director', 'employee', 'inventory_manager']}>
           <Box bg={bgColor} minH="100vh" p={6}>
             <VStack spacing={6} align="stretch">
               {/* Summary Cards */}

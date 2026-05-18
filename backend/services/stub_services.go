@@ -62,7 +62,7 @@ func requiresManualJournalApproval(sourceType string, adjustmentOf *uint64) bool
 }
 
 func creatorBypassesManualJournalApproval(req *JournalEntryRequest) bool {
-	return req != nil && req.RequestedByFinanceManager && !req.RequireDirectorApproval
+	return req != nil && (req.SystemGenerated || (req.RequestedByFinanceManager && !req.RequireDirectorApproval))
 }
 
 func shouldForceManualJournalDraft(req *JournalEntryRequest, sourceType string, adjustmentOf *uint64) bool {
@@ -118,6 +118,246 @@ func validateAdjustmentReference(tx *gorm.DB, sourceType string, adjustmentOf *u
 	}
 
 	return normalizedAdjustmentOf, nil
+}
+
+func findPostedSourceJournalIDForAdjustment(tx *gorm.DB, sourceType string, sourceID uint64, adjustmentDate time.Time) *uint64 {
+	if tx == nil || strings.TrimSpace(sourceType) == "" || sourceID == 0 {
+		return nil
+	}
+
+	var original models.SSOTJournalEntry
+	query := tx.
+		Where("source_type = ? AND source_id = ? AND status = ? AND deleted_at IS NULL",
+			strings.ToUpper(strings.TrimSpace(sourceType)), sourceID, models.SSOTStatusPosted)
+	if !adjustmentDate.IsZero() {
+		query = query.Where("entry_date <= ?", adjustmentDate)
+	}
+
+	if err := query.Order("entry_date ASC, id ASC").First(&original).Error; err != nil {
+		return nil
+	}
+
+	originalID := original.ID
+	return &originalID
+}
+
+func resolveJournalAdjustmentCategory(sourceType string, adjustmentOf *uint64, requestedCode string) (string, string, error) {
+	normalizedSourceType := strings.ToUpper(strings.TrimSpace(sourceType))
+	normalizedCode := models.NormalizeJournalAdjustmentCategoryCode(requestedCode)
+	isManualAdjustmentOfPostedJournal := normalizedSourceType == models.SSOTSourceTypeAdjustment &&
+		adjustmentOf != nil &&
+		*adjustmentOf != 0
+
+	if normalizedCode == "" {
+		if isManualAdjustmentOfPostedJournal {
+			return "", "", fmt.Errorf("kategori transaksi adjustment wajib dipilih")
+		}
+		return "", "", nil
+	}
+
+	category, exists := models.GetJournalAdjustmentCategory(normalizedCode)
+	if !exists {
+		return "", "", fmt.Errorf("kategori transaksi adjustment tidak valid: %s", requestedCode)
+	}
+
+	return category.Code, category.Label, nil
+}
+
+func validatePersistedJournalAdjustmentCategory(entry *models.SSOTJournalEntry) error {
+	if entry == nil {
+		return nil
+	}
+	_, _, err := resolveJournalAdjustmentCategory(entry.SourceType, entry.AdjustmentOf, entry.AdjustmentCategoryCode)
+	return err
+}
+
+func journalHasRelatedAdjustment(entry *models.SSOTJournalEntry) bool {
+	if entry == nil {
+		return false
+	}
+	for _, adjustment := range entry.AdjustmentEntries {
+		if adjustment.DeletedAt == nil && adjustment.Status != models.SSOTStatusCancelled {
+			return true
+		}
+	}
+	return false
+}
+
+func journalAdjustmentText(entry *models.SSOTJournalEntry) string {
+	if entry == nil {
+		return ""
+	}
+	parts := []string{
+		entry.SourceType,
+		entry.SourceCode,
+		entry.Reference,
+		entry.Description,
+		entry.Notes,
+	}
+	for _, line := range entry.Lines {
+		parts = append(parts, line.Description)
+		if line.Account != nil {
+			parts = append(parts, line.Account.Code, line.Account.Name)
+		}
+	}
+	return strings.ToUpper(strings.Join(parts, " "))
+}
+
+func inferJournalAdjustmentRequirement(entry *models.SSOTJournalEntry) (models.JournalAdjustmentCategoryDefinition, string, bool) {
+	if entry == nil {
+		return models.JournalAdjustmentCategoryDefinition{}, "", false
+	}
+
+	sourceType := strings.ToUpper(strings.TrimSpace(entry.SourceType))
+	if sourceType == models.SSOTSourceTypeAdjustment || sourceType == models.SSOTSourceTypeReversal {
+		return models.JournalAdjustmentCategoryDefinition{}, "", false
+	}
+	if entry.Status != models.SSOTStatusPosted || entry.ReversedBy != nil {
+		return models.JournalAdjustmentCategoryDefinition{}, "", false
+	}
+
+	text := journalAdjustmentText(entry)
+	hasAny := func(values ...string) bool {
+		for _, value := range values {
+			if strings.Contains(text, strings.ToUpper(value)) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if strings.HasPrefix(sourceType, "PAYROLL") || hasAny("PPH 21", "PPH21", "PPH PAYROLL") {
+		category, _ := models.GetJournalAdjustmentCategory(models.JournalAdjustmentCategoryPPh21Accrual)
+		return category, "Terindikasi ada pembebanan PPh 21/accrual pajak payroll.", true
+	}
+	if hasAny("PPH 23", "PPH23") {
+		category, _ := models.GetJournalAdjustmentCategory(models.JournalAdjustmentCategoryPPh23Accrual)
+		return category, "Terindikasi ada pembebanan PPh 23 atau PPh 23 menyusul.", true
+	}
+	if sourceType == models.SSOTSourceTypeSale && hasAny("PIUTANG USAHA", "1102") {
+		category, _ := models.GetJournalAdjustmentCategory(models.JournalAdjustmentCategorySalesRevenueRecognition)
+		return category, "Sales diakui ke Piutang Usaha sebelum kas diterima.", true
+	}
+	if hasAny("ACCRUED COGS", "ACCRUED HPP", "RELEASE ACCRUED", "ESTIMATED HPP BACKORDER", "BACKORDER", salesBackorderClearingAccountCode) {
+		category, _ := models.GetJournalAdjustmentCategory(models.JournalAdjustmentCategoryCOGSHPPRecognition)
+		return category, "Terindikasi COGS/HPP terkait accrued, release, atau backorder.", true
+	}
+	if sourceType == models.SSOTSourceTypePrepaidAmortization ||
+		sourceType == models.SSOTSourceTypePrepaidTermination ||
+		hasAny("PREPAID", "AMORTISASI", "AMORTIZATION") {
+		category, _ := models.GetJournalAdjustmentCategory(models.JournalAdjustmentCategoryPrepaidMonthlyRealization)
+		return category, "Terindikasi realisasi prepaid bulanan.", true
+	}
+
+	return models.JournalAdjustmentCategoryDefinition{}, "", false
+}
+
+func hydrateJournalAdjustmentRequirement(entry *models.SSOTJournalEntry) {
+	if entry == nil {
+		return
+	}
+
+	entry.AdjustmentCompleted = journalHasRelatedAdjustment(entry)
+
+	category, reason, required := inferJournalAdjustmentRequirement(entry)
+	if !required {
+		entry.AdjustmentRequired = false
+		entry.AdjustmentRequirementCode = ""
+		entry.AdjustmentRequirementLabel = ""
+		entry.AdjustmentRequirementCOA = ""
+		entry.AdjustmentRequirementReason = ""
+		entry.AdjustmentRequirementTagline = ""
+		return
+	}
+
+	entry.AdjustmentRequired = true
+	entry.AdjustmentRequirementCode = category.Code
+	entry.AdjustmentRequirementLabel = category.Label
+	entry.AdjustmentRequirementCOA = category.COA
+	entry.AdjustmentRequirementReason = reason
+	entry.AdjustmentRequirementTagline = models.JournalAdjustmentRequirementTagline
+}
+
+func hydrateJournalAdjustmentRequirements(entries []models.SSOTJournalEntry) {
+	for idx := range entries {
+		hydrateJournalAdjustmentRequirement(&entries[idx])
+	}
+}
+
+func applyJournalAdjustmentRequirementFilter(query *gorm.DB, filterValue string) *gorm.DB {
+	normalized := strings.ToUpper(strings.TrimSpace(filterValue))
+	if normalized == "" || normalized == "ALL" {
+		return query
+	}
+
+	lineMatchSQL := `
+		EXISTS (
+			SELECT 1
+			FROM unified_journal_lines ujl_req
+			LEFT JOIN accounts acc_req ON acc_req.id = ujl_req.account_id
+			WHERE ujl_req.journal_id = unified_journal_ledger.id
+			AND (
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%PPH 21%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%PPH21%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%PPH PAYROLL%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%PPH 23%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%PPH23%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%ACCRUED COGS%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%ACCRUED HPP%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%RELEASE ACCRUED%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%ESTIMATED HPP BACKORDER%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%BACKORDER%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%PREPAID%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%AMORTISASI%' OR
+				UPPER(COALESCE(ujl_req.description, '')) LIKE '%AMORTIZATION%' OR
+				UPPER(COALESCE(acc_req.code, '')) LIKE '1102%' OR
+				UPPER(COALESCE(acc_req.code, '')) = '2103-009' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%PIUTANG USAHA%' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%PPH 21%' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%PPH21%' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%PPH 23%' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%PPH23%' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%ACCRUED COGS%' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%ACCRUED HPP%' OR
+				UPPER(COALESCE(acc_req.name, '')) LIKE '%PREPAID%'
+			)
+		)`
+	baseAdjustmentScopeSQL := `
+		unified_journal_ledger.status = 'POSTED'
+		AND unified_journal_ledger.source_type NOT IN ('ADJUSTMENT', 'REVERSAL')
+		AND unified_journal_ledger.reversed_by IS NULL`
+	adjustmentCategoryMatchSQL := `
+			UPPER(COALESCE(unified_journal_ledger.source_type, '')) LIKE 'PAYROLL%'
+			OR UPPER(COALESCE(unified_journal_ledger.source_type, '')) IN ('PREPAID_AMORTIZATION', 'PREPAID_TERMINATION')
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%PPH 21%'
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%PPH21%'
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%PPH PAYROLL%'
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%PPH 23%'
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%PPH23%'
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%PREPAID%'
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%AMORTISASI%'
+			OR UPPER(COALESCE(unified_journal_ledger.description, '')) LIKE '%AMORTIZATION%'
+			OR ` + lineMatchSQL
+	eligibleSQL := baseAdjustmentScopeSQL + ` AND (` + adjustmentCategoryMatchSQL + `)`
+	adjustedSQL := `
+		EXISTS (
+			SELECT 1
+			FROM unified_journal_ledger adj_req
+			WHERE adj_req.adjustment_of = unified_journal_ledger.id
+			AND adj_req.deleted_at IS NULL
+			AND adj_req.status <> 'CANCELLED'
+		)`
+
+	switch normalized {
+	case "NEEDS_ADJUSTMENT":
+		return query.Where(eligibleSQL).Where("NOT " + adjustedSQL)
+	case "ADJUSTED":
+		return query.Where(eligibleSQL).Where(adjustedSQL)
+	case "NOT_REQUIRED":
+		return query.Where(baseAdjustmentScopeSQL).Where("NOT (" + adjustmentCategoryMatchSQL + ")")
+	default:
+		return query
+	}
 }
 
 func validateJournalAccount(tx *gorm.DB, accountID uint64, lineNumber int, accountCache map[uint64]models.Account, disallowCashBankLinked bool) (models.Account, error) {
@@ -240,7 +480,14 @@ func (s *UnifiedJournalService) CreateJournalEntry(entry interface{}) (*models.S
 	if err != nil {
 		return nil, err
 	}
+	adjustmentCategoryCode, adjustmentCategoryLabel, err := resolveJournalAdjustmentCategory(normalizedSourceType, adjustmentOf, req.AdjustmentCategoryCode)
+	if err != nil {
+		return nil, err
+	}
 	normalizedSourceType, sourceIDPtr, isAutoGenerated := normalizeJournalMetadata(normalizedSourceType, req.SourceID, adjustmentOf)
+	if req.SystemGenerated {
+		isAutoGenerated = true
+	}
 	totalDebit, totalCredit, err := validateJournalLines(s.db, req.Lines, shouldDisallowCashBankLinkedAccounts(normalizedSourceType, adjustmentOf))
 	if err != nil {
 		return nil, err
@@ -296,6 +543,8 @@ func (s *UnifiedJournalService) CreateJournalEntry(entry interface{}) (*models.S
 		PostedAt:                 postedAt,
 		PostedBy:                 postedBy,
 		AdjustmentOf:             adjustmentOf,
+		AdjustmentCategoryCode:   adjustmentCategoryCode,
+		AdjustmentCategoryLabel:  adjustmentCategoryLabel,
 		CreatedBy:                req.CreatedBy,
 	}
 
@@ -956,6 +1205,7 @@ func (s *UnifiedJournalService) GetJournalEntry(entryID uint64) (*models.SSOTJou
 		First(&entry, entryID).Error; err != nil {
 		return nil, fmt.Errorf("journal entry not found: %w", err)
 	}
+	hydrateJournalAdjustmentRequirement(&entry)
 	return &entry, nil
 }
 
@@ -979,7 +1229,14 @@ func (s *UnifiedJournalService) CreateJournalEntryWithTx(tx *gorm.DB, request *J
 	if err != nil {
 		return nil, err
 	}
+	adjustmentCategoryCode, adjustmentCategoryLabel, err := resolveJournalAdjustmentCategory(normalizedSourceType, adjustmentOf, request.AdjustmentCategoryCode)
+	if err != nil {
+		return nil, err
+	}
 	normalizedSourceType, sourceIDPtr, isAutoGenerated := normalizeJournalMetadata(normalizedSourceType, request.SourceID, adjustmentOf)
+	if request.SystemGenerated {
+		isAutoGenerated = true
+	}
 	totalDebit, totalCredit, err := validateJournalLines(tx, request.Lines, shouldDisallowCashBankLinkedAccounts(normalizedSourceType, adjustmentOf))
 	if err != nil {
 		return nil, err
@@ -1035,6 +1292,8 @@ func (s *UnifiedJournalService) CreateJournalEntryWithTx(tx *gorm.DB, request *J
 		PostedAt:                 postedAt,
 		PostedBy:                 postedBy,
 		AdjustmentOf:             adjustmentOf,
+		AdjustmentCategoryCode:   adjustmentCategoryCode,
+		AdjustmentCategoryLabel:  adjustmentCategoryLabel,
 		CreatedBy:                request.CreatedBy,
 	}
 	if err := tx.Create(entryModel).Error; err != nil {
@@ -1102,6 +1361,10 @@ func (s *UnifiedJournalService) GetJournalEntries(filters interface{}) (*Journal
 	if f.SourceType != "" {
 		query = query.Where("source_type = ?", f.SourceType)
 	}
+	if categoryCode := models.NormalizeJournalAdjustmentCategoryCode(f.AdjustmentCategoryCode); categoryCode != "" {
+		query = query.Where("adjustment_category_code = ?", categoryCode)
+	}
+	query = applyJournalAdjustmentRequirementFilter(query, f.AdjustmentRequirement)
 	if f.SourceID != nil {
 		query = query.Where("source_id = ?", *f.SourceID)
 	}
@@ -1163,12 +1426,15 @@ func (s *UnifiedJournalService) GetJournalEntries(filters interface{}) (*Journal
 		Preload("Creator").
 		Preload("FinanceManagerApprover").
 		Preload("Poster").
+		Preload("AdjustmentEntries", "deleted_at IS NULL").
 		Order(orderClause).
 		Limit(limit).
 		Offset(offset).
 		Find(&entries).Error; err != nil {
 		return nil, fmt.Errorf("failed to query journal entries: %w", err)
 	}
+
+	hydrateJournalAdjustmentRequirements(entries)
 
 	return &JournalResponse{
 		Data:       entries,
@@ -1206,6 +1472,10 @@ func (s *UnifiedJournalService) UpdateJournalEntry(id uint64, req *JournalEntryR
 	if err != nil {
 		return nil, err
 	}
+	adjustmentCategoryCode, adjustmentCategoryLabel, err := resolveJournalAdjustmentCategory(effectiveSourceType, adjustmentOf, req.AdjustmentCategoryCode)
+	if err != nil {
+		return nil, err
+	}
 	totalDebit, totalCredit, err := validateJournalLines(s.db, req.Lines, shouldDisallowCashBankLinkedAccounts(effectiveSourceType, adjustmentOf))
 	if err != nil {
 		return nil, err
@@ -1227,6 +1497,8 @@ func (s *UnifiedJournalService) UpdateJournalEntry(id uint64, req *JournalEntryR
 		entry.Notes = req.Notes
 		entry.TotalDebit = totalDebit
 		entry.TotalCredit = totalCredit
+		entry.AdjustmentCategoryCode = adjustmentCategoryCode
+		entry.AdjustmentCategoryLabel = adjustmentCategoryLabel
 		// Don't change CreatedBy, but maybe UpdatedAt is handled by GORM
 
 		if err := tx.Save(&entry).Error; err != nil {
@@ -1292,6 +1564,9 @@ func (s *UnifiedJournalService) SendJournalEntryToDirector(id uint64, financeMan
 	if isJournalDirectorApprovalPending(&entry) {
 		return nil, fmt.Errorf("journal entry is already waiting for director approval")
 	}
+	if err := validatePersistedJournalAdjustmentCategory(&entry); err != nil {
+		return nil, err
+	}
 	if err := CheckClosedPeriod(s.db, entry.EntryDate); err != nil {
 		return nil, err
 	}
@@ -1334,6 +1609,9 @@ func (s *UnifiedJournalService) PostJournalEntry(id uint64, userID uint64) (*mod
 	// Validate balance again just in case
 	if !entry.TotalDebit.Equal(entry.TotalCredit) {
 		return nil, fmt.Errorf("journal entry is not balanced")
+	}
+	if err := validatePersistedJournalAdjustmentCategory(&entry); err != nil {
+		return nil, err
 	}
 
 	// Guard: check if journal entry date is in a closed accounting period
@@ -1505,9 +1783,11 @@ type JournalEntryRequest struct {
 	SourceType                string               `json:"source_type"`
 	SourceID                  uint64               `json:"source_id"`
 	AdjustmentOf              *uint64              `json:"adjustment_of"`
+	AdjustmentCategoryCode    string               `json:"adjustment_category_code"`
 	RequireDirectorApproval   bool                 `json:"require_director_approval"`
 	RequestedByFinanceManager bool                 `json:"requested_by_finance_manager"`
 	AutoPost                  bool                 `json:"auto_post"`
+	SystemGenerated           bool                 `json:"-"`
 }
 
 // Helpers to resolve default accounts for cash/bank journals
@@ -1645,19 +1925,21 @@ type UltraFastPaymentRequest struct {
 
 // Missing types for controllers
 type JournalFilters struct {
-	StartDate   time.Time  `json:"start_date"`
-	EndDate     time.Time  `json:"end_date"`
-	DateFrom    *time.Time `json:"date_from"`
-	DateTo      *time.Time `json:"date_to"`
-	AccountID   uint       `form:"account_id" json:"account_id"`
-	Status      string     `form:"status" json:"status"`
-	Reference   string     `form:"reference" json:"reference"`
-	Description string     `form:"description" json:"description"`
-	Search      string     `form:"search" json:"search"`
-	SourceType  string     `form:"source_type" json:"source_type"`
-	SourceID    *uint64    `form:"source_id" json:"source_id"`
-	Page        int        `form:"page" json:"page"`
-	Limit       int        `form:"limit" json:"limit"`
+	StartDate              time.Time  `json:"start_date"`
+	EndDate                time.Time  `json:"end_date"`
+	DateFrom               *time.Time `json:"date_from"`
+	DateTo                 *time.Time `json:"date_to"`
+	AccountID              uint       `form:"account_id" json:"account_id"`
+	Status                 string     `form:"status" json:"status"`
+	Reference              string     `form:"reference" json:"reference"`
+	Description            string     `form:"description" json:"description"`
+	Search                 string     `form:"search" json:"search"`
+	SourceType             string     `form:"source_type" json:"source_type"`
+	SourceID               *uint64    `form:"source_id" json:"source_id"`
+	AdjustmentCategoryCode string     `form:"adjustment_category_code" json:"adjustment_category_code"`
+	AdjustmentRequirement  string     `form:"adjustment_requirement" json:"adjustment_requirement"`
+	Page                   int        `form:"page" json:"page"`
+	Limit                  int        `form:"limit" json:"limit"`
 }
 
 type JournalAccountBalance struct {

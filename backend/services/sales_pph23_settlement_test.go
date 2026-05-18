@@ -276,6 +276,53 @@ func TestAddLatePPh23ClosesOutstandingInvoice(t *testing.T) {
 	}
 }
 
+func TestAddLatePPh23HandlesExistingUnderpaidTax(t *testing.T) {
+	db := newSalesPPh23TestDB(t)
+	sale := seedSalesPPh23Fixture(t, db, 10000)
+
+	service := &SalesServiceV2{db: db}
+	updatedSale, err := service.AddLatePPh23(sale.ID, models.SaleLatePPh23Request{
+		Date:      time.Date(2026, time.April, 16, 0, 0, 0, 0, time.UTC),
+		Amount:    30000,
+		Reference: "BUPOT-UNDERPAID-001",
+		Notes:     "PPh23 final lebih besar dari estimasi awal",
+	}, 1)
+	if err != nil {
+		t.Fatalf("expected existing PPh23 underpayment adjustment success, got %v", err)
+	}
+
+	if updatedSale.PPh23Amount != 30000 {
+		t.Fatalf("expected adjusted PPh23 amount 30000, got %.2f", updatedSale.PPh23Amount)
+	}
+	if updatedSale.TotalAmount != 970000 {
+		t.Fatalf("expected updated total amount 970000, got %.2f", updatedSale.TotalAmount)
+	}
+	if updatedSale.OutstandingAmount != 0 {
+		t.Fatalf("expected outstanding amount 0, got %.2f", updatedSale.OutstandingAmount)
+	}
+	if updatedSale.Status != models.SaleStatusPaid {
+		t.Fatalf("expected status PAID, got %s", updatedSale.Status)
+	}
+
+	var journal models.SSOTJournalEntry
+	if err := db.Preload("Lines").First(&journal, *updatedSale.PPh23SettlementJournalEntryID).Error; err != nil {
+		t.Fatalf("load underpaid PPh23 journal: %v", err)
+	}
+	if len(journal.Lines) != 3 {
+		t.Fatalf("expected 3 journal lines for underpaid PPh23, got %d", len(journal.Lines))
+	}
+
+	var debitTotal float64
+	var creditTotal float64
+	for _, line := range journal.Lines {
+		debitTotal += line.DebitAmount.InexactFloat64()
+		creditTotal += line.CreditAmount.InexactFloat64()
+	}
+	if debitTotal != 30000 || creditTotal != 30000 {
+		t.Fatalf("expected balanced PPh23 journal 30000/30000, got debit %.2f credit %.2f", debitTotal, creditTotal)
+	}
+}
+
 func TestAddLatePPh23OnPaidInvoiceCreatesPaymentCorrection(t *testing.T) {
 	db := newSalesPPh23TestDB(t)
 	baseSale := seedSalesPPh23Fixture(t, db, 0)

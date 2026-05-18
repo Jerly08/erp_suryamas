@@ -61,7 +61,7 @@ func cloneModulePermission(permission *ModulePermission) *ModulePermission {
 
 // GetJournalWorkflowPermission locks the journal module to the approved
 // business workflow regardless of legacy permission rows:
-// - finance staff prepares draft journal adjustments
+// - finance staff/accounting prepares draft journal adjustments
 // - finance manager/finance can submit their own journal directly or route it to director
 // - finance manager/finance approves and posts staff drafts
 // - admin stays read only for journal monitoring
@@ -87,7 +87,7 @@ func GetJournalWorkflowPermission(role string) *ModulePermission {
 			CanExport:  true,
 			CanMenu:    true,
 		}
-	case RoleFinanceStaff:
+	case RoleFinanceStaff, RoleAccounting:
 		return &ModulePermission{
 			CanView:    true,
 			CanCreate:  true,
@@ -136,7 +136,7 @@ func EnforceWorkflowManagedModulePermission(role string, module string, permissi
 // GetDefaultPermissions returns default permissions based on role
 func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	permissions := make(map[string]*ModulePermission)
-	modules := []string{"accounts", "products", "contacts", "assets", "prepaid_expenses", "sales", "purchases", "payments", "cash_bank", "journal", "reports", "users", "settings", "purchase_requests", "projects", "boms"}
+	modules := []string{"accounts", "products", "contacts", "assets", "prepaid_expenses", "sales", "purchases", "payments", "cash_bank", "journal", "payroll", "reports", "users", "settings", "purchase_requests", "projects", "boms"}
 
 	switch NormalizeRole(role) {
 	case RoleAdmin:
@@ -147,7 +147,7 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 			}
 
 			canApprove := true
-			if module == "cash_bank" {
+			if module == "cash_bank" || module == "payroll" {
 				canApprove = false
 			}
 
@@ -167,6 +167,16 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		for _, module := range modules {
 			if journalPermission := GetJournalWorkflowPermission(role); module == "journal" && journalPermission != nil {
 				permissions[module] = journalPermission
+			} else if module == "payroll" {
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: true,
+					CanExport:  true,
+					CanMenu:    true,
+				}
 			} else if contains(financialModules, module) {
 				permissions[module] = &ModulePermission{
 					CanView:    true,
@@ -211,9 +221,9 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 				}
 			}
 		}
-	case RoleFinanceStaff:
+	case RoleFinanceStaff, RoleAccounting:
 		operationalModules := []string{"sales", "purchases", "payments", "journal", "prepaid_expenses", "projects"}
-		viewOnlyMenuModules := []string{"accounts", "reports", "boms"}
+		viewOnlyMenuModules := []string{"accounts", "reports", "boms", "payroll"}
 		for _, module := range modules {
 			switch {
 			case module == "journal":
@@ -290,6 +300,30 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 				}
 			}
 		}
+	case RoleHR:
+		for _, module := range modules {
+			if module == "payroll" {
+				permissions[module] = &ModulePermission{
+					CanView:    true,
+					CanCreate:  true,
+					CanEdit:    true,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  true,
+					CanMenu:    true,
+				}
+			} else {
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
+			}
+		}
 	case RoleInventoryManager:
 		// Inventory manager has comprehensive access to inventory and related operations
 		coreInventoryModules := []string{"products", "purchases", "sales", "boms"}
@@ -297,7 +331,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 		financialSupportModules := []string{"accounts", "payments", "cash_bank", "journal"}
 
 		for _, module := range modules {
-			if contains(coreInventoryModules, module) {
+			if module == "payroll" {
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
+			} else if contains(coreInventoryModules, module) {
 				// Full access to core inventory modules
 				permissions[module] = &ModulePermission{
 					CanView:    true,
@@ -357,7 +401,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	case RoleEmployee:
 		// Employee has limited access
 		for _, module := range modules {
-			if module == "contacts" {
+			if module == "payroll" {
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
+			} else if module == "contacts" {
 				// Employee needs view access to contacts for vendor/customer data loading
 				// but should NOT have menu access to browse contacts directly
 				permissions[module] = &ModulePermission{
@@ -462,7 +516,17 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 	case RoleDirector:
 		// Director has view, approve, and limited create/edit access
 		for _, module := range modules {
-			if module == "purchases" || module == "purchase_requests" || module == "sales" || module == "payments" || module == "cash_bank" || module == "journal" || module == "projects" || module == "boms" {
+			if module == "payroll" {
+				permissions[module] = &ModulePermission{
+					CanView:    false,
+					CanCreate:  false,
+					CanEdit:    false,
+					CanDelete:  false,
+					CanApprove: false,
+					CanExport:  false,
+					CanMenu:    false,
+				}
+			} else if module == "purchases" || module == "purchase_requests" || module == "sales" || module == "payments" || module == "cash_bank" || module == "journal" || module == "projects" || module == "boms" {
 				// Directors need create/edit access for purchases to create receipts,
 				// and for sales/payments for operational oversight
 				permissions[module] = &ModulePermission{

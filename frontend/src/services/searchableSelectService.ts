@@ -4,6 +4,7 @@ import { API_ENDPOINTS } from '@/config/api';
 // Types
 export interface Contact {
   id: number;
+  code?: string;
   name: string;
   type: 'CUSTOMER' | 'VENDOR';
   email?: string;

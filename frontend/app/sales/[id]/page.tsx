@@ -8,6 +8,7 @@ import UnifiedLayout from "@/components/layout/UnifiedLayout";
 import salesService, { Sale } from "@/services/salesService";
 import PaymentForm from "@/components/sales/PaymentForm";
 import PPh23SettlementForm from "@/components/sales/PPh23SettlementForm";
+import { getSalePPhStatus } from "@/utils/taxPaymentStatus";
 import {
   Box,
   Heading,
@@ -206,6 +207,12 @@ const SaleDetailPage: React.FC = () => {
     (sale.outstanding_amount || 0) <= 0.005 &&
     !sale.pph23_settlement_date &&
     sale.status !== "CANCELLED";
+  const canAdjustPPh23 =
+    !!sale &&
+    (sale.pph23_amount || 0) > 0 &&
+    (sale.outstanding_amount || 0) > 0.005 &&
+    !sale.pph23_settlement_date &&
+    sale.status !== "CANCELLED";
   const pph23PostingStatus = !sale
     ? "-"
     : sale.pph23_settlement_date
@@ -215,8 +222,9 @@ const SaleDetailPage: React.FC = () => {
         : (sale.pph23_amount || 0) <= 0
           ? "Tidak ada PPh23"
         : (sale.outstanding_amount || 0) > 0.005
-          ? "Menunggu pelunasan invoice"
+          ? "Menunggu pelunasan invoice / koreksi kurang bayar PPh23"
           : "Siap dipost";
+  const pphStatus = sale ? getSalePPhStatus(sale) : null;
   const saleItems = sale?.sale_items || [];
   const pendingBackorderQty = saleItems.reduce(
     (sum, item) => sum + (item.backorder_quantity || 0),
@@ -362,9 +370,13 @@ const SaleDetailPage: React.FC = () => {
                     {t("sales.detail.recordPayment")}
                   </MenuItem>
                 )}
-                {(canAddPPh23 || canPostPPh23) && (
+                {(canAddPPh23 || canPostPPh23 || canAdjustPPh23) && (
                   <MenuItem icon={<FiCheck />} onClick={onPPh23Open}>
-                    {canAddPPh23 ? "Tambah PPh23" : "Bayar PPh23"}
+                    {canAddPPh23
+                      ? "Tambah PPh23"
+                      : canAdjustPPh23
+                        ? "Koreksi PPh23"
+                        : "Bayar PPh23"}
                   </MenuItem>
                 )}
                 <MenuItem
@@ -530,7 +542,7 @@ const SaleDetailPage: React.FC = () => {
                             item.backorder_quantity > 0
                               ? `${item.backorder_quantity} backorder`
                               : item.fulfillment_status === "FULFILLED"
-                                ? "Backorder selesai"
+                                ? "Fulfilled"
                                 : "Ready stock"}
                           </Badge>
                           <Text fontSize="xs" color="gray.500">
@@ -638,6 +650,27 @@ const SaleDetailPage: React.FC = () => {
                   <Text fontWeight="medium" color="orange.500">
                     - {salesService.formatCurrency(sale.pph23_amount || 0)}
                   </Text>
+                </Flex>
+              )}
+
+              {pphStatus && (
+                <Flex justify="space-between" align="start" gap={4}>
+                  <Text color="orange.500">Status PPh:</Text>
+                  <VStack align="end" spacing={1}>
+                    <Badge colorScheme={pphStatus.colorScheme} variant="subtle">
+                      {pphStatus.label}
+                    </Badge>
+                    {pphStatus.totalAmount > 0 && (
+                      <Text fontSize="xs" color="orange.500" textAlign="end">
+                        Total {salesService.formatCurrency(pphStatus.totalAmount)}
+                        {pphStatus.outstandingAmount > 0
+                          ? `, sisa ${salesService.formatCurrency(
+                              pphStatus.outstandingAmount,
+                            )}`
+                          : ""}
+                      </Text>
+                    )}
+                  </VStack>
                 </Flex>
               )}
 

@@ -24,9 +24,18 @@ export interface PurchaseCreateRequest {
   due_date?: string; // ISO string
   discount?: number;
   tax?: number;
+  freight_cost?: number;
   notes?: string;
   items: PurchaseItemRequest[]; // backend expects `items`
   request_priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+}
+
+export interface PurchaseAccountingCOARequest {
+  credit_account_id?: number;
+  items: Array<{
+    purchase_item_id: number;
+    expense_account_id: number;
+  }>;
 }
 
 export interface PurchaseFilterParams {
@@ -37,6 +46,7 @@ export interface PurchaseFilterParams {
   end_date?: string;
   search?: string;
   approval_status?: string;
+  accounting_status?: string;
   requires_approval?: boolean;
   page?: number;
   limit?: number;
@@ -100,6 +110,7 @@ export interface Purchase {
   other_tax_deductions?: number;
   total_tax_deductions?: number;
   tax?: number;
+  freight_cost?: number;
   tax_amount: number;
   total_amount: number; // grand total
   // Payment tracking fields
@@ -228,6 +239,7 @@ class PurchaseService {
         end_date: params.end_date,
         search: params.search,
         approval_status: toUpper(params.approval_status),
+        accounting_status: toUpper(params.accounting_status),
         requires_approval: params.requires_approval,
         page: params.page ?? 1,
         limit: params.limit ?? 10,
@@ -261,6 +273,17 @@ class PurchaseService {
     return response.data;
   }
 
+  async completeAccountingCOA(
+    id: number,
+    payload: PurchaseAccountingCOARequest,
+  ): Promise<Purchase> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_ACCOUNTING_COA(id),
+      payload,
+    );
+    return response.data?.purchase ?? response.data;
+  }
+
   async delete(id: number): Promise<{ message: string }> {
     const response = await api.delete(API_ENDPOINTS.PURCHASES_BY_ID(id));
     return response.data;
@@ -280,15 +303,17 @@ class PurchaseService {
   async getSummary(
     filters: Partial<PurchaseFilterParams> = {},
   ): Promise<PurchaseSummary> {
+    const toUpper = (v?: string) => (v ? v.toUpperCase() : undefined);
     const response = await api.get(API_ENDPOINTS.PURCHASES_SUMMARY, {
       params: {
-        status: filters.status,
+        status: toUpper(filters.status),
         vendor_id: filters.vendor_id,
         project_id: filters.project_id,
         start_date: filters.start_date,
         end_date: filters.end_date,
         search: filters.search,
-        approval_status: filters.approval_status,
+        approval_status: toUpper(filters.approval_status),
+        accounting_status: toUpper(filters.accounting_status),
         requires_approval: filters.requires_approval,
       },
     });
@@ -392,15 +417,18 @@ class PurchaseService {
   async exportPurchasesPDF(filters?: PurchaseFilterParams): Promise<Blob> {
     try {
       const params = new URLSearchParams();
+      const toUpper = (v?: string) => (v ? v.toUpperCase() : undefined);
 
-      if (filters?.status) params.append("status", filters.status);
+      if (filters?.status) params.append("status", toUpper(filters.status)!);
       if (filters?.vendor_id) params.append("vendor_id", filters.vendor_id);
       if (filters?.project_id) params.append("project_id", filters.project_id);
       if (filters?.start_date) params.append("start_date", filters.start_date);
       if (filters?.end_date) params.append("end_date", filters.end_date);
       if (filters?.search) params.append("search", filters.search);
       if (filters?.approval_status)
-        params.append("approval_status", filters.approval_status);
+        params.append("approval_status", toUpper(filters.approval_status)!);
+      if (filters?.accounting_status)
+        params.append("accounting_status", toUpper(filters.accounting_status)!);
       if (filters?.requires_approval !== undefined)
         params.append(
           "requires_approval",
@@ -427,15 +455,18 @@ class PurchaseService {
   async exportPurchasesCSV(filters?: PurchaseFilterParams): Promise<Blob> {
     try {
       const params = new URLSearchParams();
+      const toUpper = (v?: string) => (v ? v.toUpperCase() : undefined);
 
-      if (filters?.status) params.append("status", filters.status);
+      if (filters?.status) params.append("status", toUpper(filters.status)!);
       if (filters?.vendor_id) params.append("vendor_id", filters.vendor_id);
       if (filters?.project_id) params.append("project_id", filters.project_id);
       if (filters?.start_date) params.append("start_date", filters.start_date);
       if (filters?.end_date) params.append("end_date", filters.end_date);
       if (filters?.search) params.append("search", filters.search);
       if (filters?.approval_status)
-        params.append("approval_status", filters.approval_status);
+        params.append("approval_status", toUpper(filters.approval_status)!);
+      if (filters?.accounting_status)
+        params.append("accounting_status", toUpper(filters.accounting_status)!);
       if (filters?.requires_approval !== undefined)
         params.append(
           "requires_approval",

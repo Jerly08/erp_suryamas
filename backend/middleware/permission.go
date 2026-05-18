@@ -7,23 +7,39 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net/http"
-	"time"
 )
 
 type PermissionMiddleware struct {
-	db    *gorm.DB
-	cache *PermissionCache
+	db *gorm.DB
 }
 
 func NewPermissionMiddleware(db *gorm.DB) *PermissionMiddleware {
 	return &PermissionMiddleware{
-		db:    db,
-		cache: NewPermissionCache(5 * time.Minute), // Cache for 5 minutes
+		db: db,
 	}
 }
 
-func workflowManagedModulePermission(role string, module string) *models.ModulePermission {
-	return models.GetJournalWorkflowPermission(role)
+func modulePermissionAllowsAction(permission *models.ModulePermission, action string) bool {
+	if permission == nil {
+		return false
+	}
+
+	switch action {
+	case "view":
+		return permission.CanView
+	case "create":
+		return permission.CanCreate
+	case "edit":
+		return permission.CanEdit
+	case "delete":
+		return permission.CanDelete
+	case "approve":
+		return permission.CanApprove
+	case "export":
+		return permission.CanExport
+	default:
+		return false
+	}
 }
 
 // CheckModulePermission checks if user has specific permission for a module
@@ -59,108 +75,35 @@ func (pm *PermissionMiddleware) CheckModulePermission(module string, action stri
 			role = roleStr
 		}
 
-		if workflowPermission := workflowManagedModulePermission(role, module); workflowPermission != nil {
-			hasPermission := false
-			switch action {
-			case "view":
-				hasPermission = workflowPermission.CanView
-			case "create":
-				hasPermission = workflowPermission.CanCreate
-			case "edit":
-				hasPermission = workflowPermission.CanEdit
-			case "delete":
-				hasPermission = workflowPermission.CanDelete
-			case "approve":
-				hasPermission = workflowPermission.CanApprove
-			case "export":
-				hasPermission = workflowPermission.CanExport
-			default:
-				hasPermission = false
-			}
-
-			pm.cache.Set(userID, module, action, hasPermission)
-			if !hasPermission {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error":               "You don't have permission to " + action + " " + module,
-					"required_permission": action,
-					"module":              module,
-					"user_role":           role,
-				})
-				c.Abort()
-				return
-			}
-
-			c.Next()
-			return
-		}
-
 		// Debug logging
 		log.Printf("[PERMISSION DEBUG] UserID: %d, Role: %s, Module: %s, Action: %s", userID, role, module, action)
-
-		// Check cache first
-		if cachedResult, found := pm.cache.Get(userID, module, action); found {
-			log.Printf("[PERMISSION CACHE] Cache hit for user %d, module %s, action %s: %v", userID, module, action, cachedResult)
-			if !cachedResult {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error":               "You don't have permission to " + action + " " + module,
-					"required_permission": action,
-					"module":              module,
-					"user_role":           role,
-				})
-				c.Abort()
-				return
-			}
-			c.Next()
-			return
-		}
 
 		// Check if user has specific permission in database
 		var permission models.ModulePermissionRecord
 		err := pm.db.Where("user_id = ? AND module = ?", userID, module).First(&permission).Error
 
 		hasPermission := false
+		var basePermission *models.ModulePermission
 
 		if err == nil {
-			// Permission record found, check specific action
+			// Permission record found, use it as the base before workflow overrides.
 			log.Printf("[PERMISSION DEBUG] Found custom permission record for user %d, module %s", userID, module)
-			switch action {
-			case "view":
-				hasPermission = permission.CanView
-			case "create":
-				hasPermission = permission.CanCreate
-			case "edit":
-				hasPermission = permission.CanEdit
-			case "delete":
-				hasPermission = permission.CanDelete
-			case "approve":
-				hasPermission = permission.CanApprove
-			case "export":
-				hasPermission = permission.CanExport
-			default:
-				hasPermission = false
+			basePermission = &models.ModulePermission{
+				CanView:    permission.CanView,
+				CanCreate:  permission.CanCreate,
+				CanEdit:    permission.CanEdit,
+				CanDelete:  permission.CanDelete,
+				CanApprove: permission.CanApprove,
+				CanExport:  permission.CanExport,
+				CanMenu:    permission.CanMenu,
 			}
-			log.Printf("[PERMISSION DEBUG] Custom permission result: %v", hasPermission)
 		} else if err == gorm.ErrRecordNotFound {
 			// No custom permission, use default based on role
 			log.Printf("[PERMISSION DEBUG] No custom permission found, using default for role: %s", role)
 			defaultPerms := models.GetDefaultPermissions(role)
 			if modPerm, ok := defaultPerms[module]; ok {
 				log.Printf("[PERMISSION DEBUG] Found default permissions for module %s", module)
-				switch action {
-				case "view":
-					hasPermission = modPerm.CanView
-				case "create":
-					hasPermission = modPerm.CanCreate
-				case "edit":
-					hasPermission = modPerm.CanEdit
-				case "delete":
-					hasPermission = modPerm.CanDelete
-				case "approve":
-					hasPermission = modPerm.CanApprove
-				case "export":
-					hasPermission = modPerm.CanExport
-				}
-				log.Printf("[PERMISSION DEBUG] Default permission result: %v", hasPermission)
+				basePermission = modPerm
 			} else {
 				log.Printf("[PERMISSION DEBUG] No default permissions found for module %s", module)
 			}
@@ -168,10 +111,9 @@ func (pm *PermissionMiddleware) CheckModulePermission(module string, action stri
 			log.Printf("[PERMISSION DEBUG] Database error: %v", err)
 		}
 
+		effectivePermission := models.EnforceWorkflowManagedModulePermission(role, module, basePermission)
+		hasPermission = modulePermissionAllowsAction(effectivePermission, action)
 		log.Printf("[PERMISSION DEBUG] Final result - hasPermission: %v", hasPermission)
-
-		// Store result in cache
-		pm.cache.Set(userID, module, action, hasPermission)
 
 		if !hasPermission {
 			log.Printf("[PERMISSION DEBUG] Access denied for user %d, role %s, module %s, action %s", userID, role, module, action)

@@ -127,6 +127,15 @@ func (s *PurchaseService) GetPurchaseByID(id uint) (*models.Purchase, error) {
 	return purchase, nil
 }
 
+func (s *PurchaseService) isPurchaseCOAReadOnlyUser(userID uint) bool {
+	var user models.User
+	if err := s.db.Select("role").First(&user, userID).Error; err != nil {
+		fmt.Printf("?? Could not resolve role for purchase COA restriction (user %d): %v\n", userID, err)
+		return false
+	}
+	return models.IsFinanceStaffRole(user.Role)
+}
+
 func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, userID uint) (*models.Purchase, error) {
 	// Validate vendor exists
 	vendor, err := s.contactRepo.GetByID(request.VendorID)
@@ -136,14 +145,27 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	}
 	fmt.Printf("? Vendor validation passed: %s (ID: %d)\n", vendor.Name, vendor.ID)
 
+	coaReadOnlyUser := s.isPurchaseCOAReadOnlyUser(userID)
+	if coaReadOnlyUser {
+		request.CreditAccountID = nil
+		for i := range request.Items {
+			request.Items[i].ExpenseAccountID = 0
+		}
+	}
+
 	request.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(request.PaymentMethod)))
-	request.BankAccountID, request.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
-		request.PaymentMethod,
-		request.BankAccountID,
-		request.CreditAccountID,
-	)
-	if err != nil {
-		return nil, err
+	if coaReadOnlyUser && request.PaymentMethod == models.PurchasePaymentCredit {
+		request.BankAccountID = nil
+		request.CreditAccountID = nil
+	} else {
+		request.BankAccountID, request.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
+			request.PaymentMethod,
+			request.BankAccountID,
+			request.CreditAccountID,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Generate purchase code
@@ -178,6 +200,7 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		PPh21Rate:          getPPhRateFromPointer(request.PPh21Rate),
 		PPh23Rate:          getPPhRateFromPointer(request.PPh23Rate),
 		OtherTaxDeductions: request.OtherTaxDeductions,
+		FreightCost:        request.FreightCost,
 		Status:             models.PurchaseStatusDraft,
 		Notes:              request.Notes,
 		ApprovalStatus:     models.PurchaseApprovalNotStarted,
@@ -317,6 +340,9 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	if request.Notes != nil {
 		purchase.Notes = *request.Notes
 	}
+	if request.FreightCost != nil {
+		purchase.FreightCost = *request.FreightCost
+	}
 	// Update payment method fields
 	if request.PaymentMethod != nil {
 		purchase.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(*request.PaymentMethod)))
@@ -331,13 +357,28 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		purchase.PaymentReference = *request.PaymentReference
 	}
 
-	purchase.BankAccountID, purchase.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
-		purchase.PaymentMethod,
-		purchase.BankAccountID,
-		purchase.CreditAccountID,
-	)
-	if err != nil {
-		return nil, err
+	coaReadOnlyUser := s.isPurchaseCOAReadOnlyUser(userID)
+	if coaReadOnlyUser {
+		purchase.CreditAccountID = nil
+		if len(request.Items) > 0 {
+			for i := range request.Items {
+				request.Items[i].ExpenseAccountID = 0
+			}
+		}
+	}
+
+	if coaReadOnlyUser && purchase.PaymentMethod == models.PurchasePaymentCredit {
+		purchase.BankAccountID = nil
+		purchase.CreditAccountID = nil
+	} else {
+		purchase.BankAccountID, purchase.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
+			purchase.PaymentMethod,
+			purchase.BankAccountID,
+			purchase.CreditAccountID,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Update items if provided
@@ -1160,6 +1201,12 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 
 	// Do not update purchase status here - it should remain in current status until payment is made
 	// Receipt completion is independent of purchase completion
+	receiptBackorderAffectedProductIDs, settlementErr := s.settleBackordersForApprovedPurchase(purchase)
+	if settlementErr != nil {
+		fmt.Printf("?? Warning: Failed to settle sales backorders after receipt %s for purchase %s: %v\n", createdReceipt.ReceiptNumber, purchase.Code, settlementErr)
+	} else {
+		s.syncStockAlertsForProducts(receiptBackorderAffectedProductIDs)
+	}
 
 	return s.purchaseRepo.FindReceiptByID(createdReceipt.ID)
 }
@@ -1354,6 +1401,192 @@ func (s *PurchaseService) GenerateAllReceiptsPDF(purchaseID uint) ([]byte, *mode
 	return pdfBytes, purchase, nil
 }
 
+func (s *PurchaseService) purchaseNeedsAccountingCOA(purchase *models.Purchase) bool {
+	if purchase == nil {
+		return false
+	}
+
+	if purchase.PaymentMethod == models.PurchasePaymentCredit &&
+		(purchase.CreditAccountID == nil || *purchase.CreditAccountID == 0) {
+		return true
+	}
+
+	for _, item := range purchase.PurchaseItems {
+		if item.ExpenseAccountID == 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (s *PurchaseService) markPurchasePendingAccounting(purchase *models.Purchase) error {
+	if purchase == nil {
+		return nil
+	}
+	if purchase.Status == models.PurchaseStatusPendingAccounting {
+		return nil
+	}
+
+	purchase.Status = models.PurchaseStatusPendingAccounting
+	purchase.UpdatedAt = time.Now()
+	_, err := s.purchaseRepo.Update(purchase)
+	return err
+}
+
+func purchaseItemLabelForAccounting(item models.PurchaseItem) string {
+	if strings.TrimSpace(item.Description) != "" {
+		return strings.TrimSpace(item.Description)
+	}
+	if item.Product != nil && strings.TrimSpace(item.Product.Name) != "" {
+		return strings.TrimSpace(item.Product.Name)
+	}
+	return fmt.Sprintf("item #%d", item.ID)
+}
+
+func (s *PurchaseService) validatePurchaseDebitAccount(accountID uint) error {
+	if accountID == 0 {
+		return errors.New("COA debit item wajib dipilih")
+	}
+
+	account, err := s.accountRepo.FindByID(context.TODO(), accountID)
+	if err != nil || account == nil {
+		return fmt.Errorf("COA debit item %d tidak ditemukan", accountID)
+	}
+	if account.IsHeader {
+		return fmt.Errorf("COA %s - %s adalah akun header dan tidak bisa dipakai untuk transaksi", account.Code, account.Name)
+	}
+
+	accountType := strings.ToUpper(strings.TrimSpace(account.Type))
+	if accountType != models.AccountTypeAsset && accountType != models.AccountTypeExpense {
+		return fmt.Errorf("COA %s - %s harus bertipe ASSET atau EXPENSE untuk item purchase", account.Code, account.Name)
+	}
+
+	return nil
+}
+
+func (s *PurchaseService) validatePurchaseCreditAccount(accountID uint) error {
+	if accountID == 0 {
+		return errors.New("COA hutang wajib dipilih untuk purchase kredit")
+	}
+
+	account, err := s.accountRepo.FindByID(context.TODO(), accountID)
+	if err != nil || account == nil {
+		return fmt.Errorf("COA hutang %d tidak ditemukan", accountID)
+	}
+	if account.IsHeader {
+		return fmt.Errorf("COA %s - %s adalah akun header dan tidak bisa dipakai untuk transaksi", account.Code, account.Name)
+	}
+	if !strings.EqualFold(strings.TrimSpace(account.Type), models.AccountTypeLiability) {
+		return fmt.Errorf("COA %s - %s harus bertipe LIABILITY untuk hutang purchase", account.Code, account.Name)
+	}
+
+	return nil
+}
+
+func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.PurchaseAccountingCOARequest, userID uint) (*models.Purchase, error) {
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return nil, fmt.Errorf("purchase not found: %v", err)
+	}
+
+	if purchase.ApprovalStatus != models.PurchaseApprovalApproved {
+		return nil, errors.New("COA accounting hanya bisa dilengkapi setelah purchase disetujui Finance Manager")
+	}
+	if purchase.Status != models.PurchaseStatusPendingAccounting {
+		return nil, fmt.Errorf("purchase tidak sedang menunggu input COA accounting (status saat ini: %s)", purchase.Status)
+	}
+	if len(purchase.PurchaseItems) == 0 {
+		return nil, errors.New("purchase tidak memiliki item untuk diposting")
+	}
+	if len(request.Items) == 0 {
+		return nil, errors.New("minimal satu item COA wajib dikirim")
+	}
+
+	itemAccountByID := make(map[uint]uint, len(request.Items))
+	for _, item := range request.Items {
+		if item.PurchaseItemID == 0 {
+			return nil, errors.New("purchase_item_id wajib diisi")
+		}
+		if err := s.validatePurchaseDebitAccount(item.ExpenseAccountID); err != nil {
+			return nil, err
+		}
+		itemAccountByID[item.PurchaseItemID] = item.ExpenseAccountID
+	}
+
+	for _, item := range purchase.PurchaseItems {
+		if _, ok := itemAccountByID[item.ID]; !ok {
+			return nil, fmt.Errorf("COA untuk %s wajib dipilih", purchaseItemLabelForAccounting(item))
+		}
+	}
+
+	var creditAccountID *uint
+	if purchase.PaymentMethod == models.PurchasePaymentCredit {
+		if request.CreditAccountID == nil || *request.CreditAccountID == 0 {
+			return nil, errors.New("COA hutang wajib dipilih untuk purchase kredit")
+		}
+		if err := s.validatePurchaseCreditAccount(*request.CreditAccountID); err != nil {
+			return nil, err
+		}
+		creditAccountID = request.CreditAccountID
+	}
+
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return nil, err
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		purchaseUpdates := map[string]interface{}{
+			"status":     models.PurchaseStatusApproved,
+			"updated_at": time.Now(),
+		}
+		if purchase.PaymentMethod == models.PurchasePaymentCredit {
+			purchaseUpdates["credit_account_id"] = *creditAccountID
+		}
+
+		if err := tx.Model(&models.Purchase{}).
+			Where("id = ?", purchaseID).
+			Updates(purchaseUpdates).Error; err != nil {
+			return fmt.Errorf("failed to update purchase accounting status: %w", err)
+		}
+
+		for purchaseItemID, accountID := range itemAccountByID {
+			if err := tx.Model(&models.PurchaseItem{}).
+				Where("id = ? AND purchase_id = ?", purchaseItemID, purchaseID).
+				Update("expense_account_id", accountID).Error; err != nil {
+				return fmt.Errorf("failed to update COA for purchase item %d: %w", purchaseItemID, err)
+			}
+		}
+
+		if purchase.ApprovalRequestID != nil {
+			historyNote := models.ApprovalHistory{
+				RequestID: *purchase.ApprovalRequestID,
+				UserID:    userID,
+				Action:    models.ApprovalActionApproved,
+				Comments:  "Accounting completed GL/COA input and finalized purchase posting",
+				Metadata:  "{\"accounting_coa_completed\":true}",
+			}
+			if err := tx.Create(&historyNote).Error; err != nil {
+				return fmt.Errorf("failed to record accounting COA history: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.OnPurchaseApproved(purchaseID); err != nil {
+		_ = s.db.Model(&models.Purchase{}).
+			Where("id = ?", purchaseID).
+			Update("status", models.PurchaseStatusPendingAccounting).Error
+		return nil, fmt.Errorf("COA berhasil disimpan, tetapi finalisasi purchase gagal: %v", err)
+	}
+
+	return s.GetPurchaseByID(purchaseID)
+}
+
 // PostApprovalCallback Implementation
 
 // OnPurchaseApproved implements PostApprovalCallback interface - handles business logic after purchase approval
@@ -1370,6 +1603,14 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 
 	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
 		return err
+	}
+
+	if s.purchaseNeedsAccountingCOA(purchase) {
+		if err := s.markPurchasePendingAccounting(purchase); err != nil {
+			return fmt.Errorf("failed to mark purchase pending accounting COA: %v", err)
+		}
+		fmt.Printf("?? Purchase %s is approved but waiting for Accounting GL/COA input before posting\n", purchase.Code)
+		return nil
 	}
 
 	// 1. Update product stock
@@ -1457,21 +1698,21 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 		// Tidak mereturn error agar approval parent tetap jalan
 	}
 
-	// 8. Settle any open sales backorders now that inventory is available and the
-	// purchase journal has established the actual inventory cost.
-	if purchaseJournalCreated {
-		fmt.Printf("?? Settling sales backorders from approved purchase %s\n", purchase.Code)
-		backorderAffectedProductIDs, settlementErr := s.settleBackordersForApprovedPurchase(purchase)
-		if settlementErr != nil {
-			fmt.Printf("?? Warning: Failed to settle sales backorders for purchase %s: %v\n", purchase.Code, settlementErr)
-		} else {
-			for productID := range backorderAffectedProductIDs {
-				affectedProductIDs[productID] = struct{}{}
-			}
-			fmt.Printf("? Sales backorder settlement completed for purchase %s\n", purchase.Code)
-		}
+	// 8. Settle any open sales backorders now that inventory is available.
+	// Even when the purchase journal already existed or was skipped as duplicate,
+	// the stock may still need to be allocated to sales waiting fulfillment.
+	if !purchaseJournalCreated {
+		fmt.Printf("?? Purchase journal was not newly posted for %s; attempting sales backorder settlement against current stock\n", purchase.Code)
+	}
+	fmt.Printf("?? Settling sales backorders from approved purchase %s\n", purchase.Code)
+	backorderAffectedProductIDs, settlementErr := s.settleBackordersForApprovedPurchase(purchase)
+	if settlementErr != nil {
+		fmt.Printf("?? Warning: Failed to settle sales backorders for purchase %s: %v\n", purchase.Code, settlementErr)
 	} else {
-		fmt.Printf("?? Skipping sales backorder settlement for purchase %s because purchase journal was not posted\n", purchase.Code)
+		for productID := range backorderAffectedProductIDs {
+			affectedProductIDs[productID] = struct{}{}
+		}
+		fmt.Printf("? Sales backorder settlement completed for purchase %s\n", purchase.Code)
 	}
 
 	s.syncStockAlertsForProducts(affectedProductIDs)
@@ -1490,6 +1731,11 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 
 	for _, item := range purchase.PurchaseItems {
 		if item.ItemType == models.PurchaseItemTypePrepaid {
+			if item.ExpenseAccountID == 0 {
+				fmt.Printf("?? Skipping Prepaid Expense auto-generation for purchase item %d because prepaid COA is empty\n", item.ID)
+				continue
+			}
+
 			// Ambil durasi bulan, default = 12 jika tidak diset
 			months := item.AmortizationMonth
 			if months <= 0 {
@@ -2580,6 +2826,13 @@ func (s *PurchaseService) CreateIntegratedPayment(
 		return nil, fmt.Errorf("failed to commit transaction: %v", err)
 	}
 
+	paymentBackorderAffectedProductIDs, settlementErr := s.settleBackordersForApprovedPurchase(purchase)
+	if settlementErr != nil {
+		fmt.Printf("?? Warning: Failed to settle sales backorders after vendor payment for purchase %s: %v\n", purchase.Code, settlementErr)
+	} else {
+		s.syncStockAlertsForProducts(paymentBackorderAffectedProductIDs)
+	}
+
 	// Return success response
 	return map[string]interface{}{
 		"payment": map[string]interface{}{
@@ -2711,7 +2964,7 @@ func (s *PurchaseService) updateProductStockOnApproval(purchase *models.Purchase
 		fmt.Printf("?? Product %d (%s): Current stock = %d, Adding quantity = %d\n",
 			product.ID, product.Name, product.Stock, item.Quantity)
 
-		purchaseUnitCost := effectivePurchaseUnitCost(&item)
+		purchaseUnitCost := purchaseItemLandedUnitCost(purchase, &item)
 
 		// Update stock quantity (add purchased quantity)
 		oldStock := product.Stock

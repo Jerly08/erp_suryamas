@@ -64,6 +64,10 @@ class InvoiceTypeService {
   // Get all invoice types
   async getInvoiceTypes(activeOnly = false): Promise<InvoiceType[]> {
     try {
+      if (activeOnly) {
+        return this.getActiveInvoiceTypes();
+      }
+
       const params = activeOnly ? { active_only: 'true' } : {};
       console.log('InvoiceTypeService: Making API call to:', API_ENDPOINTS.INVOICE_TYPES, 'with params:', params);
       const response = await api.get(API_ENDPOINTS.INVOICE_TYPES, { params });

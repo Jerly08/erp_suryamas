@@ -524,7 +524,13 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 			return nil, fmt.Errorf("failed to load product %d: %v", itemRequest.ProductID, err)
 		}
 
+		if itemRequest.EstimatedUnitCost != nil && *itemRequest.EstimatedUnitCost < 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("estimated HPP tidak boleh negatif untuk item '%s'", normalizeSaleItemProductName(&itemRequest))
+		}
+
 		fulfillmentSnapshot := buildSaleItemFulfillmentSnapshotWithRemainingStock(&product, int(itemRequest.Quantity), remainingProductStock)
+		applySaleEstimatedUnitCostOverride(&fulfillmentSnapshot, int(itemRequest.Quantity), itemRequest.EstimatedUnitCost)
 
 		item := models.SaleItem{
 			ProductID:        itemRequest.ProductID,
@@ -965,7 +971,13 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				return nil, fmt.Errorf("failed to load product %d: %v", itemRequest.ProductID, err)
 			}
 
+			if itemRequest.EstimatedUnitCost != nil && *itemRequest.EstimatedUnitCost < 0 {
+				tx.Rollback()
+				return nil, fmt.Errorf("estimated HPP tidak boleh negatif untuk item '%s'", normalizeSaleItemProductName(&itemRequest))
+			}
+
 			fulfillmentSnapshot := buildSaleItemFulfillmentSnapshotWithRemainingStock(&product, int(itemRequest.Quantity), remainingProductStock)
+			applySaleEstimatedUnitCostOverride(&fulfillmentSnapshot, int(itemRequest.Quantity), itemRequest.EstimatedUnitCost)
 
 			item := models.SaleItem{
 				SaleID:           sale.ID,
@@ -1224,6 +1236,10 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 		}
 
 		snapshot := buildSaleItemFulfillmentSnapshotWithRemainingStock(&product, item.Quantity, remainingProductStock)
+		if item.EstimatedUnitCost > 0 {
+			estimatedUnitCost := item.EstimatedUnitCost
+			applySaleEstimatedUnitCostOverride(&snapshot, item.Quantity, &estimatedUnitCost)
+		}
 		applySaleItemFulfillmentSnapshot(item, snapshot)
 
 		if err := tx.Model(&models.SaleItem{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
@@ -1803,15 +1819,19 @@ func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23Settle
 	}
 
 	journalService := NewUnifiedJournalService(tx)
+	adjustmentOf := findPostedSourceJournalIDForAdjustment(tx, models.SSOTSourceTypeSale, uint64(sale.ID), request.Date)
 	journalRequest := &JournalEntryRequest{
-		EntryDate:   request.Date,
-		Reference:   journalReference,
-		Description: fmt.Sprintf("Posting PPh23 Sales - %s", referenceNumber),
-		Notes:       strings.TrimSpace(request.Notes),
-		SourceType:  models.SSOTSourceTypeAdjustment,
-		SourceID:    uint64(sale.ID),
-		AutoPost:    true,
-		CreatedBy:   uint64(userID),
+		EntryDate:              request.Date,
+		Reference:              journalReference,
+		Description:            fmt.Sprintf("Posting PPh23 Sales - %s", referenceNumber),
+		Notes:                  strings.TrimSpace(request.Notes),
+		SourceType:             models.SSOTSourceTypeAdjustment,
+		SourceID:               uint64(sale.ID),
+		AdjustmentOf:           adjustmentOf,
+		AdjustmentCategoryCode: models.JournalAdjustmentCategorySalesPPh23Settlement,
+		AutoPost:               true,
+		SystemGenerated:        true,
+		CreatedBy:              uint64(userID),
 		Lines: []JournalLineRequest{
 			{
 				AccountID:    uint64(pph23CreditAccount.ID),

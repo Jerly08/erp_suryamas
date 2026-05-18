@@ -4,7 +4,12 @@ import "strings"
 
 // NormalizeRole standardizes role comparisons across the app.
 func NormalizeRole(role string) string {
-	return strings.ToLower(strings.TrimSpace(role))
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	normalized = strings.NewReplacer(" ", "_", "-", "_").Replace(normalized)
+	for strings.Contains(normalized, "__") {
+		normalized = strings.ReplaceAll(normalized, "__", "_")
+	}
+	return normalized
 }
 
 // CanonicalRole maps legacy aliases into their persisted internal role key.
@@ -29,7 +34,7 @@ func NormalizeRoleForStorage(role string) string {
 
 func IsValidUserRole(role string) bool {
 	switch NormalizeRole(role) {
-	case RoleAdmin, RoleFinance, RoleFinanceManager, RoleFinanceStaff, RoleDirector, RoleInventoryManager, RoleEmployee, RoleAuditor, RoleOperationalUser:
+	case RoleAdmin, RoleFinance, RoleFinanceManager, RoleFinanceStaff, RoleAccounting, RoleHR, RoleDirector, RoleInventoryManager, RoleEmployee, RoleAuditor, RoleOperationalUser:
 		return true
 	default:
 		return false
@@ -53,8 +58,16 @@ func IsFinanceStaffRole(role string) bool {
 	return NormalizeRole(role) == RoleFinanceStaff
 }
 
+func IsAccountingRole(role string) bool {
+	return NormalizeRole(role) == RoleAccounting
+}
+
+func IsHRRole(role string) bool {
+	return NormalizeRole(role) == RoleHR
+}
+
 func IsFinanceTeamRole(role string) bool {
-	return IsFinanceManagerRole(role) || IsFinanceStaffRole(role)
+	return IsFinanceManagerRole(role) || IsFinanceStaffRole(role) || IsAccountingRole(role)
 }
 
 func IsStaffRole(role string) bool {
@@ -69,7 +82,7 @@ func CanReviewPurchaseRequests(role string) bool {
 // CanViewAllTransactionData controls whether a role can browse requests from all users.
 func CanViewAllTransactionData(role string) bool {
 	switch NormalizeRole(role) {
-	case RoleAdmin, RoleDirector, RoleInventoryManager, RoleFinanceStaff:
+	case RoleAdmin, RoleDirector, RoleInventoryManager, RoleFinanceStaff, RoleAccounting:
 		return true
 	default:
 		return IsFinanceManagerRole(role)
@@ -91,6 +104,8 @@ func WorkflowRoleMatchesUserRole(workflowRole string, userRole string) bool {
 	switch requiredRole {
 	case RoleFinance:
 		return IsFinanceManagerRole(userRole)
+	case RoleFinanceStaff:
+		return IsFinanceStaffRole(userRole) || IsAccountingRole(userRole)
 	default:
 		return requiredRole != "" && requiredRole == NormalizeRole(userRole)
 	}
@@ -101,6 +116,8 @@ func WorkflowStepAssignableRoles(workflowRole string) []string {
 	switch NormalizeRole(workflowRole) {
 	case RoleFinance:
 		return []string{RoleFinance, RoleFinanceManager}
+	case RoleFinanceStaff:
+		return []string{RoleFinanceStaff, RoleAccounting}
 	case "":
 		return nil
 	default:

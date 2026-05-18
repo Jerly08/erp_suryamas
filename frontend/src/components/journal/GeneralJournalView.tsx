@@ -121,6 +121,8 @@ export default function GeneralJournalView() {
   const [totalPages, setTotalPages] = useState(0);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [sourceTypeFilter, setSourceTypeFilter] = useState("ALL");
+  const [adjustmentRequirementFilter, setAdjustmentRequirementFilter] =
+    useState("ALL");
   const [pendingAdjustmentCount, setPendingAdjustmentCount] = useState(0);
   const [pendingAdjustmentPreview, setPendingAdjustmentPreview] = useState<
     SSOTJournalEntry[]
@@ -128,7 +130,8 @@ export default function GeneralJournalView() {
   const pageSize = 100;
   const normalizedRole = String(user?.role || "").toLowerCase();
   const isAdmin = normalizedRole === "admin";
-  const isFinanceStaff = normalizedRole === "finance_staff";
+  const isFinanceStaff =
+    normalizedRole === "finance_staff" || normalizedRole === "accounting";
   const isFinanceManagerApprover =
     normalizedRole === "finance_manager" || normalizedRole === "finance";
   const isDirectorApprover = normalizedRole === "director";
@@ -142,6 +145,17 @@ export default function GeneralJournalView() {
   const canDeleteGeneralDraft =
     canDelete && !isFinanceManagerApprover && !isDirectorApprover && !isAdmin;
   const canReverseJournalEntry = canApprove && isFinanceManagerApprover;
+  const canShowCreateAdjustmentAction = useCallback(
+    (entry: SSOTJournalEntry) =>
+      entry.status === "POSTED" &&
+      canCreateAdjustment &&
+      !entry.reversed_by &&
+      entry.source_type !== "REVERSAL" &&
+      entry.source_type !== "ADJUSTMENT" &&
+      entry.adjustment_required === true &&
+      entry.adjustment_completed !== true,
+    [canCreateAdjustment],
+  );
 
   const isDirectorApprovalPending = useCallback((entry: SSOTJournalEntry) => {
     return (
@@ -170,9 +184,17 @@ export default function GeneralJournalView() {
       end_date: endDate,
       status: statusFilter,
       source_type: sourceTypeFilter,
+      adjustment_requirement: adjustmentRequirementFilter,
       search: searchTerm,
     });
-  }, [endDate, searchTerm, sourceTypeFilter, startDate, statusFilter]);
+  }, [
+    adjustmentRequirementFilter,
+    endDate,
+    searchTerm,
+    sourceTypeFilter,
+    startDate,
+    statusFilter,
+  ]);
 
   const handleExportPDF = async () => {
     try {
@@ -228,6 +250,7 @@ export default function GeneralJournalView() {
         end_date: endDate,
         status: statusFilter,
         source_type: sourceTypeFilter,
+        adjustment_requirement: adjustmentRequirementFilter,
         search: searchTerm,
         page: currentPage,
         limit: pageSize,
@@ -247,6 +270,7 @@ export default function GeneralJournalView() {
       setLoading(false);
     }
   }, [
+    adjustmentRequirementFilter,
     currentPage,
     endDate,
     pageSize,
@@ -264,7 +288,11 @@ export default function GeneralJournalView() {
 
   useEffect(() => {
     const loadPendingAdjustmentQueue = async () => {
-      if (!isDirectorApprover && !isFinanceManagerApprover && !canManageAdjustmentDraft) {
+      if (
+        !isDirectorApprover &&
+        !isFinanceManagerApprover &&
+        !canManageAdjustmentDraft
+      ) {
         setPendingAdjustmentCount(0);
         setPendingAdjustmentPreview([]);
         return;
@@ -310,9 +338,17 @@ export default function GeneralJournalView() {
       setEndDate("");
       setStatusFilter("DRAFT");
       setSourceTypeFilter("ADJUSTMENT");
+      setAdjustmentRequirementFilter("ALL");
       setSearchTerm(reference || "");
     },
-    [setCurrentPage, setEndDate, setSearchTerm, setSourceTypeFilter, setStartDate, setStatusFilter],
+    [
+      setCurrentPage,
+      setEndDate,
+      setSearchTerm,
+      setSourceTypeFilter,
+      setStartDate,
+      setStatusFilter,
+    ],
   );
 
   useEffect(() => {
@@ -326,8 +362,12 @@ export default function GeneralJournalView() {
     options: { require_director_approval?: boolean } = {},
   ) => {
     try {
-      const result = await ssotJournalService.postJournalEntry(entry.id, options);
-      const sentToDirector = result.status === "DRAFT" && isDirectorApprovalPending(result);
+      const result = await ssotJournalService.postJournalEntry(
+        entry.id,
+        options,
+      );
+      const sentToDirector =
+        result.status === "DRAFT" && isDirectorApprovalPending(result);
       toast({
         title: t("common.success"),
         description: sentToDirector
@@ -554,8 +594,8 @@ export default function GeneralJournalView() {
                   {isDirectorApprover
                     ? `${pendingAdjustmentCount} jurnal adjustment menunggu approval director`
                     : isFinanceManagerApprover
-                    ? `${pendingAdjustmentCount} jurnal adjustment menunggu approval finance manager`
-                    : `${pendingAdjustmentCount} jurnal adjustment masih menunggu approval finance manager`}
+                      ? `${pendingAdjustmentCount} jurnal adjustment menunggu approval finance manager`
+                      : `${pendingAdjustmentCount} jurnal adjustment masih menunggu approval finance manager`}
                 </Text>
                 <Text fontSize="sm" mt={1}>
                   Queue approval memakai tanggal pembuatan draft, jadi jurnal
@@ -591,11 +631,12 @@ export default function GeneralJournalView() {
                   {isDirectorApprover
                     ? "Lihat Approval Director"
                     : isFinanceManagerApprover
-                    ? "Lihat Approval Adjustment"
-                    : "Lihat Draft Adjustment"}
+                      ? "Lihat Approval Adjustment"
+                      : "Lihat Draft Adjustment"}
                 </Button>
                 {(statusFilter !== "ALL" ||
                   sourceTypeFilter !== "ALL" ||
+                  adjustmentRequirementFilter !== "ALL" ||
                   searchTerm !== "" ||
                   startDate !==
                     new Date(new Date().getFullYear(), 0, 1)
@@ -615,6 +656,7 @@ export default function GeneralJournalView() {
                       setEndDate(new Date().toISOString().split("T")[0]);
                       setStatusFilter("ALL");
                       setSourceTypeFilter("ALL");
+                      setAdjustmentRequirementFilter("ALL");
                       setSearchTerm("");
                     }}
                   >
@@ -624,6 +666,21 @@ export default function GeneralJournalView() {
               </HStack>
             </Alert>
           )}
+
+        <Alert status="info" borderRadius="md" variant="left-accent">
+          <AlertIcon />
+          <Box>
+            <Text fontWeight="semibold">
+              Jurnal adjustment hanya dibuka untuk 5 kategori transaksi client.
+            </Text>
+            <Text fontSize="sm">
+              Gunakan filter Adjustment untuk melihat jurnal yang butuh
+              adjustment, sudah dibuat adjustment, atau tidak masuk mapping.
+              Tombol adjustment otomatis disembunyikan jika jurnal di luar
+              kategori ini atau sudah punya adjustment.
+            </Text>
+          </Box>
+        </Alert>
 
         {canCreateAdjustment && (
           <Alert status="info" borderRadius="md">
@@ -731,6 +788,26 @@ export default function GeneralJournalView() {
                 <option value="PURCHASE">Purchase</option>
                 <option value="PAYMENT">Payment</option>
                 <option value="REVERSAL">Reversal</option>
+              </Select>
+            </Box>
+            <Box>
+              <Text fontSize="xs" color={mutedTextColor} mb={1}>
+                Adjustment
+              </Text>
+              <Select
+                value={adjustmentRequirementFilter}
+                onChange={(e) => {
+                  setCurrentPage(1);
+                  setAdjustmentRequirementFilter(e.target.value);
+                }}
+                size="sm"
+                width="210px"
+                {...fieldStyles}
+              >
+                <option value="ALL">Semua</option>
+                <option value="NEEDS_ADJUSTMENT">Butuh Adjustment</option>
+                <option value="ADJUSTED">Sudah Adjustment</option>
+                <option value="NOT_REQUIRED">Tidak Perlu Adjustment</option>
               </Select>
             </Box>
             <Box alignSelf="flex-end">
@@ -859,6 +936,50 @@ export default function GeneralJournalView() {
                               >
                                 {entry.source_type || "MANUAL"}
                               </Badge>
+                              {entry.source_type === "ADJUSTMENT" &&
+                                (entry.adjustment_category_label ||
+                                  entry.adjustment_category_code) && (
+                                  <Text
+                                    fontSize="xs"
+                                    color={mutedTextColor}
+                                    noOfLines={1}
+                                    title={
+                                      entry.adjustment_category_label ||
+                                      entry.adjustment_category_code
+                                    }
+                                  >
+                                    {entry.adjustment_category_label ||
+                                      entry.adjustment_category_code}
+                                  </Text>
+                                )}
+                              {entry.adjustment_required && (
+                                <>
+                                  <Badge
+                                    mt={1}
+                                    colorScheme={
+                                      entry.adjustment_completed
+                                        ? "green"
+                                        : "orange"
+                                    }
+                                    fontSize="xx-small"
+                                  >
+                                    {entry.adjustment_completed
+                                      ? "Sudah Adjustment"
+                                      : "Butuh Adjustment"}
+                                  </Badge>
+                                  <Text
+                                    fontSize="xs"
+                                    color={mutedTextColor}
+                                    noOfLines={1}
+                                    title={
+                                      entry.adjustment_requirement_reason ||
+                                      entry.adjustment_requirement_label
+                                    }
+                                  >
+                                    {entry.adjustment_requirement_label}
+                                  </Text>
+                                </>
+                              )}
                             </VStack>
                           )}
                         </Td>
@@ -980,6 +1101,25 @@ export default function GeneralJournalView() {
                                   {getDraftApprovalLabel(entry)}
                                 </Text>
                               )}
+                              {entry.adjustment_required && (
+                                <Text
+                                  fontSize="xs"
+                                  color={
+                                    entry.adjustment_completed
+                                      ? "green.600"
+                                      : "orange.600"
+                                  }
+                                  noOfLines={2}
+                                  title={
+                                    entry.adjustment_requirement_tagline ||
+                                    entry.adjustment_requirement_reason
+                                  }
+                                >
+                                  {entry.adjustment_completed
+                                    ? "Adjustment sudah dibuat"
+                                    : "Masuk mapping khusus adjustment"}
+                                </Text>
+                              )}
                             </VStack>
                           )}
                         </Td>
@@ -1095,36 +1235,34 @@ export default function GeneralJournalView() {
                                       {t("journal.delete")}
                                     </MenuItem>
                                   )}
-                                {entry.status === "POSTED" &&
-                                  canCreateAdjustment &&
-                                  !entry.reversed_by &&
-                                  entry.source_type !== "REVERSAL" &&
-                                  entry.source_type !== "ADJUSTMENT" && (
-                                    <MenuItem
-                                      icon={<FiPlus />}
-                                      onClick={() => handleCreateAdjustment(entry)}
-                                      _hover={{ bg: menuHoverBg }}
-                                    >
-                                      {t("journal.createAdjustment")}
-                                    </MenuItem>
-                                  )}
+                                {canShowCreateAdjustmentAction(entry) && (
+                                  <MenuItem
+                                    icon={<FiPlus />}
+                                    onClick={() =>
+                                      handleCreateAdjustment(entry)
+                                    }
+                                    _hover={{ bg: menuHoverBg }}
+                                  >
+                                    {t("journal.createAdjustment")}
+                                  </MenuItem>
+                                )}
                                 {entry.status === "POSTED" &&
                                   canReverseJournalEntry && (
-                                  <Tooltip
-                                    label="Membuat jurnal pembalik untuk membatalkan efek saldo dari jurnal ini. Histori jurnal asli tetap disimpan."
-                                    hasArrow
-                                    placement="left"
-                                    openDelay={200}
-                                  >
-                                    <MenuItem
-                                      icon={<FiRotateCcw />}
-                                      onClick={() => handleReverse(entry)}
-                                      _hover={{ bg: menuHoverBg }}
+                                    <Tooltip
+                                      label="Membuat jurnal pembalik untuk membatalkan efek saldo dari jurnal ini. Histori jurnal asli tetap disimpan."
+                                      hasArrow
+                                      placement="left"
+                                      openDelay={200}
                                     >
-                                      Reverse
-                                    </MenuItem>
-                                  </Tooltip>
-                                )}
+                                      <MenuItem
+                                        icon={<FiRotateCcw />}
+                                        onClick={() => handleReverse(entry)}
+                                        _hover={{ bg: menuHoverBg }}
+                                      >
+                                        Reverse
+                                      </MenuItem>
+                                    </Tooltip>
+                                  )}
                               </MenuList>
                             </Menu>
                           )}

@@ -610,7 +610,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 					inventoryCOGS = inventoryCOGS.Add(decimal.NewFromFloat(float64(availableQty) * estimatedUnitCost))
 					backorderCOGS = backorderCOGS.Add(decimal.NewFromFloat(float64(backorderQty) * estimatedUnitCost))
 					cogsDetails = append(cogsDetails, fmt.Sprintf("%s(Qty:%d×Rp%.0f)",
-						item.Product.Name, item.Quantity, item.Product.CostPrice))
+						item.Product.Name, item.Quantity, estimatedUnitCost))
 				}
 			}
 			// Closing brace for else block will be handled by subsequent lines or logic

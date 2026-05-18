@@ -1,5 +1,10 @@
 export const normalizeRole = (role?: string | null): string => {
-  return (role || '').toString().trim().toLowerCase();
+  return (role || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+    .replace(/_+/g, '_');
 };
 
 export const canonicalRole = (role?: string | null): string => {
@@ -23,8 +28,16 @@ export const isFinanceStaffRole = (role?: string | null): boolean => {
   return normalizeRole(role) === 'finance_staff';
 };
 
+export const isAccountingRole = (role?: string | null): boolean => {
+  return normalizeRole(role) === 'accounting';
+};
+
+export const isHRRole = (role?: string | null): boolean => {
+  return normalizeRole(role) === 'hr';
+};
+
 export const isFinanceTeamRole = (role?: string | null): boolean => {
-  return isFinanceManagerRole(role) || isFinanceStaffRole(role);
+  return isFinanceManagerRole(role) || isFinanceStaffRole(role) || isAccountingRole(role);
 };
 
 export const isStaffRole = (role?: string | null): boolean => {
@@ -77,6 +90,10 @@ export const formatRoleForApproval = (role?: string | null): string => {
     case 'finance':
     case 'finance_manager':
       return 'Finance Manager';
+    case 'accounting':
+      return 'Accounting';
+    case 'hr':
+      return 'HR';
     case 'finance_staff':
       return 'Finance Staff';
     case 'employee':
@@ -97,6 +114,10 @@ export const getRoleDisplayName = (role?: string | null): { role: string; exampl
     case 'finance':
     case 'finance_manager':
       return { role: 'Finance Manager', example: 'Jack' };
+    case 'accounting':
+      return { role: 'Accounting', example: 'Jill' };
+    case 'hr':
+      return { role: 'HR', example: 'Hana' };
     case 'finance_staff':
       return { role: 'Finance Staff', example: 'Jill' };
     case 'director':

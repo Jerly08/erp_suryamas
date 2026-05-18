@@ -94,6 +94,7 @@ func main() {
 		fmt.Println("   - Setiap modul dihapus beserta soft-delete-nya (hard delete)")
 		fmt.Println("   - Sequence ID direset untuk modul yang dipilih")
 		fmt.Println("   - Modul lain TIDAK terpengaruh")
+		fmt.Println("   - Termasuk opsi bersihkan request approval transfer antar bank yang usang")
 	} else if mode == 9 {
 		coaMaintenanceAction = askCOAMaintenanceAction()
 		if coaMaintenanceAction == coaMaintenanceCleanup {
@@ -364,6 +365,33 @@ func deletePrepaidModuleDataWithGORM(db *gorm.DB) error {
 	return nil
 }
 
+func deleteCashBankTransferModuleDataWithGORM(db *gorm.DB) error {
+	fmt.Printf("\n   Menghapus modul: Cash Bank Transfer Requests...\n")
+
+	tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
+
+	var transferCount int64
+	if err := tx.Model(&models.CashBankTransferMigration{}).Count(&transferCount).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hitung cash_bank_transfers: %w", err)
+	}
+
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.CashBankTransferMigration{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus cash_bank_transfers: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal commit hapus cash bank transfer requests: %w", err)
+	}
+
+	resetSequenceIfExists(db, "cash_bank_transfers_id_seq")
+	fmt.Printf("   Deleted cash_bank_transfers: %d\n", transferCount)
+
+	return nil
+}
+
 func resetSequenceIfExists(db *gorm.DB, seqName string) {
 	var seqExists bool
 	db.Raw("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = ? AND relkind = 'S')", seqName).Scan(&seqExists)
@@ -549,6 +577,11 @@ func executeTransactionResetWithGORM(db *gorm.DB) error {
 		fmt.Printf("   ⚠️  Warning: Delete PaymentAllocation error: %v\n", err)
 	}
 
+	fmt.Println("   Menghapus cash bank transfer approval requests...")
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.CashBankTransferMigration{}).Error; err != nil {
+		fmt.Printf("   Warning: Delete CashBankTransfer error: %v\n", err)
+	}
+
 	fmt.Println("   🗑️  Menghapus cash bank transactions...")
 	// Cash Bank Transactions (might be referenced by payments)
 	if err := tx.Unscoped().Where("1 = 1").Delete(&models.CashBankTransaction{}).Error; err != nil {
@@ -731,6 +764,7 @@ func resetMainSequences(db *gorm.DB) {
 		"prepaid_schedules_id_seq",
 		"transactions_id_seq",
 		"payments_id_seq",
+		"cash_bank_transfers_id_seq",
 		"expenses_id_seq",
 		"inventories_id_seq",
 		// Notification sequences
@@ -921,6 +955,7 @@ func showCurrentDataSummary(db *gorm.DB) {
 		TotalSSOTEventLogs  int64 `json:"total_ssot_event_logs"`
 		TotalExpenses       int64 `json:"total_expenses"`
 		TotalPayments       int64 `json:"total_payments"`
+		TotalCashTransfers  int64 `json:"total_cash_transfers"`
 		TotalInventory      int64 `json:"total_inventory"`
 		TotalNotifications  int64 `json:"total_notifications"`
 		TotalStockAlerts    int64 `json:"total_stock_alerts"`
@@ -944,6 +979,7 @@ func showCurrentDataSummary(db *gorm.DB) {
 	db.Model(&models.SSOTJournalEventLog{}).Count(&summary.TotalSSOTEventLogs)
 	db.Model(&models.Expense{}).Count(&summary.TotalExpenses)
 	db.Model(&models.Payment{}).Count(&summary.TotalPayments)
+	db.Model(&models.CashBankTransferMigration{}).Count(&summary.TotalCashTransfers)
 	db.Model(&models.Inventory{}).Count(&summary.TotalInventory)
 	db.Model(&models.Notification{}).Count(&summary.TotalNotifications)
 	db.Model(&models.StockAlert{}).Count(&summary.TotalStockAlerts)
@@ -969,6 +1005,7 @@ func showCurrentDataSummary(db *gorm.DB) {
 	fmt.Printf("   SSOT Event Logs: %d (akan DIHAPUS)\n", summary.TotalSSOTEventLogs)
 	fmt.Printf("   Expenses: %d (akan DIHAPUS)\n", summary.TotalExpenses)
 	fmt.Printf("   Payments: %d (akan DIHAPUS)\n", summary.TotalPayments)
+	fmt.Printf("   Cash Bank Transfer Requests: %d (akan DIHAPUS)\n", summary.TotalCashTransfers)
 	fmt.Printf("   Inventory: %d (akan DIHAPUS)\n", summary.TotalInventory)
 	fmt.Printf("   Notifications: %d (akan DIHAPUS)\n", summary.TotalNotifications)
 	fmt.Printf("   Stock Alerts: %d (akan DIHAPUS)\n", summary.TotalStockAlerts)
@@ -1110,6 +1147,7 @@ func showPostResetSummary(db *gorm.DB) {
 		RemainingSSOTJournals     int64 `json:"remaining_ssot_journals"`
 		RemainingSSOTLines        int64 `json:"remaining_ssot_lines"`
 		RemainingSSOTEventLogs    int64 `json:"remaining_ssot_event_logs"`
+		RemainingCashTransfers    int64 `json:"remaining_cash_transfers"`
 		RemainingNotifications    int64 `json:"remaining_notifications"`
 		RemainingStockAlerts      int64 `json:"remaining_stock_alerts"`
 		AccountsWithBalance       int64 `json:"accounts_with_balance"`
@@ -1137,6 +1175,7 @@ func showPostResetSummary(db *gorm.DB) {
 	db.Model(&models.SSOTJournalEntry{}).Count(&summary.RemainingSSOTJournals)
 	db.Model(&models.SSOTJournalLine{}).Count(&summary.RemainingSSOTLines)
 	db.Model(&models.SSOTJournalEventLog{}).Count(&summary.RemainingSSOTEventLogs)
+	db.Model(&models.CashBankTransferMigration{}).Count(&summary.RemainingCashTransfers)
 	db.Model(&models.Notification{}).Count(&summary.RemainingNotifications)
 	db.Model(&models.StockAlert{}).Count(&summary.RemainingStockAlerts)
 
@@ -1158,7 +1197,8 @@ func showPostResetSummary(db *gorm.DB) {
 		summary.RemainingTransactions == 0 && summary.RemainingJournals == 0 &&
 		summary.RemainingJournalEntries == 0 && summary.RemainingJournalLines == 0 &&
 		summary.RemainingSSOTJournals == 0 && summary.RemainingSSOTLines == 0 &&
-		summary.RemainingSSOTEventLogs == 0 && summary.RemainingNotifications == 0 &&
+		summary.RemainingSSOTEventLogs == 0 && summary.RemainingCashTransfers == 0 &&
+		summary.RemainingNotifications == 0 &&
 		summary.RemainingStockAlerts == 0 {
 		fmt.Printf("✅ Data transaksi berhasil dihapus:\n")
 		fmt.Printf("   - Sales: %d\n", summary.RemainingSales)
@@ -1172,6 +1212,7 @@ func showPostResetSummary(db *gorm.DB) {
 		fmt.Printf("   - SSOT Journal Entries: %d\n", summary.RemainingSSOTJournals)
 		fmt.Printf("   - SSOT Journal Lines: %d\n", summary.RemainingSSOTLines)
 		fmt.Printf("   - SSOT Event Logs: %d\n", summary.RemainingSSOTEventLogs)
+		fmt.Printf("   - Cash Bank Transfer Requests: %d\n", summary.RemainingCashTransfers)
 		fmt.Printf("   - Notifications: %d\n", summary.RemainingNotifications)
 		fmt.Printf("   - Stock Alerts: %d\n", summary.RemainingStockAlerts)
 	} else {
@@ -1187,6 +1228,7 @@ func showPostResetSummary(db *gorm.DB) {
 		fmt.Printf("   - SSOT Journal Entries: %d\n", summary.RemainingSSOTJournals)
 		fmt.Printf("   - SSOT Journal Lines: %d\n", summary.RemainingSSOTLines)
 		fmt.Printf("   - SSOT Event Logs: %d\n", summary.RemainingSSOTEventLogs)
+		fmt.Printf("   - Cash Bank Transfer Requests: %d\n", summary.RemainingCashTransfers)
 		fmt.Printf("   - Notifications: %d\n", summary.RemainingNotifications)
 		fmt.Printf("   - Stock Alerts: %d\n", summary.RemainingStockAlerts)
 	}
@@ -1788,6 +1830,7 @@ func executeTruncateAndResetIDWithGORM(db *gorm.DB) error {
 		"boms",
 		// Other transactions
 		"payment_allocations",
+		"cash_bank_transfers",
 		"cash_bank_transactions",
 		"transactions",
 		"payments",
@@ -2192,8 +2235,9 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	fmt.Println("  d) Products (semua produk + stock)")
 	fmt.Println("  e) Prepaid Expenses (header + schedule + jurnal amortisasi/terminasi)")
 	fmt.Println("  f) Assets (asset master + categories + jurnal asset/depresiasi + upload image)")
+	fmt.Println("  g) Cash Bank Transfer Requests (approval transfer antar bank yang tampil di queue)")
 	fmt.Println("  all) Hapus semua modul di atas")
-	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c,e,f atau all): ")
+	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c,e,f,g atau all): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
@@ -2288,6 +2332,13 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	if deleteAll || selected["f"] {
 		if err := deleteAssetModuleDataWithGORM(db); err != nil {
 			fmt.Printf("   Warning: Gagal hapus modul assets: %v\n", err)
+		}
+	}
+
+	// Hapus request approval transfer antar bank
+	if deleteAll || selected["g"] {
+		if err := deleteCashBankTransferModuleDataWithGORM(db); err != nil {
+			fmt.Printf("   Warning: Gagal hapus modul cash bank transfer requests: %v\n", err)
 		}
 	}
 

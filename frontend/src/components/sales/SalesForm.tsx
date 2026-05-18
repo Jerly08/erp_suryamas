@@ -133,6 +133,7 @@ interface FormData {
     location?: string;
     quantity: number;
     unit_price: number;
+    estimated_unit_cost?: number;
     discount_percent: number;
     taxable: boolean;
     revenue_account_id?: number;
@@ -281,6 +282,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           location: "",
           quantity: 1,
           unit_price: 0,
+          estimated_unit_cost: 0,
           discount_percent: 0,
           taxable: true,
         },
@@ -593,9 +595,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         // Load invoice types
         (async () => {
           console.log("SalesForm: Loading invoice types...");
-          const invoiceTypeService =
-            await import("@/services/invoiceTypeService");
-          const result = await invoiceTypeService.default.getInvoiceTypes();
+          const result = await invoiceTypeService.getActiveInvoiceTypes();
           console.log("SalesForm: Invoice types loaded:", result?.length || 0);
           return result;
         })(),
@@ -847,6 +847,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
               location: item.location || "",
               quantity: item.quantity || 1,
               unit_price: item.unit_price || 0,
+              estimated_unit_cost: item.estimated_unit_cost || 0,
               discount_percent: item.discount_percent || 0,
               taxable: item.taxable !== undefined ? item.taxable : true,
               revenue_account_id: item.revenue_account_id || undefined,
@@ -898,6 +899,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           location: "",
           quantity: 1,
           unit_price: 0,
+          estimated_unit_cost: 0,
           discount_percent: 0,
           taxable: true,
         },
@@ -921,6 +923,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
       setValue(`items.${index}.product_name`, product.name);
       setValue(`items.${index}.description`, product.name);
       setValue(`items.${index}.unit_price`, product.price);
+      setValue(
+        `items.${index}.estimated_unit_cost`,
+        Number(product.cost_price || product.purchase_price || 0),
+      );
 
       // --- Auto-Kitting Validation Logic ---
       if (product.is_assembly) {
@@ -977,6 +983,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       setValue(`items.${index}.product_name`, "");
       setValue(`items.${index}.description`, "");
       setValue(`items.${index}.unit_price`, 0);
+      setValue(`items.${index}.estimated_unit_cost`, 0);
     }
   };
 
@@ -1029,6 +1036,9 @@ const SalesForm: React.FC<SalesFormProps> = ({
     return {
       availableNow,
       futureFulfillmentQty,
+      estimatedUnitCost:
+        Number(currentItem.estimated_unit_cost || 0) ||
+        Number(product.cost_price || product.purchase_price || 0),
       unit: product.unit || "qty",
     };
   };
@@ -1222,6 +1232,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       location: "",
       quantity: 1,
       unit_price: 0,
+      estimated_unit_cost: 0,
       discount_percent: 0,
       taxable: true,
     });
@@ -1347,6 +1358,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
             unit_price: Math.min(
               999999999999.99,
               Math.max(0, item.unit_price || 0),
+            ),
+            estimated_unit_cost: Math.min(
+              999999999999.99,
+              Math.max(0, item.estimated_unit_cost || 0),
             ),
             discount: Math.min(
               999999.99,
@@ -1508,6 +1523,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
               location: item.location || "",
               quantity: item.quantity,
               unit_price: item.unit_price,
+              estimated_unit_cost: Math.max(
+                0,
+                Number(item.estimated_unit_cost || 0),
+              ),
               discount: item.discount_percent || 0,
               tax: 0,
               revenue_account_id: resolveRevenueAccountId(item),
@@ -1571,6 +1590,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
               999999999999.99,
               Math.max(0, item.unit_price || 0),
             ), // Cap to prevent overflow
+            estimated_unit_cost: Math.min(
+              999999999999.99,
+              Math.max(0, item.estimated_unit_cost || 0),
+            ),
             discount: Math.min(
               999999.99,
               Math.max(0, item.discount_percent || 0),
@@ -1705,7 +1728,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       <Modal
         isOpen={isOpen}
         onClose={handleClose}
-        size="6xl"
+        size="full"
         isCentered
         closeOnOverlayClick={false}
         scrollBehavior="inside"
@@ -1718,18 +1741,18 @@ const SalesForm: React.FC<SalesFormProps> = ({
           onWheel={(e) => e.stopPropagation()}
         />
         <ModalContent
-          maxH="95vh"
-          minH="80vh"
-          mx={4}
-          my={2}
+          maxH={{ base: "100vh", md: "95vh" }}
+          minH={{ base: "100vh", md: "80vh" }}
+          mx={{ base: 0, md: 4 }}
+          my={{ base: 0, md: 2 }}
           borderRadius="xl"
           bg={modalBg}
           shadow="2xl"
           overflow="hidden"
           display="flex"
           flexDirection="column"
-          w="full"
-          maxW="6xl"
+          w={{ base: "100vw", md: "96vw" }}
+          maxW={{ base: "100vw", md: "1680px" }}
         >
           <ModalHeader
             bg={headerBg}
@@ -2141,25 +2164,26 @@ const SalesForm: React.FC<SalesFormProps> = ({
                       },
                     }}
                   >
-                    <Table variant="simple" size="sm">
+                    <Table variant="simple" size="sm" minW="1660px">
                       <Thead>
                         <Tr>
-                          <Th>{t("sales.form.product")}</Th>
-                          <Th>{t("sales.form.description")}</Th>
-                          <Th>{t("sales.form.location")}</Th>
-                          <Th>{t("sales.form.quantity")}</Th>
-                          <Th>{t("sales.form.unitPrice")}</Th>
-                          <Th>{t("sales.form.itemDiscount")}</Th>
-                          <Th>{t("sales.form.taxable")}</Th>
-                          <Th>{t("sales.form.revenueAccount")}</Th>
-                          <Th>{t("sales.form.lineTotal")}</Th>
-                          <Th width="60px">{t("common.actions")}</Th>
+                          <Th minW="150px">{t("sales.form.product")}</Th>
+                          <Th minW="170px">{t("sales.form.description")}</Th>
+                          <Th minW="130px">{t("sales.form.location")}</Th>
+                          <Th minW="120px">{t("sales.form.quantity")}</Th>
+                          <Th minW="200px">{t("sales.form.unitPrice")}</Th>
+                          <Th minW="180px">Est. HPP</Th>
+                          <Th minW="130px">{t("sales.form.itemDiscount")}</Th>
+                          <Th minW="95px">{t("sales.form.taxable")}</Th>
+                          <Th minW="190px">{t("sales.form.revenueAccount")}</Th>
+                          <Th minW="150px">{t("sales.form.lineTotal")}</Th>
+                          <Th minW="70px" width="70px">{t("common.actions")}</Th>
                         </Tr>
                       </Thead>
                       <Tbody>
                         {fields.map((field, index) => (
                           <Tr key={field.id}>
-                            <Td>
+                            <Td minW="150px">
                               <FormControl
                                 isInvalid={
                                   !!errors.items?.[index]?.product_id ||
@@ -2289,7 +2313,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 </FormErrorMessage>
                               </FormControl>
                             </Td>
-                            <Td>
+                            <Td minW="170px">
                               <FormControl
                                 isInvalid={!!errors.items?.[index]?.description}
                               >
@@ -2348,7 +2372,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 </FormErrorMessage>
                               </FormControl>
                             </Td>
-                            <Td>
+                            <Td minW="130px">
                               <Input
                                 size="sm"
                                 {...register(`items.${index}.location`)}
@@ -2356,7 +2380,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 {...baseFieldStyles}
                               />
                             </Td>
-                            <Td>
+                            <Td minW="120px">
                               <FormControl
                                 isInvalid={!!errors.items?.[index]?.quantity}
                               >
@@ -2432,7 +2456,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                           fulfillmentPreview.futureFulfillmentQty
                                         }{" "}
                                         {fulfillmentPreview.unit} menunggu
-                                        stok.
+                                        stok. Est. HPP backorder:{" "}
+                                        {salesService.formatCurrency(
+                                          fulfillmentPreview.futureFulfillmentQty *
+                                            fulfillmentPreview.estimatedUnitCost,
+                                        )}
                                       </Text>
                                     );
                                   }
@@ -2452,25 +2480,50 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 })()}
                               </FormControl>
                             </Td>
-                            <Td>
-                              <CurrencyInput
-                                value={watchItems[index]?.unit_price || 0}
-                                onChange={(value) => {
-                                  setValue(`items.${index}.unit_price`, value);
-                                  clearErrors(`items.${index}.unit_price`);
-                                }}
-                                placeholder="Rp 10.000"
-                                size="sm"
-                                min={0}
-                                showLabel={false}
-                                isDisabled={isInvoiced}
-                                isInvalid={!!errors.items?.[index]?.unit_price}
-                                errorMessage={
-                                  errors.items?.[index]?.unit_price?.message
-                                }
-                              />
+                            <Td minW="200px">
+                              <Box minW="180px">
+                                <CurrencyInput
+                                  value={watchItems[index]?.unit_price || 0}
+                                  onChange={(value) => {
+                                    setValue(`items.${index}.unit_price`, value);
+                                    clearErrors(`items.${index}.unit_price`);
+                                  }}
+                                  placeholder="Rp 10.000"
+                                  size="sm"
+                                  min={0}
+                                  showLabel={false}
+                                  isDisabled={isInvoiced}
+                                  isInvalid={!!errors.items?.[index]?.unit_price}
+                                  errorMessage={
+                                    errors.items?.[index]?.unit_price?.message
+                                  }
+                                />
+                              </Box>
                             </Td>
-                            <Td>
+                            <Td minW="180px">
+                              <Box minW="160px">
+                                <CurrencyInput
+                                  value={
+                                    watchItems[index]?.estimated_unit_cost || 0
+                                  }
+                                  onChange={(value) => {
+                                    setValue(
+                                      `items.${index}.estimated_unit_cost`,
+                                      value,
+                                    );
+                                  }}
+                                  placeholder="Rp 0"
+                                  size="sm"
+                                  min={0}
+                                  showLabel={false}
+                                  isDisabled={isInvoiced}
+                                />
+                                <Text mt={1} fontSize="xs" color={textColor}>
+                                  Dipakai untuk HPP estimasi/backorder.
+                                </Text>
+                              </Box>
+                            </Td>
+                            <Td minW="130px">
                               <Controller
                                 control={control}
                                 name={`items.${index}.discount_percent`}
@@ -2504,7 +2557,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 )}
                               />
                             </Td>
-                            <Td>
+                            <Td minW="95px">
                               <VStack spacing={1} align="center">
                                 <Switch
                                   size="sm"
@@ -2526,7 +2579,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 </Text>
                               </VStack>
                             </Td>
-                            <Td>
+                            <Td minW="190px">
                               <FormControl
                                 isInvalid={
                                   !!errors.items?.[index]?.revenue_account_id
@@ -2587,7 +2640,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 </FormErrorMessage>
                               </FormControl>
                             </Td>
-                            <Td>
+                            <Td minW="150px">
                               <Text
                                 fontSize="sm"
                                 fontWeight="medium"
@@ -2598,7 +2651,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 )}
                               </Text>
                             </Td>
-                            <Td>
+                            <Td minW="70px">
                               <IconButton
                                 size="sm"
                                 colorScheme="red"

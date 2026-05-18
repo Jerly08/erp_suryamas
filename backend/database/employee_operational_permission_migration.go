@@ -9,6 +9,7 @@ import (
 
 // EmployeeOperationalPermissionMigration aligns employee access with the
 // current workflow:
+//   - employees/staff can add product master data from the Products page
 //   - employees/staff can create purchase requests
 //   - employees/staff can submit payment requests from the payments page
 //   - approvals still stay with finance manager/director via module workflow
@@ -27,7 +28,7 @@ func EmployeeOperationalPermissionMigration(db *gorm.DB) {
 		return
 	}
 
-	targetModules := []string{"purchase_requests", "payments"}
+	targetModules := []string{"products", "purchase_requests", "payments"}
 
 	for _, user := range users {
 		defaultPerms := models.GetDefaultPermissions(user.Role)

@@ -128,6 +128,15 @@ func seedUsers(db *gorm.DB) {
 			LastName:  "User",
 			IsActive:  true,
 		},
+		{
+			Username:  "hr",
+			Email:     "hr@company.com",
+			Password:  string(hashedPassword),
+			Role:      "hr",
+			FirstName: "HR",
+			LastName:  "User",
+			IsActive:  true,
+		},
 	}
 
 	// Use PostgreSQL native INSERT with ON CONFLICT DO NOTHING
@@ -495,6 +504,12 @@ func seedPermissions(db *gorm.DB) {
 		{Name: "purchase_requests:update", Resource: "purchase_requests", Action: "update", Description: "Update purchase requests"},
 		{Name: "purchase_requests:delete", Resource: "purchase_requests", Action: "delete", Description: "Delete purchase requests"},
 		{Name: "purchase_requests:approve", Resource: "purchase_requests", Action: "approve", Description: "Approve purchase requests"},
+
+		// Payroll permissions
+		{Name: "payroll:read", Resource: "payroll", Action: "read", Description: "View payroll"},
+		{Name: "payroll:create", Resource: "payroll", Action: "create", Description: "Create payroll"},
+		{Name: "payroll:update", Resource: "payroll", Action: "update", Description: "Update payroll"},
+		{Name: "payroll:approve", Resource: "payroll", Action: "approve", Description: "Approve payroll"},
 	}
 
 	// Use PostgreSQL native UPSERT to avoid all duplicate key errors
@@ -547,6 +562,7 @@ func seedRolePermissions(db *gorm.DB) {
 			"boms:read", "boms:create", "boms:update", "boms:delete",
 			"projects:read", "projects:create", "projects:update", "projects:delete",
 			"purchase_requests:read", "purchase_requests:create", "purchase_requests:update", "purchase_requests:delete", "purchase_requests:approve",
+			"payroll:read", "payroll:create", "payroll:update",
 		},
 		"finance": {
 			"accounts:read", "accounts:create", "accounts:update",
@@ -560,6 +576,7 @@ func seedRolePermissions(db *gorm.DB) {
 			"boms:read",
 			"projects:read",
 			"purchase_requests:read", "purchase_requests:approve",
+			"payroll:read", "payroll:approve",
 		},
 		"finance_staff": {
 			"accounts:read",
@@ -572,6 +589,23 @@ func seedRolePermissions(db *gorm.DB) {
 			"boms:read",
 			"projects:read", "projects:create", "projects:update",
 			"purchase_requests:read", "purchase_requests:create", "purchase_requests:update", "purchase_requests:approve",
+			"payroll:read",
+		},
+		"accounting": {
+			"accounts:read",
+			"transactions:read", "transactions:create", "transactions:update",
+			"sales:read", "sales:create", "sales:update",
+			"purchases:read", "purchases:create", "purchases:update",
+			"reports:read",
+			"contacts:read",
+			"assets:read",
+			"boms:read",
+			"projects:read", "projects:create", "projects:update",
+			"purchase_requests:read", "purchase_requests:create", "purchase_requests:update", "purchase_requests:approve",
+			"payroll:read",
+		},
+		"hr": {
+			"payroll:read", "payroll:create", "payroll:update",
 		},
 		"director": {
 			"users:read",
@@ -604,7 +638,7 @@ func seedRolePermissions(db *gorm.DB) {
 		},
 		"employee": {
 			// Align employee defaults with module-level Manage Permissions
-			"products:read",
+			"products:read", "products:create",
 			"sales:read", "sales:create",
 			"contacts:read",
 			// Needed for forms and lookups

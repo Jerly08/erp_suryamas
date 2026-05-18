@@ -19,7 +19,6 @@ import {
   Td,
   Badge,
   Box,
-  Divider,
   Grid,
   GridItem,
 } from "@chakra-ui/react";
@@ -44,6 +43,8 @@ export default function JournalDetailModal({
     switch (String(role || "").toLowerCase()) {
       case "finance_staff":
         return "Finance Staff";
+      case "accounting":
+        return "Accounting";
       case "finance_manager":
       case "finance":
         return "Finance Manager";
@@ -185,6 +186,54 @@ export default function JournalDetailModal({
                   </Text>
                   <Text>{entry.description}</Text>
                 </GridItem>
+                {entry.adjustment_required && (
+                  <GridItem colSpan={2}>
+                    <Text fontSize="xs" color="gray.500">
+                      Adjustment Requirement
+                    </Text>
+                    <Box
+                      mt={1}
+                      p={3}
+                      bg={entry.adjustment_completed ? "green.50" : "orange.50"}
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor={
+                        entry.adjustment_completed ? "green.100" : "orange.100"
+                      }
+                    >
+                      <HStack align="start" justify="space-between">
+                        <Box>
+                          <Text fontWeight="medium">
+                            {entry.adjustment_requirement_label}
+                          </Text>
+                          <Text fontSize="sm" color="gray.700" mt={1}>
+                            {entry.adjustment_requirement_tagline ||
+                              "Jurnal ini masuk mapping khusus adjustment client."}
+                          </Text>
+                        </Box>
+                        <Badge
+                          colorScheme={
+                            entry.adjustment_completed ? "green" : "orange"
+                          }
+                        >
+                          {entry.adjustment_completed
+                            ? "Sudah Adjustment"
+                            : "Butuh Adjustment"}
+                        </Badge>
+                      </HStack>
+                      {entry.adjustment_requirement_coa && (
+                        <Text fontSize="sm" color="gray.700" mt={2}>
+                          COA: {entry.adjustment_requirement_coa}
+                        </Text>
+                      )}
+                      {entry.adjustment_requirement_reason && (
+                        <Text fontSize="sm" color="gray.600" mt={1}>
+                          Alasan: {entry.adjustment_requirement_reason}
+                        </Text>
+                      )}
+                    </Box>
+                  </GridItem>
+                )}
                 {entry.adjustment_of && (
                   <GridItem colSpan={2}>
                     <Text fontSize="xs" color="gray.500">
@@ -202,6 +251,33 @@ export default function JournalDetailModal({
                     </Box>
                   </GridItem>
                 )}
+                {entry.source_type === "ADJUSTMENT" &&
+                  (entry.adjustment_category_label ||
+                    entry.adjustment_category_code) && (
+                    <GridItem colSpan={2}>
+                      <Text fontSize="xs" color="gray.500">
+                        Adjustment Category
+                      </Text>
+                      <Box
+                        mt={1}
+                        p={3}
+                        bg="orange.50"
+                        borderRadius="md"
+                        borderWidth="1px"
+                        borderColor="orange.100"
+                      >
+                        <Text fontWeight="medium">
+                          {entry.adjustment_category_label ||
+                            entry.adjustment_category_code}
+                        </Text>
+                        {entry.adjustment_category_code && (
+                          <Text fontSize="xs" color="gray.600" mt={1}>
+                            {entry.adjustment_category_code}
+                          </Text>
+                        )}
+                      </Box>
+                    </GridItem>
+                  )}
                 {entry.source_type === "ADJUSTMENT" && (
                   <GridItem colSpan={2}>
                     <Text fontSize="xs" color="gray.500">
@@ -218,8 +294,8 @@ export default function JournalDetailModal({
                       <Text>
                         Finance staff atau finance manager dapat membuat draft
                         adjustment. Finance manager melakukan review awal, dan
-                        jika diminta maka director akan melakukan approval
-                        final sebelum jurnal diposting.
+                        jika diminta maka director akan melakukan approval final
+                        sebelum jurnal diposting.
                       </Text>
                       <Text mt={2} fontSize="sm">
                         Tahap saat ini: {approvalStageLabel}
@@ -331,7 +407,7 @@ export default function JournalDetailModal({
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {entry.lines?.map((line, index) => (
+                  {entry.lines?.map((line) => (
                     <Tr key={line.id}>
                       <Td>{line.line_number}</Td>
                       <Td fontWeight="medium">

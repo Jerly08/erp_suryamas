@@ -333,6 +333,7 @@ export const API_ENDPOINTS = {
     DELETE: (id: number) => `/api/v1/journals/${id}`,
     POST: (id: number) => `/api/v1/journals/${id}/post`,
     REVERSE: (id: number) => `/api/v1/journals/${id}/reverse`,
+    ADJUSTMENT_CATEGORIES: "/api/v1/journals/adjustment-categories",
     SUMMARY: "/api/v1/journals/summary",
     ACCOUNT_BALANCES: "/api/v1/journals/account-balances",
     REFRESH_ACCOUNT_BALANCES: "/api/v1/journals/account-balances/refresh",
@@ -423,6 +424,8 @@ export const API_ENDPOINTS = {
   PURCHASES_PENDING_APPROVAL: "/api/v1/purchases/pending-approval",
   PURCHASES_APPROVE: (id: number) => `/api/v1/purchases/${id}/approve`,
   PURCHASES_REJECT: (id: number) => `/api/v1/purchases/${id}/reject`,
+  PURCHASES_ACCOUNTING_COA: (id: number) =>
+    `/api/v1/purchases/${id}/accounting-coa`,
   PURCHASES_APPROVAL_HISTORY: (id: number) =>
     `/api/v1/purchases/${id}/approval-history`,
   PURCHASES_APPROVAL_STATS: "/api/v1/purchases/approval-stats",

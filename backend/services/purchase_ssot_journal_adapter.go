@@ -263,7 +263,7 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 			accountID = uint64(item.ExpenseAccountID)
 		}
 
-		amount := decimal.NewFromFloat(item.TotalPrice)
+		amount := decimal.NewFromFloat(purchaseItemLandedTotal(purchase, &item))
 		lines = append(lines, JournalLineRequest{
 			AccountID:    accountID,
 			Description:  fmt.Sprintf("Purchase %s - %s", item.ItemType, itemName),

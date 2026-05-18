@@ -15,6 +15,14 @@ export interface Product {
   purchase_price: number;
 }
 
+export interface Contact {
+  id: number;
+  code?: string;
+  name: string;
+  type: "CUSTOMER" | "VENDOR" | "EMPLOYEE";
+  is_active?: boolean;
+}
+
 export interface PurchaseRequestItem {
   id: number;
   purchase_request_id: number;
@@ -32,12 +40,27 @@ export interface PurchaseRequestItem {
   product?: Product;
 }
 
+export interface PurchaseRequestDocument {
+  id: number;
+  purchase_request_id: number;
+  document_type: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  mime_type: string;
+  uploaded_by: number;
+  created_at: string;
+  updated_at: string;
+  uploader?: User;
+}
+
 export interface PurchaseRequest {
   id: number;
   pr_number: string;
   requester_id: number;
   department: string;
   project_id: number | null;
+  vendor_id: number | null;
   total_estimated_amount: number;
   status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "COMPLETED";
   current_approval_stage?:
@@ -67,7 +90,9 @@ export interface PurchaseRequest {
     code: string;
     name: string;
   };
+  vendor?: Contact;
   items?: PurchaseRequestItem[];
+  documents?: PurchaseRequestDocument[];
 }
 
 export interface PurchaseRequestItemPayload {
@@ -80,6 +105,7 @@ export interface PurchaseRequestItemPayload {
 export interface PurchaseRequestCreatePayload {
   department?: string;
   project_id?: number | null;
+  vendor_id?: number | null;
   notes?: string;
   items: PurchaseRequestItemPayload[];
 }
@@ -105,11 +131,17 @@ export const purchaseRequestService = {
   getAll: async (
     department?: string,
     status?: string,
+    availableForPurchase?: boolean,
+    currentPurchaseId?: number,
   ): Promise<PurchaseRequest[]> => {
     let query = "";
     const params = new URLSearchParams();
     if (department) params.append("department", department);
     if (status) params.append("status", status);
+    if (availableForPurchase) params.append("available_for_purchase", "true");
+    if (currentPurchaseId) {
+      params.append("current_purchase_id", currentPurchaseId.toString());
+    }
 
     if (params.toString()) query = `?${params.toString()}`;
 
@@ -124,8 +156,47 @@ export const purchaseRequestService = {
 
   create: async (
     data: PurchaseRequestCreatePayload,
+    documents: File[] = [],
   ): Promise<PurchaseRequest> => {
+    if (documents.length > 0) {
+      const formData = new FormData();
+      formData.append("payload", JSON.stringify(data));
+      documents.forEach((file) => {
+        formData.append("documents", file);
+      });
+
+      const response = await api.post(BASE_URL, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return response.data;
+    }
+
     const response = await api.post(BASE_URL, data);
+    return response.data;
+  },
+
+  uploadDocuments: async (
+    id: number,
+    documents: File[],
+  ): Promise<{ message: string; documents: PurchaseRequestDocument[] }> => {
+    const formData = new FormData();
+    documents.forEach((file) => {
+      formData.append("documents", file);
+    });
+
+    const response = await api.post(`${BASE_URL}/${id}/documents`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return response.data;
+  },
+
+  getDocuments: async (id: number): Promise<PurchaseRequestDocument[]> => {
+    const response = await api.get(`${BASE_URL}/${id}/documents`);
+    return response.data;
+  },
+
+  deleteDocument: async (documentId: number): Promise<{ message: string }> => {
+    const response = await api.delete(`${BASE_URL}/documents/${documentId}`);
     return response.data;
   },
 

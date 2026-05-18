@@ -1,4 +1,5 @@
 export { AdminDashboard } from "./AdminDashboard";
+export { COAApprovalQueueCard } from "./COAApprovalQueueCard";
 export { FinanceDashboard } from "./FinanceDashboard";
 export { FinanceStaffDashboard } from "./FinanceStaffDashboard";
 export { InventoryManagerDashboard } from "./InventoryManagerDashboard";

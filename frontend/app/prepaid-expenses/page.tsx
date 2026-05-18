@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useModulePermissions } from '@/hooks/usePermissions';
+import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import {
   AlertDialog,
   AlertDialogBody,
@@ -81,7 +83,16 @@ interface Account {
 
 export default function PrepaidExpensesPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const normalizedRole = normalizeRole(user?.role);
+  const isAdmin = normalizedRole === 'admin';
+  const isFinanceManager = isFinanceManagerRole(normalizedRole);
+  const {
+    canEdit: canEditPrepaidExpenses,
+    canDelete: canDeletePrepaidExpenses,
+  } = useModulePermissions('prepaid_expenses');
+  const { canView: canViewAccounts } = useModulePermissions('accounts');
+  const canManagePrepaidExpenses = isAdmin || isFinanceManager || canEditPrepaidExpenses;
+  const canSelectPrepaidAccounts = isAdmin || isFinanceManager || canViewAccounts;
   const [prepaids, setPrepaids] = useState<PrepaidExpense[]>([]);
   const [schedules, setSchedules] = useState<PrepaidSchedule[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -176,6 +187,15 @@ export default function PrepaidExpensesPage() {
 
   const handleAmortize = async (scheduleId: number) => {
     if (!selectedPrepaid) return;
+    if (!canManagePrepaidExpenses) {
+      toast({
+        title: 'Akses ditolak',
+        description: 'Anda belum memiliki permission edit untuk prepaid expense.',
+        status: 'warning',
+        duration: 3000
+      });
+      return;
+    }
 
     // Periksa apakah expense account sudah diset
     if (!selectedPrepaid.expense_account_id || selectedPrepaid.expense_account_id === 0) {
@@ -211,6 +231,15 @@ export default function PrepaidExpensesPage() {
 
   const handleSetExpenseAccount = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     if (!selectedPrepaid) return;
+    if (!canManagePrepaidExpenses || !canSelectPrepaidAccounts) {
+      toast({
+        title: 'Akses ditolak',
+        description: 'Anda membutuhkan akses edit prepaid expense dan view COA untuk memilih akun beban.',
+        status: 'warning',
+        duration: 3000
+      });
+      return;
+    }
     const accountId = parseInt(e.target.value);
     if (!accountId) return;
 
@@ -239,6 +268,15 @@ export default function PrepaidExpensesPage() {
   };
 
   const handleTerminateClick = (prepaid: PrepaidExpense) => {
+    if (!canManagePrepaidExpenses) {
+      toast({
+        title: 'Akses ditolak',
+        description: 'Anda belum memiliki permission edit untuk terminasi prepaid expense.',
+        status: 'warning',
+        duration: 3000
+      });
+      return;
+    }
     setPrepaidToTerminate(prepaid);
     setTerminateType('REFUND');
     setDestinationAccount('');
@@ -247,6 +285,15 @@ export default function PrepaidExpensesPage() {
 
   const handleTerminateSubmit = async () => {
     if (!prepaidToTerminate) return;
+    if (!canManagePrepaidExpenses) {
+      toast({
+        title: 'Akses ditolak',
+        description: 'Anda belum memiliki permission edit untuk terminasi prepaid expense.',
+        status: 'warning',
+        duration: 3000
+      });
+      return;
+    }
 
     // Validasi akun tujuan
     if (!destinationAccount || parseInt(destinationAccount) === 0) {
@@ -284,6 +331,15 @@ export default function PrepaidExpensesPage() {
   };
 
   const handleEditScheduleClick = (schedule: PrepaidSchedule) => {
+    if (!canManagePrepaidExpenses) {
+      toast({
+        title: 'Akses ditolak',
+        description: 'Anda belum memiliki permission edit untuk mengubah jadwal prepaid expense.',
+        status: 'warning',
+        duration: 3000
+      });
+      return;
+    }
     setScheduleToEdit(schedule);
     setEditScheduledDate(toDateInputValue(schedule.scheduled_date));
     onEditScheduleOpen();
@@ -291,6 +347,15 @@ export default function PrepaidExpensesPage() {
 
   const handleUpdateScheduleSubmit = async () => {
     if (!selectedPrepaid || !scheduleToEdit) return;
+    if (!canManagePrepaidExpenses) {
+      toast({
+        title: 'Akses ditolak',
+        description: 'Anda belum memiliki permission edit untuk mengubah jadwal prepaid expense.',
+        status: 'warning',
+        duration: 3000
+      });
+      return;
+    }
     if (!editScheduledDate) {
       toast({
         title: 'Tanggal belum diisi',
@@ -426,12 +491,12 @@ export default function PrepaidExpensesPage() {
                     <Button size="sm" colorScheme="blue" leftIcon={<Icon as={FiEye} />} onClick={() => loadPrepaidDetails(item)}>
                       Jadwal
                     </Button>
-                    {item.status === 'ACTIVE' && (
+                    {item.status === 'ACTIVE' && canManagePrepaidExpenses && (
                       <Button size="sm" colorScheme="orange" leftIcon={<Icon as={FiXCircle} />} onClick={() => handleTerminateClick(item)}>
                         Terminasi
                       </Button>
                     )}
-                    {isAdmin && (
+                    {(isAdmin || canDeletePrepaidExpenses) && (
                       <Button size="sm" colorScheme="red" variant="outline" leftIcon={<Icon as={FiTrash2} />} onClick={() => handleDeleteClick(item)}>
                         Hapus
                       </Button>
@@ -465,6 +530,7 @@ export default function PrepaidExpensesPage() {
                 <Select size="sm" bg={inputBg} borderColor={inputBorderColor} color={textColor}
                   value={selectedPrepaid?.expense_account_id || ''}
                   onChange={handleSetExpenseAccount}
+                  isDisabled={!canManagePrepaidExpenses || !canSelectPrepaidAccounts}
                   _hover={{ borderColor: inputBorderColor }}
                   _focusVisible={fieldFocusStyles}
                 >
@@ -475,6 +541,11 @@ export default function PrepaidExpensesPage() {
                       <option key={acc.id} value={acc.id}>{acc.code} - {acc.name}</option>
                     ))}
                 </Select>
+                {!canSelectPrepaidAccounts && (
+                  <Text fontSize="xs" color="orange.500">
+                    Akses COA belum aktif untuk memilih akun beban.
+                  </Text>
+                )}
               </VStack>
             </Flex>
 
@@ -508,7 +579,7 @@ export default function PrepaidExpensesPage() {
                       )}
                     </Td>
                     <Td>
-                      {sched.status === 'PENDING' && (
+                      {sched.status === 'PENDING' && canManagePrepaidExpenses && (
                         <HStack spacing={2}>
                           <Button size="xs" variant="outline" leftIcon={<Icon as={FiEdit2} />} onClick={() => handleEditScheduleClick(sched)}>
                             Edit Jadwal

@@ -80,8 +80,6 @@ import {
   Tooltip,
   Radio,
   RadioGroup,
-  Stack,
-  Checkbox,
 } from "@chakra-ui/react";
 import {
   FiPlus,
@@ -119,6 +117,7 @@ import { Account as GLAccount, AccountCatalogItem } from "@/types/account";
 import approvalService from "@/services/approvalService";
 import { assetService } from "@/services/assetService";
 import {
+  isAccountingRole,
   isFinanceManagerRole,
   isFinanceTeamRole,
   normalizeRole,
@@ -146,6 +145,7 @@ interface PurchaseFormData {
 
   // Legacy tax field (backward compatibility)
   tax: string;
+  freight_cost: string;
 
   // Tax additions (Penambahan)
   ppn_rate: string;
@@ -264,6 +264,8 @@ const getStatusColor = (status: string) => {
       return "yellow";
     case "pending":
       return "blue";
+    case "pending_accounting":
+      return "orange";
     case "cancelled":
     case "rejected":
       return "red";
@@ -288,6 +290,42 @@ const getApprovalStatusColor = (approvalStatus: string) => {
       return "gray";
   }
 };
+
+const formatDateForInput = (date: Date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getCurrentMonthPurchaseRange = () => {
+  const now = new Date();
+  return {
+    start_date: formatDateForInput(
+      new Date(now.getFullYear(), now.getMonth(), 1),
+    ),
+    end_date: formatDateForInput(now),
+  };
+};
+
+const getDefaultPurchaseFilters = (): PurchaseFilterParams => ({
+  status: "",
+  vendor_id: "",
+  project_id: "",
+  approval_status: "",
+  accounting_status: "",
+  search: "",
+  start_date: "",
+  end_date: "",
+  page: 1,
+  limit: 10,
+});
+
+const getAccountingMonitoringFilters = (): PurchaseFilterParams => ({
+  ...getDefaultPurchaseFilters(),
+  ...getCurrentMonthPurchaseRange(),
+  accounting_status: "READY_FOR_COA",
+});
 
 // Format currency in IDR
 const formatCurrency = (amount: number) => {
@@ -435,6 +473,14 @@ const getSelectablePurchaseRequestItems = (
     return currentPurchaseId != null && item.purchase_id === currentPurchaseId;
   });
 };
+
+const isPurchaseRequestSelectableForPurchase = (
+  purchaseRequest: PurchaseRequest,
+  currentPurchaseId?: number | null,
+) =>
+  purchaseRequest.status === "APPROVED" &&
+  getSelectablePurchaseRequestItems(purchaseRequest, currentPurchaseId).length >
+    0;
 
 const mapPurchaseRequestItemToFormData = (
   item: PurchaseRequestLineItem,
@@ -707,17 +753,10 @@ const PurchasesPage: React.FC = () => {
   });
 
   // Filter state
-  const [filters, setFilters] = useState<PurchaseFilterParams>({
-    status: "",
-    vendor_id: "",
-    project_id: "",
-    approval_status: "",
-    search: "",
-    start_date: "",
-    end_date: "",
-    page: 1,
-    limit: 10,
-  });
+  const [filters, setFilters] = useState<PurchaseFilterParams>(
+    getDefaultPurchaseFilters,
+  );
+  const bootstrappedPurchaseTokenRef = useRef<string | null>(null);
 
   // Local search state (client-side, no debouncing needed)
   const [searchInput, setSearchInput] = useState("");
@@ -785,8 +824,6 @@ const PurchasesPage: React.FC = () => {
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(
     [],
   );
-  const [selectedPurchaseRequestItemIds, setSelectedPurchaseRequestItemIds] =
-    useState<string[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [loadingPRs, setLoadingPRs] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
@@ -822,6 +859,7 @@ const PurchasesPage: React.FC = () => {
     // Tax additions (Penambahan)
     ppn_rate: "0",
     other_tax_additions: "0",
+    freight_cost: "0",
 
     // Tax deductions (Pemotongan)
     pph21_rate: "0",
@@ -924,6 +962,7 @@ const PurchasesPage: React.FC = () => {
   const [financeTaxForm, setFinanceTaxForm] = useState({
     ppn_rate: "0",
     other_tax_additions: "0",
+    freight_cost: "0",
     pph21_rate: "0",
     pph23_rate: "0",
     other_tax_deductions: "0",
@@ -933,6 +972,26 @@ const PurchasesPage: React.FC = () => {
     payment_reference: "",
   });
   const [savingFinanceTax, setSavingFinanceTax] = useState(false);
+
+  // Accounting COA completion modal state
+  const {
+    isOpen: isAccountingCOAOpen,
+    onOpen: onAccountingCOAOpen,
+    onClose: onAccountingCOAClose,
+  } = useDisclosure();
+  const [accountingCOAPurchase, setAccountingCOAPurchase] =
+    useState<Purchase | null>(null);
+  const [accountingCOAForm, setAccountingCOAForm] = useState({
+    credit_account_id: "",
+    items: [] as Array<{
+      purchase_item_id: number;
+      label: string;
+      quantity: number;
+      total_price: number;
+      expense_account_id: string;
+    }>,
+  });
+  const [savingAccountingCOA, setSavingAccountingCOA] = useState(false);
 
   // Receipts modal state
   const {
@@ -954,9 +1013,11 @@ const PurchasesPage: React.FC = () => {
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport, canApprove } =
     useModulePermissions("purchases");
-  const { canView: canViewAccounts } = useModulePermissions("accounts");
+  const isAccounting = isAccountingRole(roleNorm);
+  const accountingMonitoringEnabled =
+    isAccounting || isFinanceManagerRole(roleNorm) || roleNorm === "admin";
   const canSelectAccountFromCOA =
-    canViewAccounts || isFinanceManagerRole(roleNorm);
+    roleNorm === "admin" || isFinanceManagerRole(roleNorm) || isAccounting;
 
   const getDefaultPurchaseItemAccount = useCallback(
     (itemType?: string) => {
@@ -1062,10 +1123,12 @@ const PurchasesPage: React.FC = () => {
 
   const resolvePurchaseItemExpenseAccountId = useCallback(
     (item: PurchaseItemFormData) =>
-      item.expense_account_id
-        ? parseInt(item.expense_account_id, 10)
-        : getDefaultPurchaseItemAccountId(item.item_type) || undefined,
-    [getDefaultPurchaseItemAccountId],
+      canSelectAccountFromCOA
+        ? item.expense_account_id
+          ? parseInt(item.expense_account_id, 10)
+          : getDefaultPurchaseItemAccountId(item.item_type) || undefined
+        : undefined,
+    [canSelectAccountFromCOA, getDefaultPurchaseItemAccountId],
   );
 
   // Fetch system settings for default tax rate
@@ -1420,6 +1483,7 @@ const PurchasesPage: React.FC = () => {
           end_date: filterParams.end_date,
           search: filterParams.search,
           approval_status: filterParams.approval_status,
+          accounting_status: filterParams.accounting_status,
           requires_approval: filterParams.requires_approval,
         });
       } catch (summaryErr) {
@@ -1562,16 +1626,69 @@ const PurchasesPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchPurchases();
+    if (!token || !user || bootstrappedPurchaseTokenRef.current === token) {
+      return;
+    }
+
+    bootstrappedPurchaseTokenRef.current = token;
+    const queryAccountingStatus = searchParams
+      ?.get("accounting_status")
+      ?.toUpperCase();
+    const queryStartDate = searchParams?.get("start_date") || "";
+    const queryEndDate = searchParams?.get("end_date") || "";
+    const querySearch = searchParams?.get("search") || "";
+    const hasQueryFilters = Boolean(
+      queryAccountingStatus || queryStartDate || queryEndDate || querySearch,
+    );
+    const initialFilters = hasQueryFilters
+      ? {
+          ...getDefaultPurchaseFilters(),
+          accounting_status: queryAccountingStatus || "",
+          start_date: queryStartDate,
+          end_date: queryEndDate,
+          search: querySearch,
+        }
+      : isAccounting
+      ? getAccountingMonitoringFilters()
+      : getDefaultPurchaseFilters();
+
+    setSearchInput(querySearch);
+    setFilters(initialFilters);
+    fetchPurchases(initialFilters);
     fetchVendors(); // Load vendors for filter
     fetchBankAccounts(); // Load bank/cash accounts for view & forms
-  }, [token]);
+  }, [token, user, isAccounting, searchParams]);
 
   // Handle filter changes (immediate for non-search filters)
   const handleFilterChange = (newFilters: Partial<PurchaseFilterParams>) => {
     const updatedFilters = { ...filters, ...newFilters, page: 1 };
     setFilters(updatedFilters);
     fetchPurchases(updatedFilters);
+  };
+
+  const handleApplyAccountingMonitoring = (
+    accountingStatus = "READY_FOR_COA",
+    useCurrentMonth = true,
+  ) => {
+    const updatedFilters: PurchaseFilterParams = {
+      ...filters,
+      ...(useCurrentMonth ? getCurrentMonthPurchaseRange() : {}),
+      status: "",
+      approval_status: "",
+      accounting_status: accountingStatus,
+      page: 1,
+    };
+    setSearchInput("");
+    setFilters(updatedFilters);
+    fetchPurchases(updatedFilters);
+  };
+
+  const handleClearFilters = () => {
+    setSearchInput("");
+    setPurchases(allPurchases);
+    const resetFilters = getDefaultPurchaseFilters();
+    setFilters(resetFilters);
+    fetchPurchases(resetFilters);
   };
 
   // Client-side search handler (instant, no API call)
@@ -1644,6 +1761,7 @@ const PurchasesPage: React.FC = () => {
         start_date: filters.start_date || undefined,
         end_date: filters.end_date || undefined,
         search: filters.search || undefined,
+        accounting_status: filters.accounting_status || undefined,
       });
       toast({
         title: "Success",
@@ -1670,6 +1788,7 @@ const PurchasesPage: React.FC = () => {
         start_date: filters.start_date || undefined,
         end_date: filters.end_date || undefined,
         search: filters.search || undefined,
+        accounting_status: filters.accounting_status || undefined,
       });
       toast({
         title: "Success",
@@ -2295,13 +2414,23 @@ const PurchasesPage: React.FC = () => {
   };
 
   // Fetch Purchase Requests
-  const fetchPurchaseRequests = async () => {
+  const fetchPurchaseRequests = async (currentPurchaseId?: number | null) => {
     if (!token) return;
     try {
       setLoadingPRs(true);
-      const response = await fetch("/api/v1/purchase-requests", {
-        headers: { Authorization: `Bearer ${token}` },
+      const params = new URLSearchParams({
+        status: "APPROVED",
+        available_for_purchase: "true",
       });
+      if (currentPurchaseId) {
+        params.set("current_purchase_id", currentPurchaseId.toString());
+      }
+      const response = await fetch(
+        `/api/v1/purchase-requests?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
       if (response.ok) {
         const data = await response.json();
         const prs = Array.isArray(data.data)
@@ -2310,7 +2439,9 @@ const PurchasesPage: React.FC = () => {
             ? data
             : [];
         setPurchaseRequests(
-          prs.filter((pr: PurchaseRequest) => pr.status === "APPROVED"),
+          prs.filter((pr: PurchaseRequest) =>
+            isPurchaseRequestSelectableForPurchase(pr, currentPurchaseId),
+          ),
         );
       }
     } catch (err: any) {
@@ -3169,11 +3300,6 @@ const PurchasesPage: React.FC = () => {
       // Fetch detailed purchase data for editing
       const detailResponse = await purchaseService.getById(purchase.id);
       setSelectedPurchase(detailResponse);
-      setSelectedPurchaseRequestItemIds(
-        (detailResponse.purchase_items || [])
-          .map((item) => item.purchase_request_item_id?.toString() || "")
-          .filter(Boolean),
-      );
 
       // Set form data for editing
       setFormData({
@@ -3193,6 +3319,7 @@ const PurchasesPage: React.FC = () => {
           detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() || "0",
+        freight_cost: detailResponse.freight_cost?.toString() || "0",
         // Tax deductions (Pemotongan)
         pph21_rate: detailResponse.pph21_rate?.toString() || "0",
         pph23_rate: detailResponse.pph23_rate?.toString() || "0",
@@ -3215,7 +3342,7 @@ const PurchasesPage: React.FC = () => {
       });
 
       await fetchVendors(); // Load vendors for dropdown
-      await fetchPurchaseRequests(); // Load Purchase Requests
+      await fetchPurchaseRequests(detailResponse.id); // Load Purchase Requests
       await fetchProjects(); // Load Projects
       await fetchProductsList(); // Load products for dropdown
       await fetchExpenseAccounts(); // Load expense accounts for dropdown
@@ -3243,6 +3370,7 @@ const PurchasesPage: React.FC = () => {
           detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() || "0",
+        freight_cost: detailResponse.freight_cost?.toString() || "0",
         pph21_rate: detailResponse.pph21_rate?.toString() || "0",
         pph23_rate: detailResponse.pph23_rate?.toString() || "0",
         other_tax_deductions:
@@ -3274,6 +3402,7 @@ const PurchasesPage: React.FC = () => {
     const ppnRate = parseFloat(financeTaxForm.ppn_rate) || 0;
     const otherTaxAdditions =
       parseFloat(financeTaxForm.other_tax_additions) || 0;
+    const freightCost = parseFloat(financeTaxForm.freight_cost) || 0;
     const pph21Rate = parseFloat(financeTaxForm.pph21_rate) || 0;
     const pph23Rate = parseFloat(financeTaxForm.pph23_rate) || 0;
     const otherTaxDeductions =
@@ -3285,6 +3414,7 @@ const PurchasesPage: React.FC = () => {
 
     return (
       netBeforeTax +
+      freightCost +
       ppnAmount +
       otherTaxAdditions -
       pph21Amount -
@@ -3356,6 +3486,7 @@ const PurchasesPage: React.FC = () => {
           : defaultTaxRate,
         other_tax_additions:
           parseFloat(financeTaxForm.other_tax_additions) || 0,
+        freight_cost: parseFloat(financeTaxForm.freight_cost) || 0,
         pph21_rate: parseFloat(financeTaxForm.pph21_rate) || 0,
         pph23_rate: parseFloat(financeTaxForm.pph23_rate) || 0,
         other_tax_deductions:
@@ -3364,9 +3495,10 @@ const PurchasesPage: React.FC = () => {
         bank_account_id: financeTaxForm.bank_account_id
           ? parseInt(financeTaxForm.bank_account_id)
           : undefined,
-        credit_account_id: financeTaxForm.credit_account_id
-          ? parseInt(financeTaxForm.credit_account_id)
-          : undefined,
+        credit_account_id:
+          canSelectAccountFromCOA && financeTaxForm.credit_account_id
+            ? parseInt(financeTaxForm.credit_account_id)
+            : undefined,
         payment_reference: financeTaxForm.payment_reference,
         // NOTE: No items sent — backend will skip item update
       };
@@ -3401,6 +3533,108 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
+  const handleAccountingCOAConfig = async (purchase: Purchase) => {
+    try {
+      const detailResponse = await purchaseService.getById(purchase.id);
+      setAccountingCOAPurchase(detailResponse);
+      setAccountingCOAForm({
+        credit_account_id: detailResponse.credit_account_id?.toString() || "",
+        items: (detailResponse.purchase_items || []).map((item) => ({
+          purchase_item_id: item.id,
+          label: getPurchaseItemDisplayName(item),
+          quantity: item.quantity,
+          total_price: item.total_price || item.quantity * item.unit_price,
+          expense_account_id: item.expense_account_id?.toString() || "",
+        })),
+      });
+      await fetchExpenseAccounts();
+      await fetchCreditAccounts();
+      onAccountingCOAOpen();
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description:
+          err.response?.data?.error ||
+          err.message ||
+          "Gagal memuat detail purchase untuk input COA",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    }
+  };
+
+  const handleSaveAccountingCOA = async () => {
+    if (!accountingCOAPurchase) return;
+
+    const missingItem = accountingCOAForm.items.find(
+      (item) => !item.expense_account_id,
+    );
+    if (missingItem) {
+      toast({
+        title: "COA Belum Lengkap",
+        description: `Pilih COA untuk ${missingItem.label}.`,
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (
+      accountingCOAPurchase.payment_method === "CREDIT" &&
+      !accountingCOAForm.credit_account_id
+    ) {
+      toast({
+        title: "COA Hutang Belum Dipilih",
+        description: "Purchase kredit wajib memiliki akun hutang/liability.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    try {
+      setSavingAccountingCOA(true);
+      await purchaseService.completeAccountingCOA(accountingCOAPurchase.id, {
+        credit_account_id: accountingCOAForm.credit_account_id
+          ? parseInt(accountingCOAForm.credit_account_id, 10)
+          : undefined,
+        items: accountingCOAForm.items.map((item) => ({
+          purchase_item_id: item.purchase_item_id,
+          expense_account_id: parseInt(item.expense_account_id, 10),
+        })),
+      });
+
+      toast({
+        title: "Purchase Difinalisasi",
+        description:
+          "COA berhasil dilengkapi. Jurnal, stok, payable/prepaid, dan fulfillment diproses setelah input accounting.",
+        status: "success",
+        duration: 5000,
+        isClosable: true,
+      });
+
+      onAccountingCOAClose();
+      await fetchPurchases();
+    } catch (err: any) {
+      toast({
+        title: "Gagal Finalisasi COA",
+        description:
+          err.response?.data?.error ||
+          err.response?.data?.message ||
+          err.message ||
+          "Terjadi kesalahan saat finalisasi COA accounting",
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
+    } finally {
+      setSavingAccountingCOA(false);
+    }
+  };
+
   // Handle create new purchase
   const handleCreate = async () => {
     // Reset form data
@@ -3419,6 +3653,7 @@ const PurchasesPage: React.FC = () => {
       // Tax additions (Penambahan)
       ppn_rate: defaultTaxRate.toString(),
       other_tax_additions: "0",
+      freight_cost: "0",
 
       // Tax deductions (Pemotongan)
       pph21_rate: "0",
@@ -3434,7 +3669,6 @@ const PurchasesPage: React.FC = () => {
       items: [],
     });
     setSelectedPurchase(null);
-    setSelectedPurchaseRequestItemIds([]);
     await fetchVendors(); // Load vendors for dropdown
     await fetchPurchaseRequests(); // Load Purchase Requests
     await fetchProjects(); // Load Projects
@@ -3487,15 +3721,18 @@ const PurchasesPage: React.FC = () => {
         return !item.description?.trim() || !item.asset_category_id;
       }
       if (item.item_type === "PREPAID") {
-        // Prepaid items require: description, expense_account_id, quantity, amortization month
+        // Prepaid items require COA only for roles that are allowed to choose COA.
         return (
           !item.description?.trim() ||
-          !resolvePurchaseItemExpenseAccountId(item) ||
+          (canSelectAccountFromCOA && !resolvePurchaseItemExpenseAccountId(item)) ||
           amortizationMonth <= 0
         );
       }
-      // Inventory items require: product_id, quantity, expense_account_id
-      return !item.product_id || !resolvePurchaseItemExpenseAccountId(item);
+      // Inventory items require COA only for roles that are allowed to choose COA.
+      return (
+        !item.product_id ||
+        (canSelectAccountFromCOA && !resolvePurchaseItemExpenseAccountId(item))
+      );
     });
 
     if (invalidItems.length > 0) {
@@ -3508,7 +3745,9 @@ const PurchasesPage: React.FC = () => {
       if (assetInvalid)
         errorMsg = "Item Aset Tetap: Nama aset dan Kategori Aset harus diisi.";
       else if (prepaidInvalid)
-        errorMsg = "Item Prepaid: Deskripsi dan Akun harus diisi.";
+        errorMsg = canSelectAccountFromCOA
+          ? "Item Prepaid: Deskripsi dan Akun harus diisi."
+          : "Item Prepaid: Deskripsi dan durasi amortisasi harus diisi.";
 
       toast({
         title: "Error",
@@ -3576,6 +3815,7 @@ const PurchasesPage: React.FC = () => {
           ? parseFloat(formData.ppn_rate)
           : defaultTaxRate,
         other_tax_additions: parseFloat(formData.other_tax_additions) || 0,
+        freight_cost: parseFloat(formData.freight_cost) || 0,
         pph21_rate: parseFloat(formData.pph21_rate) || 0,
         pph23_rate: parseFloat(formData.pph23_rate) || 0,
         other_tax_deductions: parseFloat(formData.other_tax_deductions) || 0,
@@ -3588,6 +3828,7 @@ const PurchasesPage: React.FC = () => {
             : parseInt(normalizedPayment.bank_account_id),
         credit_account_id:
           normalizedPaymentMethod === "CREDIT" &&
+          canSelectAccountFromCOA &&
           normalizedPayment.credit_account_id
             ? parseInt(normalizedPayment.credit_account_id)
             : undefined,
@@ -3698,6 +3939,7 @@ const PurchasesPage: React.FC = () => {
           detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() || "0",
+        freight_cost: detailResponse.freight_cost?.toString() || "0",
         // Tax deductions
         pph21_rate: detailResponse.pph21_rate?.toString() || "0",
         pph23_rate: detailResponse.pph23_rate?.toString() || "0",
@@ -3709,12 +3951,14 @@ const PurchasesPage: React.FC = () => {
         credit_account_id: detailResponse.credit_account_id?.toString() || "",
         payment_reference: "", // Clear payment reference
         items:
-          detailResponse.purchase_items?.map(mapPurchaseItemToFormData) || [],
+          detailResponse.purchase_items?.map((item) => ({
+            ...mapPurchaseItemToFormData(item),
+            purchase_request_item_id: "",
+          })) || [],
       });
 
       // Reset selected purchase so it treats it as NEW
       setSelectedPurchase(null);
-      setSelectedPurchaseRequestItemIds([]);
 
       // We can run these in parallel to speed up
       await Promise.all([
@@ -3898,6 +4142,10 @@ const PurchasesPage: React.FC = () => {
       ((purchaseStatus === "DRAFT" && canCurrentUserActOnPurchase(purchase)) ||
         purchaseStatus === "PENDING" ||
         purchaseStatus === "PENDING_APPROVAL");
+    const accountingCanCompleteCOA =
+      canEdit &&
+      purchaseStatus === "PENDING_ACCOUNTING" &&
+      (roleNorm === "admin" || isFinanceManagerRole(roleNorm) || isAccounting);
 
     return (
       <HStack spacing={2}>
@@ -3943,6 +4191,23 @@ const PurchasesPage: React.FC = () => {
             }}
           >
             Set Pajak & Pembayaran
+          </Button>
+        )}
+
+        {accountingCanCompleteCOA && (
+          <Button
+            size="sm"
+            colorScheme="orange"
+            variant="solid"
+            leftIcon={<FiEdit />}
+            onClick={() => handleAccountingCOAConfig(purchase)}
+            fontWeight="semibold"
+            _hover={{
+              transform: "translateY(-1px)",
+              boxShadow: "md",
+            }}
+          >
+            Lengkapi COA
           </Button>
         )}
 
@@ -4072,6 +4337,7 @@ const PurchasesPage: React.FC = () => {
               "finance",
               "finance_manager",
               "finance_staff",
+              "accounting",
               "inventory_manager",
               "employee",
               "director",
@@ -4095,6 +4361,7 @@ const PurchasesPage: React.FC = () => {
             "finance",
             "finance_manager",
             "finance_staff",
+            "accounting",
             "inventory_manager",
             "employee",
             "director",
@@ -4571,6 +4838,81 @@ const PurchasesPage: React.FC = () => {
                 </Alert>
               )}
 
+              {accountingMonitoringEnabled && (
+                <Card
+                  mb={6}
+                  bg={filters.accounting_status ? statBgColors.orange : cardBg}
+                  borderWidth="1px"
+                  borderColor={
+                    filters.accounting_status ? "orange.200" : borderColor
+                  }
+                  boxShadow="sm"
+                >
+                  <CardBody>
+                    <Flex
+                      gap={4}
+                      align={{ base: "stretch", lg: "center" }}
+                      justify="space-between"
+                      direction={{ base: "column", lg: "row" }}
+                    >
+                      <Box>
+                        <HStack spacing={3} mb={2}>
+                          <Box
+                            p={2}
+                            borderRadius="lg"
+                            bg={statBgColors.orange}
+                            color={statColors.orange}
+                          >
+                            <FiFileText size={18} />
+                          </Box>
+                          <Heading size="sm">Monitoring Accounting</Heading>
+                          <Badge colorScheme="orange" variant="subtle">
+                            Siap Input GL/COA
+                          </Badge>
+                        </HStack>
+                        <Text fontSize="sm" color={textSecondary}>
+                          Gunakan filter ini untuk melihat Purchase yang sudah
+                          dibuat dan sudah disetujui Finance Manager, terutama
+                          yang masih menunggu Accounting melengkapi GL/COA.
+                        </Text>
+                      </Box>
+
+                      <HStack spacing={2} wrap="wrap">
+                        <Badge colorScheme="blue" px={3} py={1}>
+                          {pagination.total} data tampil
+                        </Badge>
+                        <Button
+                          size="sm"
+                          colorScheme="orange"
+                          leftIcon={<FiClock />}
+                          onClick={() =>
+                            handleApplyAccountingMonitoring(
+                              "READY_FOR_COA",
+                              true,
+                            )
+                          }
+                        >
+                          Bulan Ini - Siap COA
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          leftIcon={<FiCheckCircle />}
+                          onClick={() =>
+                            handleApplyAccountingMonitoring(
+                              "APPROVED_BY_FINANCE",
+                              true,
+                            )
+                          }
+                        >
+                          Semua Approved FM
+                        </Button>
+                      </HStack>
+                    </Flex>
+                  </CardBody>
+                </Card>
+              )}
+
               {/* Search and Filters */}
               <Card mb={6}>
                 <CardBody>
@@ -4660,7 +5002,10 @@ const PurchasesPage: React.FC = () => {
                         placeholder={t("purchases.allStatuses")}
                         value={filters.status || ""}
                         onChange={(e) =>
-                          handleFilterChange({ status: e.target.value })
+                          handleFilterChange({
+                            status: e.target.value,
+                            accounting_status: "",
+                          })
                         }
                         bg={cardBg}
                       >
@@ -4668,6 +5013,9 @@ const PurchasesPage: React.FC = () => {
                         <option value="draft">{t("purchases.draft")}</option>
                         <option value="pending_approval">
                           {t("purchases.pendingApprovalStatus")}
+                        </option>
+                        <option value="pending_accounting">
+                          Menunggu Accounting
                         </option>
                         <option value="approved">
                           {t("purchases.approved")}
@@ -4677,6 +5025,40 @@ const PurchasesPage: React.FC = () => {
                         </option>
                       </Select>
                     </Box>
+
+                    {accountingMonitoringEnabled && (
+                      <Box minW="220px">
+                        <Text
+                          fontSize="sm"
+                          fontWeight="medium"
+                          mb={2}
+                          color={textSecondary}
+                        >
+                          Monitoring Accounting
+                        </Text>
+                        <Select
+                          placeholder="Semua Purchase"
+                          value={filters.accounting_status || ""}
+                          onChange={(e) =>
+                            handleFilterChange({
+                              accounting_status: e.target.value,
+                              status: "",
+                              approval_status: "",
+                            })
+                          }
+                          bg={cardBg}
+                        >
+                          <option value="">Semua Purchase</option>
+                          <option value="READY_FOR_COA">
+                            Siap Input GL/COA
+                          </option>
+                          <option value="APPROVED_BY_FINANCE">
+                            Approved Finance Manager
+                          </option>
+                          <option value="COA_COMPLETED">COA Selesai</option>
+                        </Select>
+                      </Box>
+                    )}
 
                     <Box minW="160px">
                       <Text
@@ -4693,6 +5075,7 @@ const PurchasesPage: React.FC = () => {
                         onChange={(e) =>
                           handleFilterChange({
                             approval_status: e.target.value,
+                            accounting_status: "",
                           })
                         }
                         bg={cardBg}
@@ -4756,25 +5139,7 @@ const PurchasesPage: React.FC = () => {
                     <Button
                       leftIcon={<FiFilter />}
                       variant="outline"
-                      onClick={() => {
-                        // Clear search input state
-                        setSearchInput("");
-                        // Reset purchases to show all
-                        setPurchases(allPurchases);
-                        // Reset filters
-                        setFilters({
-                          page: 1,
-                          limit: 10,
-                          status: "",
-                          vendor_id: "",
-                          project_id: "",
-                          approval_status: "",
-                          search: "",
-                          start_date: "",
-                          end_date: "",
-                        });
-                        fetchPurchases({ page: 1, limit: 10 });
-                      }}
+                      onClick={handleClearFilters}
                     >
                       {t("purchases.clearFilters")}
                     </Button>
@@ -5216,7 +5581,7 @@ const PurchasesPage: React.FC = () => {
                               >
                                 ➕ Tax Additions (Penambahan)
                               </Text>
-                              <SimpleGrid columns={2} spacing={4}>
+                              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                                 <FormControl>
                                   <FormLabel fontSize="sm">
                                     PPN Rate (%)
@@ -5270,6 +5635,27 @@ const PurchasesPage: React.FC = () => {
                                   </NumberInput>
                                   <FormHelperText fontSize="xs">
                                     Pajak tambahan lainnya (opsional)
+                                  </FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">
+                                    Freight / Biaya Pengiriman
+                                  </FormLabel>
+                                  <CurrencyInput
+                                    value={parseFloat(formData.freight_cost) || 0}
+                                    onChange={(value) =>
+                                      setFormData({
+                                        ...formData,
+                                        freight_cost: value.toString(),
+                                      })
+                                    }
+                                    placeholder="0"
+                                    size="sm"
+                                    min={0}
+                                  />
+                                  <FormHelperText fontSize="xs">
+                                    Dikapitalisasi ke inventory valuation/HPP.
                                   </FormHelperText>
                                 </FormControl>
                               </SimpleGrid>
@@ -5433,6 +5819,8 @@ const PurchasesPage: React.FC = () => {
                                       100;
                                     const totalAdditions =
                                       ppnAmount + otherAdditions;
+                                    const freightCost =
+                                      parseFloat(formData.freight_cost) || 0;
 
                                     const pph21Amount =
                                       (discountedSubtotal *
@@ -5457,6 +5845,7 @@ const PurchasesPage: React.FC = () => {
 
                                     const finalTotal =
                                       discountedSubtotal +
+                                      freightCost +
                                       totalAdditions -
                                       totalDeductions;
 
@@ -5494,6 +5883,12 @@ const PurchasesPage: React.FC = () => {
                                               + Other Additions (
                                               {formData.other_tax_additions}%):{" "}
                                               {formatCurrency(otherAdditions)}
+                                            </Text>
+                                          )}
+                                          {freightCost > 0 && (
+                                            <Text color={statColors.green}>
+                                              + Freight / Pengiriman:{" "}
+                                              {formatCurrency(freightCost)}
                                             </Text>
                                           )}
                                           {parseFloat(formData.pph21_rate) >
@@ -5686,17 +6081,17 @@ const PurchasesPage: React.FC = () => {
                                     bg={inputBg}
                                   >
                                     <Text fontSize="xs" fontWeight="semibold">
-                                      Default Liability COA
+                                      COA Liability Belum Dipilih
                                     </Text>
                                     <Text fontSize="xs" color={textSecondary}>
-                                      Hutang usaha default sistem akan dipakai saat purchase disimpan.
+                                      Finance staff tidak memilih COA saat create purchase.
                                     </Text>
                                   </Box>
                                 )}
                                 <FormHelperText fontSize="xs">
                                   {canSelectAccountFromCOA
                                     ? "Required: Select liability account for tracking credit purchases"
-                                    : "COA liability opsional untuk user ini. Sistem akan memakai akun default."}
+                                    : "COA liability dikosongkan dan dapat dilengkapi oleh role accounting/finance manager."}
                                 </FormHelperText>
                               </FormControl>
                             )}
@@ -5880,7 +6275,18 @@ const PurchasesPage: React.FC = () => {
                                     const selectedPr = purchaseRequests.find(
                                       (pr) => pr.id.toString() === selectedPrId,
                                     );
-                                    setSelectedPurchaseRequestItemIds([]);
+                                    const approvedItems =
+                                      getSelectablePurchaseRequestItems(
+                                        selectedPr,
+                                        selectedPurchase?.id ?? null,
+                                      );
+                                    const purchaseItemsFromPr =
+                                      approvedItems.map((item) =>
+                                        mapPurchaseRequestItemToFormData(
+                                          item,
+                                          defaultExpenseAccountId,
+                                        ),
+                                      );
 
                                     setFormData((prev) => ({
                                       ...prev,
@@ -5889,7 +6295,7 @@ const PurchasesPage: React.FC = () => {
                                         ? selectedPr.project_id.toString()
                                         : prev.project_id,
                                       items: selectedPrId
-                                        ? []
+                                        ? purchaseItemsFromPr
                                         : prev.items.filter(
                                             (item) =>
                                               !item.purchase_request_item_id,
@@ -5927,163 +6333,11 @@ const PurchasesPage: React.FC = () => {
                                 color={warningTextColor}
                               >
                                 {selectedPurchaseRequest
-                                  ? `${selectablePurchaseRequestItems.length} item approved tersedia. Pilih item yang mau dibeli dulu, lalu muat ke form purchase.`
+                                  ? selectablePurchaseRequestItems.length > 0
+                                    ? `${selectablePurchaseRequestItems.length} item approved dari PR ini otomatis dimuat ke form purchase.`
+                                    : "Tidak ada item approved yang belum dipakai dari PR ini."
                                   : "Warning: Amount cannot exceed PR limit"}
                               </FormHelperText>
-                              {selectedPurchaseRequest && (
-                                <Box
-                                  mt={3}
-                                  p={3}
-                                  borderWidth="1px"
-                                  borderColor={borderColor}
-                                  rounded="md"
-                                  bg={notesBoxBg}
-                                >
-                                  <Flex
-                                    justify="space-between"
-                                    align="center"
-                                    gap={2}
-                                    mb={3}
-                                    wrap="wrap"
-                                  >
-                                    <Box>
-                                      <Text fontSize="sm" fontWeight="semibold">
-                                        Item approved siap diproses
-                                      </Text>
-                                      <Text fontSize="xs" color={textSecondary}>
-                                        PR {selectedPurchaseRequest.pr_number}:
-                                        pilih item approved yang belum dipakai
-                                        di purchase lain.
-                                      </Text>
-                                    </Box>
-                                    <HStack spacing={2}>
-                                      <Button
-                                        size="xs"
-                                        variant="ghost"
-                                        onClick={() =>
-                                          setSelectedPurchaseRequestItemIds(
-                                            selectablePurchaseRequestItems.map(
-                                              (item) => item.id.toString(),
-                                            ),
-                                          )
-                                        }
-                                      >
-                                        Pilih Semua
-                                      </Button>
-                                      <Button
-                                        size="xs"
-                                        variant="ghost"
-                                        onClick={() =>
-                                          setSelectedPurchaseRequestItemIds([])
-                                        }
-                                      >
-                                        Kosongkan
-                                      </Button>
-                                    </HStack>
-                                  </Flex>
-
-                                  {selectablePurchaseRequestItems.length ===
-                                  0 ? (
-                                    <Text fontSize="sm" color={textSecondary}>
-                                      Tidak ada item approved yang tersedia
-                                      untuk PR ini.
-                                    </Text>
-                                  ) : (
-                                    <>
-                                      <Stack
-                                        spacing={2}
-                                        maxH="180px"
-                                        overflowY="auto"
-                                      >
-                                        {selectablePurchaseRequestItems.map(
-                                          (item) => (
-                                            <Checkbox
-                                              key={item.id}
-                                              isChecked={selectedPurchaseRequestItemIds.includes(
-                                                item.id.toString(),
-                                              )}
-                                              onChange={(event) => {
-                                                const itemId =
-                                                  item.id.toString();
-                                                setSelectedPurchaseRequestItemIds(
-                                                  (prev) =>
-                                                    event.target.checked
-                                                      ? [...prev, itemId]
-                                                      : prev.filter(
-                                                          (value) =>
-                                                            value !== itemId,
-                                                        ),
-                                                );
-                                              }}
-                                            >
-                                              <Box>
-                                                <Text
-                                                  fontSize="sm"
-                                                  fontWeight="medium"
-                                                >
-                                                  {item.product?.code
-                                                    ? `${item.product.code} - `
-                                                    : ""}
-                                                  {item.product?.name ||
-                                                    `Product #${item.product_id}`}
-                                                </Text>
-                                                <Text
-                                                  fontSize="xs"
-                                                  color={textSecondary}
-                                                >
-                                                  Qty {item.quantity} | Budget{" "}
-                                                  {formatCurrency(
-                                                    item.total_estimated_price,
-                                                  )}
-                                                </Text>
-                                              </Box>
-                                            </Checkbox>
-                                          ),
-                                        )}
-                                      </Stack>
-                                      <Button
-                                        mt={3}
-                                        size="sm"
-                                        colorScheme="blue"
-                                        variant="outline"
-                                        onClick={() => {
-                                          const chosenItems =
-                                            selectablePurchaseRequestItems.filter(
-                                              (item) =>
-                                                selectedPurchaseRequestItemIds.includes(
-                                                  item.id.toString(),
-                                                ),
-                                            );
-
-                                          if (chosenItems.length === 0) {
-                                            toast({
-                                              title:
-                                                "Pilih minimal 1 item approved",
-                                              status: "warning",
-                                              duration: 3000,
-                                              isClosable: true,
-                                            });
-                                            return;
-                                          }
-
-                                          setFormData((prev) => ({
-                                            ...prev,
-                                            items: chosenItems.map((item) =>
-                                              mapPurchaseRequestItemToFormData(
-                                                item,
-                                                defaultExpenseAccountId,
-                                              ),
-                                            ),
-                                          }));
-                                        }}
-                                      >
-                                        Gunakan item terpilih (
-                                        {selectedPurchaseRequestItemIds.length})
-                                      </Button>
-                                    </>
-                                  )}
-                                </Box>
-                              )}
                             </FormControl>
 
                             <FormControl>
@@ -6446,8 +6700,7 @@ const PurchasesPage: React.FC = () => {
                                         verticalAlign="top"
                                         pt={3}
                                       >
-                                        {item.item_type === "ASSET" &&
-                                        canSelectAccountFromCOA ? (
+                                        {item.item_type === "ASSET" ? (
                                           /* === ASSET MODE: Input Deskripsi + Kategori Aset === */
                                           <VStack spacing={2} align="stretch">
                                             <Input
@@ -6531,8 +6784,7 @@ const PurchasesPage: React.FC = () => {
                                               dengan status PENDING
                                             </Badge>
                                           </VStack>
-                                        ) : item.item_type === "PREPAID" &&
-                                          canSelectAccountFromCOA ? (
+                                        ) : item.item_type === "PREPAID" ? (
                                           /* === PREPAID MODE: Input Deskripsi + Durasi Amortisasi === */
                                           <VStack spacing={2} align="stretch">
                                             <Input
@@ -6839,7 +7091,8 @@ const PurchasesPage: React.FC = () => {
                                         verticalAlign="top"
                                         pt={3}
                                       >
-                                        {item.item_type === "ASSET" ? (
+                                        {item.item_type === "ASSET" &&
+                                        canSelectAccountFromCOA ? (
                                           <Box maxW="240px">
                                             <SearchableSelect
                                               options={expenseAccounts
@@ -6915,7 +7168,8 @@ const PurchasesPage: React.FC = () => {
                                               }
                                             />
                                           </Box>
-                                        ) : item.item_type === "PREPAID" ? (
+                                        ) : item.item_type === "PREPAID" &&
+                                          canSelectAccountFromCOA ? (
                                           /* === PREPAID MODE: Show Current Asset / Prepaid accounts only === */
                                           <Box maxW="240px">
                                             <SearchableSelect
@@ -7038,16 +7292,17 @@ const PurchasesPage: React.FC = () => {
                                               fontWeight="semibold"
                                               color={inputTextColor}
                                             >
-                                              Default COA Sistem
+                                              COA Belum Dipilih
                                             </Text>
                                             <Text
                                               fontSize="xs"
                                               color={textSecondary}
                                               mt={1}
                                             >
-                                              {getDefaultPurchaseItemAccountLabel(
-                                                item.item_type,
-                                              )}
+                                              COA dikosongkan saat create
+                                              purchase dan dapat dilengkapi
+                                              oleh role accounting/finance
+                                              manager.
                                             </Text>
                                           </Box>
                                         )}
@@ -7211,7 +7466,7 @@ const PurchasesPage: React.FC = () => {
                                 >
                                   ➕ Tax Additions (Penambahan)
                                 </Text>
-                                <SimpleGrid columns={2} spacing={4}>
+                                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                                   <FormControl>
                                     <FormLabel fontSize="sm">
                                       PPN Rate (%)
@@ -7295,6 +7550,30 @@ const PurchasesPage: React.FC = () => {
                                       color={helperTextColor}
                                     >
                                       Pajak tambahan lainnya (opsional)
+                                    </FormHelperText>
+                                  </FormControl>
+
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      Freight / Biaya Pengiriman
+                                    </FormLabel>
+                                    <CurrencyInput
+                                      value={parseFloat(formData.freight_cost) || 0}
+                                      onChange={(value) =>
+                                        setFormData({
+                                          ...formData,
+                                          freight_cost: value.toString(),
+                                        })
+                                      }
+                                      placeholder="0"
+                                      size="sm"
+                                      min={0}
+                                    />
+                                    <FormHelperText
+                                      fontSize="xs"
+                                      color={helperTextColor}
+                                    >
+                                      Dikapitalisasi ke inventory valuation/HPP.
                                     </FormHelperText>
                                   </FormControl>
                                 </SimpleGrid>
@@ -7506,6 +7785,8 @@ const PurchasesPage: React.FC = () => {
                                         100;
                                       const totalAdditions =
                                         ppnAmount + otherAdditions;
+                                      const freightCost =
+                                        parseFloat(formData.freight_cost) || 0;
 
                                       const pph21Amount =
                                         (discountedSubtotal *
@@ -7530,6 +7811,7 @@ const PurchasesPage: React.FC = () => {
 
                                       const finalTotal =
                                         discountedSubtotal +
+                                        freightCost +
                                         totalAdditions -
                                         totalDeductions;
 
@@ -7571,6 +7853,12 @@ const PurchasesPage: React.FC = () => {
                                                 {formData.other_tax_additions}
                                                 %):{" "}
                                                 {formatCurrency(otherAdditions)}
+                                              </Text>
+                                            )}
+                                            {freightCost > 0 && (
+                                              <Text color={statColors.green}>
+                                                + Freight / Pengiriman:{" "}
+                                                {formatCurrency(freightCost)}
                                               </Text>
                                             )}
                                             {parseFloat(formData.pph21_rate) >
@@ -7772,18 +8060,18 @@ const PurchasesPage: React.FC = () => {
                                       borderRadius="md"
                                       bg={inputBg}
                                     >
-                                      <Text fontSize="xs" fontWeight="semibold">
-                                        Default Liability COA
-                                      </Text>
-                                      <Text fontSize="xs" color={textSecondary}>
-                                        Hutang usaha default sistem akan dipakai saat purchase disimpan.
-                                      </Text>
+                                        <Text fontSize="xs" fontWeight="semibold">
+                                          COA Liability Belum Dipilih
+                                        </Text>
+                                        <Text fontSize="xs" color={textSecondary}>
+                                          Finance staff tidak memilih COA saat create purchase.
+                                        </Text>
                                     </Box>
                                   )}
                                   <FormHelperText fontSize="xs">
                                     {canSelectAccountFromCOA
                                       ? "Required: Select liability account for tracking credit purchases"
-                                      : "COA liability opsional untuk user ini. Sistem akan memakai akun default."}
+                                      : "COA liability dikosongkan dan dapat dilengkapi oleh role accounting/finance manager."}
                                   </FormHelperText>
                                 </FormControl>
                               )}
@@ -8656,6 +8944,209 @@ const PurchasesPage: React.FC = () => {
                 cashBanks={cashBanks}
               />
 
+              {/* Accounting COA Completion Modal */}
+              <Modal
+                isOpen={isAccountingCOAOpen}
+                onClose={onAccountingCOAClose}
+                size="6xl"
+                scrollBehavior="inside"
+              >
+                <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+                <ModalContent bg={modalBg} borderRadius="xl" maxH="90vh">
+                  <ModalHeader
+                    borderBottom="1px solid"
+                    borderColor={borderColor}
+                    pb={4}
+                  >
+                    <VStack align="start" spacing={1}>
+                      <Heading size="md" color={headingColor}>
+                        Lengkapi GL/COA Accounting
+                      </Heading>
+                      <Text fontSize="sm" color={textSecondary}>
+                        {accountingCOAPurchase?.code} -{" "}
+                        {accountingCOAPurchase?.vendor?.name || "N/A"}
+                      </Text>
+                    </VStack>
+                  </ModalHeader>
+                  <ModalCloseButton />
+                  <ModalBody py={6}>
+                    <VStack spacing={5} align="stretch">
+                      <Alert status="info" borderRadius="lg">
+                        <AlertIcon />
+                        <Box>
+                          <AlertTitle fontSize="sm">
+                            Purchase sudah disetujui Finance Manager
+                          </AlertTitle>
+                          <AlertDescription fontSize="sm">
+                            Posting jurnal, stok, payable/prepaid, dan
+                            fulfillment ditahan sampai Accounting melengkapi
+                            GL/COA di form ini.
+                          </AlertDescription>
+                        </Box>
+                      </Alert>
+
+                      <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4}>
+                        <Box>
+                          <Text fontSize="xs" color={textSecondary}>
+                            Tanggal
+                          </Text>
+                          <Text fontSize="sm" fontWeight="medium">
+                            {accountingCOAPurchase?.date
+                              ? formatDate(accountingCOAPurchase.date)
+                              : "-"}
+                          </Text>
+                        </Box>
+                        <Box>
+                          <Text fontSize="xs" color={textSecondary}>
+                            Metode Pembayaran
+                          </Text>
+                          <Text fontSize="sm" fontWeight="medium">
+                            {accountingCOAPurchase?.payment_method || "-"}
+                          </Text>
+                        </Box>
+                        <Box>
+                          <Text fontSize="xs" color={textSecondary}>
+                            Total
+                          </Text>
+                          <Text
+                            fontSize="sm"
+                            fontWeight="bold"
+                            color="blue.600"
+                          >
+                            {formatCurrency(
+                              accountingCOAPurchase?.total_amount || 0,
+                            )}
+                          </Text>
+                        </Box>
+                        <Box>
+                          <Text fontSize="xs" color={textSecondary}>
+                            Status
+                          </Text>
+                          <Badge colorScheme="orange">
+                            PENDING ACCOUNTING
+                          </Badge>
+                        </Box>
+                      </SimpleGrid>
+
+                      {accountingCOAPurchase?.payment_method === "CREDIT" && (
+                        <FormControl isRequired>
+                          <FormLabel fontSize="sm">
+                            Akun Hutang / Liability
+                          </FormLabel>
+                          <Select
+                            placeholder="Pilih akun hutang"
+                            value={accountingCOAForm.credit_account_id}
+                            onChange={(e) =>
+                              setAccountingCOAForm((prev) => ({
+                                ...prev,
+                                credit_account_id: e.target.value,
+                              }))
+                            }
+                          >
+                            {creditAccounts.map((account) => (
+                              <option
+                                key={account.id}
+                                value={account.id.toString()}
+                              >
+                                {account.code} - {account.name}
+                              </option>
+                            ))}
+                          </Select>
+                          <FormHelperText>
+                            Akun ini menjadi sisi kredit untuk purchase kredit.
+                          </FormHelperText>
+                        </FormControl>
+                      )}
+
+                      <Box
+                        borderWidth="1px"
+                        borderColor={borderColor}
+                        borderRadius="lg"
+                        overflow="hidden"
+                      >
+                        <TableContainer>
+                          <Table size="sm">
+                            <Thead bg={tableHeaderBg}>
+                              <Tr>
+                                <Th>Item</Th>
+                                <Th isNumeric>Qty</Th>
+                                <Th isNumeric>Total</Th>
+                                <Th minW="320px">GL/COA Debit</Th>
+                              </Tr>
+                            </Thead>
+                            <Tbody>
+                              {accountingCOAForm.items.map((item, index) => (
+                                <Tr key={item.purchase_item_id}>
+                                  <Td fontWeight="medium">{item.label}</Td>
+                                  <Td isNumeric>{item.quantity}</Td>
+                                  <Td isNumeric>
+                                    {formatCurrency(item.total_price)}
+                                  </Td>
+                                  <Td>
+                                    <Select
+                                      placeholder="Pilih GL/COA"
+                                      value={item.expense_account_id}
+                                      onChange={(e) =>
+                                        setAccountingCOAForm((prev) => ({
+                                          ...prev,
+                                          items: prev.items.map((row, idx) =>
+                                            idx === index
+                                              ? {
+                                                  ...row,
+                                                  expense_account_id:
+                                                    e.target.value,
+                                                }
+                                              : row,
+                                          ),
+                                        }))
+                                      }
+                                    >
+                                      {expenseAccounts.map((account) => (
+                                        <option
+                                          key={account.id}
+                                          value={account.id?.toString()}
+                                        >
+                                          {account.code} - {account.name} (
+                                          {account.type})
+                                        </option>
+                                      ))}
+                                    </Select>
+                                  </Td>
+                                </Tr>
+                              ))}
+                            </Tbody>
+                          </Table>
+                        </TableContainer>
+                      </Box>
+                    </VStack>
+                  </ModalBody>
+                  <ModalFooter
+                    borderTop="1px solid"
+                    borderColor={borderColor}
+                    pt={4}
+                  >
+                    <HStack spacing={3} w="full" justify="flex-end">
+                      <Button
+                        variant="ghost"
+                        onClick={onAccountingCOAClose}
+                        isDisabled={savingAccountingCOA}
+                      >
+                        Batal
+                      </Button>
+                      <Button
+                        colorScheme="orange"
+                        onClick={handleSaveAccountingCOA}
+                        isLoading={savingAccountingCOA}
+                        loadingText="Memfinalisasi..."
+                        leftIcon={<FiCheckCircle />}
+                      >
+                        Simpan COA & Finalisasi
+                      </Button>
+                    </HStack>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
               {/* Finance Tax & Payment Configuration Modal (Read-Only Items) */}
               <Modal
                 isOpen={isFinanceTaxOpen}
@@ -8866,6 +9357,27 @@ const PurchasesPage: React.FC = () => {
                                 boxShadow: inputFocusShadow,
                               }}
                             />
+                          </FormControl>
+                          <FormControl>
+                            <FormLabel fontSize="sm">
+                              Freight / Biaya Pengiriman
+                            </FormLabel>
+                            <CurrencyInput
+                              value={parseFloat(financeTaxForm.freight_cost) || 0}
+                              onChange={(value) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  freight_cost: value.toString(),
+                                }))
+                              }
+                              placeholder="0"
+                              size="sm"
+                              min={0}
+                            />
+                            <FormHelperText fontSize="xs">
+                              Masuk ke nilai inventory dan HPP setelah purchase
+                              diposting.
+                            </FormHelperText>
                           </FormControl>
                           <FormControl>
                             <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
@@ -9188,37 +9700,55 @@ const PurchasesPage: React.FC = () => {
                             </Box>
                           )}
 
-                          {financeTaxForm.payment_method === "CREDIT" && (
-                            <FormControl>
-                              <FormLabel fontSize="sm">
-                                Akun Hutang (Liability)
-                              </FormLabel>
-                              <Select
-                                placeholder="Pilih Akun Hutang"
-                                value={financeTaxForm.credit_account_id}
-                                onChange={(e) =>
-                                  setFinanceTaxForm((prev) => ({
-                                    ...prev,
-                                    credit_account_id: e.target.value,
-                                  }))
-                                }
-                                _hover={{ borderColor: inputHoverBorder }}
-                                _focus={{
-                                  borderColor: inputFocusBorder,
-                                  boxShadow: inputFocusShadow,
-                                }}
+                          {financeTaxForm.payment_method === "CREDIT" &&
+                            (canSelectAccountFromCOA ? (
+                              <FormControl>
+                                <FormLabel fontSize="sm">
+                                  Akun Hutang (Liability)
+                                </FormLabel>
+                                <Select
+                                  placeholder="Pilih Akun Hutang"
+                                  value={financeTaxForm.credit_account_id}
+                                  onChange={(e) =>
+                                    setFinanceTaxForm((prev) => ({
+                                      ...prev,
+                                      credit_account_id: e.target.value,
+                                    }))
+                                  }
+                                  _hover={{ borderColor: inputHoverBorder }}
+                                  _focus={{
+                                    borderColor: inputFocusBorder,
+                                    boxShadow: inputFocusShadow,
+                                  }}
+                                >
+                                  {creditAccounts.map((account) => (
+                                    <option
+                                      key={account.id}
+                                      value={account.id.toString()}
+                                    >
+                                      {account.name} ({account.code})
+                                    </option>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                            ) : (
+                              <Box
+                                borderWidth="1px"
+                                borderColor={borderColor}
+                                borderRadius="md"
+                                bg={inputBg}
+                                p={3}
                               >
-                                {creditAccounts.map((account) => (
-                                  <option
-                                    key={account.id}
-                                    value={account.id.toString()}
-                                  >
-                                    {account.name} ({account.code})
-                                  </option>
-                                ))}
-                              </Select>
-                            </FormControl>
-                          )}
+                                <Text fontSize="xs" fontWeight="semibold">
+                                  COA Liability Menunggu Accounting
+                                </Text>
+                                <Text fontSize="xs" color={textSecondary}>
+                                  Finance Staff dapat mengatur pajak dan metode
+                                  pembayaran, tetapi GL/COA akan dilengkapi
+                                  Accounting setelah approval Finance Manager.
+                                </Text>
+                              </Box>
+                            ))}
 
                           <FormControl>
                             <FormLabel fontSize="sm">

@@ -157,7 +157,7 @@ func (h *AccountHandler) AdminDeleteAccount(c *gin.Context) {
 func (h *AccountHandler) ListAccounts(c *gin.Context) {
 	accountType := c.Query("type")
 	category := c.Query("category")
-	
+
 	var accounts []models.Account
 	var err error
 
@@ -325,13 +325,13 @@ func (h *AccountHandler) ExportAccountsPDF(c *gin.Context) {
 	c.Data(http.StatusOK, "application/pdf", pdfData)
 }
 
-// GetAccountCatalog gets minimal account data for purchase-related accounts (id, code, name, active)
-// This endpoint is for authenticated users to select accounts in purchases and payments
+// GetAccountCatalog gets minimal account data for transaction forms (id, code, name, active).
+// This endpoint is for authenticated users to select accounts in purchases, payments, and sales.
 func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 	accountType := c.Query("type")
 
-	// Allow specific types for purchase/payment operations
-	allowedTypes := []string{"EXPENSE", "ASSET", "LIABILITY"}
+	// Allow specific types used by operational transaction forms.
+	allowedTypes := []string{"EXPENSE", "ASSET", "LIABILITY", "REVENUE"}
 	if accountType != "" {
 		isAllowed := false
 		for _, allowed := range allowedTypes {
@@ -354,8 +354,7 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 		// Get accounts for specific type
 		accounts, err = h.repo.FindByType(c.Request.Context(), accountType)
 	} else {
-		// Get accounts for all allowed types for purchase operations
-		allowedTypes := []string{"EXPENSE", "ASSET", "LIABILITY"}
+		// Get accounts for all allowed operational types.
 		for _, aType := range allowedTypes {
 			typeAccounts, typeErr := h.repo.FindByType(c.Request.Context(), aType)
 			if typeErr != nil {

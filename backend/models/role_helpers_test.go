@@ -2,6 +2,22 @@ package models
 
 import "testing"
 
+func TestNormalizeRoleAcceptsDisplayRoleLabels(t *testing.T) {
+	cases := map[string]string{
+		"Finance Manager":   RoleFinanceManager,
+		"FINANCE-MANAGER":   RoleFinanceManager,
+		" finance  staff ":  RoleFinanceStaff,
+		"Accounting":        RoleAccounting,
+		"Inventory Manager": RoleInventoryManager,
+	}
+
+	for input, expected := range cases {
+		if actual := NormalizeRole(input); actual != expected {
+			t.Fatalf("expected %q to normalize to %q, got %q", input, expected, actual)
+		}
+	}
+}
+
 func TestCanManageRequiredApprovalsFinanceOnly(t *testing.T) {
 	t.Run("finance manager can approve required payment drafts", func(t *testing.T) {
 		if !CanManageRequiredApprovals(RoleFinanceManager) {
@@ -25,6 +41,9 @@ func TestCanReviewPurchaseRequestsByStageRolesOnly(t *testing.T) {
 		if !CanReviewPurchaseRequests(RoleFinanceStaff) {
 			t.Fatalf("expected finance_staff to review purchase requests")
 		}
+		if !CanReviewPurchaseRequests(RoleAccounting) {
+			t.Fatalf("expected accounting to review purchase requests")
+		}
 		if !CanReviewPurchaseRequests(RoleFinanceManager) {
 			t.Fatalf("expected finance_manager to review purchase requests")
 		}
@@ -47,5 +66,9 @@ func TestWorkflowRoleMatchesUserRoleDoesNotBypassAdmin(t *testing.T) {
 
 	if !WorkflowRoleMatchesUserRole(RoleFinance, RoleFinanceManager) {
 		t.Fatalf("expected finance manager to match finance workflow role")
+	}
+
+	if !WorkflowRoleMatchesUserRole(RoleFinanceStaff, RoleAccounting) {
+		t.Fatalf("expected accounting to match finance staff workflow role")
 	}
 }

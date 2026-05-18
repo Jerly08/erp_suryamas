@@ -24,6 +24,8 @@ var trackedSalesBackorderStatuses = []string{
 	models.SaleStatusInvoiced,
 	models.SaleStatusPaid,
 	models.SaleStatusOverdue,
+	models.SaleStatusPartiallyPaid,
+	models.SaleStatusCompleted,
 }
 
 type saleItemFulfillmentSnapshot struct {
@@ -181,6 +183,66 @@ func applySaleItemFulfillmentSnapshot(item *models.SaleItem, snapshot saleItemFu
 	item.FulfillmentStatus = snapshot.fulfillmentStatus
 }
 
+func applySaleEstimatedUnitCostOverride(snapshot *saleItemFulfillmentSnapshot, requestedQty int, estimatedUnitCost *float64) {
+	if snapshot == nil || estimatedUnitCost == nil || *estimatedUnitCost <= 0 {
+		return
+	}
+	if requestedQty < 0 {
+		requestedQty = 0
+	}
+
+	snapshot.estimatedUnitCost = *estimatedUnitCost
+	snapshot.estimatedCOGSAmount = float64(requestedQty) * snapshot.estimatedUnitCost
+	snapshot.actualCOGSAmount = float64(snapshot.fulfilledQuantity) * snapshot.estimatedUnitCost
+}
+
+func syncSaleFulfillmentStatusesForSales(tx *gorm.DB, saleIDs map[uint]struct{}) error {
+	if tx == nil || len(saleIDs) == 0 {
+		return nil
+	}
+
+	ids := make([]uint, 0, len(saleIDs))
+	for saleID := range saleIDs {
+		if saleID > 0 {
+			ids = append(ids, saleID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var saleItems []models.SaleItem
+	if err := tx.
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Preload("Product").
+		Where("sale_id IN ? AND deleted_at IS NULL", ids).
+		Find(&saleItems).Error; err != nil {
+		return fmt.Errorf("failed to reload sale fulfillment statuses: %w", err)
+	}
+
+	for _, item := range saleItems {
+		var product *models.Product
+		if item.Product.ID != 0 {
+			product = &item.Product
+		}
+		nextStatus := resolveSaleFulfillmentStatus(&item, product)
+		if nextStatus == item.FulfillmentStatus {
+			continue
+		}
+
+		if err := tx.Model(&models.SaleItem{}).
+			Where("id = ?", item.ID).
+			Updates(map[string]interface{}{
+				"fulfillment_status": nextStatus,
+				"updated_at":         time.Now(),
+			}).Error; err != nil {
+			return fmt.Errorf("failed to sync fulfillment status for sale item %d: %w", item.ID, err)
+		}
+	}
+
+	return nil
+}
+
 func ensureSalesBackorderClearingAccountTx(tx *gorm.DB) (*models.Account, error) {
 	var account models.Account
 	err := tx.Where("code = ? AND deleted_at IS NULL", salesBackorderClearingAccountCode).First(&account).Error
@@ -250,6 +312,11 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 	if purchase == nil {
 		return affectedProductIDs, nil
 	}
+	switch purchase.Status {
+	case models.PurchaseStatusApproved, models.PurchaseStatusCompleted, models.PurchaseStatusPaid:
+	default:
+		return affectedProductIDs, nil
+	}
 	if s.unifiedJournalService == nil {
 		log.Printf("⚠️ [BACKORDER] Unified journal service not available, skipping backorder settlement for purchase %s", purchase.Code)
 		return affectedProductIDs, nil
@@ -264,6 +331,7 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 		var totalEstimated float64
 		var totalActual float64
 		totalAllocatedQty := 0
+		affectedSaleIDs := make(map[uint]struct{})
 
 		for _, purchaseItem := range purchase.PurchaseItems {
 			if purchaseItem.ProductID == nil || *purchaseItem.ProductID == 0 {
@@ -281,7 +349,7 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 				continue
 			}
 
-			remainingQty := purchaseItem.Quantity
+			remainingQty := minInt(purchaseItem.Quantity, product.Stock)
 			if remainingQty <= 0 {
 				continue
 			}
@@ -302,7 +370,7 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 				continue
 			}
 
-			actualUnitCost := effectivePurchaseUnitCost(&purchaseItem)
+			actualUnitCost := purchaseItemLandedUnitCost(purchase, &purchaseItem)
 			allocatedForProduct := 0
 
 			for _, saleItem := range saleItems {
@@ -361,6 +429,7 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 				totalAllocatedQty += allocateQty
 				totalEstimated += estimatedAmount
 				totalActual += actualAmount
+				affectedSaleIDs[saleItem.SaleID] = struct{}{}
 			}
 
 			if allocatedForProduct > 0 {
@@ -380,6 +449,10 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 
 		if totalAllocatedQty == 0 {
 			return nil
+		}
+
+		if err := syncSaleFulfillmentStatusesForSales(tx, affectedSaleIDs); err != nil {
+			return err
 		}
 
 		journalLines := []JournalLineRequest{
@@ -415,16 +488,25 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 		}
 
 		sourceID := uint64(purchase.ID)
+		var adjustmentOf *uint64
+		if len(affectedSaleIDs) == 1 {
+			for saleID := range affectedSaleIDs {
+				adjustmentOf = findPostedSourceJournalIDForAdjustment(tx, models.SSOTSourceTypeSale, uint64(saleID), purchase.Date)
+			}
+		}
 		req := &JournalEntryRequest{
-			EntryDate:   purchase.Date,
-			Reference:   fmt.Sprintf("BO-HPP-%s", purchase.Code),
-			Description: fmt.Sprintf("Sales backorder settlement - %s", purchase.Code),
-			Notes:       salesBackorderSettlementNotes,
-			Lines:       journalLines,
-			CreatedBy:   uint64(purchase.UserID),
-			SourceType:  models.SSOTSourceTypeAdjustment,
-			SourceID:    sourceID,
-			AutoPost:    true,
+			EntryDate:              purchase.Date,
+			Reference:              fmt.Sprintf("BO-HPP-%s", purchase.Code),
+			Description:            fmt.Sprintf("Sales backorder settlement - %s", purchase.Code),
+			Notes:                  salesBackorderSettlementNotes,
+			Lines:                  journalLines,
+			CreatedBy:              uint64(purchase.UserID),
+			SourceType:             models.SSOTSourceTypeAdjustment,
+			SourceID:               sourceID,
+			AdjustmentOf:           adjustmentOf,
+			AdjustmentCategoryCode: models.JournalAdjustmentCategorySalesBackorderHPP,
+			AutoPost:               true,
+			SystemGenerated:        true,
 		}
 
 		if _, err := s.unifiedJournalService.CreateJournalEntryWithTx(tx, req); err != nil {

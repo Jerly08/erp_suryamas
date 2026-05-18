@@ -624,6 +624,8 @@ const UsersPage: React.FC = () => {
                         <option value="admin">{t('users.roles.admin') || "Administrator"}</option>
                         <option value="finance">{t('users.roles.finance') || "Finance Manager"}</option>
                         <option value="finance_staff">{t('users.roles.financeStaff') || "Finance Staff"}</option>
+                        <option value="accounting">{t('users.roles.accounting') || "Accounting"}</option>
+                        <option value="hr">{t('users.roles.hr') || "HR"}</option>
                         <option value="director">{t('users.roles.director') || "Director"}</option>
                         <option value="inventory_manager">{t('users.roles.inventoryManager') || "Inventory Manager"}</option>
                       </Select>

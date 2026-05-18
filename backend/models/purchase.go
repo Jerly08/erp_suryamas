@@ -36,6 +36,7 @@ type Purchase struct {
 
 	// Legacy tax field (kept for backward compatibility)
 	TaxAmount   float64 `json:"tax_amount" gorm:"type:decimal(15,2);default:0"`
+	FreightCost float64 `json:"freight_cost" gorm:"type:decimal(15,2);default:0"` // Capitalized delivery/shipping cost for inventory valuation
 	TotalAmount float64 `json:"total_amount" gorm:"type:decimal(15,2);default:0"` // kept for compatibility (grand total)
 
 	// Payment tracking fields
@@ -136,13 +137,14 @@ type PurchasePayment struct {
 
 // Purchase Status Constants
 const (
-	PurchaseStatusDraft           = "DRAFT"
-	PurchaseStatusPending         = "PENDING"
-	PurchaseStatusPendingApproval = "PENDING_APPROVAL"
-	PurchaseStatusApproved        = "APPROVED"
-	PurchaseStatusCompleted       = "COMPLETED"
-	PurchaseStatusPaid            = "PAID"
-	PurchaseStatusCancelled       = "CANCELLED"
+	PurchaseStatusDraft             = "DRAFT"
+	PurchaseStatusPending           = "PENDING"
+	PurchaseStatusPendingApproval   = "PENDING_APPROVAL"
+	PurchaseStatusPendingAccounting = "PENDING_ACCOUNTING"
+	PurchaseStatusApproved          = "APPROVED"
+	PurchaseStatusCompleted         = "COMPLETED"
+	PurchaseStatusPaid              = "PAID"
+	PurchaseStatusCancelled         = "CANCELLED"
 )
 
 // Purchase Approval Status Constants
@@ -152,6 +154,13 @@ const (
 	PurchaseApprovalPending     = "PENDING"
 	PurchaseApprovalApproved    = "APPROVED"
 	PurchaseApprovalRejected    = "REJECTED"
+)
+
+// Purchase Accounting Monitoring Constants
+const (
+	PurchaseAccountingStatusReadyForCOA       = "READY_FOR_COA"
+	PurchaseAccountingStatusApprovedByFinance = "APPROVED_BY_FINANCE"
+	PurchaseAccountingStatusCOACompleted      = "COA_COMPLETED"
 )
 
 // Purchase Matching Status Constants
@@ -180,6 +189,7 @@ type PurchaseFilter struct {
 	EndDate          string `json:"end_date"`
 	Search           string `json:"search"`
 	ApprovalStatus   string `json:"approval_status"`
+	AccountingStatus string `json:"accounting_status"`
 	RequiresApproval *bool  `json:"requires_approval"`
 	Page             int    `json:"page"`
 	Limit            int    `json:"limit"`
@@ -202,7 +212,8 @@ type PurchaseCreateRequest struct {
 	PaymentReference string `json:"payment_reference"`
 
 	// Legacy tax field (for backward compatibility - ignored in calculation)
-	Tax float64 `json:"tax"`
+	Tax         float64 `json:"tax"`
+	FreightCost float64 `json:"freight_cost"`
 
 	// Tax additions (Penambahan) - using pointers to distinguish null vs zero
 	PPNRate           *float64 `json:"ppn_rate"` // nil = default to 11%, 0 = no VAT
@@ -230,7 +241,8 @@ type PurchaseUpdateRequest struct {
 	PaymentReference *string `json:"payment_reference"`
 
 	// Legacy tax field (for backward compatibility - ignored in calculation)
-	Tax *float64 `json:"tax"`
+	Tax         *float64 `json:"tax"`
+	FreightCost *float64 `json:"freight_cost"`
 
 	// Tax additions (Penambahan) - pointers to distinguish null vs zero
 	PPNRate           **float64 `json:"ppn_rate"` // double pointer for update operations
@@ -258,6 +270,16 @@ type PurchaseItemRequest struct {
 	Discount              float64 `json:"discount"`
 	Tax                   float64 `json:"tax"`
 	ExpenseAccountID      uint    `json:"expense_account_id"`
+}
+
+type PurchaseAccountingCOARequest struct {
+	CreditAccountID *uint                              `json:"credit_account_id"`
+	Items           []PurchaseAccountingCOAItemRequest `json:"items" binding:"required,min=1"`
+}
+
+type PurchaseAccountingCOAItemRequest struct {
+	PurchaseItemID   uint `json:"purchase_item_id" binding:"required"`
+	ExpenseAccountID uint `json:"expense_account_id" binding:"required"`
 }
 
 // Purchase Item Type Constants

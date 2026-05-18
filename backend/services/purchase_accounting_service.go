@@ -78,6 +78,7 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 	fmt.Printf("ℹ Starting purchase totals calculation for %d items\n", len(items))
 	subtotalBeforeDiscount := 0.0
 	itemDiscountAmount := 0.0
+	hasInventoryValuationItem := false
 
 	purchase.PurchaseItems = []models.PurchaseItem{}
 
@@ -103,9 +104,6 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 
 		// Validate product exists only for INVENTORY items
 		if !isAssetItem && !isPrepaidItem {
-			if itemReq.ExpenseAccountID == 0 {
-				return fmt.Errorf("item %d: expense_account_id is required for inventory items", i+1)
-			}
 			if itemReq.ProductID == nil || *itemReq.ProductID == 0 {
 				return fmt.Errorf("item %d: product_id is required for inventory items", i+1)
 			}
@@ -115,14 +113,13 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 				return fmt.Errorf("product %d not found: %v", *itemReq.ProductID, err)
 			}
 			fmt.Printf("✅ Product found: %s (ID: %d)\n", product.Name, product.ID)
+			if !product.IsService && !product.IsAssembly {
+				hasInventoryValuationItem = true
+			}
 		} else if isAssetItem || isPrepaidItem {
 			// Asset and Prepaid items: validate description is provided
 			if itemReq.Description == "" {
 				return fmt.Errorf("item %d: description is required for non-inventory items", i+1)
-			}
-			// For Prepaid items, expense account is also required
-			if isPrepaidItem && itemReq.ExpenseAccountID == 0 {
-				return fmt.Errorf("item %d: expense_account_id is required for prepaid items", i+1)
 			}
 		}
 
@@ -174,6 +171,10 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 	}
 
 	// Set basic calculated fields with sanitization
+	purchase.FreightCost = sanitizeFloat(clampNonNegative(purchase.FreightCost))
+	if purchase.FreightCost > 0 && !hasInventoryValuationItem {
+		return fmt.Errorf("freight cost hanya bisa ditambahkan ke purchase yang memiliki item inventory")
+	}
 	purchase.SubtotalBeforeDiscount = sanitizeFloat(clampNonNegative(subtotalBeforeDiscount))
 	purchase.ItemDiscountAmount = sanitizeFloat(clampNonNegative(itemDiscountAmount))
 	purchase.OrderDiscountAmount = sanitizeFloat(clampNonNegative(orderDiscountAmount))
@@ -223,11 +224,12 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 
 	fmt.Printf("ℹ Calculating final total amount\n")
 	fmt.Printf("   NetBeforeTax: %.2f\n", purchase.NetBeforeTax)
+	fmt.Printf("   FreightCost: %.2f\n", purchase.FreightCost)
 	fmt.Printf("   TotalTaxAdditions: %.2f\n", purchase.TotalTaxAdditions)
 	fmt.Printf("   TotalTaxDeductions: %.2f\n", purchase.TotalTaxDeductions)
 	// Calculate final total amount (never negative)
-	// Total = Net Before Tax + Tax Additions - Tax Deductions
-	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
+	// Total = Net Before Tax + Freight Cost + Tax Additions - Tax Deductions
+	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.FreightCost + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
 	fmt.Printf("✅ Final total calculated: %.2f + %.2f - %.2f = %.2f\n",
 		purchase.NetBeforeTax, purchase.TotalTaxAdditions, purchase.TotalTaxDeductions, purchase.TotalAmount)
 
@@ -252,6 +254,7 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) error {
 	subtotalBeforeDiscount := 0.0
 	itemDiscountAmount := 0.0
+	hasInventoryValuationItem := false
 
 	for _, item := range purchase.PurchaseItems {
 		// Sanitize item fields
@@ -270,6 +273,10 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 
 		subtotalBeforeDiscount += lineSubtotal
 		itemDiscountAmount += item.Discount
+		itemForValuation := item
+		if isInventoryValuationPurchaseItem(&itemForValuation) {
+			hasInventoryValuationItem = true
+		}
 	}
 
 	// Calculate order-level discount
@@ -284,6 +291,10 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 	}
 
 	// Set basic calculated fields (sanitized)
+	purchase.FreightCost = sanitizeFloat(clampNonNegative(purchase.FreightCost))
+	if purchase.FreightCost > 0 && !hasInventoryValuationItem {
+		return fmt.Errorf("freight cost hanya bisa ditambahkan ke purchase yang memiliki item inventory")
+	}
 	purchase.SubtotalBeforeDiscount = sanitizeFloat(clampNonNegative(subtotalBeforeDiscount))
 	purchase.ItemDiscountAmount = sanitizeFloat(clampNonNegative(itemDiscountAmount))
 	purchase.OrderDiscountAmount = sanitizeFloat(clampNonNegative(orderDiscountAmount))
@@ -325,8 +336,8 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 	purchase.TotalTaxDeductions = sanitizeFloat(clampNonNegative(purchase.PPh21Amount + purchase.PPh23Amount + purchase.OtherTaxDeductions))
 
 	// Calculate final total amount (never negative)
-	// Total = Net Before Tax + Tax Additions - Tax Deductions
-	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
+	// Total = Net Before Tax + Freight Cost + Tax Additions - Tax Deductions
+	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.FreightCost + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
 
 	// For legacy compatibility, set TaxAmount to PPN amount
 	purchase.TaxAmount = purchase.PPNAmount
@@ -351,7 +362,7 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 	// Clear existing items
 	purchase.PurchaseItems = []models.PurchaseItem{}
 
-	for i, itemReq := range items {
+	for _, itemReq := range items {
 		// Determine item type
 		itemType := itemReq.ItemType
 		if itemType == "" {
@@ -361,9 +372,6 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 		isPrepaidItem := itemType == models.PurchaseItemTypePrepaid
 
 		if !isAssetItem && !isPrepaidItem {
-			if itemReq.ExpenseAccountID == 0 {
-				return fmt.Errorf("item %d: expense_account_id is required for inventory items", i+1)
-			}
 			// Validate product exists for inventory items
 			if itemReq.ProductID == nil || *itemReq.ProductID == 0 {
 				return fmt.Errorf("product_id is required for inventory items")
@@ -371,10 +379,6 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 			_, err := s.productRepo.FindByID(*itemReq.ProductID)
 			if err != nil {
 				return fmt.Errorf("product %d not found", *itemReq.ProductID)
-			}
-		} else if isPrepaidItem {
-			if itemReq.ExpenseAccountID == 0 {
-				return fmt.Errorf("item %d: expense_account_id is required for prepaid items", i+1)
 			}
 		}
 
@@ -1029,10 +1033,11 @@ func (s *PurchaseService) createPurchaseJournalLines(purchase *models.Purchase, 
 			}
 		}
 
+		landedTotal := purchaseItemLandedTotal(purchase, &item)
 		lines = append(lines, models.JournalLine{
 			AccountID:    accountID,
 			Description:  fmt.Sprintf("%s - %s", accountName, item.Product.Name),
-			DebitAmount:  item.TotalPrice,
+			DebitAmount:  landedTotal,
 			CreditAmount: 0,
 			LineNumber:   lineNumber,
 		})

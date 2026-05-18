@@ -76,6 +76,116 @@ func TestNormalizePurchasePaymentConfigurationMapsHeaderCreditAccountToDetail(t 
 	require.EqualValues(t, 11, *creditAccountID)
 }
 
+func TestValidateLinkedPurchaseRequestSelectionRejectsRequestAlreadyLinkedToPurchase(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Skipf("sqlite test unavailable: %v", err)
+	}
+
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.Contact{},
+		&models.Product{},
+		&models.Purchase{},
+		&models.PurchaseRequest{},
+		&models.PurchaseRequestItem{},
+	))
+
+	user := models.User{
+		Username: "purchase-user",
+		Email:    "purchase-user@example.com",
+		Password: "hashed",
+		Role:     models.RoleFinanceStaff,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	vendor := models.Contact{
+		Code:     "VEN-PR-LINK",
+		Name:     "Vendor PR Link",
+		Type:     models.ContactTypeVendor,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&vendor).Error)
+
+	product := models.Product{
+		Code:     "PRD-PR-LINK",
+		Name:     "Product PR Link",
+		Unit:     "pcs",
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&product).Error)
+
+	pr := models.PurchaseRequest{
+		PRNumber:             "PR-LINKED",
+		RequesterID:          user.ID,
+		Status:               models.PRStatusApproved,
+		CurrentApprovalStage: models.PRApprovalStageFinalized,
+		Items: []models.PurchaseRequestItem{
+			{
+				ProductID:           product.ID,
+				Quantity:            1,
+				EstimatedPrice:      1000,
+				TotalEstimatedPrice: 1000,
+				ApprovalStatus:      models.PRItemDecisionApproved,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&pr).Error)
+
+	existingPurchase := models.Purchase{
+		Code:              "PO-PR-LINKED",
+		VendorID:          vendor.ID,
+		UserID:            user.ID,
+		Status:            models.PurchaseStatusDraft,
+		PurchaseRequestID: &pr.ID,
+	}
+	require.NoError(t, db.Create(&existingPurchase).Error)
+
+	service := &PurchaseService{db: db}
+	purchaseItemID := pr.Items[0].ID
+	productID := product.ID
+	newPurchase := &models.Purchase{
+		PurchaseRequestID: &pr.ID,
+		PurchaseItems: []models.PurchaseItem{
+			{
+				ProductID:             &productID,
+				PurchaseRequestItemID: &purchaseItemID,
+				Quantity:              1,
+				UnitPrice:             1000,
+				TotalPrice:            1000,
+			},
+		},
+	}
+
+	_, _, err = service.validateLinkedPurchaseRequestSelection(newPurchase, false)
+	require.ErrorContains(t, err, "already linked to purchase PO-PR-LINKED")
+
+	existingPurchase.PurchaseItems = newPurchase.PurchaseItems
+	_, _, err = service.validateLinkedPurchaseRequestSelection(&existingPurchase, true)
+	require.NoError(t, err)
+}
+
+func TestValidateLinkedPurchaseRequestSelectionRejectsOrphanRequestItemLink(t *testing.T) {
+	service := &PurchaseService{}
+	purchaseRequestItemID := uint(99)
+	productID := uint(1)
+	purchase := &models.Purchase{
+		PurchaseItems: []models.PurchaseItem{
+			{
+				ProductID:             &productID,
+				PurchaseRequestItemID: &purchaseRequestItemID,
+				Quantity:              1,
+				UnitPrice:             1000,
+				TotalPrice:            1000,
+			},
+		},
+	}
+
+	_, _, err := service.validateLinkedPurchaseRequestSelection(purchase, false)
+	require.ErrorContains(t, err, "purchase_request_id is required")
+}
+
 func uintPtr(value uint) *uint {
 	return &value
 }

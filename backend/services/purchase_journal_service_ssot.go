@@ -92,7 +92,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 	// Calculate totals
 	var subtotal float64
 	for _, item := range purchase.PurchaseItems {
-		subtotal += item.TotalPrice
+		subtotal += purchaseItemLandedTotal(purchase, &item)
 	}
 
 	// 1. DEBIT SIDE - Inventory/Expense/Fixed Asset accounts for each item
@@ -218,11 +218,18 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 			itemName = item.Description
 		}
 
+		landedTotal := purchaseItemLandedTotal(purchase, &item)
+		freightAllocation := purchaseItemFreightAllocation(purchase, &item)
+		description := fmt.Sprintf("Pembelian - %s", itemName)
+		if freightAllocation > 0 {
+			description = fmt.Sprintf("Pembelian + alokasi freight - %s", itemName)
+		}
+
 		lines = append(lines, PurchaseJournalLineRequest{
 			AccountID:    uint64(debitAccount.ID),
-			DebitAmount:  decimal.NewFromFloat(item.TotalPrice),
+			DebitAmount:  decimal.NewFromFloat(landedTotal),
 			CreditAmount: decimal.Zero,
-			Description:  fmt.Sprintf("Pembelian - %s", itemName),
+			Description:  description,
 		})
 	}
 

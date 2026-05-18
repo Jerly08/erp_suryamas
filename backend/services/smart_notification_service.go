@@ -37,7 +37,7 @@ func (s *SmartNotificationService) CreateSmartNotification(
 ) error {
 	// Get notification matrix rules
 	matrix := models.GetNotificationMatrix()
-	
+
 	// Convert data to JSON string
 	var dataString string
 	if data != nil {
@@ -95,7 +95,7 @@ func (s *SmartNotificationService) getEligibleUsers(
 	matrix map[string]models.NotificationMatrix,
 ) ([]uint, error) {
 	var eligibleUsers []uint
-	
+
 	// Get role-specific matrix
 	roleMatrix, exists := matrix[strings.ToLower(targetRole)]
 	if !exists {
@@ -120,8 +120,12 @@ func (s *SmartNotificationService) getEligibleUsers(
 	}
 
 	// Query users based on criteria
+	targetRoles := models.WorkflowStepAssignableRoles(targetRole)
+	if len(targetRoles) == 0 {
+		targetRoles = []string{targetRole}
+	}
 	query := s.db.Model(&models.User{}).
-		Where("LOWER(role) = LOWER(?) AND is_active = ?", targetRole, true)
+		Where("LOWER(role) IN ? AND is_active = ?", targetRoles, true)
 
 	// Apply department filter if needed
 	if department != "" && roleMatrix.RequiresDepartmentMatch {
@@ -162,14 +166,14 @@ func (s *SmartNotificationService) balanceApprovalWorkload(userIDs []uint, role 
 	for _, userID := range userIDs {
 		var count int64
 		err := s.db.Model(&models.Notification{}).
-			Where("user_id = ? AND type = ? AND is_read = ?", 
+			Where("user_id = ? AND type = ? AND is_read = ?",
 				userID, models.NotificationTypeApprovalPending, false).
 			Count(&count).Error
-		
+
 		if err != nil {
 			continue
 		}
-		
+
 		workloads = append(workloads, UserWorkload{
 			UserID:       userID,
 			PendingCount: int(count),
@@ -205,7 +209,7 @@ func (s *SmartNotificationService) isNotificationTypeAllowed(notificationType st
 func (s *SmartNotificationService) userWantsNotification(userID uint, notificationType string) bool {
 	var pref models.NotificationPreference
 	err := s.db.Where("user_id = ?", userID).First(&pref).Error
-	
+
 	// If no preferences found, default to true
 	if err != nil {
 		return true
@@ -243,7 +247,7 @@ func (s *SmartNotificationService) isInQuietHours(pref models.NotificationPrefer
 
 	now := time.Now()
 	currentTime := fmt.Sprintf("%02d:%02d", now.Hour(), now.Minute())
-	
+
 	// Simple comparison (doesn't handle overnight quiet hours)
 	return currentTime >= pref.QuietHoursStart && currentTime <= pref.QuietHoursEnd
 }
@@ -262,7 +266,7 @@ func (s *SmartNotificationService) hasReachedDailyLimit(userID uint) bool {
 	err = s.db.Model(&models.Notification{}).
 		Where("user_id = ? AND created_at >= ?", userID, today).
 		Count(&count).Error
-	
+
 	if err != nil {
 		return false
 	}
@@ -300,7 +304,7 @@ func (s *SmartNotificationService) createBatchNotification(
 		// Check if user prefers batch notifications
 		var pref models.NotificationPreference
 		s.db.Where("user_id = ?", userID).First(&pref)
-		
+
 		if !pref.BatchNotifications {
 			// Create individual notification
 			s.createNotificationForUser(userID, notificationType, title, message, dataString)
@@ -317,11 +321,11 @@ func (s *SmartNotificationService) createBatchNotification(
 		if err == gorm.ErrRecordNotFound {
 			// Create new batch
 			batch = models.NotificationBatch{
-				UserID:      userID,
-				BatchType:   notificationType,
-				ItemCount:   1,
-				TotalAmount: totalAmount,
-				Summary:     fmt.Sprintf("You have new %s", notificationType),
+				UserID:       userID,
+				BatchType:    notificationType,
+				ItemCount:    1,
+				TotalAmount:  totalAmount,
+				Summary:      fmt.Sprintf("You have new %s", notificationType),
 				DetailedData: dataString,
 			}
 			s.db.Create(&batch)
@@ -378,12 +382,12 @@ func (s *SmartNotificationService) isDuplicateNotification(userID uint, notifica
 	// Check for existing notification with same purchase_id, user_id, and type within last 1 hour
 	var count int64
 	oneHourAgo := time.Now().Add(-1 * time.Hour)
-	
+
 	err := s.db.Model(&models.Notification{}).
-		Where("user_id = ? AND type = ? AND created_at >= ? AND (title = ? OR data::json->>'purchase_id' = ?)", 
+		Where("user_id = ? AND type = ? AND created_at >= ? AND (title = ? OR data::json->>'purchase_id' = ?)",
 			userID, notificationType, oneHourAgo, title, fmt.Sprintf("%.0f", purchaseID)).
 		Count(&count).Error
-	
+
 	if err != nil {
 		return false // If error, allow creation
 	}
@@ -406,14 +410,14 @@ func (s *SmartNotificationService) getPurchaseDisplayAmount(purchaseID uint) flo
 func (s *SmartNotificationService) getNotificationPriority(notificationType string) string {
 	switch notificationType {
 	case models.NotificationTypeApprovalPending,
-	     models.NotificationTypeApprovalEscalated,
-	     models.NotificationTypeCriticalAlert:
+		models.NotificationTypeApprovalEscalated,
+		models.NotificationTypeCriticalAlert:
 		return models.NotificationPriorityHigh
 	case models.NotificationTypeApprovalRejected,
-	     models.NotificationTypeBudgetExceeded:
+		models.NotificationTypeBudgetExceeded:
 		return models.NotificationPriorityHigh
 	case models.NotificationTypeApprovalApproved,
-	     models.NotificationTypePaymentDue:
+		models.NotificationTypePaymentDue:
 		return models.NotificationPriorityNormal
 	default:
 		return models.NotificationPriorityNormal
@@ -434,7 +438,7 @@ func (s *SmartNotificationService) CreatePurchaseNotification(
 			return s.CreateSmartNotification(
 				models.NotificationTypeApprovalPending,
 				"Purchase Approval Required",
-				fmt.Sprintf("Purchase %s requires approval (Amount: %s)", 
+				fmt.Sprintf("Purchase %s requires approval (Amount: %s)",
 					purchase.Code, utils.FormatRupiahWithoutDecimals(purchase.TotalAmount)),
 				map[string]interface{}{
 					"purchase_id":   purchase.ID,
@@ -453,7 +457,7 @@ func (s *SmartNotificationService) CreatePurchaseNotification(
 			s.CreateSmartNotification(
 				models.NotificationTypeHighValuePurchase,
 				"High-Value Purchase for Review",
-				fmt.Sprintf("High-value purchase %s needs review before director approval (Amount: %s)", 
+				fmt.Sprintf("High-value purchase %s needs review before director approval (Amount: %s)",
 					purchase.Code, utils.FormatRupiahWithoutDecimals(purchase.TotalAmount)),
 				map[string]interface{}{
 					"purchase_id":   purchase.ID,
@@ -467,12 +471,12 @@ func (s *SmartNotificationService) CreatePurchaseNotification(
 				0,
 				"",
 			)
-			
+
 			// Also notify director
 			return s.CreateSmartNotification(
 				models.NotificationTypeApprovalPending,
 				"High-Value Purchase Approval Required",
-				fmt.Sprintf("High-value purchase %s requires your approval (Amount: %s)", 
+				fmt.Sprintf("High-value purchase %s requires your approval (Amount: %s)",
 					purchase.Code, utils.FormatRupiahWithoutDecimals(purchase.TotalAmount)),
 				map[string]interface{}{
 					"purchase_id":   purchase.ID,
@@ -512,12 +516,12 @@ func (s *SmartNotificationService) CreatePurchaseNotification(
 		if data, ok := additionalData["reason"].(string); ok {
 			reason = data
 		}
-		
+
 		message := fmt.Sprintf("Your purchase request %s has been rejected", purchase.Code)
 		if reason != "" {
 			message += fmt.Sprintf(". Reason: %s", reason)
 		}
-		
+
 		return s.CreateSmartNotification(
 			models.NotificationTypeApprovalRejected,
 			"Purchase Rejected",
@@ -541,19 +545,19 @@ func (s *SmartNotificationService) CreatePurchaseNotification(
 		if data, ok := additionalData["reason"].(string); ok {
 			escalationReason = data
 		}
-		
+
 		return s.CreateSmartNotification(
 			models.NotificationTypeApprovalEscalated,
 			"URGENT: Purchase Escalated for Approval",
-			fmt.Sprintf("Purchase %s has been escalated: %s (Amount: %s)", 
+			fmt.Sprintf("Purchase %s has been escalated: %s (Amount: %s)",
 				purchase.Code, escalationReason, utils.FormatRupiahWithoutDecimals(purchase.TotalAmount)),
 			map[string]interface{}{
-				"purchase_id":   purchase.ID,
-				"purchase_code": purchase.Code,
-				"vendor_name":   purchase.Vendor.Name,
-				"total_amount":  purchase.TotalAmount,
+				"purchase_id":       purchase.ID,
+				"purchase_code":     purchase.Code,
+				"vendor_name":       purchase.Vendor.Name,
+				"total_amount":      purchase.TotalAmount,
 				"escalation_reason": escalationReason,
-				"action_type":   "escalated",
+				"action_type":       "escalated",
 			},
 			purchase.TotalAmount,
 			"director",
@@ -608,25 +612,25 @@ func (s *SmartNotificationService) ProcessBatchNotifications() error {
 func (s *SmartNotificationService) GetUserNotificationPreferences(userID uint) (*models.NotificationPreference, error) {
 	var pref models.NotificationPreference
 	err := s.db.Where("user_id = ?", userID).First(&pref).Error
-	
+
 	if err == gorm.ErrRecordNotFound {
 		// Create default preferences
 		pref = models.NotificationPreference{
-			UserID:               userID,
-			EmailEnabled:         true,
-			InAppEnabled:         true,
-			PushEnabled:          false,
-			BatchNotifications:   false,
+			UserID:                userID,
+			EmailEnabled:          true,
+			InAppEnabled:          true,
+			PushEnabled:           false,
+			BatchNotifications:    false,
 			MaxDailyNotifications: 100,
-			ApprovalPending:      true,
-			ApprovalApproved:     true,
-			ApprovalRejected:     true,
-			ApprovalEscalated:    true,
-			StockAlerts:          true,
-			PaymentReminders:     true,
-			SystemAlerts:         true,
+			ApprovalPending:       true,
+			ApprovalApproved:      true,
+			ApprovalRejected:      true,
+			ApprovalEscalated:     true,
+			StockAlerts:           true,
+			PaymentReminders:      true,
+			SystemAlerts:          true,
 		}
-		
+
 		if err := s.db.Create(&pref).Error; err != nil {
 			return nil, err
 		}

@@ -11,12 +11,15 @@ import (
 
 type PurchaseRequestService interface {
 	CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint, userRole string) (*models.PurchaseRequest, error)
-	GetPurchaseRequests(userID uint, userRole string, department string, status string) ([]models.PurchaseRequest, error)
+	GetPurchaseRequests(userID uint, userRole string, department string, status string, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error)
 	GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error)
 	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
 	ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error)
 	RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error)
 	DeletePurchaseRequest(id uint) error
+	UploadPurchaseRequestDocument(purchaseRequestID uint, documentType, fileName, filePath string, fileSize int64, mimeType string, userID uint, userRole string) (*models.PurchaseRequestDocument, error)
+	GetPurchaseRequestDocuments(purchaseRequestID uint, userID uint, userRole string) ([]models.PurchaseRequestDocument, error)
+	DeletePurchaseRequestDocument(documentID uint, userID uint, userRole string) error
 	SyncPurchaseRequestItemsWithPurchase(purchase *models.Purchase) error
 	ReleasePurchaseRequestItemsFromPurchase(purchase *models.Purchase) error
 }
@@ -48,7 +51,28 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 	var items []models.PurchaseRequestItem
 	initialStage := resolveInitialPurchaseRequestStage(userRole)
 
+	if len(payload.Items) == 0 {
+		return nil, fmt.Errorf("items are required")
+	}
+
+	if payload.VendorID != nil {
+		var vendor models.Contact
+		if err := s.db.Where("id = ? AND type = ?", *payload.VendorID, models.ContactTypeVendor).First(&vendor).Error; err != nil {
+			return nil, fmt.Errorf("invalid vendor id: %d", *payload.VendorID)
+		}
+	}
+
 	for _, rawItem := range payload.Items {
+		if rawItem.ProductID == 0 {
+			return nil, fmt.Errorf("product_id is required")
+		}
+		if rawItem.Quantity < 1 {
+			return nil, fmt.Errorf("quantity must be at least 1")
+		}
+		if rawItem.EstimatedPrice < 0 {
+			return nil, fmt.Errorf("estimated_price cannot be negative")
+		}
+
 		product, err := s.productRepo.FindByID(rawItem.ProductID)
 		if err != nil {
 			return nil, fmt.Errorf("invalid product id: %d", rawItem.ProductID)
@@ -75,6 +99,7 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 		RequesterID:          userID,
 		Department:           payload.Department,
 		ProjectID:            payload.ProjectID,
+		VendorID:             payload.VendorID,
 		TotalEstimatedAmount: totalEstimatedAmount,
 		Status:               models.PRStatusPendingApproval,
 		CurrentApprovalStage: initialStage,
@@ -96,13 +121,13 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 	return s.repo.GetByID(pr.ID)
 }
 
-func (s *purchaseRequestService) GetPurchaseRequests(userID uint, userRole string, department string, status string) ([]models.PurchaseRequest, error) {
+func (s *purchaseRequestService) GetPurchaseRequests(userID uint, userRole string, department string, status string, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error) {
 	var requesterID uint
 	if !models.CanViewAllTransactionData(userRole) {
 		requesterID = userID
 	}
 
-	return s.repo.GetAll(department, status, requesterID)
+	return s.repo.GetAll(department, status, requesterID, availableForPurchase, currentPurchaseID)
 }
 
 func (s *purchaseRequestService) GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error) {
@@ -223,6 +248,8 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			}
 		}
 
+		pr.TotalEstimatedAmount = calculateFinalPurchaseRequestTotal(pr.Items)
+
 		if err := s.repo.Update(pr); err != nil {
 			return "", err
 		}
@@ -283,6 +310,8 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			}
 		}
 
+		pr.TotalEstimatedAmount = calculateFinalPurchaseRequestTotal(pr.Items)
+
 		if err := s.repo.Update(pr); err != nil {
 			return "", err
 		}
@@ -328,6 +357,53 @@ func (s *purchaseRequestService) RejectPurchaseRequest(id uint, approverID uint,
 
 func (s *purchaseRequestService) DeletePurchaseRequest(id uint) error {
 	return s.repo.Delete(id)
+}
+
+func (s *purchaseRequestService) UploadPurchaseRequestDocument(purchaseRequestID uint, documentType, fileName, filePath string, fileSize int64, mimeType string, userID uint, userRole string) (*models.PurchaseRequestDocument, error) {
+	if _, err := s.GetPurchaseRequestByID(purchaseRequestID, userID, userRole); err != nil {
+		return nil, err
+	}
+
+	if documentType == "" {
+		documentType = models.PurchaseRequestDocumentSupporting
+	}
+
+	document := &models.PurchaseRequestDocument{
+		PurchaseRequestID: purchaseRequestID,
+		DocumentType:      documentType,
+		FileName:          fileName,
+		FilePath:          filePath,
+		FileSize:          fileSize,
+		MimeType:          mimeType,
+		UploadedBy:        userID,
+	}
+
+	if err := s.repo.CreateDocument(document); err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetDocumentByID(document.ID)
+}
+
+func (s *purchaseRequestService) GetPurchaseRequestDocuments(purchaseRequestID uint, userID uint, userRole string) ([]models.PurchaseRequestDocument, error) {
+	if _, err := s.GetPurchaseRequestByID(purchaseRequestID, userID, userRole); err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetDocumentsByPurchaseRequestID(purchaseRequestID)
+}
+
+func (s *purchaseRequestService) DeletePurchaseRequestDocument(documentID uint, userID uint, userRole string) error {
+	document, err := s.repo.GetDocumentByID(documentID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := s.GetPurchaseRequestByID(document.PurchaseRequestID, userID, userRole); err != nil {
+		return err
+	}
+
+	return s.repo.DeleteDocument(documentID)
 }
 
 func (s *purchaseRequestService) SyncPurchaseRequestItemsWithPurchase(purchase *models.Purchase) error {
@@ -421,10 +497,10 @@ func resolvePurchaseRequestReviewStage(pr *models.PurchaseRequest, reviewerRole 
 	roleNorm := models.NormalizeRole(reviewerRole)
 	switch stage {
 	case models.PRApprovalStageFinanceStaff:
-		if models.IsFinanceStaffRole(roleNorm) {
+		if models.IsFinanceStaffRole(roleNorm) || models.IsAccountingRole(roleNorm) {
 			return stage, nil
 		}
-		return "", fmt.Errorf("only finance staff can review purchase requests at the first stage")
+		return "", fmt.Errorf("only finance staff or accounting can review purchase requests at the first stage")
 	case models.PRApprovalStageFinanceManager:
 		if models.IsFinanceManagerRole(roleNorm) {
 			return stage, nil
@@ -494,6 +570,16 @@ func normalizePurchaseRequestDecision(decision string) string {
 	default:
 		return ""
 	}
+}
+
+func calculateFinalPurchaseRequestTotal(items []models.PurchaseRequestItem) float64 {
+	var total float64
+	for _, item := range items {
+		if item.ApprovalStatus == models.PRItemDecisionApproved {
+			total += item.TotalEstimatedPrice
+		}
+	}
+	return total
 }
 
 func (s *purchaseRequestService) notifyPurchaseRequestCreated(pr *models.PurchaseRequest) {

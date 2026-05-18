@@ -121,7 +121,7 @@ func (dc *DashboardController) GetAnalytics(c *gin.Context) {
 
 	// Only allow admin, finance-family, and director roles
 	userRoleLower := strings.ToLower(userRole)
-	if userRoleLower != "admin" && userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "finance_staff" && userRoleLower != "director" {
+	if userRoleLower != "admin" && userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "finance_staff" && userRoleLower != "accounting" && userRoleLower != "director" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized to view analytics"})
 		return
 	}
@@ -156,7 +156,7 @@ func (dc *DashboardController) GetFinanceDashboardData(c *gin.Context) {
 
 	// Only allow finance-family roles and admin
 	userRoleLower := strings.ToLower(userRole)
-	if userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "finance_staff" && userRoleLower != "admin" {
+	if userRoleLower != "finance" && userRoleLower != "finance_manager" && userRoleLower != "finance_staff" && userRoleLower != "accounting" && userRoleLower != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied - Finance role required"})
 		return
 	}
@@ -236,7 +236,7 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	userRole := strings.ToLower(strings.TrimSpace(c.GetString("user_role")))
 
-	if userRole != "finance_staff" && userRole != "finance" && userRole != "finance_manager" && userRole != "admin" {
+	if userRole != "finance_staff" && userRole != "accounting" && userRole != "finance" && userRole != "finance_manager" && userRole != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied - Finance staff role required"})
 		return
 	}

@@ -38,8 +38,19 @@ import {
   Textarea,
   Select,
   Grid,
+  Link,
 } from "@chakra-ui/react";
-import { FiPlus, FiSearch, FiTrash2, FiCheck, FiEye } from "react-icons/fi";
+import {
+  FiPlus,
+  FiSearch,
+  FiTrash2,
+  FiCheck,
+  FiEye,
+  FiPaperclip,
+  FiDownload,
+  FiX,
+  FiFileText,
+} from "react-icons/fi";
 import Layout from "@/components/layout/Layout";
 import ProtectedModule from "@/components/common/ProtectedModule";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -51,25 +62,38 @@ import {
   PurchaseRequestItem,
 } from "@/services/purchaseRequestService";
 import { projectService, Project } from "@/services/projectService";
+import searchableSelectService, {
+  Contact as SelectContact,
+} from "@/services/searchableSelectService";
 import { useAuth } from "@/contexts/AuthContext";
 import api from "@/services/api";
 import {
+  isAccountingRole,
   isFinanceManagerRole,
   isFinanceStaffRole,
   isFinanceTeamRole,
   normalizeRole,
 } from "@/utils/roles";
+import { getImageUrl } from "@/utils/imageUrl";
+
+const ACCEPTED_DOCUMENT_TYPES =
+  ".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp";
+const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
 
 export default function PurchaseRequestsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [vendors, setVendors] = useState<SelectContact[]>([]);
   const [products, setProducts] = useState<any[]>([]); // simplified type for catalogue items
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [startDateFilter, setStartDateFilter] = useState("");
+  const [endDateFilter, setEndDateFilter] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { canCreate } = usePermissions();
+  const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
+  const { canCreate, canEdit } = usePermissions();
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -108,7 +132,9 @@ export default function PurchaseRequestsPage() {
   // Form state
   const [department, setDepartment] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [vendorId, setVendorId] = useState("");
   const [notes, setNotes] = useState("");
+  const [documents, setDocuments] = useState<File[]>([]);
   const [items, setItems] = useState([
     { product_id: "", quantity: 1, estimated_price: 0, notes: "" },
   ]);
@@ -140,9 +166,12 @@ export default function PurchaseRequestsPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [prsRes, projectsRes, productsRes] = await Promise.all([
+      const [prsRes, projectsRes, vendorsRes, productsRes] = await Promise.all([
         purchaseRequestService.getAll(),
         projectService.getAll().catch(() => []),
+        searchableSelectService
+          .getVendors({ is_active: true, limit: 1000 })
+          .catch(() => []),
         api
           .get("/api/v1/products")
           .then((res) => res.data.data)
@@ -150,6 +179,7 @@ export default function PurchaseRequestsPage() {
       ]);
       setRequests(prsRes || []);
       setProjects(projectsRes || []);
+      setVendors(vendorsRes || []);
       setProducts(productsRes || []);
     } catch (error) {
       toast({ title: "Gagal memuat data", status: "error", duration: 3000 });
@@ -161,7 +191,9 @@ export default function PurchaseRequestsPage() {
   const handleOpenCreate = () => {
     setDepartment(userDepartment);
     setProjectId("");
+    setVendorId("");
     setNotes("");
+    setDocuments([]);
     setItems([{ product_id: "", quantity: 1, estimated_price: 0, notes: "" }]);
     onCreateOpen();
   };
@@ -200,6 +232,102 @@ export default function PurchaseRequestsPage() {
     setItems(newItems);
   };
 
+  const validateDocument = (file: File) => {
+    const allowedExtensions = ACCEPTED_DOCUMENT_TYPES.split(",");
+    const extension = `.${file.name.split(".").pop()?.toLowerCase() || ""}`;
+
+    if (!allowedExtensions.includes(extension)) {
+      return "Format dokumen belum didukung. Gunakan PDF, Word, Excel, CSV, TXT, JPG, PNG, atau WebP.";
+    }
+
+    if (file.size > MAX_DOCUMENT_SIZE) {
+      return "Ukuran dokumen maksimal 20MB per file.";
+    }
+
+    return null;
+  };
+
+  const handleDocumentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    if (selectedFiles.length === 0) return;
+
+    const invalidFile = selectedFiles.find((file) => validateDocument(file));
+    if (invalidFile) {
+      toast({
+        title: "Dokumen tidak bisa diunggah",
+        description: validateDocument(invalidFile) || undefined,
+        status: "warning",
+        duration: 4000,
+      });
+      event.target.value = "";
+      return;
+    }
+
+    setDocuments((prev) => {
+      const existing = new Set(prev.map((file) => `${file.name}-${file.size}`));
+      const nextFiles = selectedFiles.filter(
+        (file) => !existing.has(`${file.name}-${file.size}`),
+      );
+      return [...prev, ...nextFiles];
+    });
+    event.target.value = "";
+  };
+
+  const handleRemoveDocument = (index: number) => {
+    setDocuments((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const handleExistingDocumentUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    if (!selectedRequest) return;
+
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (selectedFiles.length === 0) return;
+
+    const invalidFile = selectedFiles.find((file) => validateDocument(file));
+    if (invalidFile) {
+      toast({
+        title: "Dokumen tidak bisa diunggah",
+        description: validateDocument(invalidFile) || undefined,
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    try {
+      setIsUploadingDocuments(true);
+      await purchaseRequestService.uploadDocuments(selectedRequest.id, selectedFiles);
+      const refreshed = await purchaseRequestService.getById(selectedRequest.id);
+      setSelectedRequest(refreshed);
+      toast({
+        title: "Dokumen berhasil ditambahkan",
+        status: "success",
+        duration: 3000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal mengunggah dokumen",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 4000,
+      });
+    } finally {
+      setIsUploadingDocuments(false);
+    }
+  };
+
+  const formatFileSize = (size?: number) => {
+    const bytes = Number(size || 0);
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const getDocumentUrl = (path?: string) => getImageUrl(path || "") || "#";
+
   const handleCreateSubmit = async () => {
     // Basic validation
     if (!items.some((i) => i.product_id)) {
@@ -215,6 +343,7 @@ export default function PurchaseRequestsPage() {
       const payload: PurchaseRequestCreatePayload = {
         department,
         project_id: projectId ? parseInt(projectId) : undefined,
+        vendor_id: vendorId ? parseInt(vendorId) : undefined,
         notes,
         items: items
           .filter((i) => i.product_id)
@@ -226,7 +355,7 @@ export default function PurchaseRequestsPage() {
           })),
       };
 
-      await purchaseRequestService.create(payload);
+      await purchaseRequestService.create(payload, documents);
       toast({
         title: "Pengajuan berhasil dikirim",
         status: "success",
@@ -255,14 +384,15 @@ export default function PurchaseRequestsPage() {
     const stage = getCurrentReviewStage(pr);
     if (stage === "DIRECTOR") return "Menunggu Director";
     if (stage === "FINANCE_MANAGER") return "Menunggu Finance Manager";
-    if (stage === "FINANCE_STAFF") return "Menunggu Finance Staff";
+    if (stage === "FINANCE_STAFF") return "Menunggu Finance Staff/Accounting";
     return null;
   };
 
   const canCurrentUserReviewRequest = (pr?: PurchaseRequest | null) => {
     const stage = getCurrentReviewStage(pr);
     if (!stage || !canApprovePurchaseRequest) return false;
-    if (stage === "FINANCE_STAFF") return isFinanceStaffRole(roleNorm);
+    if (stage === "FINANCE_STAFF")
+      return isFinanceStaffRole(roleNorm) || isAccountingRole(roleNorm);
     if (stage === "FINANCE_MANAGER") return isFinanceManagerRole(roleNorm);
     if (stage === "DIRECTOR") return roleNorm === "director";
     return false;
@@ -458,11 +588,53 @@ export default function PurchaseRequestsPage() {
     void openRequestFromNotification();
   }, [onViewOpen, router, searchParams, toast]);
 
-  const filteredRequests = requests.filter(
-    (r) =>
-      r.pr_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (r.project?.name || "").toLowerCase().includes(searchQuery.toLowerCase()),
+  const getDateKey = (value?: string | null) => {
+    if (!value) return "";
+
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) return "";
+
+    const year = parsedDate.getFullYear();
+    const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
+    const day = String(parsedDate.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  };
+
+  const isDateRangeInvalid =
+    Boolean(startDateFilter && endDateFilter) && startDateFilter > endDateFilter;
+
+  const hasActiveFilters = Boolean(
+    searchQuery || startDateFilter || endDateFilter,
   );
+
+  const handleClearFilters = () => {
+    setSearchQuery("");
+    setStartDateFilter("");
+    setEndDateFilter("");
+  };
+
+  const filteredRequests = requests.filter((r) => {
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    const matchesSearch =
+      !normalizedSearch ||
+      r.pr_number.toLowerCase().includes(normalizedSearch) ||
+      (r.vendor?.name || "").toLowerCase().includes(normalizedSearch) ||
+      (r.project?.name || "").toLowerCase().includes(normalizedSearch);
+
+    const requestDate = getDateKey(r.created_at);
+    const matchesStartDate =
+      !startDateFilter || Boolean(requestDate && requestDate >= startDateFilter);
+    const matchesEndDate =
+      !endDateFilter || Boolean(requestDate && requestDate <= endDateFilter);
+
+    return (
+      matchesSearch &&
+      !isDateRangeInvalid &&
+      matchesStartDate &&
+      matchesEndDate
+    );
+  });
 
   const getStatusBadge = (request: PurchaseRequest) => {
     switch (request.status) {
@@ -496,6 +668,89 @@ export default function PurchaseRequestsPage() {
     }
   };
 
+  const normalizeDecision = (
+    decision?: string | null,
+  ): PurchaseRequestItem["approval_status"] => {
+    if (decision === "APPROVED" || decision === "REJECTED") {
+      return decision;
+    }
+    return "PENDING";
+  };
+
+  const getEffectiveItemDecision = (
+    pr: PurchaseRequest | null,
+    item: PurchaseRequestItem,
+    includeDraftReview = false,
+  ): PurchaseRequestItem["approval_status"] => {
+    if (
+      includeDraftReview &&
+      canCurrentUserReviewRequest(pr) &&
+      Object.prototype.hasOwnProperty.call(reviewDecisions, item.id)
+    ) {
+      return normalizeDecision(reviewDecisions[item.id]);
+    }
+
+    const stage = getCurrentReviewStage(pr);
+    if (stage === "DIRECTOR") {
+      const directorDecision = normalizeDecision(item.director_decision);
+      if (directorDecision !== "PENDING") return directorDecision;
+
+      const managerDecision = normalizeDecision(item.finance_manager_decision);
+      if (managerDecision !== "PENDING") return managerDecision;
+
+      return normalizeDecision(item.finance_staff_decision);
+    }
+
+    if (stage === "FINANCE_MANAGER") {
+      const managerDecision = normalizeDecision(item.finance_manager_decision);
+      if (managerDecision !== "PENDING") return managerDecision;
+
+      return normalizeDecision(item.finance_staff_decision);
+    }
+
+    if (stage === "FINANCE_STAFF") {
+      return normalizeDecision(item.finance_staff_decision);
+    }
+
+    return normalizeDecision(item.approval_status);
+  };
+
+  const getReviewSummary = (
+    pr: PurchaseRequest | null,
+    includeDraftReview = false,
+  ) => {
+    const summary = {
+      approved: 0,
+      rejected: 0,
+      pending: 0,
+      activeTotal: 0,
+    };
+
+    (pr?.items || []).forEach((item) => {
+      const decision = getEffectiveItemDecision(pr, item, includeDraftReview);
+
+      if (decision === "APPROVED") summary.approved += 1;
+      if (decision === "REJECTED") summary.rejected += 1;
+      if (decision === "PENDING") summary.pending += 1;
+
+      if (decision !== "REJECTED") {
+        summary.activeTotal += Number(item.total_estimated_price || 0);
+      }
+    });
+
+    return summary;
+  };
+
+  const getDisplayBudgetTotal = (pr: PurchaseRequest) => {
+    if (!pr.items?.length) {
+      return Number(pr.total_estimated_amount || 0);
+    }
+
+    return getReviewSummary(pr).activeTotal;
+  };
+
+  const selectedRequestSummary = getReviewSummary(selectedRequest, true);
+
   return (
     <ProtectedModule module="purchase_requests">
       <Layout>
@@ -527,23 +782,86 @@ export default function PurchaseRequestsPage() {
             borderWidth="1px"
             borderColor={borderColor}
           >
-            <Flex p={4} borderBottomWidth="1px" borderColor={borderColor}>
-              <InputGroup maxW="300px">
-                <InputLeftElement pointerEvents="none">
-                  <Icon as={FiSearch} color={mutedTextColor} />
-                </InputLeftElement>
+            <Flex
+              p={4}
+              borderBottomWidth="1px"
+              borderColor={borderColor}
+              gap={3}
+              align="flex-end"
+              wrap="wrap"
+            >
+              <FormControl maxW={{ base: "100%", md: "320px" }}>
+                <FormLabel fontSize="sm" color={mutedTextColor}>
+                  Pencarian
+                </FormLabel>
+                <InputGroup>
+                  <InputLeftElement pointerEvents="none">
+                    <Icon as={FiSearch} color={mutedTextColor} />
+                  </InputLeftElement>
+                  <Input
+                    placeholder="Cari by Nomor PR, Vendor, atau Proyek..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    bg={inputBg}
+                    borderColor={inputBorderColor}
+                    color={textColor}
+                    _hover={{ borderColor: inputBorderColor }}
+                    _focusVisible={fieldFocusStyles}
+                    _placeholder={{ color: mutedTextColor }}
+                  />
+                </InputGroup>
+              </FormControl>
+
+              <FormControl maxW={{ base: "100%", md: "180px" }}>
+                <FormLabel fontSize="sm" color={mutedTextColor}>
+                  Dari Tanggal
+                </FormLabel>
                 <Input
-                  placeholder="Cari by Nomor PR atau Proyek..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  type="date"
+                  value={startDateFilter}
+                  onChange={(e) => setStartDateFilter(e.target.value)}
                   bg={inputBg}
                   borderColor={inputBorderColor}
                   color={textColor}
                   _hover={{ borderColor: inputBorderColor }}
                   _focusVisible={fieldFocusStyles}
-                  _placeholder={{ color: mutedTextColor }}
                 />
-              </InputGroup>
+              </FormControl>
+
+              <FormControl maxW={{ base: "100%", md: "180px" }}>
+                <FormLabel fontSize="sm" color={mutedTextColor}>
+                  Sampai Tanggal
+                </FormLabel>
+                <Input
+                  type="date"
+                  value={endDateFilter}
+                  onChange={(e) => setEndDateFilter(e.target.value)}
+                  bg={inputBg}
+                  borderColor={inputBorderColor}
+                  color={textColor}
+                  _hover={{ borderColor: inputBorderColor }}
+                  _focusVisible={fieldFocusStyles}
+                />
+              </FormControl>
+
+              <Button
+                leftIcon={<FiX />}
+                variant="outline"
+                onClick={handleClearFilters}
+                isDisabled={!hasActiveFilters}
+              >
+                Reset Filter
+              </Button>
+
+              <Text
+                fontSize="sm"
+                color={isDateRangeInvalid ? "red.500" : mutedTextColor}
+                ml={{ base: 0, md: "auto" }}
+              >
+                {isDateRangeInvalid
+                  ? "Tanggal mulai tidak boleh lebih besar dari tanggal akhir."
+                  : `Menampilkan ${filteredRequests.length} dari ${requests.length} PR`}
+              </Text>
             </Flex>
 
             <Box overflowX="auto">
@@ -552,6 +870,7 @@ export default function PurchaseRequestsPage() {
                   <Tr>
                     <Th>PR Number</Th>
                     <Th>Requester</Th>
+                    <Th>Vendor Name</Th>
                     <Th>Departemen/Proyek</Th>
                     <Th>Tgl Pengajuan</Th>
                     <Th isNumeric>Estimasi Anggaran</Th>
@@ -562,13 +881,13 @@ export default function PurchaseRequestsPage() {
                 <Tbody>
                   {loading ? (
                     <Tr>
-                      <Td colSpan={7} textAlign="center" py={4}>
+                      <Td colSpan={8} textAlign="center" py={4}>
                         Memuat...
                       </Td>
                     </Tr>
                   ) : filteredRequests.length === 0 ? (
                     <Tr>
-                      <Td colSpan={7} textAlign="center" py={4}>
+                      <Td colSpan={8} textAlign="center" py={4}>
                         Tidak ada pengajuan ditemukan
                       </Td>
                     </Tr>
@@ -587,6 +906,16 @@ export default function PurchaseRequestsPage() {
                           {pr.requester?.first_name} {pr.requester?.last_name}
                         </Td>
                         <Td>
+                          <Text fontWeight="medium">
+                            {pr.vendor?.name || "-"}
+                          </Text>
+                          {pr.vendor?.code && (
+                            <Text fontSize="xs" color={mutedTextColor}>
+                              {pr.vendor.code}
+                            </Text>
+                          )}
+                        </Td>
+                        <Td>
                           {pr.department && (
                             <Text fontSize="xs" color={mutedTextColor}>
                               {pr.department}
@@ -600,7 +929,7 @@ export default function PurchaseRequestsPage() {
                         </Td>
                         <Td>{new Date(pr.created_at).toLocaleDateString()}</Td>
                         <Td isNumeric>
-                          {formatCurrency(pr.total_estimated_amount)}
+                          {formatCurrency(getDisplayBudgetTotal(pr))}
                         </Td>
                         <Td>{getStatusBadge(pr)}</Td>
                         <Td>
@@ -673,6 +1002,26 @@ export default function PurchaseRequestsPage() {
                     _focusVisible={fieldFocusStyles}
                     _placeholder={{ color: mutedTextColor }}
                   />
+                </FormControl>
+                <FormControl>
+                  <FormLabel color={textColor}>Vendor Name</FormLabel>
+                  <Select
+                    placeholder="-- Pilih Vendor (Opsional) --"
+                    value={vendorId}
+                    onChange={(e) => setVendorId(e.target.value)}
+                    bg={inputBg}
+                    borderColor={inputBorderColor}
+                    color={textColor}
+                    _hover={{ borderColor: inputBorderColor }}
+                    _focusVisible={fieldFocusStyles}
+                  >
+                    {vendors.map((vendor) => (
+                      <option key={vendor.id} value={vendor.id}>
+                        {vendor.name}
+                        {vendor.code ? ` - ${vendor.code}` : ""}
+                      </option>
+                    ))}
+                  </Select>
                 </FormControl>
                 <FormControl>
                   <FormLabel color={textColor}>Tautkan Ke Proyek</FormLabel>
@@ -839,6 +1188,85 @@ export default function PurchaseRequestsPage() {
                   _focusVisible={fieldFocusStyles}
                 />
               </FormControl>
+
+              <Box
+                mt={4}
+                borderWidth="1px"
+                borderColor={borderColor}
+                rounded="md"
+                p={4}
+                bg={infoPanelBg}
+              >
+                <Flex
+                  justify="space-between"
+                  align={{ base: "flex-start", md: "center" }}
+                  direction={{ base: "column", md: "row" }}
+                  gap={3}
+                >
+                  <Box>
+                    <Text fontWeight="bold" color={textColor}>
+                      Dokumen Pendukung
+                    </Text>
+                    <Text fontSize="sm" color={mutedTextColor}>
+                      Bisa unggah beberapa file dalam satu PR: PDF, Word, Excel,
+                      CSV, TXT, JPG, PNG, atau WebP. Maksimal 20MB per file.
+                    </Text>
+                  </Box>
+                  <Button
+                    as="label"
+                    leftIcon={<FiPaperclip />}
+                    variant="outline"
+                    colorScheme="blue"
+                    cursor="pointer"
+                    flexShrink={0}
+                  >
+                    Pilih Dokumen
+                    <Input
+                      type="file"
+                      multiple
+                      accept={ACCEPTED_DOCUMENT_TYPES}
+                      display="none"
+                      onChange={handleDocumentChange}
+                    />
+                  </Button>
+                </Flex>
+
+                {documents.length > 0 && (
+                  <Box mt={3}>
+                    {documents.map((file, index) => (
+                      <Flex
+                        key={`${file.name}-${file.size}-${index}`}
+                        align="center"
+                        justify="space-between"
+                        gap={3}
+                        py={2}
+                        borderTopWidth={index === 0 ? "0" : "1px"}
+                        borderColor={borderColor}
+                      >
+                        <Flex align="center" gap={2} minW={0}>
+                          <Icon as={FiFileText} color="blue.500" />
+                          <Box minW={0}>
+                            <Text fontSize="sm" fontWeight="medium" noOfLines={1}>
+                              {file.name}
+                            </Text>
+                            <Text fontSize="xs" color={mutedTextColor}>
+                              {formatFileSize(file.size)}
+                            </Text>
+                          </Box>
+                        </Flex>
+                        <IconButton
+                          aria-label="Hapus dokumen"
+                          icon={<FiX />}
+                          size="sm"
+                          variant="ghost"
+                          colorScheme="red"
+                          onClick={() => handleRemoveDocument(index)}
+                        />
+                      </Flex>
+                    ))}
+                  </Box>
+                )}
+              </Box>
             </ModalBody>
             <ModalFooter
               bg={modalFooterBg}
@@ -872,9 +1300,10 @@ export default function PurchaseRequestsPage() {
             bg={modalBg}
             borderWidth="1px"
             borderColor={borderColor}
-            maxW={{ base: "calc(100vw - 1rem)", xl: "1320px" }}
+            w={{ base: "calc(100vw - 1rem)", lg: "calc(100vw - 4rem)" }}
+            maxW="1800px"
             maxH="calc(100vh - 2rem)"
-            mx={2}
+            mx="auto"
           >
             <ModalHeader
               display="flex"
@@ -924,6 +1353,19 @@ export default function PurchaseRequestsPage() {
                   </Box>
                   <Box>
                     <Text fontSize="sm" color={mutedTextColor}>
+                      Vendor Name
+                    </Text>
+                    <Text fontWeight="medium">
+                      {selectedRequest.vendor?.name || "-"}
+                    </Text>
+                    {selectedRequest.vendor?.code && (
+                      <Text fontSize="xs" color={mutedTextColor}>
+                        {selectedRequest.vendor.code}
+                      </Text>
+                    )}
+                  </Box>
+                  <Box>
+                    <Text fontSize="sm" color={mutedTextColor}>
                       Tanggal Pengajuan
                     </Text>
                     <Text fontWeight="medium">
@@ -954,7 +1396,7 @@ export default function PurchaseRequestsPage() {
                   {selectedRequest.finance_staff_approver && (
                     <Box>
                       <Text fontSize="sm" color={mutedTextColor}>
-                        Review Finance Staff
+                        Review Finance Staff/Accounting
                       </Text>
                       <Text fontWeight="medium" color="orange.600">
                         {selectedRequest.finance_staff_approver.first_name}{" "}
@@ -1017,28 +1459,13 @@ export default function PurchaseRequestsPage() {
                 <Text fontWeight="bold">Rincian Item</Text>
                 <Flex gap={2} wrap="wrap">
                   <Badge colorScheme="green">
-                    {
-                      (selectedRequest?.items || []).filter(
-                        (item) => item.approval_status === "APPROVED",
-                      ).length
-                    }{" "}
-                    Approved
+                    {selectedRequestSummary.approved} Approved
                   </Badge>
                   <Badge colorScheme="red">
-                    {
-                      (selectedRequest?.items || []).filter(
-                        (item) => item.approval_status === "REJECTED",
-                      ).length
-                    }{" "}
-                    Rejected
+                    {selectedRequestSummary.rejected} Rejected
                   </Badge>
                   <Badge colorScheme="gray">
-                    {
-                      (selectedRequest?.items || []).filter(
-                        (item) => item.approval_status === "PENDING",
-                      ).length
-                    }{" "}
-                    Pending
+                    {selectedRequestSummary.pending} Pending
                   </Badge>
                 </Flex>
               </Flex>
@@ -1049,21 +1476,30 @@ export default function PurchaseRequestsPage() {
                 overflow="hidden"
                 mb={4}
               >
-                <TableContainer overflowX="auto">
-                  <Table variant="striped" size="sm" minW="1120px" mb={0}>
+                <TableContainer w="full" maxW="100%" overflowX="auto" pb={1}>
+                  <Table
+                    variant="striped"
+                    size="sm"
+                    minW={
+                      canCurrentUserReviewRequest(selectedRequest)
+                        ? "1240px"
+                        : "1040px"
+                    }
+                    mb={0}
+                  >
                     <Thead>
                       <Tr>
-                        <Th>Item (Benchmark)</Th>
-                        <Th isNumeric>Qty</Th>
-                        <Th isNumeric>Est. Harga Satuan</Th>
-                        <Th isNumeric>Total Est.</Th>
-                        <Th>Staff</Th>
-                        <Th>Manager</Th>
-                        <Th>Director</Th>
-                        <Th>Final</Th>
-                        <Th>Purchase</Th>
+                        <Th minW="220px">Item (Benchmark)</Th>
+                        <Th isNumeric minW="70px">Qty</Th>
+                        <Th isNumeric minW="150px">Est. Harga Satuan</Th>
+                        <Th isNumeric minW="150px">Total Est.</Th>
+                        <Th minW="95px">Staff</Th>
+                        <Th minW="95px">Manager</Th>
+                        <Th minW="95px">Director</Th>
+                        <Th minW="95px">Final</Th>
+                        <Th minW="125px">Purchase</Th>
                         {canCurrentUserReviewRequest(selectedRequest) && (
-                          <Th minW="210px">Keputusan</Th>
+                          <Th minW="220px">Keputusan</Th>
                         )}
                       </Tr>
                     </Thead>
@@ -1078,16 +1514,17 @@ export default function PurchaseRequestsPage() {
                               </Text>
                             )}
                           </Td>
-                          <Td isNumeric verticalAlign="top">
+                          <Td isNumeric verticalAlign="top" whiteSpace="nowrap">
                             {it.quantity}
                           </Td>
-                          <Td isNumeric verticalAlign="top">
+                          <Td isNumeric verticalAlign="top" whiteSpace="nowrap">
                             {formatCurrency(it.estimated_price)}
                           </Td>
                           <Td
                             isNumeric
                             fontWeight="semibold"
                             verticalAlign="top"
+                            whiteSpace="nowrap"
                           >
                             {formatCurrency(it.total_estimated_price)}
                           </Td>
@@ -1103,7 +1540,7 @@ export default function PurchaseRequestsPage() {
                           <Td verticalAlign="top">
                             {getDecisionBadge(it.approval_status)}
                           </Td>
-                          <Td verticalAlign="top">
+                          <Td verticalAlign="top" whiteSpace="nowrap">
                             {it.purchase_id ? (
                               <Badge colorScheme="blue">Sudah Dipilih</Badge>
                             ) : (
@@ -1155,10 +1592,10 @@ export default function PurchaseRequestsPage() {
                           fontWeight="bold"
                           fontSize="md"
                           color="blue.600"
+                          minW="170px"
+                          whiteSpace="nowrap"
                         >
-                          {formatCurrency(
-                            selectedRequest?.total_estimated_amount || 0,
-                          )}
+                          {formatCurrency(selectedRequestSummary.activeTotal)}
                         </Td>
                       </Tr>
                     </Tbody>
@@ -1183,6 +1620,100 @@ export default function PurchaseRequestsPage() {
                   </Text>
                 </Box>
               )}
+
+              <Box
+                mt={4}
+                borderWidth="1px"
+                borderColor={borderColor}
+                rounded="md"
+                p={4}
+                bg={infoPanelBg}
+              >
+                <Flex
+                  justify="space-between"
+                  align={{ base: "flex-start", md: "center" }}
+                  direction={{ base: "column", md: "row" }}
+                  gap={3}
+                  mb={3}
+                >
+                  <Flex align="center" gap={2}>
+                    <Icon as={FiPaperclip} color="blue.500" />
+                    <Text fontWeight="bold">Dokumen Pendukung</Text>
+                    <Badge colorScheme="blue">
+                      {selectedRequest?.documents?.length || 0} file
+                    </Badge>
+                  </Flex>
+                  {selectedRequest && canEdit("purchase_requests") && (
+                    <Button
+                      as="label"
+                      leftIcon={<FiPaperclip />}
+                      size="sm"
+                      variant="outline"
+                      colorScheme="blue"
+                      cursor="pointer"
+                      isLoading={isUploadingDocuments}
+                    >
+                      Tambah Dokumen
+                      <Input
+                        type="file"
+                        multiple
+                        accept={ACCEPTED_DOCUMENT_TYPES}
+                        display="none"
+                        onChange={handleExistingDocumentUpload}
+                      />
+                    </Button>
+                  )}
+                </Flex>
+
+                {selectedRequest?.documents?.length ? (
+                  <Box>
+                    {selectedRequest.documents.map((document, index) => (
+                      <Flex
+                        key={document.id}
+                        align={{ base: "flex-start", md: "center" }}
+                        justify="space-between"
+                        direction={{ base: "column", md: "row" }}
+                        gap={3}
+                        py={3}
+                        borderTopWidth={index === 0 ? "0" : "1px"}
+                        borderColor={borderColor}
+                      >
+                        <Flex align="center" gap={3} minW={0}>
+                          <Icon as={FiFileText} color="blue.500" />
+                          <Box minW={0}>
+                            <Text fontWeight="medium" noOfLines={1}>
+                              {document.file_name}
+                            </Text>
+                            <Text fontSize="xs" color={mutedTextColor}>
+                              {formatFileSize(document.file_size)}
+                              {document.uploader &&
+                                ` - diunggah oleh ${document.uploader.first_name} ${document.uploader.last_name}`}
+                            </Text>
+                          </Box>
+                        </Flex>
+                        <Button
+                          as={Link}
+                          href={getDocumentUrl(document.file_path)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          leftIcon={<FiDownload />}
+                          size="sm"
+                          variant="outline"
+                          colorScheme="blue"
+                          textDecoration="none"
+                          _hover={{ textDecoration: "none" }}
+                        >
+                          Buka
+                        </Button>
+                      </Flex>
+                    ))}
+                  </Box>
+                ) : (
+                  <Text fontSize="sm" color={mutedTextColor}>
+                    Belum ada dokumen pendukung untuk PR ini.
+                  </Text>
+                )}
+              </Box>
 
               {canCurrentUserReviewRequest(selectedRequest) && (
                 <Box

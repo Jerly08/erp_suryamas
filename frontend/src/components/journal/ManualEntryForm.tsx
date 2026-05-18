@@ -39,6 +39,7 @@ import { accountService } from "@/services/accountService";
 import cashbankService from "@/services/cashbankService";
 import {
   ssotJournalService,
+  JournalAdjustmentCategory,
   SSOTJournalEntry,
 } from "@/services/ssotJournalService";
 import { Account } from "@/types/account";
@@ -152,6 +153,7 @@ interface ManualEntryFormData {
   entry_date: string;
   reference: string;
   description: string;
+  adjustment_category_code: string;
   notes: string;
   lines: JournalLineForm[];
 }
@@ -172,6 +174,8 @@ interface ManualEntryFormProps {
     notes?: string;
     source_type?: string;
     adjustment_of?: number;
+    adjustment_category_code?: string;
+    adjustment_category_label?: string;
     require_director_approval?: boolean;
     adjusted_entry?: SSOTJournalEntry;
     lines?: any[];
@@ -215,6 +219,9 @@ export default function ManualEntryForm({
   const [cashBankLinkedAccounts, setCashBankLinkedAccounts] = useState<
     Account[]
   >([]);
+  const [adjustmentCategories, setAdjustmentCategories] = useState<
+    JournalAdjustmentCategory[]
+  >([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const normalizedRole = String(user?.role || "").toLowerCase();
@@ -222,7 +229,8 @@ export default function ManualEntryForm({
     initialData?.source_type === "ADJUSTMENT" ? "ADJUSTMENT" : entryType;
   const isAdjustmentEntry = effectiveEntryType === "ADJUSTMENT";
   const isEmployeeJournalSubmitter = normalizedRole === "employee";
-  const isFinanceStaffJournalSubmitter = normalizedRole === "finance_staff";
+  const isFinanceStaffJournalSubmitter =
+    normalizedRole === "finance_staff" || normalizedRole === "accounting";
   const isFinanceManagerJournalSubmitter =
     normalizedRole === "finance_manager" || normalizedRole === "finance";
   const [requireDirectorApproval, setRequireDirectorApproval] = useState(
@@ -273,6 +281,10 @@ export default function ManualEntryForm({
         : new Date().toISOString().split("T")[0],
       reference: defaultReference,
       description: defaultDescription,
+      adjustment_category_code:
+        initialData?.adjustment_category_code ||
+        baseEntry?.adjustment_requirement_code ||
+        "",
       notes: initialData?.notes || "",
       lines: initialData?.lines
         ? initialData.lines.map((l) => ({
@@ -356,7 +368,39 @@ export default function ManualEntryForm({
     loadAccounts();
   }, [toast, t]);
 
+  useEffect(() => {
+    if (!isAdjustmentEntry) {
+      setAdjustmentCategories([]);
+      return;
+    }
+
+    const loadAdjustmentCategories = async () => {
+      try {
+        const categories = await ssotJournalService.getAdjustmentCategories();
+        setAdjustmentCategories(categories);
+      } catch (error) {
+        console.error("Failed to load journal adjustment categories", error);
+        toast({
+          title: t("common.error"),
+          description: "Gagal memuat kategori jurnal adjustment",
+          status: "error",
+          duration: 3000,
+        });
+      }
+    };
+
+    loadAdjustmentCategories();
+  }, [isAdjustmentEntry, toast, t]);
+
   const watchLines = watch("lines");
+  const selectedAdjustmentCategoryCode = watch("adjustment_category_code");
+  const selectedAdjustmentCategory = useMemo(
+    () =>
+      adjustmentCategories.find(
+        (category) => category.code === selectedAdjustmentCategoryCode,
+      ),
+    [adjustmentCategories, selectedAdjustmentCategoryCode],
+  );
   const cashBankLinkedAccountById = useMemo(
     () =>
       new Map(
@@ -427,6 +471,17 @@ export default function ManualEntryForm({
       return;
     }
 
+    if (isAdjustmentEntry && !data.adjustment_category_code) {
+      toast({
+        title: t("common.error"),
+        description:
+          "Kategori transaksi adjustment wajib dipilih agar kebutuhan adjustment client terdokumentasi.",
+        status: "error",
+        duration: 4000,
+      });
+      return;
+    }
+
     if (hasBlockedCashBankSelection) {
       const blockedAccountSummary = blockedSelectedAccounts
         .map(
@@ -479,6 +534,9 @@ export default function ManualEntryForm({
         notes: data.notes,
         source_type: effectiveEntryType,
         adjustment_of: effectiveAdjustmentOf,
+        adjustment_category_code: isAdjustmentEntry
+          ? data.adjustment_category_code
+          : undefined,
         require_director_approval:
           isFinanceManagerJournalSubmitter && !initialData?.id
             ? requireDirectorApproval
@@ -516,10 +574,10 @@ export default function ManualEntryForm({
                   isFinanceManagerJournalSubmitter
                 ? "Jurnal berhasil diposting oleh finance manager."
                 : isAdjustmentEntry && isFinanceStaffJournalSubmitter
-              ? t("journal.adjustmentCreateSuccess")
-              : isEmployeeJournalSubmitter
-                ? "Draft jurnal berhasil disimpan. Finance akan memverifikasi dan memposting jurnal ini."
-                : t("journal.create_success"),
+                  ? t("journal.adjustmentCreateSuccess")
+                  : isEmployeeJournalSubmitter
+                    ? "Draft jurnal berhasil disimpan. Finance akan memverifikasi dan memposting jurnal ini."
+                    : t("journal.create_success"),
           status: "success",
           duration: 3000,
         });
@@ -653,6 +711,62 @@ export default function ManualEntryForm({
                   {t("journal.validation.description_required")}
                 </FormErrorMessage>
               </FormControl>
+              {isAdjustmentEntry && (
+                <FormControl
+                  isRequired
+                  isInvalid={!!errors.adjustment_category_code}
+                >
+                  <FormLabel>Kategori Transaksi Adjustment</FormLabel>
+                  <Select
+                    placeholder="Pilih kategori transaksi"
+                    {...register("adjustment_category_code", {
+                      required: isAdjustmentEntry,
+                    })}
+                    {...fieldStyles}
+                  >
+                    {adjustmentCategories.map((category) => (
+                      <option key={category.code} value={category.code}>
+                        {category.label}
+                      </option>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    Mapping ini membantu finance menentukan jenis transaksi
+                    client yang memang membutuhkan jurnal adjustment.
+                  </FormHelperText>
+                  <FormErrorMessage>
+                    Kategori transaksi adjustment wajib dipilih.
+                  </FormErrorMessage>
+                  {selectedAdjustmentCategory && (
+                    <Box
+                      mt={3}
+                      p={3}
+                      bg="orange.50"
+                      borderWidth="1px"
+                      borderColor="orange.100"
+                      borderRadius="md"
+                    >
+                      <Text fontWeight="semibold" color="orange.700">
+                        {selectedAdjustmentCategory.label}
+                      </Text>
+                      <Text fontSize="sm" color="orange.800" mt={1}>
+                        {selectedAdjustmentCategory.description}
+                      </Text>
+                      {selectedAdjustmentCategory.coa && (
+                        <Text fontSize="xs" color="orange.700" mt={2}>
+                          COA: {selectedAdjustmentCategory.coa}
+                        </Text>
+                      )}
+                      {selectedAdjustmentCategory.examples.length > 0 && (
+                        <Text fontSize="xs" color="orange.700" mt={2}>
+                          Contoh:{" "}
+                          {selectedAdjustmentCategory.examples.join("; ")}
+                        </Text>
+                      )}
+                    </Box>
+                  )}
+                </FormControl>
+              )}
               <FormControl>
                 <FormLabel>Notes</FormLabel>
                 <Textarea
@@ -873,7 +987,10 @@ export default function ManualEntryForm({
             type="submit"
             isLoading={submitting}
             isDisabled={
-              !isBalanced || totalDebit === 0 || hasBlockedCashBankSelection
+              !isBalanced ||
+              totalDebit === 0 ||
+              hasBlockedCashBankSelection ||
+              (isAdjustmentEntry && !selectedAdjustmentCategoryCode)
             }
           >
             {initialData
@@ -886,11 +1003,11 @@ export default function ManualEntryForm({
                   ? "Kirim ke Director"
                   : isFinanceManagerJournalSubmitter
                     ? "Post Journal"
-                : isEmployeeJournalSubmitter
-                  ? "Simpan Draft"
-                  : isAdjustmentEntry
-                    ? "Simpan Adjustment"
-                    : "Save Journal"}
+                    : isEmployeeJournalSubmitter
+                      ? "Simpan Draft"
+                      : isAdjustmentEntry
+                        ? "Simpan Adjustment"
+                        : "Save Journal"}
           </Button>
         </HStack>
       </VStack>

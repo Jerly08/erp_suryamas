@@ -523,12 +523,24 @@ func (s *SalesServiceV2) createSalePPh23PaymentCorrection(
 func (s *SalesServiceV2) createLateSalePPh23FinalJournal(
 	tx *gorm.DB,
 	sale *models.Sale,
-	amount float64,
+	finalAmount float64,
+	prepaidReclassAmount float64,
+	receivableSettlementAmount float64,
 	request models.SaleLatePPh23Request,
 	userID uint,
 ) (*models.SSOTJournalEntry, string, error) {
 	if sale == nil {
 		return nil, "", fmt.Errorf("sale is required")
+	}
+	finalAmount = roundScheduleMoney(finalAmount)
+	prepaidReclassAmount = roundScheduleMoney(prepaidReclassAmount)
+	receivableSettlementAmount = roundScheduleMoney(receivableSettlementAmount)
+	if finalAmount <= 0.005 {
+		return nil, "", fmt.Errorf("nominal PPh23 final harus lebih besar dari 0")
+	}
+	if math.Abs(finalAmount-(prepaidReclassAmount+receivableSettlementAmount)) > 0.01 {
+		return nil, "", fmt.Errorf("jurnal PPh23 tidak seimbang: nilai final %.2f tidak sama dengan reclass %.2f + piutang %.2f",
+			finalAmount, prepaidReclassAmount, receivableSettlementAmount)
 	}
 
 	referenceNumber := buildSalePPh23ReferenceNumber(sale)
@@ -539,9 +551,20 @@ func (s *SalesServiceV2) createLateSalePPh23FinalJournal(
 		return nil, "", fmt.Errorf("akun Kredit Pajak PPh23 tidak ditemukan: %v", err)
 	}
 
-	receivableAccount, err := resolveSalesReceivableAccount(tx)
-	if err != nil {
-		return nil, "", err
+	var pph23PrepaidAccount *models.Account
+	if prepaidReclassAmount > 0.005 {
+		pph23PrepaidAccount, err = taxHelper.GetWithholdingTax23Account(tx)
+		if err != nil {
+			return nil, "", fmt.Errorf("akun sumber PPh23 tidak ditemukan: %v", err)
+		}
+	}
+
+	var receivableAccount *models.Account
+	if receivableSettlementAmount > 0.005 {
+		receivableAccount, err = resolveSalesReceivableAccount(tx)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 
 	journalReference := strings.TrimSpace(request.Reference)
@@ -549,30 +572,46 @@ func (s *SalesServiceV2) createLateSalePPh23FinalJournal(
 		journalReference = fmt.Sprintf("PPH23-%s", referenceNumber)
 	}
 
-	unifiedJournalService := NewUnifiedJournalService(tx)
-	journalEntry, err := unifiedJournalService.CreateJournalEntryWithTx(tx, &JournalEntryRequest{
-		EntryDate:   request.Date,
-		Reference:   journalReference,
-		Description: fmt.Sprintf("Posting PPh23 Susulan Sales - %s", referenceNumber),
-		Notes:       strings.TrimSpace(request.Notes),
-		SourceType:  models.SSOTSourceTypeAdjustment,
-		SourceID:    uint64(sale.ID),
-		AutoPost:    true,
-		CreatedBy:   uint64(userID),
-		Lines: []JournalLineRequest{
-			{
-				AccountID:    uint64(pph23CreditAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(amount),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("Kredit Pajak PPh23 - %s", referenceNumber),
-			},
-			{
-				AccountID:    uint64(receivableAccount.ID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(amount),
-				Description:  fmt.Sprintf("Kurangi Piutang Usaha untuk PPh23 - %s", referenceNumber),
-			},
+	journalLines := []JournalLineRequest{
+		{
+			AccountID:    uint64(pph23CreditAccount.ID),
+			DebitAmount:  decimal.NewFromFloat(finalAmount),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("Kredit Pajak PPh23 - %s", referenceNumber),
 		},
+	}
+	if prepaidReclassAmount > 0.005 {
+		journalLines = append(journalLines, JournalLineRequest{
+			AccountID:    uint64(pph23PrepaidAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(prepaidReclassAmount),
+			Description:  fmt.Sprintf("Reclass PPh23 Dibayar Dimuka - %s", referenceNumber),
+		})
+	}
+	if receivableSettlementAmount > 0.005 {
+		journalLines = append(journalLines, JournalLineRequest{
+			AccountID:    uint64(receivableAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(receivableSettlementAmount),
+			Description:  fmt.Sprintf("Kurangi Piutang Usaha untuk PPh23 - %s", referenceNumber),
+		})
+	}
+
+	unifiedJournalService := NewUnifiedJournalService(tx)
+	adjustmentOf := findPostedSourceJournalIDForAdjustment(tx, models.SSOTSourceTypeSale, uint64(sale.ID), request.Date)
+	journalEntry, err := unifiedJournalService.CreateJournalEntryWithTx(tx, &JournalEntryRequest{
+		EntryDate:              request.Date,
+		Reference:              journalReference,
+		Description:            fmt.Sprintf("Posting PPh23 Susulan Sales - %s", referenceNumber),
+		Notes:                  strings.TrimSpace(request.Notes),
+		SourceType:             models.SSOTSourceTypeAdjustment,
+		SourceID:               uint64(sale.ID),
+		AdjustmentOf:           adjustmentOf,
+		AdjustmentCategoryCode: models.JournalAdjustmentCategorySalesPPh23Settlement,
+		AutoPost:               true,
+		SystemGenerated:        true,
+		CreatedBy:              uint64(userID),
+		Lines:                  journalLines,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create late PPh23 journal: %w", err)
@@ -611,11 +650,6 @@ func (s *SalesServiceV2) AddLatePPh23(saleID uint, request models.SaleLatePPh23R
 		return nil, fmt.Errorf("PPh23 susulan hanya bisa ditambahkan untuk invoice yang sudah diterbitkan")
 	}
 
-	if sale.PPh23Amount > 0.005 {
-		tx.Rollback()
-		return nil, fmt.Errorf("invoice ini sudah memiliki PPh23, gunakan posting PPh23 yang sudah tersedia")
-	}
-
 	if sale.PPh23SettlementJournalEntryID != nil || sale.PPh23SettlementDate != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("PPh23 untuk invoice ini sudah pernah dipost")
@@ -627,19 +661,30 @@ func (s *SalesServiceV2) AddLatePPh23(saleID uint, request models.SaleLatePPh23R
 		return nil, err
 	}
 
-	if sale.PaidAmount+amount < sale.TotalAmount-0.005 {
-		tx.Rollback()
-		return nil, fmt.Errorf("invoice belum lunas. Posting PPh23 susulan hanya bisa dilakukan ketika pembayaran customer ditambah PPh23 sudah menutup total invoice")
+	existingPPh23Amount := roundScheduleMoney(sale.PPh23Amount)
+	additionalAmount := amount
+	if existingPPh23Amount > 0.005 {
+		if amount <= existingPPh23Amount+0.005 {
+			tx.Rollback()
+			return nil, fmt.Errorf("nominal PPh23 final harus lebih besar dari PPh23 yang sudah tercatat (saat ini %.2f)", existingPPh23Amount)
+		}
+		additionalAmount = roundScheduleMoney(amount - existingPPh23Amount)
 	}
 
-	if sale.OutstandingAmount <= 0.005 {
+	if sale.PaidAmount+additionalAmount < sale.TotalAmount-0.005 {
+		tx.Rollback()
+		return nil, fmt.Errorf("invoice belum lunas. Posting PPh23 susulan hanya bisa dilakukan ketika pembayaran customer ditambah tambahan PPh23 menutup total invoice")
+	}
+
+	correctionAmount := roundScheduleMoney(additionalAmount - math.Max(roundScheduleMoney(sale.OutstandingAmount), 0))
+	if correctionAmount > 0.005 {
 		correctionSources, sourceErr := buildSalePPh23CorrectionSources(tx, &sale)
 		if sourceErr != nil {
 			tx.Rollback()
 			return nil, sourceErr
 		}
 
-		remainingCorrection := amount
+		remainingCorrection := correctionAmount
 		for _, source := range correctionSources {
 			if remainingCorrection <= 0.005 {
 				break
@@ -669,7 +714,7 @@ func (s *SalesServiceV2) AddLatePPh23(saleID uint, request models.SaleLatePPh23R
 
 		if remainingCorrection > 0.005 {
 			tx.Rollback()
-			return nil, fmt.Errorf("histori payment kas/bank tidak cukup untuk mengoreksi invoice lunas sebesar PPh23 yang diminta")
+			return nil, fmt.Errorf("histori payment kas/bank tidak cukup untuk mengoreksi invoice sebesar tambahan PPh23 yang diminta")
 		}
 	}
 
@@ -688,7 +733,15 @@ func (s *SalesServiceV2) AddLatePPh23(saleID uint, request models.SaleLatePPh23R
 	}
 	sale.SettlementStatus = models.ResolveSaleSettlementStatus(sale.Status, sale.PaidAmount, sale.OutstandingAmount)
 
-	journalEntry, journalReference, err := s.createLateSalePPh23FinalJournal(tx, &sale, amount, request, userID)
+	journalEntry, journalReference, err := s.createLateSalePPh23FinalJournal(
+		tx,
+		&sale,
+		amount,
+		existingPPh23Amount,
+		additionalAmount,
+		request,
+		userID,
+	)
 	if err != nil {
 		tx.Rollback()
 		return nil, err

@@ -92,6 +92,13 @@ func (pc *PurchaseController) applyStaffPurchaseScope(c *gin.Context, filter *mo
 	}
 }
 
+func getPurchaseAccountingStatusQuery(c *gin.Context) string {
+	if accountingStatus := c.Query("accounting_status"); accountingStatus != "" {
+		return accountingStatus
+	}
+	return c.Query("accounting_monitor")
+}
+
 // Purchase CRUD Operations
 
 // GetPurchases godoc
@@ -123,6 +130,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 	endDate := c.Query("end_date")
 	search := c.Query("search")
 	approvalStatus := c.Query("approval_status")
+	accountingStatus := getPurchaseAccountingStatusQuery(c)
 
 	var requiresApproval *bool
 	if reqApp := c.Query("requires_approval"); reqApp != "" {
@@ -138,6 +146,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 		EndDate:          endDate,
 		Search:           search,
 		ApprovalStatus:   approvalStatus,
+		AccountingStatus: accountingStatus,
 		RequiresApproval: requiresApproval,
 		Page:             page,
 		Limit:            limit,
@@ -538,6 +547,41 @@ func (pc *PurchaseController) RejectPurchase(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (pc *PurchaseController) CompleteAccountingCOA(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	userRole := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(userRole)
+	if roleNorm != models.RoleAdmin && !models.IsFinanceManagerRole(roleNorm) && !models.IsAccountingRole(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Hanya Accounting, Finance Manager, atau Admin yang dapat melengkapi GL/COA setelah approval purchase",
+		})
+		return
+	}
+
+	var request models.PurchaseAccountingCOARequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	purchase, err := pc.purchaseService.CompleteAccountingCOA(uint(id), request, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "COA accounting berhasil dilengkapi dan purchase sudah difinalisasi",
+		"purchase": purchase,
+	})
+}
+
 func purchaseApprovalErrorStatus(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
@@ -881,6 +925,7 @@ func (pc *PurchaseController) GetPurchasesSummary(c *gin.Context) {
 	endDate := c.Query("end_date")
 	search := c.Query("search")
 	approvalStatus := c.Query("approval_status")
+	accountingStatus := getPurchaseAccountingStatusQuery(c)
 
 	var requiresApproval *bool
 	if reqApp := c.Query("requires_approval"); reqApp != "" {
@@ -896,6 +941,7 @@ func (pc *PurchaseController) GetPurchasesSummary(c *gin.Context) {
 		EndDate:          endDate,
 		Search:           search,
 		ApprovalStatus:   approvalStatus,
+		AccountingStatus: accountingStatus,
 		RequiresApproval: requiresApproval,
 	}
 	pc.applyStaffPurchaseScope(c, &filter)
@@ -1484,6 +1530,7 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 	projectID := c.Query("project_id")
 	search := c.Query("search")
 	approvalStatus := c.Query("approval_status")
+	accountingStatus := getPurchaseAccountingStatusQuery(c)
 
 	// If no dates provided, default to last 30 days to keep report size reasonable
 	if startDate == "" && endDate == "" {
@@ -1495,15 +1542,16 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 
 	// Build filter with all parameters to match current filtering behavior
 	filter := models.PurchaseFilter{
-		Status:         status,
-		VendorID:       vendorID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		EndDate:        endDate,
-		Search:         search,
-		ApprovalStatus: approvalStatus,
-		Page:           1,
-		Limit:          10000, // Large limit for export
+		Status:           status,
+		VendorID:         vendorID,
+		ProjectID:        projectID,
+		StartDate:        startDate,
+		EndDate:          endDate,
+		Search:           search,
+		ApprovalStatus:   approvalStatus,
+		AccountingStatus: accountingStatus,
+		Page:             1,
+		Limit:            10000, // Large limit for export
 	}
 	pc.applyStaffPurchaseScope(c, &filter)
 
@@ -1562,6 +1610,7 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 	projectID := c.Query("project_id")
 	search := c.Query("search")
 	approvalStatus := c.Query("approval_status")
+	accountingStatus := getPurchaseAccountingStatusQuery(c)
 
 	// If no dates provided, default to last 30 days to keep report size reasonable
 	if startDate == "" && endDate == "" {
@@ -1573,15 +1622,16 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 
 	// Build filter with all parameters to match current filtering behavior
 	filter := models.PurchaseFilter{
-		Status:         status,
-		VendorID:       vendorID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		EndDate:        endDate,
-		Search:         search,
-		ApprovalStatus: approvalStatus,
-		Page:           1,
-		Limit:          10000, // Large limit for export
+		Status:           status,
+		VendorID:         vendorID,
+		ProjectID:        projectID,
+		StartDate:        startDate,
+		EndDate:          endDate,
+		Search:           search,
+		ApprovalStatus:   approvalStatus,
+		AccountingStatus: accountingStatus,
+		Page:             1,
+		Limit:            10000, // Large limit for export
 	}
 	pc.applyStaffPurchaseScope(c, &filter)
 

@@ -49,6 +49,9 @@ func InitializeDatabase(db *gorm.DB) {
 	// Run auto-fix migration for common issues (after git pull)
 	AutoFixMigration(db)
 
+	// Backfill finalized PR budget totals to exclude rejected item rows
+	PurchaseRequestBudgetTotalMigration(db)
+
 	// Fix sales balance issues
 	SalesBalanceFixMigration(db)
 
@@ -139,6 +142,10 @@ func RunMigrations(db *gorm.DB) {
 		&models.Payment{},
 		&models.CashBank{},
 		&models.CashBankTransaction{},
+
+		// Payroll models
+		&models.PayrollRun{},
+		&models.PayrollItem{},
 
 		// Expense models
 		&models.ExpenseCategory{},

@@ -272,14 +272,15 @@ type SaleUpdateRequest struct {
 }
 
 type SaleItemRequest struct {
-	ProductID       uint     `json:"product_id"`
-	ProductName     string   `json:"product_name"`
-	Description     string   `json:"description"`
-	Location        string   `json:"location"`
-	Quantity        float64  `json:"quantity" binding:"required,min=1"` // Accept float from frontend
-	UnitPrice       float64  `json:"unit_price" binding:"required,min=0"`
-	DiscountPercent *float64 `json:"discount_percent"`
-	DiscountAmount  *float64 `json:"discount_amount"`
+	ProductID         uint     `json:"product_id"`
+	ProductName       string   `json:"product_name"`
+	Description       string   `json:"description"`
+	Location          string   `json:"location"`
+	Quantity          float64  `json:"quantity" binding:"required,min=1"` // Accept float from frontend
+	UnitPrice         float64  `json:"unit_price" binding:"required,min=0"`
+	EstimatedUnitCost *float64 `json:"estimated_unit_cost"`
+	DiscountPercent   *float64 `json:"discount_percent"`
+	DiscountAmount    *float64 `json:"discount_amount"`
 	// Legacy fields for backward compatibility
 	Discount         *float64 `json:"discount"` // Can come from frontend
 	Tax              *float64 `json:"tax"`
@@ -503,23 +504,25 @@ type SalePayment struct {
 
 // Item Create/Update DTOs
 type SaleItemCreateRequest struct {
-	SaleID           uint    `json:"sale_id" binding:"required"`
-	ProductID        uint    `json:"product_id"`
-	ProductName      string  `json:"product_name"`
-	Quantity         int     `json:"quantity" binding:"required,min=1"`
-	UnitPrice        float64 `json:"unit_price" binding:"required,min=0"`
-	Discount         float64 `json:"discount"`
-	Tax              float64 `json:"tax"`
-	RevenueAccountID uint    `json:"revenue_account_id"`
+	SaleID            uint     `json:"sale_id" binding:"required"`
+	ProductID         uint     `json:"product_id"`
+	ProductName       string   `json:"product_name"`
+	Quantity          int      `json:"quantity" binding:"required,min=1"`
+	UnitPrice         float64  `json:"unit_price" binding:"required,min=0"`
+	EstimatedUnitCost *float64 `json:"estimated_unit_cost"`
+	Discount          float64  `json:"discount"`
+	Tax               float64  `json:"tax"`
+	RevenueAccountID  uint     `json:"revenue_account_id"`
 }
 
 type SaleItemUpdateRequest struct {
-	ProductName      *string  `json:"product_name"`
-	Quantity         *int     `json:"quantity"`
-	UnitPrice        *float64 `json:"unit_price"`
-	Discount         *float64 `json:"discount"`
-	Tax              *float64 `json:"tax"`
-	RevenueAccountID *uint    `json:"revenue_account_id"`
+	ProductName       *string  `json:"product_name"`
+	Quantity          *int     `json:"quantity"`
+	UnitPrice         *float64 `json:"unit_price"`
+	EstimatedUnitCost *float64 `json:"estimated_unit_cost"`
+	Discount          *float64 `json:"discount"`
+	Tax               *float64 `json:"tax"`
+	RevenueAccountID  *uint    `json:"revenue_account_id"`
 }
 
 // GORM hooks untuk update computed fields (removed duplicate - see line 82)

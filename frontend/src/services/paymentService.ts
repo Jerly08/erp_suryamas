@@ -38,6 +38,8 @@ export interface Payment {
   pph_type?: string;
   pph_rate?: number;
   pph_amount?: number;
+  pph_paid_amount?: number;
+  pph_payment_status?: 'PAID' | 'UNPAID' | 'PARTIAL_PAID' | 'NONE';
   approval_stage?: 'FINANCE_MANAGER' | 'DIRECTOR' | '';
   require_director_approval?: boolean;
   finance_manager_approved_by?: number | null;

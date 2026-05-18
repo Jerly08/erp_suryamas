@@ -55,7 +55,7 @@ func (c *UnifiedJournalController) CreateJournalEntry(ctx *gin.Context) {
 	}
 
 	if isAdjustmentSourceType(req.SourceType) && !canManageAdjustmentDraft(userRole) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff atau finance manager yang dapat membuat jurnal adjustment"})
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya finance staff, accounting, atau finance manager yang dapat membuat jurnal adjustment"})
 		return
 	}
 	if isAdjustmentSourceType(req.SourceType) && (req.AdjustmentOf == nil || *req.AdjustmentOf == 0) {
@@ -155,6 +155,12 @@ func (c *UnifiedJournalController) GetJournalEntries(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+func (c *UnifiedJournalController) GetAdjustmentCategories(ctx *gin.Context) {
+	ctx.JSON(http.StatusOK, gin.H{
+		"data": models.GetJournalAdjustmentCategories(),
+	})
 }
 
 // GetAccountBalances retrieves account balances
@@ -260,7 +266,7 @@ func getJournalUserRoleFromContext(ctx *gin.Context) string {
 }
 
 func canManageAdjustmentDraft(role string) bool {
-	return models.IsFinanceStaffRole(role) || models.IsFinanceManagerRole(role)
+	return models.IsFinanceStaffRole(role) || models.IsAccountingRole(role) || models.IsFinanceManagerRole(role)
 }
 
 func canApproveAdjustment(role string) bool {
@@ -494,6 +500,7 @@ func (c *UnifiedJournalController) RegisterRoutes(router *gin.Engine) {
 		{
 			journals.POST("", c.CreateJournalEntry)
 			journals.GET("", c.GetJournalEntries)
+			journals.GET("/adjustment-categories", c.GetAdjustmentCategories)
 			journals.GET("/:id", c.GetJournalEntry)
 			journals.PUT("/:id", c.UpdateJournalEntry)
 			journals.DELETE("/:id", c.DeleteJournalEntry)

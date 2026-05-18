@@ -13,6 +13,7 @@ type PurchaseRequest struct {
 	RequesterID uint   `json:"requester_id" gorm:"not null;index"` // employee who created it
 	Department  string `json:"department" gorm:"size:100"`
 	ProjectID   *uint  `json:"project_id" gorm:"index"` // Optional tracking cost center
+	VendorID    *uint  `json:"vendor_id" gorm:"index"`  // Optional preferred/target vendor
 
 	TotalEstimatedAmount float64 `json:"total_estimated_amount" gorm:"type:decimal(15,2);default:0"`
 	Status               string  `json:"status" gorm:"size:30;default:'DRAFT'"` // DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
@@ -35,13 +36,15 @@ type PurchaseRequest struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Requester              User                  `json:"requester" gorm:"foreignKey:RequesterID"`
-	Project                *Project              `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
-	Items                  []PurchaseRequestItem `json:"items" gorm:"foreignKey:PurchaseRequestID"`
-	Approver               *User                 `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	FinanceStaffApprover   *User                 `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
-	FinanceManagerApprover *User                 `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
-	DirectorApprover       *User                 `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+	Requester              User                      `json:"requester" gorm:"foreignKey:RequesterID"`
+	Project                *Project                  `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	Vendor                 *Contact                  `json:"vendor,omitempty" gorm:"foreignKey:VendorID"`
+	Items                  []PurchaseRequestItem     `json:"items" gorm:"foreignKey:PurchaseRequestID"`
+	Documents              []PurchaseRequestDocument `json:"documents" gorm:"foreignKey:PurchaseRequestID"`
+	Approver               *User                     `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	FinanceStaffApprover   *User                     `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
+	FinanceManagerApprover *User                     `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User                     `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
 }
 
 // PurchaseRequestItem represents the details of items requested
@@ -70,6 +73,25 @@ type PurchaseRequestItem struct {
 	Purchase        *Purchase       `json:"purchase,omitempty" gorm:"foreignKey:PurchaseID"`
 }
 
+// PurchaseRequestDocument stores supporting attachments uploaded with a PR.
+type PurchaseRequestDocument struct {
+	ID                uint           `json:"id" gorm:"primaryKey"`
+	PurchaseRequestID uint           `json:"purchase_request_id" gorm:"not null;index"`
+	DocumentType      string         `json:"document_type" gorm:"size:50;default:'SUPPORTING_DOCUMENT'"`
+	FileName          string         `json:"file_name" gorm:"not null;size:255"`
+	FilePath          string         `json:"file_path" gorm:"not null;size:500"`
+	FileSize          int64          `json:"file_size"`
+	MimeType          string         `json:"mime_type" gorm:"size:100"`
+	UploadedBy        uint           `json:"uploaded_by" gorm:"not null;index"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
+
+	// Relations
+	PurchaseRequest PurchaseRequest `json:"purchase_request" gorm:"foreignKey:PurchaseRequestID"`
+	Uploader        User            `json:"uploader" gorm:"foreignKey:UploadedBy"`
+}
+
 // PurchaseRequest Status Constants
 const (
 	PRStatusDraft           = "DRAFT"
@@ -94,10 +116,16 @@ const (
 	PRItemDecisionRejected = "REJECTED"
 )
 
+// Purchase request document type constants
+const (
+	PurchaseRequestDocumentSupporting = "SUPPORTING_DOCUMENT"
+)
+
 // Request DTOs
 type PurchaseRequestCreatePayload struct {
 	Department string                       `json:"department"`
 	ProjectID  *uint                        `json:"project_id"`
+	VendorID   *uint                        `json:"vendor_id"`
 	Notes      string                       `json:"notes"`
 	Items      []PurchaseRequestItemPayload `json:"items" binding:"required,min=1"`
 }

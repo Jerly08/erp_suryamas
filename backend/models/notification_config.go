@@ -142,6 +142,17 @@ func GetNotificationMatrix() map[string]NotificationMatrix {
 			NotificationScope:       NotificationScopeAll,
 			RequiresDepartmentMatch: false,
 		},
+		"accounting": {
+			Role: "accounting",
+			AllowedTypes: []string{
+				NotificationTypeApprovalPending,
+				NotificationTypeApprovalEscalated,
+				"BUDGET_ALERT",
+			},
+			AmountThreshold:         0,
+			NotificationScope:       NotificationScopeAll,
+			RequiresDepartmentMatch: false,
+		},
 		"finance": {
 			Role: "finance",
 			AllowedTypes: []string{

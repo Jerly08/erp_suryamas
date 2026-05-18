@@ -112,6 +112,7 @@ class UserService {
       'finance': 'Finance Manager',
       'finance_manager': 'Finance Manager',
       'finance_staff': 'Finance Staff',
+      'accounting': 'Accounting',
       'sales': 'Sales',
       'inventory': 'Inventory',
       'employee': 'Staff'

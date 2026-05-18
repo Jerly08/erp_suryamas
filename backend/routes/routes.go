@@ -149,6 +149,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	assetController := controllers.NewAssetController(db)
 	debugController := controllers.NewDebugController()
 	monitoringController := controllers.NewMonitoringController()
+	payrollController := controllers.NewPayrollController(db)
 
 	// Initialize repositories, services and handlers
 	accountRepo := repositories.NewAccountRepository(db)
@@ -379,6 +380,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			// Main CRUD operations
 			unifiedJournals.POST("", permMiddleware.CanCreate("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.CreateJournalEntry)
 			unifiedJournals.GET("", permMiddleware.CanView("journal"), unifiedJournalController.GetJournalEntries)
+			unifiedJournals.GET("/adjustment-categories", permMiddleware.CanView("journal"), unifiedJournalController.GetAdjustmentCategories)
 			unifiedJournals.GET("/:id", permMiddleware.CanView("journal"), unifiedJournalController.GetJournalEntry)
 			unifiedJournals.PUT("/:id", permMiddleware.CanEdit("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.UpdateJournalEntry)
 			unifiedJournals.DELETE("/:id", permMiddleware.CanDelete("journal"), periodValidationMiddleware.ValidateTransactionPeriod(), unifiedJournalController.DeleteJournalEntry)
@@ -707,6 +709,9 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchaseRequests.GET("", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetAll)
 				purchaseRequests.GET("/:id", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetByID)
 				purchaseRequests.POST("", permMiddleware.CanCreate("purchase_requests"), purchaseRequestController.Create)
+				purchaseRequests.GET("/:id/documents", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetDocuments)
+				purchaseRequests.POST("/:id/documents", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UploadDocuments)
+				purchaseRequests.DELETE("/documents/:document_id", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.DeleteDocument)
 
 				// Approval & Rejection workflows
 				purchaseRequests.PUT("/:id/review", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Review)
@@ -890,6 +895,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.POST("/:id/submit-approval", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.SubmitForApproval)
 				purchases.POST("/:id/approve", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.ApprovePurchase)
 				purchases.POST("/:id/reject", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.RejectPurchase)
+				purchases.POST("/:id/accounting-coa", permMiddleware.CanEdit("purchases"), purchaseController.CompleteAccountingCOA)
 				// Approval history endpoint (accessible by those who can view purchases)
 				purchases.GET("/:id/approval-history", permMiddleware.CanView("purchases"), purchaseApprovalHandler.GetApprovalHistory)
 				// Pending approvals (for those who can approve)
@@ -985,6 +991,19 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				prepaid.PUT("/:id/schedules/:schedule_id", permMiddleware.CanEdit("prepaid_expenses"), prepaidController.UpdateSchedule)
 				prepaid.POST("/:id/amortize/:schedule_id", permMiddleware.CanEdit("prepaid_expenses"), periodValidationMiddleware.ValidateTransactionPeriod(), prepaidController.AmortizeSchedule)
 				prepaid.POST("/:id/terminate", permMiddleware.CanEdit("prepaid_expenses"), periodValidationMiddleware.ValidateTransactionPeriod(), prepaidController.TerminatePrepaid)
+			}
+
+			// Payroll routes: HR creates detail, finance manager approves, finance/accounting see summary only.
+			payroll := protected.Group("/payroll")
+			{
+				payroll.GET("", permMiddleware.CanView("payroll"), payrollController.GetPayrollRuns)
+				payroll.GET("/import/template", permMiddleware.CanCreate("payroll"), payrollController.DownloadPayrollImportTemplate)
+				payroll.POST("/import/preview", permMiddleware.CanCreate("payroll"), payrollController.ImportPayrollPreview)
+				payroll.GET("/:id", permMiddleware.CanView("payroll"), payrollController.GetPayrollRun)
+				payroll.POST("", permMiddleware.CanCreate("payroll"), payrollController.CreatePayrollRun)
+				payroll.POST("/:id/approve", permMiddleware.CanApprove("payroll"), payrollController.ApprovePayrollRun)
+				payroll.POST("/:id/reject", permMiddleware.CanApprove("payroll"), payrollController.RejectPayrollRun)
+				payroll.POST("/:id/pay-pph", permMiddleware.CanApprove("payroll"), payrollController.PayPayrollPPh)
 			}
 
 			// Note: CashBank routes are already set up via SetupPaymentRoutes

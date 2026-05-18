@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { isFinanceManagerRole, normalizeRole } from "@/utils/roles";
 import {
   AdminDashboard,
+  COAApprovalQueueCard,
   FinanceDashboard,
   FinanceStaffDashboard,
   InventoryManagerDashboard,
@@ -23,7 +24,22 @@ import {
   AlertIcon,
   AlertTitle,
   AlertDescription,
+  Button,
 } from "@chakra-ui/react";
+
+const AccountingDashboard = () => (
+  <Flex justify="center" align="center" minH="16vh">
+    <VStack spacing={2}>
+      <Text fontSize="xl" fontWeight="bold">
+        Dashboard Accounting
+      </Text>
+      <Text color="gray.500" textAlign="center">
+        Fokus dashboard ini adalah monitoring purchase yang menunggu input
+        GL/COA dari tim Accounting.
+      </Text>
+    </VStack>
+  </Flex>
+);
 
 export default function DashboardPage() {
   const { user, token } = useAuth();
@@ -61,6 +77,8 @@ export default function DashboardPage() {
         "finance",
         "finance_manager",
         "finance_staff",
+        "accounting",
+        "hr",
         "inventory_manager",
         "director",
         "employee",
@@ -73,6 +91,12 @@ export default function DashboardPage() {
 
   const isLoading =
     redirecting || (roleNeedsAnalytics ? analyticsLoading : false);
+
+  const role = normalizeRole(user?.role);
+  const shouldShowCOAApprovalQueue =
+    !isLoading &&
+    !error &&
+    ["admin", "finance", "finance_manager", "accounting"].includes(role);
 
   const renderDashboardByRole = () => {
     if (isLoading) {
@@ -96,7 +120,6 @@ export default function DashboardPage() {
       );
     }
 
-    const role = normalizeRole(user?.role);
     switch (role) {
       case "admin":
         return <AdminDashboard analytics={analytics} />;
@@ -105,6 +128,22 @@ export default function DashboardPage() {
         return <FinanceDashboard analytics={analytics} />;
       case "finance_staff":
         return <FinanceStaffDashboard />;
+      case "accounting":
+        return <AccountingDashboard />;
+      case "hr":
+        return (
+          <Flex justify="center" align="center" minH="60vh">
+            <VStack spacing={4}>
+              <Text fontSize="xl" fontWeight="bold">Dashboard HR</Text>
+              <Text color="gray.500" textAlign="center">
+                Kelola input payroll dan kirimkan ke Finance Manager untuk approval.
+              </Text>
+              <Button colorScheme="blue" onClick={() => router.push("/payroll")}>
+                Buka Modul Payroll
+              </Button>
+            </VStack>
+          </Flex>
+        );
       case "inventory_manager":
         return <InventoryManagerDashboard />;
       case "director":
@@ -130,12 +169,21 @@ export default function DashboardPage() {
         "finance",
         "finance_manager",
         "finance_staff",
+        "accounting",
+        "hr",
         "director",
         "inventory_manager",
         "employee",
       ]}
     >
-      {renderDashboardByRole()}
+      {shouldShowCOAApprovalQueue ? (
+        <VStack spacing={6} align="stretch">
+          <COAApprovalQueueCard />
+          {renderDashboardByRole()}
+        </VStack>
+      ) : (
+        renderDashboardByRole()
+      )}
     </SimpleLayout>
   );
 }

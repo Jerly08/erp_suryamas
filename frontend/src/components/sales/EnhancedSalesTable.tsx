@@ -43,6 +43,7 @@ import {
 } from "react-icons/fi";
 import { Sale } from "@/services/salesService";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getSalePPhStatus } from "@/utils/taxPaymentStatus";
 
 interface SalesTableProps {
   sales: Sale[];
@@ -136,7 +137,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
 
     if (fulfilledBackorder > 0) {
       return {
-        label: `Backorder selesai`,
+        label: "Fulfilled",
         caption: `${fulfilledBackorder} qty sudah dipenuhi`,
         colorScheme: "green" as const,
       };
@@ -288,6 +289,14 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                     fontSize="xs"
                     fontWeight="bold"
                   >
+                    Status PPh
+                  </Th>
+                  <Th
+                    color={textColor}
+                    borderColor={borderColor}
+                    fontSize="xs"
+                    fontWeight="bold"
+                  >
                     Fulfillment
                   </Th>
                   <Th
@@ -306,6 +315,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                   const workflowStatus = getWorkflowStatus(sale.status);
                   const displayStatus = getDisplayStatus(sale);
                   const fulfillment = getFulfillmentSummary(sale);
+                  const pphStatus = getSalePPhStatus(sale);
                   const canAddPPh23 =
                     !!onPPh23Settlement &&
                     (sale.pph23_amount || 0) <= 0 &&
@@ -316,6 +326,13 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                     !!onPPh23Settlement &&
                     (sale.pph23_amount || 0) > 0 &&
                     (sale.outstanding_amount || 0) <= 0.005 &&
+                    !sale.pph23_settlement_date &&
+                    workflowStatus !== "DRAFT" &&
+                    workflowStatus !== "CANCELLED";
+                  const canAdjustPPh23 =
+                    !!onPPh23Settlement &&
+                    (sale.pph23_amount || 0) > 0 &&
+                    (sale.outstanding_amount || 0) > 0.005 &&
                     !sale.pph23_settlement_date &&
                     workflowStatus !== "DRAFT" &&
                     workflowStatus !== "CANCELLED";
@@ -387,6 +404,31 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                         >
                           {getStatusLabel(sale)}
                         </Badge>
+                      </Td>
+                      <Td borderColor={borderColor} py={3}>
+                        <VStack align="start" spacing={1}>
+                          <Badge
+                            colorScheme={pphStatus.colorScheme}
+                            variant="subtle"
+                            px={2}
+                            py={1}
+                            borderRadius="md"
+                            fontSize="xs"
+                          >
+                            {pphStatus.label}
+                          </Badge>
+                          {pphStatus.totalAmount > 0 ? (
+                            <Text fontSize="xs" color={textColor}>
+                              PPh: {formatCurrency(pphStatus.totalAmount)}
+                            </Text>
+                          ) : null}
+                          {pphStatus.outstandingAmount > 0 ? (
+                            <Text fontSize="xs" color="orange.500">
+                              Sisa:{" "}
+                              {formatCurrency(pphStatus.outstandingAmount)}
+                            </Text>
+                          ) : null}
+                        </VStack>
                       </Td>
                       <Td borderColor={borderColor} py={3}>
                         <VStack align="start" spacing={1}>
@@ -510,12 +552,16 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                                 {t("purchases.payment.recordPayment")}
                               </MenuItem>
                               )}
-                            {canEdit && (canAddPPh23 || canPostPPh23) && (
+                            {canEdit && (canAddPPh23 || canPostPPh23 || canAdjustPPh23) && (
                               <MenuItem
-                                icon={canAddPPh23 ? <FiDollarSign /> : <FiCheck />}
+                                icon={canAddPPh23 || canAdjustPPh23 ? <FiDollarSign /> : <FiCheck />}
                                 onClick={() => onPPh23Settlement(sale)}
                               >
-                                {canAddPPh23 ? "Tambah PPh23" : "Bayar PPh23"}
+                                {canAddPPh23
+                                  ? "Tambah PPh23"
+                                  : canAdjustPPh23
+                                    ? "Koreksi PPh23"
+                                    : "Bayar PPh23"}
                               </MenuItem>
                             )}
                             {canEdit &&

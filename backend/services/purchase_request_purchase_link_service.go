@@ -2,6 +2,7 @@ package services
 
 import (
 	"app-sistem-akuntansi/models"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,7 +10,15 @@ import (
 )
 
 func (s *PurchaseService) validateLinkedPurchaseRequestSelection(purchase *models.Purchase, allowReservedByCurrentPurchase bool) (*models.PurchaseRequest, float64, error) {
-	if purchase == nil || purchase.PurchaseRequestID == nil {
+	if purchase == nil {
+		return nil, 0, nil
+	}
+	if purchase.PurchaseRequestID == nil {
+		for _, purchaseItem := range purchase.PurchaseItems {
+			if purchaseItem.PurchaseRequestItemID != nil {
+				return nil, 0, fmt.Errorf("purchase_request_id is required when purchase item is linked to purchase request item %d", *purchaseItem.PurchaseRequestItemID)
+			}
+		}
 		return nil, 0, nil
 	}
 
@@ -20,6 +29,21 @@ func (s *PurchaseService) validateLinkedPurchaseRequestSelection(purchase *model
 
 	if pr.Status != models.PRStatusApproved {
 		return nil, 0, fmt.Errorf("cannot create purchase from unapproved request (Status: %s)", pr.Status)
+	}
+
+	var existingPurchase models.Purchase
+	query := s.db.
+		Select("id", "code", "status").
+		Where("purchase_request_id = ? AND deleted_at IS NULL AND status <> ?", pr.ID, models.PurchaseStatusCancelled)
+	if allowReservedByCurrentPurchase && purchase.ID > 0 {
+		query = query.Where("id <> ?", purchase.ID)
+	}
+	err := query.Order("id ASC").First(&existingPurchase).Error
+	if err == nil {
+		return nil, 0, fmt.Errorf("purchase request %s is already linked to purchase %s", pr.PRNumber, existingPurchase.Code)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, 0, fmt.Errorf("failed to validate purchase request usage: %v", err)
 	}
 
 	if len(purchase.PurchaseItems) == 0 {

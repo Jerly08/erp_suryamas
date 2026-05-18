@@ -102,6 +102,8 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
         return 'yellow';
       case 'pending':
         return 'blue';
+      case 'pending_accounting':
+        return 'orange';
       case 'cancelled':
       case 'rejected':
         return 'red';

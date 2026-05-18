@@ -4,6 +4,7 @@ import (
 	"app-sistem-akuntansi/models"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -14,6 +15,20 @@ type PurchaseRepository struct {
 
 func NewPurchaseRepository(db *gorm.DB) *PurchaseRepository {
 	return &PurchaseRepository{db: db}
+}
+
+func isDateOnlyFilter(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", false
+	}
+
+	parsed, err := time.Parse("2006-01-02", trimmed)
+	if err != nil {
+		return trimmed, false
+	}
+
+	return parsed.Format("2006-01-02"), true
 }
 
 func (r *PurchaseRepository) applyPurchaseFilter(query *gorm.DB, filter models.PurchaseFilter) *gorm.DB {
@@ -34,11 +49,19 @@ func (r *PurchaseRepository) applyPurchaseFilter(query *gorm.DB, filter models.P
 	}
 
 	if filter.StartDate != "" {
-		query = query.Where("purchases.date >= ?", filter.StartDate)
+		if startDate, ok := isDateOnlyFilter(filter.StartDate); ok {
+			query = query.Where("DATE(purchases.date) >= ?", startDate)
+		} else {
+			query = query.Where("purchases.date >= ?", strings.TrimSpace(filter.StartDate))
+		}
 	}
 
 	if filter.EndDate != "" {
-		query = query.Where("purchases.date <= ?", filter.EndDate)
+		if endDate, ok := isDateOnlyFilter(filter.EndDate); ok {
+			query = query.Where("DATE(purchases.date) <= ?", endDate)
+		} else {
+			query = query.Where("purchases.date <= ?", strings.TrimSpace(filter.EndDate))
+		}
 	}
 
 	if filter.Search != "" {
@@ -50,6 +73,38 @@ func (r *PurchaseRepository) applyPurchaseFilter(query *gorm.DB, filter models.P
 
 	if filter.ApprovalStatus != "" {
 		query = query.Where("purchases.approval_status = ?", filter.ApprovalStatus)
+	}
+
+	if filter.AccountingStatus != "" {
+		switch strings.ToUpper(strings.TrimSpace(filter.AccountingStatus)) {
+		case models.PurchaseAccountingStatusReadyForCOA:
+			query = query.Where(
+				"purchases.approval_status = ? AND purchases.status = ?",
+				models.PurchaseApprovalApproved,
+				models.PurchaseStatusPendingAccounting,
+			)
+		case models.PurchaseAccountingStatusApprovedByFinance, "FINANCE_APPROVED":
+			query = query.Where(
+				"purchases.approval_status = ? AND purchases.status IN ?",
+				models.PurchaseApprovalApproved,
+				[]string{
+					models.PurchaseStatusPendingAccounting,
+					models.PurchaseStatusApproved,
+					models.PurchaseStatusCompleted,
+					models.PurchaseStatusPaid,
+				},
+			)
+		case models.PurchaseAccountingStatusCOACompleted, "COMPLETED_COA":
+			query = query.Where(
+				"purchases.approval_status = ? AND purchases.status IN ?",
+				models.PurchaseApprovalApproved,
+				[]string{
+					models.PurchaseStatusApproved,
+					models.PurchaseStatusCompleted,
+					models.PurchaseStatusPaid,
+				},
+			)
+		}
 	}
 
 	if filter.RequiresApproval != nil {
@@ -334,11 +389,17 @@ func (r *PurchaseRepository) GetPurchasesSummary(filter models.PurchaseFilter) (
 
 	// Calculate approved purchases total
 	query2 := r.applyPurchaseFilter(r.db.Model(&models.Purchase{}), filter)
+	approvedAmountStatuses := []string{
+		models.PurchaseStatusPendingAccounting,
+		models.PurchaseStatusApproved,
+		models.PurchaseStatusCompleted,
+		models.PurchaseStatusPaid,
+	}
 
 	// Debug: Log the values being used in query
-	fmt.Printf("[DEBUG] Approved query - Status values: %v, Approval status: %v\n", []string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}, models.PurchaseApprovalApproved)
+	fmt.Printf("[DEBUG] Approved query - Status values: %v, Approval status: %v\n", approvedAmountStatuses, models.PurchaseApprovalApproved)
 
-	query2.Where("purchases.status IN (?) AND purchases.approval_status = ?", []string{models.PurchaseStatusApproved, models.PurchaseStatusCompleted}, models.PurchaseApprovalApproved).
+	query2.Where("purchases.status IN (?) AND purchases.approval_status = ?", approvedAmountStatuses, models.PurchaseApprovalApproved).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&totalApprovedAmount)
 
 	// Debug: Log the result

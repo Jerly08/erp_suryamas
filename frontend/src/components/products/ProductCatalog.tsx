@@ -289,6 +289,7 @@ const ProductCatalog: React.FC = () => {
   };
 
   const handleEditProduct = (product: Product) => {
+    if (!canEdit) return;
     setSelectedProduct(product);
     setIsModalOpen(true);
   };
@@ -576,6 +577,9 @@ const ProductCatalog: React.FC = () => {
                 {hasInventory && (
                   <Th color={mutedTextColor} borderColor={borderColor}>{tabIndex === 1 ? 'Harga Pokok / HPP' : 'Acuan Harga Beli'}</Th>
                 )}
+                {hasInventory && (
+                  <Th color={mutedTextColor} borderColor={borderColor}>Nilai Inventory</Th>
+                )}
                 <Th color={mutedTextColor} borderColor={borderColor}>Acuan Harga Jual</Th>
                 <Th color={mutedTextColor} borderColor={borderColor}>{t('products.table.actions')}</Th>
               </Tr>
@@ -610,6 +614,13 @@ const ProductCatalog: React.FC = () => {
                   {hasInventory && (
                     <Td color={tabIndex === 1 ? warningColor : successColor} fontWeight="semibold" borderColor={borderColor}>
                       {formatCurrencyDetailed(tabIndex === 1 ? (product.cost_price || 0) : (product.purchase_price || 0))}
+                    </Td>
+                  )}
+                  {hasInventory && (
+                    <Td color={warningColor} fontWeight="semibold" borderColor={borderColor}>
+                      {product.is_assembly || product.is_service
+                        ? '-'
+                        : formatCurrencyDetailed((product.stock || 0) * (product.cost_price || product.purchase_price || 0))}
                     </Td>
                   )}
                   <Td color={salePriceColor} fontWeight="semibold" borderColor={borderColor}>{formatCurrencyDetailed(product.sale_price || 0)}</Td>
@@ -696,7 +707,7 @@ const ProductCatalog: React.FC = () => {
         )}
 
         {/* Add/Edit Product Modal */}
-        {canEdit && (
+        {(selectedProduct ? canEdit : canCreate) && (
           <Modal isOpen={isModalOpen || !!selectedProduct} onClose={handleCloseModal} size="6xl">
             <ModalOverlay />
             <ModalContent bg={modalBg} border="1px solid" borderColor={borderColor}>
@@ -851,6 +862,9 @@ const ProductCatalog: React.FC = () => {
                           <Text fontSize="md" color={warningColor} fontWeight="bold">
                             {formatCurrencyDetailed(detailProduct.cost_price || 0)}
                           </Text>
+                          <Text fontSize="xs" color={mutedTextColor}>
+                            Termasuk alokasi freight dari purchase.
+                          </Text>
                         </Box>
                       )}
                       <Box>
@@ -920,6 +934,12 @@ const ProductCatalog: React.FC = () => {
                           <Text fontWeight="semibold" color={labelColor}>Net Available</Text>
                           <Text fontSize="md" fontWeight="bold" color={textColor}>
                             {detailProduct.net_available_stock ?? detailProduct.stock}
+                          </Text>
+                        </Box>
+                        <Box>
+                          <Text fontWeight="semibold" color={labelColor}>Nilai Inventory</Text>
+                          <Text fontSize="md" fontWeight="bold" color={warningColor}>
+                            {formatCurrencyDetailed((detailProduct.stock || 0) * (detailProduct.cost_price || detailProduct.purchase_price || 0))}
                           </Text>
                         </Box>
                         <Box>

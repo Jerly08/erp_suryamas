@@ -27,6 +27,7 @@ import {
 import { FiFilePlus } from 'react-icons/fi';
 import { Payment, stripInternalPaymentReference } from '@/services/paymentService';
 import paymentService from '@/services/paymentService';
+import { getPaymentPPhStatus } from '@/utils/taxPaymentStatus';
 
 interface PaymentDetailModalProps {
   payment: Payment | null;
@@ -71,6 +72,7 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
   const statusLabel = paymentService.getStatusLabel(payment.status);
   const approvedBy = paymentService.getActorDisplayName(payment.approver);
   const rejectedBy = paymentService.getActorDisplayName(payment.rejector);
+  const pphStatus = getPaymentPPhStatus(payment);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="xl">
@@ -148,6 +150,24 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                         <Badge variant="outline">
                           {paymentService.getMethodDisplayName(payment.method)}
                         </Badge>
+                      </Td>
+                    </Tr>
+                    <Tr>
+                      <Td fontWeight="medium">Status PPh:</Td>
+                      <Td>
+                        <VStack align="start" spacing={1}>
+                          <Badge colorScheme={pphStatus.colorScheme} variant="subtle">
+                            {pphStatus.label}
+                          </Badge>
+                          {pphStatus.totalAmount > 0 ? (
+                            <Text fontSize="sm" color={textSecondary}>
+                              Total PPh {formatCurrency(pphStatus.totalAmount)}
+                              {pphStatus.outstandingAmount > 0
+                                ? `, sisa ${formatCurrency(pphStatus.outstandingAmount)}`
+                                : ''}
+                            </Text>
+                          ) : null}
+                        </VStack>
                       </Td>
                     </Tr>
                   </Tbody>

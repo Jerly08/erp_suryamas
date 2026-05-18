@@ -690,6 +690,7 @@ func AutoMigrate(db *gorm.DB) {
 		// Purchase Requests
 		&models.PurchaseRequest{},
 		&models.PurchaseRequestItem{},
+		&models.PurchaseRequestDocument{},
 
 		// Expenses
 		&models.ExpenseCategory{},
@@ -705,6 +706,10 @@ func AutoMigrate(db *gorm.DB) {
 		&models.CashBankFrozenHistory{},
 		&models.Payment{},
 		&models.PaymentAllocation{},
+
+		// Payroll
+		&models.PayrollRun{},
+		&models.PayrollItem{},
 
 		// Journals and reports
 		&models.Journal{},
@@ -906,6 +911,8 @@ func EnsureSSOTTables(db *gorm.DB) {
 			reversed_from  BIGINT,
 			reversal_reason TEXT,
 			adjustment_of  BIGINT,
+			adjustment_category_code VARCHAR(60),
+			adjustment_category_label VARCHAR(160),
 			created_by     BIGINT NOT NULL,
 			created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -926,6 +933,12 @@ func EnsureSSOTTables(db *gorm.DB) {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='adjustment_of') THEN
 				ALTER TABLE unified_journal_ledger ADD COLUMN adjustment_of BIGINT;
 			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='adjustment_category_code') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN adjustment_category_code VARCHAR(60);
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='adjustment_category_label') THEN
+				ALTER TABLE unified_journal_ledger ADD COLUMN adjustment_category_label VARCHAR(160);
+			END IF;
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='unified_journal_ledger' AND column_name='approval_stage') THEN
 				ALTER TABLE unified_journal_ledger ADD COLUMN approval_stage VARCHAR(30);
 			END IF;
@@ -942,6 +955,7 @@ func EnsureSSOTTables(db *gorm.DB) {
 	`)
 
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_unified_journal_adjustment_of ON unified_journal_ledger(adjustment_of);`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_unified_journal_adjustment_category ON unified_journal_ledger(adjustment_category_code);`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_unified_journal_approval_stage ON unified_journal_ledger(approval_stage);`)
 
 	// unified_journal_lines

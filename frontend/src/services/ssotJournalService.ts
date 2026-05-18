@@ -25,6 +25,15 @@ export interface SSOTJournalEntry {
   reversed_by?: number;
   reversed_from?: number;
   adjustment_of?: number;
+  adjustment_category_code?: string;
+  adjustment_category_label?: string;
+  adjustment_required?: boolean;
+  adjustment_completed?: boolean;
+  adjustment_requirement_code?: string;
+  adjustment_requirement_label?: string;
+  adjustment_requirement_coa?: string;
+  adjustment_requirement_reason?: string;
+  adjustment_requirement_tagline?: string;
   reversed_at?: string;
   created_at: string;
   updated_at: string;
@@ -83,6 +92,7 @@ export interface CreateJournalRequest {
   notes?: string;
   source_type?: string;
   adjustment_of?: number;
+  adjustment_category_code?: string;
   require_director_approval?: boolean;
   requested_by_finance_manager?: boolean;
   auto_post?: boolean;
@@ -98,6 +108,16 @@ export interface CreateJournalRequest {
 
 export interface UpdateJournalRequest extends CreateJournalRequest {
   // Same structure as create request
+}
+
+export interface JournalAdjustmentCategory {
+  code: string;
+  label: string;
+  description: string;
+  coa: string;
+  recommended_source_types: string[];
+  examples: string[];
+  requires_original_journal: boolean;
 }
 
 class SSOTJournalService {
@@ -154,6 +174,8 @@ class SSOTJournalService {
       end_date?: string;
       status?: string;
       source_type?: string;
+      adjustment_category_code?: string;
+      adjustment_requirement?: string;
       page?: number;
       limit?: number;
       search?: string;
@@ -243,6 +265,19 @@ class SSOTJournalService {
     return this.unwrapData<SSOTJournalEntry>(result);
   }
 
+  async getAdjustmentCategories(): Promise<JournalAdjustmentCategory[]> {
+    const response = await fetch(API_ENDPOINTS.JOURNALS.ADJUSTMENT_CATEGORIES, {
+      headers: this.getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch adjustment categories");
+    }
+
+    const result = await response.json();
+    return this.unwrapData<JournalAdjustmentCategory[]>(result);
+  }
+
   // Update journal entry
   async updateJournalEntry(
     id: number,
@@ -281,7 +316,10 @@ class SSOTJournalService {
   }
 
   // Post journal entry
-  async postJournalEntry(id: number, options: { require_director_approval?: boolean } = {}): Promise<SSOTJournalEntry> {
+  async postJournalEntry(
+    id: number,
+    options: { require_director_approval?: boolean } = {},
+  ): Promise<SSOTJournalEntry> {
     const response = await fetch(API_ENDPOINTS.JOURNALS.POST(id), {
       method: "PUT",
       headers: this.getAuthHeaders(),
@@ -420,6 +458,7 @@ class SSOTJournalService {
       end_date?: string;
       status?: string;
       source_type?: string;
+      adjustment_requirement?: string;
       search?: string;
     } = {},
   ): Promise<SSOTJournalEntry[]> {
