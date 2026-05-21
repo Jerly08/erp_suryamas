@@ -31,6 +31,7 @@ func newPurchaseRequestTestDB(t *testing.T) *gorm.DB {
 		&models.Project{},
 		&models.Product{},
 		&models.Purchase{},
+		&models.PurchaseItem{},
 		&models.PurchaseRequest{},
 		&models.PurchaseRequestItem{},
 		&models.PurchaseRequestDocument{},
@@ -339,6 +340,45 @@ func TestGetPurchaseRequestsAvailableForPurchaseExcludesLinkedRequests(t *testin
 		PurchaseRequestID: &usedPR.ID,
 	}
 	require.NoError(t, db.Create(&linkedPurchase).Error)
+
+	usedByItemPR := models.PurchaseRequest{
+		PRNumber:                 "PR-USED-BY-ITEM",
+		RequesterID:              requester.ID,
+		Department:               "ops",
+		Status:                   models.PRStatusApproved,
+		CurrentApprovalStage:     models.PRApprovalStageFinalized,
+		TotalEstimatedAmount:     45000,
+		ApprovedBy:               &approvedBy,
+		FinanceManagerApprovedBy: &approvedBy,
+		Items: []models.PurchaseRequestItem{
+			{
+				ProductID:              product.ID,
+				Quantity:               1,
+				EstimatedPrice:         45000,
+				TotalEstimatedPrice:    45000,
+				ApprovalStatus:         models.PRItemDecisionApproved,
+				FinanceManagerDecision: models.PRItemDecisionApproved,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&usedByItemPR).Error)
+
+	itemLinkedPurchase := models.Purchase{
+		Code:     "PO-USED-PR-ITEM",
+		VendorID: vendor.ID,
+		UserID:   requester.ID,
+		Status:   models.PurchaseStatusDraft,
+	}
+	require.NoError(t, db.Create(&itemLinkedPurchase).Error)
+	usedByItemID := usedByItemPR.Items[0].ID
+	require.NoError(t, db.Create(&models.PurchaseItem{
+		PurchaseID:            itemLinkedPurchase.ID,
+		ProductID:             &product.ID,
+		PurchaseRequestItemID: &usedByItemID,
+		Quantity:              1,
+		UnitPrice:             45000,
+		TotalPrice:            45000,
+	}).Error)
 
 	list, err := service.GetPurchaseRequests(financeManager.ID, financeManager.Role, "", "APPROVED", true, 0)
 	require.NoError(t, err)

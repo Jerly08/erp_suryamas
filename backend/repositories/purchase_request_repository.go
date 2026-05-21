@@ -76,7 +76,7 @@ func (r *purchaseRequestRepository) GetAll(department string, status string, req
 		currentPurchaseCondition := ""
 		args := []interface{}{models.PurchaseStatusCancelled}
 		if currentPurchaseID > 0 {
-			currentPurchaseCondition = "AND purchases.id <> ?"
+			currentPurchaseCondition = "AND linked_purchases.id <> ?"
 			args = append(args, currentPurchaseID)
 		}
 
@@ -85,10 +85,29 @@ func (r *purchaseRequestRepository) GetAll(department string, status string, req
 			Where(`
 				NOT EXISTS (
 					SELECT 1
-					FROM purchases
-					WHERE purchases.purchase_request_id = purchase_requests.id
-						AND purchases.deleted_at IS NULL
-						AND purchases.status <> ?
+					FROM purchases linked_purchases
+					WHERE linked_purchases.deleted_at IS NULL
+						AND linked_purchases.status <> ?
+						AND (
+							linked_purchases.purchase_request_id = purchase_requests.id
+							OR EXISTS (
+								SELECT 1
+								FROM purchase_request_items linked_request_items
+								WHERE linked_request_items.purchase_request_id = purchase_requests.id
+									AND linked_request_items.purchase_id = linked_purchases.id
+									AND linked_request_items.deleted_at IS NULL
+							)
+							OR EXISTS (
+								SELECT 1
+								FROM purchase_items linked_purchase_items
+								JOIN purchase_request_items linked_purchase_request_items
+									ON linked_purchase_request_items.id = linked_purchase_items.purchase_request_item_id
+									AND linked_purchase_request_items.deleted_at IS NULL
+								WHERE linked_purchase_items.purchase_id = linked_purchases.id
+									AND linked_purchase_items.deleted_at IS NULL
+									AND linked_purchase_request_items.purchase_request_id = purchase_requests.id
+							)
+						)
 						`+currentPurchaseCondition+`
 				)
 			`, args...)

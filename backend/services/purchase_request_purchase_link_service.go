@@ -46,6 +46,40 @@ func (s *PurchaseService) validateLinkedPurchaseRequestSelection(purchase *model
 		return nil, 0, fmt.Errorf("failed to validate purchase request usage: %v", err)
 	}
 
+	linkedByItemQuery := s.db.
+		Table("purchases AS linked_purchases").
+		Select("linked_purchases.id, linked_purchases.code, linked_purchases.status").
+		Where("linked_purchases.deleted_at IS NULL AND linked_purchases.status <> ?", models.PurchaseStatusCancelled).
+		Where(`(
+			EXISTS (
+				SELECT 1
+				FROM purchase_request_items linked_request_items
+				WHERE linked_request_items.purchase_request_id = ?
+					AND linked_request_items.purchase_id = linked_purchases.id
+					AND linked_request_items.deleted_at IS NULL
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM purchase_items linked_purchase_items
+				JOIN purchase_request_items linked_purchase_request_items
+					ON linked_purchase_request_items.id = linked_purchase_items.purchase_request_item_id
+					AND linked_purchase_request_items.deleted_at IS NULL
+				WHERE linked_purchase_items.purchase_id = linked_purchases.id
+					AND linked_purchase_items.deleted_at IS NULL
+					AND linked_purchase_request_items.purchase_request_id = ?
+			)
+		)`, pr.ID, pr.ID)
+	if allowReservedByCurrentPurchase && purchase.ID > 0 {
+		linkedByItemQuery = linkedByItemQuery.Where("linked_purchases.id <> ?", purchase.ID)
+	}
+	err = linkedByItemQuery.Order("linked_purchases.id ASC").First(&existingPurchase).Error
+	if err == nil {
+		return nil, 0, fmt.Errorf("purchase request %s is already linked to purchase %s", pr.PRNumber, existingPurchase.Code)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, 0, fmt.Errorf("failed to validate purchase request item usage: %v", err)
+	}
+
 	if len(purchase.PurchaseItems) == 0 {
 		return &pr, 0, nil
 	}

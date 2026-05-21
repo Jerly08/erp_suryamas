@@ -968,22 +968,34 @@ export default function PurchaseRequestsPage() {
         </Box>
 
         {/* MODAL CREATE PR */}
-        <Modal isOpen={isCreateOpen} onClose={onCreateClose} size="4xl">
+        <Modal
+          isOpen={isCreateOpen}
+          onClose={onCreateClose}
+          size="4xl"
+          scrollBehavior="inside"
+        >
           <ModalOverlay />
           <ModalContent
             bg={modalBg}
             borderWidth="1px"
             borderColor={borderColor}
+            w={{ base: "calc(100vw - 1rem)", md: "calc(100vw - 2rem)" }}
+            maxW="1200px"
+            maxH={{ base: "calc(100dvh - 0.75rem)", md: "calc(100dvh - 2rem)" }}
+            display="flex"
+            flexDirection="column"
+            overflow="hidden"
           >
             <ModalHeader
               bg={modalHeaderBg}
               borderBottomWidth="1px"
               borderColor={borderColor}
+              flexShrink={0}
             >
               Buat Purchase Request Baru
             </ModalHeader>
             <ModalCloseButton color={textColor} />
-            <ModalBody>
+            <ModalBody flex="1" minH={0} overflowY="auto" px={{ base: 4, md: 6 }}>
               <Grid
                 templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }}
                 gap={4}
@@ -1273,14 +1285,25 @@ export default function PurchaseRequestsPage() {
               borderTop="1px"
               borderColor={borderColor}
               borderBottomRadius="md"
+              flexShrink={0}
+              gap={3}
+              flexWrap="wrap"
+              position="sticky"
+              bottom={0}
+              zIndex={2}
             >
-              <Button variant="ghost" mr={3} onClick={onCreateClose}>
+              <Button
+                variant="ghost"
+                onClick={onCreateClose}
+                w={{ base: "full", sm: "auto" }}
+              >
                 Batal
               </Button>
               <Button
                 colorScheme="blue"
                 isLoading={isSubmitting}
                 onClick={handleCreateSubmit}
+                w={{ base: "full", sm: "auto" }}
               >
                 Kirim Pengajuan
               </Button>
@@ -1302,8 +1325,11 @@ export default function PurchaseRequestsPage() {
             borderColor={borderColor}
             w={{ base: "calc(100vw - 1rem)", lg: "calc(100vw - 4rem)" }}
             maxW="1800px"
-            maxH="calc(100vh - 2rem)"
+            maxH={{ base: "calc(100dvh - 0.75rem)", md: "calc(100dvh - 2rem)" }}
             mx="auto"
+            display="flex"
+            flexDirection="column"
+            overflow="hidden"
           >
             <ModalHeader
               display="flex"
@@ -1315,6 +1341,7 @@ export default function PurchaseRequestsPage() {
               bg={modalHeaderBg}
               borderBottomWidth="1px"
               borderColor={borderColor}
+              flexShrink={0}
             >
               <Text pr={2}>
                 Detail Purchase Request: {selectedRequest?.pr_number}
@@ -1324,7 +1351,15 @@ export default function PurchaseRequestsPage() {
               </Box>
             </ModalHeader>
             <ModalCloseButton color={textColor} />
-            <ModalBody pb={6} overflowY="auto">
+            <ModalBody
+              flex="1"
+              minH={0}
+              pb={6}
+              overflowY="auto"
+              overflowX="hidden"
+              px={{ base: 4, md: 6 }}
+              overscrollBehavior="contain"
+            >
               {selectedRequest && (
                 <Grid
                   templateColumns={{ base: "1fr", md: "repeat(2, 1fr)" }}
@@ -1788,6 +1823,11 @@ export default function PurchaseRequestsPage() {
               bg={modalFooterBg}
               borderTopWidth="1px"
               borderColor={borderColor}
+              flexShrink={0}
+              position="sticky"
+              bottom={0}
+              zIndex={2}
+              px={{ base: 4, md: 6 }}
             >
               {canCurrentUserReviewRequest(selectedRequest) ? (
                 <Flex
