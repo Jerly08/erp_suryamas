@@ -108,3 +108,4 @@ noted.txt
 /backend/docs/swagger_backup_*.yml
 
 /backup
+/backups/

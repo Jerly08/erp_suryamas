@@ -142,18 +142,186 @@ git pull
 ./scripts/vps/deploy.sh
 ```
 
-## 7. Backup database
+## 7. Backup harian lokal
 
-Script backup sudah disiapkan:
+Script backup database saja:
 
 ```bash
 chmod +x scripts/vps/backup-db.sh
 ./scripts/vps/backup-db.sh
 ```
 
-Hasil backup akan masuk ke folder `backups/`.
+Untuk backup harian production, gunakan script gabungan database + file upload:
 
-Disarankan jadwalkan via `cron`, misalnya backup harian jam 02:00.
+```bash
+chmod +x scripts/vps/backup-daily.sh
+./scripts/vps/backup-daily.sh
+```
+
+Hasil backup harian lokal masuk ke:
+
+```text
+backups/daily/database/
+backups/daily/uploads/
+backups/daily/manifests/
+```
+
+Default retensi backup lokal adalah `30` hari. Retensi bisa diubah saat menjalankan script:
+
+```bash
+BACKUP_RETENTION_DAYS=60 ./scripts/vps/backup-daily.sh
+```
+
+Jadwalkan via `cron` agar berjalan setiap hari jam 00:00:
+
+```bash
+sudo crontab -e
+```
+
+Tambahkan:
+
+```cron
+0 0 * * * cd /opt/erp_akuntansi && BACKUP_RETENTION_DAYS=30 ./scripts/vps/backup-daily.sh >> /var/log/erp-backup.log 2>&1
+```
+
+Catatan: backup lokal tetap berada di VPS yang sama. Untuk production yang lebih aman, tetap siapkan backup offsite/cloud agar data aman jika VPS rusak.
+
+### Backup ke Google Drive
+
+Backup harian bisa otomatis di-copy ke Google Drive memakai `rclone`.
+
+Install rclone di VPS:
+
+```bash
+sudo apt update
+sudo apt install -y rclone
+```
+
+Hubungkan Google Drive:
+
+```bash
+rclone config
+```
+
+Pilih:
+
+```text
+n) New remote
+name: erp-gdrive
+Storage: drive
+```
+
+Ikuti proses login Google sampai selesai, lalu test:
+
+```bash
+rclone lsd erp-gdrive:
+```
+
+Tambahkan target Google Drive di `.env.production`:
+
+```env
+BACKUP_OFFSITE_TARGET=erp-gdrive:erp-akuntansi/backups
+```
+
+Jika `BACKUP_OFFSITE_TARGET` diisi, `backup-daily.sh` akan:
+
+- tetap membuat backup lokal terlebih dahulu
+- upload database dump ke Google Drive
+- upload archive uploads ke Google Drive
+- upload manifest/checksum ke Google Drive
+
+Untuk keamanan yang lebih kuat, gunakan `rclone crypt` di atas Google Drive agar isi backup terenkripsi sebelum naik ke cloud.
+
+### Notifikasi email backup
+
+Notifikasi email dikirim oleh `backup-daily.sh` jika `BACKUP_NOTIFY_EMAIL_TO` diisi. Cara paling ringan adalah memakai `msmtp` sebagai sendmail-compatible mailer.
+
+Install:
+
+```bash
+sudo apt install -y msmtp msmtp-mta bsd-mailx
+```
+
+Buat konfigurasi:
+
+```bash
+sudo nano /etc/msmtprc
+```
+
+Contoh konfigurasi SMTP:
+
+```text
+defaults
+auth           on
+tls            on
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+logfile        /var/log/msmtp.log
+
+account        backup
+host           smtp.gmail.com
+port           587
+from           backup@example.com
+user           backup@example.com
+password       APP_PASSWORD_SMTP
+
+account default : backup
+```
+
+Amankan file:
+
+```bash
+sudo chmod 600 /etc/msmtprc
+```
+
+Test kirim email:
+
+```bash
+echo "SMTP backup notification test" | mail -s "ERP Backup Test" tujuan@example.com
+```
+
+Tambahkan email tujuan di `.env.production`:
+
+```env
+BACKUP_NOTIFY_EMAIL_TO=tujuan@example.com
+BACKUP_NOTIFY_EMAIL_FROM=backup@example.com
+BACKUP_NOTIFY_SUBJECT_PREFIX="[ERP Backup]"
+BACKUP_NOTIFY_ON_SUCCESS=true
+BACKUP_NOTIFY_ON_FAILURE=true
+```
+
+Setelah itu cron backup harian tetap sama:
+
+```cron
+0 0 * * * cd /opt/erp_akuntansi && BACKUP_RETENTION_DAYS=30 ./scripts/vps/backup-daily.sh >> /var/log/erp-backup.log 2>&1
+```
+
+### Restore-test bulanan
+
+Backup yang baik harus pernah dites restore. Script berikut akan mengambil backup database dan upload terbaru, lalu:
+
+- restore database ke container PostgreSQL sementara
+- validasi dump database bisa dibaca dan memiliki tabel
+- validasi archive upload bisa dibuka
+- membuat laporan restore-test lokal
+
+Jalankan manual:
+
+```bash
+chmod +x scripts/vps/restore-test-latest.sh
+./scripts/vps/restore-test-latest.sh
+```
+
+Hasil laporan masuk ke:
+
+```text
+backups/daily/restore-tests/
+```
+
+Jadwalkan restore-test otomatis 1x per bulan, misalnya tanggal 1 jam 01:00:
+
+```cron
+0 1 1 * * cd /opt/erp_akuntansi && ./scripts/vps/restore-test-latest.sh >> /var/log/erp-restore-test.log 2>&1
+```
 
 ## 8. Catatan production penting
 
