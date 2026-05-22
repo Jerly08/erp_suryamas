@@ -161,8 +161,11 @@ const payrollService = {
     return response.data;
   },
 
-  async approvePayrollRun(id: number): Promise<PayrollRun> {
-    const response = await api.post(`/api/v1/payroll/${id}/approve`);
+  async approvePayrollRun(
+    id: number,
+    payload?: { expense_account_id?: number; cash_bank_account_id?: number; payment_method?: string },
+  ): Promise<PayrollRun> {
+    const response = await api.post(`/api/v1/payroll/${id}/approve`, payload);
     return unwrapData<PayrollRun>(response);
   },
 

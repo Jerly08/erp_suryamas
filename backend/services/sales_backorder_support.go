@@ -38,6 +38,28 @@ type saleItemFulfillmentSnapshot struct {
 	fulfillmentStatus   string
 }
 
+type BackorderBackfillAllocationResult struct {
+	SaleID          uint    `json:"sale_id"`
+	SaleItemID      uint    `json:"sale_item_id"`
+	SaleCode        string  `json:"sale_code"`
+	Quantity        int     `json:"quantity"`
+	EstimatedAmount float64 `json:"estimated_amount"`
+	ActualAmount    float64 `json:"actual_amount"`
+	VarianceAmount  float64 `json:"variance_amount"`
+}
+
+type ProductBackorderBackfillResult struct {
+	ProductID                uint                                `json:"product_id"`
+	ProductCode              string                              `json:"product_code"`
+	ProductName              string                              `json:"product_name"`
+	AllocatedQuantity        int                                 `json:"allocated_quantity"`
+	RemainingStock           int                                 `json:"remaining_stock"`
+	PendingBackorderQuantity int                                 `json:"pending_backorder_quantity"`
+	JournalID                *uint64                             `json:"journal_id,omitempty"`
+	AffectedSaleIDs          []uint                              `json:"affected_sale_ids"`
+	Allocations              []BackorderBackfillAllocationResult `json:"allocations"`
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -517,6 +539,248 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 	})
 
 	return affectedProductIDs, err
+}
+
+func BackfillSalesBackordersForProduct(db *gorm.DB, productID uint, userID uint) (*ProductBackorderBackfillResult, error) {
+	if db == nil {
+		return nil, fmt.Errorf("database connection is required")
+	}
+	if productID == 0 {
+		return nil, fmt.Errorf("product ID is required")
+	}
+
+	result := &ProductBackorderBackfillResult{ProductID: productID}
+	journalService := NewUnifiedJournalService(db)
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		cogsAccount, inventoryAccount, clearingAccount, err := resolveBackorderSettlementAccounts(tx, NewTaxAccountHelper(tx))
+		if err != nil {
+			return err
+		}
+
+		var product models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&product, productID).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return fmt.Errorf("product not found")
+			}
+			return fmt.Errorf("failed to lock product %d for backorder backfill: %w", productID, err)
+		}
+
+		result.ProductID = product.ID
+		result.ProductCode = product.Code
+		result.ProductName = product.Name
+		result.RemainingStock = product.Stock
+
+		if product.IsService || product.IsAssembly {
+			return fmt.Errorf("manual fulfillment backfill is only allowed for stock-managed products")
+		}
+
+		if product.Stock <= 0 {
+			return populateBackfillPendingQuantity(tx, result)
+		}
+
+		var saleItems []models.SaleItem
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Joins("JOIN sales ON sales.id = sale_items.sale_id").
+			Preload("Sale").
+			Where("sale_items.product_id = ? AND sale_items.backorder_quantity > 0 AND sale_items.deleted_at IS NULL", product.ID).
+			Where("sales.status IN ? AND sales.deleted_at IS NULL", trackedSalesBackorderStatuses).
+			Order("sales.date ASC, sales.id ASC, sale_items.id ASC").
+			Find(&saleItems).Error; err != nil {
+			return fmt.Errorf("failed to load open sale backorders for product %s: %w", product.Name, err)
+		}
+
+		if len(saleItems) == 0 {
+			return populateBackfillPendingQuantity(tx, result)
+		}
+
+		remainingQty := product.Stock
+		actualUnitCost := resolveSaleEstimatedUnitCost(&product)
+		totalEstimated := 0.0
+		totalActual := 0.0
+		affectedSaleIDs := make(map[uint]struct{})
+		now := time.Now()
+
+		for _, saleItem := range saleItems {
+			if remainingQty <= 0 {
+				break
+			}
+
+			allocateQty := minInt(saleItem.BackorderQuantity, remainingQty)
+			if allocateQty <= 0 {
+				continue
+			}
+
+			itemActualUnitCost := actualUnitCost
+			if itemActualUnitCost <= 0 {
+				itemActualUnitCost = saleItem.EstimatedUnitCost
+			}
+
+			estimatedAmount := float64(allocateQty) * saleItem.EstimatedUnitCost
+			actualAmount := float64(allocateQty) * itemActualUnitCost
+			allocation := models.SaleBackorderAllocation{
+				SaleID:            saleItem.SaleID,
+				SaleItemID:        saleItem.ID,
+				ProductID:         product.ID,
+				Quantity:          allocateQty,
+				EstimatedUnitCost: saleItem.EstimatedUnitCost,
+				ActualUnitCost:    itemActualUnitCost,
+				EstimatedAmount:   estimatedAmount,
+				ActualAmount:      actualAmount,
+				VarianceAmount:    actualAmount - estimatedAmount,
+				Status:            models.SaleBackorderAllocationStatusApplied,
+				AppliedAt:         &now,
+				Notes:             "Manual fulfillment backfill from available product stock",
+			}
+			if err := tx.Create(&allocation).Error; err != nil {
+				return fmt.Errorf("failed to create backorder allocation for sale item %d: %w", saleItem.ID, err)
+			}
+
+			saleItem.BackorderQuantity -= allocateQty
+			saleItem.FulfilledQuantity += allocateQty
+			saleItem.ActualCOGSAmount += actualAmount
+			saleItem.COGSVarianceAmount = saleItem.ActualCOGSAmount - saleItem.EstimatedCOGSAmount
+			saleItem.FulfillmentStatus = resolveSaleFulfillmentStatus(&saleItem, &product)
+
+			if err := tx.Model(&models.SaleItem{}).Where("id = ?", saleItem.ID).Updates(map[string]interface{}{
+				"backorder_quantity":   saleItem.BackorderQuantity,
+				"fulfilled_quantity":   saleItem.FulfilledQuantity,
+				"actual_cogs_amount":   saleItem.ActualCOGSAmount,
+				"cogs_variance_amount": saleItem.COGSVarianceAmount,
+				"fulfillment_status":   saleItem.FulfillmentStatus,
+				"updated_at":           time.Now(),
+			}).Error; err != nil {
+				return fmt.Errorf("failed to update sale item %d after manual backfill: %w", saleItem.ID, err)
+			}
+
+			remainingQty -= allocateQty
+			result.AllocatedQuantity += allocateQty
+			totalEstimated += estimatedAmount
+			totalActual += actualAmount
+			affectedSaleIDs[saleItem.SaleID] = struct{}{}
+			result.Allocations = append(result.Allocations, BackorderBackfillAllocationResult{
+				SaleID:          saleItem.SaleID,
+				SaleItemID:      saleItem.ID,
+				SaleCode:        saleItem.Sale.Code,
+				Quantity:        allocateQty,
+				EstimatedAmount: estimatedAmount,
+				ActualAmount:    actualAmount,
+				VarianceAmount:  actualAmount - estimatedAmount,
+			})
+		}
+
+		if result.AllocatedQuantity == 0 {
+			return populateBackfillPendingQuantity(tx, result)
+		}
+
+		product.Stock = remainingQty
+		if err := tx.Model(&models.Product{}).Where("id = ?", product.ID).Updates(map[string]interface{}{
+			"stock":      product.Stock,
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+			return fmt.Errorf("failed to reduce product stock for manual backfill on product %d: %w", product.ID, err)
+		}
+		result.RemainingStock = product.Stock
+
+		if err := syncSaleFulfillmentStatusesForSales(tx, affectedSaleIDs); err != nil {
+			return err
+		}
+
+		for saleID := range affectedSaleIDs {
+			result.AffectedSaleIDs = append(result.AffectedSaleIDs, saleID)
+		}
+
+		journalLines := []JournalLineRequest{
+			{
+				AccountID:    uint64(clearingAccount.ID),
+				DebitAmount:  decimal.NewFromFloat(totalEstimated),
+				CreditAmount: decimal.Zero,
+				Description:  fmt.Sprintf("Backorder clearing manual backfill - %s", product.Code),
+			},
+			{
+				AccountID:    uint64(inventoryAccount.ID),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: decimal.NewFromFloat(totalActual),
+				Description:  fmt.Sprintf("Inventory consumed by manual backfill - %s", product.Code),
+			},
+		}
+
+		variance := totalActual - totalEstimated
+		if variance > 0.005 {
+			journalLines = append(journalLines, JournalLineRequest{
+				AccountID:    uint64(cogsAccount.ID),
+				DebitAmount:  decimal.NewFromFloat(variance),
+				CreditAmount: decimal.Zero,
+				Description:  fmt.Sprintf("COGS variance on manual backfill - %s", product.Code),
+			})
+		} else if variance < -0.005 {
+			journalLines = append(journalLines, JournalLineRequest{
+				AccountID:    uint64(cogsAccount.ID),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: decimal.NewFromFloat(-variance),
+				Description:  fmt.Sprintf("COGS variance on manual backfill - %s", product.Code),
+			})
+		}
+
+		entryDate := time.Now()
+		var adjustmentOf *uint64
+		if len(affectedSaleIDs) == 1 {
+			for saleID := range affectedSaleIDs {
+				adjustmentOf = findPostedSourceJournalIDForAdjustment(tx, models.SSOTSourceTypeSale, uint64(saleID), entryDate)
+			}
+		}
+
+		sourceID := uint64(product.ID)
+		journal, err := journalService.CreateJournalEntryWithTx(tx, &JournalEntryRequest{
+			EntryDate:              entryDate,
+			Reference:              fmt.Sprintf("BO-HPP-MANUAL-%s-%s", product.Code, entryDate.Format("20060102150405")),
+			Description:            fmt.Sprintf("Manual sales backorder fulfillment backfill - %s", product.Name),
+			Notes:                  salesBackorderSettlementNotes,
+			Lines:                  journalLines,
+			CreatedBy:              uint64(userID),
+			SourceType:             models.SSOTSourceTypeAdjustment,
+			SourceID:               sourceID,
+			AdjustmentOf:           adjustmentOf,
+			AdjustmentCategoryCode: models.JournalAdjustmentCategorySalesBackorderHPP,
+			AutoPost:               true,
+			SystemGenerated:        true,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create manual backorder fulfillment journal for product %s: %w", product.Code, err)
+		}
+		result.JournalID = &journal.ID
+
+		return populateBackfillPendingQuantity(tx, result)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func populateBackfillPendingQuantity(tx *gorm.DB, result *ProductBackorderBackfillResult) error {
+	if tx == nil || result == nil || result.ProductID == 0 {
+		return nil
+	}
+
+	type pendingRow struct {
+		PendingBackorderQty int
+	}
+	var row pendingRow
+	if err := tx.Table("sale_items").
+		Select("COALESCE(SUM(sale_items.backorder_quantity), 0) AS pending_backorder_qty").
+		Joins("JOIN sales ON sales.id = sale_items.sale_id").
+		Where("sale_items.product_id = ? AND sale_items.backorder_quantity > 0 AND sale_items.deleted_at IS NULL", result.ProductID).
+		Where("sales.status IN ? AND sales.deleted_at IS NULL", trackedSalesBackorderStatuses).
+		Scan(&row).Error; err != nil {
+		return fmt.Errorf("failed to query remaining backorder quantity for product %d: %w", result.ProductID, err)
+	}
+
+	result.PendingBackorderQuantity = row.PendingBackorderQty
+	return nil
 }
 
 func (s *PurchaseService) reverseBackorderSettlementsForRejectedPurchase(purchase *models.Purchase) (map[uint]struct{}, error) {

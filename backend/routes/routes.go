@@ -489,6 +489,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				products.DELETE("/:id", permMiddleware.CanDelete("products"), productController.DeleteProduct)
 
 				// 📊 Critical inventory operations dengan extra monitoring
+				products.POST("/:id/backfill-fulfillment", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), productController.BackfillFulfillment)
 				products.POST("/adjust-stock", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), periodValidationMiddleware.ValidateTransactionPeriod(), productController.AdjustStock)
 				products.POST("/opname", permMiddleware.CanEdit("products"), enhancedSecurity.RequestMonitoring(), periodValidationMiddleware.ValidateTransactionPeriod(), productController.Opname)
 				products.POST("/upload-image", permMiddleware.CanEdit("products"), productController.UploadProductImage)

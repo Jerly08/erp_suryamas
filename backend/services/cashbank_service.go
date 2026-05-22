@@ -1544,9 +1544,19 @@ func (s *CashBankService) GetPaymentAccounts() ([]models.CashBank, error) {
 
 	var paymentAccounts []models.CashBank
 	for _, account := range accounts {
-		if account.IsActive {
-			paymentAccounts = append(paymentAccounts, account)
+		if !account.IsActive {
+			continue
 		}
+		currency := normalizeCashBankCurrency(account.Currency)
+		if currency != "IDR" && currency != "USD" {
+			continue
+		}
+		if account.AccountID > 0 {
+			if account.Account.ID == 0 || !account.Account.IsActive || account.Account.IsHeader {
+				continue
+			}
+		}
+		paymentAccounts = append(paymentAccounts, account)
 	}
 
 	return paymentAccounts, nil

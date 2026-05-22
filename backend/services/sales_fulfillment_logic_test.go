@@ -112,6 +112,34 @@ func TestSettleBackordersForApprovedPurchaseIncludesPartiallyPaidSales(t *testin
 	assertBackorderSettled(t, db, productID)
 }
 
+func TestBackfillSalesBackordersForProductUsesAvailableStock(t *testing.T) {
+	db, _, _, productID := setupBackorderSettlementTest(t, models.SaleStatusPaid)
+
+	result, err := BackfillSalesBackordersForProduct(db, productID, 1)
+	require.NoError(t, err)
+	require.Equal(t, productID, result.ProductID)
+	require.Equal(t, 10, result.AllocatedQuantity)
+	require.Equal(t, 0, result.RemainingStock)
+	require.Equal(t, 0, result.PendingBackorderQuantity)
+	require.Len(t, result.Allocations, 1)
+
+	assertBackorderSettled(t, db, productID)
+
+	var allocation models.SaleBackorderAllocation
+	require.NoError(t, db.Where("product_id = ?", productID).First(&allocation).Error)
+	require.Nil(t, allocation.PurchaseID)
+	require.Nil(t, allocation.PurchaseItemID)
+	require.Equal(t, 10, allocation.Quantity)
+
+	journal := requireSingleJournal(t, db, models.SSOTSourceTypeAdjustment, uint64(productID), salesBackorderSettlementNotes)
+	require.Equal(t, models.SSOTStatusPosted, journal.Status)
+	assertJournalLineTotals(t, db, journal.ID, map[string][2]float64{
+		"2103-009": {900, 0},
+		"1103-001": {0, 1000},
+		"5101":     {100, 0},
+	})
+}
+
 func TestSalesBackorderEstimatedHPPFlowFromInvoiceToPurchaseSettlement(t *testing.T) {
 	resetSettingsCacheForTest()
 	defer resetSettingsCacheForTest()

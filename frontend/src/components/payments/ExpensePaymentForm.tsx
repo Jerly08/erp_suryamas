@@ -61,6 +61,10 @@ import CurrencyInput from '@/components/common/CurrencyInput';
 import { useAuth } from '@/contexts/AuthContext';
 import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { useModulePermissions } from '@/hooks/usePermissions';
+import {
+  filterActiveLeafAccounts,
+  filterOperationalCashBankAccounts,
+} from '@/utils/accountFilters';
 
 const formatCashBankBalance = (amount: number, currency?: string) => {
   const normalizedCurrency = (currency || 'IDR').toUpperCase();
@@ -465,11 +469,11 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     try {
       // Load expense accounts
       const expenseData = await accountService.getAccountCatalog(token, 'EXPENSE');
-      const activeExpenseAccounts = expenseData.filter(acc => acc.active);
+      const activeExpenseAccounts = filterActiveLeafAccounts(expenseData);
 
       // Load liability accounts
       const liabilityData = await accountService.getAccountCatalog(token, 'LIABILITY');
-      const activeLiabilityAccounts = liabilityData.filter(acc => acc.active);
+      const activeLiabilityAccounts = filterActiveLeafAccounts(liabilityData);
 
       const fallbackExpenseAccount =
         activeExpenseAccounts[0] || activeLiabilityAccounts[0] || null;
@@ -489,7 +493,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
       // Load cash/bank accounts that can be used for payments
       const cashBankData = await cashbankService.getPaymentAccounts();
-      setCashBanks(cashBankData || []);
+      setCashBanks(filterOperationalCashBankAccounts(cashBankData || []));
 
       // Load contacts (all types for expense payee — vendors, employees, etc.)
       const contactData = await searchableSelectService.getContacts({ is_active: true });

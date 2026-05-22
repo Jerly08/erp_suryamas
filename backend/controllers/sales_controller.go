@@ -33,29 +33,47 @@ func mapSaleWriteError(err error) (int, string, map[string]string, map[string]in
 	}
 
 	errorMsg := strings.TrimSpace(err.Error())
+	lowerErrorMsg := strings.ToLower(errorMsg)
 
 	switch {
-	case strings.Contains(errorMsg, "customer not found"):
+	case strings.Contains(lowerErrorMsg, "customer not found"):
 		return http.StatusNotFound, "Customer not found", nil, nil, true
-	case strings.Contains(errorMsg, "sale not found"):
+	case strings.Contains(lowerErrorMsg, "sale not found"):
 		return http.StatusNotFound, "Sale not found", nil, nil, true
-	case strings.Contains(errorMsg, "stock tidak mencukupi"),
-		strings.Contains(errorMsg, "stock habis"),
-		strings.Contains(errorMsg, "stock tidak cukup"),
-		strings.Contains(errorMsg, "stok 0"):
+	case strings.Contains(lowerErrorMsg, "revenue account"),
+		strings.Contains(lowerErrorMsg, "akun coa"),
+		strings.Contains(lowerErrorMsg, "coa pendapatan"),
+		strings.Contains(lowerErrorMsg, "akun pendapatan"),
+		strings.Contains(lowerErrorMsg, "default revenue account"),
+		strings.Contains(lowerErrorMsg, "no default revenue account"):
+		return http.StatusBadRequest, "Konfigurasi COA penjualan belum valid", map[string]string{
+			"revenue_account_id": errorMsg,
+		}, nil, true
+	case strings.Contains(lowerErrorMsg, "column") &&
+		(strings.Contains(lowerErrorMsg, "sale_items") ||
+			strings.Contains(lowerErrorMsg, "estimated_unit_cost") ||
+			strings.Contains(lowerErrorMsg, "backorder_quantity") ||
+			strings.Contains(lowerErrorMsg, "fulfillment_status")):
+		return http.StatusBadRequest, "Schema sales staging belum lengkap", map[string]string{
+			"schema": "Jalankan migration terbaru, lalu restart backend. Detail: " + errorMsg,
+		}, nil, true
+	case strings.Contains(lowerErrorMsg, "stock tidak mencukupi"),
+		strings.Contains(lowerErrorMsg, "stock habis"),
+		strings.Contains(lowerErrorMsg, "stock tidak cukup"),
+		strings.Contains(lowerErrorMsg, "stok 0"):
 		return http.StatusBadRequest, "Stock validation failed", map[string]string{
 			"items": errorMsg,
 		}, nil, true
-	case strings.Contains(errorMsg, "manual sale item"),
-		strings.Contains(errorMsg, "product name"),
-		strings.Contains(errorMsg, "invalid sale item"),
-		strings.Contains(errorMsg, "validation"):
+	case strings.Contains(lowerErrorMsg, "manual sale item"),
+		strings.Contains(lowerErrorMsg, "product name"),
+		strings.Contains(lowerErrorMsg, "invalid sale item"),
+		strings.Contains(lowerErrorMsg, "validation"):
 		return http.StatusBadRequest, "Sale validation failed", map[string]string{
 			"items": errorMsg,
 		}, nil, true
-	case strings.Contains(errorMsg, "inventory"),
-		strings.Contains(errorMsg, "tidak bisa mengubah"),
-		strings.Contains(errorMsg, "closed period"),
+	case strings.Contains(lowerErrorMsg, "inventory"),
+		strings.Contains(lowerErrorMsg, "tidak bisa mengubah"),
+		strings.Contains(lowerErrorMsg, "closed period"),
 		strings.Contains(errorMsg, "CLOSED_PERIOD:"):
 		return http.StatusBadRequest, "Sale update is not allowed", nil, map[string]interface{}{
 			"details": errorMsg,

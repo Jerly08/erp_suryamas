@@ -41,6 +41,10 @@ import accountService from "@/services/accountService";
 import { Account as GLAccount } from "@/types/account";
 import { useTranslation } from "@/hooks/useTranslation";
 import { roundUsdIdrRate } from "@/utils/exchangeRate";
+import {
+  filterActiveLeafAccounts,
+  filterOperationalCashBankAccounts,
+} from "@/utils/accountFilters";
 
 interface PaymentFormProps {
   isOpen: boolean;
@@ -444,9 +448,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
 
       // Use cashbank service to get payment accounts (cash and bank accounts)
       const paymentAccounts = await cashbankService.getPaymentAccounts();
-      setAccounts(paymentAccounts || []);
+      const leafPaymentAccounts = filterOperationalCashBankAccounts(paymentAccounts || []);
+      setAccounts(leafPaymentAccounts);
 
-      if (paymentAccounts.length === 0) {
+      if (leafPaymentAccounts.length === 0) {
         toast({
           title: t("common.noData"),
           description: t("common.noData"),
@@ -501,19 +506,21 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
             token,
             "LIABILITY",
           );
-          const formattedAccounts: GLAccount[] = catalogData.map((item) => ({
-            id: item.id,
-            code: item.code,
-            name: item.name,
-            type: "LIABILITY" as const,
-            is_active: item.active,
-            level: 1,
-            is_header: false,
-            balance: 0,
-            created_at: "",
-            updated_at: "",
-            description: "",
-          }));
+          const formattedAccounts: GLAccount[] = filterActiveLeafAccounts(catalogData).map(
+            (item) => ({
+              id: item.id,
+              code: item.code,
+              name: item.name,
+              type: "LIABILITY" as const,
+              is_active: item.active,
+              level: 1,
+              is_header: false,
+              balance: 0,
+              created_at: "",
+              updated_at: "",
+              description: "",
+            }),
+          );
           console.log(
             "Formatted credit accounts from catalog:",
             formattedAccounts,
@@ -532,7 +539,9 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
       // Use full account data for other roles or as fallback for EMPLOYEE
       try {
         const data = await accountService.getAccounts(token, "LIABILITY");
-        const list: GLAccount[] = Array.isArray(data) ? data : [];
+        const list: GLAccount[] = Array.isArray(data)
+          ? filterActiveLeafAccounts(data)
+          : [];
         console.log("Formatted credit accounts from regular endpoint:", list);
         setCreditAccounts(list);
       } catch (regularError: any) {

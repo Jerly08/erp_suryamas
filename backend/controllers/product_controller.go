@@ -206,6 +206,40 @@ func (pc *ProductController) GetProduct(c *gin.Context) {
 	})
 }
 
+func (pc *ProductController) BackfillFulfillment(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
+		return
+	}
+
+	userID := c.GetUint("user_id")
+	result, err := services.BackfillSalesBackordersForProduct(pc.DB, uint(id), userID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		errorMessage := err.Error()
+		if strings.Contains(errorMessage, "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(errorMessage, "only allowed") || strings.Contains(errorMessage, "required") {
+			status = http.StatusBadRequest
+		}
+
+		c.JSON(status, gin.H{"error": errorMessage})
+		return
+	}
+
+	if pc.stockMonitoringService != nil {
+		if err := pc.stockMonitoringService.SyncProductAlerts(uint(id)); err != nil {
+			log.Printf("Failed to sync stock alerts after fulfillment backfill for product %d: %v", id, err)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Future fulfillment backfill processed successfully",
+		"data":    result,
+	})
+}
+
 // AdjustStock handles stock adjustments for products
 func (pc *ProductController) AdjustStock(c *gin.Context) {
 	var input struct {

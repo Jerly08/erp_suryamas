@@ -71,6 +71,7 @@ import CurrencyInput from '@/components/common/CurrencyInput';
 import { useAuth } from '@/contexts/AuthContext';
 import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { roundUsdIdrRate } from '@/utils/exchangeRate';
+import { filterOperationalCashBankAccounts } from '@/utils/accountFilters';
 
 interface AdvancedPaymentFormProps {
   isOpen: boolean;
@@ -570,7 +571,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const loadCashBankAccounts = async () => {
     try {
       const accounts = await cashbankService.getPaymentAccounts();
-      setCashBankAccounts(accounts);
+      setCashBankAccounts(filterOperationalCashBankAccounts(accounts || []));
     } catch (error) {
       console.error('Error loading cash bank accounts:', error);
     }

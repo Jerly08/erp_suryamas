@@ -124,6 +124,11 @@ func RunAutoMigrations(db *gorm.DB) error {
 		log.Printf("⚠️  ACTIVITY_LOGS USER_ID FIX FAILED: %v", err)
 	}
 
+	// Ensure payroll PPh columns exist (smart skip)
+	if err := ensurePayrollPPhColumns(db); err != nil {
+		log.Printf("⚠️  PAYROLL PPH COLUMNS MIGRATION FAILED: %v", err)
+	}
+
 	// Sync sequences for tables with seeded data to prevent duplicate PK errors
 	if err := SyncAllSeededSequences(db); err != nil {
 		log.Printf("⚠️  SEQUENCE SYNC FAILED: %v", err)
@@ -2102,5 +2107,65 @@ func SyncAllSeededSequences(db *gorm.DB) error {
 		}
 	}
 
+	return nil
+}
+
+// ensurePayrollPPhColumns guarantees PPh columns exist in payroll_runs table.
+// This is idempotent and safe to run on every startup.
+func ensurePayrollPPhColumns(db *gorm.DB) error {
+	// Quick check: if the key column already exists, skip entirely
+	if columnExists(db, "payroll_runs", "pph_payable_journal_entry_id") {
+		return nil
+	}
+
+	log.Println("🔧 Adding PPh columns to payroll_runs...")
+
+	alterSQL := `
+	ALTER TABLE payroll_runs
+	  ADD COLUMN IF NOT EXISTS pph_payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID',
+	  ADD COLUMN IF NOT EXISTS pph_paid_amount DECIMAL(15,2) DEFAULT 0,
+	  ADD COLUMN IF NOT EXISTS pph_recognition_date TIMESTAMP NULL,
+	  ADD COLUMN IF NOT EXISTS pph_payment_date TIMESTAMP NULL,
+	  ADD COLUMN IF NOT EXISTS pph_payment_reference VARCHAR(100) DEFAULT '',
+	  ADD COLUMN IF NOT EXISTS pph_payment_notes TEXT DEFAULT '',
+	  ADD COLUMN IF NOT EXISTS pph_payable_journal_entry_id BIGINT NULL,
+	  ADD COLUMN IF NOT EXISTS pph_payment_journal_entry_id BIGINT NULL
+	`
+	if err := db.Exec(alterSQL).Error; err != nil {
+		return fmt.Errorf("failed to add payroll PPh columns: %v", err)
+	}
+
+	// Backfill existing rows
+	updateSQL := `
+	UPDATE payroll_runs
+	SET
+	  pph_paid_amount = COALESCE(pph_paid_amount, 0),
+	  pph_recognition_date = COALESCE(pph_recognition_date, period_end),
+	  pph_payment_reference = COALESCE(pph_payment_reference, ''),
+	  pph_payment_notes = COALESCE(pph_payment_notes, ''),
+	  pph_payment_status = CASE
+	    WHEN COALESCE(total_pph, 0) <= 0.01 THEN 'PAID'
+	    WHEN COALESCE(pph_paid_amount, 0) >= COALESCE(total_pph, 0) - 0.01 THEN 'PAID'
+	    WHEN COALESCE(pph_paid_amount, 0) > 0.01 THEN 'PARTIAL_PAID'
+	    ELSE 'UNPAID'
+	  END
+	`
+	if err := db.Exec(updateSQL).Error; err != nil {
+		log.Printf("⚠️  Warning: backfill payroll PPh data failed: %v", err)
+	}
+
+	// Indexes
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_payroll_runs_pph_payment_status ON payroll_runs(pph_payment_status)",
+		"CREATE INDEX IF NOT EXISTS idx_payroll_runs_pph_payable_journal_entry_id ON payroll_runs(pph_payable_journal_entry_id)",
+		"CREATE INDEX IF NOT EXISTS idx_payroll_runs_pph_payment_journal_entry_id ON payroll_runs(pph_payment_journal_entry_id)",
+	}
+	for _, idx := range indexes {
+		if err := db.Exec(idx).Error; err != nil {
+			log.Printf("⚠️  Warning: index creation failed: %v", err)
+		}
+	}
+
+	log.Println("✅ Payroll PPh columns added successfully")
 	return nil
 }

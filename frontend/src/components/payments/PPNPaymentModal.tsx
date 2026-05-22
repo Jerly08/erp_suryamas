@@ -40,6 +40,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { FiInfo, FiDollarSign } from 'react-icons/fi';
 import { useAuth } from '@/contexts/AuthContext';
 import cashbankService, { CashBank, getBookBalanceInIDR } from '@/services/cashbankService';
+import { filterOperationalCashBankAccounts } from '@/utils/accountFilters';
 
 interface PPNPaymentModalProps {
   isOpen: boolean;
@@ -166,7 +167,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
   const loadCashBanks = async () => {
     try {
       const accounts = await cashbankService.getPaymentAccounts();
-      setCashBanks(accounts || []);
+      setCashBanks(filterOperationalCashBankAccounts(accounts || []));
     } catch (error: any) {
       console.error('Failed to load cash/bank accounts:', error);
       toast({

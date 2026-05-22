@@ -20,6 +20,8 @@ import {
   isHRRole,
   normalizeRole,
 } from '@/utils/roles';
+import { filterOperationalCashBankAccounts, filterActiveLeafAccounts } from '@/utils/accountFilters';
+import accountService from '@/services/accountService';
 import {
   Alert,
   AlertDescription,
@@ -184,8 +186,12 @@ const getPPhRemainingAmount = (payroll?: PayrollRun | null) => {
 };
 
 const getApiErrorMessage = (error: unknown, fallback: string) => {
-  const maybeError = error as { response?: { data?: { error?: string } } };
-  return maybeError.response?.data?.error || fallback;
+  const maybeError = error as {
+    response?: { data?: { error?: string; message?: string; details?: string } };
+  };
+  const apiError = maybeError.response?.data;
+  const message = apiError?.error || apiError?.message || fallback;
+  return apiError?.details ? `${message}: ${apiError.details}` : message;
 };
 
 const payrollImportHeaders = [
@@ -227,6 +233,12 @@ export default function PayrollPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [selectedPayroll, setSelectedPayroll] = useState<PayrollRun | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [expenseAccounts, setExpenseAccounts] = useState<any[]>([]);
+  const [approvalCashBanks, setApprovalCashBanks] = useState<CashBank[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [selectedExpenseAccount, setSelectedExpenseAccount] = useState<string>('');
+  const [selectedCashBankAccount, setSelectedCashBankAccount] = useState<string>('');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('BANK_TRANSFER');
   const [rejectReason, setRejectReason] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<PayrollImportPreview | null>(null);
@@ -289,7 +301,7 @@ export default function PayrollPage() {
     setCashBankLoading(true);
     try {
       const accounts = await cashBankService.getCashBankAccounts();
-      const usableAccounts = accounts.filter(
+      const usableAccounts = filterOperationalCashBankAccounts(accounts).filter(
         (account) =>
           account.is_active &&
           account.account_id &&
@@ -309,6 +321,52 @@ export default function PayrollPage() {
       setCashBankLoading(false);
     }
   }, [toast]);
+
+  const loadApprovalAccounts = useCallback(async () => {
+    setAccountsLoading(true);
+    try {
+      const token = window.localStorage.getItem('token') || '';
+
+      const [expenseData, cashBankData] = await Promise.all([
+        accountService.getAccountCatalog(token, 'EXPENSE'),
+        cashBankService.getCashBankAccounts(),
+      ]);
+
+      const filteredExpenses = filterActiveLeafAccounts(expenseData);
+      const usableCashBanks = filterOperationalCashBankAccounts(cashBankData).filter(
+        (account) =>
+          account.is_active &&
+          account.account_id &&
+          (account.currency || 'IDR').toUpperCase() === 'IDR' &&
+          account.allow_direct_transactions !== false,
+      );
+
+      setExpenseAccounts(filteredExpenses);
+      setApprovalCashBanks(usableCashBanks);
+
+      const defaultExpense = filteredExpenses.find(
+        (acc) =>
+          acc.code === '6101' ||
+          acc.code === '5101-001' ||
+          acc.code === '5201' ||
+          acc.name.toLowerCase().includes('gaji') ||
+          acc.name.toLowerCase().includes('salary'),
+      );
+      if (defaultExpense) {
+        setSelectedExpenseAccount(defaultExpense.id.toString());
+      } else if (filteredExpenses.length > 0) {
+        setSelectedExpenseAccount(filteredExpenses[0].id.toString());
+      }
+
+      if (usableCashBanks.length > 0) {
+        setSelectedCashBankAccount(usableCashBanks[0].account_id.toString());
+      }
+    } catch (error) {
+      console.error('Failed to load accounts for approval:', error);
+    } finally {
+      setAccountsLoading(false);
+    }
+  }, []);
 
   const totals = payrollRuns.reduce(
     (acc, payroll) => ({
@@ -526,7 +584,14 @@ export default function PayrollPage() {
   const openDetail = async (payroll: PayrollRun) => {
     setSelectedPayroll(payroll);
     setRejectReason('');
+    setSelectedExpenseAccount('');
+    setSelectedCashBankAccount('');
+    setSelectedPaymentMethod('BANK_TRANSFER');
     detailModal.onOpen();
+
+    if (canApprovePayroll && payroll.status === 'PENDING_APPROVAL') {
+      loadApprovalAccounts();
+    }
 
     setDetailLoading(true);
     try {
@@ -620,9 +685,28 @@ export default function PayrollPage() {
 
   const approveSelected = async () => {
     if (!selectedPayroll) return;
+
+    if (!selectedCashBankAccount) {
+      toast({
+        title: 'Akun Kas/Bank belum dipilih',
+        description: 'Pilih akun Kas/Bank IDR untuk pembayaran gaji karyawan.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const updated = await payrollService.approvePayrollRun(selectedPayroll.id);
+      const payload: { expense_account_id?: number; cash_bank_account_id?: number; payment_method?: string } = {};
+      if (selectedExpenseAccount) {
+        payload.expense_account_id = Number(selectedExpenseAccount);
+      }
+      payload.cash_bank_account_id = Number(selectedCashBankAccount);
+      payload.payment_method = selectedPaymentMethod || 'BANK_TRANSFER';
+
+      const updated = await payrollService.approvePayrollRun(selectedPayroll.id, payload);
       setSelectedPayroll(updated);
       toast({
         title: 'Payroll approved',
@@ -710,9 +794,11 @@ export default function PayrollPage() {
                     <Button leftIcon={<FiUpload />} colorScheme="teal" onClick={importModal.onOpen}>
                       Import Excel
                     </Button>
-                    <Button leftIcon={<FiPlus />} colorScheme="blue" onClick={createModal.onOpen}>
-                      Create Payroll
-                    </Button>
+                    {isAdmin && (
+                      <Button leftIcon={<FiPlus />} colorScheme="blue" onClick={createModal.onOpen}>
+                        Create Payroll
+                      </Button>
+                    )}
                   </>
                 )}
               </HStack>
@@ -1156,9 +1242,9 @@ export default function PayrollPage() {
             </ModalContent>
           </Modal>
 
-          <Modal isOpen={detailModal.isOpen} onClose={detailModal.onClose} size="6xl" scrollBehavior="inside">
+          <Modal isOpen={detailModal.isOpen} onClose={detailModal.onClose} size="full" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent maxW={{ base: '96vw', xl: '1180px' }}>
+            <ModalContent maxW={{ base: '98vw', xl: '95vw' }} my={4}>
               <ModalHeader borderBottomWidth="1px" borderColor={borderColor}>
                 <Flex justify="space-between" align="center" pr={8}>
                   <Box>
@@ -1286,6 +1372,62 @@ export default function PayrollPage() {
                           <Icon as={FiLock} />
                           <Text fontWeight="semibold">Approval Finance Manager</Text>
                         </HStack>
+
+                        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={4}>
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm" fontWeight="medium">Akun Beban Gaji (Debit)</FormLabel>
+                            {accountsLoading ? (
+                              <Spinner size="sm" />
+                            ) : (
+                              <Select
+                                value={selectedExpenseAccount}
+                                onChange={(e) => setSelectedExpenseAccount(e.target.value)}
+                                bg={inputBg}
+                              >
+                                {expenseAccounts.map((acc) => (
+                                  <option key={acc.id} value={acc.id}>
+                                    {acc.code} - {acc.name}
+                                  </option>
+                                ))}
+                              </Select>
+                            )}
+                          </FormControl>
+
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm" fontWeight="medium">Akun Kas/Bank Gaji (Kredit)</FormLabel>
+                            {accountsLoading ? (
+                              <Spinner size="sm" />
+                            ) : (
+                              <Select
+                                placeholder="Pilih Kas/Bank Pembayaran"
+                                value={selectedCashBankAccount}
+                                onChange={(e) => setSelectedCashBankAccount(e.target.value)}
+                                bg={inputBg}
+                              >
+                                {approvalCashBanks.map((acc) => (
+                                  <option key={acc.id} value={acc.account_id}>
+                                    {acc.code} - {acc.name} ({formatCurrency(acc.balance)})
+                                  </option>
+                                ))}
+                              </Select>
+                            )}
+                          </FormControl>
+
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm" fontWeight="medium">Metode Pembayaran</FormLabel>
+                            <Select
+                              value={selectedPaymentMethod}
+                              onChange={(e) => setSelectedPaymentMethod(e.target.value)}
+                              bg={inputBg}
+                            >
+                              <option value="BANK_TRANSFER">Bank Transfer</option>
+                              <option value="CASH">Cash / Kas Tunai</option>
+                              <option value="CHECK">Check</option>
+                              <option value="OTHER">Lainnya</option>
+                            </Select>
+                          </FormControl>
+                        </SimpleGrid>
+
                         <FormControl>
                           <FormLabel>Catatan Reject</FormLabel>
                           <Textarea value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Wajib diisi jika payroll ditolak." bg={inputBg} />

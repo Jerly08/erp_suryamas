@@ -1,5 +1,6 @@
 import api from "./api";
 import { API_ENDPOINTS } from "../config/api";
+import { filterOperationalCashBankAccounts } from "@/utils/accountFilters";
 
 // Types
 export interface CashBank {
@@ -36,6 +37,8 @@ export interface CashBank {
     id: number;
     code: string;
     name: string;
+    is_active?: boolean;
+    is_header?: boolean;
   };
 }
 
@@ -513,7 +516,7 @@ class CashBankService {
       const response = await api.get(API_ENDPOINTS.CASH_BANK.PAYMENT_ACCOUNTS, {
         params: { _t: Date.now() },
       });
-      return response.data.data || response.data;
+      return filterOperationalCashBankAccounts(response.data.data || response.data || []);
     } catch (error) {
       console.error("Error fetching payment accounts:", error);
       throw error;

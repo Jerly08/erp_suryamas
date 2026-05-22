@@ -107,6 +107,28 @@ export interface StockOpname {
   notes?: string;
 }
 
+export interface ProductBackfillAllocation {
+  sale_id: number;
+  sale_item_id: number;
+  sale_code: string;
+  quantity: number;
+  estimated_amount: number;
+  actual_amount: number;
+  variance_amount: number;
+}
+
+export interface ProductBackfillResult {
+  product_id: number;
+  product_code: string;
+  product_name: string;
+  allocated_quantity: number;
+  remaining_stock: number;
+  pending_backorder_quantity: number;
+  journal_id?: number;
+  affected_sale_ids: number[];
+  allocations: ProductBackfillAllocation[];
+}
+
 export interface BulkPriceUpdate {
   updates: {
     product_id: number;
@@ -157,6 +179,11 @@ class ProductService {
   async deleteProduct(id: number) {
     const response = await api.delete(API_ENDPOINTS.PRODUCTS_BY_ID(id));
     return response.data;
+  }
+
+  async backfillFulfillment(id: number) {
+    const response = await api.post(API_ENDPOINTS.PRODUCTS_BACKFILL_FULFILLMENT(id));
+    return response.data as { message: string; data: ProductBackfillResult };
   }
 
   async importProducts(products: Partial<Product>[]) {

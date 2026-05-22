@@ -319,8 +319,30 @@ func resolvePayrollSalaryExpenseAccount(tx *gorm.DB) (*models.Account, error) {
 	return nil, fmt.Errorf("akun Beban Gaji tidak ditemukan")
 }
 
-func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *models.PayrollRun, userID uint) (*uint64, error) {
-	if run == nil || run.TotalPPh <= 0.01 {
+func resolvePayrollSalaryPayableAccount(tx *gorm.DB) (*models.Account, error) {
+	if account, err := resolvePayrollAccountByCodes(tx, "2103-001", "2103"); err == nil {
+		return account, nil
+	}
+
+	var account models.Account
+	if err := tx.
+		Where("deleted_at IS NULL AND is_active = ? AND is_header = ? AND type = ? AND (LOWER(name) LIKE ? OR LOWER(name) LIKE ?)",
+			true,
+			false,
+			models.AccountTypeLiability,
+			"%utang gaji%",
+			"%hutang gaji%",
+		).
+		Order("code ASC").
+		First(&account).Error; err == nil {
+		return &account, nil
+	}
+
+	return nil, fmt.Errorf("akun Utang Gaji tidak ditemukan")
+}
+
+func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *models.PayrollRun, userID uint, customExpenseAccountID *uint, customCashBankAccountID *uint, paymentMethod string) (*uint64, error) {
+	if run == nil || run.TotalOverall <= 0.01 {
 		return nil, nil
 	}
 
@@ -332,46 +354,150 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 		First(&existing).Error; err == nil {
 		return &existing.ID, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("failed to check payroll PPh payable journal: %w", err)
+		return nil, fmt.Errorf("failed to check payroll accrual journal: %w", err)
 	}
 
-	expenseAccount, err := resolvePayrollSalaryExpenseAccount(tx)
-	if err != nil {
-		return nil, err
-	}
-	pphPayableAccount, err := resolvePayrollPPhPayableAccount(tx)
-	if err != nil {
-		return nil, err
+	var expenseAccount *models.Account
+	var err error
+	if customExpenseAccountID != nil && *customExpenseAccountID > 0 {
+		var acc models.Account
+		if err = tx.First(&acc, *customExpenseAccountID).Error; err != nil {
+			return nil, fmt.Errorf("akun Beban Gaji kustom tidak ditemukan: %w", err)
+		}
+		expenseAccount = &acc
+	} else {
+		expenseAccount, err = resolvePayrollSalaryExpenseAccount(tx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	amount := decimal.NewFromFloat(roundPayrollMoney(run.TotalPPh))
+	var cashBankAccount *models.Account
+	if customCashBankAccountID != nil && *customCashBankAccountID > 0 {
+		var acc models.Account
+		if err = tx.First(&acc, *customCashBankAccountID).Error; err != nil {
+			return nil, fmt.Errorf("akun Kas/Bank kustom tidak ditemukan: %w", err)
+		}
+		cashBankAccount = &acc
+	} else {
+		if account, err := resolvePayrollAccountByCodes(tx, "1101-003", "1101-001", "1101-002"); err == nil {
+			cashBankAccount = account
+		} else {
+			return nil, fmt.Errorf("akun Kas/Bank untuk pembayaran gaji wajib dipilih")
+		}
+	}
+
+	var pphPayableAccount *models.Account
+	if run.TotalPPh > 0.01 {
+		pphPayableAccount, err = resolvePayrollPPhPayableAccount(tx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var salaryPayableAccount *models.Account
+	withheldDeductions := roundPayrollMoney((run.TotalSalary + run.TotalBonus) - (run.TotalPPh + run.TotalOverall))
+	if withheldDeductions > 0.01 {
+		salaryPayableAccount, err = resolvePayrollSalaryPayableAccount(tx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var lines []services.JournalLineRequest
+
+	grossSalary := roundPayrollMoney(run.TotalSalary + run.TotalBonus)
+	lines = append(lines, services.JournalLineRequest{
+		AccountID:    uint64(expenseAccount.ID),
+		DebitAmount:  decimal.NewFromFloat(grossSalary),
+		CreditAmount: decimal.Zero,
+		Description:  fmt.Sprintf("Beban Gaji & Tunjangan Periode %s - %s", run.PayrollNumber, run.Notes),
+	})
+
+	if run.TotalPPh > 0.01 && pphPayableAccount != nil {
+		lines = append(lines, services.JournalLineRequest{
+			AccountID:    uint64(pphPayableAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(roundPayrollMoney(run.TotalPPh)),
+			Description:  fmt.Sprintf("Hutang PPh 21 Karyawan Periode %s", run.PayrollNumber),
+		})
+	}
+
+	lines = append(lines, services.JournalLineRequest{
+		AccountID:    uint64(cashBankAccount.ID),
+		DebitAmount:  decimal.Zero,
+		CreditAmount: decimal.NewFromFloat(roundPayrollMoney(run.TotalOverall)),
+		Description:  fmt.Sprintf("Pembayaran Net Gaji Karyawan Periode %s via %s", run.PayrollNumber, paymentMethod),
+	})
+
+	if withheldDeductions > 0.01 && salaryPayableAccount != nil {
+		lines = append(lines, services.JournalLineRequest{
+			AccountID:    uint64(salaryPayableAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(withheldDeductions),
+			Description:  fmt.Sprintf("Potongan BPJS & Lainnya Periode %s", run.PayrollNumber),
+		})
+	}
+
+	method := "Transfer"
+	if paymentMethod != "" {
+		method = paymentMethod
+	}
+
 	journalService := services.NewUnifiedJournalService(tx)
 	journalEntry, err := journalService.CreateJournalEntryWithTx(tx, &services.JournalEntryRequest{
 		EntryDate:   run.PeriodEnd,
-		Reference:   fmt.Sprintf("PPH-PAYROLL-%s", run.PayrollNumber),
-		Description: fmt.Sprintf("Pengakuan Hutang PPh Payroll - %s", run.PayrollNumber),
-		Notes:       "PPh payroll diakui sebagai hutang pajak pada periode payroll terkait. Pembayaran dapat dilakukan menyusul.",
+		Reference:   fmt.Sprintf("PAYROLL-%s", run.PayrollNumber),
+		Description: fmt.Sprintf("Jurnal Pengakuan & Pembayaran Payroll - %s", run.PayrollNumber),
+		Notes:       fmt.Sprintf("Beban Gaji kotor diakui, PPh 21 ditahan sebagai hutang pajak, Net Gaji dibayarkan langsung dari Kas/Bank via %s.", method),
 		SourceType:  "PAYROLL_PPH_PAYABLE",
 		SourceID:    sourceID,
 		AutoPost:    true,
 		CreatedBy:   uint64(userID),
-		Lines: []services.JournalLineRequest{
-			{
-				AccountID:    uint64(expenseAccount.ID),
-				DebitAmount:  amount,
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("Beban payroll terkait PPh - %s", run.PayrollNumber),
-			},
-			{
-				AccountID:    uint64(pphPayableAccount.ID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: amount,
-				Description:  fmt.Sprintf("Hutang PPh payroll - %s", run.PayrollNumber),
-			},
-		},
+		Lines:       lines,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create payroll PPh payable journal: %w", err)
+		return nil, fmt.Errorf("failed to create payroll accrual/payment journal: %w", err)
+	}
+
+	var cashBank models.CashBank
+	if err = tx.Where("account_id = ? AND deleted_at IS NULL", cashBankAccount.ID).First(&cashBank).Error; err == nil {
+		paymentAmount := roundPayrollMoney(run.TotalOverall)
+		cashBank.Balance = roundPayrollMoney(cashBank.Balance - paymentAmount)
+		if !cashBank.IsForeignCurrency() {
+			cashBank.BookBalanceIDR = cashBank.Balance
+			cashBank.LastExchangeRate = 1
+		}
+		if err = tx.Save(&cashBank).Error; err != nil {
+			return nil, fmt.Errorf("failed to update cash/bank balance: %w", err)
+		}
+
+		currency := strings.ToUpper(strings.TrimSpace(cashBank.Currency))
+		if currency == "" {
+			currency = "IDR"
+		}
+		exchangeRate := cashBank.EffectiveExchangeRate()
+		cashMovement := -paymentAmount
+		bookAmountIDR := cashMovement
+		if cashBank.IsForeignCurrency() {
+			bookAmountIDR = roundPayrollMoney(cashMovement * exchangeRate)
+		}
+
+		cbTx := models.CashBankTransaction{
+			CashBankID:      cashBank.ID,
+			ReferenceType:   "PAYROLL_NET_PAYMENT",
+			ReferenceID:     run.ID,
+			Amount:          cashMovement,
+			Currency:        currency,
+			ExchangeRate:    exchangeRate,
+			BookAmountIDR:   bookAmountIDR,
+			BalanceAfter:    cashBank.Balance,
+			TransactionDate: run.PeriodEnd,
+			Notes:           fmt.Sprintf("Disbursement Gaji Karyawan Periode %s", run.PayrollNumber),
+		}
+		if err = tx.Create(&cbTx).Error; err != nil {
+			return nil, fmt.Errorf("failed to create cash/bank transaction record: %w", err)
+		}
 	}
 
 	return &journalEntry.ID, nil
@@ -816,6 +942,13 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 		return
 	}
 
+	var req struct {
+		ExpenseAccountID  *uint  `json:"expense_account_id"`
+		CashBankAccountID *uint  `json:"cash_bank_account_id"`
+		PaymentMethod     string `json:"payment_method"`
+	}
+	_ = ctx.ShouldBindJSON(&req) // Ignore EOF/errors to remain backward compatible
+
 	now := time.Now()
 	tx := c.db.Begin()
 	if tx.Error != nil {
@@ -855,12 +988,12 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 		run.PPhRecognitionDate = &recognitionDate
 	}
 
-	if run.TotalPPh > 0.01 && run.PPhPayableJournalEntryID == nil {
-		journalID, err := c.createPayrollPPhPayableJournal(tx, &run, userID)
+	if run.TotalOverall > 0.01 && run.PPhPayableJournalEntryID == nil {
+		journalID, err := c.createPayrollPPhPayableJournal(tx, &run, userID, req.ExpenseAccountID, req.CashBankAccountID, req.PaymentMethod)
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{
-				"error":   "Gagal membuat jurnal hutang PPh payroll",
+				"error":   "Gagal membuat jurnal payroll",
 				"details": err.Error(),
 			})
 			return
@@ -872,7 +1005,10 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 
 	if err := tx.Model(&run).Updates(updates).Error; err != nil {
 		tx.Rollback()
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve payroll"})
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to approve payroll",
+			"details": err.Error(),
+		})
 		return
 	}
 
@@ -1048,7 +1184,7 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 		run.PPhRecognitionDate = &recognitionDate
 	}
 	if run.PPhPayableJournalEntryID == nil {
-		journalID, err := c.createPayrollPPhPayableJournal(tx, &run, userID)
+		journalID, err := c.createPayrollPPhPayableJournal(tx, &run, userID, nil, nil, "")
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{

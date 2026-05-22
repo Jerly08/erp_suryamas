@@ -128,6 +128,10 @@ import ProtectedModule from "@/components/common/ProtectedModule";
 import { useColorModeValue } from "@chakra-ui/react";
 import SearchableSelect from "@/components/common/SearchableSelect";
 import CurrencyInput from "@/components/common/CurrencyInput";
+import {
+  filterActiveLeafAccounts,
+  filterOperationalCashBankAccounts,
+} from "@/utils/accountFilters";
 // SSOT Journal Integration
 import PurchaseJournalEntriesModal from "../../src/components/purchase/PurchaseJournalEntriesModal";
 import purchaseJournalService from "../../src/services/purchaseJournalService";
@@ -191,11 +195,20 @@ interface BankAccount {
   name: string;
   code: string;
   type: string;
+  account_id?: number;
+  is_active?: boolean;
   balance?: number;
   currency: string;
   book_balance_idr?: number;
   last_exchange_rate?: number;
   frozen_amount?: number;
+  account?: {
+    id?: number;
+    code?: string;
+    name?: string;
+    is_active?: boolean;
+    is_header?: boolean;
+  };
 }
 
 const normalizePurchasePaymentFields = (
@@ -2021,7 +2034,7 @@ const PurchasesPage: React.FC = () => {
       }
 
       const data = await response.json();
-      setCashBanks(data.data || []);
+      setCashBanks(filterOperationalCashBankAccounts(data.data || []));
     } catch (err: any) {
       console.error("Error fetching cash banks for payment:", err);
       // Don't show error toast here as it's called from handleRecordPayment
@@ -2538,7 +2551,7 @@ const PurchasesPage: React.FC = () => {
       // The data array already contains both bank and cash accounts
       const allAccounts = data.data || [];
 
-      setBankAccounts(allAccounts);
+      setBankAccounts(filterOperationalCashBankAccounts(allAccounts));
     } catch (err: any) {
       console.error("Error fetching bank accounts:", err);
       toast({
@@ -2562,7 +2575,9 @@ const PurchasesPage: React.FC = () => {
       // Use public catalog endpoint for all roles - no authentication required
       try {
         const catalogData = await accountService.getCreditAccounts(); // Use our fixed public method
-        const formattedAccounts: GLAccount[] = catalogData.map((item) => ({
+        const formattedAccounts: GLAccount[] = filterActiveLeafAccounts(
+          catalogData,
+        ).map((item) => ({
           id: item.id,
           code: item.code,
           name: item.name,
@@ -2593,7 +2608,7 @@ const PurchasesPage: React.FC = () => {
       try {
         const data = await accountService.getAccounts(token, "LIABILITY");
         const list: GLAccount[] = Array.isArray(data)
-          ? data.filter((account) => account.is_active && !account.is_header)
+          ? filterActiveLeafAccounts(data)
           : [];
         console.log("Formatted credit accounts from regular endpoint:", list);
         setCreditAccounts(list);
@@ -2641,21 +2656,21 @@ const PurchasesPage: React.FC = () => {
       try {
         // Fetch expense accounts using public endpoint
         const expenseCatalogData = await accountService.getExpenseAccounts(); // Use our fixed public method
-        const formattedExpenseAccounts: GLAccount[] = expenseCatalogData.map(
-          (item) => ({
-            id: item.id,
-            code: item.code,
-            name: item.name,
-            type: "EXPENSE" as const,
-            is_active: item.active,
-            level: 1,
-            is_header: false,
-            balance: 0,
-            created_at: "",
-            updated_at: "",
-            description: "",
-          }),
-        );
+        const formattedExpenseAccounts: GLAccount[] = filterActiveLeafAccounts(
+          expenseCatalogData,
+        ).map((item) => ({
+          id: item.id,
+          code: item.code,
+          name: item.name,
+          type: "EXPENSE" as const,
+          is_active: item.active,
+          level: 1,
+          is_header: false,
+          balance: 0,
+          created_at: "",
+          updated_at: "",
+          description: "",
+        }));
 
         // For service companies: only show expense accounts (no inventory/fixed assets)
         if (isServiceCompany) {
@@ -2668,7 +2683,7 @@ const PurchasesPage: React.FC = () => {
               "ASSET",
             ); // Public endpoint
             // Include both inventory and fixed asset accounts
-            const assetAccounts = assetCatalogData
+            const assetAccounts = filterActiveLeafAccounts(assetCatalogData)
               .filter((item) => {
                 const code = item.code || "";
                 const name = (item.name || "").toLowerCase();
@@ -2736,7 +2751,7 @@ const PurchasesPage: React.FC = () => {
         }
 
         // Filter out header/parent accounts — only detail accounts can be selected for transactions
-        const detailAccounts = allAccounts.filter((acc) => !acc.is_header);
+        const detailAccounts = filterActiveLeafAccounts(allAccounts);
         console.log(
           "Formatted accounts from public catalog (inventory + fixed assets + expense), filtered headers:",
           detailAccounts.length,
@@ -2826,9 +2841,7 @@ const PurchasesPage: React.FC = () => {
         }
 
         // Filter out header/parent accounts — only detail accounts can be selected for transactions
-        const detailAccountsList = allAccountsList.filter(
-          (acc) => !acc.is_header,
-        );
+        const detailAccountsList = filterActiveLeafAccounts(allAccountsList);
         console.log(
           "Formatted accounts from regular endpoint (inventory + fixed assets + expense), filtered headers:",
           detailAccountsList.length,

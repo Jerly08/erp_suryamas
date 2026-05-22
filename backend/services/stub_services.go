@@ -2,6 +2,7 @@ package services
 
 import (
 	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/utils"
 	"context"
 	"fmt"
 	"log"
@@ -83,6 +84,14 @@ func shouldDisallowCashBankLinkedAccounts(sourceType string, adjustmentOf *uint6
 	return requiresManualJournalApproval(sourceType, adjustmentOf)
 }
 
+func journalAccountingDateStart(date time.Time) time.Time {
+	if date.IsZero() {
+		return date
+	}
+	localDate := date.In(utils.JakartaTZ)
+	return time.Date(localDate.Year(), localDate.Month(), localDate.Day(), 0, 0, 0, 0, utils.JakartaTZ)
+}
+
 func validateAdjustmentReference(tx *gorm.DB, sourceType string, adjustmentOf *uint64, entryDate time.Time) (*uint64, error) {
 	normalizedAdjustmentOf := normalizeOptionalUint64(adjustmentOf)
 	if normalizedAdjustmentOf == nil {
@@ -113,7 +122,7 @@ func validateAdjustmentReference(tx *gorm.DB, sourceType string, adjustmentOf *u
 		return nil, fmt.Errorf("jurnal asal adjustment harus berstatus POSTED")
 	}
 
-	if entryDate.Before(original.EntryDate) {
+	if journalAccountingDateStart(entryDate).Before(journalAccountingDateStart(original.EntryDate)) {
 		return nil, fmt.Errorf("tanggal adjustment tidak boleh lebih awal dari jurnal asal")
 	}
 

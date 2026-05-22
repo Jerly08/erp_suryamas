@@ -37,6 +37,8 @@ export const API_ENDPOINTS = {
   // Products (with /api/v1 prefix)
   PRODUCTS: "/api/v1/products",
   PRODUCTS_BY_ID: (id: number) => `/api/v1/products/${id}`,
+  PRODUCTS_BACKFILL_FULFILLMENT: (id: number) =>
+    `/api/v1/products/${id}/backfill-fulfillment`,
   PRODUCTS_ADJUST_STOCK: "/api/v1/products/adjust-stock",
   PRODUCTS_OPNAME: "/api/v1/products/opname",
   PRODUCTS_UPLOAD_IMAGE: "/api/v1/products/upload-image",

@@ -77,6 +77,8 @@ export interface AccountCatalogItem {
   code: string;
   name: string;
   active: boolean;
+  is_header?: boolean;
+  is_active?: boolean;
 }
 
 export interface ApiResponse<T> {

@@ -76,6 +76,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useModulePermissions } from "@/hooks/usePermissions";
 import { isFinanceManagerRole, normalizeRole } from "@/utils/roles";
+import {
+  filterActiveLeafAccounts,
+  filterOperationalCashBankAccounts,
+} from "@/utils/accountFilters";
 
 interface SalesFormProps {
   isOpen: boolean;
@@ -668,8 +672,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         accountsResult.status === "fulfilled" &&
         Array.isArray(accountsResult.value)
       ) {
-        const revenueAccounts = accountsResult.value
-          .filter((acc: { active?: boolean }) => acc.active !== false)
+        const revenueAccounts = filterActiveLeafAccounts(accountsResult.value)
           .map((acc: { id: number; code: string; name: string }) => ({
             id: acc.id,
             code: acc.code,
@@ -707,7 +710,9 @@ const SalesForm: React.FC<SalesFormProps> = ({
         cashBankResult.status === "fulfilled" &&
         Array.isArray(cashBankResult.value)
       ) {
-        setCashBankAccounts(cashBankResult.value);
+        setCashBankAccounts(
+          filterOperationalCashBankAccounts(cashBankResult.value),
+        );
       } else {
         console.warn(
           "Failed to load cash & bank accounts:",

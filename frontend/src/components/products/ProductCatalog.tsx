@@ -50,7 +50,7 @@ import {
   Icon,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { FiSearch, FiEdit, FiTrash2, FiUpload, FiEye, FiPlus, FiGrid, FiPackage, FiMapPin, FiSettings, FiChevronDown } from 'react-icons/fi';
+import { FiSearch, FiEdit, FiTrash2, FiUpload, FiEye, FiPlus, FiGrid, FiPackage, FiMapPin, FiSettings, FiChevronDown, FiRefreshCw } from 'react-icons/fi';
 import ProductService, { Product, Category, WarehouseLocation } from '@/services/productService';
 import ProductForm from './ProductForm';
 import CategoryManagement from './CategoryManagement';
@@ -86,6 +86,7 @@ const ProductCatalog: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [pendingUpload, setPendingUpload] = useState<{ productId: number, file: File } | null>(null);
+  const [backfillLoadingProductId, setBackfillLoadingProductId] = useState<number | null>(null);
   const { isOpen: isAlertOpen, onOpen: onAlertOpen, onClose: onAlertClose } = useDisclosure();
   const { isOpen: isDetailOpen, onOpen: onDetailOpen, onClose: onDetailClose } = useDisclosure();
   const { isOpen: isManagementModalOpen, onOpen: onManagementModalOpen, onClose: onManagementModalClose } = useDisclosure();
@@ -318,6 +319,40 @@ const ProductCatalog: React.FC = () => {
         status: 'error',
         isClosable: true,
       });
+    }
+  };
+
+  const handleBackfillFulfillment = async (product: Product) => {
+    if (!product.id || backfillLoadingProductId !== null) {
+      return;
+    }
+
+    if (!window.confirm(`Trigger manual fulfillment backfill untuk "${product.name}"? Stok tersedia akan dialokasikan ke sales backorder tertua.`)) {
+      return;
+    }
+
+    setBackfillLoadingProductId(product.id);
+    try {
+      const response = await ProductService.backfillFulfillment(product.id);
+      const result = response.data;
+      await fetchProducts();
+      toast({
+        title: result.allocated_quantity > 0 ? 'Backfill fulfillment selesai' : 'Tidak ada backorder yang dialokasikan',
+        description: result.allocated_quantity > 0
+          ? `${result.allocated_quantity} qty dialokasikan. Sisa stok ${result.remaining_stock}, sisa BO ${result.pending_backorder_quantity}.`
+          : `Sisa stok ${result.remaining_stock}, sisa BO ${result.pending_backorder_quantity}.`,
+        status: result.allocated_quantity > 0 ? 'success' : 'info',
+        isClosable: true,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Backfill fulfillment gagal',
+        description: error?.response?.data?.error || error?.message || 'Gagal menjalankan backfill manual',
+        status: 'error',
+        isClosable: true,
+      });
+    } finally {
+      setBackfillLoadingProductId(null);
     }
   };
 
@@ -655,6 +690,20 @@ const ProductCatalog: React.FC = () => {
                         >
                           {t('common.delete')}
                         </Button>
+                        {hasInventory && !product.is_service && !product.is_assembly && (product.pending_backorder_qty || 0) > 0 && (product.stock || 0) > 0 && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="orange"
+                            leftIcon={<FiRefreshCw />}
+                            mr={2}
+                            isLoading={backfillLoadingProductId === product.id}
+                            loadingText="Backfill"
+                            onClick={() => handleBackfillFulfillment(product)}
+                          >
+                            Backfill BO
+                          </Button>
+                        )}
                         <Input
                           type="file"
                           accept="image/*"
