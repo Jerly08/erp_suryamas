@@ -80,11 +80,22 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 		IsActive: true,
 		IsHeader: false,
 	}
+	cashAccount := models.Account{
+		Code:     "1101-003",
+		Name:     "BANK GIRO",
+		Type:     models.AccountTypeAsset,
+		Category: models.CategoryCurrentAsset,
+		IsActive: true,
+		IsHeader: false,
+	}
 	if err := db.Create(&salaryExpense).Error; err != nil {
 		t.Fatalf("failed to create salary expense account: %v", err)
 	}
 	if err := db.Create(&pphPayable).Error; err != nil {
 		t.Fatalf("failed to create PPh payable account: %v", err)
+	}
+	if err := db.Create(&cashAccount).Error; err != nil {
+		t.Fatalf("failed to create cash account: %v", err)
 	}
 
 	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -96,8 +107,7 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 		Status:             models.PayrollStatusPendingApproval,
 		TotalSalary:        10000000,
 		TotalPPh:           300000,
-		TotalBPJS:          100000,
-		TotalOverall:       9600000,
+		TotalOverall:       9700000,
 		PPhPaymentStatus:   models.PayrollPPhPaymentStatusUnpaid,
 		PPhRecognitionDate: &periodEnd,
 		CreatedByID:        hrUser.ID,
@@ -106,8 +116,7 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 				EmployeeName: "Staff Test",
 				BaseSalary:   10000000,
 				PPh:          300000,
-				BPJS:         100000,
-				NetPay:       9600000,
+				NetPay:       9700000,
 			},
 		},
 	}
@@ -151,7 +160,7 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 	if journal.Status != models.SSOTStatusPosted {
 		t.Fatalf("expected posted journal, got %s", journal.Status)
 	}
-	if len(journal.Lines) != 2 {
-		t.Fatalf("expected 2 journal lines, got %d", len(journal.Lines))
+	if len(journal.Lines) != 3 {
+		t.Fatalf("expected 3 journal lines, got %d", len(journal.Lines))
 	}
 }

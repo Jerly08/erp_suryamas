@@ -28,17 +28,17 @@ type PayrollRun struct {
 	Status                   string         `json:"status" gorm:"not null;default:'PENDING_APPROVAL';size:30"`
 	TotalSalary              float64        `json:"total_salary" gorm:"type:decimal(15,2);default:0"`
 	TotalBonus               float64        `json:"total_bonus" gorm:"type:decimal(15,2);default:0"`
-	TotalPPh                 float64        `json:"total_pph" gorm:"type:decimal(15,2);default:0"`
+	TotalPPh                 float64        `json:"total_pph" gorm:"column:total_pph;type:decimal(15,2);default:0"`
 	TotalBPJS                float64        `json:"total_bpjs" gorm:"type:decimal(15,2);default:0"`
 	TotalOverall             float64        `json:"total_overall" gorm:"type:decimal(15,2);default:0"`
-	PPhPaymentStatus         string         `json:"pph_payment_status" gorm:"not null;default:'UNPAID';size:20"`
-	PPhPaidAmount            float64        `json:"pph_paid_amount" gorm:"type:decimal(15,2);default:0"`
-	PPhRecognitionDate       *time.Time     `json:"pph_recognition_date"`
-	PPhPaymentDate           *time.Time     `json:"pph_payment_date"`
-	PPhPaymentReference      string         `json:"pph_payment_reference" gorm:"size:100"`
-	PPhPaymentNotes          string         `json:"pph_payment_notes" gorm:"type:text"`
-	PPhPayableJournalEntryID *uint64        `json:"pph_payable_journal_entry_id" gorm:"index"`
-	PPhPaymentJournalEntryID *uint64        `json:"pph_payment_journal_entry_id" gorm:"index"`
+	PPhPaymentStatus         string         `json:"pph_payment_status" gorm:"column:pph_payment_status;not null;default:'UNPAID';size:20"`
+	PPhPaidAmount            float64        `json:"pph_paid_amount" gorm:"column:pph_paid_amount;type:decimal(15,2);default:0"`
+	PPhRecognitionDate       *time.Time     `json:"pph_recognition_date" gorm:"column:pph_recognition_date"`
+	PPhPaymentDate           *time.Time     `json:"pph_payment_date" gorm:"column:pph_payment_date"`
+	PPhPaymentReference      string         `json:"pph_payment_reference" gorm:"column:pph_payment_reference;size:100"`
+	PPhPaymentNotes          string         `json:"pph_payment_notes" gorm:"column:pph_payment_notes;type:text"`
+	PPhPayableJournalEntryID *uint64        `json:"pph_payable_journal_entry_id" gorm:"column:pph_payable_journal_entry_id;index"`
+	PPhPaymentJournalEntryID *uint64        `json:"pph_payment_journal_entry_id" gorm:"column:pph_payment_journal_entry_id;index"`
 	CreatedByID              uint           `json:"created_by_id" gorm:"not null;index"`
 	ApprovedByID             *uint          `json:"approved_by_id"`
 	ApprovedAt               *time.Time     `json:"approved_at"`
