@@ -71,4 +71,27 @@ func TestWorkflowRoleMatchesUserRoleDoesNotBypassAdmin(t *testing.T) {
 	if !WorkflowRoleMatchesUserRole(RoleFinanceStaff, RoleAccounting) {
 		t.Fatalf("expected accounting to match finance staff workflow role")
 	}
+
+	if !WorkflowRoleMatchesUserRole("purchase_finance_staff", RoleFinanceStaff) {
+		t.Fatalf("expected finance staff to match purchase finance staff workflow role")
+	}
+
+	if WorkflowRoleMatchesUserRole("purchase_finance_staff", RoleAccounting) {
+		t.Fatalf("expected accounting not to match purchase finance staff workflow role")
+	}
+}
+
+func TestWorkflowStepAssignableRolesIncludesPurchaseFinanceStaffQueue(t *testing.T) {
+	roles := WorkflowStepAssignableRoles(RoleFinanceStaff)
+	found := false
+	for _, role := range roles {
+		if role == "purchase_finance_staff" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatalf("expected finance staff queue lookup to include purchase_finance_staff workflow role, got %#v", roles)
+	}
 }

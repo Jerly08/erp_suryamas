@@ -708,7 +708,7 @@ func (sc *SalesController) CreateSalePayment(c *gin.Context) {
 	})
 }
 
-// SettleSalePPh23 posts the deferred PPh23 reclass journal after the invoice is fully paid.
+// SettleSalePPh23 posts the deferred PPh23 reclass journal, optionally reducing receivables.
 func (sc *SalesController) SettleSalePPh23(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -752,8 +752,10 @@ func (sc *SalesController) SettleSalePPh23(c *gin.Context) {
 		case strings.Contains(errorMsg, "tidak memiliki PPh23"),
 			strings.Contains(errorMsg, "baru bisa dipost"),
 			strings.Contains(errorMsg, "sudah pernah dipost"),
+			strings.Contains(errorMsg, "outstanding"),
 			strings.Contains(errorMsg, "dibatalkan"),
 			strings.Contains(errorMsg, "akun sumber PPh23"),
+			strings.Contains(errorMsg, "piutang"),
 			strings.Contains(errorMsg, "Kredit Pajak PPh23"):
 			utils.SendBusinessRuleError(c, "Posting PPh23 tidak dapat diproses", map[string]interface{}{
 				"details": errorMsg,

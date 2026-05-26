@@ -428,6 +428,8 @@ export const API_ENDPOINTS = {
   PURCHASES_REJECT: (id: number) => `/api/v1/purchases/${id}/reject`,
   PURCHASES_ACCOUNTING_COA: (id: number) =>
     `/api/v1/purchases/${id}/accounting-coa`,
+  PURCHASES_FINAL_APPROVAL: (id: number) =>
+    `/api/v1/purchases/${id}/final-approval`,
   PURCHASES_APPROVAL_HISTORY: (id: number) =>
     `/api/v1/purchases/${id}/approval-history`,
   PURCHASES_APPROVAL_STATS: "/api/v1/purchases/approval-stats",
@@ -438,6 +440,7 @@ export const API_ENDPOINTS = {
   PURCHASES_INTEGRATED_PAYMENT: (id: number) =>
     `/api/v1/purchases/${id}/integrated-payment`,
   PURCHASES_PAYMENTS: (id: number) => `/api/v1/purchases/${id}/payments`,
+  PURCHASES_PAY_PPH: (id: number) => `/api/v1/purchases/${id}/pay-pph`,
   PURCHASES_EXPORT_PDF: "/api/v1/purchases/export/pdf",
   PURCHASES_EXPORT_CSV: "/api/v1/purchases/export/csv",
   PURCHASES_RECEIPTS_BY_ID: (id: number) => `/api/v1/purchases/${id}/receipts`,

@@ -204,16 +204,77 @@ func TestSettlePPh23CreatesJournalAndUpdatesSale(t *testing.T) {
 	}
 }
 
-func TestSettlePPh23RequiresPaidInvoice(t *testing.T) {
+func TestSettlePPh23AllowsUnpaidInvoiceWithoutReducingOutstanding(t *testing.T) {
 	db := newSalesPPh23TestDB(t)
 	sale := seedSalesPPh23Fixture(t, db, 150000)
 
 	service := &SalesServiceV2{db: db}
-	_, err := service.SettlePPh23(sale.ID, models.SalePPh23SettlementRequest{
-		Date: time.Date(2026, time.April, 16, 0, 0, 0, 0, time.UTC),
+	updatedSale, err := service.SettlePPh23(sale.ID, models.SalePPh23SettlementRequest{
+		Date:      time.Date(2026, time.April, 16, 0, 0, 0, 0, time.UTC),
+		Reference: "BUPOT-PARTIAL-001",
 	}, 1)
-	if err == nil {
-		t.Fatalf("expected settle PPh23 to fail for unpaid invoice")
+	if err != nil {
+		t.Fatalf("expected settle PPh23 to succeed for unpaid invoice, got %v", err)
+	}
+	if updatedSale.OutstandingAmount != 150000 {
+		t.Fatalf("expected outstanding to stay 150000 without reduction option, got %.2f", updatedSale.OutstandingAmount)
+	}
+	if updatedSale.Status != models.SaleStatusPaid {
+		t.Fatalf("expected workflow status to stay PAID from fixture, got %s", updatedSale.Status)
+	}
+	if updatedSale.PPh23SettlementJournalEntryID == nil {
+		t.Fatalf("expected PPh23 settlement journal entry id to be saved")
+	}
+}
+
+func TestSettlePPh23CanReduceOutstandingForLegacyGrossInvoice(t *testing.T) {
+	db := newSalesPPh23TestDB(t)
+	baseSale := seedSalesPPh23Fixture(t, db, 0)
+
+	sale := models.Sale{
+		Code:              "SAL-GROSS-PPH",
+		CustomerID:        baseSale.CustomerID,
+		UserID:            baseSale.UserID,
+		Type:              models.SaleTypeInvoice,
+		Status:            models.SaleStatusInvoiced,
+		Date:              time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:           time.Date(2026, time.April, 30, 0, 0, 0, 0, time.UTC),
+		InvoiceNumber:     "INV-GROSS-PPH",
+		TaxableAmount:     1000000,
+		Subtotal:          1000000,
+		TotalAmount:       1000000,
+		PaidAmount:        500000,
+		OutstandingAmount: 500000,
+		PPh23Rate:         2,
+		PPh23Amount:       20000,
+	}
+	if err := db.Create(&sale).Error; err != nil {
+		t.Fatalf("seed legacy gross sale: %v", err)
+	}
+
+	service := &SalesServiceV2{db: db}
+	updatedSale, err := service.SettlePPh23(sale.ID, models.SalePPh23SettlementRequest{
+		Date:              time.Date(2026, time.April, 16, 0, 0, 0, 0, time.UTC),
+		Reference:         "BUPOT-GROSS-001",
+		ReduceOutstanding: true,
+	}, 1)
+	if err != nil {
+		t.Fatalf("expected settle PPh23 with outstanding reduction success, got %v", err)
+	}
+
+	if updatedSale.TotalAmount != 980000 {
+		t.Fatalf("expected total amount 980000 after PPh23 reduction, got %.2f", updatedSale.TotalAmount)
+	}
+	if updatedSale.OutstandingAmount != 480000 {
+		t.Fatalf("expected outstanding amount 480000 after PPh23 reduction, got %.2f", updatedSale.OutstandingAmount)
+	}
+
+	var journal models.SSOTJournalEntry
+	if err := db.Preload("Lines").First(&journal, *updatedSale.PPh23SettlementJournalEntryID).Error; err != nil {
+		t.Fatalf("load reduced PPh23 journal: %v", err)
+	}
+	if len(journal.Lines) != 2 {
+		t.Fatalf("expected 2 journal lines for reduced PPh23, got %d", len(journal.Lines))
 	}
 }
 
@@ -273,6 +334,54 @@ func TestAddLatePPh23ClosesOutstandingInvoice(t *testing.T) {
 	}
 	if len(journal.Lines) != 2 {
 		t.Fatalf("expected 2 journal lines for late PPh23, got %d", len(journal.Lines))
+	}
+}
+
+func TestAddLatePPh23CanReducePartialOutstandingInvoice(t *testing.T) {
+	db := newSalesPPh23TestDB(t)
+	baseSale := seedSalesPPh23Fixture(t, db, 0)
+
+	sale := models.Sale{
+		Code:              "SAL-LATE-PARTIAL",
+		CustomerID:        baseSale.CustomerID,
+		UserID:            baseSale.UserID,
+		Type:              models.SaleTypeInvoice,
+		Status:            models.SaleStatusInvoiced,
+		Date:              time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:           time.Date(2026, time.April, 30, 0, 0, 0, 0, time.UTC),
+		InvoiceNumber:     "INV-LATE-PARTIAL",
+		TaxableAmount:     1000000,
+		Subtotal:          1000000,
+		TotalAmount:       1000000,
+		PaidAmount:        500000,
+		OutstandingAmount: 500000,
+	}
+	if err := db.Create(&sale).Error; err != nil {
+		t.Fatalf("seed partial late sale: %v", err)
+	}
+
+	service := &SalesServiceV2{db: db}
+	updatedSale, err := service.AddLatePPh23(sale.ID, models.SaleLatePPh23Request{
+		Date:              time.Date(2026, time.April, 16, 0, 0, 0, 0, time.UTC),
+		Amount:            20000,
+		Reference:         "BUPOT-LATE-PARTIAL",
+		ReduceOutstanding: true,
+	}, 1)
+	if err != nil {
+		t.Fatalf("expected add late PPh23 partial outstanding success, got %v", err)
+	}
+
+	if updatedSale.TotalAmount != 980000 {
+		t.Fatalf("expected updated total amount 980000, got %.2f", updatedSale.TotalAmount)
+	}
+	if updatedSale.OutstandingAmount != 480000 {
+		t.Fatalf("expected outstanding amount 480000, got %.2f", updatedSale.OutstandingAmount)
+	}
+	if updatedSale.Status != models.SaleStatusInvoiced {
+		t.Fatalf("expected status INVOICED, got %s", updatedSale.Status)
+	}
+	if updatedSale.PPh23SettlementJournalEntryID == nil {
+		t.Fatalf("expected late PPh23 journal entry to be saved")
 	}
 }
 

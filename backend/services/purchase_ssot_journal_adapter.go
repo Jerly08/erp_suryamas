@@ -145,6 +145,11 @@ func (adapter *PurchaseSSOTJournalAdapter) GetPurchaseRelatedJournalEntries(
 		return nil, fmt.Errorf("failed to get purchase adjustment journals: %v", err)
 	}
 
+	// 4) Purchase PPh settlement journals are tied to the purchase ID as source_id.
+	if err := collectEntries(models.SSOTSourceTypePurchasePPhPayment); err != nil {
+		return nil, fmt.Errorf("failed to get purchase PPh payment journals: %v", err)
+	}
+
 	result := make([]models.SSOTJournalEntry, 0, len(journalByID))
 	for _, entry := range journalByID {
 		result = append(result, entry)
@@ -282,8 +287,9 @@ func (adapter *PurchaseSSOTJournalAdapter) buildPurchaseJournalLines(
 		})
 	}
 
-	// Calculate net amount after withholdings
-	netAmount := purchase.TotalAmount - purchase.PPh21Amount - purchase.PPh23Amount - purchase.OtherTaxDeductions
+	// TotalAmount is already net of purchase withholdings. PPh payable lines are
+	// posted separately below.
+	netAmount := purchase.TotalAmount
 
 	// Credit side based on payment method
 	if purchase.PaymentMethod == models.PurchasePaymentCash ||
@@ -365,10 +371,10 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 		if apID, err := adapter.taxService.GetAccountID("purchase_payable"); err == nil && apID != 0 {
 			ids.AccountsPayableID = uint64(apID)
 		}
-		if p21ID, err := adapter.taxService.GetAccountID("withholding_tax21"); err == nil && p21ID != 0 {
+		if p21ID, err := adapter.taxService.GetPurchaseTaxAccountID("pph21"); err == nil && p21ID != 0 {
 			ids.PPh21PayableID = uint64(p21ID)
 		}
-		if p23ID, err := adapter.taxService.GetAccountID("withholding_tax23"); err == nil && p23ID != 0 {
+		if p23ID, err := adapter.taxService.GetPurchaseTaxAccountID("pph23"); err == nil && p23ID != 0 {
 			ids.PPh23PayableID = uint64(p23ID)
 		}
 	}

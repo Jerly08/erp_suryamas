@@ -336,6 +336,7 @@ export interface SalePPh23SettlementRequest {
   date: string;
   reference?: string;
   notes?: string;
+  reduce_outstanding?: boolean;
 }
 
 export interface SaleLatePPh23Request {
@@ -344,6 +345,7 @@ export interface SaleLatePPh23Request {
   rate?: number;
   reference?: string;
   notes?: string;
+  reduce_outstanding?: boolean;
 }
 
 export interface IntegratedSalePaymentResponse {

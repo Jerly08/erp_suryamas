@@ -73,6 +73,14 @@ func isSalesOutputVATAccountAllowed(account *models.Account) bool {
 	return strings.EqualFold(strings.TrimSpace(account.Type), models.AccountTypeLiability)
 }
 
+func isPurchaseWithholdingPayableAccountAllowed(account *models.Account) bool {
+	if account == nil {
+		return false
+	}
+
+	return strings.EqualFold(strings.TrimSpace(account.Type), models.AccountTypeLiability)
+}
+
 func (h *TaxAccountHelper) loadConfiguredAccount(tx *gorm.DB, accountID uint) (*models.Account, error) {
 	dbToUse := h.db
 	if tx != nil {
@@ -121,6 +129,41 @@ func (h *TaxAccountHelper) GetWithholdingTax23Account(tx *gorm.DB) (*models.Acco
 
 	log.Printf("WARNING [TaxAccountHelper] PPh23 account not configured, using default (1105-002)")
 	return h.getAccountByCode(tx, "1105-002")
+}
+
+func (h *TaxAccountHelper) getPurchaseWithholdingPayableAccount(tx *gorm.DB, taxType, fallbackCode string) (*models.Account, error) {
+	if h.taxAccountService != nil {
+		if accountID, err := h.taxAccountService.GetPurchaseTaxAccountID(taxType); err == nil && accountID > 0 {
+			if account, loadErr := h.loadConfiguredAccount(tx, accountID); loadErr == nil {
+				if isPurchaseWithholdingPayableAccountAllowed(account) {
+					log.Printf("INFO [TaxAccountHelper] Using configured purchase %s payable account: %s (%s)", taxType, account.Code, account.Name)
+					return account, nil
+				}
+
+				log.Printf(
+					"WARNING [TaxAccountHelper] Configured purchase %s account %s (%s) has invalid type %s, falling back to %s",
+					taxType,
+					account.Code,
+					account.Name,
+					account.Type,
+					fallbackCode,
+				)
+			}
+		}
+	}
+
+	log.Printf("WARNING [TaxAccountHelper] Purchase %s payable account not configured, using default (%s)", taxType, fallbackCode)
+	return h.getAccountByCode(tx, fallbackCode)
+}
+
+// GetPurchaseWithholdingTax21PayableAccount returns the purchase-side PPh 21 payable account.
+func (h *TaxAccountHelper) GetPurchaseWithholdingTax21PayableAccount(tx *gorm.DB) (*models.Account, error) {
+	return h.getPurchaseWithholdingPayableAccount(tx, "pph21", "2102-003")
+}
+
+// GetPurchaseWithholdingTax23PayableAccount returns the purchase-side PPh 23 payable account.
+func (h *TaxAccountHelper) GetPurchaseWithholdingTax23PayableAccount(tx *gorm.DB) (*models.Account, error) {
+	return h.getPurchaseWithholdingPayableAccount(tx, "pph23", "2102-004")
 }
 
 // GetPPh23TaxCreditAccount returns the dedicated PPh23 tax credit reclass account.

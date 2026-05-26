@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import {
   Box,
   Button,
+  Checkbox,
   FormControl,
   FormHelperText,
   FormLabel,
@@ -48,8 +49,10 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
   const [notes, setNotes] = useState("");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
+  const [reduceOutstanding, setReduceOutstanding] = useState(false);
   const [loading, setLoading] = useState(false);
   const currentPPh23Amount = sale?.pph23_amount || 0;
+  const currentOutstandingAmount = sale?.outstanding_amount || 0;
   const hasExistingPPh23 = currentPPh23Amount > 0.005;
   const isLateAddMode =
     !!sale &&
@@ -63,6 +66,26 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
     sale.status !== "CANCELLED";
   const isInvoiceSettled = (sale?.outstanding_amount || 0) <= 0.005;
   const referenceNumber = sale?.invoice_number || sale?.code || "-";
+  const estimatedNetInvoiceTotal = sale
+    ? (sale.taxable_amount || 0) +
+      (sale.ppn || sale.ppn_amount || 0) +
+      (sale.other_tax_additions || 0) +
+      (sale.shipping_cost || 0) -
+      ((sale.pph || 0) +
+        (sale.pph21_amount || 0) +
+        (sale.pph23_amount || 0) +
+        (sale.other_tax_deductions || 0))
+    : 0;
+  const pph23AlreadyReducesInvoiceTotal =
+    hasExistingPPh23 &&
+    Math.abs((sale?.total_amount || 0) - estimatedNetInvoiceTotal) <= 1;
+  const showOutstandingReductionOption =
+    !!sale &&
+    currentOutstandingAmount > 0.005 &&
+    !sale.pph23_settlement_date &&
+    sale.status !== "CANCELLED";
+  const disableOutstandingReduction =
+    canAdjustExistingPPh23 && pph23AlreadyReducesInvoiceTotal;
 
   useEffect(() => {
     if (!isOpen) {
@@ -74,6 +97,11 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
     setNotes("");
     setAmount("");
     setRate("");
+    setReduceOutstanding(
+      !!sale &&
+        (sale.outstanding_amount || 0) > 0.005 &&
+        (sale.pph23_amount || 0) <= 0.005,
+    );
   }, [isOpen, sale]);
 
   const handleClose = () => {
@@ -140,6 +168,7 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
           date: new Date(date).toISOString(),
           reference: reference.trim(),
           notes: notes.trim(),
+          reduce_outstanding: reduceOutstanding,
         };
         if (hasAmountInput) {
           payload.amount = numericAmount;
@@ -154,6 +183,7 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
           date: new Date(date).toISOString(),
           reference: reference.trim(),
           notes: notes.trim(),
+          reduce_outstanding: reduceOutstanding,
         };
 
         updatedSale = await salesService.settleSalePPh23(sale.id, payload);
@@ -274,7 +304,7 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                         <Text fontSize="sm" color="orange.500">
                           {isInvoiceSettled
                             ? "Invoice sudah lunas. Jika ada tambahan PPh23, sistem akan koreksi payment/kas-bank dulu, lalu mempost PPh23 final pada tanggal yang dipilih."
-                            : "Invoice belum sepenuhnya lunas. Sistem akan mempost PPh23 final jika nilai PPh23 yang diinput menutup sisa piutang invoice."}
+                            : "Invoice belum sepenuhnya lunas. Aktifkan opsi kurangi outstanding jika PPh23 ini dipakai untuk mengurangi sisa piutang invoice."}
                         </Text>
                       </>
                     ) : (
@@ -353,6 +383,25 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                       </FormHelperText>
                     </FormControl>
                   </>
+                )}
+
+                {showOutstandingReductionOption && (
+                  <FormControl>
+                    <Checkbox
+                      isChecked={reduceOutstanding}
+                      isDisabled={disableOutstandingReduction}
+                      onChange={(event) =>
+                        setReduceOutstanding(event.target.checked)
+                      }
+                    >
+                      Kurangi outstanding dengan PPh23 ini
+                    </Checkbox>
+                    <FormHelperText>
+                      {disableOutstandingReduction
+                        ? "Nilai invoice saat ini sudah net of PPh23, jadi outstanding yang tampil adalah sisa pembayaran kas/bank."
+                        : "Jika dicentang, sistem akan kredit Piutang Usaha dan menurunkan outstanding sebesar PPh23 yang dipost."}
+                    </FormHelperText>
+                  </FormControl>
                 )}
 
                 <FormControl>

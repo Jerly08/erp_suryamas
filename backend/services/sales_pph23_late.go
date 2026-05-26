@@ -64,6 +64,56 @@ func roundSalePPh23NativeAmount(value float64) float64 {
 	return math.Round(value*1000000) / 1000000
 }
 
+func calculateSaleNetTotalWithCurrentTaxes(sale *models.Sale) float64 {
+	if sale == nil {
+		return 0
+	}
+
+	totalTaxDeductions := sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
+	return roundScheduleMoney(sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - totalTaxDeductions)
+}
+
+func applySalePPh23OutstandingReduction(sale *models.Sale, requestedAmount float64) (float64, error) {
+	if sale == nil {
+		return 0, fmt.Errorf("sale is required")
+	}
+
+	requestedAmount = roundScheduleMoney(requestedAmount)
+	if requestedAmount <= 0.005 {
+		return 0, fmt.Errorf("nominal pengurang outstanding PPh23 harus lebih besar dari 0")
+	}
+
+	currentOutstanding := roundScheduleMoney(sale.OutstandingAmount)
+	if currentOutstanding <= 0.005 {
+		return 0, nil
+	}
+
+	expectedNetTotal := calculateSaleNetTotalWithCurrentTaxes(sale)
+	availableLegacyGrossReduction := roundScheduleMoney(sale.TotalAmount - expectedNetTotal)
+	if availableLegacyGrossReduction <= 0.005 {
+		return 0, fmt.Errorf("PPh23 sudah termasuk sebagai potongan nilai invoice, sehingga outstanding tidak perlu dikurangi lagi")
+	}
+
+	reductionAmount := math.Min(requestedAmount, currentOutstanding)
+	reductionAmount = math.Min(reductionAmount, availableLegacyGrossReduction)
+	reductionAmount = roundScheduleMoney(reductionAmount)
+	if reductionAmount <= 0.005 {
+		return 0, fmt.Errorf("tidak ada outstanding PPh23 yang bisa dikurangi")
+	}
+
+	sale.TotalAmount = roundScheduleMoney(sale.TotalAmount - reductionAmount)
+	sale.OutstandingAmount = roundScheduleMoney(sale.TotalAmount - sale.PaidAmount)
+	if sale.OutstandingAmount <= 0.005 {
+		sale.OutstandingAmount = 0
+		sale.Status = models.SaleStatusPaid
+	} else {
+		sale.Status = models.SaleStatusInvoiced
+	}
+	sale.SettlementStatus = models.ResolveSaleSettlementStatus(sale.Status, sale.PaidAmount, sale.OutstandingAmount)
+
+	return reductionAmount, nil
+}
+
 func inverseReceivableFXType(value string) string {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "GAIN":
@@ -671,9 +721,9 @@ func (s *SalesServiceV2) AddLatePPh23(saleID uint, request models.SaleLatePPh23R
 		additionalAmount = roundScheduleMoney(amount - existingPPh23Amount)
 	}
 
-	if sale.PaidAmount+additionalAmount < sale.TotalAmount-0.005 {
+	if !request.ReduceOutstanding && sale.PaidAmount+additionalAmount < sale.TotalAmount-0.005 {
 		tx.Rollback()
-		return nil, fmt.Errorf("invoice belum lunas. Posting PPh23 susulan hanya bisa dilakukan ketika pembayaran customer ditambah tambahan PPh23 menutup total invoice")
+		return nil, fmt.Errorf("invoice belum lunas. Aktifkan opsi kurangi outstanding jika PPh23 akan dipakai untuk mengurangi sisa piutang invoice")
 	}
 
 	correctionAmount := roundScheduleMoney(additionalAmount - math.Max(roundScheduleMoney(sale.OutstandingAmount), 0))

@@ -288,7 +288,7 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
                   Permissions control what actions users can perform in each module.
                   View permission is required for all other permissions to work.
                   Menu permission controls whether users can access the module through navigation menus.
-                  Accounts / COA permission controls whether finance staff can manually choose Chart of Accounts in Purchase, Sales, and Expense Payment forms. Finance manager tetap bisa mengakses COA agar approval tidak terblokir.
+                  Accounts / COA permission controls whether users can manually choose Chart of Accounts in Purchase, Sales, and Expense Payment forms. Untuk Purchase, GL/COA dilengkapi oleh Accounting sebelum final approval Finance Manager.
                 </Text>
               </Alert>
 

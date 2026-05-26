@@ -96,6 +96,7 @@ import {
   FiDownload,
   FiFileText,
   FiSearch,
+  FiDollarSign,
 } from "react-icons/fi";
 import purchaseService, {
   Purchase,
@@ -132,6 +133,7 @@ import {
   filterActiveLeafAccounts,
   filterOperationalCashBankAccounts,
 } from "@/utils/accountFilters";
+import { getPurchasePPhStatus } from "@/utils/taxPaymentStatus";
 // SSOT Journal Integration
 import PurchaseJournalEntriesModal from "../../src/components/purchase/PurchaseJournalEntriesModal";
 import purchaseJournalService from "../../src/services/purchaseJournalService";
@@ -279,6 +281,8 @@ const getStatusColor = (status: string) => {
       return "blue";
     case "pending_accounting":
       return "orange";
+    case "pending_final_approval":
+      return "purple";
     case "cancelled":
     case "rejected":
       return "red";
@@ -834,6 +838,21 @@ const PurchasesPage: React.FC = () => {
   );
   const [selectedPurchaseForPayment, setSelectedPurchaseForPayment] =
     useState<Purchase | null>(null);
+  const {
+    isOpen: isPPhPaymentOpen,
+    onOpen: onPPhPaymentOpen,
+    onClose: onPPhPaymentClose,
+  } = useDisclosure();
+  const [selectedPurchaseForPPh, setSelectedPurchaseForPPh] =
+    useState<Purchase | null>(null);
+  const [pphPaymentForm, setPPhPaymentForm] = useState({
+    payment_date: formatDateForInput(new Date()),
+    amount: "",
+    cash_bank_id: "",
+    reference: "",
+    notes: "",
+  });
+  const [savingPPhPayment, setSavingPPhPayment] = useState(false);
   const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(
     [],
   );
@@ -1030,7 +1049,7 @@ const PurchasesPage: React.FC = () => {
   const accountingMonitoringEnabled =
     isAccounting || isFinanceManagerRole(roleNorm) || roleNorm === "admin";
   const canSelectAccountFromCOA =
-    roleNorm === "admin" || isFinanceManagerRole(roleNorm) || isAccounting;
+    roleNorm === "admin" || isAccounting;
 
   const getDefaultPurchaseItemAccount = useCallback(
     (itemType?: string) => {
@@ -1102,7 +1121,10 @@ const PurchasesPage: React.FC = () => {
           return true;
         }
 
-        return isServiceCompany && String(account.type || "").toUpperCase() === "EXPENSE";
+        return (
+          isServiceCompany &&
+          String(account.type || "").toUpperCase() === "EXPENSE"
+        );
       });
 
       if (inventoryOrExpenseAccount) {
@@ -1111,8 +1133,9 @@ const PurchasesPage: React.FC = () => {
 
       if (defaultExpenseAccountId) {
         return (
-          expenseAccounts.find((account) => account.id === defaultExpenseAccountId) ||
-          null
+          expenseAccounts.find(
+            (account) => account.id === defaultExpenseAccountId,
+          ) || null
         );
       }
 
@@ -1498,6 +1521,7 @@ const PurchasesPage: React.FC = () => {
           approval_status: filterParams.approval_status,
           accounting_status: filterParams.accounting_status,
           requires_approval: filterParams.requires_approval,
+          outstanding: filterParams.outstanding,
         });
       } catch (summaryErr) {
         console.warn("Failed to fetch purchase summary:", summaryErr);
@@ -1662,8 +1686,8 @@ const PurchasesPage: React.FC = () => {
           search: querySearch,
         }
       : isAccounting
-      ? getAccountingMonitoringFilters()
-      : getDefaultPurchaseFilters();
+        ? getAccountingMonitoringFilters()
+        : getDefaultPurchaseFilters();
 
     setSearchInput(querySearch);
     setFilters(initialFilters);
@@ -3457,6 +3481,12 @@ const PurchasesPage: React.FC = () => {
     return [];
   };
 
+  const getPPhPaymentBankAccounts = (): BankAccount[] =>
+    bankAccounts.filter((account) => {
+      const currency = (account.currency || "IDR").toUpperCase();
+      return currency === "IDR" && ["CASH", "BANK"].includes(account.type);
+    });
+
   const isBalanceInsufficient = (): boolean => {
     const paymentMethod = financeTaxForm.payment_method;
     if (paymentMethod === "CREDIT") return false;
@@ -3472,6 +3502,130 @@ const PurchasesPage: React.FC = () => {
     return getEligibleBankAccounts().filter(
       (a) => getAccountBookBalance(a) >= totalPayment,
     );
+  };
+
+  const handleOpenPurchasePPhPayment = async (purchase: Purchase) => {
+    const pphStatus = getPurchasePPhStatus(purchase);
+    if (pphStatus.totalAmount <= 0) {
+      toast({
+        title: "Tidak ada PPh",
+        description: "Purchase ini tidak memiliki PPh 21/23 untuk dibayar.",
+        status: "info",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (pphStatus.outstandingAmount <= 0) {
+      toast({
+        title: "PPh sudah dibayar",
+        description: "Tidak ada sisa PPh yang perlu disetorkan.",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (bankAccounts.length === 0) {
+      await fetchBankAccounts();
+    }
+
+    setSelectedPurchaseForPPh(purchase);
+    setPPhPaymentForm({
+      payment_date: formatDateForInput(new Date()),
+      amount: pphStatus.outstandingAmount.toString(),
+      cash_bank_id: "",
+      reference: "",
+      notes: `Pembayaran PPh purchase ${purchase.code}`,
+    });
+    onPPhPaymentOpen();
+  };
+
+  const handleSubmitPurchasePPhPayment = async () => {
+    if (!selectedPurchaseForPPh) return;
+
+    const amount = Number(pphPaymentForm.amount || 0);
+    const pphStatus = getPurchasePPhStatus(selectedPurchaseForPPh);
+    const cashBankId = Number(pphPaymentForm.cash_bank_id || 0);
+    const selectedCashBank = getPPhPaymentBankAccounts().find(
+      (account) => account.id === cashBankId,
+    );
+
+    if (!pphPaymentForm.payment_date) {
+      toast({
+        title: "Tanggal wajib diisi",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (amount <= 0 || amount > pphStatus.outstandingAmount + 1) {
+      toast({
+        title: "Nominal PPh tidak valid",
+        description: `Nominal harus lebih besar dari 0 dan maksimal ${formatCurrency(pphStatus.outstandingAmount)}.`,
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!cashBankId || !selectedCashBank) {
+      toast({
+        title: "Pilih kas/bank",
+        description: "Pilih akun kas/bank IDR untuk setoran PPh.",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (getAccountBookBalance(selectedCashBank) + 1 < amount) {
+      toast({
+        title: "Saldo kas/bank tidak cukup",
+        description: `Saldo tersedia ${formatBankAccountSummary(selectedCashBank)}.`,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    try {
+      setSavingPPhPayment(true);
+      await purchaseService.payPurchasePPh(selectedPurchaseForPPh.id, {
+        payment_date: pphPaymentForm.payment_date,
+        amount,
+        cash_bank_id: cashBankId,
+        reference: pphPaymentForm.reference.trim(),
+        notes: pphPaymentForm.notes.trim(),
+      });
+      toast({
+        title: "PPh purchase berhasil dibayar",
+        description: "Status PPh purchase sudah diperbarui.",
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+      onPPhPaymentClose();
+      setSelectedPurchaseForPPh(null);
+      await fetchPurchases();
+    } catch (error: any) {
+      toast({
+        title: "Gagal bayar PPh purchase",
+        description:
+          error.response?.data?.details ||
+          error.response?.data?.error ||
+          error.message ||
+          "Pembayaran PPh purchase belum bisa diproses.",
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
+    } finally {
+      setSavingPPhPayment(false);
+    }
   };
 
   // Save Finance Tax/Payment Config (only tax + payment fields, NO items)
@@ -3621,9 +3775,9 @@ const PurchasesPage: React.FC = () => {
       });
 
       toast({
-        title: "Purchase Difinalisasi",
+        title: "COA Berhasil Disimpan",
         description:
-          "COA berhasil dilengkapi. Jurnal, stok, payable/prepaid, dan fulfillment diproses setelah input accounting.",
+          "Purchase sekarang menunggu final approval Finance Manager sebelum jurnal diposting.",
         status: "success",
         duration: 5000,
         isClosable: true,
@@ -3645,6 +3799,41 @@ const PurchasesPage: React.FC = () => {
       });
     } finally {
       setSavingAccountingCOA(false);
+    }
+  };
+
+  const handleFinalApprovePurchase = async (purchase: Purchase) => {
+    try {
+      const result = await purchaseService.finalApproveAfterCOA(purchase.id, {
+        comments:
+          "Final approval Finance Manager setelah Accounting melengkapi GL/COA",
+      });
+
+      toast({
+        title: "Purchase Final Approved",
+        description:
+          "Jurnal purchase sudah diposting dan proses stok/payable sudah dijalankan.",
+        status: "success",
+        duration: 5000,
+        isClosable: true,
+      });
+
+      if (selectedPurchase?.id === purchase.id) {
+        setSelectedPurchase(result);
+      }
+      await fetchPurchases();
+    } catch (err: any) {
+      toast({
+        title: "Gagal Final Approval",
+        description:
+          err.response?.data?.error ||
+          err.response?.data?.message ||
+          err.message ||
+          "Final approval purchase belum bisa diproses.",
+        status: "error",
+        duration: 6000,
+        isClosable: true,
+      });
     }
   };
 
@@ -3737,7 +3926,8 @@ const PurchasesPage: React.FC = () => {
         // Prepaid items require COA only for roles that are allowed to choose COA.
         return (
           !item.description?.trim() ||
-          (canSelectAccountFromCOA && !resolvePurchaseItemExpenseAccountId(item)) ||
+          (canSelectAccountFromCOA &&
+            !resolvePurchaseItemExpenseAccountId(item)) ||
           amortizationMonth <= 0
         );
       }
@@ -4112,7 +4302,9 @@ const PurchasesPage: React.FC = () => {
       if (activeStep) {
         const waitingForRole =
           activeStep.approver_role === "finance"
-            ? "Finance"
+            ? "Finance Manager"
+            : activeStep.approver_role === "purchase_finance_staff"
+              ? "Finance Staff"
             : activeStep.approver_role === "director"
               ? "Director"
               : activeStep.approver_role === "admin"
@@ -4150,6 +4342,7 @@ const PurchasesPage: React.FC = () => {
     const actionProps = getActionButtonProps(purchase);
     const roleNorm = normalizeRole(user?.role as any);
     const purchaseStatus = (purchase.status || "").toUpperCase();
+    const pphStatus = getPurchasePPhStatus(purchase);
     const financeCanConfigurePurchase =
       (roleNorm === "admin" || isFinanceOperationalRole) &&
       ((purchaseStatus === "DRAFT" && canCurrentUserActOnPurchase(purchase)) ||
@@ -4158,7 +4351,11 @@ const PurchasesPage: React.FC = () => {
     const accountingCanCompleteCOA =
       canEdit &&
       purchaseStatus === "PENDING_ACCOUNTING" &&
-      (roleNorm === "admin" || isFinanceManagerRole(roleNorm) || isAccounting);
+      (roleNorm === "admin" || isAccounting);
+    const financeManagerCanFinalApprove =
+      canApprove &&
+      purchaseStatus === "PENDING_FINAL_APPROVAL" &&
+      isFinanceManagerRole(roleNorm);
 
     return (
       <HStack spacing={2}>
@@ -4224,6 +4421,23 @@ const PurchasesPage: React.FC = () => {
           </Button>
         )}
 
+        {financeManagerCanFinalApprove && (
+          <Button
+            size="sm"
+            colorScheme="purple"
+            variant="solid"
+            leftIcon={<FiCheckCircle />}
+            onClick={() => handleFinalApprovePurchase(purchase)}
+            fontWeight="semibold"
+            _hover={{
+              transform: "translateY(-1px)",
+              boxShadow: "md",
+            }}
+          >
+            Final Approve
+          </Button>
+        )}
+
         {/* Record Payment button for APPROVED or PAID CREDIT purchases with outstanding amount */}
         {(purchaseStatus === "APPROVED" ||
           purchaseStatus === "PAID" ||
@@ -4245,6 +4459,29 @@ const PurchasesPage: React.FC = () => {
               }}
             >
               Record Payment
+            </Button>
+          )}
+
+        {(purchaseStatus === "APPROVED" ||
+          purchaseStatus === "PAID" ||
+          purchaseStatus === "COMPLETED") &&
+          pphStatus.outstandingAmount > 0 &&
+          (roleNorm === "admin" ||
+            isFinanceOperationalRole ||
+            roleNorm === "director") && (
+            <Button
+              size="sm"
+              colorScheme="orange"
+              variant="outline"
+              leftIcon={<FiDollarSign />}
+              onClick={() => handleOpenPurchasePPhPayment(purchase)}
+              fontWeight="semibold"
+              _hover={{
+                transform: "translateY(-1px)",
+                boxShadow: "md",
+              }}
+            >
+              Bayar PPh
             </Button>
           )}
 
@@ -4920,6 +5157,20 @@ const PurchasesPage: React.FC = () => {
                         >
                           Semua Approved FM
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorScheme="purple"
+                          leftIcon={<FiCheckCircle />}
+                          onClick={() =>
+                            handleApplyAccountingMonitoring(
+                              "PENDING_FINAL_APPROVAL",
+                              true,
+                            )
+                          }
+                        >
+                          Menunggu Final Approval
+                        </Button>
                       </HStack>
                     </Flex>
                   </CardBody>
@@ -5030,12 +5281,51 @@ const PurchasesPage: React.FC = () => {
                         <option value="pending_accounting">
                           Menunggu Accounting
                         </option>
+                        <option value="pending_final_approval">
+                          Menunggu Final Approval
+                        </option>
                         <option value="approved">
                           {t("purchases.approved")}
                         </option>
                         <option value="cancelled">
                           {t("purchases.cancelled")}
                         </option>
+                      </Select>
+                    </Box>
+
+                    <Box minW="160px">
+                      <Text
+                        fontSize="sm"
+                        fontWeight="medium"
+                        mb={2}
+                        color={textSecondary}
+                      >
+                        Outstanding
+                      </Text>
+                      <Select
+                        placeholder="Semua"
+                        value={
+                          filters.outstanding === true
+                            ? "true"
+                            : filters.outstanding === false
+                              ? "false"
+                              : ""
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          handleFilterChange({
+                            outstanding:
+                              val === "true"
+                                ? true
+                                : val === "false"
+                                  ? false
+                                  : undefined,
+                          });
+                        }}
+                        bg={cardBg}
+                      >
+                        <option value="">Semua</option>
+                        <option value="true">Belum Lunas (Outstanding)</option>
                       </Select>
                     </Box>
 
@@ -5067,6 +5357,9 @@ const PurchasesPage: React.FC = () => {
                           </option>
                           <option value="APPROVED_BY_FINANCE">
                             Approved Finance Manager
+                          </option>
+                          <option value="PENDING_FINAL_APPROVAL">
+                            Menunggu Final Approval
                           </option>
                           <option value="COA_COMPLETED">COA Selesai</option>
                         </Select>
@@ -5550,9 +5843,26 @@ const PurchasesPage: React.FC = () => {
                     )}
                   </ModalBody>
                   <ModalFooter>
-                    <Button onClick={onViewClose}>
-                      {t("purchases.close")}
-                    </Button>
+                    <HStack>
+                      {selectedPurchase &&
+                        (selectedPurchase.status || "").toUpperCase() ===
+                          "PENDING_FINAL_APPROVAL" &&
+                        canApprove &&
+                        isFinanceManagerRole(roleNorm) && (
+                          <Button
+                            colorScheme="purple"
+                            leftIcon={<FiCheckCircle />}
+                            onClick={() =>
+                              handleFinalApprovePurchase(selectedPurchase)
+                            }
+                          >
+                            Final Approve & Post
+                          </Button>
+                        )}
+                      <Button onClick={onViewClose}>
+                        {t("purchases.close")}
+                      </Button>
+                    </HStack>
                   </ModalFooter>
                 </ModalContent>
               </Modal>
@@ -5594,7 +5904,10 @@ const PurchasesPage: React.FC = () => {
                               >
                                 ➕ Tax Additions (Penambahan)
                               </Text>
-                              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                              <SimpleGrid
+                                columns={{ base: 1, md: 3 }}
+                                spacing={4}
+                              >
                                 <FormControl>
                                   <FormLabel fontSize="sm">
                                     PPN Rate (%)
@@ -5656,7 +5969,9 @@ const PurchasesPage: React.FC = () => {
                                     Freight / Biaya Pengiriman
                                   </FormLabel>
                                   <CurrencyInput
-                                    value={parseFloat(formData.freight_cost) || 0}
+                                    value={
+                                      parseFloat(formData.freight_cost) || 0
+                                    }
                                     onChange={(value) =>
                                       setFormData({
                                         ...formData,
@@ -5856,11 +6171,12 @@ const PurchasesPage: React.FC = () => {
                                       pph23Amount +
                                       otherDeductions;
 
-                                    const finalTotal =
+                                    const grossBeforePPh =
                                       discountedSubtotal +
                                       freightCost +
-                                      totalAdditions -
-                                      totalDeductions;
+                                      totalAdditions;
+                                    const finalTotal =
+                                      grossBeforePPh - totalDeductions;
 
                                     return (
                                       <SimpleGrid
@@ -5880,6 +6196,13 @@ const PurchasesPage: React.FC = () => {
                                           </Text>
                                           <Text color={textSecondary}>
                                             After Discount:{" "}
+                                            {formatCurrency(discountedSubtotal)}
+                                          </Text>
+                                          <Text
+                                            color={statColors.blue}
+                                            fontWeight="semibold"
+                                          >
+                                            Harga Item sebelum PPh:{" "}
                                             {formatCurrency(discountedSubtotal)}
                                           </Text>
                                         </VStack>
@@ -5927,6 +6250,14 @@ const PurchasesPage: React.FC = () => {
                                               {formatCurrency(otherDeductions)}
                                             </Text>
                                           )}
+                                          <Text color={textSecondary}>
+                                            Tagihan sebelum PPh:{" "}
+                                            {formatCurrency(grossBeforePPh)}
+                                          </Text>
+                                          <Text color={statColors.red}>
+                                            Amount PPh dipotong: -
+                                            {formatCurrency(totalDeductions)}
+                                          </Text>
                                           <Text
                                             fontWeight="bold"
                                             color={statColors.blue}
@@ -5934,7 +6265,7 @@ const PurchasesPage: React.FC = () => {
                                             borderColor={borderColor}
                                             pt={1}
                                           >
-                                            Final Total:{" "}
+                                            Net Payment Vendor:{" "}
                                             {formatCurrency(finalTotal)}
                                           </Text>
                                         </VStack>
@@ -6097,14 +6428,15 @@ const PurchasesPage: React.FC = () => {
                                       COA Liability Belum Dipilih
                                     </Text>
                                     <Text fontSize="xs" color={textSecondary}>
-                                      Finance staff tidak memilih COA saat create purchase.
+                                      GL/COA akan dilengkapi Accounting setelah
+                                      approval Finance Manager.
                                     </Text>
                                   </Box>
                                 )}
                                 <FormHelperText fontSize="xs">
                                   {canSelectAccountFromCOA
                                     ? "Required: Select liability account for tracking credit purchases"
-                                    : "COA liability dikosongkan dan dapat dilengkapi oleh role accounting/finance manager."}
+                                    : "COA liability dikosongkan dan akan dilengkapi oleh Accounting sebelum final approval."}
                                 </FormHelperText>
                               </FormControl>
                             )}
@@ -7313,9 +7645,8 @@ const PurchasesPage: React.FC = () => {
                                               mt={1}
                                             >
                                               COA dikosongkan saat create
-                                              purchase dan dapat dilengkapi
-                                              oleh role accounting/finance
-                                              manager.
+                                              purchase dan dapat dilengkapi oleh
+                                              role accounting/finance manager.
                                             </Text>
                                           </Box>
                                         )}
@@ -7479,7 +7810,10 @@ const PurchasesPage: React.FC = () => {
                                 >
                                   ➕ Tax Additions (Penambahan)
                                 </Text>
-                                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                                <SimpleGrid
+                                  columns={{ base: 1, md: 3 }}
+                                  spacing={4}
+                                >
                                   <FormControl>
                                     <FormLabel fontSize="sm">
                                       PPN Rate (%)
@@ -7571,7 +7905,9 @@ const PurchasesPage: React.FC = () => {
                                       Freight / Biaya Pengiriman
                                     </FormLabel>
                                     <CurrencyInput
-                                      value={parseFloat(formData.freight_cost) || 0}
+                                      value={
+                                        parseFloat(formData.freight_cost) || 0
+                                      }
                                       onChange={(value) =>
                                         setFormData({
                                           ...formData,
@@ -7822,11 +8158,12 @@ const PurchasesPage: React.FC = () => {
                                         pph23Amount +
                                         otherDeductions;
 
-                                      const finalTotal =
+                                      const grossBeforePPh =
                                         discountedSubtotal +
                                         freightCost +
-                                        totalAdditions -
-                                        totalDeductions;
+                                        totalAdditions;
+                                      const finalTotal =
+                                        grossBeforePPh - totalDeductions;
 
                                       return (
                                         <SimpleGrid
@@ -7847,6 +8184,15 @@ const PurchasesPage: React.FC = () => {
                                             </Text>
                                             <Text color={textSecondary}>
                                               After Discount:{" "}
+                                              {formatCurrency(
+                                                discountedSubtotal,
+                                              )}
+                                            </Text>
+                                            <Text
+                                              color={statColors.blue}
+                                              fontWeight="semibold"
+                                            >
+                                              Harga Item sebelum PPh:{" "}
                                               {formatCurrency(
                                                 discountedSubtotal,
                                               )}
@@ -7902,6 +8248,14 @@ const PurchasesPage: React.FC = () => {
                                                 )}
                                               </Text>
                                             )}
+                                            <Text color={textSecondary}>
+                                              Tagihan sebelum PPh:{" "}
+                                              {formatCurrency(grossBeforePPh)}
+                                            </Text>
+                                            <Text color={statColors.red}>
+                                              Amount PPh dipotong: -
+                                              {formatCurrency(totalDeductions)}
+                                            </Text>
                                             <Text
                                               fontWeight="bold"
                                               color={statColors.blue}
@@ -7909,7 +8263,7 @@ const PurchasesPage: React.FC = () => {
                                               borderColor={borderColor}
                                               pt={1}
                                             >
-                                              Final Total:{" "}
+                                              Net Payment Vendor:{" "}
                                               {formatCurrency(finalTotal)}
                                             </Text>
                                           </VStack>
@@ -8035,7 +8389,9 @@ const PurchasesPage: React.FC = () => {
 
                               {/* Credit Account dropdown for Credit payment */}
                               {formData.payment_method === "CREDIT" && (
-                                <FormControl isRequired={canSelectAccountFromCOA}>
+                                <FormControl
+                                  isRequired={canSelectAccountFromCOA}
+                                >
                                   <FormLabel fontSize="sm" fontWeight="medium">
                                     Liability Account
                                   </FormLabel>
@@ -8073,18 +8429,19 @@ const PurchasesPage: React.FC = () => {
                                       borderRadius="md"
                                       bg={inputBg}
                                     >
-                                        <Text fontSize="xs" fontWeight="semibold">
-                                          COA Liability Belum Dipilih
-                                        </Text>
-                                        <Text fontSize="xs" color={textSecondary}>
-                                          Finance staff tidak memilih COA saat create purchase.
-                                        </Text>
+                                      <Text fontSize="xs" fontWeight="semibold">
+                                        COA Liability Belum Dipilih
+                                      </Text>
+                                      <Text fontSize="xs" color={textSecondary}>
+                                        GL/COA akan dilengkapi Accounting setelah
+                                        approval Finance Manager.
+                                      </Text>
                                     </Box>
                                   )}
                                   <FormHelperText fontSize="xs">
                                     {canSelectAccountFromCOA
                                       ? "Required: Select liability account for tracking credit purchases"
-                                      : "COA liability dikosongkan dan dapat dilengkapi oleh role accounting/finance manager."}
+                                      : "COA liability dikosongkan dan akan dilengkapi oleh Accounting sebelum final approval."}
                                   </FormHelperText>
                                 </FormControl>
                               )}
@@ -8948,6 +9305,200 @@ const PurchasesPage: React.FC = () => {
                 purchase={selectedPurchaseForJournal}
               />
 
+              <Modal
+                isOpen={isPPhPaymentOpen}
+                onClose={() => {
+                  if (!savingPPhPayment) {
+                    onPPhPaymentClose();
+                  }
+                }}
+                size="2xl"
+                scrollBehavior="inside"
+              >
+                <ModalOverlay />
+                <ModalContent>
+                  <ModalHeader>
+                    Bayar PPh Purchase {selectedPurchaseForPPh?.code || ""}
+                  </ModalHeader>
+                  <ModalCloseButton isDisabled={savingPPhPayment} />
+                  <ModalBody>
+                    {selectedPurchaseForPPh && (
+                      <VStack spacing={5} align="stretch">
+                        {(() => {
+                          const pphStatus = getPurchasePPhStatus(
+                            selectedPurchaseForPPh,
+                          );
+                          return (
+                            <SimpleGrid
+                              columns={{ base: 1, md: 3 }}
+                              spacing={4}
+                            >
+                              <Card variant="outline">
+                                <CardBody>
+                                  <Stat>
+                                    <StatLabel>Total PPh</StatLabel>
+                                    <StatNumber color="orange.500">
+                                      {formatCurrency(pphStatus.totalAmount)}
+                                    </StatNumber>
+                                  </Stat>
+                                </CardBody>
+                              </Card>
+                              <Card variant="outline">
+                                <CardBody>
+                                  <Stat>
+                                    <StatLabel>Sudah Dibayar</StatLabel>
+                                    <StatNumber color="green.500">
+                                      {formatCurrency(pphStatus.paidAmount)}
+                                    </StatNumber>
+                                  </Stat>
+                                </CardBody>
+                              </Card>
+                              <Card variant="outline">
+                                <CardBody>
+                                  <Stat>
+                                    <StatLabel>Sisa PPh</StatLabel>
+                                    <StatNumber color="red.500">
+                                      {formatCurrency(
+                                        pphStatus.outstandingAmount,
+                                      )}
+                                    </StatNumber>
+                                  </Stat>
+                                </CardBody>
+                              </Card>
+                            </SimpleGrid>
+                          );
+                        })()}
+
+                        <Alert status="info" borderRadius="md">
+                          <AlertIcon />
+                          <Box>
+                            <AlertTitle fontSize="sm">
+                              Setoran PPh memakai kas/bank
+                            </AlertTitle>
+                            <AlertDescription fontSize="sm">
+                              Jurnal yang dibuat: Dr Hutang PPh, Cr Kas/Bank.
+                              Status PPh di tabel purchase akan berubah setelah
+                              pembayaran tersimpan.
+                            </AlertDescription>
+                          </Box>
+                        </Alert>
+
+                        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                          <FormControl isRequired>
+                            <FormLabel>Tanggal Bayar PPh</FormLabel>
+                            <Input
+                              type="date"
+                              value={pphPaymentForm.payment_date}
+                              onChange={(event) =>
+                                setPPhPaymentForm((prev) => ({
+                                  ...prev,
+                                  payment_date: event.target.value,
+                                }))
+                              }
+                            />
+                          </FormControl>
+
+                          <FormControl isRequired>
+                            <FormLabel>Nominal PPh</FormLabel>
+                            <NumberInput
+                              min={0}
+                              precision={0}
+                              value={pphPaymentForm.amount}
+                              onChange={(valueString) =>
+                                setPPhPaymentForm((prev) => ({
+                                  ...prev,
+                                  amount: valueString,
+                                }))
+                              }
+                            >
+                              <NumberInputField />
+                              <NumberInputStepper>
+                                <NumberIncrementStepper />
+                                <NumberDecrementStepper />
+                              </NumberInputStepper>
+                            </NumberInput>
+                          </FormControl>
+
+                          <FormControl isRequired>
+                            <FormLabel>Akun Kas/Bank</FormLabel>
+                            <Select
+                              placeholder={
+                                loadingBankAccounts
+                                  ? "Memuat kas/bank..."
+                                  : "Pilih kas/bank IDR"
+                              }
+                              value={pphPaymentForm.cash_bank_id}
+                              onChange={(event) =>
+                                setPPhPaymentForm((prev) => ({
+                                  ...prev,
+                                  cash_bank_id: event.target.value,
+                                }))
+                              }
+                              disabled={loadingBankAccounts}
+                            >
+                              {getPPhPaymentBankAccounts().map((account) => (
+                                <option
+                                  key={account.id}
+                                  value={account.id.toString()}
+                                >
+                                  {account.code} - {account.name} (
+                                  {formatBankAccountSummary(account)})
+                                </option>
+                              ))}
+                            </Select>
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel>Referensi</FormLabel>
+                            <Input
+                              placeholder="NTPN / bukti bayar"
+                              value={pphPaymentForm.reference}
+                              onChange={(event) =>
+                                setPPhPaymentForm((prev) => ({
+                                  ...prev,
+                                  reference: event.target.value,
+                                }))
+                              }
+                            />
+                          </FormControl>
+                        </SimpleGrid>
+
+                        <FormControl>
+                          <FormLabel>Catatan</FormLabel>
+                          <Textarea
+                            value={pphPaymentForm.notes}
+                            onChange={(event) =>
+                              setPPhPaymentForm((prev) => ({
+                                ...prev,
+                                notes: event.target.value,
+                              }))
+                            }
+                          />
+                        </FormControl>
+                      </VStack>
+                    )}
+                  </ModalBody>
+                  <ModalFooter>
+                    <Button
+                      variant="ghost"
+                      mr={3}
+                      onClick={onPPhPaymentClose}
+                      isDisabled={savingPPhPayment}
+                    >
+                      Batal
+                    </Button>
+                    <Button
+                      colorScheme="orange"
+                      leftIcon={<FiDollarSign />}
+                      onClick={handleSubmitPurchasePPhPayment}
+                      isLoading={savingPPhPayment}
+                    >
+                      Bayar PPh
+                    </Button>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
+
               {/* Payment Modal */}
               <PurchasePaymentForm
                 isOpen={isPaymentOpen}
@@ -8992,8 +9543,9 @@ const PurchasesPage: React.FC = () => {
                           </AlertTitle>
                           <AlertDescription fontSize="sm">
                             Posting jurnal, stok, payable/prepaid, dan
-                            fulfillment ditahan sampai Accounting melengkapi
-                            GL/COA di form ini.
+                            fulfillment tetap ditahan setelah Accounting
+                            menyimpan GL/COA. Finance Manager perlu melakukan
+                            final approval sebelum jurnal diposting.
                           </AlertDescription>
                         </Box>
                       </Alert>
@@ -9035,9 +9587,7 @@ const PurchasesPage: React.FC = () => {
                           <Text fontSize="xs" color={textSecondary}>
                             Status
                           </Text>
-                          <Badge colorScheme="orange">
-                            PENDING ACCOUNTING
-                          </Badge>
+                          <Badge colorScheme="orange">PENDING ACCOUNTING</Badge>
                         </Box>
                       </SimpleGrid>
 
@@ -9150,10 +9700,10 @@ const PurchasesPage: React.FC = () => {
                         colorScheme="orange"
                         onClick={handleSaveAccountingCOA}
                         isLoading={savingAccountingCOA}
-                        loadingText="Memfinalisasi..."
+                        loadingText="Menyimpan..."
                         leftIcon={<FiCheckCircle />}
                       >
-                        Simpan COA & Finalisasi
+                        Simpan COA
                       </Button>
                     </HStack>
                   </ModalFooter>
@@ -9376,7 +9926,9 @@ const PurchasesPage: React.FC = () => {
                               Freight / Biaya Pengiriman
                             </FormLabel>
                             <CurrencyInput
-                              value={parseFloat(financeTaxForm.freight_cost) || 0}
+                              value={
+                                parseFloat(financeTaxForm.freight_cost) || 0
+                              }
                               onChange={(value) =>
                                 setFinanceTaxForm((prev) => ({
                                   ...prev,

@@ -41,6 +41,7 @@ import {
 } from 'react-icons/fi';
 import { Purchase } from '@/services/purchaseService';
 import { useTranslation } from '@/hooks/useTranslation';
+import { getPurchasePPhStatus } from '@/utils/taxPaymentStatus';
 
 interface PurchaseTableProps {
   purchases: Purchase[];
@@ -104,6 +105,8 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
         return 'blue';
       case 'pending_accounting':
         return 'orange';
+      case 'pending_final_approval':
+        return 'purple';
       case 'cancelled':
       case 'rejected':
         return 'red';
@@ -180,19 +183,23 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.paidAmount', 'PAID AMOUNT')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.outstanding', 'OUTSTANDING')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.status', 'STATUS')}</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">STATUS PPH</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.approvalStatus', 'APPROVAL STATUS')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold" textAlign="center">{translateOrFallback('purchases.table.actions', 'ACTIONS')}</Th>
                 </Tr>
               </Thead>
               <Tbody>
-                {purchases.map((purchase, index) => (
-                  <Tr
-                    key={purchase.id}
-                    _hover={{ bg: hoverBg }}
-                    transition="all 0.2s ease"
-                    borderBottom={index === purchases.length - 1 ? 'none' : '1px solid'}
-                    borderColor={borderColor}
-                  >
+                {purchases.map((purchase, index) => {
+                  const pphStatus = getPurchasePPhStatus(purchase);
+
+                  return (
+                    <Tr
+                      key={purchase.id}
+                      _hover={{ bg: hoverBg }}
+                      transition="all 0.2s ease"
+                      borderBottom={index === purchases.length - 1 ? 'none' : '1px solid'}
+                      borderColor={borderColor}
+                    >
                     <Td borderColor={borderColor} py={3}>
                       <Text fontWeight="medium" color="blue.600">
                         {purchase.code}
@@ -256,6 +263,30 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                       >
                         {getStatusLabel(purchase.status)}
                       </Badge>
+                    </Td>
+                    <Td borderColor={borderColor} py={3}>
+                      <Flex direction="column" align="flex-start" gap={1}>
+                        <Badge
+                          colorScheme={pphStatus.colorScheme}
+                          variant="subtle"
+                          px={2}
+                          py={1}
+                          borderRadius="md"
+                          fontSize="xs"
+                        >
+                          {pphStatus.label}
+                        </Badge>
+                        {pphStatus.totalAmount > 0 && (
+                          <Text fontSize="xs" color={textColor}>
+                            PPh: {formatCurrency(pphStatus.totalAmount)}
+                          </Text>
+                        )}
+                        {pphStatus.outstandingAmount > 0 && (
+                          <Text fontSize="xs" color="orange.500">
+                            Sisa: {formatCurrency(pphStatus.outstandingAmount)}
+                          </Text>
+                        )}
+                      </Flex>
                     </Td>
                     <Td borderColor={borderColor} py={3}>
                       <Badge
@@ -344,7 +375,8 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                       )}
                     </Td>
                   </Tr>
-                ))}
+                  );
+                })}
               </Tbody>
             </Table>
           </Box>

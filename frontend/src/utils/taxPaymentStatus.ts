@@ -1,4 +1,5 @@
 import type { Payment } from "@/services/paymentService";
+import type { Purchase } from "@/services/purchaseService";
 import type { Sale } from "@/services/salesService";
 
 export type TaxPaymentStatus = "NONE" | "PAID" | "UNPAID" | "PARTIAL_PAID";
@@ -22,7 +23,10 @@ const statusLabels: Record<TaxPaymentStatus, string> = {
   PARTIAL_PAID: "Partial Paid",
 };
 
-const statusColors: Record<TaxPaymentStatus, TaxPaymentStatusMeta["colorScheme"]> = {
+const statusColors: Record<
+  TaxPaymentStatus,
+  TaxPaymentStatusMeta["colorScheme"]
+> = {
   NONE: "gray",
   PAID: "green",
   UNPAID: "red",
@@ -124,5 +128,41 @@ export const getSalePPhStatus = (sale: Sale): TaxPaymentStatusMeta => {
     totalPPh,
     paidAmount,
     "Sales invoice ini tidak memiliki komponen PPh.",
+  );
+};
+
+export const getPurchasePPhStatus = (
+  purchase: Purchase,
+): TaxPaymentStatusMeta => {
+  const pph21Amount = purchase.pph21_amount || 0;
+  const pph23Amount = purchase.pph23_amount || 0;
+  const totalPPh = pph21Amount + pph23Amount;
+
+  const purchaseAny = purchase as Purchase & {
+    pph_paid_amount?: number;
+    pph_payment_status?: TaxPaymentStatus;
+    pph_payment_date?: string;
+    pph_settlement_date?: string;
+  };
+
+  let paidAmount = purchaseAny.pph_paid_amount || 0;
+  if (purchaseAny.pph_payment_status === "PAID") {
+    paidAmount = totalPPh;
+  } else if (purchaseAny.pph_payment_status === "PARTIAL_PAID") {
+    paidAmount = purchaseAny.pph_paid_amount || 0;
+  } else if (purchaseAny.pph_payment_status === "UNPAID") {
+    paidAmount = 0;
+  } else if (
+    !purchaseAny.pph_payment_status &&
+    totalPPh > MONEY_EPSILON &&
+    (purchaseAny.pph_payment_date || purchaseAny.pph_settlement_date)
+  ) {
+    paidAmount = totalPPh;
+  }
+
+  return buildTaxPaymentStatusMeta(
+    totalPPh,
+    paidAmount,
+    "Purchase ini tidak memiliki komponen PPh.",
   );
 };

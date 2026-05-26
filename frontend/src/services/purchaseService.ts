@@ -48,6 +48,7 @@ export interface PurchaseFilterParams {
   approval_status?: string;
   accounting_status?: string;
   requires_approval?: boolean;
+  outstanding?: boolean;
   page?: number;
   limit?: number;
 }
@@ -109,6 +110,12 @@ export interface Purchase {
   pph23_amount?: number;
   other_tax_deductions?: number;
   total_tax_deductions?: number;
+  pph_payment_status?: "NONE" | "PAID" | "UNPAID" | "PARTIAL_PAID";
+  pph_paid_amount?: number;
+  pph_payment_date?: string | null;
+  pph_payment_reference?: string;
+  pph_payment_notes?: string;
+  pph_payment_journal_entry_id?: number | null;
   tax?: number;
   freight_cost?: number;
   tax_amount: number;
@@ -187,6 +194,14 @@ export interface PurchasePaymentRequest {
   notes?: string;
 }
 
+export interface PurchasePPhPaymentRequest {
+  payment_date: string;
+  amount: number;
+  cash_bank_id: number;
+  reference?: string;
+  notes?: string;
+}
+
 export interface PurchasePayment {
   id: number;
   purchase_id: number;
@@ -241,6 +256,7 @@ class PurchaseService {
         approval_status: toUpper(params.approval_status),
         accounting_status: toUpper(params.accounting_status),
         requires_approval: params.requires_approval,
+        outstanding: params.outstanding,
         page: params.page ?? 1,
         limit: params.limit ?? 10,
       },
@@ -284,6 +300,17 @@ class PurchaseService {
     return response.data?.purchase ?? response.data;
   }
 
+  async finalApproveAfterCOA(
+    id: number,
+    payload: { comments?: string } = {},
+  ): Promise<Purchase> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_FINAL_APPROVAL(id),
+      payload,
+    );
+    return response.data?.purchase ?? response.data;
+  }
+
   async delete(id: number): Promise<{ message: string }> {
     const response = await api.delete(API_ENDPOINTS.PURCHASES_BY_ID(id));
     return response.data;
@@ -315,6 +342,7 @@ class PurchaseService {
         approval_status: toUpper(filters.approval_status),
         accounting_status: toUpper(filters.accounting_status),
         requires_approval: filters.requires_approval,
+        outstanding: filters.outstanding,
       },
     });
     return response.data;
@@ -383,6 +411,17 @@ class PurchaseService {
     return response.data;
   }
 
+  async payPurchasePPh(
+    purchaseId: number,
+    data: PurchasePPhPaymentRequest,
+  ): Promise<Purchase> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_PAY_PPH(purchaseId),
+      data,
+    );
+    return response.data?.purchase ?? response.data?.data ?? response.data;
+  }
+
   async getPurchasePayments(purchaseId: number): Promise<PurchasePayment[]> {
     const response = await api.get(
       API_ENDPOINTS.PURCHASES_PAYMENTS(purchaseId),
@@ -434,6 +473,8 @@ class PurchaseService {
           "requires_approval",
           filters.requires_approval.toString(),
         );
+      if (filters?.outstanding !== undefined)
+        params.append("outstanding", filters.outstanding.toString());
 
       const response = await api.get(
         `${API_ENDPOINTS.PURCHASES_EXPORT_PDF}?${params}`,
@@ -472,6 +513,8 @@ class PurchaseService {
           "requires_approval",
           filters.requires_approval.toString(),
         );
+      if (filters?.outstanding !== undefined)
+        params.append("outstanding", filters.outstanding.toString());
 
       const response = await api.get(
         `${API_ENDPOINTS.PURCHASES_EXPORT_CSV}?${params}`,

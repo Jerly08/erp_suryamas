@@ -21,7 +21,9 @@ func newPurchaseJournalSSOTTestDB(t *testing.T) *gorm.DB {
 
 	if err := db.AutoMigrate(
 		&models.User{},
+		&models.Settings{},
 		&models.Account{},
+		&models.CashBank{},
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 	); err != nil {
@@ -60,6 +62,110 @@ func createSSOTTestAccount(t *testing.T, db *gorm.DB, code, name, accountType, c
 	}
 
 	return account
+}
+
+func TestCreatePurchaseJournalWithPPh23UsesPayableCredit(t *testing.T) {
+	db := newPurchaseJournalSSOTTestDB(t)
+	service := NewPurchaseJournalServiceSSOT(db, nil, NewSettingsService(db))
+
+	inventory := createSSOTTestAccount(t, db, "1103-001", "PERSEDIAAN BARANG DAGANG", models.AccountTypeAsset, models.CategoryCurrentAsset)
+	ppnMasukan := createSSOTTestAccount(t, db, "2102-002", "PPN MASUKAN", models.AccountTypeLiability, models.CategoryCurrentLiability)
+	bankGL := createSSOTTestAccount(t, db, "1101-005", "BANK - OCBC", models.AccountTypeAsset, models.CategoryCurrentAsset)
+	pph23Payable := createSSOTTestAccount(t, db, "2102-004", "HUTANG PPH PASAL 23", models.AccountTypeLiability, models.CategoryCurrentLiability)
+
+	cashBank := models.CashBank{
+		Code:      "BANK-OCBC",
+		Name:      "BANK - OCBC",
+		Type:      models.CashBankTypeBank,
+		AccountID: bankGL.ID,
+		Currency:  "IDR",
+		IsActive:  true,
+	}
+	if err := db.Create(&cashBank).Error; err != nil {
+		t.Fatalf("create cash bank: %v", err)
+	}
+
+	productID := uint(1)
+	purchaseID := uint(88)
+	purchase := &models.Purchase{
+		ID:                 purchaseID,
+		Code:               "PO/TEST/PPH23",
+		VendorID:           1,
+		UserID:             1,
+		Date:               time.Now(),
+		NetBeforeTax:       12090909.09,
+		PPNAmount:          1330000,
+		PPh23Amount:        241818.18,
+		TotalTaxDeductions: 241818.18,
+		TotalAmount:        13179090.91,
+		PaymentMethod:      models.PurchasePaymentTransfer,
+		BankAccountID:      &cashBank.ID,
+		Status:             models.PurchaseStatusApproved,
+		Vendor:             models.Contact{Name: "CV Sumber Rejeki"},
+		PurchaseItems: []models.PurchaseItem{
+			{
+				ID:         1,
+				ProductID:  &productID,
+				Quantity:   1,
+				UnitPrice:  12090909.09,
+				TotalPrice: 12090909.09,
+				Product: &models.Product{
+					ID:        productID,
+					Name:      "Laptop Dell XPS 13",
+					IsService: false,
+				},
+			},
+		},
+	}
+
+	if err := service.CreatePurchaseJournal(purchase, nil); err != nil {
+		t.Fatalf("create purchase journal: %v", err)
+	}
+
+	sourceID := uint64(purchaseID)
+	var entry models.SSOTJournalEntry
+	if err := db.Where("source_type = ? AND source_id = ?", models.SSOTSourceTypePurchase, sourceID).First(&entry).Error; err != nil {
+		t.Fatalf("load purchase journal entry: %v", err)
+	}
+	if got := entry.TotalDebit.Round(2).StringFixed(2); got != "13420909.09" {
+		t.Fatalf("expected debit 13420909.09, got %s", got)
+	}
+	if got := entry.TotalCredit.Round(2).StringFixed(2); got != "13420909.09" {
+		t.Fatalf("expected credit 13420909.09, got %s", got)
+	}
+
+	var lines []models.SSOTJournalLine
+	if err := db.Where("journal_id = ?", entry.ID).Find(&lines).Error; err != nil {
+		t.Fatalf("load purchase journal lines: %v", err)
+	}
+
+	var bankLine, pphLine *models.SSOTJournalLine
+	for i := range lines {
+		switch lines[i].AccountID {
+		case uint64(bankGL.ID):
+			bankLine = &lines[i]
+		case uint64(pph23Payable.ID):
+			pphLine = &lines[i]
+		}
+	}
+	if bankLine == nil {
+		t.Fatalf("expected bank credit line for account %s", bankGL.Code)
+	}
+	if got := bankLine.CreditAmount.Round(2).StringFixed(2); got != "13179090.91" {
+		t.Fatalf("expected bank credit 13179090.91, got %s", got)
+	}
+	if pphLine == nil {
+		t.Fatalf("expected PPh23 payable credit line for account %s", pph23Payable.Code)
+	}
+	if !pphLine.DebitAmount.IsZero() {
+		t.Fatalf("expected PPh23 debit to be zero, got %s", pphLine.DebitAmount.String())
+	}
+	if got := pphLine.CreditAmount.Round(2).StringFixed(2); got != "241818.18" {
+		t.Fatalf("expected PPh23 credit 241818.18, got %s", got)
+	}
+	if inventory.ID == 0 || ppnMasukan.ID == 0 {
+		t.Fatalf("test setup accounts were not created")
+	}
 }
 
 func TestDeletePurchaseJournalRemovesLinkedReversalEntries(t *testing.T) {

@@ -6,22 +6,11 @@ import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import cashBankService, { CashBank } from '@/services/cashbankService';
-import payrollService, {
-  PayrollImportPreview,
-  PayrollItem,
-  PayrollPPhPaymentStatus,
-  PayrollRun,
-  PayrollStatus,
-} from '@/services/payrollService';
-import {
-  isAccountingRole,
-  isFinanceManagerRole,
-  isFinanceStaffRole,
-  isHRRole,
-  normalizeRole,
-} from '@/utils/roles';
+import payrollService, { PayrollImportPreview, PayrollItem, PayrollPPhPaymentStatus, PayrollRun, PayrollStatus } from '@/services/payrollService';
+import { isAccountingRole, isFinanceManagerRole, isFinanceStaffRole, isHRRole, normalizeRole } from '@/utils/roles';
 import { filterOperationalCashBankAccounts, filterActiveLeafAccounts } from '@/utils/accountFilters';
 import accountService from '@/services/accountService';
+import type { AccountCatalogItem } from '@/types/account';
 import {
   Alert,
   AlertDescription,
@@ -67,21 +56,7 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react';
-import {
-  FiCheckCircle,
-  FiDollarSign,
-  FiDownload,
-  FiEye,
-  FiFileText,
-  FiLock,
-  FiPlus,
-  FiRefreshCw,
-  FiShield,
-  FiTrash2,
-  FiUpload,
-  FiUsers,
-  FiXCircle,
-} from 'react-icons/fi';
+import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiPlus, FiRefreshCw, FiShield, FiTrash2, FiUpload, FiUsers, FiXCircle } from 'react-icons/fi';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('id-ID', {
@@ -126,6 +101,47 @@ const blankPayrollItem = (): PayrollItem => ({
   pph: 0,
   bpjs: 0,
   notes: '',
+});
+
+const getPayrollItemBonus = (item: PayrollItem) => {
+  const bonus = Number(item.bonus || 0);
+  if (bonus > 0) return bonus;
+  return Number(item.compensation_pkwt || 0) + Number(item.overtime || 0) + Number(item.proportional || 0);
+};
+
+const getPayrollItemBPJS = (item: PayrollItem) => {
+  const componentTotal = Number(item.bpjs_tk_jht || 0) + Number(item.bpjs_tk_jp || 0) + Number(item.bpjs_kesehatan || 0);
+  if (componentTotal > 0) return componentTotal;
+  return Number(item.bpjs || 0);
+};
+
+const getPayrollItemNetPay = (item: PayrollItem) => Math.max(0, Number(item.base_salary || 0) + getPayrollItemBonus(item) - getPayrollItemBPJS(item) - Number(item.other_deduction || 0));
+
+const recalculatePayrollItem = (item: PayrollItem): PayrollItem => {
+  const bpjs = getPayrollItemBPJS(item);
+  return {
+    ...item,
+    bpjs,
+    net_pay: getPayrollItemNetPay({ ...item, bpjs }),
+  };
+};
+
+const payrollBPJSComponentFields: Array<keyof PayrollItem> = ['bpjs_tk_jht', 'bpjs_tk_jp', 'bpjs_kesehatan'];
+
+const sumPayrollBPJSComponents = (item: PayrollItem) => Number(item.bpjs_tk_jht || 0) + Number(item.bpjs_tk_jp || 0) + Number(item.bpjs_kesehatan || 0);
+
+const recalculatePayrollImportPreview = (preview: PayrollImportPreview, items: PayrollItem[]): PayrollImportPreview => ({
+  ...preview,
+  items,
+  summary: {
+    ...preview.summary,
+    imported_rows: items.length,
+    total_salary: items.reduce((sum, item) => sum + Number(item.base_salary || 0), 0),
+    total_bonus: items.reduce((sum, item) => sum + getPayrollItemBonus(item), 0),
+    total_pph: items.reduce((sum, item) => sum + Number(item.pph || 0), 0),
+    total_bpjs: items.reduce((sum, item) => sum + getPayrollItemBPJS(item), 0),
+    total_overall: items.reduce((sum, item) => sum + getPayrollItemNetPay(item), 0),
+  },
 });
 
 const statusLabel = (status: PayrollStatus | string) => {
@@ -187,7 +203,9 @@ const getPPhRemainingAmount = (payroll?: PayrollRun | null) => {
 
 const getApiErrorMessage = (error: unknown, fallback: string) => {
   const maybeError = error as {
-    response?: { data?: { error?: string; message?: string; details?: string } };
+    response?: {
+      data?: { error?: string; message?: string; details?: string };
+    };
   };
   const apiError = maybeError.response?.data;
   const message = apiError?.error || apiError?.message || fallback;
@@ -206,6 +224,7 @@ const payrollImportHeaders = [
   'BASIC SALARY',
   'COMPENSATION PKWT',
   'OVERTIME',
+  'PPH21 TERUTANG',
   'BPJS TK JHT 2%',
   'BPJS TK JP 1%',
   'BPJS KESEHATAN 1%',
@@ -233,7 +252,7 @@ export default function PayrollPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [selectedPayroll, setSelectedPayroll] = useState<PayrollRun | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [expenseAccounts, setExpenseAccounts] = useState<any[]>([]);
+  const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
   const [approvalCashBanks, setApprovalCashBanks] = useState<CashBank[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [selectedExpenseAccount, setSelectedExpenseAccount] = useState<string>('');
@@ -301,13 +320,7 @@ export default function PayrollPage() {
     setCashBankLoading(true);
     try {
       const accounts = await cashBankService.getCashBankAccounts();
-      const usableAccounts = filterOperationalCashBankAccounts(accounts).filter(
-        (account) =>
-          account.is_active &&
-          account.account_id &&
-          (account.currency || 'IDR').toUpperCase() === 'IDR' &&
-          account.allow_direct_transactions !== false,
-      );
+      const usableAccounts = filterOperationalCashBankAccounts(accounts).filter((account) => account.is_active && account.account_id && (account.currency || 'IDR').toUpperCase() === 'IDR' && account.allow_direct_transactions !== false);
       setCashBanks(usableAccounts);
     } catch (error: unknown) {
       toast({
@@ -327,31 +340,17 @@ export default function PayrollPage() {
     try {
       const token = window.localStorage.getItem('token') || '';
 
-      const [expenseData, cashBankData] = await Promise.all([
-        accountService.getAccountCatalog(token, 'EXPENSE'),
-        cashBankService.getCashBankAccounts(),
-      ]);
+      const [expenseData, cashBankData] = await Promise.all([accountService.getAccountCatalog(token, 'EXPENSE'), cashBankService.getCashBankAccounts()]);
 
       const filteredExpenses = filterActiveLeafAccounts(expenseData);
       const usableCashBanks = filterOperationalCashBankAccounts(cashBankData).filter(
-        (account) =>
-          account.is_active &&
-          account.account_id &&
-          (account.currency || 'IDR').toUpperCase() === 'IDR' &&
-          account.allow_direct_transactions !== false,
+        (account) => account.is_active && account.account_id && (account.currency || 'IDR').toUpperCase() === 'IDR' && account.allow_direct_transactions !== false,
       );
 
       setExpenseAccounts(filteredExpenses);
       setApprovalCashBanks(usableCashBanks);
 
-      const defaultExpense = filteredExpenses.find(
-        (acc) =>
-          acc.code === '6101' ||
-          acc.code === '5101-001' ||
-          acc.code === '5201' ||
-          acc.name.toLowerCase().includes('gaji') ||
-          acc.name.toLowerCase().includes('salary'),
-      );
+      const defaultExpense = filteredExpenses.find((acc) => acc.code === '6101' || acc.code === '5101-001' || acc.code === '5201' || acc.name.toLowerCase().includes('gaji') || acc.name.toLowerCase().includes('salary'));
       if (defaultExpense) {
         setSelectedExpenseAccount(defaultExpense.id.toString());
       } else if (filteredExpenses.length > 0) {
@@ -382,10 +381,29 @@ export default function PayrollPage() {
   const updateDraftItem = (index: number, field: keyof PayrollItem, value: string | number) => {
     setDraft((prev) => ({
       ...prev,
-      items: prev.items.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, [field]: value } : item,
-      ),
+      items: prev.items.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        return recalculatePayrollItem({
+          ...item,
+          [field]: value,
+        } as PayrollItem);
+      }),
     }));
+  };
+
+  const updateImportPreviewItem = (index: number, field: keyof PayrollItem, value: string | number) => {
+    setImportPreview((prev) => {
+      if (!prev) return prev;
+      const items = prev.items.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        const updated = { ...item, [field]: value } as PayrollItem;
+        if (payrollBPJSComponentFields.includes(field)) {
+          updated.bpjs = sumPayrollBPJSComponents(updated);
+        }
+        return recalculatePayrollItem(updated);
+      });
+      return recalculatePayrollImportPreview(prev, items);
+    });
   };
 
   const addDraftItem = () => {
@@ -459,10 +477,12 @@ export default function PayrollPage() {
     setImportLoading(true);
     try {
       const preview = await payrollService.previewPayrollImport(importFile);
-      setImportPreview(preview);
+      const normalizedItems = preview.items.map(recalculatePayrollItem);
+      const normalizedPreview = recalculatePayrollImportPreview(preview, normalizedItems);
+      setImportPreview(normalizedPreview);
       toast({
         title: 'Preview import berhasil',
-        description: `${preview.summary.imported_rows} baris payroll siap direview.`,
+        description: `${normalizedPreview.summary.imported_rows} baris payroll siap direview.`,
         status: 'success',
         duration: 3000,
         isClosable: true,
@@ -481,6 +501,17 @@ export default function PayrollPage() {
   };
 
   const handleSubmitImportedPayroll = async () => {
+    if (!importDraft.period_start || !importDraft.period_end) {
+      toast({
+        title: 'Periode wajib diisi',
+        description: 'Period Start dan Period End harus diisi sebelum submit payroll.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     if (!importPreview?.items.length) {
       toast({
         title: 'Belum ada data import',
@@ -499,7 +530,7 @@ export default function PayrollPage() {
         period_end: importDraft.period_end,
         payment_date: importDraft.payment_date,
         notes: importDraft.notes,
-        items: importPreview.items,
+        items: importPreview.items.map(recalculatePayrollItem),
       });
       toast({
         title: 'Payroll import berhasil disubmit',
@@ -524,18 +555,33 @@ export default function PayrollPage() {
   };
 
   const handleCreatePayroll = async () => {
+    if (!draft.period_start || !draft.period_end) {
+      toast({
+        title: 'Periode wajib diisi',
+        description: 'Period Start dan Period End harus diisi sebelum submit payroll.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     const cleanItems = draft.items
-      .map((item) => ({
-        employee_name: item.employee_name.trim(),
-        employee_code: item.employee_code?.trim() || '',
-        department: item.department?.trim() || '',
-        position: item.position?.trim() || '',
-        base_salary: Number(item.base_salary || 0),
-        bonus: Number(item.bonus || 0),
-        pph: Number(item.pph || 0),
-        bpjs: Number(item.bpjs || 0),
-        notes: item.notes?.trim() || '',
-      }))
+      .map((item) => {
+        const normalizedItem = recalculatePayrollItem(item);
+        return {
+          employee_name: normalizedItem.employee_name.trim(),
+          employee_code: normalizedItem.employee_code?.trim() || '',
+          department: normalizedItem.department?.trim() || '',
+          position: normalizedItem.position?.trim() || '',
+          base_salary: Number(normalizedItem.base_salary || 0),
+          bonus: Number(normalizedItem.bonus || 0),
+          pph: Number(normalizedItem.pph || 0),
+          bpjs: getPayrollItemBPJS(normalizedItem),
+          net_pay: getPayrollItemNetPay(normalizedItem),
+          notes: normalizedItem.notes?.trim() || '',
+        };
+      })
       .filter((item) => item.employee_name);
 
     if (!cleanItems.length) {
@@ -699,7 +745,11 @@ export default function PayrollPage() {
 
     setSubmitting(true);
     try {
-      const payload: { expense_account_id?: number; cash_bank_account_id?: number; payment_method?: string } = {};
+      const payload: {
+        expense_account_id?: number;
+        cash_bank_account_id?: number;
+        payment_method?: string;
+      } = {};
       if (selectedExpenseAccount) {
         payload.expense_account_id = Number(selectedExpenseAccount);
       }
@@ -778,9 +828,7 @@ export default function PayrollPage() {
                   <Icon as={FiUsers} boxSize={7} color="blue.500" />
                   <Heading size="xl">Payroll</Heading>
                 </HStack>
-                <Text color={mutedText}>
-                  HR membuat payroll, Finance Manager approval, Accounting dan Finance Staff hanya melihat summary.
-                </Text>
+                <Text color={mutedText}>HR membuat payroll, Finance Manager approval, Accounting dan Finance Staff hanya melihat summary.</Text>
               </Box>
               <HStack>
                 <Button leftIcon={<FiRefreshCw />} variant="outline" onClick={loadPayroll} isLoading={loading}>
@@ -807,9 +855,7 @@ export default function PayrollPage() {
             {isSummaryOnly && (
               <Alert status="info" borderRadius="xl" bg={softPanelBg}>
                 <AlertIcon />
-                <AlertDescription>
-                  Akses role {isAccountingRole(role) ? 'Accounting' : 'Finance Staff'} dibatasi ke summary payroll saja. Detail per karyawan disembunyikan dari API dan UI.
-                </AlertDescription>
+                <AlertDescription>Akses role {isAccountingRole(role) ? 'Accounting' : 'Finance Staff'} dibatasi ke summary payroll saja. Detail per karyawan disembunyikan dari API dan UI.</AlertDescription>
               </Alert>
             )}
 
@@ -835,9 +881,9 @@ export default function PayrollPage() {
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
                   <Stat>
-                    <StatLabel>Total PPh</StatLabel>
+                    <StatLabel>PPh21 Terutang</StatLabel>
                     <StatNumber color="orange.500">{formatCurrency(totals.pph)}</StatNumber>
-                    <StatHelpText>Potongan pajak</StatHelpText>
+                    <StatHelpText>Hutang pajak, tidak mengurangi salary</StatHelpText>
                   </Stat>
                 </CardBody>
               </Card>
@@ -853,9 +899,9 @@ export default function PayrollPage() {
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
                   <Stat>
-                    <StatLabel>Total Overall Payroll</StatLabel>
+                    <StatLabel>Total Net Salary</StatLabel>
                     <StatNumber color="blue.600">{formatCurrency(totals.overall)}</StatNumber>
-                    <StatHelpText>Salary + bonus - PPh - BPJS</StatHelpText>
+                    <StatHelpText>Salary + bonus - BPJS/potongan lain</StatHelpText>
                   </Stat>
                 </CardBody>
               </Card>
@@ -892,10 +938,10 @@ export default function PayrollPage() {
                           <Th>Tgl Bayar</Th>
                           <Th isNumeric>Total Salary</Th>
                           <Th isNumeric>Total Bonus</Th>
-                          <Th isNumeric>Total PPh</Th>
-                          <Th>Status PPh</Th>
+                          <Th isNumeric>PPh21 Terutang</Th>
+                          <Th>Status PPh21</Th>
                           <Th isNumeric>Total BPJS</Th>
-                          <Th isNumeric>Total Overall</Th>
+                          <Th isNumeric>Net Salary</Th>
                           <Th>Status</Th>
                           {canSeeEmployeeDetail && <Th>Aksi</Th>}
                         </Tr>
@@ -904,16 +950,16 @@ export default function PayrollPage() {
                         {payrollRuns.map((payroll) => (
                           <Tr key={payroll.id}>
                             <Td fontWeight="semibold">{payroll.payroll_number}</Td>
-                            <Td>{formatDate(payroll.period_start)} - {formatDate(payroll.period_end)}</Td>
+                            <Td>
+                              {formatDate(payroll.period_start)} - {formatDate(payroll.period_end)}
+                            </Td>
                             <Td>{formatDate(payroll.payment_date)}</Td>
                             <Td isNumeric>{formatCurrency(payroll.total_salary)}</Td>
                             <Td isNumeric>{formatCurrency(payroll.total_bonus)}</Td>
                             <Td isNumeric>{formatCurrency(payroll.total_pph)}</Td>
                             <Td>
                               <VStack align="start" spacing={1}>
-                                <Badge colorScheme={pphPaymentStatusColor(getPPhPaymentStatus(payroll))}>
-                                  {pphPaymentStatusLabel(getPPhPaymentStatus(payroll))}
-                                </Badge>
+                                <Badge colorScheme={pphPaymentStatusColor(getPPhPaymentStatus(payroll))}>{pphPaymentStatusLabel(getPPhPaymentStatus(payroll))}</Badge>
                                 {Number(payroll.total_pph || 0) > 0 && (
                                   <Text fontSize="xs" color={mutedText}>
                                     Dibayar {formatCurrency(Number(payroll.pph_paid_amount || 0))}
@@ -931,22 +977,9 @@ export default function PayrollPage() {
                             {canSeeEmployeeDetail && (
                               <Td>
                                 <HStack spacing={2}>
-                                  <IconButton
-                                    aria-label="Lihat detail payroll"
-                                    icon={<FiEye />}
-                                    size="sm"
-                                    variant="ghost"
-                                    colorScheme="blue"
-                                    onClick={() => openDetail(payroll)}
-                                  />
+                                  <IconButton aria-label="Lihat detail payroll" icon={<FiEye />} size="sm" variant="ghost" colorScheme="blue" onClick={() => openDetail(payroll)} />
                                   {canApprovePayroll && payroll.status === 'APPROVED' && getPPhRemainingAmount(payroll) > 0 && (
-                                    <Button
-                                      leftIcon={<FiDollarSign />}
-                                      size="sm"
-                                      colorScheme="orange"
-                                      variant="outline"
-                                      onClick={() => openPayPPh(payroll)}
-                                    >
+                                    <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="orange" variant="outline" onClick={() => openPayPPh(payroll)}>
                                       Pay PPh
                                     </Button>
                                   )}
@@ -1000,15 +1033,45 @@ export default function PayrollPage() {
                   <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                     <FormControl isRequired>
                       <FormLabel>Period Start</FormLabel>
-                      <Input type="date" value={importDraft.period_start} onChange={(event) => setImportDraft((prev) => ({ ...prev, period_start: event.target.value }))} bg={inputBg} />
+                      <Input
+                        type="date"
+                        value={importDraft.period_start}
+                        onChange={(event) =>
+                          setImportDraft((prev) => ({
+                            ...prev,
+                            period_start: event.target.value,
+                          }))
+                        }
+                        bg={inputBg}
+                      />
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel>Period End</FormLabel>
-                      <Input type="date" value={importDraft.period_end} onChange={(event) => setImportDraft((prev) => ({ ...prev, period_end: event.target.value }))} bg={inputBg} />
+                      <Input
+                        type="date"
+                        value={importDraft.period_end}
+                        onChange={(event) =>
+                          setImportDraft((prev) => ({
+                            ...prev,
+                            period_end: event.target.value,
+                          }))
+                        }
+                        bg={inputBg}
+                      />
                     </FormControl>
                     <FormControl>
                       <FormLabel>Payment Date</FormLabel>
-                      <Input type="date" value={importDraft.payment_date} onChange={(event) => setImportDraft((prev) => ({ ...prev, payment_date: event.target.value }))} bg={inputBg} />
+                      <Input
+                        type="date"
+                        value={importDraft.payment_date}
+                        onChange={(event) =>
+                          setImportDraft((prev) => ({
+                            ...prev,
+                            payment_date: event.target.value,
+                          }))
+                        }
+                        bg={inputBg}
+                      />
                     </FormControl>
                   </SimpleGrid>
 
@@ -1031,7 +1094,16 @@ export default function PayrollPage() {
                     </FormControl>
                     <FormControl>
                       <FormLabel>Catatan Payroll</FormLabel>
-                      <Textarea value={importDraft.notes} onChange={(event) => setImportDraft((prev) => ({ ...prev, notes: event.target.value }))} bg={inputBg} />
+                      <Textarea
+                        value={importDraft.notes}
+                        onChange={(event) =>
+                          setImportDraft((prev) => ({
+                            ...prev,
+                            notes: event.target.value,
+                          }))
+                        }
+                        bg={inputBg}
+                      />
                     </FormControl>
                   </SimpleGrid>
 
@@ -1046,12 +1118,56 @@ export default function PayrollPage() {
 
                   {importPreview && (
                     <>
-                      <SimpleGrid columns={{ base: 1, md: 2, xl: 5 }} spacing={4}>
-                        <Card variant="outline"><CardBody><Stat><StatLabel>Imported Rows</StatLabel><StatNumber>{importPreview.summary.imported_rows}</StatNumber><StatHelpText>dari {importPreview.summary.total_rows} baris</StatHelpText></Stat></CardBody></Card>
-                        <Card variant="outline"><CardBody><Stat><StatLabel>Total Salary</StatLabel><StatNumber>{formatCurrency(importPreview.summary.total_salary)}</StatNumber></Stat></CardBody></Card>
-                        <Card variant="outline"><CardBody><Stat><StatLabel>Total Bonus</StatLabel><StatNumber color="green.500">{formatCurrency(importPreview.summary.total_bonus)}</StatNumber></Stat></CardBody></Card>
-                        <Card variant="outline"><CardBody><Stat><StatLabel>Total BPJS</StatLabel><StatNumber color="purple.500">{formatCurrency(importPreview.summary.total_bpjs)}</StatNumber></Stat></CardBody></Card>
-                        <Card variant="outline"><CardBody><Stat><StatLabel>Total Overall</StatLabel><StatNumber color="blue.600">{formatCurrency(importPreview.summary.total_overall)}</StatNumber></Stat></CardBody></Card>
+                      <SimpleGrid columns={{ base: 1, md: 2, xl: 6 }} spacing={4}>
+                        <Card variant="outline">
+                          <CardBody>
+                            <Stat>
+                              <StatLabel>Imported Rows</StatLabel>
+                              <StatNumber>{importPreview.summary.imported_rows}</StatNumber>
+                              <StatHelpText>dari {importPreview.summary.total_rows} baris</StatHelpText>
+                            </Stat>
+                          </CardBody>
+                        </Card>
+                        <Card variant="outline">
+                          <CardBody>
+                            <Stat>
+                              <StatLabel>Total Salary</StatLabel>
+                              <StatNumber>{formatCurrency(importPreview.summary.total_salary)}</StatNumber>
+                            </Stat>
+                          </CardBody>
+                        </Card>
+                        <Card variant="outline">
+                          <CardBody>
+                            <Stat>
+                              <StatLabel>Total Bonus</StatLabel>
+                              <StatNumber color="green.500">{formatCurrency(importPreview.summary.total_bonus)}</StatNumber>
+                            </Stat>
+                          </CardBody>
+                        </Card>
+                        <Card variant="outline">
+                          <CardBody>
+                            <Stat>
+                              <StatLabel>PPh21 Terutang</StatLabel>
+                              <StatNumber color="orange.500">{formatCurrency(importPreview.summary.total_pph)}</StatNumber>
+                            </Stat>
+                          </CardBody>
+                        </Card>
+                        <Card variant="outline">
+                          <CardBody>
+                            <Stat>
+                              <StatLabel>Total BPJS</StatLabel>
+                              <StatNumber color="purple.500">{formatCurrency(importPreview.summary.total_bpjs)}</StatNumber>
+                            </Stat>
+                          </CardBody>
+                        </Card>
+                        <Card variant="outline">
+                          <CardBody>
+                            <Stat>
+                              <StatLabel>Net Salary</StatLabel>
+                              <StatNumber color="blue.600">{formatCurrency(importPreview.summary.total_overall)}</StatNumber>
+                            </Stat>
+                          </CardBody>
+                        </Card>
                       </SimpleGrid>
 
                       {importPreview.warnings.length > 0 && (
@@ -1062,7 +1178,9 @@ export default function PayrollPage() {
                       )}
 
                       <Box>
-                        <Heading size="sm" mb={3}>Review Grid Payroll Import</Heading>
+                        <Heading size="sm" mb={3}>
+                          Review Grid Payroll Import
+                        </Heading>
                         <TableContainer borderWidth="1px" borderColor={borderColor} borderRadius="xl" maxH="460px" overflowY="auto">
                           <Table size="sm">
                             <Thead bg={tableHeaderBg} position="sticky" top={0} zIndex={1}>
@@ -1078,12 +1196,13 @@ export default function PayrollPage() {
                                 <Th isNumeric>Basic Salary</Th>
                                 <Th isNumeric>Comp. PKWT</Th>
                                 <Th isNumeric>Overtime</Th>
+                                <Th isNumeric>PPh21 Terutang</Th>
                                 <Th isNumeric>BPJS JHT</Th>
                                 <Th isNumeric>BPJS JP</Th>
                                 <Th isNumeric>BPJS Kes.</Th>
                                 <Th isNumeric>Proportional</Th>
                                 <Th isNumeric>Other Deduction</Th>
-                                <Th isNumeric>Net Pay</Th>
+                                <Th isNumeric>Net Salary</Th>
                               </Tr>
                             </Thead>
                             <Tbody>
@@ -1100,12 +1219,23 @@ export default function PayrollPage() {
                                   <Td isNumeric>{formatCurrency(item.base_salary)}</Td>
                                   <Td isNumeric>{formatCurrency(item.compensation_pkwt || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.overtime || 0)}</Td>
-                                  <Td isNumeric>{formatCurrency(item.bpjs_tk_jht || 0)}</Td>
-                                  <Td isNumeric>{formatCurrency(item.bpjs_tk_jp || 0)}</Td>
-                                  <Td isNumeric>{formatCurrency(item.bpjs_kesehatan || 0)}</Td>
+                                  <Td isNumeric minW="140px">
+                                    <Input size="sm" type="number" value={item.pph || 0} onChange={(event) => updateImportPreviewItem(index, 'pph', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <Input size="sm" type="number" value={item.bpjs_tk_jht || 0} onChange={(event) => updateImportPreviewItem(index, 'bpjs_tk_jht', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <Input size="sm" type="number" value={item.bpjs_tk_jp || 0} onChange={(event) => updateImportPreviewItem(index, 'bpjs_tk_jp', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <Input size="sm" type="number" value={item.bpjs_kesehatan || 0} onChange={(event) => updateImportPreviewItem(index, 'bpjs_kesehatan', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                  </Td>
                                   <Td isNumeric>{formatCurrency(item.proportional || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.other_deduction || 0)}</Td>
-                                  <Td isNumeric fontWeight="bold" color="blue.600">{formatCurrency(item.net_pay || 0)}</Td>
+                                  <Td isNumeric fontWeight="bold" color="blue.600">
+                                    {formatCurrency(getPayrollItemNetPay(item))}
+                                  </Td>
                                 </Tr>
                               ))}
                             </Tbody>
@@ -1147,27 +1277,69 @@ export default function PayrollPage() {
                   <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                     <FormControl isRequired>
                       <FormLabel>Period Start</FormLabel>
-                      <Input type="date" value={draft.period_start} onChange={(event) => setDraft((prev) => ({ ...prev, period_start: event.target.value }))} bg={inputBg} />
+                      <Input
+                        type="date"
+                        value={draft.period_start}
+                        onChange={(event) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            period_start: event.target.value,
+                          }))
+                        }
+                        bg={inputBg}
+                      />
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel>Period End</FormLabel>
-                      <Input type="date" value={draft.period_end} onChange={(event) => setDraft((prev) => ({ ...prev, period_end: event.target.value }))} bg={inputBg} />
+                      <Input
+                        type="date"
+                        value={draft.period_end}
+                        onChange={(event) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            period_end: event.target.value,
+                          }))
+                        }
+                        bg={inputBg}
+                      />
                     </FormControl>
                     <FormControl>
                       <FormLabel>Payment Date</FormLabel>
-                      <Input type="date" value={draft.payment_date} onChange={(event) => setDraft((prev) => ({ ...prev, payment_date: event.target.value }))} bg={inputBg} />
+                      <Input
+                        type="date"
+                        value={draft.payment_date}
+                        onChange={(event) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            payment_date: event.target.value,
+                          }))
+                        }
+                        bg={inputBg}
+                      />
                     </FormControl>
                   </SimpleGrid>
 
                   <FormControl>
                     <FormLabel>Catatan Payroll</FormLabel>
-                    <Textarea value={draft.notes} onChange={(event) => setDraft((prev) => ({ ...prev, notes: event.target.value }))} placeholder="Catatan internal HR untuk payroll ini" bg={inputBg} />
+                    <Textarea
+                      value={draft.notes}
+                      onChange={(event) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          notes: event.target.value,
+                        }))
+                      }
+                      placeholder="Catatan internal HR untuk payroll ini"
+                      bg={inputBg}
+                    />
                   </FormControl>
 
                   <Flex justify="space-between" align="center">
                     <Box>
                       <Heading size="sm">Detail Payroll Karyawan</Heading>
-                      <Text color={mutedText} fontSize="sm">Detail ini hanya terlihat oleh HR, Admin, dan Finance Manager.</Text>
+                      <Text color={mutedText} fontSize="sm">
+                        Detail ini hanya terlihat oleh HR, Admin, dan Finance Manager.
+                      </Text>
                     </Box>
                     <Button leftIcon={<FiPlus />} size="sm" onClick={addDraftItem}>
                       Tambah Karyawan
@@ -1182,17 +1354,27 @@ export default function PayrollPage() {
                           <Th minW="110px">Kode</Th>
                           <Th minW="140px">Departemen</Th>
                           <Th minW="140px">Posisi</Th>
-                          <Th minW="140px" isNumeric>Salary</Th>
-                          <Th minW="130px" isNumeric>Bonus</Th>
-                          <Th minW="130px" isNumeric>PPh</Th>
-                          <Th minW="130px" isNumeric>BPJS</Th>
-                          <Th minW="140px" isNumeric>Net Pay</Th>
+                          <Th minW="140px" isNumeric>
+                            Salary
+                          </Th>
+                          <Th minW="130px" isNumeric>
+                            Bonus
+                          </Th>
+                          <Th minW="150px" isNumeric>
+                            PPh21 Terutang
+                          </Th>
+                          <Th minW="130px" isNumeric>
+                            BPJS
+                          </Th>
+                          <Th minW="140px" isNumeric>
+                            Net Salary
+                          </Th>
                           <Th w="50px"></Th>
                         </Tr>
                       </Thead>
                       <Tbody>
                         {draft.items.map((item, index) => {
-                          const netPay = Number(item.base_salary || 0) + Number(item.bonus || 0) - Number(item.pph || 0) - Number(item.bpjs || 0);
+                          const netPay = getPayrollItemNetPay(item);
                           return (
                             <Tr key={index}>
                               <Td>
@@ -1219,7 +1401,9 @@ export default function PayrollPage() {
                               <Td>
                                 <Input size="sm" type="number" value={item.bpjs} onChange={(event) => updateDraftItem(index, 'bpjs', Number(event.target.value))} textAlign="right" bg={inputBg} />
                               </Td>
-                              <Td isNumeric fontWeight="bold">{formatCurrency(netPay)}</Td>
+                              <Td isNumeric fontWeight="bold">
+                                {formatCurrency(netPay)}
+                              </Td>
                               <Td>
                                 <IconButton aria-label="Hapus detail" icon={<FiTrash2 />} size="sm" variant="ghost" colorScheme="red" onClick={() => removeDraftItem(index)} isDisabled={draft.items.length === 1} />
                               </Td>
@@ -1265,17 +1449,36 @@ export default function PayrollPage() {
                 ) : selectedPayroll ? (
                   <VStack align="stretch" spacing={5}>
                     <SimpleGrid columns={{ base: 1, md: 2, xl: 6 }} spacing={4}>
-                      <Card variant="outline"><CardBody><Stat><StatLabel>Total Salary</StatLabel><StatNumber>{formatCurrency(selectedPayroll.total_salary)}</StatNumber></Stat></CardBody></Card>
-                      <Card variant="outline"><CardBody><Stat><StatLabel>Total Bonus</StatLabel><StatNumber color="green.500">{formatCurrency(selectedPayroll.total_bonus)}</StatNumber></Stat></CardBody></Card>
-                      <Card variant="outline"><CardBody><Stat><StatLabel>Total PPh</StatLabel><StatNumber color="orange.500">{formatCurrency(selectedPayroll.total_pph)}</StatNumber></Stat></CardBody></Card>
                       <Card variant="outline">
                         <CardBody>
                           <Stat>
-                            <StatLabel>Status PPh</StatLabel>
+                            <StatLabel>Total Salary</StatLabel>
+                            <StatNumber>{formatCurrency(selectedPayroll.total_salary)}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Total Bonus</StatLabel>
+                            <StatNumber color="green.500">{formatCurrency(selectedPayroll.total_bonus)}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>PPh21 Terutang</StatLabel>
+                            <StatNumber color="orange.500">{formatCurrency(selectedPayroll.total_pph)}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Status PPh21</StatLabel>
                             <StatNumber fontSize="lg">
-                              <Badge colorScheme={pphPaymentStatusColor(getPPhPaymentStatus(selectedPayroll))}>
-                                {pphPaymentStatusLabel(getPPhPaymentStatus(selectedPayroll))}
-                              </Badge>
+                              <Badge colorScheme={pphPaymentStatusColor(getPPhPaymentStatus(selectedPayroll))}>{pphPaymentStatusLabel(getPPhPaymentStatus(selectedPayroll))}</Badge>
                             </StatNumber>
                             <StatHelpText>
                               Paid {formatCurrency(Number(selectedPayroll.pph_paid_amount || 0))} | Sisa {formatCurrency(getPPhRemainingAmount(selectedPayroll))}
@@ -1283,15 +1486,30 @@ export default function PayrollPage() {
                           </Stat>
                         </CardBody>
                       </Card>
-                      <Card variant="outline"><CardBody><Stat><StatLabel>Total BPJS</StatLabel><StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber></Stat></CardBody></Card>
-                      <Card variant="outline"><CardBody><Stat><StatLabel>Total Overall</StatLabel><StatNumber color="blue.600">{formatCurrency(selectedPayroll.total_overall)}</StatNumber></Stat></CardBody></Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Total BPJS</StatLabel>
+                            <StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Net Salary</StatLabel>
+                            <StatNumber color="blue.600">{formatCurrency(selectedPayroll.total_overall)}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
                     </SimpleGrid>
 
                     {Number(selectedPayroll.total_pph || 0) > 0 && (
                       <Alert status="info" borderRadius="xl">
                         <AlertIcon />
                         <AlertDescription>
-                          Hutang PPh payroll diakui pada periode payroll ({formatDate(selectedPayroll.pph_recognition_date || selectedPayroll.period_end)}). Tombol Pay PPh hanya mencatat settlement pada tanggal pajak benar-benar dibayar.
+                          Hutang PPh payroll diakui pada periode payroll ({formatDate(selectedPayroll.pph_recognition_date || selectedPayroll.period_end)}
+                          ). Tombol Pay PPh hanya mencatat settlement pada tanggal pajak benar-benar dibayar.
                         </AlertDescription>
                       </Alert>
                     )}
@@ -1299,9 +1517,7 @@ export default function PayrollPage() {
                     {!selectedPayroll.detail_allowed && (
                       <Alert status="info" borderRadius="xl">
                         <AlertIcon />
-                        <AlertDescription>
-                          Anda hanya memiliki akses summary payroll. Detail per karyawan tidak ditampilkan untuk role ini.
-                        </AlertDescription>
+                        <AlertDescription>Anda hanya memiliki akses summary payroll. Detail per karyawan tidak ditampilkan untuk role ini.</AlertDescription>
                       </Alert>
                     )}
 
@@ -1321,12 +1537,13 @@ export default function PayrollPage() {
                               <Th isNumeric>Basic Salary</Th>
                               <Th isNumeric>Comp. PKWT</Th>
                               <Th isNumeric>Overtime</Th>
+                              <Th isNumeric>PPh21 Terutang</Th>
                               <Th isNumeric>BPJS JHT</Th>
                               <Th isNumeric>BPJS JP</Th>
                               <Th isNumeric>BPJS Kes.</Th>
                               <Th isNumeric>Proportional</Th>
                               <Th isNumeric>Other Deduction</Th>
-                              <Th isNumeric>Net Pay</Th>
+                              <Th isNumeric>Net Salary</Th>
                             </Tr>
                           </Thead>
                           <Tbody>
@@ -1340,18 +1557,25 @@ export default function PayrollPage() {
                                 <Td>{item.division || '-'}</Td>
                                 <Td>
                                   <Text fontWeight="semibold">{item.employee_name}</Text>
-                                  <Text fontSize="xs" color={mutedText}>{item.department || '-'}</Text>
+                                  <Text fontSize="xs" color={mutedText}>
+                                    {item.department || '-'}
+                                  </Text>
                                 </Td>
                                 <Td>{item.position || '-'}</Td>
                                 <Td isNumeric>{formatCurrency(item.base_salary)}</Td>
                                 <Td isNumeric>{formatCurrency(item.compensation_pkwt || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.overtime || 0)}</Td>
+                                <Td isNumeric color="orange.600">
+                                  {formatCurrency(item.pph || 0)}
+                                </Td>
                                 <Td isNumeric>{formatCurrency(item.bpjs_tk_jht || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.bpjs_tk_jp || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.bpjs_kesehatan || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.proportional || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.other_deduction || 0)}</Td>
-                                <Td isNumeric fontWeight="bold">{formatCurrency(item.net_pay || 0)}</Td>
+                                <Td isNumeric fontWeight="bold">
+                                  {formatCurrency(getPayrollItemNetPay(item))}
+                                </Td>
                               </Tr>
                             ))}
                           </Tbody>
@@ -1375,15 +1599,13 @@ export default function PayrollPage() {
 
                         <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={4}>
                           <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">Akun Beban Gaji (Debit)</FormLabel>
+                            <FormLabel fontSize="sm" fontWeight="medium">
+                              Akun Beban Gaji (Debit)
+                            </FormLabel>
                             {accountsLoading ? (
                               <Spinner size="sm" />
                             ) : (
-                              <Select
-                                value={selectedExpenseAccount}
-                                onChange={(e) => setSelectedExpenseAccount(e.target.value)}
-                                bg={inputBg}
-                              >
+                              <Select value={selectedExpenseAccount} onChange={(e) => setSelectedExpenseAccount(e.target.value)} bg={inputBg}>
                                 {expenseAccounts.map((acc) => (
                                   <option key={acc.id} value={acc.id}>
                                     {acc.code} - {acc.name}
@@ -1394,16 +1616,13 @@ export default function PayrollPage() {
                           </FormControl>
 
                           <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">Akun Kas/Bank Gaji (Kredit)</FormLabel>
+                            <FormLabel fontSize="sm" fontWeight="medium">
+                              Akun Kas/Bank Gaji (Kredit)
+                            </FormLabel>
                             {accountsLoading ? (
                               <Spinner size="sm" />
                             ) : (
-                              <Select
-                                placeholder="Pilih Kas/Bank Pembayaran"
-                                value={selectedCashBankAccount}
-                                onChange={(e) => setSelectedCashBankAccount(e.target.value)}
-                                bg={inputBg}
-                              >
+                              <Select placeholder="Pilih Kas/Bank Pembayaran" value={selectedCashBankAccount} onChange={(e) => setSelectedCashBankAccount(e.target.value)} bg={inputBg}>
                                 {approvalCashBanks.map((acc) => (
                                   <option key={acc.id} value={acc.account_id}>
                                     {acc.code} - {acc.name} ({formatCurrency(acc.balance)})
@@ -1414,12 +1633,10 @@ export default function PayrollPage() {
                           </FormControl>
 
                           <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">Metode Pembayaran</FormLabel>
-                            <Select
-                              value={selectedPaymentMethod}
-                              onChange={(e) => setSelectedPaymentMethod(e.target.value)}
-                              bg={inputBg}
-                            >
+                            <FormLabel fontSize="sm" fontWeight="medium">
+                              Metode Pembayaran
+                            </FormLabel>
+                            <Select value={selectedPaymentMethod} onChange={(e) => setSelectedPaymentMethod(e.target.value)} bg={inputBg}>
                               <option value="BANK_TRANSFER">Bank Transfer</option>
                               <option value="CASH">Cash / Kas Tunai</option>
                               <option value="CHECK">Check</option>
@@ -1489,7 +1706,7 @@ export default function PayrollPage() {
                       <Card variant="outline">
                         <CardBody>
                           <Stat>
-                            <StatLabel>Total PPh</StatLabel>
+                            <StatLabel>PPh21 Terutang</StatLabel>
                             <StatNumber color="orange.500">{formatCurrency(selectedPayroll.total_pph)}</StatNumber>
                           </Stat>
                         </CardBody>
@@ -1518,7 +1735,12 @@ export default function PayrollPage() {
                         <Input
                           type="date"
                           value={pphPaymentDraft.payment_date}
-                          onChange={(event) => setPPhPaymentDraft((prev) => ({ ...prev, payment_date: event.target.value }))}
+                          onChange={(event) =>
+                            setPPhPaymentDraft((prev) => ({
+                              ...prev,
+                              payment_date: event.target.value,
+                            }))
+                          }
                           bg={inputBg}
                         />
                       </FormControl>
@@ -1529,7 +1751,12 @@ export default function PayrollPage() {
                           min={0}
                           max={getPPhRemainingAmount(selectedPayroll)}
                           value={pphPaymentDraft.amount}
-                          onChange={(event) => setPPhPaymentDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))}
+                          onChange={(event) =>
+                            setPPhPaymentDraft((prev) => ({
+                              ...prev,
+                              amount: Number(event.target.value),
+                            }))
+                          }
                           bg={inputBg}
                         />
                       </FormControl>
@@ -1540,7 +1767,12 @@ export default function PayrollPage() {
                       <Select
                         placeholder={cashBankLoading ? 'Memuat kas/bank...' : 'Pilih kas/bank pembayaran PPh'}
                         value={pphPaymentDraft.cash_bank_id}
-                        onChange={(event) => setPPhPaymentDraft((prev) => ({ ...prev, cash_bank_id: event.target.value }))}
+                        onChange={(event) =>
+                          setPPhPaymentDraft((prev) => ({
+                            ...prev,
+                            cash_bank_id: event.target.value,
+                          }))
+                        }
                         bg={inputBg}
                         isDisabled={cashBankLoading}
                       >
@@ -1559,7 +1791,12 @@ export default function PayrollPage() {
                       <FormLabel>Reference</FormLabel>
                       <Input
                         value={pphPaymentDraft.reference}
-                        onChange={(event) => setPPhPaymentDraft((prev) => ({ ...prev, reference: event.target.value }))}
+                        onChange={(event) =>
+                          setPPhPaymentDraft((prev) => ({
+                            ...prev,
+                            reference: event.target.value,
+                          }))
+                        }
                         bg={inputBg}
                       />
                     </FormControl>
@@ -1568,7 +1805,12 @@ export default function PayrollPage() {
                       <FormLabel>Catatan</FormLabel>
                       <Textarea
                         value={pphPaymentDraft.notes}
-                        onChange={(event) => setPPhPaymentDraft((prev) => ({ ...prev, notes: event.target.value }))}
+                        onChange={(event) =>
+                          setPPhPaymentDraft((prev) => ({
+                            ...prev,
+                            notes: event.target.value,
+                          }))
+                        }
                         bg={inputBg}
                       />
                     </FormControl>
@@ -1579,13 +1821,7 @@ export default function PayrollPage() {
                 <Button variant="ghost" mr={3} onClick={pphPaymentModal.onClose}>
                   Batal
                 </Button>
-                <Button
-                  leftIcon={<FiDollarSign />}
-                  colorScheme="orange"
-                  onClick={handlePayPPh}
-                  isLoading={submitting}
-                  isDisabled={!selectedPayroll || cashBankLoading || cashBanks.length === 0}
-                >
+                <Button leftIcon={<FiDollarSign />} colorScheme="orange" onClick={handlePayPPh} isLoading={submitting} isDisabled={!selectedPayroll || cashBankLoading || cashBanks.length === 0}>
                   Bayar PPh
                 </Button>
               </ModalFooter>

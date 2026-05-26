@@ -46,6 +46,20 @@ class PurchaseJournalService {
     return await response.json();
   }
 
+  async backfillPurchaseJournalEntries(purchaseId: number): Promise<PurchaseJournalData> {
+    const response = await fetch(`${API_V1_BASE}/purchases/${purchaseId}/journal-entries/backfill`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || error.message || `Failed to backfill purchase journal entries: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
   // Get detailed information about a specific journal entry
   async getJournalEntryDetails(journalId: number): Promise<JournalEntryWithDetails> {
     const response = await fetch(`${API_V1_BASE}/journals/${journalId}`, {

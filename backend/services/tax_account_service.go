@@ -26,12 +26,12 @@ func NewTaxAccountService(db *gorm.DB) *TaxAccountService {
 	service := &TaxAccountService{
 		db: db,
 	}
-	
+
 	// Load current settings on initialization
 	if err := service.loadSettings(); err != nil {
 		log.Printf("Warning: Failed to load tax account settings: %v", err)
 	}
-	
+
 	return service
 }
 
@@ -72,11 +72,11 @@ func (s *TaxAccountService) loadSettings() error {
 		// Create default settings if none exist
 		defaultSettings := models.GetDefaultTaxAccountSettings()
 		defaultSettings.UpdatedBy = 1 // System user ID
-		
+
 		if createErr := s.db.Create(defaultSettings).Error; createErr != nil {
 			return fmt.Errorf("failed to create default settings: %v", createErr)
 		}
-		
+
 		// Load the created settings with relations
 		return s.loadSettings()
 	}
@@ -118,26 +118,26 @@ func (s *TaxAccountService) CreateSettings(req *models.TaxAccountSettingsCreateR
 
 	// Create new settings
 	settings := &models.TaxAccountSettings{
-		SalesReceivableAccountID:   req.SalesReceivableAccountID,
-		SalesCashAccountID:         req.SalesCashAccountID,
-		SalesBankAccountID:         req.SalesBankAccountID,
-		SalesRevenueAccountID:      req.SalesRevenueAccountID,
-		SalesOutputVATAccountID:    req.SalesOutputVATAccountID,
-		PurchasePayableAccountID:   req.PurchasePayableAccountID,
-		PurchaseCashAccountID:      req.PurchaseCashAccountID,
-		PurchaseBankAccountID:      req.PurchaseBankAccountID,
-		PurchaseInputVATAccountID:  req.PurchaseInputVATAccountID,
-		PurchaseExpenseAccountID:   req.PurchaseExpenseAccountID,
-		WithholdingTax21AccountID:  req.WithholdingTax21AccountID,
-		WithholdingTax23AccountID:  req.WithholdingTax23AccountID,
-		WithholdingTax25AccountID:  req.WithholdingTax25AccountID,
-		TaxPayableAccountID:        req.TaxPayableAccountID,
-		InventoryAccountID:         req.InventoryAccountID,
-		COGSAccountID:              req.COGSAccountID,
-		IsActive:                   true,
-		ApplyToAllCompanies:        req.ApplyToAllCompanies != nil && *req.ApplyToAllCompanies,
-		UpdatedBy:                  userID,
-		Notes:                      req.Notes,
+		SalesReceivableAccountID:  req.SalesReceivableAccountID,
+		SalesCashAccountID:        req.SalesCashAccountID,
+		SalesBankAccountID:        req.SalesBankAccountID,
+		SalesRevenueAccountID:     req.SalesRevenueAccountID,
+		SalesOutputVATAccountID:   req.SalesOutputVATAccountID,
+		PurchasePayableAccountID:  req.PurchasePayableAccountID,
+		PurchaseCashAccountID:     req.PurchaseCashAccountID,
+		PurchaseBankAccountID:     req.PurchaseBankAccountID,
+		PurchaseInputVATAccountID: req.PurchaseInputVATAccountID,
+		PurchaseExpenseAccountID:  req.PurchaseExpenseAccountID,
+		WithholdingTax21AccountID: req.WithholdingTax21AccountID,
+		WithholdingTax23AccountID: req.WithholdingTax23AccountID,
+		WithholdingTax25AccountID: req.WithholdingTax25AccountID,
+		TaxPayableAccountID:       req.TaxPayableAccountID,
+		InventoryAccountID:        req.InventoryAccountID,
+		COGSAccountID:             req.COGSAccountID,
+		IsActive:                  true,
+		ApplyToAllCompanies:       req.ApplyToAllCompanies != nil && *req.ApplyToAllCompanies,
+		UpdatedBy:                 userID,
+		Notes:                     req.Notes,
 	}
 
 	// Validate settings
@@ -484,6 +484,11 @@ func (s *TaxAccountService) GetActiveTaxConfig() (*models.TaxConfig, error) {
 	// Try to load from database
 	s.cacheMux.RUnlock()
 	s.cacheMux.Lock()
+	if !s.db.Migrator().HasTable(&models.TaxConfig{}) {
+		s.cacheMux.Unlock()
+		s.cacheMux.RLock()
+		return nil, fmt.Errorf("tax config table not found")
+	}
 	var taxConfig models.TaxConfig
 	err := s.db.Where("is_active = ? AND is_default = ?", true, true).First(&taxConfig).Error
 	if err != nil {
@@ -644,7 +649,7 @@ func (s *TaxAccountService) GetPurchaseTaxAccountID(taxType string) (uint, error
 // CalculateTax calculates tax amount based on amount and tax configuration
 func (s *TaxAccountService) CalculateTax(amount float64, taxRate float64, discountBeforeTax bool, discount float64) float64 {
 	config, _ := s.GetActiveTaxConfig()
-	
+
 	var baseAmount float64
 	if discountBeforeTax {
 		baseAmount = amount - discount
@@ -673,11 +678,11 @@ func (s *TaxAccountService) CalculateTax(amount float64, taxRate float64, discou
 
 // CalculateSalesTax calculates sales tax with all applicable taxes
 type SalesTaxCalculation struct {
-	PPNAmount       float64
-	PPh21Amount     float64
-	PPh23Amount     float64
-	OtherTaxAmount  float64
-	TotalTaxAmount  float64
+	PPNAmount      float64
+	PPh21Amount    float64
+	PPh23Amount    float64
+	OtherTaxAmount float64
+	TotalTaxAmount float64
 }
 
 func (s *TaxAccountService) CalculateSalesTax(subtotal float64, discount float64, enablePPN bool, enablePPh21 bool, enablePPh23 bool, enableOther bool) (*SalesTaxCalculation, error) {
@@ -687,7 +692,7 @@ func (s *TaxAccountService) CalculateSalesTax(subtotal float64, discount float64
 	}
 
 	result := &SalesTaxCalculation{}
-	
+
 	if enablePPN {
 		result.PPNAmount = s.CalculateTax(subtotal, config.SalesPPNRate, config.DiscountBeforeTax, discount)
 	}
@@ -700,7 +705,7 @@ func (s *TaxAccountService) CalculateSalesTax(subtotal float64, discount float64
 	if enableOther {
 		result.OtherTaxAmount = s.CalculateTax(subtotal, config.SalesOtherTaxRate, config.DiscountBeforeTax, discount)
 	}
-	
+
 	result.TotalTaxAmount = result.PPNAmount + result.PPh21Amount + result.PPh23Amount + result.OtherTaxAmount
 
 	return result, nil
@@ -708,12 +713,12 @@ func (s *TaxAccountService) CalculateSalesTax(subtotal float64, discount float64
 
 // CalculatePurchaseTax calculates purchase tax with all applicable taxes
 type PurchaseTaxCalculation struct {
-	PPNAmount       float64
-	PPh21Amount     float64
-	PPh23Amount     float64
-	PPh25Amount     float64
-	OtherTaxAmount  float64
-	TotalTaxAmount  float64
+	PPNAmount      float64
+	PPh21Amount    float64
+	PPh23Amount    float64
+	PPh25Amount    float64
+	OtherTaxAmount float64
+	TotalTaxAmount float64
 }
 
 func (s *TaxAccountService) CalculatePurchaseTax(subtotal float64, discount float64, enablePPN bool, enablePPh21 bool, enablePPh23 bool, enablePPh25 bool, enableOther bool) (*PurchaseTaxCalculation, error) {
@@ -723,7 +728,7 @@ func (s *TaxAccountService) CalculatePurchaseTax(subtotal float64, discount floa
 	}
 
 	result := &PurchaseTaxCalculation{}
-	
+
 	if enablePPN {
 		result.PPNAmount = s.CalculateTax(subtotal, config.PurchasePPNRate, config.DiscountBeforeTax, discount)
 	}
@@ -739,7 +744,7 @@ func (s *TaxAccountService) CalculatePurchaseTax(subtotal float64, discount floa
 	if enableOther {
 		result.OtherTaxAmount = s.CalculateTax(subtotal, config.PurchaseOtherTaxRate, config.DiscountBeforeTax, discount)
 	}
-	
+
 	result.TotalTaxAmount = result.PPNAmount + result.PPh21Amount + result.PPh23Amount + result.PPh25Amount + result.OtherTaxAmount
 
 	return result, nil

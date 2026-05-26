@@ -204,13 +204,6 @@ const SaleDetailPage: React.FC = () => {
   const canPostPPh23 =
     !!sale &&
     (sale.pph23_amount || 0) > 0 &&
-    (sale.outstanding_amount || 0) <= 0.005 &&
-    !sale.pph23_settlement_date &&
-    sale.status !== "CANCELLED";
-  const canAdjustPPh23 =
-    !!sale &&
-    (sale.pph23_amount || 0) > 0 &&
-    (sale.outstanding_amount || 0) > 0.005 &&
     !sale.pph23_settlement_date &&
     sale.status !== "CANCELLED";
   const pph23PostingStatus = !sale
@@ -221,8 +214,6 @@ const SaleDetailPage: React.FC = () => {
         ? "Belum ditambahkan"
         : (sale.pph23_amount || 0) <= 0
           ? "Tidak ada PPh23"
-        : (sale.outstanding_amount || 0) > 0.005
-          ? "Menunggu pelunasan invoice / koreksi kurang bayar PPh23"
           : "Siap dipost";
   const pphStatus = sale ? getSalePPhStatus(sale) : null;
   const saleItems = sale?.sale_items || [];
@@ -370,13 +361,11 @@ const SaleDetailPage: React.FC = () => {
                     {t("sales.detail.recordPayment")}
                   </MenuItem>
                 )}
-                {(canAddPPh23 || canPostPPh23 || canAdjustPPh23) && (
+                {(canAddPPh23 || canPostPPh23) && (
                   <MenuItem icon={<FiCheck />} onClick={onPPh23Open}>
                     {canAddPPh23
                       ? "Tambah PPh23"
-                      : canAdjustPPh23
-                        ? "Koreksi PPh23"
-                        : "Bayar PPh23"}
+                      : "Posting PPh23"}
                   </MenuItem>
                 )}
                 <MenuItem

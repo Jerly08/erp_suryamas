@@ -59,7 +59,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import approvalService, { Purchase, ApprovalStats, ApprovalHistory } from '@/services/approvalService';
 import WorkflowVisualization from '@/components/approval/WorkflowVisualization';
-import { normalizeRole, humanizeRole } from '@/utils/roles';
+import { normalizeRole, humanizeRole, workflowRoleMatchesUserRole } from '@/utils/roles';
 import { getUserDisplayName } from '@/utils/userDisplay';
 
 interface PurchaseApprovalDashboardProps {}
@@ -344,15 +344,14 @@ const getPriorityColor = (amount: number) => {
     return { role: null, humanRole: 'Status tidak diketahui', hasActiveStep: false, stepStatus: 'UNKNOWN' };
   };
 
-  // Check if current user can approve: must match active step approver_role OR be admin
+  // Check if current user can approve: must match active step approver_role.
   const canUserApprove = (purchase: Purchase, userRole?: string) => {
     const roleNorm = normalizeRole(userRole || '');
     if (!roleNorm) return false;
-    if (roleNorm === 'admin') return true;
     
     const stepInfo = getActiveStepInfo(purchase);
     // Only allow approval if there's an active step and user role matches
-    return stepInfo.hasActiveStep && stepInfo.role === roleNorm;
+    return stepInfo.hasActiveStep && workflowRoleMatchesUserRole(stepInfo.role, roleNorm);
   };
 
   // Get tooltip text for why user cannot approve
@@ -473,7 +472,7 @@ const getPriorityColor = (amount: number) => {
   const filteredPurchases = purchases.filter((p) => {
     const nextRole = getActiveStepRole(p);
     if (!nextRole) return true; // if unknown, show it
-    return meRole === 'admin' || meRole === nextRole;
+    return meRole === 'admin' || workflowRoleMatchesUserRole(nextRole, meRole);
   });
 
   // Count pending items for other roles (for informative empty state)
@@ -482,7 +481,7 @@ const getPriorityColor = (amount: number) => {
     const status = (p.approval_status || '').toLowerCase();
     const isPending = status === 'pending' || status === 'pending_approval';
     const stepInfo = getActiveStepInfo(p);
-    return isPending && stepInfo.hasActiveStep && stepInfo.role !== meRole;
+    return isPending && stepInfo.hasActiveStep && !workflowRoleMatchesUserRole(stepInfo.role, meRole);
   }).length;
 
   // Derive next approver label for header (from first item, if any)

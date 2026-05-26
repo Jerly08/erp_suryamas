@@ -315,37 +315,38 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 		}
 	}
 
-	// Calculate total credit (subtotal + PPN - any withholdings)
-	totalCredit := subtotal + purchase.PPNAmount
+	// Calculate vendor payment/payable amount. Purchase PPh is withheld from the
+	// vendor payment and posted separately as tax payable.
+	vendorCredit := subtotal + purchase.PPNAmount
 
 	// Handle withholding taxes (reduce the credit amount) - use configured account
 	if purchase.PPh21Amount > 0 {
-		pph21Account, err := s.taxAccountHelper.GetWithholdingTax21Account(dbToUse)
+		pph21Account, err := s.taxAccountHelper.GetPurchaseWithholdingTax21PayableAccount(dbToUse)
 		if err != nil {
 			log.Printf("⚠️ PPh 21 account not found, skipping PPh21 entry: %v", err)
 		} else {
 			lines = append(lines, PurchaseJournalLineRequest{
 				AccountID:    uint64(pph21Account.ID),
-				DebitAmount:  decimal.NewFromFloat(purchase.PPh21Amount),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("PPh 21 - %s", purchase.Code),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: decimal.NewFromFloat(purchase.PPh21Amount),
+				Description:  fmt.Sprintf("Utang PPh 21 - %s", purchase.Code),
 			})
-			totalCredit -= purchase.PPh21Amount
+			vendorCredit -= purchase.PPh21Amount
 		}
 	}
 
 	if purchase.PPh23Amount > 0 {
-		pph23Account, err := s.taxAccountHelper.GetWithholdingTax23Account(dbToUse)
+		pph23Account, err := s.taxAccountHelper.GetPurchaseWithholdingTax23PayableAccount(dbToUse)
 		if err != nil {
 			log.Printf("⚠️ PPh 23 account not found, skipping PPh23 entry: %v", err)
 		} else {
 			lines = append(lines, PurchaseJournalLineRequest{
 				AccountID:    uint64(pph23Account.ID),
-				DebitAmount:  decimal.NewFromFloat(purchase.PPh23Amount),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("PPh 23 - %s", purchase.Code),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: decimal.NewFromFloat(purchase.PPh23Amount),
+				Description:  fmt.Sprintf("Utang PPh 23 - %s", purchase.Code),
 			})
-			totalCredit -= purchase.PPh23Amount
+			vendorCredit -= purchase.PPh23Amount
 		}
 	}
 
@@ -353,7 +354,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 	lines = append(lines, PurchaseJournalLineRequest{
 		AccountID:    uint64(creditAccount.ID),
 		DebitAmount:  decimal.Zero,
-		CreditAmount: decimal.NewFromFloat(totalCredit),
+		CreditAmount: decimal.NewFromFloat(vendorCredit),
 		Description:  fmt.Sprintf("Pembayaran Pembelian - %s", purchase.Code),
 	})
 

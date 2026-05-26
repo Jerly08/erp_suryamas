@@ -35,7 +35,7 @@ func main() {
 	fmt.Println("  5) HAPUS PERIODE CLOSING — Hapus semua periode closing yang sudah pernah di-close")
 	fmt.Println("  6) RESET COMPANY TYPE — Set company_type ke NULL (untuk test onboarding flow)")
 	fmt.Println("  7) TRUNCATE & RESET ID — Hapus SEMUA data transaksi + BOM/Project/PR + reset semua ID dari 0")
-	fmt.Println("  8) HAPUS MODUL — Hapus data modul tertentu (BOMs, Projects, PR, Products) secara selektif")
+	fmt.Println("  8) HAPUS MODUL — Hapus data modul tertentu (BOMs, Projects, PR, Products, Payroll) secara selektif")
 	fmt.Println("")
 	fmt.Println("  9) MAINTENANCE COA â€” Cleanup / restore account COA inactive & soft deleted")
 	mode := askResetMode()
@@ -89,7 +89,7 @@ func main() {
 		fmt.Println("   - ⚠️  PERINGATAN: Ini operasi yang sangat merusak!")
 	} else if mode == 8 {
 		fmt.Println("🗂️  MODE HAPUS MODUL: Hapus data modul tertentu secara selektif")
-		fmt.Println("   - Pilih modul mana yang ingin dihapus: BOMs, Projects, Purchase Requests, Products, Assets")
+		fmt.Println("   - Pilih modul mana yang ingin dihapus: BOMs, Projects, Purchase Requests, Products, Assets, Payroll")
 		fmt.Println("   - Sekarang juga mendukung Prepaid Expenses + jurnal amortisasi/terminasi")
 		fmt.Println("   - Setiap modul dihapus beserta soft-delete-nya (hard delete)")
 		fmt.Println("   - Sequence ID direset untuk modul yang dipilih")
@@ -636,6 +636,15 @@ func executeTransactionResetWithGORM(db *gorm.DB) error {
 		fmt.Printf("   ⚠️  Warning: Delete Purchase error: %v\n", err)
 	}
 
+	fmt.Println("   🗑️  Menghapus payroll data...")
+	// Payroll related - items first, then runs
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollItem{}).Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Delete PayrollItem error: %v\n", err)
+	}
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollRun{}).Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Delete PayrollRun error: %v\n", err)
+	}
+
 	fmt.Println("   🗑️  Menghapus approval dan workflow data...")
 	fmt.Println("   Menghapus prepaid expense related data...")
 	// Prepaid related - schedules first, then headers
@@ -755,6 +764,7 @@ func resetMainSequences(db *gorm.DB) {
 		// Transaction sequences
 		"sales_id_seq",
 		"sale_items_id_seq",
+		"sale_backorder_allocations_id_seq",
 		"purchases_id_seq",
 		"purchase_items_id_seq",
 		"purchase_receipts_id_seq",
@@ -762,6 +772,9 @@ func resetMainSequences(db *gorm.DB) {
 		"purchase_documents_id_seq",
 		"prepaid_expenses_id_seq",
 		"prepaid_schedules_id_seq",
+		// Payroll sequences
+		"payroll_items_id_seq",
+		"payroll_runs_id_seq",
 		"transactions_id_seq",
 		"payments_id_seq",
 		"cash_bank_transfers_id_seq",
@@ -946,6 +959,8 @@ func showCurrentDataSummary(db *gorm.DB) {
 		TotalSales          int64 `json:"total_sales"`
 		TotalPurchases      int64 `json:"total_purchases"`
 		TotalPrepaids       int64 `json:"total_prepaids"`
+		TotalPayrollRuns    int64 `json:"total_payroll_runs"`
+		TotalPayrollItems   int64 `json:"total_payroll_items"`
 		TotalTransactions   int64 `json:"total_transactions"`
 		TotalJournals       int64 `json:"total_journals"`
 		TotalJournalEntries int64 `json:"total_journal_entries"`
@@ -970,6 +985,8 @@ func showCurrentDataSummary(db *gorm.DB) {
 	db.Model(&models.Sale{}).Count(&summary.TotalSales)
 	db.Model(&models.Purchase{}).Count(&summary.TotalPurchases)
 	db.Model(&models.PrepaidExpense{}).Count(&summary.TotalPrepaids)
+	db.Model(&models.PayrollRun{}).Count(&summary.TotalPayrollRuns)
+	db.Model(&models.PayrollItem{}).Count(&summary.TotalPayrollItems)
 	db.Model(&models.Transaction{}).Count(&summary.TotalTransactions)
 	db.Model(&models.Journal{}).Count(&summary.TotalJournals)
 	db.Model(&models.JournalEntry{}).Count(&summary.TotalJournalEntries)
@@ -996,6 +1013,8 @@ func showCurrentDataSummary(db *gorm.DB) {
 	fmt.Printf("   Sales: %d (akan DIHAPUS)\n", summary.TotalSales)
 	fmt.Printf("   Purchases: %d (akan DIHAPUS)\n", summary.TotalPurchases)
 	fmt.Printf("   Prepaid Expenses: %d (akan DIHAPUS)\n", summary.TotalPrepaids)
+	fmt.Printf("   Payroll Runs: %d (akan DIHAPUS)\n", summary.TotalPayrollRuns)
+	fmt.Printf("   Payroll Items: %d (akan DIHAPUS)\n", summary.TotalPayrollItems)
 	fmt.Printf("   Transactions: %d (akan DIHAPUS)\n", summary.TotalTransactions)
 	fmt.Printf("   Classic Journals: %d (akan DIHAPUS)\n", summary.TotalJournals)
 	fmt.Printf("   Classic Journal Entries: %d (akan DIHAPUS)\n", summary.TotalJournalEntries)
@@ -1140,6 +1159,8 @@ func showPostResetSummary(db *gorm.DB) {
 		RemainingPurchases        int64 `json:"remaining_purchases"`
 		RemainingPrepaids         int64 `json:"remaining_prepaids"`
 		RemainingPrepaidSchedules int64 `json:"remaining_prepaid_schedules"`
+		RemainingPayrollRuns      int64 `json:"remaining_payroll_runs"`
+		RemainingPayrollItems     int64 `json:"remaining_payroll_items"`
 		RemainingTransactions     int64 `json:"remaining_transactions"`
 		RemainingJournals         int64 `json:"remaining_journals"`
 		RemainingJournalEntries   int64 `json:"remaining_journal_entries"`
@@ -1168,6 +1189,8 @@ func showPostResetSummary(db *gorm.DB) {
 	db.Model(&models.Purchase{}).Count(&summary.RemainingPurchases)
 	db.Model(&models.PrepaidExpense{}).Count(&summary.RemainingPrepaids)
 	db.Model(&models.PrepaidSchedule{}).Count(&summary.RemainingPrepaidSchedules)
+	db.Model(&models.PayrollRun{}).Count(&summary.RemainingPayrollRuns)
+	db.Model(&models.PayrollItem{}).Count(&summary.RemainingPayrollItems)
 	db.Model(&models.Transaction{}).Count(&summary.RemainingTransactions)
 	db.Model(&models.Journal{}).Count(&summary.RemainingJournals)
 	db.Model(&models.JournalEntry{}).Count(&summary.RemainingJournalEntries)
@@ -1194,6 +1217,7 @@ func showPostResetSummary(db *gorm.DB) {
 
 	if summary.RemainingSales == 0 && summary.RemainingPurchases == 0 &&
 		summary.RemainingPrepaids == 0 && summary.RemainingPrepaidSchedules == 0 &&
+		summary.RemainingPayrollRuns == 0 && summary.RemainingPayrollItems == 0 &&
 		summary.RemainingTransactions == 0 && summary.RemainingJournals == 0 &&
 		summary.RemainingJournalEntries == 0 && summary.RemainingJournalLines == 0 &&
 		summary.RemainingSSOTJournals == 0 && summary.RemainingSSOTLines == 0 &&
@@ -1205,6 +1229,8 @@ func showPostResetSummary(db *gorm.DB) {
 		fmt.Printf("   - Purchases: %d\n", summary.RemainingPurchases)
 		fmt.Printf("   - Prepaid Expenses: %d\n", summary.RemainingPrepaids)
 		fmt.Printf("   - Prepaid Schedules: %d\n", summary.RemainingPrepaidSchedules)
+		fmt.Printf("   - Payroll Runs: %d\n", summary.RemainingPayrollRuns)
+		fmt.Printf("   - Payroll Items: %d\n", summary.RemainingPayrollItems)
 		fmt.Printf("   - Transactions: %d\n", summary.RemainingTransactions)
 		fmt.Printf("   - Classic Journals: %d\n", summary.RemainingJournals)
 		fmt.Printf("   - Classic Journal Entries: %d\n", summary.RemainingJournalEntries)
@@ -1221,6 +1247,8 @@ func showPostResetSummary(db *gorm.DB) {
 		fmt.Printf("   - Purchases: %d\n", summary.RemainingPurchases)
 		fmt.Printf("   - Prepaid Expenses: %d\n", summary.RemainingPrepaids)
 		fmt.Printf("   - Prepaid Schedules: %d\n", summary.RemainingPrepaidSchedules)
+		fmt.Printf("   - Payroll Runs: %d\n", summary.RemainingPayrollRuns)
+		fmt.Printf("   - Payroll Items: %d\n", summary.RemainingPayrollItems)
 		fmt.Printf("   - Transactions: %d\n", summary.RemainingTransactions)
 		fmt.Printf("   - Classic Journals: %d\n", summary.RemainingJournals)
 		fmt.Printf("   - Classic Journal Entries: %d\n", summary.RemainingJournalEntries)
@@ -1805,6 +1833,7 @@ func executeTruncateAndResetIDWithGORM(db *gorm.DB) error {
 		"journal_entries",
 		"journals",
 		// Sales related
+		"sale_backorder_allocations",
 		"sale_return_items",
 		"sale_returns",
 		"sale_payments",
@@ -1819,6 +1848,9 @@ func executeTruncateAndResetIDWithGORM(db *gorm.DB) error {
 		// Prepaid related
 		"prepaid_schedules",
 		"prepaid_expenses",
+		// Payroll related
+		"payroll_items",
+		"payroll_runs",
 		// Purchase Request system
 		"purchase_request_items",
 		"purchase_requests",
@@ -2222,6 +2254,106 @@ func clearAssetUploadDirectories() (int, error) {
 	return removedFiles, lastErr
 }
 
+func deletePayrollModuleDataWithGORM(db *gorm.DB) error {
+	fmt.Println("\n   Menghapus modul: Payroll...")
+
+	tx := db.Session(&gorm.Session{SkipHooks: true}).Begin()
+	if err := tx.Exec("SET LOCAL session_replication_role = 'replica'").Error; err != nil {
+		fmt.Printf("   Warning: Gagal set session_replication_role=replica untuk payroll: %v\n", err)
+	}
+	_ = tx.Exec("SET CONSTRAINTS ALL DEFERRED").Error
+
+	var runCount int64
+	var itemCount int64
+	tx.Model(&models.PayrollRun{}).Count(&runCount)
+	tx.Model(&models.PayrollItem{}).Count(&itemCount)
+
+	// Hitung jurnal terkait payroll
+	payrollSourceTypes := []string{"PAYROLL_PPH_PAYABLE", "PAYROLL_PPH_PAYMENT"}
+
+	var ssotJournalCount int64
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where("source_type IN ?", payrollSourceTypes).
+		Count(&ssotJournalCount).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hitung SSOT payroll journals: %w", err)
+	}
+
+	// Hapus journal event logs terkait payroll
+	if err := tx.Exec(`
+		DELETE FROM journal_event_log
+		WHERE journal_id IN (
+			SELECT id
+			FROM unified_journal_ledger
+			WHERE source_type IN ?
+		)
+	`, payrollSourceTypes).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus journal_event_log payroll: %w", err)
+	}
+
+	// Hapus journal lines terkait payroll
+	if err := tx.Exec(`
+		DELETE FROM unified_journal_lines
+		WHERE journal_id IN (
+			SELECT id
+			FROM unified_journal_ledger
+			WHERE source_type IN ?
+		)
+	`, payrollSourceTypes).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus unified_journal_lines payroll: %w", err)
+	}
+
+	// Hapus journal entries terkait payroll
+	if err := tx.Where("source_type IN ?", payrollSourceTypes).
+		Unscoped().
+		Delete(&models.SSOTJournalEntry{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus unified_journal_ledger payroll: %w", err)
+	}
+
+	// Hapus cash bank transactions terkait payroll
+	payrollCBTxRefTypes := []string{"PAYROLL_NET_PAYMENT", "PAYROLL_PPH_PAYMENT"}
+	var cbTxCount int64
+	tx.Model(&models.CashBankTransaction{}).
+		Where("reference_type IN ?", payrollCBTxRefTypes).
+		Count(&cbTxCount)
+
+	if err := tx.Unscoped().
+		Where("reference_type IN ?", payrollCBTxRefTypes).
+		Delete(&models.CashBankTransaction{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus cash_bank_transactions payroll: %w", err)
+	}
+
+	// Hapus payroll items lalu payroll runs
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollItem{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus payroll_items: %w", err)
+	}
+
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollRun{}).Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal hapus payroll_runs: %w", err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		_ = tx.Rollback().Error
+		return fmt.Errorf("gagal commit hapus modul payroll: %w", err)
+	}
+
+	resetSequenceIfExists(db, "payroll_runs_id_seq")
+	resetSequenceIfExists(db, "payroll_items_id_seq")
+
+	fmt.Printf("   Deleted payroll_runs: %d\n", runCount)
+	fmt.Printf("   Deleted payroll_items: %d\n", itemCount)
+	fmt.Printf("   Deleted SSOT payroll journals: %d\n", ssotJournalCount)
+	fmt.Printf("   Deleted cash bank transactions (payroll): %d\n", cbTxCount)
+
+	return nil
+}
+
 // executeDeleteModuleDataWithGORM menghapus data modul tertentu secara selektif.
 // User memilih satu atau lebih modul: BOMs, Projects, Purchase Requests, Products, Prepaid Expenses, Assets.
 func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
@@ -2236,8 +2368,9 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	fmt.Println("  e) Prepaid Expenses (header + schedule + jurnal amortisasi/terminasi)")
 	fmt.Println("  f) Assets (asset master + categories + jurnal asset/depresiasi + upload image)")
 	fmt.Println("  g) Cash Bank Transfer Requests (approval transfer antar bank yang tampil di queue)")
+	fmt.Println("  h) Payroll (payroll runs + items + jurnal PPh payable/payment + cash bank transactions)")
 	fmt.Println("  all) Hapus semua modul di atas")
-	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c,e,f,g atau all): ")
+	fmt.Print("Masukkan pilihan (pisahkan koma, contoh: a,b,c,e,f,g,h atau all): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
@@ -2339,6 +2472,13 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 	if deleteAll || selected["g"] {
 		if err := deleteCashBankTransferModuleDataWithGORM(db); err != nil {
 			fmt.Printf("   Warning: Gagal hapus modul cash bank transfer requests: %v\n", err)
+		}
+	}
+
+	// Hapus modul Payroll
+	if deleteAll || selected["h"] {
+		if err := deletePayrollModuleDataWithGORM(db); err != nil {
+			fmt.Printf("   Warning: Gagal hapus modul payroll: %v\n", err)
 		}
 	}
 

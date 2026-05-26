@@ -345,6 +345,9 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 	}
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
+		// Fix sequence desync: ensure sale_backorder_allocations_id_seq is ahead of max existing ID
+		tx.Exec(`SELECT setval('sale_backorder_allocations_id_seq', COALESCE((SELECT MAX(id) FROM sale_backorder_allocations), 0) + 1, false)`)
+
 		cogsAccount, inventoryAccount, clearingAccount, err := resolveBackorderSettlementAccounts(tx, NewTaxAccountHelper(tx))
 		if err != nil {
 			return err
@@ -477,34 +480,38 @@ func (s *PurchaseService) settleBackordersForApprovedPurchase(purchase *models.P
 			return err
 		}
 
+		decEstimated := decimal.NewFromFloat(totalEstimated).Round(2)
+		decActual := decimal.NewFromFloat(totalActual).Round(2)
+		decVariance := decActual.Sub(decEstimated)
+
 		journalLines := []JournalLineRequest{
 			{
 				AccountID:    uint64(clearingAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(totalEstimated),
+				DebitAmount:  decEstimated,
 				CreditAmount: decimal.Zero,
 				Description:  fmt.Sprintf("Backorder clearing settlement - %s", purchase.Code),
 			},
 			{
 				AccountID:    uint64(inventoryAccount.ID),
 				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(totalActual),
+				CreditAmount: decActual,
 				Description:  fmt.Sprintf("Inventory consumed by backorder settlement - %s", purchase.Code),
 			},
 		}
 
-		variance := totalActual - totalEstimated
-		if variance > 0.005 {
+		tolerance := decimal.NewFromFloat(0.005)
+		if decVariance.GreaterThan(tolerance) {
 			journalLines = append(journalLines, JournalLineRequest{
 				AccountID:    uint64(cogsAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(variance),
+				DebitAmount:  decVariance,
 				CreditAmount: decimal.Zero,
 				Description:  fmt.Sprintf("COGS variance on backorder settlement - %s", purchase.Code),
 			})
-		} else if variance < -0.005 {
+		} else if decVariance.LessThan(tolerance.Neg()) {
 			journalLines = append(journalLines, JournalLineRequest{
 				AccountID:    uint64(cogsAccount.ID),
 				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(-variance),
+				CreditAmount: decVariance.Abs(),
 				Description:  fmt.Sprintf("COGS variance on backorder settlement - %s", purchase.Code),
 			})
 		}
@@ -553,6 +560,9 @@ func BackfillSalesBackordersForProduct(db *gorm.DB, productID uint, userID uint)
 	journalService := NewUnifiedJournalService(db)
 
 	err := db.Transaction(func(tx *gorm.DB) error {
+		// Fix sequence desync: ensure sale_backorder_allocations_id_seq is ahead of max existing ID
+		tx.Exec(`SELECT setval('sale_backorder_allocations_id_seq', COALESCE((SELECT MAX(id) FROM sale_backorder_allocations), 0) + 1, false)`)
+
 		cogsAccount, inventoryAccount, clearingAccount, err := resolveBackorderSettlementAccounts(tx, NewTaxAccountHelper(tx))
 		if err != nil {
 			return err
@@ -691,34 +701,38 @@ func BackfillSalesBackordersForProduct(db *gorm.DB, productID uint, userID uint)
 			result.AffectedSaleIDs = append(result.AffectedSaleIDs, saleID)
 		}
 
+		decEstimated := decimal.NewFromFloat(totalEstimated).Round(2)
+		decActual := decimal.NewFromFloat(totalActual).Round(2)
+		decVariance := decActual.Sub(decEstimated)
+
 		journalLines := []JournalLineRequest{
 			{
 				AccountID:    uint64(clearingAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(totalEstimated),
+				DebitAmount:  decEstimated,
 				CreditAmount: decimal.Zero,
 				Description:  fmt.Sprintf("Backorder clearing manual backfill - %s", product.Code),
 			},
 			{
 				AccountID:    uint64(inventoryAccount.ID),
 				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(totalActual),
+				CreditAmount: decActual,
 				Description:  fmt.Sprintf("Inventory consumed by manual backfill - %s", product.Code),
 			},
 		}
 
-		variance := totalActual - totalEstimated
-		if variance > 0.005 {
+		tolerance := decimal.NewFromFloat(0.005)
+		if decVariance.GreaterThan(tolerance) {
 			journalLines = append(journalLines, JournalLineRequest{
 				AccountID:    uint64(cogsAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(variance),
+				DebitAmount:  decVariance,
 				CreditAmount: decimal.Zero,
 				Description:  fmt.Sprintf("COGS variance on manual backfill - %s", product.Code),
 			})
-		} else if variance < -0.005 {
+		} else if decVariance.LessThan(tolerance.Neg()) {
 			journalLines = append(journalLines, JournalLineRequest{
 				AccountID:    uint64(cogsAccount.ID),
 				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(-variance),
+				CreditAmount: decVariance.Abs(),
 				Description:  fmt.Sprintf("COGS variance on manual backfill - %s", product.Code),
 			})
 		}

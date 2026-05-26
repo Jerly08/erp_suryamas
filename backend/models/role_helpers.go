@@ -104,6 +104,8 @@ func WorkflowRoleMatchesUserRole(workflowRole string, userRole string) bool {
 	switch requiredRole {
 	case RoleFinance:
 		return IsFinanceManagerRole(userRole)
+	case "purchase_finance_staff":
+		return IsFinanceStaffRole(userRole)
 	case RoleFinanceStaff:
 		return IsFinanceStaffRole(userRole) || IsAccountingRole(userRole)
 	default:
@@ -116,8 +118,10 @@ func WorkflowStepAssignableRoles(workflowRole string) []string {
 	switch NormalizeRole(workflowRole) {
 	case RoleFinance:
 		return []string{RoleFinance, RoleFinanceManager}
+	case "purchase_finance_staff":
+		return []string{RoleFinanceStaff}
 	case RoleFinanceStaff:
-		return []string{RoleFinanceStaff, RoleAccounting}
+		return []string{RoleFinanceStaff, RoleAccounting, "purchase_finance_staff"}
 	case "":
 		return nil
 	default:

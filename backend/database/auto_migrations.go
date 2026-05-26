@@ -933,18 +933,7 @@ func ensureStandardPurchaseApprovalWorkflow(db *gorm.DB) error {
 			log.Println("✅ Standard Purchase Approval workflow normalized (Finance required, Director optional)")
 		}
 
-		// Check if workflow has steps
-		var stepCount int64
-		db.Model(&ApprovalStep{}).Where("workflow_id = ?", existingWorkflow.ID).Count(&stepCount)
-
-		if stepCount == 0 {
-			log.Println("🔧 Creating workflow steps...")
-			// Create steps for existing workflow
-			return createWorkflowSteps(db, existingWorkflow.ID)
-		} else {
-			// Silently skip if everything exists
-			return nil
-		}
+		return syncStandardPurchaseApprovalWorkflowSteps(db, existingWorkflow.ID)
 	}
 
 	// If not found, create it
@@ -974,9 +963,8 @@ func ensureStandardPurchaseApprovalWorkflow(db *gorm.DB) error {
 	return fmt.Errorf("failed to check existing workflow: %v", result.Error)
 }
 
-// createWorkflowSteps creates the standard approval workflow steps
-func createWorkflowSteps(db *gorm.DB, workflowID uint) error {
-	steps := []ApprovalStep{
+func standardPurchaseApprovalSteps(workflowID uint) []ApprovalStep {
+	return []ApprovalStep{
 		{
 			WorkflowID:   workflowID,
 			StepOrder:    1,
@@ -988,21 +976,71 @@ func createWorkflowSteps(db *gorm.DB, workflowID uint) error {
 		{
 			WorkflowID:   workflowID,
 			StepOrder:    2,
-			StepName:     "Finance Approval",
-			ApproverRole: "finance",
+			StepName:     "Finance Staff Review",
+			ApproverRole: "purchase_finance_staff",
 			IsOptional:   false,
 			TimeLimit:    48,
 		},
 		{
 			WorkflowID:   workflowID,
 			StepOrder:    3,
+			StepName:     "Finance Manager Approval",
+			ApproverRole: "finance",
+			IsOptional:   false,
+			TimeLimit:    48,
+		},
+		{
+			WorkflowID:   workflowID,
+			StepOrder:    4,
 			StepName:     "Director Approval",
 			ApproverRole: "director",
 			IsOptional:   true,
 			TimeLimit:    72,
 		},
 	}
+}
 
+func syncStandardPurchaseApprovalWorkflowSteps(db *gorm.DB, workflowID uint) error {
+	for _, expected := range standardPurchaseApprovalSteps(workflowID) {
+		var step ApprovalStep
+		err := db.Where("workflow_id = ? AND step_order = ?", workflowID, expected.StepOrder).First(&step).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if err := db.Create(&expected).Error; err != nil {
+				return fmt.Errorf("failed to create workflow step '%s': %v", expected.StepName, err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("failed to check workflow step %d: %v", expected.StepOrder, err)
+		}
+
+		updates := map[string]interface{}{}
+		if step.StepName != expected.StepName {
+			updates["step_name"] = expected.StepName
+		}
+		if step.ApproverRole != expected.ApproverRole {
+			updates["approver_role"] = expected.ApproverRole
+		}
+		if step.IsOptional != expected.IsOptional {
+			updates["is_optional"] = expected.IsOptional
+		}
+		if step.TimeLimit != expected.TimeLimit {
+			updates["time_limit"] = expected.TimeLimit
+		}
+		if len(updates) > 0 {
+			if err := db.Model(&step).Updates(updates).Error; err != nil {
+				return fmt.Errorf("failed to update workflow step '%s': %v", expected.StepName, err)
+			}
+		}
+	}
+
+	log.Println("Standard Purchase Approval workflow synchronized")
+	return nil
+}
+
+// createWorkflowSteps creates the standard approval workflow steps
+func createWorkflowSteps(db *gorm.DB, workflowID uint) error {
+	steps := standardPurchaseApprovalSteps(workflowID)
 	for _, step := range steps {
 		if err := db.Create(&step).Error; err != nil {
 			return fmt.Errorf("failed to create workflow step '%s': %v", step.StepName, err)

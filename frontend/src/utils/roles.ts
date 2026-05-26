@@ -56,6 +56,9 @@ export const workflowRoleMatchesUserRole = (workflowRole?: string | null, userRo
   if (normalizedWorkflowRole === 'finance') {
     return isFinanceManagerRole(normalizedUserRole);
   }
+  if (normalizedWorkflowRole === 'purchase_finance_staff') {
+    return isFinanceStaffRole(normalizedUserRole);
+  }
 
   return normalizedWorkflowRole !== '' && normalizedWorkflowRole === normalizedUserRole;
 };
@@ -76,6 +79,18 @@ export const isRoleAllowed = (allowedRoles: (string | null | undefined)[] = [], 
 export const humanizeRole = (role?: string | null): string => {
   const r = normalizeRole(role);
   if (!r) return 'Unknown';
+  switch (r) {
+    case 'finance':
+    case 'finance_manager':
+      return 'Finance Manager';
+    case 'finance_staff':
+    case 'purchase_finance_staff':
+      return 'Finance Staff';
+    case 'accounting':
+      return 'Accounting';
+    case 'employee':
+      return 'Staff';
+  }
   return r.charAt(0).toUpperCase() + r.slice(1);
 };
 
@@ -95,6 +110,7 @@ export const formatRoleForApproval = (role?: string | null): string => {
     case 'hr':
       return 'HR';
     case 'finance_staff':
+    case 'purchase_finance_staff':
       return 'Finance Staff';
     case 'employee':
       return 'Staff';
@@ -119,6 +135,7 @@ export const getRoleDisplayName = (role?: string | null): { role: string; exampl
     case 'hr':
       return { role: 'HR', example: 'Hana' };
     case 'finance_staff':
+    case 'purchase_finance_staff':
       return { role: 'Finance Staff', example: 'Jill' };
     case 'director':
       return { role: 'Director', example: 'Josh' };

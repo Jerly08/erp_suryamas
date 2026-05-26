@@ -89,16 +89,24 @@ func (r *PurchaseRepository) applyPurchaseFilter(query *gorm.DB, filter models.P
 				models.PurchaseApprovalApproved,
 				[]string{
 					models.PurchaseStatusPendingAccounting,
+					models.PurchaseStatusPendingFinalApproval,
 					models.PurchaseStatusApproved,
 					models.PurchaseStatusCompleted,
 					models.PurchaseStatusPaid,
 				},
+			)
+		case models.PurchaseAccountingStatusPendingFinalApproval, "FINAL_APPROVAL":
+			query = query.Where(
+				"purchases.approval_status = ? AND purchases.status = ?",
+				models.PurchaseApprovalApproved,
+				models.PurchaseStatusPendingFinalApproval,
 			)
 		case models.PurchaseAccountingStatusCOACompleted, "COMPLETED_COA":
 			query = query.Where(
 				"purchases.approval_status = ? AND purchases.status IN ?",
 				models.PurchaseApprovalApproved,
 				[]string{
+					models.PurchaseStatusPendingFinalApproval,
 					models.PurchaseStatusApproved,
 					models.PurchaseStatusCompleted,
 					models.PurchaseStatusPaid,
@@ -109,6 +117,10 @@ func (r *PurchaseRepository) applyPurchaseFilter(query *gorm.DB, filter models.P
 
 	if filter.RequiresApproval != nil {
 		query = query.Where("purchases.requires_approval = ?", *filter.RequiresApproval)
+	}
+
+	if filter.OutstandingOnly != nil && *filter.OutstandingOnly {
+		query = query.Where("purchases.outstanding_amount > 0")
 	}
 
 	return query
@@ -391,6 +403,7 @@ func (r *PurchaseRepository) GetPurchasesSummary(filter models.PurchaseFilter) (
 	query2 := r.applyPurchaseFilter(r.db.Model(&models.Purchase{}), filter)
 	approvedAmountStatuses := []string{
 		models.PurchaseStatusPendingAccounting,
+		models.PurchaseStatusPendingFinalApproval,
 		models.PurchaseStatusApproved,
 		models.PurchaseStatusCompleted,
 		models.PurchaseStatusPaid,

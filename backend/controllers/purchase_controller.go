@@ -138,6 +138,12 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 		requiresApproval = &val
 	}
 
+	var outstandingOnly *bool
+	if outstanding := c.Query("outstanding"); outstanding != "" {
+		val := outstanding == "true"
+		outstandingOnly = &val
+	}
+
 	filter := models.PurchaseFilter{
 		Status:           status,
 		VendorID:         vendorID,
@@ -148,6 +154,7 @@ func (pc *PurchaseController) GetPurchases(c *gin.Context) {
 		ApprovalStatus:   approvalStatus,
 		AccountingStatus: accountingStatus,
 		RequiresApproval: requiresApproval,
+		OutstandingOnly:  outstandingOnly,
 		Page:             page,
 		Limit:            limit,
 	}
@@ -557,9 +564,9 @@ func (pc *PurchaseController) CompleteAccountingCOA(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	userRole := c.MustGet("user_role").(string)
 	roleNorm := models.NormalizeRole(userRole)
-	if roleNorm != models.RoleAdmin && !models.IsFinanceManagerRole(roleNorm) && !models.IsAccountingRole(roleNorm) {
+	if roleNorm != models.RoleAdmin && !models.IsAccountingRole(roleNorm) {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Hanya Accounting, Finance Manager, atau Admin yang dapat melengkapi GL/COA setelah approval purchase",
+			"error": "Hanya Accounting atau Admin yang dapat melengkapi GL/COA setelah approval purchase",
 		})
 		return
 	}
@@ -577,7 +584,41 @@ func (pc *PurchaseController) CompleteAccountingCOA(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "COA accounting berhasil dilengkapi dan purchase sudah difinalisasi",
+		"message":  "COA accounting berhasil dilengkapi dan menunggu final approval Finance Manager",
+		"purchase": purchase,
+	})
+}
+
+func (pc *PurchaseController) FinalApprovePurchase(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	userRole := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(userRole)
+	if !models.IsFinanceManagerRole(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Hanya Finance Manager yang dapat melakukan final approval purchase setelah GL/COA lengkap",
+		})
+		return
+	}
+
+	var request struct {
+		Comments string `json:"comments"`
+	}
+	_ = c.ShouldBindJSON(&request)
+
+	purchase, err := pc.purchaseService.FinalApprovePurchaseAfterAccounting(uint(id), userID, request.Comments)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Purchase berhasil final approve dan jurnal sudah diposting",
 		"purchase": purchase,
 	})
 }
@@ -933,6 +974,12 @@ func (pc *PurchaseController) GetPurchasesSummary(c *gin.Context) {
 		requiresApproval = &val
 	}
 
+	var outstandingOnly *bool
+	if outstanding := c.Query("outstanding"); outstanding != "" {
+		val := outstanding == "true"
+		outstandingOnly = &val
+	}
+
 	filter := models.PurchaseFilter{
 		Status:           status,
 		VendorID:         vendorID,
@@ -943,6 +990,7 @@ func (pc *PurchaseController) GetPurchasesSummary(c *gin.Context) {
 		ApprovalStatus:   approvalStatus,
 		AccountingStatus: accountingStatus,
 		RequiresApproval: requiresApproval,
+		OutstandingOnly:  outstandingOnly,
 	}
 	pc.applyStaffPurchaseScope(c, &filter)
 
@@ -1519,6 +1567,77 @@ func (pc *PurchaseController) GetPurchaseJournalEntries(c *gin.Context) {
 	})
 }
 
+// BackfillPurchaseJournalEntries creates a missing SSOT purchase journal for an approved purchase.
+func (pc *PurchaseController) BackfillPurchaseJournalEntries(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
+
+	entries, err := pc.purchaseService.BackfillPurchaseJournal(uint(id))
+	if err != nil {
+		log.Printf("âš ï¸ BackfillPurchaseJournalEntries failed for purchase %d: %v", id, err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"purchase_id":     id,
+		"journal_entries": entries,
+		"count":           len(entries),
+		"status":          "backfilled",
+	})
+}
+
+// PayPurchasePPh records settlement of purchase PPh payable.
+func (pc *PurchaseController) PayPurchasePPh(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
+
+	var request models.PurchasePPhPaymentRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
+		return
+	}
+
+	purchase, err := pc.purchaseService.PayPurchasePPh(uint(id), request, userID)
+	if err != nil {
+		errorMsg := strings.TrimSpace(err.Error())
+		statusCode := http.StatusBadRequest
+		if strings.Contains(errorMsg, "not found") {
+			statusCode = http.StatusNotFound
+		}
+		c.JSON(statusCode, gin.H{
+			"error":   "Pembayaran PPh purchase tidak dapat diproses",
+			"details": errorMsg,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "PPh purchase berhasil dibayar",
+		"purchase": purchase,
+	})
+}
+
 // Export Operations
 
 // ExportPurchasesReportPDF exports purchases report as PDF with filtering support
@@ -1540,6 +1659,12 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 		endDate = end.Format("2006-01-02")
 	}
 
+	var outstandingOnly *bool
+	if outstanding := c.Query("outstanding"); outstanding != "" {
+		val := outstanding == "true"
+		outstandingOnly = &val
+	}
+
 	// Build filter with all parameters to match current filtering behavior
 	filter := models.PurchaseFilter{
 		Status:           status,
@@ -1550,6 +1675,7 @@ func (pc *PurchaseController) ExportPurchasesReportPDF(c *gin.Context) {
 		Search:           search,
 		ApprovalStatus:   approvalStatus,
 		AccountingStatus: accountingStatus,
+		OutstandingOnly:  outstandingOnly,
 		Page:             1,
 		Limit:            10000, // Large limit for export
 	}
@@ -1620,6 +1746,12 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 		endDate = end.Format("2006-01-02")
 	}
 
+	var outstandingOnlyCSV *bool
+	if outstanding := c.Query("outstanding"); outstanding != "" {
+		val := outstanding == "true"
+		outstandingOnlyCSV = &val
+	}
+
 	// Build filter with all parameters to match current filtering behavior
 	filter := models.PurchaseFilter{
 		Status:           status,
@@ -1630,6 +1762,7 @@ func (pc *PurchaseController) ExportPurchasesReportCSV(c *gin.Context) {
 		Search:           search,
 		ApprovalStatus:   approvalStatus,
 		AccountingStatus: accountingStatus,
+		OutstandingOnly:  outstandingOnlyCSV,
 		Page:             1,
 		Limit:            10000, // Large limit for export
 	}

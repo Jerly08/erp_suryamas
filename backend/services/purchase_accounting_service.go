@@ -242,6 +242,7 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 	// Final sanitize (keep existing values if already set by approval)
 	purchase.PaidAmount = sanitizeFloat(clampNonNegative(purchase.PaidAmount))
 	purchase.OutstandingAmount = sanitizeFloat(clampNonNegative(purchase.OutstandingAmount))
+	syncPurchasePPhPaymentStatus(purchase)
 
 	return nil
 }
@@ -353,6 +354,7 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 		purchase.OutstandingAmount = 0
 		purchase.PaidAmount = 0
 	}
+	syncPurchasePPhPaymentStatus(purchase)
 
 	return nil
 }

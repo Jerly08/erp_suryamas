@@ -325,14 +325,6 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                   const canPostPPh23 =
                     !!onPPh23Settlement &&
                     (sale.pph23_amount || 0) > 0 &&
-                    (sale.outstanding_amount || 0) <= 0.005 &&
-                    !sale.pph23_settlement_date &&
-                    workflowStatus !== "DRAFT" &&
-                    workflowStatus !== "CANCELLED";
-                  const canAdjustPPh23 =
-                    !!onPPh23Settlement &&
-                    (sale.pph23_amount || 0) > 0 &&
-                    (sale.outstanding_amount || 0) > 0.005 &&
                     !sale.pph23_settlement_date &&
                     workflowStatus !== "DRAFT" &&
                     workflowStatus !== "CANCELLED";
@@ -552,16 +544,14 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                                 {t("purchases.payment.recordPayment")}
                               </MenuItem>
                               )}
-                            {canEdit && (canAddPPh23 || canPostPPh23 || canAdjustPPh23) && (
+                            {canEdit && (canAddPPh23 || canPostPPh23) && (
                               <MenuItem
-                                icon={canAddPPh23 || canAdjustPPh23 ? <FiDollarSign /> : <FiCheck />}
+                                icon={canAddPPh23 ? <FiDollarSign /> : <FiCheck />}
                                 onClick={() => onPPh23Settlement(sale)}
                               >
                                 {canAddPPh23
                                   ? "Tambah PPh23"
-                                  : canAdjustPPh23
-                                    ? "Koreksi PPh23"
-                                    : "Bayar PPh23"}
+                                  : "Posting PPh23"}
                               </MenuItem>
                             )}
                             {canEdit &&

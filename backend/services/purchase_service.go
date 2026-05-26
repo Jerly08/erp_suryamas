@@ -45,6 +45,61 @@ type PurchaseResult struct {
 	TotalPages int               `json:"total_pages"`
 }
 
+func roundPurchaseMoney(value float64) float64 {
+	return math.Round(value*100) / 100
+}
+
+func purchasePPhTotal(purchase *models.Purchase) float64 {
+	if purchase == nil {
+		return 0
+	}
+	return roundPurchaseMoney(purchase.PPh21Amount + purchase.PPh23Amount)
+}
+
+func purchasePPhPaymentStatus(totalPPh float64, paidAmount float64) string {
+	totalPPh = roundPurchaseMoney(totalPPh)
+	paidAmount = roundPurchaseMoney(paidAmount)
+	if totalPPh <= 0.01 {
+		return models.PurchasePPhPaymentStatusNone
+	}
+	if paidAmount >= totalPPh-0.01 {
+		return models.PurchasePPhPaymentStatusPaid
+	}
+	if paidAmount > 0.01 {
+		return models.PurchasePPhPaymentStatusPartialPaid
+	}
+	return models.PurchasePPhPaymentStatusUnpaid
+}
+
+func syncPurchasePPhPaymentStatus(purchase *models.Purchase) {
+	if purchase == nil {
+		return
+	}
+	totalPPh := purchasePPhTotal(purchase)
+	if totalPPh <= 0.01 {
+		purchase.PPhPaidAmount = 0
+		purchase.PPhPaymentStatus = models.PurchasePPhPaymentStatusNone
+		return
+	}
+	purchase.PPhPaidAmount = roundPurchaseMoney(math.Min(math.Max(purchase.PPhPaidAmount, 0), totalPPh))
+	purchase.PPhPaymentStatus = purchasePPhPaymentStatus(totalPPh, purchase.PPhPaidAmount)
+}
+
+func parsePurchasePPhPaymentDate(value string) (*time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, fmt.Errorf("payment_date is required")
+	}
+	if parsed, err := time.Parse("2006-01-02", trimmed); err == nil {
+		return &parsed, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
 func NewPurchaseService(
 	db *gorm.DB,
 	purchaseRepo *repositories.PurchaseRepository,
@@ -133,7 +188,8 @@ func (s *PurchaseService) isPurchaseCOAReadOnlyUser(userID uint) bool {
 		fmt.Printf("?? Could not resolve role for purchase COA restriction (user %d): %v\n", userID, err)
 		return false
 	}
-	return models.IsFinanceStaffRole(user.Role)
+	role := models.NormalizeRole(user.Role)
+	return role != models.RoleAdmin && !models.IsAccountingRole(role)
 }
 
 func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, userID uint) (*models.Purchase, error) {
@@ -1537,7 +1593,7 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		purchaseUpdates := map[string]interface{}{
-			"status":     models.PurchaseStatusApproved,
+			"status":     models.PurchaseStatusPendingFinalApproval,
 			"updated_at": time.Now(),
 		}
 		if purchase.PaymentMethod == models.PurchasePaymentCredit {
@@ -1563,8 +1619,8 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 				RequestID: *purchase.ApprovalRequestID,
 				UserID:    userID,
 				Action:    models.ApprovalActionApproved,
-				Comments:  "Accounting completed GL/COA input and finalized purchase posting",
-				Metadata:  "{\"accounting_coa_completed\":true}",
+				Comments:  "Accounting completed GL/COA input; waiting for Finance Manager final approval",
+				Metadata:  "{\"accounting_coa_completed\":true,\"waiting_final_approval\":true}",
 			}
 			if err := tx.Create(&historyNote).Error; err != nil {
 				return fmt.Errorf("failed to record accounting COA history: %w", err)
@@ -1577,11 +1633,64 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 		return nil, err
 	}
 
-	if err := s.OnPurchaseApproved(purchaseID); err != nil {
+	return s.GetPurchaseByID(purchaseID)
+}
+
+func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, userID uint, comments string) (*models.Purchase, error) {
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return nil, fmt.Errorf("purchase not found: %v", err)
+	}
+	if purchase.ApprovalStatus != models.PurchaseApprovalApproved {
+		return nil, errors.New("purchase belum melewati approval Finance Manager awal")
+	}
+	if purchase.Status != models.PurchaseStatusPendingFinalApproval {
+		return nil, fmt.Errorf("purchase belum menunggu final approval Finance Manager (status saat ini: %s)", purchase.Status)
+	}
+	if s.purchaseNeedsAccountingCOA(purchase) {
+		return nil, errors.New("GL/COA belum lengkap, Accounting harus melengkapi COA terlebih dahulu")
+	}
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"status":      models.PurchaseStatusApproved,
+			"approved_by": userID,
+			"approved_at": now,
+			"updated_at":  now,
+		}
+		if err := tx.Model(&models.Purchase{}).Where("id = ?", purchaseID).Updates(updates).Error; err != nil {
+			return fmt.Errorf("failed to mark purchase final approved: %w", err)
+		}
+		if purchase.ApprovalRequestID != nil {
+			historyComments := strings.TrimSpace(comments)
+			if historyComments == "" {
+				historyComments = "Finance Manager final approval after Accounting GL/COA completion"
+			}
+			history := models.ApprovalHistory{
+				RequestID: *purchase.ApprovalRequestID,
+				UserID:    userID,
+				Action:    models.ApprovalActionApproved,
+				Comments:  historyComments,
+				Metadata:  "{\"finance_manager_final_approval\":true}",
+			}
+			if err := tx.Create(&history).Error; err != nil {
+				return fmt.Errorf("failed to record final approval history: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := s.postFinalApprovedPurchase(purchaseID); err != nil {
 		_ = s.db.Model(&models.Purchase{}).
 			Where("id = ?", purchaseID).
-			Update("status", models.PurchaseStatusPendingAccounting).Error
-		return nil, fmt.Errorf("COA berhasil disimpan, tetapi finalisasi purchase gagal: %v", err)
+			Update("status", models.PurchaseStatusPendingFinalApproval).Error
+		return nil, fmt.Errorf("final approval tersimpan, tetapi posting purchase gagal: %v", err)
 	}
 
 	return s.GetPurchaseByID(purchaseID)
@@ -1589,8 +1698,25 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 
 // PostApprovalCallback Implementation
 
-// OnPurchaseApproved implements PostApprovalCallback interface - handles business logic after purchase approval
+// OnPurchaseApproved implements PostApprovalCallback interface. Initial approval
+// now stops at Accounting GL/COA review; posting happens only after final
+// Finance Manager approval.
 func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return fmt.Errorf("failed to get purchase for post-approval routing: %v", err)
+	}
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return err
+	}
+	if err := s.markPurchasePendingAccounting(purchase); err != nil {
+		return fmt.Errorf("failed to mark purchase pending accounting COA: %v", err)
+	}
+	fmt.Printf("?? Purchase %s approved by Finance Manager and routed to Accounting GL/COA input\n", purchase.Code)
+	return nil
+}
+
+func (s *PurchaseService) postFinalApprovedPurchase(purchaseID uint) error {
 	fmt.Printf("?? Starting post-approval processing for purchase %d\n", purchaseID)
 
 	// Get the approved purchase
@@ -1606,11 +1732,7 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	}
 
 	if s.purchaseNeedsAccountingCOA(purchase) {
-		if err := s.markPurchasePendingAccounting(purchase); err != nil {
-			return fmt.Errorf("failed to mark purchase pending accounting COA: %v", err)
-		}
-		fmt.Printf("?? Purchase %s is approved but waiting for Accounting GL/COA input before posting\n", purchase.Code)
-		return nil
+		return fmt.Errorf("purchase %s belum lengkap GL/COA accounting", purchase.Code)
 	}
 
 	// 1. Update product stock
@@ -1630,8 +1752,7 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	// Use SSOT service exclusively
 	if s.journalServiceSSOT != nil {
 		if err := s.journalServiceSSOT.CreatePurchaseJournal(purchase, nil); err != nil {
-			fmt.Printf("?? Warning: SSOT journal creation failed: %v\n", err)
-			// Continue processing - journal can be recreated later
+			return fmt.Errorf("failed to post purchase journal: %w", err)
 		} else {
 			purchaseJournalCreated = true
 			fmt.Printf("? [SSOT] Created purchase journal entries for Balance Sheet integration\n")
@@ -3376,6 +3497,268 @@ func (s *PurchaseService) GetPurchaseJournalEntries(purchaseID uint) ([]models.S
 	}
 
 	return entries, nil
+}
+
+// BackfillPurchaseJournal creates the missing SSOT purchase journal for an already-approved purchase.
+func (s *PurchaseService) BackfillPurchaseJournal(purchaseID uint) ([]models.SSOTJournalEntry, error) {
+	if s.journalServiceSSOT == nil {
+		return nil, fmt.Errorf("SSOT journal service not available")
+	}
+
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get purchase: %v", err)
+	}
+	if !s.journalServiceSSOT.ShouldPostToJournal(purchase.Status) {
+		return nil, fmt.Errorf("purchase status %s cannot be posted to journal", purchase.Status)
+	}
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return nil, err
+	}
+	if s.purchaseNeedsAccountingCOA(purchase) {
+		if markErr := s.markPurchasePendingAccounting(purchase); markErr != nil {
+			return nil, fmt.Errorf("purchase needs GL/COA input and could not be marked pending accounting: %v", markErr)
+		}
+		return nil, fmt.Errorf("purchase needs Accounting GL/COA input before journal can be created")
+	}
+
+	if err := s.journalServiceSSOT.CreatePurchaseJournal(purchase, nil); err != nil {
+		return nil, err
+	}
+
+	return s.GetPurchaseJournalEntries(purchaseID)
+}
+
+// PayPurchasePPh records settlement of purchase-side PPh payable via cash/bank.
+func (s *PurchaseService) PayPurchasePPh(purchaseID uint, request models.PurchasePPhPaymentRequest, userID uint) (*models.Purchase, error) {
+	paymentDate, err := parsePurchasePPhPaymentDate(request.PaymentDate)
+	if err != nil {
+		return nil, fmt.Errorf("tanggal pembayaran PPh tidak valid: %v", err)
+	}
+
+	amount := roundPurchaseMoney(request.Amount)
+	if amount <= 0.01 {
+		return nil, fmt.Errorf("nominal pembayaran PPh harus lebih besar dari 0")
+	}
+
+	var updatedPurchase models.Purchase
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var purchase models.Purchase
+		if err := tx.
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Vendor").
+			Preload("PurchaseItems.Product").
+			First(&purchase, purchaseID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("purchase not found")
+			}
+			return fmt.Errorf("failed to load purchase: %v", err)
+		}
+
+		status := strings.ToUpper(strings.TrimSpace(purchase.Status))
+		if status != models.PurchaseStatusApproved && status != models.PurchaseStatusCompleted && status != models.PurchaseStatusPaid {
+			return fmt.Errorf("PPh purchase hanya bisa dibayar setelah purchase approved/completed/paid")
+		}
+		if err := CheckClosedPeriod(tx, *paymentDate); err != nil {
+			return err
+		}
+
+		totalPPh := purchasePPhTotal(&purchase)
+		if totalPPh <= 0.01 {
+			return fmt.Errorf("purchase ini tidak memiliki PPh 21/23 untuk dibayar")
+		}
+		if purchase.PPhPaidAmount < 0 {
+			purchase.PPhPaidAmount = 0
+		}
+		if purchase.PPhPaidAmount > totalPPh {
+			purchase.PPhPaidAmount = totalPPh
+		}
+
+		remaining := roundPurchaseMoney(totalPPh - purchase.PPhPaidAmount)
+		if remaining <= 0.01 {
+			return fmt.Errorf("PPh purchase sudah dibayar")
+		}
+		if amount > remaining+0.01 {
+			return fmt.Errorf("nominal pembayaran melebihi sisa PPh. Sisa: %.2f", remaining)
+		}
+
+		sourceID := uint64(purchase.ID)
+		var purchaseJournalCount int64
+		if err := tx.Model(&models.SSOTJournalEntry{}).
+			Where("source_type = ? AND source_id = ? AND deleted_at IS NULL", models.SSOTSourceTypePurchase, sourceID).
+			Count(&purchaseJournalCount).Error; err != nil {
+			return fmt.Errorf("failed to check purchase journal: %v", err)
+		}
+		if purchaseJournalCount == 0 {
+			if s.journalServiceSSOT == nil {
+				return fmt.Errorf("jurnal purchase belum terbentuk dan SSOT journal service tidak tersedia")
+			}
+			if s.purchaseNeedsAccountingCOA(&purchase) {
+				return fmt.Errorf("purchase masih membutuhkan input GL/COA sebelum PPh bisa dibayar")
+			}
+			if err := s.journalServiceSSOT.CreatePurchaseJournal(&purchase, tx); err != nil {
+				return fmt.Errorf("gagal membuat jurnal purchase sebelum bayar PPh: %v", err)
+			}
+		}
+
+		var cashBank models.CashBank
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND deleted_at IS NULL AND is_active = ?", request.CashBankID, true).
+			First(&cashBank).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("akun kas/bank tidak ditemukan atau tidak aktif")
+			}
+			return fmt.Errorf("failed to load cash/bank account: %v", err)
+		}
+		if cashBank.AccountID == 0 {
+			return fmt.Errorf("akun kas/bank belum terhubung ke GL/COA")
+		}
+		if strings.ToUpper(strings.TrimSpace(cashBank.Currency)) != "IDR" {
+			return fmt.Errorf("pembayaran PPh purchase hanya didukung dari akun kas/bank IDR")
+		}
+		if cashBank.AvailableBalance()+0.01 < amount {
+			return fmt.Errorf("saldo kas/bank tidak cukup. Saldo tersedia: %.2f", cashBank.AvailableBalance())
+		}
+
+		taxHelper := NewTaxAccountHelper(tx)
+		type pphComponent struct {
+			label   string
+			amount  float64
+			account *models.Account
+		}
+		components := make([]pphComponent, 0, 2)
+		if purchase.PPh21Amount > 0.01 {
+			account, err := taxHelper.GetPurchaseWithholdingTax21PayableAccount(tx)
+			if err != nil {
+				return fmt.Errorf("akun hutang PPh 21 tidak ditemukan: %v", err)
+			}
+			components = append(components, pphComponent{label: "PPh 21", amount: roundPurchaseMoney(purchase.PPh21Amount), account: account})
+		}
+		if purchase.PPh23Amount > 0.01 {
+			account, err := taxHelper.GetPurchaseWithholdingTax23PayableAccount(tx)
+			if err != nil {
+				return fmt.Errorf("akun hutang PPh 23 tidak ditemukan: %v", err)
+			}
+			components = append(components, pphComponent{label: "PPh 23", amount: roundPurchaseMoney(purchase.PPh23Amount), account: account})
+		}
+		if len(components) == 0 {
+			return fmt.Errorf("purchase ini tidak memiliki komponen PPh 21/23 yang bisa dibayar")
+		}
+
+		paidRatio := 0.0
+		if totalPPh > 0 {
+			paidRatio = math.Min(math.Max(purchase.PPhPaidAmount/totalPPh, 0), 1)
+		}
+		paymentRatio := amount / remaining
+		allocated := 0.0
+		lines := make([]JournalLineRequest, 0, len(components)+1)
+		for index, component := range components {
+			componentRemaining := roundPurchaseMoney(component.amount * (1 - paidRatio))
+			lineAmount := roundPurchaseMoney(componentRemaining * paymentRatio)
+			if index == len(components)-1 {
+				lineAmount = roundPurchaseMoney(amount - allocated)
+			}
+			if lineAmount <= 0.01 {
+				continue
+			}
+			allocated = roundPurchaseMoney(allocated + lineAmount)
+			lines = append(lines, JournalLineRequest{
+				AccountID:    uint64(component.account.ID),
+				DebitAmount:  decimal.NewFromFloat(lineAmount),
+				CreditAmount: decimal.Zero,
+				Description:  fmt.Sprintf("Settlement hutang %s purchase - %s", component.label, purchase.Code),
+			})
+		}
+		if math.Abs(allocated-amount) > 0.01 {
+			return fmt.Errorf("alokasi pembayaran PPh tidak balance")
+		}
+
+		reference := strings.TrimSpace(request.Reference)
+		if reference == "" {
+			reference = fmt.Sprintf("PAY-PPH-%s", purchase.Code)
+		}
+		notes := strings.TrimSpace(request.Notes)
+		if notes == "" {
+			notes = fmt.Sprintf("Pembayaran PPh purchase %s", purchase.Code)
+		}
+
+		lines = append(lines, JournalLineRequest{
+			AccountID:    uint64(cashBank.AccountID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(amount),
+			Description:  fmt.Sprintf("Kas/bank keluar bayar PPh purchase - %s", purchase.Code),
+		})
+
+		journalService := NewUnifiedJournalService(tx)
+		journalEntry, err := journalService.CreateJournalEntryWithTx(tx, &JournalEntryRequest{
+			EntryDate:   *paymentDate,
+			Reference:   reference,
+			Description: fmt.Sprintf("Pembayaran PPh Purchase - %s", purchase.Code),
+			Notes:       notes,
+			SourceType:  models.SSOTSourceTypePurchasePPhPayment,
+			SourceID:    sourceID,
+			AutoPost:    true,
+			CreatedBy:   uint64(userID),
+			Lines:       lines,
+		})
+		if err != nil {
+			return fmt.Errorf("gagal membuat jurnal pembayaran PPh: %v", err)
+		}
+
+		cashBank.Balance = roundPurchaseMoney(cashBank.Balance - amount)
+		cashBank.BookBalanceIDR = cashBank.Balance
+		cashBank.LastExchangeRate = 1
+		if err := tx.Save(&cashBank).Error; err != nil {
+			return fmt.Errorf("failed to update cash/bank balance: %v", err)
+		}
+
+		cashBankTransaction := &models.CashBankTransaction{
+			CashBankID:      cashBank.ID,
+			ReferenceType:   models.SSOTSourceTypePurchasePPhPayment,
+			ReferenceID:     purchase.ID,
+			Amount:          -amount,
+			Currency:        "IDR",
+			ExchangeRate:    1,
+			BookAmountIDR:   -amount,
+			BalanceAfter:    cashBank.Balance,
+			TransactionDate: *paymentDate,
+			Notes:           notes,
+		}
+		if err := tx.Create(cashBankTransaction).Error; err != nil {
+			return fmt.Errorf("failed to record cash/bank transaction: %v", err)
+		}
+
+		guard := NewCashBankCurrencyGuard(s.db)
+		if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+			return fmt.Errorf("failed to validate cash/bank balance: %v", err)
+		}
+
+		paidAmount := roundPurchaseMoney(purchase.PPhPaidAmount + amount)
+		paymentJournalID := journalEntry.ID
+		updates := map[string]interface{}{
+			"pph_paid_amount":              paidAmount,
+			"pph_payment_status":           purchasePPhPaymentStatus(totalPPh, paidAmount),
+			"pph_payment_date":             *paymentDate,
+			"pph_payment_reference":        reference,
+			"pph_payment_notes":            notes,
+			"pph_payment_journal_entry_id": paymentJournalID,
+			"updated_at":                   time.Now(),
+		}
+		if err := tx.Model(&purchase).Updates(updates).Error; err != nil {
+			return fmt.Errorf("failed to update purchase PPh status: %v", err)
+		}
+
+		return tx.
+			Preload("Vendor").
+			Preload("User").
+			Preload("PurchaseItems.Product").
+			First(&updatedPurchase, purchase.ID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &updatedPurchase, nil
 }
 
 // GetDB returns the database connection for external services

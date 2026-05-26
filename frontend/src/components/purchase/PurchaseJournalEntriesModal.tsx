@@ -239,6 +239,7 @@ const PurchaseJournalEntriesModal: React.FC<PurchaseJournalEntriesModalProps> = 
   const purchaseAmount = purchase?.total_amount || 0;
   const [journalData, setJournalData] = useState<PurchaseJournalData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [backfilling, setBackfilling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
 
@@ -283,6 +284,36 @@ const PurchaseJournalEntriesModal: React.FC<PurchaseJournalEntriesModalProps> = 
 
   const handleRefresh = () => {
     fetchJournalEntries();
+  };
+
+  const handleBackfill = async () => {
+    if (!purchaseId || purchaseId === 0) return;
+
+    setBackfilling(true);
+    setError(null);
+    try {
+      const data = await purchaseJournalService.backfillPurchaseJournalEntries(purchaseId);
+      setJournalData(data);
+      toast({
+        title: 'Journal created',
+        description: 'Purchase journal entries have been backfilled.',
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to backfill journal entries';
+      setError(message);
+      toast({
+        title: 'Backfill failed',
+        description: message,
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setBackfilling(false);
+    }
   };
 
   const handleViewDetails = (entry: JournalEntryWithDetails) => {
@@ -369,15 +400,29 @@ const PurchaseJournalEntriesModal: React.FC<PurchaseJournalEntriesModalProps> = 
             <Text fontWeight="semibold" fontSize="lg">
               Journal Entries
             </Text>
-            <Button
-              leftIcon={<FiRefreshCw />}
-              size="sm"
-              variant="outline"
-              onClick={handleRefresh}
-              isLoading={loading}
-            >
-              Refresh
-            </Button>
+            <HStack>
+              {journalData?.count === 0 && !loading ? (
+                <Button
+                  leftIcon={<FiFileText />}
+                  size="sm"
+                  colorScheme="blue"
+                  variant="solid"
+                  onClick={handleBackfill}
+                  isLoading={backfilling}
+                >
+                  Backfill Journal
+                </Button>
+              ) : null}
+              <Button
+                leftIcon={<FiRefreshCw />}
+                size="sm"
+                variant="outline"
+                onClick={handleRefresh}
+                isLoading={loading}
+              >
+                Refresh
+              </Button>
+            </HStack>
           </Flex>
 
           {loading ? (
@@ -398,13 +443,22 @@ const PurchaseJournalEntriesModal: React.FC<PurchaseJournalEntriesModalProps> = 
           ) : journalData?.count === 0 ? (
             <Alert status="info" borderRadius="md">
               <AlertIcon />
-              <Box>
+              <Box flex="1">
                 <AlertTitle>No Journal Entries Found</AlertTitle>
                 <AlertDescription>
                   This purchase doesn't have any associated journal entries yet. 
                   Journal entries are typically created when the purchase is approved.
                 </AlertDescription>
               </Box>
+              <Button
+                leftIcon={<FiFileText />}
+                size="sm"
+                colorScheme="blue"
+                onClick={handleBackfill}
+                isLoading={backfilling}
+              >
+                Backfill
+              </Button>
             </Alert>
           ) : (
             <VStack spacing={0} align="stretch">

@@ -897,6 +897,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.POST("/:id/approve", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.ApprovePurchase)
 				purchases.POST("/:id/reject", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.RejectPurchase)
 				purchases.POST("/:id/accounting-coa", permMiddleware.CanEdit("purchases"), purchaseController.CompleteAccountingCOA)
+				purchases.POST("/:id/final-approval", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.FinalApprovePurchase)
 				// Approval history endpoint (accessible by those who can view purchases)
 				purchases.GET("/:id/approval-history", permMiddleware.CanView("purchases"), purchaseApprovalHandler.GetApprovalHistory)
 				// Pending approvals (for those who can approve)
@@ -928,6 +929,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				// Payment management (similar to sales payment management)
 				purchases.GET("/:id/payments", rbacMgr.RequireAnyPermission("purchases:view", "payments:view"), purchaseController.GetPurchasePayments)
 				purchases.POST("/:id/payments", rbacMgr.RequireAnyPermission("purchases:edit", "payments:create"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchasePayment)
+				purchases.POST("/:id/pay-pph", rbacMgr.RequireAnyPermission("purchases:edit", "payments:create"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.PayPurchasePPh)
 
 				// Integrated Payment Management routes
 				purchases.GET("/:id/for-payment", rbacMgr.RequireAnyPermission("purchases:view", "payments:view"), purchaseController.GetPurchaseForPayment)
@@ -939,6 +941,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 				// Journal entries integration dengan SSOT Journal System
 				purchases.GET("/:id/journal-entries", permMiddleware.CanView("reports"), purchaseController.GetPurchaseJournalEntries)
+				purchases.POST("/:id/journal-entries/backfill", rbacMgr.RequireAnyPermission("purchases:approve", "journal:create"), purchaseController.BackfillPurchaseJournalEntries)
 			}
 
 			// Expenses routes - REMOVED: No implementation yet

@@ -429,17 +429,19 @@ type SalePaymentRequest struct {
 }
 
 type SalePPh23SettlementRequest struct {
-	Date      time.Time `json:"date" binding:"required"`
-	Reference string    `json:"reference"`
-	Notes     string    `json:"notes"`
+	Date              time.Time `json:"date" binding:"required"`
+	Reference         string    `json:"reference"`
+	Notes             string    `json:"notes"`
+	ReduceOutstanding bool      `json:"reduce_outstanding"`
 }
 
 type SaleLatePPh23Request struct {
-	Date      time.Time `json:"date" binding:"required"`
-	Amount    float64   `json:"amount"`
-	Rate      *float64  `json:"rate"`
-	Reference string    `json:"reference"`
-	Notes     string    `json:"notes"`
+	Date              time.Time `json:"date" binding:"required"`
+	Amount            float64   `json:"amount"`
+	Rate              *float64  `json:"rate"`
+	Reference         string    `json:"reference"`
+	Notes             string    `json:"notes"`
+	ReduceOutstanding bool      `json:"reduce_outstanding"`
 }
 
 type SaleReturnRequest struct {

@@ -112,6 +112,7 @@ var payrollImportHeaderAliases = map[string]string{
 	"netpay":           "net_pay",
 	"pph":              "pph",
 	"pph21":            "pph",
+	"pph21terutang":    "pph",
 	"incometax":        "pph",
 }
 
@@ -147,12 +148,27 @@ var payrollImportTemplateHeaders = []string{
 	"BASIC SALARY",
 	"COMPENSATION PKWT",
 	"OVERTIME",
+	"PPH21 TERUTANG",
 	"BPJS TK JHT 2%",
 	"BPJS TK JP 1%",
 	"BPJS KESEHATAN 1%",
 	"PROPORTIONAL",
 	"OTHER DEDUCTION",
 	"NET PAY",
+}
+
+func payrollItemGross(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	return item.BaseSalary + item.Bonus
+}
+
+func payrollCalculatedNetPay(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	return roundPayrollMoney(payrollItemGross(item) - item.BPJS - item.OtherDeduction)
 }
 
 func normalizePayrollImportHeader(value string) string {
@@ -227,9 +243,7 @@ func payrollImportItemTotals(item *models.PayrollItemCreateRequest) {
 	if item.Department == "" {
 		item.Department = item.WorkUnit
 	}
-	if item.NetPay == 0 {
-		item.NetPay = item.BaseSalary + item.Bonus - item.PPh - item.BPJS - item.OtherDeduction
-	}
+	item.NetPay = payrollCalculatedNetPay(item)
 }
 
 func roundPayrollMoney(value float64) float64 {
@@ -341,8 +355,34 @@ func resolvePayrollSalaryPayableAccount(tx *gorm.DB) (*models.Account, error) {
 	return nil, fmt.Errorf("akun Utang Gaji tidak ditemukan")
 }
 
+func resolvePayrollPPh21ExpenseAccount(tx *gorm.DB, fallback *models.Account) (*models.Account, error) {
+	if account, err := resolvePayrollAccountByCodes(tx, "9101"); err == nil {
+		return account, nil
+	}
+
+	var account models.Account
+	if err := tx.
+		Where("deleted_at IS NULL AND is_active = ? AND is_header = ? AND type = ? AND (LOWER(name) LIKE ? OR LOWER(name) LIKE ?)",
+			true,
+			false,
+			models.AccountTypeExpense,
+			"%pph%",
+			"%pajak%",
+		).
+		Order("code ASC").
+		First(&account).Error; err == nil {
+		return &account, nil
+	}
+
+	if fallback != nil {
+		return fallback, nil
+	}
+
+	return nil, fmt.Errorf("akun Beban PPh 21 tidak ditemukan")
+}
+
 func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *models.PayrollRun, userID uint, customExpenseAccountID *uint, customCashBankAccountID *uint, paymentMethod string) (*uint64, error) {
-	if run == nil || run.TotalOverall <= 0.01 {
+	if run == nil || (run.TotalOverall <= 0.01 && run.TotalPPh <= 0.01) {
 		return nil, nil
 	}
 
@@ -396,7 +436,8 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 	}
 
 	var salaryPayableAccount *models.Account
-	withheldDeductions := roundPayrollMoney((run.TotalSalary + run.TotalBonus) - (run.TotalPPh + run.TotalOverall))
+	grossSalary := roundPayrollMoney(run.TotalSalary + run.TotalBonus)
+	withheldDeductions := roundPayrollMoney(grossSalary - run.TotalOverall)
 	if withheldDeductions > 0.01 {
 		salaryPayableAccount, err = resolvePayrollSalaryPayableAccount(tx)
 		if err != nil {
@@ -406,7 +447,6 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 
 	var lines []services.JournalLineRequest
 
-	grossSalary := roundPayrollMoney(run.TotalSalary + run.TotalBonus)
 	lines = append(lines, services.JournalLineRequest{
 		AccountID:    uint64(expenseAccount.ID),
 		DebitAmount:  decimal.NewFromFloat(grossSalary),
@@ -415,6 +455,16 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 	})
 
 	if run.TotalPPh > 0.01 && pphPayableAccount != nil {
+		pphExpenseAccount, err := resolvePayrollPPh21ExpenseAccount(tx, expenseAccount)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, services.JournalLineRequest{
+			AccountID:    uint64(pphExpenseAccount.ID),
+			DebitAmount:  decimal.NewFromFloat(roundPayrollMoney(run.TotalPPh)),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("Beban PPh 21 ditanggung perusahaan Periode %s", run.PayrollNumber),
+		})
 		lines = append(lines, services.JournalLineRequest{
 			AccountID:    uint64(pphPayableAccount.ID),
 			DebitAmount:  decimal.Zero,
@@ -449,7 +499,7 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 		EntryDate:   run.PeriodEnd,
 		Reference:   fmt.Sprintf("PAYROLL-%s", run.PayrollNumber),
 		Description: fmt.Sprintf("Jurnal Pengakuan & Pembayaran Payroll - %s", run.PayrollNumber),
-		Notes:       fmt.Sprintf("Beban Gaji kotor diakui, PPh 21 ditahan sebagai hutang pajak, Net Gaji dibayarkan langsung dari Kas/Bank via %s.", method),
+		Notes:       fmt.Sprintf("Beban Gaji kotor diakui, PPh 21 terutang tidak mengurangi pembayaran salary, Net Gaji dibayarkan langsung dari Kas/Bank via %s.", method),
 		SourceType:  "PAYROLL_PPH_PAYABLE",
 		SourceID:    sourceID,
 		AutoPost:    true,
@@ -605,9 +655,9 @@ func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
 			WrapText:   true,
 		},
 	})
-	workbook.SetCellStyle(sheetName, "A1", "Q1", headerStyle)
+	workbook.SetCellStyle(sheetName, "A1", "R1", headerStyle)
 	workbook.SetRowHeight(sheetName, 1, 34)
-	workbook.SetColWidth(sheetName, "A", "Q", 18)
+	workbook.SetColWidth(sheetName, "A", "R", 18)
 
 	// Light sample values help HR keep the expected data shape without saving real employee data.
 	workbook.SetCellValue(sheetName, "D2", "Payroll")
@@ -988,7 +1038,7 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 		run.PPhRecognitionDate = &recognitionDate
 	}
 
-	if run.TotalOverall > 0.01 && run.PPhPayableJournalEntryID == nil {
+	if (run.TotalOverall > 0.01 || run.TotalPPh > 0.01) && run.PPhPayableJournalEntryID == nil {
 		journalID, err := c.createPayrollPPhPayableJournal(tx, &run, userID, req.ExpenseAccountID, req.CashBankAccountID, req.PaymentMethod)
 		if err != nil {
 			tx.Rollback()

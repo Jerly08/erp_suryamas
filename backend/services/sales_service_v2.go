@@ -1784,11 +1784,6 @@ func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23Settle
 		return nil, fmt.Errorf("invoice ini tidak memiliki PPh23 untuk dipost")
 	}
 
-	if sale.OutstandingAmount > 0.005 {
-		tx.Rollback()
-		return nil, fmt.Errorf("PPh23 baru bisa dipost setelah invoice lunas")
-	}
-
 	if sale.PPh23SettlementJournalEntryID != nil || sale.PPh23SettlementDate != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("PPh23 untuk invoice ini sudah pernah dipost")
@@ -1796,16 +1791,40 @@ func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23Settle
 
 	taxHelper := NewTaxAccountHelper(tx)
 
-	pph23PrepaidAccount, err := taxHelper.GetWithholdingTax23Account(tx)
-	if err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("akun sumber PPh23 tidak ditemukan: %v", err)
-	}
-
 	pph23CreditAccount, err := taxHelper.GetPPh23TaxCreditAccount(tx)
 	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("akun Kredit Pajak PPh23 tidak ditemukan: %v", err)
+	}
+
+	receivableSettlementAmount := 0.0
+	prepaidReclassAmount := roundScheduleMoney(sale.PPh23Amount)
+	if request.ReduceOutstanding {
+		reductionAmount, reductionErr := applySalePPh23OutstandingReduction(&sale, sale.PPh23Amount)
+		if reductionErr != nil {
+			tx.Rollback()
+			return nil, reductionErr
+		}
+		receivableSettlementAmount = reductionAmount
+		prepaidReclassAmount = roundScheduleMoney(sale.PPh23Amount - receivableSettlementAmount)
+	}
+
+	var pph23PrepaidAccount *models.Account
+	if prepaidReclassAmount > 0.005 {
+		pph23PrepaidAccount, err = taxHelper.GetWithholdingTax23Account(tx)
+		if err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("akun sumber PPh23 tidak ditemukan: %v", err)
+		}
+	}
+
+	var receivableAccount *models.Account
+	if receivableSettlementAmount > 0.005 {
+		receivableAccount, err = resolveSalesReceivableAccount(tx)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 	}
 
 	referenceNumber := strings.TrimSpace(sale.InvoiceNumber)
@@ -1816,6 +1835,31 @@ func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23Settle
 	journalReference := strings.TrimSpace(request.Reference)
 	if journalReference == "" {
 		journalReference = fmt.Sprintf("PPH23-%s", referenceNumber)
+	}
+
+	journalLines := []JournalLineRequest{
+		{
+			AccountID:    uint64(pph23CreditAccount.ID),
+			DebitAmount:  decimal.NewFromFloat(sale.PPh23Amount),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("Kredit Pajak PPh23 - %s", referenceNumber),
+		},
+	}
+	if prepaidReclassAmount > 0.005 {
+		journalLines = append(journalLines, JournalLineRequest{
+			AccountID:    uint64(pph23PrepaidAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(prepaidReclassAmount),
+			Description:  fmt.Sprintf("Reclass PPh23 Dibayar Dimuka - %s", referenceNumber),
+		})
+	}
+	if receivableSettlementAmount > 0.005 {
+		journalLines = append(journalLines, JournalLineRequest{
+			AccountID:    uint64(receivableAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(receivableSettlementAmount),
+			Description:  fmt.Sprintf("Kurangi Piutang Usaha untuk PPh23 - %s", referenceNumber),
+		})
 	}
 
 	journalService := NewUnifiedJournalService(tx)
@@ -1832,20 +1876,7 @@ func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23Settle
 		AutoPost:               true,
 		SystemGenerated:        true,
 		CreatedBy:              uint64(userID),
-		Lines: []JournalLineRequest{
-			{
-				AccountID:    uint64(pph23CreditAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(sale.PPh23Amount),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("Kredit Pajak PPh23 - %s", referenceNumber),
-			},
-			{
-				AccountID:    uint64(pph23PrepaidAccount.ID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(sale.PPh23Amount),
-				Description:  fmt.Sprintf("Reclass PPh23 Dibayar Dimuka - %s", referenceNumber),
-			},
-		},
+		Lines:                  journalLines,
 	}
 
 	journalEntry, err := journalService.CreateJournalEntryWithTx(tx, journalRequest)
@@ -1865,6 +1896,14 @@ func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23Settle
 	if err := tx.Save(&sale).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to update sale PPh23 settlement: %v", err)
+	}
+	if err := rebalanceExistingSalePaymentSchedules(tx, &sale); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := syncSalePaymentScheduleProgress(tx, &sale); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to sync sale payment schedules: %w", err)
 	}
 
 	if err := tx.Commit().Error; err != nil {

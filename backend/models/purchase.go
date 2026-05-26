@@ -27,12 +27,18 @@ type Purchase struct {
 	TotalTaxAdditions float64 `json:"total_tax_additions" gorm:"type:decimal(15,2);default:0"` // Total penambahan
 
 	// Tax deductions (Pemotongan) - PPh, etc
-	PPh21Rate          float64 `json:"pph21_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 21 percentage
-	PPh21Amount        float64 `json:"pph21_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 21 amount
-	PPh23Rate          float64 `json:"pph23_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 23 percentage
-	PPh23Amount        float64 `json:"pph23_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 23 amount
-	OtherTaxDeductions float64 `json:"other_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Other tax deductions
-	TotalTaxDeductions float64 `json:"total_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Total pemotongan
+	PPh21Rate                float64    `json:"pph21_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 21 percentage
+	PPh21Amount              float64    `json:"pph21_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 21 amount
+	PPh23Rate                float64    `json:"pph23_rate" gorm:"type:decimal(8,2);default:0"`            // PPh 23 percentage
+	PPh23Amount              float64    `json:"pph23_amount" gorm:"type:decimal(15,2);default:0"`         // Calculated PPh 23 amount
+	OtherTaxDeductions       float64    `json:"other_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Other tax deductions
+	TotalTaxDeductions       float64    `json:"total_tax_deductions" gorm:"type:decimal(15,2);default:0"` // Total pemotongan
+	PPhPaymentStatus         string     `json:"pph_payment_status" gorm:"column:pph_payment_status;not null;default:'NONE';size:20"`
+	PPhPaidAmount            float64    `json:"pph_paid_amount" gorm:"column:pph_paid_amount;type:decimal(15,2);default:0"`
+	PPhPaymentDate           *time.Time `json:"pph_payment_date" gorm:"column:pph_payment_date"`
+	PPhPaymentReference      string     `json:"pph_payment_reference" gorm:"column:pph_payment_reference;size:100"`
+	PPhPaymentNotes          string     `json:"pph_payment_notes" gorm:"column:pph_payment_notes;type:text"`
+	PPhPaymentJournalEntryID *uint64    `json:"pph_payment_journal_entry_id" gorm:"column:pph_payment_journal_entry_id;index"`
 
 	// Legacy tax field (kept for backward compatibility)
 	TaxAmount   float64 `json:"tax_amount" gorm:"type:decimal(15,2);default:0"`
@@ -137,14 +143,15 @@ type PurchasePayment struct {
 
 // Purchase Status Constants
 const (
-	PurchaseStatusDraft             = "DRAFT"
-	PurchaseStatusPending           = "PENDING"
-	PurchaseStatusPendingApproval   = "PENDING_APPROVAL"
-	PurchaseStatusPendingAccounting = "PENDING_ACCOUNTING"
-	PurchaseStatusApproved          = "APPROVED"
-	PurchaseStatusCompleted         = "COMPLETED"
-	PurchaseStatusPaid              = "PAID"
-	PurchaseStatusCancelled         = "CANCELLED"
+	PurchaseStatusDraft                = "DRAFT"
+	PurchaseStatusPending              = "PENDING"
+	PurchaseStatusPendingApproval      = "PENDING_APPROVAL"
+	PurchaseStatusPendingAccounting    = "PENDING_ACCOUNTING"
+	PurchaseStatusPendingFinalApproval = "PENDING_FINAL_APPROVAL"
+	PurchaseStatusApproved             = "APPROVED"
+	PurchaseStatusCompleted            = "COMPLETED"
+	PurchaseStatusPaid                 = "PAID"
+	PurchaseStatusCancelled            = "CANCELLED"
 )
 
 // Purchase Approval Status Constants
@@ -158,9 +165,10 @@ const (
 
 // Purchase Accounting Monitoring Constants
 const (
-	PurchaseAccountingStatusReadyForCOA       = "READY_FOR_COA"
-	PurchaseAccountingStatusApprovedByFinance = "APPROVED_BY_FINANCE"
-	PurchaseAccountingStatusCOACompleted      = "COA_COMPLETED"
+	PurchaseAccountingStatusReadyForCOA          = "READY_FOR_COA"
+	PurchaseAccountingStatusApprovedByFinance    = "APPROVED_BY_FINANCE"
+	PurchaseAccountingStatusCOACompleted         = "COA_COMPLETED"
+	PurchaseAccountingStatusPendingFinalApproval = "PENDING_FINAL_APPROVAL"
 )
 
 // Purchase Matching Status Constants
@@ -169,6 +177,14 @@ const (
 	PurchaseMatchingPartial  = "PARTIAL"
 	PurchaseMatchingMatched  = "MATCHED"
 	PurchaseMatchingMismatch = "MISMATCH"
+)
+
+// Purchase PPh Payment Status Constants
+const (
+	PurchasePPhPaymentStatusNone        = "NONE"
+	PurchasePPhPaymentStatusUnpaid      = "UNPAID"
+	PurchasePPhPaymentStatusPartialPaid = "PARTIAL_PAID"
+	PurchasePPhPaymentStatusPaid        = "PAID"
 )
 
 // Purchase Payment Method Constants
@@ -191,6 +207,7 @@ type PurchaseFilter struct {
 	ApprovalStatus   string `json:"approval_status"`
 	AccountingStatus string `json:"accounting_status"`
 	RequiresApproval *bool  `json:"requires_approval"`
+	OutstandingOnly  *bool  `json:"outstanding_only"` // Filter purchases with outstanding_amount > 0
 	Page             int    `json:"page"`
 	Limit            int    `json:"limit"`
 }
@@ -275,6 +292,14 @@ type PurchaseItemRequest struct {
 type PurchaseAccountingCOARequest struct {
 	CreditAccountID *uint                              `json:"credit_account_id"`
 	Items           []PurchaseAccountingCOAItemRequest `json:"items" binding:"required,min=1"`
+}
+
+type PurchasePPhPaymentRequest struct {
+	PaymentDate string  `json:"payment_date" binding:"required"`
+	Amount      float64 `json:"amount" binding:"required"`
+	CashBankID  uint    `json:"cash_bank_id" binding:"required"`
+	Reference   string  `json:"reference"`
+	Notes       string  `json:"notes"`
 }
 
 type PurchaseAccountingCOAItemRequest struct {

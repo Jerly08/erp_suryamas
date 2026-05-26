@@ -202,6 +202,7 @@ const (
 const (
 	SSOTSourceTypeSale                = "SALE"
 	SSOTSourceTypePurchase            = "PURCHASE"
+	SSOTSourceTypePurchasePPhPayment  = "PURCHASE_PPH_PAYMENT"
 	SSOTSourceTypePayment             = "PAYMENT"
 	SSOTSourceTypeCashBank            = "CASH_BANK"
 	SSOTSourceTypeAsset               = "ASSET"
