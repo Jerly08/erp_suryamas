@@ -4227,6 +4227,10 @@ const PurchasesPage: React.FC = () => {
     const approvalStatus = (purchase.approval_status || "").toUpperCase();
     const purchaseStatus = (purchase.status || "").toUpperCase();
 
+    if (purchaseStatus === "PENDING_FINAL_APPROVAL") {
+      return isFinanceManagerRole(roleNorm);
+    }
+
     if (
       approvalStatus === "APPROVED" ||
       approvalStatus === "REJECTED" ||
@@ -4258,7 +4262,25 @@ const PurchasesPage: React.FC = () => {
     const isUserTurn =
       purchaseStatus === "DRAFT"
         ? canActOnDraftApproval
+        : purchaseStatus === "PENDING_FINAL_APPROVAL"
+          ? isFinanceManagerRole(roleNorm)
         : workflowRoleMatchesUserRole(activeStep?.approver_role, roleNorm);
+
+    if (purchaseStatus === "PENDING_FINAL_APPROVAL") {
+      return isFinanceManagerRole(roleNorm)
+        ? {
+            text: "Finalisasi Jurnal",
+            icon: <FiCheckCircle />,
+            colorScheme: "purple",
+            variant: "solid",
+          }
+        : {
+            text: "Waiting for Finance Manager Finalisasi",
+            icon: <FiClock />,
+            colorScheme: "purple",
+            variant: "outline",
+          };
+    }
 
     // Completed states
     if (
@@ -4372,6 +4394,8 @@ const PurchasesPage: React.FC = () => {
               actionProps.text === "Submit for Approval"
             ) {
               handleSubmitForApproval(purchase.id);
+            } else if (financeManagerCanFinalApprove) {
+              handleFinalApprovePurchase(purchase);
             } else {
               setSelectedPurchase(purchase);
               onViewOpen();
@@ -4418,23 +4442,6 @@ const PurchasesPage: React.FC = () => {
             }}
           >
             Lengkapi COA
-          </Button>
-        )}
-
-        {financeManagerCanFinalApprove && (
-          <Button
-            size="sm"
-            colorScheme="purple"
-            variant="solid"
-            leftIcon={<FiCheckCircle />}
-            onClick={() => handleFinalApprovePurchase(purchase)}
-            fontWeight="semibold"
-            _hover={{
-              transform: "translateY(-1px)",
-              boxShadow: "md",
-            }}
-          >
-            Final Approve
           </Button>
         )}
 
@@ -5674,6 +5681,7 @@ const PurchasesPage: React.FC = () => {
                         <ApprovalPanel
                           purchaseId={selectedPurchase.id}
                           approvalStatus={selectedPurchase.approval_status}
+                          purchaseStatus={selectedPurchase.status}
                           approvalSteps={
                             selectedPurchase.approval_request?.approval_steps ||
                             []
@@ -5688,6 +5696,24 @@ const PurchasesPage: React.FC = () => {
                           ) => {
                             if (!selectedPurchase) return;
                             try {
+                              if (
+                                (selectedPurchase.status || "").toUpperCase() ===
+                                "PENDING_FINAL_APPROVAL"
+                              ) {
+                                await handleFinalApprovePurchase(
+                                  selectedPurchase,
+                                );
+                                return;
+                              }
+
+                              const roleNorm = normalizeRole(
+                                user?.role as unknown as string,
+                              );
+                              const activeStep =
+                                getCurrentApprovalStepInfo(selectedPurchase);
+                              const canEscalateToDirector =
+                                isFinanceManagerRole(roleNorm) &&
+                                activeStep?.approver_role === "finance";
                               // Call API to approve with escalation parameter
                               const result =
                                 await approvalService.approvePurchase(
@@ -5695,7 +5721,10 @@ const PurchasesPage: React.FC = () => {
                                   {
                                     comments: comments || "",
                                     escalate_to_director:
-                                      requiresDirector || false,
+                                      Boolean(
+                                        requiresDirector &&
+                                          canEscalateToDirector,
+                                      ),
                                   },
                                 );
 
@@ -5844,21 +5873,6 @@ const PurchasesPage: React.FC = () => {
                   </ModalBody>
                   <ModalFooter>
                     <HStack>
-                      {selectedPurchase &&
-                        (selectedPurchase.status || "").toUpperCase() ===
-                          "PENDING_FINAL_APPROVAL" &&
-                        canApprove &&
-                        isFinanceManagerRole(roleNorm) && (
-                          <Button
-                            colorScheme="purple"
-                            leftIcon={<FiCheckCircle />}
-                            onClick={() =>
-                              handleFinalApprovePurchase(selectedPurchase)
-                            }
-                          >
-                            Final Approve & Post
-                          </Button>
-                        )}
                       <Button onClick={onViewClose}>
                         {t("purchases.close")}
                       </Button>

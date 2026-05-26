@@ -144,6 +144,11 @@ class ApprovalService {
     return response.data;
   }
 
+  async finalApprovePurchase(purchaseId: number, data: { comments?: string } = {}): Promise<{ message: string; purchase: Purchase }> {
+    const response = await api.post(API_ENDPOINTS.PURCHASES_FINAL_APPROVAL(purchaseId), data);
+    return response.data;
+  }
+
   // Reject a purchase
   async rejectPurchase(purchaseId: number, data: { comments: string }): Promise<{ message: string; purchase_id: number; comments: string }> {
     const response = await api.post(API_ENDPOINTS.PURCHASES_REJECT(purchaseId), data);

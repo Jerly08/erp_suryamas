@@ -776,6 +776,45 @@ func (s *PurchaseService) ProcessPurchaseApproval(purchaseID uint, approved bool
 	return err
 }
 
+func (s *PurchaseService) ensureActiveApprovalStepForUser(requestID uint, userID uint, expectedRoles ...string) error {
+	if s.approvalService == nil {
+		return errors.New("approval service is not available")
+	}
+
+	var approvalReq models.ApprovalRequest
+	if err := s.db.Preload("ApprovalSteps.Step").First(&approvalReq, requestID).Error; err != nil {
+		return fmt.Errorf("failed to load approval request: %v", err)
+	}
+	if approvalReq.Status != models.ApprovalStatusPending {
+		return fmt.Errorf("approval request is no longer pending")
+	}
+
+	for i := range approvalReq.ApprovalSteps {
+		action := &approvalReq.ApprovalSteps[i]
+		if !action.IsActive || action.Status != models.ApprovalStatusPending {
+			continue
+		}
+		if !s.approvalService.canUserApprove(userID, action.Step.ApproverRole) {
+			continue
+		}
+
+		if len(expectedRoles) == 0 {
+			return nil
+		}
+
+		activeRole := models.NormalizeRole(action.Step.ApproverRole)
+		for _, expectedRole := range expectedRoles {
+			if activeRole == models.NormalizeRole(expectedRole) {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("director escalation can only be requested from Finance Manager approval step; active step is %s", action.Step.ApproverRole)
+	}
+
+	return errors.New("no active approval step found for your role")
+}
+
 // ProcessPurchaseApprovalWithEscalation processes purchase approval with escalation logic
 func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint, approved bool, userID uint, userRole, comments string, escalateToDirector bool) (map[string]interface{}, error) {
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
@@ -910,6 +949,12 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 
 		if err := s.advanceRequesterSubmissionStep(purchase, purchase.UserID, "Purchase submitted by requester for approval"); err != nil {
 			return nil, err
+		}
+
+		if purchase.ApprovalRequestID != nil {
+			if err := s.ensureActiveApprovalStepForUser(*purchase.ApprovalRequestID, userID, models.RoleFinance); err != nil {
+				return nil, err
+			}
 		}
 
 		// IMPORTANT: Escalate to director FIRST before processing approval

@@ -307,48 +307,9 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 			return err
 		}
 	} else {
-		// FIXED LOGIC: Check if the approving user can approve any OTHER pending steps
-		// This fixes the bug where finance users skip their own step approval
-		var userCanApproveOtherSteps []*models.ApprovalAction
-		for i := range approvalReq.ApprovalSteps {
-			step := &approvalReq.ApprovalSteps[i]
-			if step.Status == models.ApprovalStatusPending && !step.IsActive {
-				if s.canUserApprove(userID, step.Step.ApproverRole) {
-					userCanApproveOtherSteps = append(userCanApproveOtherSteps, step)
-				}
-			}
-		}
-
-		// Process any steps the user can approve directly
-		if len(userCanApproveOtherSteps) > 0 {
-			// User can approve other steps - complete them automatically
-			for _, step := range userCanApproveOtherSteps {
-				step.Status = models.ApprovalStatusApproved
-				step.ApproverID = &userID
-				step.Comments = "Auto-approved: User has multiple role permissions"
-				step.ActionDate = &now
-				step.IsActive = false
-
-				if err := tx.Save(step).Error; err != nil {
-					tx.Rollback()
-					return err
-				}
-
-				// Create history for auto-approval
-				autoHistory := models.ApprovalHistory{
-					RequestID: requestID,
-					UserID:    userID,
-					Action:    models.ApprovalActionApproved,
-					Comments:  fmt.Sprintf("Auto-approved %s step: User has %s role permissions", step.Step.ApproverRole, step.Step.ApproverRole),
-					Metadata:  "{\"auto_approved\": true}",
-				}
-
-				if err := tx.Create(&autoHistory).Error; err != nil {
-					tx.Rollback()
-					return err
-				}
-			}
-		}
+		// Approve exactly the active step. Purchase approval has Accounting and
+		// optional Director gates after finance review, so future pending steps
+		// must never be auto-approved because a user happens to match another role.
 
 		// Now check for next steps to activate
 		var activeNextStep *models.ApprovalStep
@@ -359,8 +320,19 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 				break
 			}
 
+			directorAlreadyActive := false
+			if strings.ToLower(nextStep.ApproverRole) == "director" {
+				for i := range approvalReq.ApprovalSteps {
+					action := &approvalReq.ApprovalSteps[i]
+					if action.StepID == nextStep.ID && action.IsActive && action.Status == models.ApprovalStatusPending {
+						directorAlreadyActive = true
+						break
+					}
+				}
+			}
+
 			// Should we skip this step?
-			if strings.ToLower(nextStep.ApproverRole) == "director" && nextStep.IsOptional && !approvalReq.Workflow.RequireDirector {
+			if strings.ToLower(nextStep.ApproverRole) == "director" && !directorAlreadyActive && !approvalReq.Workflow.RequireDirector {
 				// Skip this nextStep and keep looking for the one after it
 				tempCurrentOrder = nextStep.StepOrder
 				continue
@@ -403,8 +375,9 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 		allStepsCompleted := true
 		for i := range approvalReq.ApprovalSteps {
 			step := &approvalReq.ApprovalSteps[i]
-			// Skip optional director steps unless they were specifically activated or workflow requires it
-			if strings.ToLower(step.Step.ApproverRole) == "director" && step.Step.IsOptional && !step.IsActive {
+			// Skip director unless it was specifically activated by escalation or
+			// the workflow globally requires Director approval.
+			if strings.ToLower(step.Step.ApproverRole) == "director" && !step.IsActive {
 				if approvalReq.Workflow.RequireDirector {
 					// Workflow actively requires it! Don't skip it.
 				} else {
@@ -444,7 +417,7 @@ func (s *ApprovalService) ProcessApprovalAction(requestID uint, userID uint, act
 				}
 			}
 
-			if pendingDirectorStep != nil {
+			if pendingDirectorStep != nil && approvalReq.Workflow.RequireDirector {
 				// Activate the pending director step
 				pendingDirectorStep.IsActive = true
 				if err := tx.Save(pendingDirectorStep).Error; err != nil {
@@ -942,16 +915,8 @@ func (s *ApprovalService) EscalateToDirector(requestID uint, escalatedByUserID u
 		return fmt.Errorf("failed to find director action: %v", err)
 	}
 
-	// Important: DO NOT deactivate all other steps immediately
-	// Keep the current step active until it's properly processed
-	// Only deactivate other steps if they are not the currently active finance step
-	if err := tx.Model(&models.ApprovalAction{}).
-		Where("request_id = ? AND id != ? AND is_active = ? AND status != ?",
-			requestID, directorAction.ID, false, models.ApprovalStatusPending).
-		Update("is_active", false).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
+	// Keep the current finance-manager step active until ProcessApprovalAction
+	// approves it. Director is only an additional pending step at this point.
 
 	// Create escalation history
 	history := models.ApprovalHistory{

@@ -159,6 +159,27 @@ func (pm *PermissionMiddleware) CanExport(module string) gin.HandlerFunc {
 	return pm.CheckModulePermission(module, "export")
 }
 
+func (pm *PermissionMiddleware) CanUsePurchaseApprovalWorkflow() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetString("role")
+		if role == "" {
+			role = c.GetString("user_role")
+		}
+
+		roleNorm := models.NormalizeRole(role)
+		if models.IsFinanceStaffRole(roleNorm) || models.IsFinanceManagerRole(roleNorm) || roleNorm == models.RoleDirector {
+			c.Next()
+			return
+		}
+
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":     "Only Finance Staff, Finance Manager, or Director can act on purchase approval workflow steps",
+			"user_role": role,
+		})
+		c.Abort()
+	}
+}
+
 func (pm *PermissionMiddleware) CanReviewPurchaseRequests() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role := c.GetString("role")

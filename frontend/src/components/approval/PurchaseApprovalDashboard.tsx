@@ -59,7 +59,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import approvalService, { Purchase, ApprovalStats, ApprovalHistory } from '@/services/approvalService';
 import WorkflowVisualization from '@/components/approval/WorkflowVisualization';
-import { normalizeRole, humanizeRole, workflowRoleMatchesUserRole } from '@/utils/roles';
+import { normalizeRole, humanizeRole, isFinanceManagerRole, workflowRoleMatchesUserRole } from '@/utils/roles';
 import { getUserDisplayName } from '@/utils/userDisplay';
 
 interface PurchaseApprovalDashboardProps {}
@@ -97,6 +97,9 @@ const PurchaseApprovalDashboard: React.FC<PurchaseApprovalDashboardProps> = () =
   const [approvalHistory, setApprovalHistory] = useState<ApprovalHistory[]>([]);
   const [processing, setProcessing] = useState(false);
   const [requiresDirector, setRequiresDirector] = useState(false);
+
+  const isPendingFinalApproval = (purchase?: Purchase | null) =>
+    (purchase?.status || '').toUpperCase() === 'PENDING_FINAL_APPROVAL';
 
   useEffect(() => {
     if (token) {
@@ -145,11 +148,30 @@ const PurchaseApprovalDashboard: React.FC<PurchaseApprovalDashboardProps> = () =
     
     setProcessing(true);
     try {
-      // Check if user is Finance and wants to escalate to Director
+      if (isPendingFinalApproval(selectedPurchase)) {
+        await approvalService.finalApprovePurchase(selectedPurchase.id, {
+          comments: comments || 'Final approval Finance Manager setelah Accounting melengkapi GL/COA',
+        });
+
+        toast({
+          title: 'Final Approval Posted',
+          description: 'Purchase sudah difinalisasi dan jurnal sudah diposting.',
+          status: 'success',
+          duration: 5000,
+          isClosable: true,
+        });
+
+        onApprovalClose();
+        setComments('');
+        setRequiresDirector(false);
+        setSelectedPurchase(null);
+        await fetchPurchasesForApproval();
+        await fetchApprovalStats();
+        return;
+      }
+
       const userRole = normalizeRole(user?.role as string);
-      const isFinance = userRole === 'finance';
-      // Remove amount restriction - Finance can escalate any amount to Director
-      const needsEscalation = isFinance && requiresDirector;
+      const needsEscalation = isFinanceManagerRole(userRole) && requiresDirector;
       
       const response = await approvalService.approvePurchase(selectedPurchase.id, {
         comments: comments || undefined,
@@ -177,6 +199,7 @@ const PurchaseApprovalDashboard: React.FC<PurchaseApprovalDashboardProps> = () =
       
       onApprovalClose();
       setComments('');
+      setRequiresDirector(false);
       setSelectedPurchase(null);
       // Refresh data to show updated status
       await fetchPurchasesForApproval();
@@ -221,6 +244,7 @@ const PurchaseApprovalDashboard: React.FC<PurchaseApprovalDashboardProps> = () =
       });
       onApprovalClose();
       setComments('');
+      setRequiresDirector(false);
       setSelectedPurchase(null);
       await fetchPurchasesForApproval();
       await fetchApprovalStats();
@@ -260,6 +284,7 @@ const PurchaseApprovalDashboard: React.FC<PurchaseApprovalDashboardProps> = () =
     setSelectedPurchase(purchase);
     setApprovalType(type);
     setComments('');
+    setRequiresDirector(false);
     onApprovalOpen();
   };
 
@@ -290,10 +315,12 @@ const getPriorityColor = (amount: number) => {
 
   // Determine active step's approver role from approval_steps
   const getActiveStepRole = (purchase: Purchase): string | null => {
+    if (isPendingFinalApproval(purchase)) return 'finance';
+
     // approvalService types show approval_steps: ApprovalAction[]
     // Active step is where is_active = true and status is PENDING
     // Fallback: first step with status PENDING
-    const steps = (purchase as any).approval_steps as any[] | undefined;
+    const steps = ((purchase as any).approval_steps || (purchase as any).approval_request?.approval_steps) as any[] | undefined;
     if (!steps || steps.length === 0) return null;
     const active = steps.find((a: any) => a.is_active && a.status === 'PENDING');
     if (active?.step?.approver_role) return normalizeRole(active.step.approver_role);
@@ -304,7 +331,16 @@ const getPriorityColor = (amount: number) => {
 
   // Get active step details for display
   const getActiveStepInfo = (purchase: Purchase): { role: string | null, humanRole: string, hasActiveStep: boolean, stepStatus: string } => {
-    const steps = (purchase as any).approval_steps as any[] | undefined;
+    if (isPendingFinalApproval(purchase)) {
+      return {
+        role: 'finance',
+        humanRole: 'Menunggu Finance Manager Finalisasi',
+        hasActiveStep: true,
+        stepStatus: 'PENDING_FINAL_APPROVAL'
+      };
+    }
+
+    const steps = ((purchase as any).approval_steps || (purchase as any).approval_request?.approval_steps) as any[] | undefined;
     if (!steps || steps.length === 0) {
       return { role: null, humanRole: 'Tidak ada workflow', hasActiveStep: false, stepStatus: 'NO_WORKFLOW' };
     }
@@ -364,10 +400,6 @@ const getPriorityColor = (amount: number) => {
         return `Menunggu persetujuan ${stepInfo.humanRole}`;
       }
       return 'Tidak ada step approval yang aktif';
-    }
-    
-    if (roleNorm === 'admin') {
-      return 'Admin override: Approve purchase';
     }
     
     if (stepInfo.role !== roleNorm) {
@@ -704,6 +736,7 @@ const getPriorityColor = (amount: number) => {
                   {filteredPurchases.map((purchase) => {
                     const stepInfo = getActiveStepInfo(purchase);
                     const canApprove = canUserApprove(purchase, user?.role as unknown as string);
+                    const finalApprovalPending = isPendingFinalApproval(purchase);
                     const approvalTooltip = getApprovalTooltipText(purchase, user?.role as unknown as string);
                     
                     return (
@@ -768,31 +801,28 @@ const getPriorityColor = (amount: number) => {
                           {/* Approve Button */}
                           <Tooltip label={approvalTooltip}>
                             <IconButton
-                              aria-label={meRole === 'admin' ? 'Admin override: Approve' : 'Approve'}
+                              aria-label="Approve"
                               icon={<FiCheckCircle />}
                               size="sm"
                               variant="ghost"
                               colorScheme="green"
-                              isDisabled={!canApprove && meRole !== 'admin'}
-                              onClick={() => (canApprove || meRole === 'admin') && openApprovalDialog(purchase, 'approve')}
+                              isDisabled={!canApprove}
+                              onClick={() => canApprove && openApprovalDialog(purchase, 'approve')}
                             />
                           </Tooltip>
                           
                           {/* Reject Button */}
-                          <Tooltip label={canApprove || meRole === 'admin' ? (meRole === 'admin' ? 'Admin override: Reject purchase' : 'Reject purchase') : approvalTooltip}>
+                          <Tooltip label={finalApprovalPending ? 'Final approval hanya bisa difinalisasi, bukan ditolak dari tahap ini' : canApprove ? 'Reject purchase' : approvalTooltip}>
                             <IconButton
-                              aria-label={meRole === 'admin' ? 'Admin override: Reject' : 'Reject'}
+                              aria-label="Reject"
                               icon={<FiXCircle />}
                               size="sm"
                               variant="ghost"
                               colorScheme="red"
-                              isDisabled={!canApprove && meRole !== 'admin'}
-                              onClick={() => (canApprove || meRole === 'admin') && openApprovalDialog(purchase, 'reject')}
+                              isDisabled={!canApprove || finalApprovalPending}
+                              onClick={() => canApprove && !finalApprovalPending && openApprovalDialog(purchase, 'reject')}
                             />
                           </Tooltip>
-                          {meRole === 'admin' && (
-                            <Badge colorScheme="purple" variant="subtle">Admin override</Badge>
-                          )}
                           
                           <Tooltip label="View History">
                             <IconButton
@@ -821,7 +851,11 @@ const getPriorityColor = (amount: number) => {
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>
-            {approvalType === 'approve' ? 'Approve Purchase' : 'Reject Purchase'}
+            {approvalType === 'approve'
+              ? isPendingFinalApproval(selectedPurchase)
+                ? 'Finalisasi Purchase & Post Jurnal'
+                : 'Approve Purchase'
+              : 'Reject Purchase'}
           </ModalHeader>
           <ModalCloseButton />
           <ModalBody>
@@ -857,21 +891,25 @@ const getPriorityColor = (amount: number) => {
                   />
                 </FormControl>
                 {/* Show checkbox for Finance role to escalate to Director */}
-                {approvalType === 'approve' && normalizeRole(user?.role as string) === 'finance' && (
-                  <FormControl>
-                    <HStack>
-                      <input
-                        type="checkbox"
-                        id="escalateToDirector"
-                        checked={requiresDirector}
-                        onChange={(e) => setRequiresDirector(e.target.checked)}
-                      />
-                      <FormLabel htmlFor="escalateToDirector" mb={0} cursor="pointer">
-                        Eskalasi ke Director untuk persetujuan tambahan
-                      </FormLabel>
-                    </HStack>
-                  </FormControl>
-                )}
+                {approvalType === 'approve' &&
+                  selectedPurchase &&
+                  !isPendingFinalApproval(selectedPurchase) &&
+                  isFinanceManagerRole(user?.role as string) &&
+                  canUserApprove(selectedPurchase, user?.role as unknown as string) && (
+                    <FormControl>
+                      <HStack>
+                        <input
+                          type="checkbox"
+                          id="escalateToDirector"
+                          checked={requiresDirector}
+                          onChange={(e) => setRequiresDirector(e.target.checked)}
+                        />
+                        <FormLabel htmlFor="escalateToDirector" mb={0} cursor="pointer">
+                          Eskalasi ke Director untuk persetujuan tambahan
+                        </FormLabel>
+                      </HStack>
+                    </FormControl>
+                  )}
               </VStack>
             )}
           </ModalBody>
@@ -885,7 +923,11 @@ const getPriorityColor = (amount: number) => {
               isLoading={processing}
               loadingText="Processing..."
             >
-              {approvalType === 'approve' ? 'Approve' : 'Reject'}
+              {approvalType === 'approve'
+                ? isPendingFinalApproval(selectedPurchase)
+                  ? 'Finalisasi & Post'
+                  : 'Approve'
+                : 'Reject'}
             </Button>
           </ModalFooter>
         </ModalContent>

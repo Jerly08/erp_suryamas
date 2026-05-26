@@ -280,8 +280,20 @@ func (h *PurchaseApprovalHandler) GetPurchasesForApproval(c *gin.Context) {
 		return
 	}
 
+	finalApprovalFilter := models.PurchaseFilter{
+		Status: models.PurchaseStatusPendingFinalApproval,
+		Page:   1,
+		Limit:  filter.Limit,
+	}
+	finalApprovalPurchases, err := h.purchaseService.GetPurchases(finalApprovalFilter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Filter based on user's approval authority
-	filteredPurchases := h.filterPurchasesByApprovalAuthority(purchases.Data, userRole, userID)
+	candidates := append(purchases.Data, finalApprovalPurchases.Data...)
+	filteredPurchases := h.filterPurchasesByApprovalAuthority(candidates, userRole, userID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"purchases": filteredPurchases,
@@ -424,6 +436,13 @@ func (h *PurchaseApprovalHandler) filterPurchasesByApprovalAuthority(purchases [
 
 	var filtered []models.Purchase
 	for _, p := range purchases {
+		if strings.EqualFold(strings.TrimSpace(p.Status), models.PurchaseStatusPendingFinalApproval) {
+			if models.IsFinanceManagerRole(userRole) {
+				filtered = append(filtered, p)
+			}
+			continue
+		}
+
 		if p.ApprovalRequestID == nil || p.ApprovalRequest == nil {
 			continue
 		}
@@ -444,6 +463,9 @@ func (h *PurchaseApprovalHandler) filterPurchasesByApprovalAuthority(purchases [
 	}
 
 	// Fallback: rely on approval service query (in case steps were not loaded for some records)
+	if h.approvalService == nil {
+		return filtered
+	}
 	pendingReqs, err := h.approvalService.GetPendingApprovals(userID, userRole)
 	if err != nil {
 		return filtered
@@ -486,8 +508,11 @@ func (h *PurchaseApprovalHandler) GetApprovalStats(c *gin.Context) {
 		return
 	}
 
-	// Only admin, finance, director can see stats
-	if models.NormalizeRole(userRole) != models.RoleAdmin && !models.IsFinanceManagerRole(userRole) && models.NormalizeRole(userRole) != models.RoleDirector {
+	// Only purchase approval workflow roles can see stats
+	if models.NormalizeRole(userRole) != models.RoleAdmin &&
+		!models.IsFinanceStaffRole(userRole) &&
+		!models.IsFinanceManagerRole(userRole) &&
+		models.NormalizeRole(userRole) != models.RoleDirector {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}
@@ -509,7 +534,16 @@ func (h *PurchaseApprovalHandler) GetApprovalStats(c *gin.Context) {
 
 	pendingPurchases, err := h.purchaseService.GetPurchases(pendingFilter)
 	if err == nil {
-		roleFiltered := h.filterPurchasesByApprovalAuthority(pendingPurchases.Data, userRole, userID)
+		finalApprovalFilter := models.PurchaseFilter{
+			Status: models.PurchaseStatusPendingFinalApproval,
+			Page:   1,
+			Limit:  1000,
+		}
+		candidates := pendingPurchases.Data
+		if finalApprovalPurchases, finalErr := h.purchaseService.GetPurchases(finalApprovalFilter); finalErr == nil {
+			candidates = append(candidates, finalApprovalPurchases.Data...)
+		}
+		roleFiltered := h.filterPurchasesByApprovalAuthority(candidates, userRole, userID)
 		stats["pending_approvals"] = len(roleFiltered)
 		// Calculate total pending amount for items the user can act on
 		totalPending := 0.0

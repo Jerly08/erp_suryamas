@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, VStack, HStack, Badge, Text, Spinner, Alert, AlertIcon, Divider, Button, Textarea, FormControl, FormLabel, FormHelperText, Checkbox, useToast, useColorModeValue } from '@chakra-ui/react';
 import { useApproval } from '@/hooks/useApproval';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,6 +8,7 @@ import { getUserDisplayName } from '@/utils/userDisplay';
 interface ApprovalPanelProps {
   purchaseId?: number;
   approvalStatus?: string;
+  purchaseStatus?: string;
   approvalSteps?: Array<{
     id: number;
     status: string;
@@ -39,7 +40,7 @@ const statusColor = (s?: string) => {
   }
 };
 
-export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approvalStatus, approvalSteps = [], canApprove = false, onApprove, onReject, actionLoading = false, purchaseAmount = 0 }) => {
+export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approvalStatus, purchaseStatus, approvalSteps = [], canApprove = false, onApprove, onReject, actionLoading = false, purchaseAmount = 0 }) => {
   const { history, loading, error, refresh } = useApproval(purchaseId);
   const { user } = useAuth();
   const toast = useToast();
@@ -117,13 +118,18 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
     allowRoleFallback: false,
   });
   const isFinanceRole = isFinanceManagerRole(normalizedRole);
+  const isPendingFinalApproval = (purchaseStatus || '').toUpperCase() === 'PENDING_FINAL_APPROVAL';
   const isPendingApproval = (approvalStatus || '').toUpperCase() === 'PENDING';
   const isNotStarted = (approvalStatus || '').toUpperCase() === 'NOT_STARTED';
-  const isApproved = (approvalStatus || '').toUpperCase() === 'APPROVED';
+  const isApproved = (approvalStatus || '').toUpperCase() === 'APPROVED' && !isPendingFinalApproval;
   const isRejected = (approvalStatus || '').toUpperCase() === 'REJECTED';
   
   // Determine the active step based on approval history
   const getActiveApprovalStep = () => {
+    if (isPendingFinalApproval) {
+      return 'finance';
+    }
+
     const workflowActiveStep =
       approvalSteps.find((step) => step.is_active && (step.status || '').toUpperCase() === 'PENDING') ||
       approvalSteps.find((step) => (step.status || '').toUpperCase() === 'PENDING');
@@ -136,31 +142,8 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
       return null; // Process completed
     }
     
-    // For new approval workflow starting from Employee
-    if (history.length === 0 || isNotStarted) {
-      // Employee creates the purchase but approval process starts from Finance
-      return 'finance'; // First approval step is Finance
-    }
-    
-    // If we're in pending status, determine who should act next based on history
-    if (isPendingApproval) {
-      const financeAlreadyApproved = history.some((entry) => {
-        if (entry.action !== 'APPROVED') return false;
-        return isFinanceManagerRole(entry.user?.role || '');
-      });
-
-      if (financeAlreadyApproved) {
-        return 'director';
-      }
-      
-      const requesterSubmission = history.find(h => 
-        h.action === 'CREATED' || h.action === 'SUBMITTED'
-      );
-      if (requesterSubmission) {
-        return 'finance';
-      }
-      
-      return 'finance'; // Default to finance if no clear employee submission found
+    if (history.length === 0 || isNotStarted || isPendingApproval) {
+      return null;
     }
     
     return null; // Default fallback
@@ -174,14 +157,29 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
   const isUserTurn = workflowRoleMatchesUserRole(activeStep, normalizedRole);
   const canUserAct = isUserTurn && canApprove && !isApproved && !isRejected;
   
-  const shouldShowDirectorCheckbox = isFinanceRole && canUserAct && (isPendingApproval || isNotStarted);
+  const shouldShowDirectorCheckbox = isFinanceRole && canUserAct && activeStep === 'finance' && isPendingApproval && !isPendingFinalApproval;
   const isDisabled = isApproved || isRejected || !canUserAct; // Disable when completed or not user's turn
+
+  useEffect(() => {
+    setRequiresDirector(false);
+    setApprovalIntent(null);
+    setValidationAttempted(false);
+    setHasUserInteracted(false);
+  }, [purchaseId, activeStep]);
+
+  useEffect(() => {
+    if (!shouldShowDirectorCheckbox && requiresDirector) {
+      setRequiresDirector(false);
+    }
+  }, [shouldShowDirectorCheckbox, requiresDirector]);
   
   return (
     <Box borderWidth="1px" borderRadius="md" p={4} w="full" bg={panelBg} borderColor={panelBorderColor}>
       <HStack justify="space-between" mb={2}>
         <Text fontWeight="bold" color={panelHeadingColor}>Approval</Text>
-        <Badge colorScheme={statusColor(approvalStatus)}>{(approvalStatus || 'NOT_REQUIRED').replace('_',' ')}</Badge>
+        <Badge colorScheme={isPendingFinalApproval ? 'purple' : statusColor(approvalStatus)}>
+          {isPendingFinalApproval ? 'FINAL APPROVAL' : (approvalStatus || 'NOT_REQUIRED').replace('_',' ')}
+        </Badge>
       </HStack>
       <Divider mb={3} borderColor={dividerColor} />
       {loading ? (
@@ -255,8 +253,16 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
               <Alert status="info" size="sm" borderRadius="md">
                 <AlertIcon />
                 <Text fontSize="sm">
-                  Menunggu persetujuan dari: <Text as="span" fontWeight="bold">{formatRoleForApproval(activeStep)}</Text>
+                  Menunggu persetujuan dari: <Text as="span" fontWeight="bold">{isPendingFinalApproval ? 'Finance Manager Finalisasi' : formatRoleForApproval(activeStep)}</Text>
                   {activeStepIsEscalated && activeStep === 'director' && ' (sudah di-escalate ke Director)'}
+                </Text>
+              </Alert>
+            )}
+            {isPendingFinalApproval && isUserTurn && (
+              <Alert status="warning" size="sm" borderRadius="md">
+                <AlertIcon />
+                <Text fontSize="sm">
+                  Accounting sudah melengkapi GL/COA. Finance Manager perlu finalisasi untuk posting jurnal.
                 </Text>
               </Alert>
             )}
@@ -360,37 +366,76 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
             )}
           </VStack>
           <HStack justify="flex-end" spacing={3} pt={2}>
+            {!isPendingFinalApproval && (
+              <Button
+                size="sm"
+                variant="outline"
+                colorScheme="red"
+                onClick={async () => {
+                  setApprovalIntent('reject'); // Set rejection intent
+                  setValidationAttempted(true);
+
+                  if (comments.trim() === '') {
+                    toast({
+                      title: 'Komentar Wajib',
+                      description: 'Berdasarkan SOP, alasan penolakan harus dicantumkan sebelum melanjutkan proses',
+                      status: 'error',
+                      duration: 5000,
+                      isClosable: true,
+                    });
+
+                    // Auto focus ke textarea untuk UX yang lebih baik
+                    setTimeout(() => {
+                      const textarea = document.querySelector('textarea[placeholder*="Contoh"]');
+                      if (textarea) {
+                        (textarea as HTMLTextAreaElement).focus();
+                        (textarea as HTMLTextAreaElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }
+                    }, 100);
+                    return;
+                  }
+
+                  if (onReject && !isDisabled) {
+                    await onReject(comments);
+                    // Refresh history after rejection and reset states
+                    setRequiresDirector(false);
+                    setHasUserInteracted(false);
+                    setValidationAttempted(false);
+                    setApprovalIntent(null);
+                    setTimeout(() => refresh(), 500);
+                  }
+                }}
+                isLoading={actionLoading}
+                isDisabled={isDisabled} // Disable based on turn logic
+                title={
+                  isApproved || isRejected
+                    ? 'Proses approval sudah selesai'
+                    : !isUserTurn
+                      ? `Menunggu giliran approval dari ${activeStep}`
+                      : 'Tolak purchase ini'
+                }
+                opacity={getButtonOpacity()}
+                transition="all 0.3s ease"
+                _hover={{
+                  opacity: 1,
+                  transform: 'translateY(-1px)',
+                  boxShadow: rejectHoverShadow
+                }}
+                _active={{
+                  transform: 'translateY(0px)'
+                }}
+              >
+                Tolak
+              </Button>
+            )}
             <Button
               size="sm"
-              variant="outline"
-              colorScheme="red"
+              colorScheme="green"
               onClick={async () => {
-                setApprovalIntent('reject'); // Set rejection intent
-                setValidationAttempted(true);
-                
-                if (comments.trim() === '') {
-                  toast({
-                    title: 'Komentar Wajib',
-                    description: 'Berdasarkan SOP, alasan penolakan harus dicantumkan sebelum melanjutkan proses',
-                    status: 'error',
-                    duration: 5000,
-                    isClosable: true,
-                  });
-                  
-                  // Auto focus ke textarea untuk UX yang lebih baik
-                  setTimeout(() => {
-                    const textarea = document.querySelector('textarea[placeholder*="Contoh"]');
-                    if (textarea) {
-                      (textarea as HTMLTextAreaElement).focus();
-                      (textarea as HTMLTextAreaElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    }
-                  }, 100);
-                  return;
-                }
-                
-                if (onReject && !isDisabled) {
-                  await onReject(comments);
-                  // Refresh history after rejection and reset states
+                if (onApprove && !isDisabled) {
+                  await onApprove(comments, shouldShowDirectorCheckbox && requiresDirector);
+                  // Refresh history after approval and reset states
+                  setRequiresDirector(false);
                   setHasUserInteracted(false);
                   setValidationAttempted(false);
                   setApprovalIntent(null);
@@ -404,41 +449,9 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
                   ? 'Proses approval sudah selesai'
                   : !isUserTurn
                     ? `Menunggu giliran approval dari ${activeStep}`
-                    : 'Tolak purchase ini'
-              }
-              opacity={getButtonOpacity()}
-              transition="all 0.3s ease"
-              _hover={{
-                opacity: 1,
-                transform: 'translateY(-1px)',
-                boxShadow: rejectHoverShadow
-              }}
-              _active={{
-                transform: 'translateY(0px)'
-              }}
-            >
-              Tolak
-            </Button>
-            <Button
-              size="sm"
-              colorScheme="green"
-              onClick={async () => {
-                if (onApprove && !isDisabled) {
-                  await onApprove(comments, requiresDirector);
-                  // Refresh history after approval and reset states
-                  setHasUserInteracted(false);
-                  setValidationAttempted(false);
-                  setTimeout(() => refresh(), 500);
-                }
-              }}
-              isLoading={actionLoading}
-              isDisabled={isDisabled} // Disable based on turn logic
-              title={
-                isApproved || isRejected
-                  ? 'Proses approval sudah selesai'
-                  : !isUserTurn
-                    ? `Menunggu giliran approval dari ${activeStep}`
-                    : 'Setujui purchase ini'
+                    : isPendingFinalApproval
+                      ? 'Finalisasi dan posting jurnal'
+                      : 'Setujui purchase ini'
               }
               transition="all 0.3s ease"
               _hover={{
@@ -449,7 +462,7 @@ export const ApprovalPanel: React.FC<ApprovalPanelProps> = ({ purchaseId, approv
                 transform: 'translateY(0px)'
               }}
             >
-              Setujui
+              {isPendingFinalApproval ? 'Finalisasi & Post' : 'Setujui'}
             </Button>
           </HStack>
         </>

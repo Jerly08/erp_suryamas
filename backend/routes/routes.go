@@ -886,7 +886,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				// Basic CRUD operations dengan enhanced security
 				purchases.GET("", permMiddleware.CanView("purchases"), purchaseController.GetPurchases)
 				// Approval statistics (must be defined before parameterized "/:id" route)
-				purchases.GET("/approval-stats", permMiddleware.CanApprove("purchases"), purchaseApprovalHandler.GetApprovalStats)
+				purchases.GET("/approval-stats", permMiddleware.CanUsePurchaseApprovalWorkflow(), purchaseApprovalHandler.GetApprovalStats)
 				purchases.GET("/:id", permMiddleware.CanView("purchases"), purchaseController.GetPurchase)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
 				purchases.PUT("/:id", permMiddleware.CanEdit("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
@@ -894,14 +894,14 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 				// Approval operations dengan permission checks
 				purchases.POST("/:id/submit-approval", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.SubmitForApproval)
-				purchases.POST("/:id/approve", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.ApprovePurchase)
-				purchases.POST("/:id/reject", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.RejectPurchase)
+				purchases.POST("/:id/approve", permMiddleware.CanUsePurchaseApprovalWorkflow(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.ApprovePurchase)
+				purchases.POST("/:id/reject", permMiddleware.CanUsePurchaseApprovalWorkflow(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.RejectPurchase)
 				purchases.POST("/:id/accounting-coa", permMiddleware.CanEdit("purchases"), purchaseController.CompleteAccountingCOA)
 				purchases.POST("/:id/final-approval", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.FinalApprovePurchase)
 				// Approval history endpoint (accessible by those who can view purchases)
 				purchases.GET("/:id/approval-history", permMiddleware.CanView("purchases"), purchaseApprovalHandler.GetApprovalHistory)
 				// Pending approvals (for those who can approve)
-				purchases.GET("/pending-approval", permMiddleware.CanApprove("purchases"), purchaseApprovalHandler.GetPurchasesForApproval)
+				purchases.GET("/pending-approval", permMiddleware.CanUsePurchaseApprovalWorkflow(), purchaseApprovalHandler.GetPurchasesForApproval)
 
 				// Document management dengan permission checks
 				purchases.POST("/:id/documents", permMiddleware.CanEdit("purchases"), purchaseController.UploadDocument)
@@ -918,7 +918,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 				// Analytics and reporting dengan permission checks
 				purchases.GET("/summary", permMiddleware.CanView("purchases"), purchaseController.GetPurchasesSummary)
-				purchases.GET("/pending-approvals", permMiddleware.CanApprove("purchases"), purchaseController.GetPendingApprovals)
+				purchases.GET("/pending-approvals", permMiddleware.CanUsePurchaseApprovalWorkflow(), purchaseController.GetPendingApprovals)
 
 				// Export routes dengan permission checks
 				purchases.GET("/export/pdf", permMiddleware.CanExport("purchases"), purchaseController.ExportPurchasesReportPDF)

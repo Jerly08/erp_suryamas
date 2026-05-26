@@ -56,12 +56,12 @@ type Purchase struct {
 	CreditAccountID  *uint  `json:"credit_account_id" gorm:"index"`                 // For credit purchases - liability account
 	PaymentReference string `json:"payment_reference" gorm:"size:100"`              // Check number, transfer reference, etc.
 
-	Status string `json:"status" gorm:"size:20"` // DRAFT, PENDING_APPROVAL, APPROVED, COMPLETED, CANCELLED
+	Status string `json:"status" gorm:"size:40"` // DRAFT, PENDING_APPROVAL, PENDING_ACCOUNTING, PENDING_FINAL_APPROVAL, APPROVED
 	Notes  string `json:"notes" gorm:"type:text"`
 
 	// Approval fields
 	RequiresApproval    bool       `json:"requires_approval" gorm:"default:false"`
-	ApprovalStatus      string     `json:"approval_status" gorm:"size:20;default:'NOT_STARTED'"`
+	ApprovalStatus      string     `json:"approval_status" gorm:"size:40;default:'NOT_STARTED'"`
 	ApprovalAmountBasis string     `json:"approval_amount_basis" gorm:"size:40;default:'SUBTOTAL_BEFORE_DISCOUNT'"`
 	ApprovalBaseAmount  float64    `json:"approval_base_amount" gorm:"type:decimal(15,2);default:0"`
 	ApprovalRequestID   *uint      `json:"approval_request_id" gorm:"index"`

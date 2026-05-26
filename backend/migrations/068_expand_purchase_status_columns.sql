@@ -1,0 +1,3 @@
+ALTER TABLE purchases
+  ALTER COLUMN status TYPE VARCHAR(40),
+  ALTER COLUMN approval_status TYPE VARCHAR(40);

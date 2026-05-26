@@ -1072,9 +1072,25 @@ func (pc *PurchaseController) GetPendingApprovals(c *gin.Context) {
 		return
 	}
 
+	finalApprovalResult, finalErr := pc.purchaseService.GetPurchases(models.PurchaseFilter{
+		Status: models.PurchaseStatusPendingFinalApproval,
+		Page:   1,
+		Limit:  100,
+	})
+	if finalErr == nil {
+		result.Data = append(result.Data, finalApprovalResult.Data...)
+	}
+
 	// Filter based on user role - in a real app, this would be more sophisticated
 	var filteredPurchases []models.Purchase
 	for _, purchase := range result.Data {
+		if purchase.Status == models.PurchaseStatusPendingFinalApproval {
+			if models.IsFinanceManagerRole(userRole) {
+				filteredPurchases = append(filteredPurchases, purchase)
+			}
+			continue
+		}
+
 		// Finance manager can approve finance-step purchases
 		if models.IsFinanceManagerRole(userRole) {
 			filteredPurchases = append(filteredPurchases, purchase)
