@@ -294,6 +294,21 @@ type PurchaseAccountingCOARequest struct {
 	Items           []PurchaseAccountingCOAItemRequest `json:"items" binding:"required,min=1"`
 }
 
+type PurchaseFinalReviewConfigRequest struct {
+	PaymentMethod    *string `json:"payment_method"`
+	BankAccountID    *uint   `json:"bank_account_id"`
+	CreditAccountID  *uint   `json:"credit_account_id"`
+	PaymentReference *string `json:"payment_reference"`
+
+	FreightCost        *float64 `json:"freight_cost"`
+	PPNRate            *float64 `json:"ppn_rate"`
+	OtherTaxAdditions  *float64 `json:"other_tax_additions"`
+	PPh21Rate          *float64 `json:"pph21_rate"`
+	PPh23Rate          *float64 `json:"pph23_rate"`
+	OtherTaxDeductions *float64 `json:"other_tax_deductions"`
+	Notes              *string  `json:"notes"`
+}
+
 type PurchasePPhPaymentRequest struct {
 	PaymentDate string  `json:"payment_date" binding:"required"`
 	Amount      float64 `json:"amount" binding:"required"`

@@ -1585,6 +1585,148 @@ func (s *PurchaseService) validatePurchaseCreditAccount(accountID uint) error {
 	return nil
 }
 
+func (s *PurchaseService) UpdatePurchaseFinalReviewConfig(purchaseID uint, request models.PurchaseFinalReviewConfigRequest, userID uint) (*models.Purchase, error) {
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return nil, fmt.Errorf("purchase not found: %v", err)
+	}
+	if purchase.ApprovalStatus != models.PurchaseApprovalApproved {
+		return nil, errors.New("purchase belum melewati approval Finance Manager awal")
+	}
+	if purchase.Status != models.PurchaseStatusPendingFinalApproval {
+		return nil, fmt.Errorf("konfigurasi final hanya bisa dikoreksi saat purchase menunggu final approval (status saat ini: %s)", purchase.Status)
+	}
+	if len(purchase.PurchaseItems) == 0 {
+		return nil, errors.New("purchase tidak memiliki item untuk dihitung ulang")
+	}
+	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
+		return nil, err
+	}
+
+	if request.PaymentMethod != nil {
+		purchase.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(*request.PaymentMethod)))
+	} else {
+		purchase.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(purchase.PaymentMethod)))
+	}
+	if request.BankAccountID != nil {
+		if *request.BankAccountID == 0 {
+			purchase.BankAccountID = nil
+		} else {
+			purchase.BankAccountID = request.BankAccountID
+		}
+	}
+	if request.CreditAccountID != nil {
+		if *request.CreditAccountID == 0 {
+			purchase.CreditAccountID = nil
+		} else {
+			purchase.CreditAccountID = request.CreditAccountID
+		}
+	}
+	if request.PaymentReference != nil {
+		purchase.PaymentReference = *request.PaymentReference
+	}
+	if request.FreightCost != nil {
+		purchase.FreightCost = *request.FreightCost
+	}
+	if request.PPNRate != nil {
+		purchase.PPNRate = *request.PPNRate
+	}
+	if request.OtherTaxAdditions != nil {
+		purchase.OtherTaxAdditions = *request.OtherTaxAdditions
+	}
+	if request.PPh21Rate != nil {
+		purchase.PPh21Rate = *request.PPh21Rate
+	}
+	if request.PPh23Rate != nil {
+		purchase.PPh23Rate = *request.PPh23Rate
+	}
+	if request.OtherTaxDeductions != nil {
+		purchase.OtherTaxDeductions = *request.OtherTaxDeductions
+	}
+	if request.Notes != nil {
+		purchase.Notes = *request.Notes
+	}
+
+	purchase.BankAccountID, purchase.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
+		purchase.PaymentMethod,
+		purchase.BankAccountID,
+		purchase.CreditAccountID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.recalculatePurchaseTotals(purchase); err != nil {
+		return nil, fmt.Errorf("failed to recalculate final purchase totals: %v", err)
+	}
+	s.setApprovalBasisAndBase(purchase)
+
+	now := time.Now()
+	purchase.UpdatedAt = now
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		selectFields := []string{
+			"PaymentMethod",
+			"BankAccountID",
+			"CreditAccountID",
+			"PaymentReference",
+			"FreightCost",
+			"SubtotalBeforeDiscount",
+			"ItemDiscountAmount",
+			"OrderDiscountAmount",
+			"NetBeforeTax",
+			"PPNRate",
+			"PPNAmount",
+			"OtherTaxAdditions",
+			"TotalTaxAdditions",
+			"PPh21Rate",
+			"PPh21Amount",
+			"PPh23Rate",
+			"PPh23Amount",
+			"OtherTaxDeductions",
+			"TotalTaxDeductions",
+			"TaxAmount",
+			"TotalAmount",
+			"PaidAmount",
+			"OutstandingAmount",
+			"PPhPaymentStatus",
+			"PPhPaidAmount",
+			"ApprovalAmountBasis",
+			"ApprovalBaseAmount",
+			"UpdatedAt",
+		}
+		if request.Notes != nil {
+			selectFields = append(selectFields, "Notes")
+		}
+
+		if err := tx.Model(&models.Purchase{}).
+			Where("id = ?", purchaseID).
+			Select(selectFields).
+			Updates(purchase).Error; err != nil {
+			return fmt.Errorf("failed to update final review configuration: %w", err)
+		}
+
+		if purchase.ApprovalRequestID != nil {
+			history := models.ApprovalHistory{
+				RequestID: *purchase.ApprovalRequestID,
+				UserID:    userID,
+				Action:    models.ApprovalActionApproved,
+				Comments:  "Finance Manager reviewed/updated tax, payment, and GL readiness before final approval",
+				Metadata:  "{\"finance_manager_final_config_review\":true,\"waiting_final_approval\":true}",
+			}
+			if err := tx.Create(&history).Error; err != nil {
+				return fmt.Errorf("failed to record final review configuration history: %w", err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.GetPurchaseByID(purchaseID)
+}
+
 func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.PurchaseAccountingCOARequest, userID uint) (*models.Purchase, error) {
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
 	if err != nil {
@@ -1594,8 +1736,10 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 	if purchase.ApprovalStatus != models.PurchaseApprovalApproved {
 		return nil, errors.New("COA accounting hanya bisa dilengkapi setelah purchase disetujui Finance Manager")
 	}
-	if purchase.Status != models.PurchaseStatusPendingAccounting {
-		return nil, fmt.Errorf("purchase tidak sedang menunggu input COA accounting (status saat ini: %s)", purchase.Status)
+	isInitialAccountingCOA := purchase.Status == models.PurchaseStatusPendingAccounting
+	isFinalReviewCOA := purchase.Status == models.PurchaseStatusPendingFinalApproval
+	if !isInitialAccountingCOA && !isFinalReviewCOA {
+		return nil, fmt.Errorf("purchase tidak sedang menunggu input/review COA (status saat ini: %s)", purchase.Status)
 	}
 	if len(purchase.PurchaseItems) == 0 {
 		return nil, errors.New("purchase tidak memiliki item untuk diposting")
@@ -1638,8 +1782,10 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		purchaseUpdates := map[string]interface{}{
-			"status":     models.PurchaseStatusPendingFinalApproval,
 			"updated_at": time.Now(),
+		}
+		if isInitialAccountingCOA {
+			purchaseUpdates["status"] = models.PurchaseStatusPendingFinalApproval
 		}
 		if purchase.PaymentMethod == models.PurchasePaymentCredit {
 			purchaseUpdates["credit_account_id"] = *creditAccountID
@@ -1660,12 +1806,18 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 		}
 
 		if purchase.ApprovalRequestID != nil {
+			historyComments := "Accounting completed GL/COA input; waiting for Finance Manager final approval"
+			metadata := "{\"accounting_coa_completed\":true,\"waiting_final_approval\":true}"
+			if isFinalReviewCOA {
+				historyComments = "Finance Manager reviewed/updated GL/COA before final approval"
+				metadata = "{\"finance_manager_coa_review\":true,\"waiting_final_approval\":true}"
+			}
 			historyNote := models.ApprovalHistory{
 				RequestID: *purchase.ApprovalRequestID,
 				UserID:    userID,
 				Action:    models.ApprovalActionApproved,
-				Comments:  "Accounting completed GL/COA input; waiting for Finance Manager final approval",
-				Metadata:  "{\"accounting_coa_completed\":true,\"waiting_final_approval\":true}",
+				Comments:  historyComments,
+				Metadata:  metadata,
 			}
 			if err := tx.Create(&historyNote).Error; err != nil {
 				return fmt.Errorf("failed to record accounting COA history: %w", err)

@@ -17,6 +17,7 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
+  Image,
   Alert,
   AlertIcon,
   AlertTitle,
@@ -32,7 +33,8 @@ import {
   Badge,
   Center
 } from '@chakra-ui/react';
-import { FiLogIn, FiEye, FiEyeOff, FiShield, FiLock, FiMail, FiUsers, FiTrendingUp, FiPieChart } from 'react-icons/fi';
+import { FiLogIn, FiEye, FiEyeOff, FiShield, FiLock, FiMail, FiUsers, FiTrendingUp } from 'react-icons/fi';
+import { AVERY_LOGO_ALT, AVERY_LOGO_PATH, POWERED_BY_TEXT } from '@/config/branding';
 
 const LoginContent = () => {
   const [email, setEmail] = useState('');
@@ -157,34 +159,23 @@ const LoginContent = () => {
             <VStack spacing={8} align="stretch">
               {/* Company Branding */}
               <Box textAlign={{ base: 'center', lg: 'left' }}>
-                <HStack spacing={4} justify={{ base: 'center', lg: 'flex-start' }} mb={6}>
-                  <Box
-                    w={12}
-                    h={12}
-                    bg={accentColor}
-                    borderRadius="xl"
-                    display="flex"
-                    alignItems="center"
-                    justifyContent="center"
-                    color="white"
-                    boxShadow="lg"
-                  >
-                    <FiPieChart size={24} />
-                  </Box>
+                <VStack spacing={3} align={{ base: 'center', lg: 'flex-start' }} mb={6}>
+                  <Image
+                    src={AVERY_LOGO_PATH}
+                    alt={AVERY_LOGO_ALT}
+                    h={{ base: '56px', md: '72px' }}
+                    maxW={{ base: '260px', md: '360px' }}
+                    objectFit="contain"
+                  />
                   <VStack spacing={0} align={{ base: 'center', lg: 'flex-start' }}>
-                    <Heading 
-                      size="xl" 
-                      color={headingColor}
-                      fontWeight="bold"
-                      letterSpacing="tight"
-                    >
-                      Sistem Akuntansi
-                    </Heading>
                     <Text color={textColor} fontSize="sm" fontWeight="medium">
                       Comprehensive Accounting Solution
                     </Text>
+                    <Text color={textColor} fontSize="xs" opacity={0.75}>
+                      {POWERED_BY_TEXT}
+                    </Text>
                   </VStack>
-                </HStack>
+                </VStack>
                 
                 <Text 
                   fontSize="lg" 
@@ -381,34 +372,16 @@ const LoginContent = () => {
                 <CardBody p={8}>
                   {/* Header */}
                   <VStack spacing={6} mb={8}>
-                    <Box
-                      w={20}
-                      h={20}
-                      bg={accentColor}
-                      borderRadius="2xl"
-                      display="flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      color="white"
-                      boxShadow="lg"
-                      position="relative"
-                      _before={{
-                        content: '""',
-                        position: 'absolute',
-                        inset: '-2px',
-                        bg: 'linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.3) 50%, transparent 70%)',
-                        borderRadius: '2xl',
-                        opacity: 0,
-                        transition: 'opacity 0.3s',
-                        zIndex: -1
-                      }}
-                      _hover={{
-                        transform: 'scale(1.05)',
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <FiLogIn size="2.5rem" />
-                    </Box>
+                    <Image
+                      src={AVERY_LOGO_PATH}
+                      alt={AVERY_LOGO_ALT}
+                      h="52px"
+                      maxW="220px"
+                      objectFit="contain"
+                    />
+                    <Text color={textColor} fontSize="xs" opacity={0.75} textAlign="center">
+                      {POWERED_BY_TEXT}
+                    </Text>
                     
                     <VStack spacing={2}>
                       <Heading 

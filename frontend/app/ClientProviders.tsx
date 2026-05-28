@@ -6,6 +6,8 @@ import { ThemeProvider } from '@/contexts/SimpleThemeContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import theme from '@/theme';
+import { AVERY_LOGO_ALT, AVERY_LOGO_PATH, POWERED_BY_TEXT } from '@/config/branding';
+import Image from 'next/image';
 
 interface ClientProvidersProps {
   children: React.ReactNode;
@@ -35,15 +37,27 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
           textAlign: 'center',
           padding: '2rem'
         }}>
-          <div style={{
-            fontSize: '1.25rem',
-            fontWeight: '600',
-            marginBottom: '0.5rem'
-          }}>Accounting System</div>
+          <Image
+            src={AVERY_LOGO_PATH}
+            alt={AVERY_LOGO_ALT}
+            width={260}
+            height={56}
+            style={{
+              height: '56px',
+              maxWidth: '260px',
+              objectFit: 'contain',
+              marginBottom: '0.75rem'
+            }}
+          />
           <div style={{
             fontSize: '0.875rem',
             opacity: 0.7
           }}>Loading...</div>
+          <div style={{
+            fontSize: '0.75rem',
+            opacity: 0.6,
+            marginTop: '0.5rem'
+          }}>{POWERED_BY_TEXT}</div>
         </div>
       </div>
     );

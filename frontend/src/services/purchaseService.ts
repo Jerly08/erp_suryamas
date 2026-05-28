@@ -38,6 +38,20 @@ export interface PurchaseAccountingCOARequest {
   }>;
 }
 
+export interface PurchaseFinalReviewConfigRequest {
+  ppn_rate?: number;
+  other_tax_additions?: number;
+  freight_cost?: number;
+  pph21_rate?: number;
+  pph23_rate?: number;
+  other_tax_deductions?: number;
+  payment_method?: string;
+  bank_account_id?: number;
+  credit_account_id?: number;
+  payment_reference?: string;
+  notes?: string;
+}
+
 export interface PurchaseFilterParams {
   status?: string;
   vendor_id?: string;
@@ -295,6 +309,17 @@ class PurchaseService {
   ): Promise<Purchase> {
     const response = await api.post(
       API_ENDPOINTS.PURCHASES_ACCOUNTING_COA(id),
+      payload,
+    );
+    return response.data?.purchase ?? response.data;
+  }
+
+  async updateFinalReviewConfig(
+    id: number,
+    payload: PurchaseFinalReviewConfigRequest,
+  ): Promise<Purchase> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_FINAL_REVIEW_CONFIG(id),
       payload,
     );
     return response.data?.purchase ?? response.data;

@@ -10,6 +10,7 @@ import { formatRoleForApproval } from '@/utils/roles';
 import { getUserDisplayName } from '@/utils/userDisplay';
 import {
   Flex,
+  Image,
   Text,
   IconButton,
   HStack,
@@ -24,6 +25,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { FiMenu, FiChevronDown, FiLogOut } from 'react-icons/fi';
+import { AVERY_LOGO_ALT, AVERY_LOGO_PATH } from '@/config/branding';
 
 interface SimpleNavbarProps {
   onMenuClick?: () => void;
@@ -77,10 +79,15 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
         />
       )}
 
-      {/* Title - visible on mobile when no sidebar */}
-      <Text fontSize="lg" fontWeight="semibold" color={textColor} display={{ base: onMenuClick ? 'none' : 'block', md: 'none' }}>
-        {t('navigation.navbar.systemTitle')}
-      </Text>
+      {/* Brand - visible on mobile when no sidebar */}
+      <Image
+        src={AVERY_LOGO_PATH}
+        alt={AVERY_LOGO_ALT}
+        h="32px"
+        maxW="132px"
+        objectFit="contain"
+        display={{ base: onMenuClick ? 'none' : 'block', md: 'none' }}
+      />
 
       {/* Spacer for desktop */}
       <div style={{ flex: 1 }} />

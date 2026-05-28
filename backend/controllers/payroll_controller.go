@@ -60,6 +60,14 @@ func currentUserID(ctx *gin.Context) (uint, bool) {
 	}
 }
 
+func respondPayrollClosedPeriod(ctx *gin.Context, err error) {
+	ctx.JSON(http.StatusBadRequest, gin.H{
+		"success": false,
+		"error":   err.Error(),
+		"code":    "PERIOD_CLOSED",
+	})
+}
+
 func payrollDate(value string, required bool) (*time.Time, error) {
 	if strings.TrimSpace(value) == "" {
 		if required {
@@ -867,10 +875,21 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		return
 	}
 
+	if err := services.CheckClosedPeriodRange(c.db, *periodStart, *periodEnd); err != nil {
+		respondPayrollClosedPeriod(ctx, err)
+		return
+	}
+
 	paymentDate, err := payrollDate(req.PaymentDate, false)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment_date", "details": err.Error()})
 		return
+	}
+	if paymentDate != nil {
+		if err := services.CheckClosedPeriod(c.db, *paymentDate); err != nil {
+			respondPayrollClosedPeriod(ctx, err)
+			return
+		}
 	}
 
 	if len(req.Items) == 0 {
@@ -1022,6 +1041,18 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Payroll hanya bisa di-approve saat status menunggu approval"})
 		return
 	}
+	if err := services.CheckClosedPeriodRange(tx, run.PeriodStart, run.PeriodEnd); err != nil {
+		tx.Rollback()
+		respondPayrollClosedPeriod(ctx, err)
+		return
+	}
+	if run.PaymentDate != nil {
+		if err := services.CheckClosedPeriod(tx, *run.PaymentDate); err != nil {
+			tx.Rollback()
+			respondPayrollClosedPeriod(ctx, err)
+			return
+		}
+	}
 
 	updates := map[string]interface{}{
 		"status":             models.PayrollStatusApproved,
@@ -1114,6 +1145,16 @@ func (c *PayrollController) RejectPayrollRun(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Payroll hanya bisa di-reject saat status menunggu approval"})
 		return
 	}
+	if err := services.CheckClosedPeriodRange(c.db, run.PeriodStart, run.PeriodEnd); err != nil {
+		respondPayrollClosedPeriod(ctx, err)
+		return
+	}
+	if run.PaymentDate != nil {
+		if err := services.CheckClosedPeriod(c.db, *run.PaymentDate); err != nil {
+			respondPayrollClosedPeriod(ctx, err)
+			return
+		}
+	}
 
 	now := time.Now()
 	if err := c.db.Model(&run).Updates(map[string]interface{}{
@@ -1159,6 +1200,10 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment_date", "details": err.Error()})
 		return
 	}
+	if err := services.CheckClosedPeriod(c.db, *paymentDate); err != nil {
+		respondPayrollClosedPeriod(ctx, err)
+		return
+	}
 
 	amount := roundPayrollMoney(req.Amount)
 	if amount <= 0.01 {
@@ -1192,6 +1237,13 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 		tx.Rollback()
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Payroll ini tidak memiliki PPh untuk dibayar"})
 		return
+	}
+	if run.PPhPayableJournalEntryID == nil {
+		if err := services.CheckClosedPeriodRange(tx, run.PeriodStart, run.PeriodEnd); err != nil {
+			tx.Rollback()
+			respondPayrollClosedPeriod(ctx, err)
+			return
+		}
 	}
 
 	remaining := remainingPayrollPPh(&run)

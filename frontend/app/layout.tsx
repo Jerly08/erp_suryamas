@@ -3,8 +3,15 @@ import "./globals.css";
 import ClientProviders from './ClientProviders';
 
 export const metadata: Metadata = {
-  title: "Accounting System - User Friendly Dark Mode",
-  description: "Professional accounting application with user-friendly dark mode",
+  title: "Avery",
+  description: "Avery accounting application",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/avery-icon.png", type: "image/png", sizes: "256x256" },
+    ],
+    apple: [{ url: "/avery-icon.png", type: "image/png", sizes: "256x256" }],
+  },
 };
 
 export default function RootLayout({

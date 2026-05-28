@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ func setupPayrollApprovalTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.Account{},
+		&models.AccountingPeriod{},
 		&models.PayrollRun{},
 		&models.PayrollItem{},
 		&models.SSOTJournalEntry{},
@@ -37,6 +39,22 @@ func setupPayrollApprovalTestDB(t *testing.T) *gorm.DB {
 	}
 
 	return db
+}
+
+func createClosedPeriod(t *testing.T, db *gorm.DB, startDate, endDate time.Time) {
+	t.Helper()
+
+	closedAt := endDate
+	period := models.AccountingPeriod{
+		StartDate:   startDate,
+		EndDate:     endDate,
+		Description: "Closed payroll guard test period",
+		IsClosed:    true,
+		ClosedAt:    &closedAt,
+	}
+	if err := db.Create(&period).Error; err != nil {
+		t.Fatalf("failed to create closed period: %v", err)
+	}
 }
 
 func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
@@ -230,5 +248,197 @@ func TestPayrollItemTotalsDoNotReduceNetPayByPPh21(t *testing.T) {
 	}
 	if item.NetPay != 9550000 {
 		t.Fatalf("expected net pay 9550000 without reducing PPh21, got %.2f", item.NetPay)
+	}
+}
+
+func TestCreatePayrollRunRejectsRangeOverlappingClosedPeriod(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPayrollApprovalTestDB(t)
+
+	hrUser := models.User{
+		Username: "hr-closed-period",
+		Email:    "hr-closed-period@example.com",
+		Password: "password",
+		Role:     models.RoleHR,
+		IsActive: true,
+	}
+	if err := db.Create(&hrUser).Error; err != nil {
+		t.Fatalf("failed to create HR user: %v", err)
+	}
+
+	createClosedPeriod(
+		t,
+		db,
+		time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC),
+	)
+
+	body := `{
+		"period_start":"2026-05-01",
+		"period_end":"2026-05-31",
+		"payment_date":"2026-05-31",
+		"items":[
+			{"employee_name":"Staff Closed","base_salary":1000000,"net_pay":1000000}
+		]
+	}`
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/payroll", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("role", models.RoleHR)
+	ctx.Set("user_id", hrUser.ID)
+
+	NewPayrollController(db).CreatePayrollRun(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "CLOSED_PERIOD:2026-05-10") {
+		t.Fatalf("expected closed period error for overlap date, got: %s", recorder.Body.String())
+	}
+
+	var count int64
+	if err := db.Model(&models.PayrollRun{}).Count(&count).Error; err != nil {
+		t.Fatalf("failed to count payroll runs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no payroll run to be created, got %d", count)
+	}
+}
+
+func TestApprovePayrollRunRejectsClosedPeriodEvenWithoutJournalAmount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPayrollApprovalTestDB(t)
+
+	hrUser := models.User{
+		Username: "hr-zero",
+		Email:    "hr-zero@example.com",
+		Password: "password",
+		Role:     models.RoleHR,
+		IsActive: true,
+	}
+	financeManager := models.User{
+		Username: "fm-zero",
+		Email:    "fm-zero@example.com",
+		Password: "password",
+		Role:     models.RoleFinanceManager,
+		IsActive: true,
+	}
+	if err := db.Create(&hrUser).Error; err != nil {
+		t.Fatalf("failed to create HR user: %v", err)
+	}
+	if err := db.Create(&financeManager).Error; err != nil {
+		t.Fatalf("failed to create finance manager user: %v", err)
+	}
+
+	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
+	createClosedPeriod(
+		t,
+		db,
+		time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC),
+	)
+
+	run := models.PayrollRun{
+		PayrollNumber:    "PAY/2026/05/ZERO",
+		PeriodStart:      periodStart,
+		PeriodEnd:        periodEnd,
+		Status:           models.PayrollStatusPendingApproval,
+		PPhPaymentStatus: models.PayrollPPhPaymentStatusPaid,
+		CreatedByID:      hrUser.ID,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("failed to create payroll run: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/payroll/"+strconv.FormatUint(uint64(run.ID), 10)+"/approve", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(uint64(run.ID), 10)}}
+	ctx.Set("role", models.RoleFinanceManager)
+	ctx.Set("user_id", financeManager.ID)
+
+	NewPayrollController(db).ApprovePayrollRun(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "CLOSED_PERIOD:2026-05-10") {
+		t.Fatalf("expected closed period error, got: %s", recorder.Body.String())
+	}
+
+	var persisted models.PayrollRun
+	if err := db.First(&persisted, run.ID).Error; err != nil {
+		t.Fatalf("failed to reload payroll run: %v", err)
+	}
+	if persisted.Status != models.PayrollStatusPendingApproval {
+		t.Fatalf("expected payroll to remain pending approval, got %s", persisted.Status)
+	}
+}
+
+func TestPayPayrollPPhRejectsClosedPaymentDate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPayrollApprovalTestDB(t)
+
+	hrUser := models.User{
+		Username: "hr-pph",
+		Email:    "hr-pph@example.com",
+		Password: "password",
+		Role:     models.RoleHR,
+		IsActive: true,
+	}
+	financeManager := models.User{
+		Username: "fm-pph",
+		Email:    "fm-pph@example.com",
+		Password: "password",
+		Role:     models.RoleFinanceManager,
+		IsActive: true,
+	}
+	if err := db.Create(&hrUser).Error; err != nil {
+		t.Fatalf("failed to create HR user: %v", err)
+	}
+	if err := db.Create(&financeManager).Error; err != nil {
+		t.Fatalf("failed to create finance manager user: %v", err)
+	}
+
+	createClosedPeriod(
+		t,
+		db,
+		time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC),
+	)
+
+	run := models.PayrollRun{
+		PayrollNumber:    "PAY/2026/05/PPH",
+		PeriodStart:      time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		PeriodEnd:        time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
+		Status:           models.PayrollStatusApproved,
+		TotalPPh:         300000,
+		PPhPaymentStatus: models.PayrollPPhPaymentStatusUnpaid,
+		CreatedByID:      hrUser.ID,
+		ApprovedByID:     &financeManager.ID,
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("failed to create payroll run: %v", err)
+	}
+
+	body := `{"payment_date":"2026-06-15","amount":100000,"cash_bank_id":1}`
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/payroll/"+strconv.FormatUint(uint64(run.ID), 10)+"/pay-pph", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(uint64(run.ID), 10)}}
+	ctx.Set("role", models.RoleFinanceManager)
+	ctx.Set("user_id", financeManager.ID)
+
+	NewPayrollController(db).PayPayrollPPh(ctx)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "CLOSED_PERIOD:2026-06-15") {
+		t.Fatalf("expected closed period error for payment date, got: %s", recorder.Body.String())
 	}
 }

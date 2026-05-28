@@ -564,9 +564,9 @@ func (pc *PurchaseController) CompleteAccountingCOA(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 	userRole := c.MustGet("user_role").(string)
 	roleNorm := models.NormalizeRole(userRole)
-	if roleNorm != models.RoleAdmin && !models.IsAccountingRole(roleNorm) {
+	if roleNorm != models.RoleAdmin && !models.IsAccountingRole(roleNorm) && !models.IsFinanceManagerRole(roleNorm) {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Hanya Accounting atau Admin yang dapat melengkapi GL/COA setelah approval purchase",
+			"error": "Hanya Accounting, Finance Manager, atau Admin yang dapat melengkapi/mengkoreksi GL/COA purchase",
 		})
 		return
 	}
@@ -585,6 +585,41 @@ func (pc *PurchaseController) CompleteAccountingCOA(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "COA accounting berhasil dilengkapi dan menunggu final approval Finance Manager",
+		"purchase": purchase,
+	})
+}
+
+func (pc *PurchaseController) UpdateFinalReviewConfig(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	userRole := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(userRole)
+	if !models.IsFinanceManagerRole(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Hanya Finance Manager yang dapat mengoreksi konfigurasi final purchase sebelum jurnal diposting",
+		})
+		return
+	}
+
+	var request models.PurchaseFinalReviewConfigRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	purchase, err := pc.purchaseService.UpdatePurchaseFinalReviewConfig(uint(id), request, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Konfigurasi final purchase berhasil diperbarui",
 		"purchase": purchase,
 	})
 }

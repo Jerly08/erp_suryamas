@@ -204,10 +204,17 @@ const getPPhRemainingAmount = (payroll?: PayrollRun | null) => {
 const getApiErrorMessage = (error: unknown, fallback: string) => {
   const maybeError = error as {
     response?: {
-      data?: { error?: string; message?: string; details?: string };
+      data?: { code?: string; error?: string; message?: string; details?: string };
     };
   };
   const apiError = maybeError.response?.data;
+  if (apiError?.code === 'PERIOD_CLOSED') {
+    const closedDate = apiError.error?.replace('CLOSED_PERIOD:', '');
+    return closedDate
+      ? `Periode payroll untuk tanggal ${formatDate(closedDate)} sudah ditutup. Gunakan periode atau tanggal pembayaran yang masih terbuka.`
+      : 'Periode payroll sudah ditutup. Gunakan periode atau tanggal pembayaran yang masih terbuka.';
+  }
+
   const message = apiError?.error || apiError?.message || fallback;
   return apiError?.details ? `${message}: ${apiError.details}` : message;
 };

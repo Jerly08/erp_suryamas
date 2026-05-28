@@ -7,6 +7,7 @@ import {
   Box,
   CloseButton,
   Flex,
+  Image,
   Icon,
   useColorModeValue,
   Text,
@@ -44,6 +45,7 @@ import { normalizeRole } from "@/utils/roles";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useTheme } from "@/contexts/SimpleThemeContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { AVERY_LOGO_ALT, AVERY_LOGO_PATH, POWERED_BY_TEXT } from "@/config/branding";
 
 // Menu structure - will be translated dynamically
 // companyType: 'SERVICE' | 'TRADING' | 'MANUFACTURING'
@@ -332,18 +334,18 @@ export default function Sidebar({
         zIndex={1000}
         className="sidebar"
         boxShadow={sidebarShadow}
+        display="flex"
+        flexDirection="column"
         {...rest}
       >
         <Flex h="20" alignItems="center" mx="8" justifyContent="space-between">
-          <Text
-            fontSize="xl"
-            fontFamily="Inter"
-            fontWeight="bold"
-            color="var(--accent-color)"
-            letterSpacing="tight"
-          >
-            {t("navigation.sidebar.appTitle")}
-          </Text>
+          <Image
+            src={AVERY_LOGO_PATH}
+            alt={AVERY_LOGO_ALT}
+            h="42px"
+            maxW="150px"
+            objectFit="contain"
+          />
           <CloseButton
             display={{ base: "flex", md: "none" }}
             onClick={onClose}
@@ -353,32 +355,40 @@ export default function Sidebar({
           />
         </Flex>
 
-        {filteredGroups.map((group, index) => (
-          <Box key={group.title} mb={6}>
-            <Text
-              fontSize="xs"
-              fontWeight="semibold"
-              color={groupLabelColor}
-              textTransform="uppercase"
-              mx="4"
-              mb="3"
-              letterSpacing="wider"
-              opacity={0.8}
-            >
-              {group.title}
-            </Text>
-            {group.items.map((link) => (
-              <NavItem
-                key={link.name}
-                icon={link.icon}
-                href={link.href}
-                isActive={pathname === link.href}
+        <Box flex="1">
+          {filteredGroups.map((group) => (
+            <Box key={group.title} mb={6}>
+              <Text
+                fontSize="xs"
+                fontWeight="semibold"
+                color={groupLabelColor}
+                textTransform="uppercase"
+                mx="4"
+                mb="3"
+                letterSpacing="wider"
+                opacity={0.8}
               >
-                {link.name}
-              </NavItem>
-            ))}
-          </Box>
-        ))}
+                {group.title}
+              </Text>
+              {group.items.map((link) => (
+                <NavItem
+                  key={link.name}
+                  icon={link.icon}
+                  href={link.href}
+                  isActive={pathname === link.href}
+                >
+                  {link.name}
+                </NavItem>
+              ))}
+            </Box>
+          ))}
+        </Box>
+
+        <Box px="6" py="4" borderTop="1px solid" borderTopColor={sidebarBorder}>
+          <Text fontSize="10px" color={groupLabelColor} lineHeight="short" opacity={0.75}>
+            {POWERED_BY_TEXT}
+          </Text>
+        </Box>
       </Box>
     );
   };

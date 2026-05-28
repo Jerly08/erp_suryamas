@@ -428,6 +428,8 @@ export const API_ENDPOINTS = {
   PURCHASES_REJECT: (id: number) => `/api/v1/purchases/${id}/reject`,
   PURCHASES_ACCOUNTING_COA: (id: number) =>
     `/api/v1/purchases/${id}/accounting-coa`,
+  PURCHASES_FINAL_REVIEW_CONFIG: (id: number) =>
+    `/api/v1/purchases/${id}/final-review-config`,
   PURCHASES_FINAL_APPROVAL: (id: number) =>
     `/api/v1/purchases/${id}/final-approval`,
   PURCHASES_APPROVAL_HISTORY: (id: number) =>

@@ -1014,7 +1014,16 @@ const PurchasesPage: React.FC = () => {
   const [accountingCOAPurchase, setAccountingCOAPurchase] =
     useState<Purchase | null>(null);
   const [accountingCOAForm, setAccountingCOAForm] = useState({
+    ppn_rate: "0",
+    other_tax_additions: "0",
+    freight_cost: "0",
+    pph21_rate: "0",
+    pph23_rate: "0",
+    other_tax_deductions: "0",
+    payment_method: "CREDIT",
+    bank_account_id: "",
     credit_account_id: "",
+    payment_reference: "",
     items: [] as Array<{
       purchase_item_id: number;
       label: string;
@@ -3404,14 +3413,14 @@ const PurchasesPage: React.FC = () => {
       setFinanceTaxPurchase(detailResponse);
       setFinanceTaxForm({
         ppn_rate:
-          detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
+          detailResponse.ppn_rate?.toString() ?? defaultTaxRate.toString(),
         other_tax_additions:
-          detailResponse.other_tax_additions?.toString() || "0",
-        freight_cost: detailResponse.freight_cost?.toString() || "0",
-        pph21_rate: detailResponse.pph21_rate?.toString() || "0",
-        pph23_rate: detailResponse.pph23_rate?.toString() || "0",
+          detailResponse.other_tax_additions?.toString() ?? "0",
+        freight_cost: detailResponse.freight_cost?.toString() ?? "0",
+        pph21_rate: detailResponse.pph21_rate?.toString() ?? "0",
+        pph23_rate: detailResponse.pph23_rate?.toString() ?? "0",
         other_tax_deductions:
-          detailResponse.other_tax_deductions?.toString() || "0",
+          detailResponse.other_tax_deductions?.toString() ?? "0",
         payment_method: detailResponse.payment_method || "CREDIT",
         bank_account_id: detailResponse.bank_account_id?.toString() || "",
         credit_account_id: detailResponse.credit_account_id?.toString() || "",
@@ -3501,6 +3510,69 @@ const PurchasesPage: React.FC = () => {
     const totalPayment = calculateFinanceTaxTotal();
     return getEligibleBankAccounts().filter(
       (a) => getAccountBookBalance(a) >= totalPayment,
+    );
+  };
+
+  const getAccountingCOAPaymentMethod = () =>
+    isPendingFinalApprovalPurchase(accountingCOAPurchase)
+      ? accountingCOAForm.payment_method
+      : accountingCOAPurchase?.payment_method || "CREDIT";
+
+  const calculateAccountingFinalReviewTotal = () => {
+    if (!accountingCOAPurchase) return 0;
+    const netBeforeTax =
+      accountingCOAPurchase.net_before_tax ||
+      accountingCOAPurchase.total_amount ||
+      0;
+    const ppnRate = parseFloat(accountingCOAForm.ppn_rate) || 0;
+    const otherTaxAdditions =
+      parseFloat(accountingCOAForm.other_tax_additions) || 0;
+    const freightCost = parseFloat(accountingCOAForm.freight_cost) || 0;
+    const pph21Rate = parseFloat(accountingCOAForm.pph21_rate) || 0;
+    const pph23Rate = parseFloat(accountingCOAForm.pph23_rate) || 0;
+    const otherTaxDeductions =
+      parseFloat(accountingCOAForm.other_tax_deductions) || 0;
+
+    return (
+      netBeforeTax +
+      freightCost +
+      netBeforeTax * (ppnRate / 100) +
+      otherTaxAdditions -
+      netBeforeTax * (pph21Rate / 100) -
+      netBeforeTax * (pph23Rate / 100) -
+      otherTaxDeductions
+    );
+  };
+
+  const getAccountingFinalReviewEligibleBankAccounts = (): BankAccount[] => {
+    if (accountingCOAForm.payment_method === "CASH") {
+      return bankAccounts.filter((a) => a.type === "CASH");
+    }
+    if (
+      accountingCOAForm.payment_method === "BANK_TRANSFER" ||
+      accountingCOAForm.payment_method === "CHECK"
+    ) {
+      return bankAccounts.filter((a) => a.type === "BANK");
+    }
+    return [];
+  };
+
+  const getAccountingFinalReviewSelectedBankAccount = ():
+    | BankAccount
+    | undefined => {
+    if (!accountingCOAForm.bank_account_id) return undefined;
+    return getAccountingFinalReviewEligibleBankAccounts().find(
+      (a) => a.id.toString() === accountingCOAForm.bank_account_id,
+    );
+  };
+
+  const isAccountingFinalReviewBalanceInsufficient = (): boolean => {
+    const paymentMethod = accountingCOAForm.payment_method;
+    if (paymentMethod === "CREDIT") return false;
+    const selectedAccount = getAccountingFinalReviewSelectedBankAccount();
+    if (!selectedAccount) return false;
+    return (
+      getAccountBookBalance(selectedAccount) < calculateAccountingFinalReviewTotal()
     );
   };
 
@@ -3705,7 +3777,19 @@ const PurchasesPage: React.FC = () => {
       const detailResponse = await purchaseService.getById(purchase.id);
       setAccountingCOAPurchase(detailResponse);
       setAccountingCOAForm({
+        ppn_rate:
+          detailResponse.ppn_rate?.toString() ?? defaultTaxRate.toString(),
+        other_tax_additions:
+          detailResponse.other_tax_additions?.toString() ?? "0",
+        freight_cost: detailResponse.freight_cost?.toString() ?? "0",
+        pph21_rate: detailResponse.pph21_rate?.toString() ?? "0",
+        pph23_rate: detailResponse.pph23_rate?.toString() ?? "0",
+        other_tax_deductions:
+          detailResponse.other_tax_deductions?.toString() ?? "0",
+        payment_method: detailResponse.payment_method || "CREDIT",
+        bank_account_id: detailResponse.bank_account_id?.toString() || "",
         credit_account_id: detailResponse.credit_account_id?.toString() || "",
+        payment_reference: detailResponse.payment_reference || "",
         items: (detailResponse.purchase_items || []).map((item) => ({
           purchase_item_id: item.id,
           label: getPurchaseItemDisplayName(item),
@@ -3714,6 +3798,7 @@ const PurchasesPage: React.FC = () => {
           expense_account_id: item.expense_account_id?.toString() || "",
         })),
       });
+      await fetchBankAccounts();
       await fetchExpenseAccounts();
       await fetchCreditAccounts();
       onAccountingCOAOpen();
@@ -3731,8 +3816,15 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
+  const isPendingFinalApprovalPurchase = (purchase?: Purchase | null) =>
+    (purchase?.status || "").toUpperCase() === "PENDING_FINAL_APPROVAL";
+
   const handleSaveAccountingCOA = async () => {
     if (!accountingCOAPurchase) return;
+    const isFinanceManagerFinalReview =
+      isPendingFinalApprovalPurchase(accountingCOAPurchase) &&
+      isFinanceManagerRole(normalizeRole(user?.role as any));
+    const accountingPaymentMethod = getAccountingCOAPaymentMethod();
 
     const missingItem = accountingCOAForm.items.find(
       (item) => !item.expense_account_id,
@@ -3749,7 +3841,7 @@ const PurchasesPage: React.FC = () => {
     }
 
     if (
-      accountingCOAPurchase.payment_method === "CREDIT" &&
+      accountingPaymentMethod === "CREDIT" &&
       !accountingCOAForm.credit_account_id
     ) {
       toast({
@@ -3762,9 +3854,66 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    if (
+      isFinanceManagerFinalReview &&
+      accountingPaymentMethod !== "CREDIT" &&
+      !accountingCOAForm.bank_account_id
+    ) {
+      toast({
+        title: "Akun Bank/Kas Belum Dipilih",
+        description: "Pilih akun bank/kas untuk metode pembayaran ini.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (
+      isFinanceManagerFinalReview &&
+      isAccountingFinalReviewBalanceInsufficient()
+    ) {
+      const selectedAccount = getAccountingFinalReviewSelectedBankAccount();
+      toast({
+        title: "Saldo Tidak Mencukupi",
+        description: `Saldo ${selectedAccount?.name} (${formatBankAccountSummary(selectedAccount)}) tidak mencukupi untuk pembayaran ${formatCurrency(calculateAccountingFinalReviewTotal())}.`,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setSavingAccountingCOA(true);
-      await purchaseService.completeAccountingCOA(accountingCOAPurchase.id, {
+      if (isFinanceManagerFinalReview) {
+        await purchaseService.updateFinalReviewConfig(accountingCOAPurchase.id, {
+          ppn_rate: !isNaN(parseFloat(accountingCOAForm.ppn_rate))
+            ? parseFloat(accountingCOAForm.ppn_rate)
+            : defaultTaxRate,
+          other_tax_additions:
+            parseFloat(accountingCOAForm.other_tax_additions) || 0,
+          freight_cost: parseFloat(accountingCOAForm.freight_cost) || 0,
+          pph21_rate: parseFloat(accountingCOAForm.pph21_rate) || 0,
+          pph23_rate: parseFloat(accountingCOAForm.pph23_rate) || 0,
+          other_tax_deductions:
+            parseFloat(accountingCOAForm.other_tax_deductions) || 0,
+          payment_method: accountingPaymentMethod,
+          bank_account_id:
+            accountingPaymentMethod !== "CREDIT" &&
+            accountingCOAForm.bank_account_id
+              ? parseInt(accountingCOAForm.bank_account_id, 10)
+              : undefined,
+          credit_account_id:
+            accountingPaymentMethod === "CREDIT" &&
+            accountingCOAForm.credit_account_id
+              ? parseInt(accountingCOAForm.credit_account_id, 10)
+              : undefined,
+          payment_reference: accountingCOAForm.payment_reference,
+        });
+      }
+
+      const updatedPurchase = await purchaseService.completeAccountingCOA(accountingCOAPurchase.id, {
         credit_account_id: accountingCOAForm.credit_account_id
           ? parseInt(accountingCOAForm.credit_account_id, 10)
           : undefined,
@@ -3774,14 +3923,41 @@ const PurchasesPage: React.FC = () => {
         })),
       });
 
-      toast({
-        title: "COA Berhasil Disimpan",
-        description:
-          "Purchase sekarang menunggu final approval Finance Manager sebelum jurnal diposting.",
-        status: "success",
-        duration: 5000,
-        isClosable: true,
-      });
+      if (isFinanceManagerFinalReview) {
+        const finalizedPurchase = await purchaseService.finalApproveAfterCOA(
+          accountingCOAPurchase.id,
+          {
+            comments:
+              "Final approval Finance Manager setelah review/koreksi GL/COA",
+          },
+        );
+
+        toast({
+          title: "Purchase Final Approved",
+          description:
+            "Koreksi pajak, pembayaran, dan COA tersimpan; jurnal purchase sudah diposting.",
+          status: "success",
+          duration: 5000,
+          isClosable: true,
+        });
+
+        if (selectedPurchase?.id === accountingCOAPurchase.id) {
+          setSelectedPurchase(finalizedPurchase);
+        }
+      } else {
+        toast({
+          title: "COA Berhasil Disimpan",
+          description:
+            "Purchase sekarang menunggu final approval Finance Manager sebelum jurnal diposting.",
+          status: "success",
+          duration: 5000,
+          isClosable: true,
+        });
+
+        if (selectedPurchase?.id === accountingCOAPurchase.id) {
+          setSelectedPurchase(updatedPurchase);
+        }
+      }
 
       onAccountingCOAClose();
       await fetchPurchases();
@@ -4269,7 +4445,7 @@ const PurchasesPage: React.FC = () => {
     if (purchaseStatus === "PENDING_FINAL_APPROVAL") {
       return isFinanceManagerRole(roleNorm)
         ? {
-            text: "Finalisasi Jurnal",
+            text: "Review & Finalisasi",
             icon: <FiCheckCircle />,
             colorScheme: "purple",
             variant: "solid",
@@ -4372,8 +4548,10 @@ const PurchasesPage: React.FC = () => {
         purchaseStatus === "PENDING_APPROVAL");
     const accountingCanCompleteCOA =
       canEdit &&
-      purchaseStatus === "PENDING_ACCOUNTING" &&
-      (roleNorm === "admin" || isAccounting);
+      ((purchaseStatus === "PENDING_ACCOUNTING" &&
+        (roleNorm === "admin" || isAccounting)) ||
+        (purchaseStatus === "PENDING_FINAL_APPROVAL" &&
+          isFinanceManagerRole(roleNorm)));
     const financeManagerCanFinalApprove =
       canApprove &&
       purchaseStatus === "PENDING_FINAL_APPROVAL" &&
@@ -4395,7 +4573,7 @@ const PurchasesPage: React.FC = () => {
             ) {
               handleSubmitForApproval(purchase.id);
             } else if (financeManagerCanFinalApprove) {
-              handleFinalApprovePurchase(purchase);
+              handleAccountingCOAConfig(purchase);
             } else {
               setSelectedPurchase(purchase);
               onViewOpen();
@@ -4428,7 +4606,7 @@ const PurchasesPage: React.FC = () => {
           </Button>
         )}
 
-        {accountingCanCompleteCOA && (
+        {accountingCanCompleteCOA && purchaseStatus !== "PENDING_FINAL_APPROVAL" && (
           <Button
             size="sm"
             colorScheme="orange"
@@ -9538,7 +9716,9 @@ const PurchasesPage: React.FC = () => {
                   >
                     <VStack align="start" spacing={1}>
                       <Heading size="md" color={headingColor}>
-                        Lengkapi GL/COA Accounting
+                        {isPendingFinalApprovalPurchase(accountingCOAPurchase)
+                          ? "Review & Finalisasi GL/COA"
+                          : "Lengkapi GL/COA Accounting"}
                       </Heading>
                       <Text fontSize="sm" color={textSecondary}>
                         {accountingCOAPurchase?.code} -{" "}
@@ -9553,13 +9733,18 @@ const PurchasesPage: React.FC = () => {
                         <AlertIcon />
                         <Box>
                           <AlertTitle fontSize="sm">
-                            Purchase sudah disetujui Finance Manager
+                            {isPendingFinalApprovalPurchase(
+                              accountingCOAPurchase,
+                            )
+                              ? "Review terakhir Finance Manager"
+                              : "Purchase sudah disetujui Finance Manager"}
                           </AlertTitle>
                           <AlertDescription fontSize="sm">
-                            Posting jurnal, stok, payable/prepaid, dan
-                            fulfillment tetap ditahan setelah Accounting
-                            menyimpan GL/COA. Finance Manager perlu melakukan
-                            final approval sebelum jurnal diposting.
+                            {isPendingFinalApprovalPurchase(
+                              accountingCOAPurchase,
+                            )
+                              ? "Koreksi akun hutang dan GL/COA debit jika input Finance Staff atau Accounting belum tepat. Saat tombol final ditekan, perubahan disimpan lalu jurnal diposting."
+                              : "Posting jurnal, stok, payable/prepaid, dan fulfillment tetap ditahan setelah Accounting menyimpan GL/COA. Finance Manager perlu melakukan final approval sebelum jurnal diposting."}
                           </AlertDescription>
                         </Box>
                       </Alert>
@@ -9580,7 +9765,7 @@ const PurchasesPage: React.FC = () => {
                             Metode Pembayaran
                           </Text>
                           <Text fontSize="sm" fontWeight="medium">
-                            {accountingCOAPurchase?.payment_method || "-"}
+                            {getAccountingCOAPaymentMethod() || "-"}
                           </Text>
                         </Box>
                         <Box>
@@ -9601,11 +9786,265 @@ const PurchasesPage: React.FC = () => {
                           <Text fontSize="xs" color={textSecondary}>
                             Status
                           </Text>
-                          <Badge colorScheme="orange">PENDING ACCOUNTING</Badge>
+                          <Badge
+                            colorScheme={
+                              isPendingFinalApprovalPurchase(
+                                accountingCOAPurchase,
+                              )
+                                ? "purple"
+                                : "orange"
+                            }
+                          >
+                            {isPendingFinalApprovalPurchase(
+                              accountingCOAPurchase,
+                            )
+                              ? "PENDING FINAL APPROVAL"
+                              : "PENDING ACCOUNTING"}
+                          </Badge>
                         </Box>
                       </SimpleGrid>
 
-                      {accountingCOAPurchase?.payment_method === "CREDIT" && (
+                      {isPendingFinalApprovalPurchase(
+                        accountingCOAPurchase,
+                      ) && (
+                        <Box
+                          borderWidth="1px"
+                          borderColor={borderColor}
+                          borderRadius="lg"
+                          p={4}
+                        >
+                          <Text
+                            fontWeight="bold"
+                            mb={3}
+                            color={headingColor}
+                            fontSize="sm"
+                          >
+                            Review Pajak & Pembayaran
+                          </Text>
+                          <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                            <FormControl>
+                              <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={accountingCOAForm.ppn_rate}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    ppn_rate: e.target.value,
+                                  }))
+                                }
+                              />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                Pajak Tambahan Lainnya
+                              </FormLabel>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={accountingCOAForm.other_tax_additions}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    other_tax_additions: e.target.value,
+                                  }))
+                                }
+                              />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                Freight / Biaya Pengiriman
+                              </FormLabel>
+                              <CurrencyInput
+                                value={
+                                  parseFloat(accountingCOAForm.freight_cost) ||
+                                  0
+                                }
+                                onChange={(value) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    freight_cost: value.toString(),
+                                  }))
+                                }
+                                placeholder="0"
+                                size="sm"
+                                min={0}
+                              />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                PPh 21 Rate (%)
+                              </FormLabel>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={accountingCOAForm.pph21_rate}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    pph21_rate: e.target.value,
+                                  }))
+                                }
+                              />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                PPh 23 Rate (%)
+                              </FormLabel>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={accountingCOAForm.pph23_rate}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    pph23_rate: e.target.value,
+                                  }))
+                                }
+                              />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                Potongan Pajak Lainnya
+                              </FormLabel>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={accountingCOAForm.other_tax_deductions}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    other_tax_deductions: e.target.value,
+                                  }))
+                                }
+                              />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                Metode Pembayaran
+                              </FormLabel>
+                              <Select
+                                value={accountingCOAForm.payment_method}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    payment_method: e.target.value,
+                                    bank_account_id:
+                                      e.target.value === "CREDIT"
+                                        ? ""
+                                        : prev.bank_account_id,
+                                  }))
+                                }
+                              >
+                                <option value="CREDIT">
+                                  Kredit (Bayar Nanti)
+                                </option>
+                                <option value="CASH">Tunai</option>
+                                <option value="BANK_TRANSFER">
+                                  Transfer Bank
+                                </option>
+                                <option value="CHECK">Cek/Giro</option>
+                              </Select>
+                            </FormControl>
+                            {accountingCOAForm.payment_method !== "CREDIT" && (
+                              <FormControl
+                                isRequired
+                                isInvalid={isAccountingFinalReviewBalanceInsufficient()}
+                              >
+                                <FormLabel fontSize="sm">
+                                  Akun Bank / Kas
+                                </FormLabel>
+                                <Select
+                                  placeholder="Pilih Akun Bank/Kas"
+                                  value={accountingCOAForm.bank_account_id}
+                                  onChange={(e) =>
+                                    setAccountingCOAForm((prev) => ({
+                                      ...prev,
+                                      bank_account_id: e.target.value,
+                                    }))
+                                  }
+                                >
+                                  {getAccountingFinalReviewEligibleBankAccounts().map(
+                                    (account) => {
+                                      const bookBalance =
+                                        getAccountBookBalance(account);
+                                      const isSufficient =
+                                        bookBalance >=
+                                        calculateAccountingFinalReviewTotal();
+                                      return (
+                                        <option
+                                          key={account.id}
+                                          value={account.id.toString()}
+                                        >
+                                          {account.name} ({account.code}) -{" "}
+                                          {formatBankAccountSummary(account)}
+                                          {!isSufficient ? " [KURANG]" : ""}
+                                        </option>
+                                      );
+                                    },
+                                  )}
+                                </Select>
+                              </FormControl>
+                            )}
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                Referensi Pembayaran
+                              </FormLabel>
+                              <Input
+                                placeholder="No. Transfer / No. Cek"
+                                value={accountingCOAForm.payment_reference}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    payment_reference: e.target.value,
+                                  }))
+                                }
+                              />
+                            </FormControl>
+                          </SimpleGrid>
+                          {isAccountingFinalReviewBalanceInsufficient() && (
+                            <Alert
+                              status="error"
+                              borderRadius="lg"
+                              variant="left-accent"
+                              mt={4}
+                            >
+                              <AlertIcon />
+                              <AlertDescription fontSize="xs">
+                                Saldo{" "}
+                                {
+                                  getAccountingFinalReviewSelectedBankAccount()
+                                    ?.name
+                                }{" "}
+                                tidak mencukupi untuk pembayaran{" "}
+                                {formatCurrency(
+                                  calculateAccountingFinalReviewTotal(),
+                                )}
+                                .
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                          <Flex justify="flex-end" mt={4}>
+                            <Box textAlign="right">
+                              <Text fontSize="xs" color={textSecondary}>
+                                Total Setelah Review
+                              </Text>
+                              <Text
+                                fontSize="md"
+                                fontWeight="bold"
+                                color="blue.600"
+                              >
+                                {formatCurrency(
+                                  calculateAccountingFinalReviewTotal(),
+                                )}
+                              </Text>
+                            </Box>
+                          </Flex>
+                        </Box>
+                      )}
+
+                      {getAccountingCOAPaymentMethod() === "CREDIT" && (
                         <FormControl isRequired>
                           <FormLabel fontSize="sm">
                             Akun Hutang / Liability
@@ -9711,13 +10150,23 @@ const PurchasesPage: React.FC = () => {
                         Batal
                       </Button>
                       <Button
-                        colorScheme="orange"
+                        colorScheme={
+                          isPendingFinalApprovalPurchase(accountingCOAPurchase)
+                            ? "purple"
+                            : "orange"
+                        }
                         onClick={handleSaveAccountingCOA}
                         isLoading={savingAccountingCOA}
-                        loadingText="Menyimpan..."
+                        loadingText={
+                          isPendingFinalApprovalPurchase(accountingCOAPurchase)
+                            ? "Finalisasi..."
+                            : "Menyimpan..."
+                        }
                         leftIcon={<FiCheckCircle />}
                       >
-                        Simpan COA
+                        {isPendingFinalApprovalPurchase(accountingCOAPurchase)
+                          ? "Simpan & Finalisasi Jurnal"
+                          : "Simpan COA"}
                       </Button>
                     </HStack>
                   </ModalFooter>

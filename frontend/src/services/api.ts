@@ -285,6 +285,7 @@ async function showAuthExpiredModal() {
 
     // Dynamically import and show the modal
     const { default: AuthExpiredModal } = await import('../components/auth/AuthExpiredModal');
+    const { LanguageProvider } = await import('../contexts/LanguageContext');
 
     // Create a container for the modal
     const modalRoot = document.createElement('div');
@@ -299,18 +300,20 @@ async function showAuthExpiredModal() {
     const { ChakraProvider } = await import('@chakra-ui/react');
     root.render(
       React.createElement(ChakraProvider, null,
-        React.createElement(AuthExpiredModal, {
-          isOpen: true,
-          onLoginRedirect: () => {
-            authExpiredModalShown = false;
-            window.clearInterval(toastCleanupInterval);
-            // Clean up modal
-            root.unmount();
-            document.body.removeChild(modalRoot);
-            // Redirect to login
-            window.location.href = '/login';
-          }
-        })
+        React.createElement(LanguageProvider, null,
+          React.createElement(AuthExpiredModal, {
+            isOpen: true,
+            onLoginRedirect: () => {
+              authExpiredModalShown = false;
+              window.clearInterval(toastCleanupInterval);
+              // Clean up modal
+              root.unmount();
+              document.body.removeChild(modalRoot);
+              // Redirect to login
+              window.location.href = '/login';
+            }
+          })
+        )
       )
     );
   } catch (error) {

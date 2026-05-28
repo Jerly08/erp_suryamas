@@ -320,6 +320,184 @@ func TestPurchaseApprovalWorkflowWithExplicitDirectorStillWaitsForAccounting(t *
 	require.Len(t, journal.Lines, 2)
 }
 
+func TestFinanceManagerCanCorrectCOABeforeFinalApproval(t *testing.T) {
+	fixture := newPurchaseWorkflowFixture(t)
+	purchase, item := fixture.createDraftPurchase(t, "PO-WF-FM-COA-CORRECTION", 175000)
+
+	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
+	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.financeStaff.ID,
+		fixture.financeStaff.Role,
+		"Finance staff reviewed",
+		false,
+	)
+	require.NoError(t, err)
+	_, err = fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.manager.ID,
+		fixture.manager.Role,
+		"Finance manager approved for accounting",
+		false,
+	)
+	require.NoError(t, err)
+
+	completed, err := fixture.service.CompleteAccountingCOA(purchase.ID, models.PurchaseAccountingCOARequest{
+		CreditAccountID: &fixture.liabilityAccount.ID,
+		Items: []models.PurchaseAccountingCOAItemRequest{
+			{PurchaseItemID: item.ID, ExpenseAccountID: fixture.expenseAccount.ID},
+		},
+	}, fixture.accounting.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPendingFinalApproval, completed.Status)
+
+	correctedExpenseAccount := models.Account{
+		Code:     "6101-992",
+		Name:     "Corrected Purchase Expense",
+		Type:     models.AccountTypeExpense,
+		IsActive: true,
+	}
+	require.NoError(t, fixture.db.Create(&correctedExpenseAccount).Error)
+	correctedLiabilityAccount := models.Account{
+		Code:     "2101-992",
+		Name:     "Corrected Purchase Payable",
+		Type:     models.AccountTypeLiability,
+		IsActive: true,
+	}
+	require.NoError(t, fixture.db.Create(&correctedLiabilityAccount).Error)
+
+	reviewed, err := fixture.service.CompleteAccountingCOA(purchase.ID, models.PurchaseAccountingCOARequest{
+		CreditAccountID: &correctedLiabilityAccount.ID,
+		Items: []models.PurchaseAccountingCOAItemRequest{
+			{PurchaseItemID: item.ID, ExpenseAccountID: correctedExpenseAccount.ID},
+		},
+	}, fixture.manager.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPendingFinalApproval, reviewed.Status)
+	require.NotNil(t, reviewed.CreditAccountID)
+	require.Equal(t, correctedLiabilityAccount.ID, *reviewed.CreditAccountID)
+
+	var savedItem models.PurchaseItem
+	require.NoError(t, fixture.db.First(&savedItem, item.ID).Error)
+	require.Equal(t, correctedExpenseAccount.ID, savedItem.ExpenseAccountID)
+
+	finalized, err := fixture.service.FinalApprovePurchaseAfterAccounting(purchase.ID, fixture.manager.ID, "Final approval after COA correction")
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusApproved, finalized.Status)
+
+	var journal models.SSOTJournalEntry
+	sourceID := uint64(purchase.ID)
+	require.NoError(t, fixture.db.Preload("Lines").
+		Where("source_type = ? AND source_id = ?", "PURCHASE", sourceID).
+		First(&journal).Error)
+	require.Len(t, journal.Lines, 2)
+
+	var debitLine, creditLine *models.SSOTJournalLine
+	for i := range journal.Lines {
+		line := &journal.Lines[i]
+		if line.DebitAmount.InexactFloat64() > 0 {
+			debitLine = line
+		}
+		if line.CreditAmount.InexactFloat64() > 0 {
+			creditLine = line
+		}
+	}
+	require.NotNil(t, debitLine)
+	require.NotNil(t, creditLine)
+	require.Equal(t, uint64(correctedExpenseAccount.ID), debitLine.AccountID)
+	require.Equal(t, uint64(correctedLiabilityAccount.ID), creditLine.AccountID)
+}
+
+func TestFinanceManagerCanCorrectTaxPaymentBeforeFinalApproval(t *testing.T) {
+	fixture := newPurchaseWorkflowFixture(t)
+	purchase, item := fixture.createDraftPurchase(t, "PO-WF-FM-TAX-CORRECTION", 100000)
+
+	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
+	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.financeStaff.ID,
+		fixture.financeStaff.Role,
+		"Finance staff reviewed",
+		false,
+	)
+	require.NoError(t, err)
+	_, err = fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.manager.ID,
+		fixture.manager.Role,
+		"Finance manager approved for accounting",
+		false,
+	)
+	require.NoError(t, err)
+
+	_, err = fixture.service.CompleteAccountingCOA(purchase.ID, models.PurchaseAccountingCOARequest{
+		CreditAccountID: &fixture.liabilityAccount.ID,
+		Items: []models.PurchaseAccountingCOAItemRequest{
+			{PurchaseItemID: item.ID, ExpenseAccountID: fixture.expenseAccount.ID},
+		},
+	}, fixture.accounting.ID)
+	require.NoError(t, err)
+
+	pph23Payable := models.Account{
+		Code:     "2102-004",
+		Name:     "Hutang PPh Pasal 23",
+		Type:     models.AccountTypeLiability,
+		IsActive: true,
+	}
+	require.NoError(t, fixture.db.Create(&pph23Payable).Error)
+
+	method := models.PurchasePaymentCredit
+	ppnRate := 0.0
+	pph23Rate := 2.0
+	reference := "FM-CORRECTED-PPH23"
+	reviewed, err := fixture.service.UpdatePurchaseFinalReviewConfig(purchase.ID, models.PurchaseFinalReviewConfigRequest{
+		PaymentMethod:    &method,
+		CreditAccountID:  &fixture.liabilityAccount.ID,
+		PaymentReference: &reference,
+		PPNRate:          &ppnRate,
+		PPh23Rate:        &pph23Rate,
+	}, fixture.manager.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPendingFinalApproval, reviewed.Status)
+	require.InDelta(t, 2000, reviewed.PPh23Amount, 0.01)
+	require.InDelta(t, 98000, reviewed.TotalAmount, 0.01)
+	require.Equal(t, models.PurchasePPhPaymentStatusUnpaid, reviewed.PPhPaymentStatus)
+
+	finalized, err := fixture.service.FinalApprovePurchaseAfterAccounting(purchase.ID, fixture.manager.ID, "Final approval after tax/payment correction")
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusApproved, finalized.Status)
+	require.InDelta(t, 98000, finalized.OutstandingAmount, 0.01)
+
+	var journal models.SSOTJournalEntry
+	sourceID := uint64(purchase.ID)
+	require.NoError(t, fixture.db.Preload("Lines").
+		Where("source_type = ? AND source_id = ?", "PURCHASE", sourceID).
+		First(&journal).Error)
+	require.Equal(t, "POSTED", journal.Status)
+	require.InDelta(t, 100000, journal.TotalDebit.InexactFloat64(), 0.01)
+	require.InDelta(t, 100000, journal.TotalCredit.InexactFloat64(), 0.01)
+	require.Len(t, journal.Lines, 3)
+
+	var payableLine, pphLine *models.SSOTJournalLine
+	for i := range journal.Lines {
+		line := &journal.Lines[i]
+		if line.AccountID == uint64(fixture.liabilityAccount.ID) {
+			payableLine = line
+		}
+		if line.AccountID == uint64(pph23Payable.ID) {
+			pphLine = line
+		}
+	}
+	require.NotNil(t, payableLine)
+	require.NotNil(t, pphLine)
+	require.InDelta(t, 98000, payableLine.CreditAmount.InexactFloat64(), 0.01)
+	require.InDelta(t, 2000, pphLine.CreditAmount.InexactFloat64(), 0.01)
+}
+
 func TestPurchaseDirectorEscalationRequiresActiveFinanceManagerStep(t *testing.T) {
 	fixture := newPurchaseWorkflowFixture(t)
 	purchase, _ := fixture.createDraftPurchase(t, "PO-WF-BAD-ESCALATION", 75000)
