@@ -85,14 +85,6 @@ JWT_SECRET=ganti-dengan-secret-acak-panjang
 JWT_ACCESS_SECRET=ganti-dengan-secret-acak-panjang
 JWT_REFRESH_SECRET=ganti-dengan-secret-acak-panjang
 SESSION_SECRET=ganti-dengan-secret-acak-panjang
-
-# Wajib untuk database production kosong pada deploy pertama.
-# Setelah login pertama berhasil, hapus/comment BOOTSTRAP_ADMIN_PASSWORD.
-BOOTSTRAP_ADMIN_EMAIL=owner@example.com
-BOOTSTRAP_ADMIN_PASSWORD=ganti-dengan-password-admin-kuat-minimal-12-karakter
-
-# Default false agar data demo tidak masuk production.
-SEED_DEMO_DATA=false
 ```
 
 Catatan penting:
@@ -100,7 +92,6 @@ Catatan penting:
 - `DOMAIN` harus sudah resolve ke IP VPS sebelum deploy pertama, supaya HTTPS otomatis berhasil.
 - Jangan buka port PostgreSQL ke publik.
 - Jangan pakai password dan secret pendek.
-- Deploy pertama pada database kosong akan gagal jika `BOOTSTRAP_ADMIN_EMAIL` dan `BOOTSTRAP_ADMIN_PASSWORD` belum diisi; ini sengaja untuk mencegah akun demo `password123` masuk production.
 
 ## 4. Deploy production
 
