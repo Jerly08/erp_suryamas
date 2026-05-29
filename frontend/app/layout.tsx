@@ -7,10 +7,11 @@ export const metadata: Metadata = {
   description: "Avery accounting application",
   icons: {
     icon: [
-      { url: "/favicon.ico" },
-      { url: "/avery-icon.png", type: "image/png", sizes: "256x256" },
+      { url: "/avery-icon.png?v=20260529", type: "image/png", sizes: "256x256" },
+      { url: "/favicon.ico?v=20260529", type: "image/x-icon" },
     ],
-    apple: [{ url: "/avery-icon.png", type: "image/png", sizes: "256x256" }],
+    shortcut: [{ url: "/avery-icon.png?v=20260529", type: "image/png", sizes: "256x256" }],
+    apple: [{ url: "/avery-icon.png?v=20260529", type: "image/png", sizes: "256x256" }],
   },
 };
 
