@@ -9,6 +9,8 @@
 
 ## Checklist Produksi
 - Ganti JWT_SECRET kuat & aman
+- Isi `BOOTSTRAP_ADMIN_EMAIL` dan `BOOTSTRAP_ADMIN_PASSWORD` hanya untuk deploy pertama pada database kosong; hapus password bootstrap setelah login pertama
+- Pastikan `SEED_DEMO_DATA=false` agar akun/data demo tidak masuk production
 - Aktifkan HTTPS untuk API & frontend
 - Konfigurasi SSL database (jika perlu)
 - Atur CORS origin spesifik

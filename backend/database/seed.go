@@ -3,6 +3,8 @@ package database
 import (
 	"app-sistem-akuntansi/models"
 	"log"
+	"os"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -10,6 +12,8 @@ import (
 
 func SeedData(db *gorm.DB) {
 	log.Println("Starting database seeding...")
+	isProduction := isProductionEnvironment()
+	seedDemo := shouldSeedDemoData()
 
 	// Seed Users
 	seedUsers(db)
@@ -35,17 +39,25 @@ func SeedData(db *gorm.DB) {
 		log.Printf("Error migrating PPh prepaid accounts: %v", err)
 	}
 
-	// Seed Contacts
-	SeedContacts(db)
+	if seedDemo {
+		// Seed Contacts
+		SeedContacts(db)
 
-	// Seed Product Categories
-	seedProductCategories(db)
+		// Seed Product Categories
+		seedProductCategories(db)
+	} else if isProduction {
+		log.Println("Production mode: skipping demo contacts and product categories")
+	}
 
 	// Seed Product Units
 	seedProductUnits(db)
 
-	// Seed Products
-	seedProducts(db)
+	if seedDemo {
+		// Seed Products
+		seedProducts(db)
+	} else if isProduction {
+		log.Println("Production mode: skipping demo products")
+	}
 
 	// Seed Expense Categories
 	seedExpenseCategories(db)
@@ -54,8 +66,12 @@ func SeedData(db *gorm.DB) {
 	// Disabled per request: do not create default Cash & Bank records during seed
 	// seedCashBankAccounts(db)
 
-	// Seed Company Profile
-	seedCompanyProfile(db)
+	if seedDemo {
+		// Seed Company Profile
+		seedCompanyProfile(db)
+	} else if isProduction {
+		log.Println("Production mode: skipping demo company profile")
+	}
 
 	// Seed Report Templates
 	seedReportTemplates(db)
@@ -77,6 +93,11 @@ func SeedData(db *gorm.DB) {
 }
 
 func seedUsers(db *gorm.DB) {
+	if isProductionEnvironment() {
+		seedProductionAdmin(db)
+		return
+	}
+
 	log.Println("🔄 Starting user seeding with robust UPSERT...")
 
 	// Seed all users for all roles
@@ -173,6 +194,69 @@ func seedUsers(db *gorm.DB) {
 	}
 
 	log.Printf("📊 User seeding completed: %d/%d users processed successfully", successCount, len(allUsers))
+}
+
+func seedProductionAdmin(db *gorm.DB) {
+	var adminCount int64
+	db.Model(&models.User{}).Where("role = ? AND is_active = ?", "admin", true).Count(&adminCount)
+	if adminCount > 0 {
+		log.Println("Production admin user already exists, skipping bootstrap admin seed")
+		return
+	}
+
+	email := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_EMAIL"))
+	password := os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")
+	if email == "" || strings.TrimSpace(password) == "" {
+		log.Fatal("Production database has no active admin user. Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD for first deploy, then remove BOOTSTRAP_ADMIN_PASSWORD after first login.")
+	}
+	if password == "password123" || strings.Contains(strings.ToLower(password), "replace-with") || len(password) < 12 {
+		log.Fatal("BOOTSTRAP_ADMIN_PASSWORD must be unique, not a placeholder, and at least 12 characters long")
+	}
+
+	username := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_USERNAME"))
+	if username == "" {
+		username = strings.Split(email, "@")[0]
+	}
+	firstName := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_FIRST_NAME"))
+	if firstName == "" {
+		firstName = "Admin"
+	}
+	lastName := strings.TrimSpace(os.Getenv("BOOTSTRAP_ADMIN_LAST_NAME"))
+	if lastName == "" {
+		lastName = "Production"
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatalf("Failed to hash bootstrap admin password: %v", err)
+	}
+
+	admin := models.User{
+		Username:  username,
+		Email:     email,
+		Password:  string(hashedPassword),
+		Role:      "admin",
+		FirstName: firstName,
+		LastName:  lastName,
+		IsActive:  true,
+	}
+
+	if err := db.Create(&admin).Error; err != nil {
+		log.Fatalf("Failed to create production bootstrap admin: %v", err)
+	}
+
+	log.Printf("Production bootstrap admin created for %s. Remove BOOTSTRAP_ADMIN_PASSWORD after first successful login.", email)
+}
+
+func isProductionEnvironment() bool {
+	return strings.EqualFold(os.Getenv("ENVIRONMENT"), "production")
+}
+
+func shouldSeedDemoData() bool {
+	if !isProductionEnvironment() {
+		return true
+	}
+	return strings.EqualFold(os.Getenv("SEED_DEMO_DATA"), "true")
 }
 
 func seedProductCategories(db *gorm.DB) {
