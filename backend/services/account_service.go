@@ -48,20 +48,23 @@ func (s *AccountServiceImpl) CreateAccount(ctx context.Context, req *models.Acco
 	}
 
 	// Validate parent hierarchy if parent is specified
+	var parent *models.Account
 	if req.ParentID != nil {
 		if err := s.ValidateAccountHierarchy(ctx, req.ParentID, string(req.Type)); err != nil {
 			return nil, err
 		}
+
+		resolvedParent, err := s.accountRepo.FindByID(ctx, *req.ParentID)
+		if err != nil {
+			return nil, err
+		}
+		parent = resolvedParent
 	}
 
 	// Generate account code if not provided
 	if req.Code == "" {
 		var parentCode string
-		if req.ParentID != nil {
-			parent, err := s.accountRepo.FindByID(ctx, *req.ParentID)
-			if err != nil {
-				return nil, err
-			}
+		if parent != nil {
 			parentCode = parent.Code
 		}
 
@@ -71,6 +74,15 @@ func (s *AccountServiceImpl) CreateAccount(ctx context.Context, req *models.Acco
 		}
 		req.Code = code
 	} else {
+		req.Code = strings.TrimSpace(req.Code)
+		if parent != nil {
+			normalizedCode, err := normalizeAccountCodeWithParentCode(req.Code, parent.Code)
+			if err != nil {
+				return nil, err
+			}
+			req.Code = normalizedCode
+		}
+
 		// Validate provided code format
 		if err := s.ValidateAccountCodeFormat(req.Code, string(req.Type)); err != nil {
 			return nil, err
@@ -303,6 +315,8 @@ func getValidPrefixes(accountType string) []string {
 
 // ValidateAccountCodeFormat validates account code format according to PSAK standards
 func (s *AccountServiceImpl) ValidateAccountCodeFormat(code, accountType string) error {
+	code = strings.TrimSpace(code)
+
 	// Check if code is empty
 	if code == "" {
 		return utils.NewValidationError("Account code cannot be empty", nil)
@@ -325,75 +339,48 @@ func (s *AccountServiceImpl) ValidateAccountCodeFormat(code, accountType string)
 		return utils.NewValidationError(fmt.Sprintf("Account code for %s must start with one of: %s", accountType, strings.Join(validPrefixes, ", ")), nil)
 	}
 
-	// Check format: either XXXX (main account) or XXXX-XXX (child account)
+	if len(code) > 20 {
+		return utils.NewValidationError("Account code cannot exceed 20 characters", nil)
+	}
+
 	if strings.Contains(code, "-") {
-		// Child account format: XXXX-XXX
-		parts := strings.Split(code, "-")
-		if len(parts) != 2 {
-			return utils.NewValidationError("Invalid child account code format. Expected: XXXX-XXX", nil)
-		}
+		return nil
+	}
 
-		parentPart := parts[0]
-		childPart := parts[1]
+	if len(code) != 4 {
+		return utils.NewValidationError("Root account code must be 4 digits", nil)
+	}
 
-		// Validate parent part (4 digits)
-		if len(parentPart) != 4 {
-			return utils.NewValidationError("Parent account code must be 4 digits", nil)
-		}
+	codeNum, err := strconv.Atoi(code)
+	if err != nil {
+		return utils.NewValidationError("Root account code must be numeric", nil)
+	}
 
-		parentNum, err := strconv.Atoi(parentPart)
-		if err != nil {
-			return utils.NewValidationError("Parent account code must be numeric", nil)
+	if !isCodeInValidRanges(codeNum, accountType) {
+		ranges := getValidCodeRanges(accountType)
+		rangeStrs := make([]string, len(ranges))
+		for i, r := range ranges {
+			rangeStrs[i] = fmt.Sprintf("%d-%d", r.Min, r.Max)
 		}
-
-		// Validate parent code is in a valid range for this account type
-		if !isCodeInValidRanges(parentNum, accountType) {
-			ranges := getValidCodeRanges(accountType)
-			rangeStrs := make([]string, len(ranges))
-			for i, r := range ranges {
-				rangeStrs[i] = fmt.Sprintf("%d-%d", r.Min, r.Max)
-			}
-			return utils.NewValidationError(fmt.Sprintf("%s account codes must be in ranges: %s", accountType, strings.Join(rangeStrs, ", ")), nil)
-		}
-
-		// Validate child part (3 digits)
-		if len(childPart) != 3 {
-			return utils.NewValidationError("Child account code must be 3 digits", nil)
-		}
-
-		if _, err := strconv.Atoi(childPart); err != nil {
-			return utils.NewValidationError("Child account code must be numeric", nil)
-		}
-
-		// Additional validation: child number should be > 0
-		childNum, _ := strconv.Atoi(childPart)
-		if childNum < 1 {
-			return utils.NewValidationError("Child account code must start from 001", nil)
-		}
-
-	} else {
-		// Main account format: XXXX (4 digits)
-		if len(code) != 4 {
-			return utils.NewValidationError("Main account code must be 4 digits", nil)
-		}
-
-		codeNum, err := strconv.Atoi(code)
-		if err != nil {
-			return utils.NewValidationError("Account code must be numeric", nil)
-		}
-
-		// Validate range based on account type (multi-range support)
-		if !isCodeInValidRanges(codeNum, accountType) {
-			ranges := getValidCodeRanges(accountType)
-			rangeStrs := make([]string, len(ranges))
-			for i, r := range ranges {
-				rangeStrs[i] = fmt.Sprintf("%d-%d", r.Min, r.Max)
-			}
-			return utils.NewValidationError(fmt.Sprintf("%s account codes must be in ranges: %s", accountType, strings.Join(rangeStrs, ", ")), nil)
-		}
+		return utils.NewValidationError(fmt.Sprintf("%s account codes must be in ranges: %s", accountType, strings.Join(rangeStrs, ", ")), nil)
 	}
 
 	return nil
+}
+
+func normalizeAccountCodeWithParentCode(code, parentCode string) (string, error) {
+	code = strings.TrimSpace(code)
+	parentPrefix := parentCode + "-"
+
+	if strings.HasPrefix(code, parentPrefix) {
+		return code, nil
+	}
+
+	if strings.HasPrefix(code, parentPrefix) {
+		return code, nil
+	}
+
+	return parentPrefix + code, nil
 }
 
 // ValidateAccountHierarchy validates parent-child account relationships

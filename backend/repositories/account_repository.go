@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -52,11 +53,47 @@ func NewAccountRepo(db *gorm.DB) *AccountRepo {
 
 // Create creates a new account
 func (r *AccountRepo) Create(ctx context.Context, req *models.AccountCreateRequest) (*models.Account, error) {
+	req.Code = strings.TrimSpace(req.Code)
+	req.Name = strings.TrimSpace(req.Name)
+
 	// Validate account type
 	if !models.IsValidAccountType(string(req.Type)) {
 		return nil, utils.NewValidationError("Invalid account type", map[string]string{
 			"type": "Must be one of: ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE",
 		})
+	}
+
+	// Resolve parent first so child codes can be normalized before uniqueness checks.
+	level := 1
+	var parent *models.Account
+	if req.ParentID != nil {
+		var parentAccount models.Account
+		if err := r.DB.WithContext(ctx).First(&parentAccount, *req.ParentID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, utils.NewNotFoundError("Parent account")
+			}
+			return nil, utils.NewDatabaseError("find parent account", err)
+		}
+
+		if parentAccount.Type != string(req.Type) {
+			return nil, utils.NewValidationError("Parent and child accounts must be of the same type", map[string]string{
+				"parent_type": parentAccount.Type,
+				"child_type":  string(req.Type),
+			})
+		}
+
+		parent = &parentAccount
+		level = parentAccount.Level + 1
+	}
+
+	normalizedCode, err := normalizeAccountCodeForParent(req.Code, parent)
+	if err != nil {
+		return nil, err
+	}
+	req.Code = normalizedCode
+
+	if err := validateAccountCodeForStorage(req.Code, string(req.Type), parent != nil); err != nil {
+		return nil, err
 	}
 
 	// Check if code already exists (only check non-deleted accounts)
@@ -78,20 +115,9 @@ func (r *AccountRepo) Create(ctx context.Context, req *models.AccountCreateReque
 		}
 	}
 
-	// Calculate level if parent exists
-	level := 1
-	if req.ParentID != nil {
-		var parent models.Account
-		if err := r.DB.WithContext(ctx).First(&parent, *req.ParentID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, utils.NewNotFoundError("Parent account")
-			}
-			return nil, utils.NewDatabaseError("find parent account", err)
-		}
-		level = parent.Level + 1
-
+	if parent != nil {
 		// Set parent as header since it now has children
-		if err := r.DB.WithContext(ctx).Model(&parent).Update("is_header", true).Error; err != nil {
+		if err := r.DB.WithContext(ctx).Model(parent).Update("is_header", true).Error; err != nil {
 			return nil, utils.NewDatabaseError("update parent header status", err)
 		}
 	}
@@ -120,6 +146,86 @@ func (r *AccountRepo) Create(ctx context.Context, req *models.AccountCreateReque
 	}
 
 	return account, nil
+}
+
+func normalizeAccountCodeForParent(code string, parent *models.Account) (string, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return "", utils.NewValidationError("Account code cannot be empty", nil)
+	}
+
+	if parent == nil {
+		return code, nil
+	}
+
+	parentPrefix := parent.Code + "-"
+	if strings.HasPrefix(code, parentPrefix) {
+		return code, nil
+	}
+
+	if strings.HasPrefix(code, parentPrefix) {
+		return code, nil
+	}
+
+	return parentPrefix + code, nil
+}
+
+func validateAccountCodeForStorage(code, accountType string, hasParent bool) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return utils.NewValidationError("Account code cannot be empty", nil)
+	}
+
+	if len(code) > 20 {
+		return utils.NewValidationError("Account code cannot exceed 20 characters", map[string]string{
+			"code": "Maximum length is 20 characters",
+		})
+	}
+
+	if hasParent {
+		return nil
+	}
+
+	if len(code) != 4 || !isNumericSegment(code) {
+		return utils.NewValidationError("Root account code must be 4 digits", map[string]string{
+			"code": "Expected root format: XXXX",
+		})
+	}
+
+	if !rootAccountCodePrefixMatchesType(code, accountType) {
+		return utils.NewValidationError(fmt.Sprintf("Root account code prefix does not match %s", accountType), nil)
+	}
+
+	return nil
+}
+
+func isNumericSegment(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func rootAccountCodePrefixMatchesType(code string, accountType string) bool {
+	switch accountType {
+	case models.AccountTypeAsset:
+		return strings.HasPrefix(code, "1")
+	case models.AccountTypeLiability:
+		return strings.HasPrefix(code, "2")
+	case models.AccountTypeEquity:
+		return strings.HasPrefix(code, "3")
+	case models.AccountTypeRevenue:
+		return strings.HasPrefix(code, "4") || strings.HasPrefix(code, "7")
+	case models.AccountTypeExpense:
+		return strings.HasPrefix(code, "5") || strings.HasPrefix(code, "6") || strings.HasPrefix(code, "8") || strings.HasPrefix(code, "9")
+	default:
+		return false
+	}
 }
 
 // Update updates an account

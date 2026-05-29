@@ -158,6 +158,20 @@ const getSmartCategory = (type: string, parentAccounts: Account[], parentId: num
   return 'EQUITY';
 };
 
+const buildEffectiveAccountCode = (code: string, parent?: Account): string => {
+  const trimmedCode = (code || '').trim();
+  if (!trimmedCode || !parent) return trimmedCode;
+
+  const parentPrefix = `${parent.code}-`;
+  if (trimmedCode.startsWith(parentPrefix)) {
+    return trimmedCode;
+  }
+
+  return `${parentPrefix}${trimmedCode}`;
+};
+
+const isValidRootCode = (code: string): boolean => /^\d{4}$/.test((code || '').trim());
+
 const AccountForm: React.FC<AccountFormProps> = ({
   account,
   parentAccounts = [],
@@ -223,6 +237,8 @@ const AccountForm: React.FC<AccountFormProps> = ({
   }, [formData]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const selectedParent = formData.parent_id ? parentAccounts.find(p => p.id === formData.parent_id) : undefined;
+  const effectiveAccountCode = buildEffectiveAccountCode(formData.code, selectedParent);
 
   // Reset form when account prop changes
   useEffect(() => {
@@ -304,36 +320,32 @@ const AccountForm: React.FC<AccountFormProps> = ({
     if (!formData.name) newErrors.name = t('accounts.validation.nameRequired');
     if (!formData.type) newErrors.type = t('accounts.validation.typeRequired');
 
-    // Validate code format: allow XXXX (main) or XXXX-XXX (child)
+    // If parent is selected, code field is treated as a free child segment.
+    // Backend stores it as parent.code + "-" + input.
     if (formData.code) {
-      const codePattern = /^\d{4}(-\d{3})?$/; // PSAK-style: 4 digits or 4 digits + dash + 3 digits
-      if (!codePattern.test(formData.code)) {
+      if (!selectedParent && !isValidRootCode(effectiveAccountCode)) {
         newErrors.code = t('accounts.validation.invalidCodeFormat');
-      } else if (formData.parent_id) {
-        // If a parent is selected, enforce different rules for header vs non-header
-        const parent = parentAccounts.find(p => p.id === formData.parent_id);
-        if (parent) {
-          const isChildFormat = formData.code.includes('-');
-          const isHeader = !!formData.is_header;
-
-          if (isHeader) {
-            // Header under a parent may use 4-digit code (e.g., 1106 under 1100)
-            // If user chooses child format, still require correct prefix
-            if (isChildFormat && !formData.code.startsWith(`${parent.code}-`)) {
-              newErrors.code = `${t('accounts.validation.childCodePrefix')} ${parent.code}-XXX`;
-            }
-            // Otherwise 4-digit is acceptable; no error
-          } else {
-            // Non-header child can use either format - 4-digit or dashed child format
-            // Only validate that if using dashed format, it must start with parent code
-            if (isChildFormat && !formData.code.startsWith(`${parent.code}-`)) {
-              newErrors.code = `${t('accounts.validation.childCodePrefix')} ${parent.code}-XXX`;
-            }
-            // For 4-digit format, we allow more flexibility as long as the account type matches
-            // The main constraint is that child accounts should logically relate to parent
-          }
-        }
       }
+    }
+
+    if (formData.parent_id && !selectedParent) {
+      newErrors.parent_id = 'Parent account tidak ditemukan';
+    }
+
+    if (selectedParent && formData.type && selectedParent.type !== formData.type) {
+      newErrors.parent_id = `Parent harus bertipe ${formData.type}`;
+    }
+
+    if (selectedParent && effectiveAccountCode === selectedParent.code) {
+      newErrors.code = 'Kode akun child tidak boleh sama dengan kode parent';
+    }
+
+    if (selectedParent && effectiveAccountCode.length > 20) {
+      newErrors.code = 'Kode akun maksimal 20 karakter';
+    }
+
+    if (!selectedParent && effectiveAccountCode.length > 20) {
+      newErrors.code = 'Kode akun maksimal 20 karakter';
     }
 
     setErrors(newErrors);
@@ -374,9 +386,10 @@ const AccountForm: React.FC<AccountFormProps> = ({
     e.preventDefault();
 
     if (validateForm()) {
-      const smartCategory = getSmartCategory(formData.type, parentAccounts, formData.parent_id, formData.code, formData.name);
+      const smartCategory = getSmartCategory(formData.type, parentAccounts, formData.parent_id, effectiveAccountCode, formData.name);
       const dataWithSmartCategory = {
         ...formData,
+        code: effectiveAccountCode,
         category: smartCategory
       };
 
@@ -386,7 +399,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
         delete dataWithSmartCategory.opening_balance;
       }
 
-      console.log('Smart category assigned:', smartCategory, 'for type:', formData.type, 'parent:', formData.parent_id, 'code:', formData.code, 'name:', formData.name);
+      console.log('Smart category assigned:', smartCategory, 'for type:', formData.type, 'parent:', formData.parent_id, 'code:', effectiveAccountCode, 'name:', formData.name);
 
       onSubmit(dataWithSmartCategory);
     }
@@ -417,16 +430,28 @@ const AccountForm: React.FC<AccountFormProps> = ({
           </Badge>
         </HStack>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormField
-            id="code"
-            label={t('accounts.accountCode')}
-            value={formData.code || ''}
-            onChange={handleChange}
-            placeholder={t('accounts.form.enterAccountCode')}
-            required
-            error={errors.code}
-            name="code"
-          />
+          <Box>
+            <FormField
+              id="code"
+              label={t('accounts.accountCode')}
+              value={formData.code || ''}
+              onChange={handleChange}
+              placeholder={selectedParent ? 'contoh: 1001' : t('accounts.form.enterAccountCode')}
+              required
+              error={errors.code}
+              name="code"
+            />
+            {selectedParent && formData.code && (
+              <Box mt={-3} mb={4} px={3} py={2} borderRadius="md" bg={panelBg} borderWidth="1px" borderColor={panelBorderColor}>
+                <Text fontSize="xs" color={mutedTextColor}>
+                  Kode final akan disimpan sebagai{' '}
+                  <Text as="span" fontFamily="mono" fontWeight="semibold" color={infoTextColor}>
+                    {effectiveAccountCode}
+                  </Text>
+                </Text>
+              </Box>
+            )}
+          </Box>
 
           <FormField
             id="name"
