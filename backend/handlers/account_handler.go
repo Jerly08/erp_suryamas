@@ -1,10 +1,7 @@
 package handlers
 
 import (
-	"app-sistem-akuntansi/models"
-	"app-sistem-akuntansi/repositories"
-	"app-sistem-akuntansi/services"
-	"app-sistem-akuntansi/utils"
+	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -13,6 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/utils"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -32,6 +34,18 @@ func NewAccountHandler(repo repositories.AccountRepository, exportService servic
 	}
 }
 
+func (h *AccountHandler) requestContextWithUser(c *gin.Context) context.Context {
+	ctx := c.Request.Context()
+	if userID := c.GetUint("user_id"); userID > 0 {
+		role, _ := c.Get("role")
+		username, _ := c.Get("username")
+		roleStr, _ := role.(string)
+		usernameStr, _ := username.(string)
+		ctx = utils.SetUserContext(ctx, userID, roleStr, usernameStr)
+	}
+	return ctx
+}
+
 // CreateAccount creates a new account
 func (h *AccountHandler) CreateAccount(c *gin.Context) {
 	var req models.AccountCreateRequest
@@ -41,7 +55,7 @@ func (h *AccountHandler) CreateAccount(c *gin.Context) {
 		return
 	}
 
-	account, err := h.repo.Create(c.Request.Context(), &req)
+	account, err := h.repo.Create(h.requestContextWithUser(c), &req)
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
 			c.JSON(appErr.StatusCode, appErr.ToErrorResponse(""))
@@ -278,7 +292,7 @@ func (h *AccountHandler) ImportAccounts(c *gin.Context) {
 		importRequests = append(importRequests, importReq)
 	}
 
-	err = h.repo.BulkImport(c.Request.Context(), importRequests)
+	err = h.repo.BulkImport(h.requestContextWithUser(c), importRequests)
 	if err != nil {
 		if appErr := utils.GetAppError(err); appErr != nil {
 			c.JSON(appErr.StatusCode, appErr.ToErrorResponse(""))
