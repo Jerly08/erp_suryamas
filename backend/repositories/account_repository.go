@@ -174,6 +174,10 @@ func normalizeAccountCodeForParent(code string, parent *models.Account) (string,
 		return code, nil
 	}
 
+	if code == parent.Code || isCompleteNumericChildCodeForParent(code, parent.Code) {
+		return code, nil
+	}
+
 	parentPrefix := parent.Code + "-"
 	if strings.HasPrefix(code, parentPrefix) {
 		return code, nil
@@ -449,6 +453,28 @@ func isNumericSegment(value string) bool {
 		}
 	}
 	return true
+}
+
+func isFourDigitNumericCode(value string) bool {
+	return len(value) == 4 && isNumericSegment(value)
+}
+
+func isCompleteNumericChildCodeForParent(code, parentCode string) bool {
+	code = strings.TrimSpace(code)
+	parentCode = strings.TrimSpace(parentCode)
+	if !isFourDigitNumericCode(code) || !isFourDigitNumericCode(parentCode) || code == parentCode {
+		return false
+	}
+
+	if strings.HasSuffix(parentCode, "000") {
+		return strings.HasPrefix(code, parentCode[:1])
+	}
+
+	if strings.HasSuffix(parentCode, "00") {
+		return strings.HasPrefix(code, parentCode[:2])
+	}
+
+	return false
 }
 
 func rootAccountCodePrefixMatchesType(code string, accountType string) bool {

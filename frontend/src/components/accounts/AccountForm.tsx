@@ -158,9 +158,57 @@ const getSmartCategory = (type: string, parentAccounts: Account[], parentId: num
   return 'EQUITY';
 };
 
+const isFourDigitNumericCode = (code: string): boolean => /^\d{4}$/.test((code || '').trim());
+
+const isCompleteNumericChildCode = (code: string, parent: Account): boolean => {
+  const trimmedCode = (code || '').trim();
+  const parentCode = (parent.code || '').trim();
+
+  if (!isFourDigitNumericCode(trimmedCode) || !isFourDigitNumericCode(parentCode) || trimmedCode === parentCode) {
+    return false;
+  }
+
+  if (parentCode.endsWith('000')) {
+    return trimmedCode[0] === parentCode[0];
+  }
+
+  if (parentCode.endsWith('00')) {
+    return trimmedCode.slice(0, 2) === parentCode.slice(0, 2);
+  }
+
+  return false;
+};
+
+const getAccountCodePlaceholder = (parent: Account | undefined, fallback: string): string => {
+  if (!parent) return fallback;
+
+  const parentCode = (parent.code || '').trim();
+  if (isFourDigitNumericCode(parentCode)) {
+    if (parentCode.endsWith('000')) {
+      return `contoh: ${parentCode[0]}100`;
+    }
+
+    if (parentCode.endsWith('00')) {
+      return `contoh: ${parentCode.slice(0, 2)}06`;
+    }
+
+    return 'contoh: 001';
+  }
+
+  return 'contoh: 1001';
+};
+
 const buildEffectiveAccountCode = (code: string, parent?: Account): string => {
   const trimmedCode = (code || '').trim();
   if (!trimmedCode || !parent) return trimmedCode;
+
+  if (trimmedCode === parent.code) {
+    return trimmedCode;
+  }
+
+  if (isCompleteNumericChildCode(trimmedCode, parent)) {
+    return trimmedCode;
+  }
 
   const parentPrefix = `${parent.code}-`;
   if (trimmedCode.startsWith(parentPrefix)) {
@@ -436,7 +484,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
               label={t('accounts.accountCode')}
               value={formData.code || ''}
               onChange={handleChange}
-              placeholder={selectedParent ? 'contoh: 1001' : t('accounts.form.enterAccountCode')}
+              placeholder={getAccountCodePlaceholder(selectedParent, t('accounts.form.enterAccountCode'))}
               required
               error={errors.code}
               name="code"
@@ -707,7 +755,7 @@ const AccountForm: React.FC<AccountFormProps> = ({
                 <HStack spacing={2} mt={2}>
                   <Text>{t('accounts.form.categoryWillBe')}</Text>
                   <Badge colorScheme="blue" variant="solid">
-                    {getSmartCategory(formData.type, parentAccounts, formData.parent_id, formData.code, formData.name).replace(/_/g, ' ')}
+                    {getSmartCategory(formData.type, parentAccounts, formData.parent_id, effectiveAccountCode, formData.name).replace(/_/g, ' ')}
                   </Badge>
                 </HStack>
                 <Tooltip

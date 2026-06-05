@@ -100,6 +100,82 @@ func TestAccountRepoCreateKeepsFullChildCodeWithParentPrefix(t *testing.T) {
 	require.Equal(t, "1101-003-1002", account.Code)
 }
 
+func TestAccountRepoCreateKeepsCompleteNumericChildCodeUnderSectionParent(t *testing.T) {
+	repo, db := setupAccountRepoTest(t)
+	ctx := context.Background()
+
+	root := models.Account{
+		Code:     "1000",
+		Name:     "ASET",
+		Type:     models.AccountTypeAsset,
+		Level:    1,
+		IsHeader: true,
+		IsActive: true,
+	}
+	seedAccount(t, db, &root)
+
+	parent := models.Account{
+		Code:     "1100",
+		Name:     "ASET LANCAR",
+		Type:     models.AccountTypeAsset,
+		ParentID: &root.ID,
+		Level:    2,
+		IsHeader: true,
+		IsActive: true,
+	}
+	seedAccount(t, db, &parent)
+
+	account, err := repo.Create(ctx, &models.AccountCreateRequest{
+		Code:     "1106",
+		Name:     "PIUTANG INTERCOMPANY",
+		Type:     models.AccountTypeAsset,
+		ParentID: &parent.ID,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "1106", account.Code)
+	require.Equal(t, parent.ID, *account.ParentID)
+	require.Equal(t, 3, account.Level)
+}
+
+func TestAccountRepoCreatePrefixesRelativeDetailCodeUnderNumericParent(t *testing.T) {
+	repo, db := setupAccountRepoTest(t)
+	ctx := context.Background()
+
+	currentAssets := models.Account{
+		Code:     "1100",
+		Name:     "ASET LANCAR",
+		Type:     models.AccountTypeAsset,
+		Level:    1,
+		IsHeader: true,
+		IsActive: true,
+	}
+	seedAccount(t, db, &currentAssets)
+
+	parent := models.Account{
+		Code:     "1102",
+		Name:     "PIUTANG USAHA",
+		Type:     models.AccountTypeAsset,
+		ParentID: &currentAssets.ID,
+		Level:    2,
+		IsHeader: true,
+		IsActive: true,
+	}
+	seedAccount(t, db, &parent)
+
+	account, err := repo.Create(ctx, &models.AccountCreateRequest{
+		Code:     "001",
+		Name:     "PIUTANG USAHA - KEMENTAN",
+		Type:     models.AccountTypeAsset,
+		ParentID: &parent.ID,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "1102-001", account.Code)
+	require.Equal(t, parent.ID, *account.ParentID)
+	require.Equal(t, 3, account.Level)
+}
+
 func TestAccountRepoCreateRejectsNormalizedCodeLongerThanStorageLimit(t *testing.T) {
 	repo, db := setupAccountRepoTest(t)
 	ctx := context.Background()

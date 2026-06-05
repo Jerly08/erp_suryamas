@@ -370,17 +370,49 @@ func (s *AccountServiceImpl) ValidateAccountCodeFormat(code, accountType string)
 
 func normalizeAccountCodeWithParentCode(code, parentCode string) (string, error) {
 	code = strings.TrimSpace(code)
-	parentPrefix := parentCode + "-"
 
-	if strings.HasPrefix(code, parentPrefix) {
+	if code == parentCode || isCompleteNumericChildCodeForParent(code, parentCode) {
 		return code, nil
 	}
 
+	parentPrefix := parentCode + "-"
 	if strings.HasPrefix(code, parentPrefix) {
 		return code, nil
 	}
 
 	return parentPrefix + code, nil
+}
+
+func isCompleteNumericChildCodeForParent(code, parentCode string) bool {
+	code = strings.TrimSpace(code)
+	parentCode = strings.TrimSpace(parentCode)
+	if len(code) != 4 || len(parentCode) != 4 || !isNumericSegment(code) || !isNumericSegment(parentCode) || code == parentCode {
+		return false
+	}
+
+	if strings.HasSuffix(parentCode, "000") {
+		return strings.HasPrefix(code, parentCode[:1])
+	}
+
+	if strings.HasSuffix(parentCode, "00") {
+		return strings.HasPrefix(code, parentCode[:2])
+	}
+
+	return false
+}
+
+func isNumericSegment(value string) bool {
+	if value == "" {
+		return false
+	}
+
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // ValidateAccountHierarchy validates parent-child account relationships
