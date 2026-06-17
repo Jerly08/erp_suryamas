@@ -76,6 +76,7 @@ export interface Sale {
   payment_method?: string;
   payment_method_type?: string; // CASH, BANK, CREDIT
   cash_bank_id?: number;
+  receivable_account_id?: number;
   shipping_method?: string;
   shipping_cost: number;
   billing_address?: string;
@@ -93,6 +94,11 @@ export interface Sale {
   sale_items?: SaleItem[];
   sale_payments?: SalePayment[];
   sale_returns?: SaleReturn[];
+  receivable_account?: {
+    id: number;
+    code: string;
+    name: string;
+  };
 
   // Backward compatibility
   items?: SaleItem[];
@@ -238,6 +244,7 @@ export interface SaleCreateRequest {
   payment_method?: string;
   payment_method_type?: string; // CASH, BANK, CREDIT
   cash_bank_id?: number;
+  receivable_account_id?: number;
   shipping_method?: string;
   shipping_cost?: number;
   billing_address?: string;
@@ -286,6 +293,7 @@ export interface SaleUpdateRequest {
   payment_method?: string;
   payment_method_type?: string; // CASH, BANK, CREDIT
   cash_bank_id?: number;
+  receivable_account_id?: number;
   shipping_method?: string;
   shipping_cost?: number;
   billing_address?: string;
@@ -892,6 +900,13 @@ class SalesService {
 
     if (!data.date) {
       errors.push("Date is required");
+    }
+
+    if (
+      (data.payment_method_type || "").toUpperCase() === "CREDIT" &&
+      (!data.receivable_account_id || data.receivable_account_id <= 0)
+    ) {
+      errors.push("Receivable account / COA is required for credit sales");
     }
 
     if (!data.items || data.items.length === 0) {

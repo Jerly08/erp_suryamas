@@ -97,6 +97,8 @@ import {
   FiFileText,
   FiSearch,
   FiDollarSign,
+  FiChevronLeft,
+  FiChevronRight,
 } from "react-icons/fi";
 import purchaseService, {
   Purchase,
@@ -1780,7 +1782,19 @@ const PurchasesPage: React.FC = () => {
 
   // Handle page change
   const handlePageChange = (page: number) => {
-    const updatedFilters = { ...filters, page };
+    const totalRows = pagination.total || purchases.length;
+    const totalPages = Math.max(
+      pagination.totalPages || Math.ceil(totalRows / pagination.limit) || 1,
+      1,
+    );
+    const nextPage = Math.min(Math.max(page, 1), totalPages);
+    const updatedFilters = { ...filters, page: nextPage };
+    setFilters(updatedFilters);
+    fetchPurchases(updatedFilters);
+  };
+
+  const handlePageSizeChange = (limit: number) => {
+    const updatedFilters = { ...filters, limit, page: 1 };
     setFilters(updatedFilters);
     fetchPurchases(updatedFilters);
   };
@@ -4762,6 +4776,20 @@ const PurchasesPage: React.FC = () => {
     );
   };
 
+  const purchaseTotalRows = pagination.total || purchases.length;
+  const purchaseTotalPages = Math.max(
+    pagination.totalPages ||
+      Math.ceil(purchaseTotalRows / (pagination.limit || 10)) ||
+      1,
+    1,
+  );
+  const purchaseStartRow =
+    purchaseTotalRows > 0 ? (pagination.page - 1) * pagination.limit + 1 : 0;
+  const purchaseEndRow = Math.min(
+    pagination.page * pagination.limit,
+    purchaseTotalRows,
+  );
+
   if (loading) {
     return (
       <ProtectedModule module="purchases">
@@ -5655,6 +5683,69 @@ const PurchasesPage: React.FC = () => {
                 canDelete={canDelete}
                 userRole={normalizeRole(user?.role as any)}
               />
+
+              {purchaseTotalRows > 0 && (
+                <Flex
+                  mt={4}
+                  px={4}
+                  py={3}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  borderRadius="md"
+                  bg={cardBg}
+                  align={{ base: "stretch", md: "center" }}
+                  justify="space-between"
+                  direction={{ base: "column", md: "row" }}
+                  gap={3}
+                >
+                  <Text fontSize="sm" color={textSecondary}>
+                    Menampilkan {purchaseStartRow}-{purchaseEndRow} dari{" "}
+                    {purchaseTotalRows} purchase
+                  </Text>
+                  <Flex align="center" gap={2} wrap="wrap">
+                    <Text fontSize="sm" color={textSecondary}>
+                      Rows
+                    </Text>
+                    <Select
+                      size="sm"
+                      maxW="90px"
+                      value={pagination.limit}
+                      onChange={(e) =>
+                        handlePageSizeChange(Number(e.target.value))
+                      }
+                      isDisabled={loading}
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      leftIcon={<FiChevronLeft />}
+                      onClick={() => handlePageChange(pagination.page - 1)}
+                      isDisabled={loading || pagination.page <= 1}
+                    >
+                      Prev
+                    </Button>
+                    <Text fontSize="sm" color={textSecondary}>
+                      Halaman {pagination.page} / {purchaseTotalPages}
+                    </Text>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      rightIcon={<FiChevronRight />}
+                      onClick={() => handlePageChange(pagination.page + 1)}
+                      isDisabled={
+                        loading ||
+                        pagination.page >= purchaseTotalPages
+                      }
+                    >
+                      Next
+                    </Button>
+                  </Flex>
+                </Flex>
+              )}
 
               {/* View Purchase Modal */}
               <Modal isOpen={isViewOpen} onClose={onViewClose} size="xl">

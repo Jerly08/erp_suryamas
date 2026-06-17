@@ -50,6 +50,8 @@ import {
   FiDownload,
   FiX,
   FiFileText,
+  FiChevronLeft,
+  FiChevronRight,
 } from "react-icons/fi";
 import Layout from "@/components/layout/Layout";
 import ProtectedModule from "@/components/common/ProtectedModule";
@@ -79,6 +81,7 @@ import { getImageUrl } from "@/utils/imageUrl";
 const ACCEPTED_DOCUMENT_TYPES =
   ".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp";
 const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
+const PURCHASE_REQUEST_PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 export default function PurchaseRequestsPage() {
   const router = useRouter();
@@ -91,6 +94,8 @@ export default function PurchaseRequestsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
   const { canCreate, canEdit } = usePermissions();
@@ -612,6 +617,7 @@ export default function PurchaseRequestsPage() {
     setSearchQuery("");
     setStartDateFilter("");
     setEndDateFilter("");
+    setCurrentPage(1);
   };
 
   const filteredRequests = requests.filter((r) => {
@@ -635,6 +641,21 @@ export default function PurchaseRequestsPage() {
       matchesEndDate
     );
   });
+
+  const totalPages = Math.max(1, Math.ceil(filteredRequests.length / pageSize));
+  const pageStartIndex = (currentPage - 1) * pageSize;
+  const paginatedRequests = filteredRequests.slice(
+    pageStartIndex,
+    pageStartIndex + pageSize,
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, startDateFilter, endDateFilter, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const getStatusBadge = (request: PurchaseRequest) => {
     switch (request.status) {
@@ -892,7 +913,7 @@ export default function PurchaseRequestsPage() {
                       </Td>
                     </Tr>
                   ) : (
-                    filteredRequests.map((pr) => (
+                    paginatedRequests.map((pr) => (
                       <Tr key={pr.id} _hover={{ bg: rowHoverBg }}>
                         <Td
                           fontWeight="bold"
@@ -964,6 +985,72 @@ export default function PurchaseRequestsPage() {
                 </Tbody>
               </Table>
             </Box>
+
+            {filteredRequests.length > 0 && (
+              <Flex
+                mt={4}
+                pt={4}
+                borderTopWidth="1px"
+                borderColor={borderColor}
+                align={{ base: "stretch", md: "center" }}
+                justify="space-between"
+                direction={{ base: "column", md: "row" }}
+                gap={3}
+              >
+                <Text fontSize="sm" color={mutedTextColor}>
+                  Menampilkan {pageStartIndex + 1}-
+                  {Math.min(pageStartIndex + pageSize, filteredRequests.length)}{" "}
+                  dari {filteredRequests.length} PR
+                </Text>
+                <Flex align="center" gap={2} wrap="wrap">
+                  <Text fontSize="sm" color={mutedTextColor}>
+                    Rows
+                  </Text>
+                  <Select
+                    size="sm"
+                    maxW="90px"
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    bg={inputBg}
+                    borderColor={inputBorderColor}
+                    color={textColor}
+                    _hover={{ borderColor: inputBorderColor }}
+                    _focusVisible={fieldFocusStyles}
+                  >
+                    {PURCHASE_REQUEST_PAGE_SIZE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    leftIcon={<FiChevronLeft />}
+                    onClick={() =>
+                      setCurrentPage((page) => Math.max(page - 1, 1))
+                    }
+                    isDisabled={currentPage <= 1}
+                  >
+                    Prev
+                  </Button>
+                  <Text fontSize="sm" color={mutedTextColor}>
+                    Halaman {currentPage} / {totalPages}
+                  </Text>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    rightIcon={<FiChevronRight />}
+                    onClick={() =>
+                      setCurrentPage((page) => Math.min(page + 1, totalPages))
+                    }
+                    isDisabled={currentPage >= totalPages}
+                  >
+                    Next
+                  </Button>
+                </Flex>
+              </Flex>
+            )}
           </Box>
         </Box>
 

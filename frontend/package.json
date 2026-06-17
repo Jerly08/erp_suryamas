@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next dev --turbopack",
-    "dev:clean": "cross-env NODE_OPTIONS=--no-deprecation next dev --turbopack",
-    "dev:verbose": "next dev --turbopack",
+    "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+    "dev:clean": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+    "dev:verbose": "next dev",
+    "dev:turbo": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next dev --turbopack",
     "prebuild": "npm run lint && npm run typecheck",
     "build": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next build",
     "build:strict": "npm run lint && npm run typecheck && cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next build",

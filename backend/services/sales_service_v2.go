@@ -437,26 +437,31 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		PPhPercent:      request.PPhPercent,
 		PPhType:         request.PPhType,
 		// Enhanced tax fields
-		PPNRate:            *ppnPercent,
-		OtherTaxAdditions:  request.OtherTaxAdditions,
-		PPh21Rate:          request.PPh21Rate,
-		PPh23Rate:          request.PPh23Rate,
-		OtherTaxDeductions: request.OtherTaxDeductions,
-		PaymentTerms:       request.PaymentTerms,
-		PaymentMethod:      request.PaymentMethod,
-		PaymentMethodType:  request.PaymentMethodType, // CASH, BANK, or CREDIT
-		CashBankID:         request.CashBankID,
-		ShippingMethod:     request.ShippingMethod,
-		ShippingCost:       request.ShippingCost,
-		ShippingTaxable:    request.ShippingTaxable,
-		BillingAddress:     request.BillingAddress,
-		ShippingAddress:    request.ShippingAddress,
-		Notes:              request.Notes,
-		InternalNotes:      request.InternalNotes,
-		Reference:          request.Reference,
+		PPNRate:             *ppnPercent,
+		OtherTaxAdditions:   request.OtherTaxAdditions,
+		PPh21Rate:           request.PPh21Rate,
+		PPh23Rate:           request.PPh23Rate,
+		OtherTaxDeductions:  request.OtherTaxDeductions,
+		PaymentTerms:        request.PaymentTerms,
+		PaymentMethod:       request.PaymentMethod,
+		PaymentMethodType:   request.PaymentMethodType, // CASH, BANK, or CREDIT
+		CashBankID:          request.CashBankID,
+		ReceivableAccountID: request.ReceivableAccountID,
+		ShippingMethod:      request.ShippingMethod,
+		ShippingCost:        request.ShippingCost,
+		ShippingTaxable:     request.ShippingTaxable,
+		BillingAddress:      request.BillingAddress,
+		ShippingAddress:     request.ShippingAddress,
+		Notes:               request.Notes,
+		InternalNotes:       request.InternalNotes,
+		Reference:           request.Reference,
 	}
 
 	if err := validateSalePaymentScheduleMode(sale.PaymentTerms, sale.PaymentMethodType); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := assignAndValidateSaleReceivableAccount(tx, sale, true); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -731,6 +736,10 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		if request.CashBankID != nil {
 			sale.CashBankID = request.CashBankID
 		}
+		if request.ReceivableAccountID != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("tidak bisa mengubah akun piutang pada penjualan yang sudah difakturkan")
+		}
 		if request.ShippingMethod != nil {
 			sale.ShippingMethod = *request.ShippingMethod
 		}
@@ -824,6 +833,9 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	if request.CashBankID != nil {
 		sale.CashBankID = request.CashBankID
 	}
+	if request.ReceivableAccountID != nil {
+		sale.ReceivableAccountID = request.ReceivableAccountID
+	}
 
 	// Update legacy tax fields
 	if request.PPNPercent != nil {
@@ -888,6 +900,10 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	}
 
 	if err := validateSalePaymentScheduleMode(sale.PaymentTerms, sale.PaymentMethodType); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := assignAndValidateSaleReceivableAccount(tx, &sale, true); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -1294,6 +1310,10 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 
 	oldStatus := sale.Status
 	sale.Status = "INVOICED"
+	if err := assignAndValidateSaleReceivableAccount(tx, &sale, false); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
 
 	// Generate invoice number using new service
 	if sale.InvoiceTypeID != nil {
@@ -1820,7 +1840,7 @@ func (s *SalesServiceV2) SettlePPh23(saleID uint, request models.SalePPh23Settle
 
 	var receivableAccount *models.Account
 	if receivableSettlementAmount > 0.005 {
-		receivableAccount, err = resolveSalesReceivableAccount(tx)
+		receivableAccount, err = resolveSalesReceivableAccount(tx, &sale)
 		if err != nil {
 			tx.Rollback()
 			return nil, err

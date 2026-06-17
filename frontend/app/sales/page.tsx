@@ -56,6 +56,8 @@ import {
   FiFilter,
   FiBarChart,
   FiSettings,
+  FiChevronLeft,
+  FiChevronRight,
 } from "react-icons/fi";
 import {
   handleLoadingError,
@@ -70,6 +72,12 @@ interface SalesPageState {
   filter: SalesFilter;
   selectedSale: Sale | null;
   summary: any;
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
 }
 
 export default function SalesPage() {
@@ -132,6 +140,7 @@ const SalesPageContent: React.FC = () => {
   );
   const tableBg = useColorModeValue("white", "var(--bg-secondary)");
   const textColor = useColorModeValue("gray.600", "var(--text-secondary)");
+  const paginationBorderColor = useColorModeValue("gray.200", "gray.700");
 
   const [state, setState] = useState<SalesPageState>({
     sales: [],
@@ -147,6 +156,12 @@ const SalesPageContent: React.FC = () => {
     },
     selectedSale: null,
     summary: null,
+    pagination: {
+      total: 0,
+      page: 1,
+      limit: 10,
+      totalPages: 1,
+    },
   });
 
   // Load sales data
@@ -158,11 +173,24 @@ const SalesPageContent: React.FC = () => {
         ? { ...state.filter, ...newFilter }
         : state.filter;
       const result = await salesService.getSales(filter);
+      const page = result.page || filter.page || 1;
+      const limit = result.limit || filter.limit || 10;
+      const total = result.total || 0;
+      const totalPages = Math.max(
+        1,
+        result.total_pages || Math.ceil(total / limit) || 1,
+      );
 
       setState((prev) => ({
         ...prev,
-        sales: result.data,
-        filter: { ...filter, page: result.page },
+        sales: result.data || [],
+        filter: { ...filter, page, limit },
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages,
+        },
         loading: false,
       }));
     } catch (error: any) {
@@ -227,6 +255,16 @@ const SalesPageContent: React.FC = () => {
     setState((prev) => ({ ...prev, filter: { ...prev.filter, [key]: value } }));
     loadSales({ [key]: value, page: 1 });
     loadSalesSummary({ [key]: value, page: 1 });
+  };
+
+  const handlePageChange = (page: number) => {
+    const totalPages = Math.max(state.pagination.totalPages, 1);
+    const nextPage = Math.min(Math.max(page, 1), totalPages);
+    loadSales({ page: nextPage });
+  };
+
+  const handlePageSizeChange = (limit: number) => {
+    loadSales({ limit, page: 1 });
   };
 
   // Handle create/edit sale
@@ -649,6 +687,7 @@ const SalesPageContent: React.FC = () => {
                       status: "",
                       start_date: "",
                       end_date: "",
+                      page: 1,
                     },
                   }));
                   loadSales({
@@ -657,6 +696,7 @@ const SalesPageContent: React.FC = () => {
                     start_date: "",
                     end_date: "",
                     page: 1,
+                    limit: state.pagination.limit,
                   });
                   loadSalesSummary({
                     search: "",
@@ -707,7 +747,74 @@ const SalesPageContent: React.FC = () => {
           formatDate={salesService.formatDate}
           canEdit={canEdit}
           canDelete={canDelete}
+          totalCount={state.pagination.total}
         />
+
+        {state.pagination.total > 0 && (
+          <Flex
+            mt={4}
+            px={4}
+            py={3}
+            borderWidth="1px"
+            borderColor={paginationBorderColor}
+            borderRadius="md"
+            bg={tableBg}
+            align={{ base: "stretch", md: "center" }}
+            justify="space-between"
+            direction={{ base: "column", md: "row" }}
+            gap={3}
+          >
+            <Text fontSize="sm" color={textColor}>
+              Menampilkan{" "}
+              {(state.pagination.page - 1) * state.pagination.limit + 1}-
+              {Math.min(
+                state.pagination.page * state.pagination.limit,
+                state.pagination.total,
+              )}{" "}
+              dari {state.pagination.total} sales
+            </Text>
+            <Flex align="center" gap={2} wrap="wrap">
+              <Text fontSize="sm" color={textColor}>
+                Rows
+              </Text>
+              <Select
+                size="sm"
+                maxW="90px"
+                value={state.pagination.limit}
+                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                isDisabled={state.loading}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                leftIcon={<FiChevronLeft />}
+                onClick={() => handlePageChange(state.pagination.page - 1)}
+                isDisabled={state.loading || state.pagination.page <= 1}
+              >
+                Prev
+              </Button>
+              <Text fontSize="sm" color={textColor}>
+                Halaman {state.pagination.page} / {state.pagination.totalPages}
+              </Text>
+              <Button
+                size="sm"
+                variant="outline"
+                rightIcon={<FiChevronRight />}
+                onClick={() => handlePageChange(state.pagination.page + 1)}
+                isDisabled={
+                  state.loading ||
+                  state.pagination.page >= state.pagination.totalPages
+                }
+              >
+                Next
+              </Button>
+            </Flex>
+          </Flex>
+        )}
       </Box>
 
       {/* Sales Form Modal */}

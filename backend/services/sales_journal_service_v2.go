@@ -142,24 +142,6 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 		return &acc, nil
 	}
 
-	// Helper to resolve piutang account with fallbacks
-	resolvePiutangAccount := func() (*models.Account, error) {
-		var acc models.Account
-		// Try primary active AR account first
-		if err := dbToUse.Where("code = ?", "1102-001").First(&acc).Error; err == nil {
-			return &acc, nil
-		}
-		// Try general AR account second
-		if err := dbToUse.Where("code = ?", "1102").First(&acc).Error; err == nil {
-			return &acc, nil
-		}
-		// Try legacy AR account last
-		if err := dbToUse.Where("code = ?", "1201").First(&acc).Error; err == nil {
-			return &acc, nil
-		}
-		return nil, fmt.Errorf("no suitable accounts receivable (Piutang Usaha) account found")
-	}
-
 	// Prepare journal items using unified lines
 	var journalItems []models.SSOTJournalLine
 	lineCount := 1
@@ -221,7 +203,7 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 		}
 	default:
 		// CREDIT or unknown → Debit Piutang Usaha
-		if acc, err := resolvePiutangAccount(); err == nil {
+		if acc, err := resolveSalesReceivableAccount(dbToUse, sale); err == nil {
 			journalItems = append(journalItems, models.SSOTJournalLine{
 				JournalID:    ssotEntry.ID,
 				AccountID:    uint64(acc.ID),
@@ -235,7 +217,7 @@ func (s *SalesJournalServiceV2) CreateSalesJournal(sale *models.Sale, tx *gorm.D
 			lineCount++
 			log.Printf("📋 CREDIT Payment: Debit to %s (%s) = %.2f", acc.Name, acc.Code, sale.TotalAmount)
 		} else {
-			log.Printf("⚠️ Missing receivable account 1201: %v", err)
+			log.Printf("⚠️ Missing selected/default sales receivable account: %v", err)
 		}
 	}
 
@@ -527,24 +509,6 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 		return &acc, nil
 	}
 
-	// Helper to resolve piutang account with fallbacks
-	resolvePiutangAccount := func() (*models.Account, error) {
-		var acc models.Account
-		// Try primary active AR account first
-		if err := dbToUse.Where("code = ?", "1102-001").First(&acc).Error; err == nil {
-			return &acc, nil
-		}
-		// Try general AR account second
-		if err := dbToUse.Where("code = ?", "1102").First(&acc).Error; err == nil {
-			return &acc, nil
-		}
-		// Try legacy AR account last
-		if err := dbToUse.Where("code = ?", "1201").First(&acc).Error; err == nil {
-			return &acc, nil
-		}
-		return nil, fmt.Errorf("no suitable accounts receivable (Piutang Usaha) account found")
-	}
-
 	bankBookAmountValue := payment.BookAmountIDR
 	if bankBookAmountValue == 0 {
 		bankBookAmountValue = payment.Amount
@@ -645,7 +609,7 @@ func (s *SalesJournalServiceV2) CreateSalesPaymentJournal(payment *models.SalePa
 	}
 
 	// CREDIT: Reduce Piutang Usaha
-	if ar, err := resolvePiutangAccount(); err == nil {
+	if ar, err := resolveSalesReceivableAccount(dbToUse, sale); err == nil {
 		journalItems = append(journalItems, models.SSOTJournalLine{
 			JournalID:    ssotEntry.ID,
 			AccountID:    uint64(ar.ID),

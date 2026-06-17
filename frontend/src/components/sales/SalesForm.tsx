@@ -19,6 +19,7 @@ import {
   Textarea,
   VStack,
   HStack,
+  SimpleGrid,
   Box,
   Divider,
   Text,
@@ -89,6 +90,45 @@ interface SalesFormProps {
   initialData?: Sale | null; // For duplication/cloning
 }
 
+type AccountCatalogRow = {
+  id: number;
+  code: string;
+  name: string;
+  active?: boolean;
+  parent_id?: number;
+  parent_code?: string;
+  parent_name?: string;
+  is_active?: boolean;
+  is_header?: boolean;
+};
+
+const isReceivableAccountCandidate = (account: AccountCatalogRow): boolean => {
+  const normalizedName = (account.name || "").toLowerCase();
+  const normalizedCode = (account.code || "").toLowerCase();
+  const normalizedParentName = (account.parent_name || "").toLowerCase();
+  const normalizedParentCode = (account.parent_code || "").toLowerCase();
+  const isContraReceivable =
+    normalizedName.includes("cadangan") ||
+    normalizedName.includes("kerugian") ||
+    normalizedName.includes("penyisihan") ||
+    normalizedName.includes("allowance") ||
+    normalizedName.includes("provision") ||
+    normalizedName.includes("contra");
+
+  return !isContraReceivable && (
+    normalizedName.includes("piutang") ||
+    normalizedName.includes("receivable") ||
+    normalizedName.includes("intercomp") ||
+    normalizedName.includes("intercompany") ||
+    normalizedParentName.includes("piutang") ||
+    normalizedParentName.includes("receivable") ||
+    normalizedParentName.includes("intercomp") ||
+    normalizedParentName.includes("intercompany") ||
+    normalizedCode.startsWith("1106-") ||
+    normalizedParentCode === "1106"
+  );
+};
+
 interface FormData {
   customer_id: number;
   sales_person_id?: number;
@@ -104,6 +144,7 @@ interface FormData {
   // Payment method and accounting fields
   payment_method_type: "CASH" | "BANK" | "CREDIT";
   cash_bank_id?: number;
+  receivable_account_id?: number;
   // Legacy tax fields (for backward compatibility)
   ppn_percent: number;
   pph_percent: number;
@@ -164,6 +205,9 @@ const SalesForm: React.FC<SalesFormProps> = ({
   >(null);
   const [defaultRevenueAccountLabel, setDefaultRevenueAccountLabel] =
     useState("");
+  const [receivableAccounts, setReceivableAccounts] = useState<
+    AccountCatalogRow[]
+  >([]);
   const [cashBankAccounts, setCashBankAccounts] = useState<any[]>([]);
   const [invoiceTypes, setInvoiceTypes] = useState<InvoiceType[]>([]);
   const [loadingData, setLoadingData] = useState(true);
@@ -277,6 +321,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       payment_terms: "NET_30",
       payment_schedules: [],
       payment_method_type: "CREDIT" as "CASH" | "BANK" | "CREDIT",
+      receivable_account_id: undefined,
       shipping_cost: 0,
       items: [
         {
@@ -324,6 +369,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const watchPaymentSchedules = watch("payment_schedules");
   const watchPaymentMethodType = watch("payment_method_type");
   const watchCashBankId = watch("cash_bank_id");
+  const watchReceivableAccountId = watch("receivable_account_id");
   const watchDate = watch("date");
   const watchType = watch("type");
   const watchDueDate = watch("due_date");
@@ -339,6 +385,14 @@ const SalesForm: React.FC<SalesFormProps> = ({
     defaultRevenueAccountLabel
       ? `COA akan memakai default sistem: ${defaultRevenueAccountLabel}`
       : "COA akan memakai default sistem saat sales disimpan.";
+
+  const resolveReceivableAccountId = (formReceivableAccountId?: number) =>
+    formReceivableAccountId ||
+    watchReceivableAccountId ||
+    0;
+
+  const getReceivableAccountHelperText = () =>
+    "Akun yang dipilih akan muncul sebagai debit piutang di jurnal invoice kredit.";
 
   useEffect(() => {
     if (isOpen) {
@@ -438,6 +492,15 @@ const SalesForm: React.FC<SalesFormProps> = ({
   }, [watchPaymentMethodType, watchPaymentTerms, setValue]);
 
   useEffect(() => {
+    if (watchPaymentMethodType !== "CREDIT") {
+      clearErrors("receivable_account_id");
+    }
+  }, [
+    watchPaymentMethodType,
+    clearErrors,
+  ]);
+
+  useEffect(() => {
     if (!watchCashBankId || cashBankAccounts.length === 0) {
       return;
     }
@@ -510,6 +573,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         productsResult,
         salesPersonsResult,
         accountsResult,
+        assetAccountsResult,
         cashBankResult,
         projectsResult,
         invoiceTypesResult,
@@ -570,6 +634,21 @@ const SalesForm: React.FC<SalesFormProps> = ({
           );
           console.log(
             "SalesForm: Revenue accounts loaded:",
+            result?.length || 0,
+          );
+          return result;
+        })(),
+
+        // Load asset accounts for credit receivable COA selection
+        (async () => {
+          console.log("SalesForm: Loading asset accounts for receivables...");
+          const accountService = await import("@/services/accountService");
+          const result = await accountService.default.getAccountCatalog(
+            token,
+            "ASSET",
+          );
+          console.log(
+            "SalesForm: Asset accounts loaded:",
             result?.length || 0,
           );
           return result;
@@ -705,6 +784,36 @@ const SalesForm: React.FC<SalesFormProps> = ({
         setDefaultRevenueAccountLabel("");
       }
 
+      if (
+        assetAccountsResult.status === "fulfilled" &&
+        Array.isArray(assetAccountsResult.value)
+      ) {
+        const receivableOptions = filterActiveLeafAccounts(
+          assetAccountsResult.value as AccountCatalogRow[],
+        )
+          .filter(isReceivableAccountCandidate)
+          .map((acc) => ({
+            id: acc.id,
+            code: acc.code,
+            name: acc.name,
+            active: acc.active,
+            parent_id: acc.parent_id,
+            parent_code: acc.parent_code,
+            parent_name: acc.parent_name,
+            is_active: acc.is_active,
+            is_header: acc.is_header,
+          }));
+        setReceivableAccounts(receivableOptions);
+      } else {
+        console.warn(
+          "Failed to load asset accounts:",
+          assetAccountsResult.status === "rejected"
+            ? assetAccountsResult.reason
+            : "No data",
+        );
+        setReceivableAccounts([]);
+      }
+
       // Process cash & bank accounts
       if (
         cashBankResult.status === "fulfilled" &&
@@ -835,6 +944,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
         (saleData.payment_method_type as FormData["payment_method_type"]) ||
         "CREDIT",
       cash_bank_id: saleData.cash_bank_id || undefined,
+      receivable_account_id:
+        String(saleData.payment_method_type || "").toUpperCase() === "CREDIT"
+          ? saleData.receivable_account_id || undefined
+          : undefined,
       shipping_method: saleData.shipping_method || undefined,
       shipping_cost: saleData.shipping_cost || 0,
       billing_address: saleData.billing_address || undefined,
@@ -895,6 +1008,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       payment_terms: "NET_30",
       payment_schedules: [],
       payment_method_type: "CREDIT" as "CASH" | "BANK" | "CREDIT",
+      receivable_account_id: undefined,
       shipping_cost: 0,
       items: [
         {
@@ -1355,6 +1469,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
         // Additional validation
         const validationErrors = salesService.validateSaleData({
           ...data,
+          receivable_account_id:
+            data.payment_method_type === "CREDIT"
+              ? resolveReceivableAccountId(data.receivable_account_id)
+              : undefined,
           items: validItems.map((item) => ({
             product_id: item.product_id,
             product_name: item.product_name?.trim() || "",
@@ -1390,6 +1508,25 @@ const SalesForm: React.FC<SalesFormProps> = ({
           );
           return;
         }
+      }
+
+      const receivableAccountId = resolveReceivableAccountId(
+        data.receivable_account_id,
+      );
+      if (
+        data.payment_method_type === "CREDIT" &&
+        (!receivableAccountId || receivableAccountId <= 0)
+      ) {
+        setError("receivable_account_id", {
+          type: "manual",
+          message: "Pilih COA piutang untuk penjualan kredit",
+        });
+        ErrorHandler.handleValidationError(
+          ["Pilih COA piutang untuk penjualan kredit"],
+          toast,
+          "sales form",
+        );
+        return;
       }
 
       const validPaymentSchedules: SalePaymentScheduleRequest[] | undefined =
@@ -1513,6 +1650,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
             payment_method: data.payment_method,
             payment_method_type: data.payment_method_type,
             cash_bank_id: data.cash_bank_id,
+            receivable_account_id:
+              data.payment_method_type === "CREDIT"
+                ? receivableAccountId
+                : undefined,
             shipping_method: data.shipping_method,
             shipping_cost: data.shipping_cost,
             billing_address: data.billing_address,
@@ -1578,6 +1719,10 @@ const SalesForm: React.FC<SalesFormProps> = ({
           payment_method: data.payment_method,
           payment_method_type: data.payment_method_type,
           cash_bank_id: data.cash_bank_id,
+          receivable_account_id:
+            data.payment_method_type === "CREDIT"
+              ? receivableAccountId
+              : undefined,
           shipping_method: data.shipping_method,
           shipping_cost: data.shipping_cost,
           billing_address: data.billing_address,
@@ -3210,12 +3355,20 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               <strong>
                                 {t("sales.form.paymentMethodOptions.credit")}:
                               </strong>{" "}
-                              Debit Accounts Receivable, Credit Revenue Account
+                              Debit selected Receivable COA, Credit Revenue
+                              Account
                             </Text>
                           </AlertDescription>
                         </Alert>
 
-                        <HStack w="full" spacing={4}>
+                        <SimpleGrid
+                          w="full"
+                          columns={{
+                            base: 1,
+                            lg: watchPaymentMethodType === "CREDIT" ? 3 : 2,
+                          }}
+                          spacing={4}
+                        >
                           <FormControl isRequired>
                             <FormLabel>
                               {t("sales.form.paymentMethod")}
@@ -3289,6 +3442,45 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           )}
 
                           {watchPaymentMethodType === "CREDIT" && (
+                            <FormControl
+                              isRequired
+                              isInvalid={!!errors.receivable_account_id}
+                            >
+                              <FormLabel>Akun Piutang (COA)</FormLabel>
+                              <Select
+                                {...register("receivable_account_id", {
+                                  required:
+                                    "Pilih COA piutang untuk penjualan kredit",
+                                  setValueAs: (value) =>
+                                    parseInt(value) || undefined,
+                                })}
+                                bg={inputBg}
+                                _focus={{ bg: inputFocusBg }}
+                                isDisabled={loadingData}
+                              >
+                                <option value="">
+                                  {loadingData
+                                    ? "Loading akun piutang..."
+                                    : receivableAccounts.length === 0
+                                      ? "Tidak ada akun piutang detail aktif"
+                                      : "Pilih akun piutang"}
+                                </option>
+                                {receivableAccounts.map((account) => (
+                                  <option key={account.id} value={account.id}>
+                                    {account.code} - {account.name}
+                                  </option>
+                                ))}
+                              </Select>
+                              <FormHelperText color={textColor}>
+                                {getReceivableAccountHelperText()}
+                              </FormHelperText>
+                              <FormErrorMessage>
+                                {errors.receivable_account_id?.message}
+                              </FormErrorMessage>
+                            </FormControl>
+                          )}
+
+                          {watchPaymentMethodType === "CREDIT" && (
                             <FormControl>
                               <FormLabel>
                                 Bank Account for Invoice (optional)
@@ -3326,16 +3518,17 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               </FormHelperText>
                             </FormControl>
                           )}
-                        </HStack>
+                        </SimpleGrid>
 
                         {watchPaymentMethodType === "CREDIT" && (
                           <Alert status="warning" size="sm" borderRadius="md">
                             <AlertIcon />
                             <AlertDescription fontSize="sm">
                               <Text>
-                                <strong>Credit Sale:</strong> Creates accounts
-                                receivable that requires follow-up payment
-                                collection.
+                                <strong>Credit Sale:</strong> Invoice akan
+                                membentuk piutang pada COA yang dipilih.
+                                Pembayaran customer akan meng-credit COA yang
+                                sama.
                               </Text>
                             </AlertDescription>
                           </Alert>

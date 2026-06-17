@@ -22,18 +22,120 @@ type salePPh23CorrectionSource struct {
 	Snapshot          *cashBankSnapshot
 }
 
-func resolveSalesReceivableAccount(tx *gorm.DB) (*models.Account, error) {
+func isSaleCreditPaymentMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "", "CREDIT", "PIUTANG":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidSaleReceivableAccount(account *models.Account) error {
+	if account == nil {
+		return fmt.Errorf("akun piutang tidak ditemukan")
+	}
+	if !account.IsActive {
+		return fmt.Errorf("akun piutang %s - %s tidak aktif", account.Code, account.Name)
+	}
+	if account.IsHeader {
+		return fmt.Errorf("akun piutang %s - %s adalah header; pilih akun detail", account.Code, account.Name)
+	}
+	if !strings.EqualFold(strings.TrimSpace(account.Type), models.AccountTypeAsset) {
+		return fmt.Errorf("akun piutang %s - %s harus bertipe aset", account.Code, account.Name)
+	}
+	return nil
+}
+
+func loadSaleReceivableAccountByID(tx *gorm.DB, accountID uint) (*models.Account, error) {
 	var acc models.Account
-	if err := tx.Where("code = ? AND deleted_at IS NULL", "1102-001").First(&acc).Error; err == nil {
+	if err := tx.First(&acc, accountID).Error; err != nil {
+		return nil, fmt.Errorf("akun piutang ID %d tidak ditemukan: %w", accountID, err)
+	}
+	if err := isValidSaleReceivableAccount(&acc); err != nil {
+		return nil, err
+	}
+	return &acc, nil
+}
+
+func resolveConfiguredSalesReceivableAccount(tx *gorm.DB) (*models.Account, error) {
+	var settings models.TaxAccountSettings
+	if err := tx.Where("is_active = ?", true).
+		Order("updated_at DESC, id DESC").
+		First(&settings).Error; err != nil {
+		return nil, err
+	}
+	if settings.SalesReceivableAccountID == 0 {
+		return nil, fmt.Errorf("akun piutang penjualan belum dikonfigurasi")
+	}
+	return loadSaleReceivableAccountByID(tx, settings.SalesReceivableAccountID)
+}
+
+func resolveFallbackSalesReceivableAccount(tx *gorm.DB) (*models.Account, error) {
+	preferredCodes := []string{"1102-001", "1102", "1201"}
+	for _, code := range preferredCodes {
+		var acc models.Account
+		if err := tx.Where("code = ?", code).First(&acc).Error; err == nil {
+			if validationErr := isValidSaleReceivableAccount(&acc); validationErr == nil {
+				return &acc, nil
+			}
+		}
+	}
+
+	var acc models.Account
+	if err := tx.
+		Where("type = ? AND is_active = ? AND is_header = ?", models.AccountTypeAsset, true, false).
+		Where("(LOWER(name) LIKE ? OR LOWER(name) LIKE ?)", "%piutang%", "%receivable%").
+		Order("code ASC").
+		First(&acc).Error; err == nil {
 		return &acc, nil
 	}
-	if err := tx.Where("code = ? AND deleted_at IS NULL", "1102").First(&acc).Error; err == nil {
-		return &acc, nil
-	}
-	if err := tx.Where("code = ? AND deleted_at IS NULL", "1201").First(&acc).Error; err == nil {
-		return &acc, nil
-	}
+
 	return nil, fmt.Errorf("akun piutang usaha tidak ditemukan")
+}
+
+func resolveSalesReceivableAccount(tx *gorm.DB, sales ...*models.Sale) (*models.Account, error) {
+	for _, sale := range sales {
+		if sale == nil || sale.ReceivableAccountID == nil || *sale.ReceivableAccountID == 0 {
+			continue
+		}
+		return loadSaleReceivableAccountByID(tx, *sale.ReceivableAccountID)
+	}
+
+	if account, err := resolveConfiguredSalesReceivableAccount(tx); err == nil {
+		return account, nil
+	}
+
+	return resolveFallbackSalesReceivableAccount(tx)
+}
+
+func assignAndValidateSaleReceivableAccount(tx *gorm.DB, sale *models.Sale, requireSelection bool) error {
+	if sale == nil {
+		return fmt.Errorf("sale tidak valid")
+	}
+	if !isSaleCreditPaymentMethod(sale.PaymentMethodType) {
+		sale.ReceivableAccountID = nil
+		return nil
+	}
+
+	if sale.ReceivableAccountID == nil || *sale.ReceivableAccountID == 0 {
+		if requireSelection && strings.TrimSpace(sale.PaymentMethodType) != "" {
+			return fmt.Errorf("akun piutang wajib dipilih untuk penjualan kredit")
+		}
+		account, err := resolveSalesReceivableAccount(tx, sale)
+		if err != nil {
+			return err
+		}
+		sale.ReceivableAccountID = &account.ID
+		return nil
+	}
+
+	account, err := loadSaleReceivableAccountByID(tx, *sale.ReceivableAccountID)
+	if err != nil {
+		return err
+	}
+	sale.ReceivableAccountID = &account.ID
+	return nil
 }
 
 func deriveSalePaymentReceivableSettlementBookAmount(payment *models.SalePayment) float64 {
@@ -456,7 +558,7 @@ func (s *SalesServiceV2) createSalePPh23PaymentCorrection(
 		return fmt.Errorf("failed to create PPh23 correction payment: %w", err)
 	}
 
-	receivableAccount, err := resolveSalesReceivableAccount(tx)
+	receivableAccount, err := resolveSalesReceivableAccount(tx, sale)
 	if err != nil {
 		return err
 	}
@@ -611,7 +713,7 @@ func (s *SalesServiceV2) createLateSalePPh23FinalJournal(
 
 	var receivableAccount *models.Account
 	if receivableSettlementAmount > 0.005 {
-		receivableAccount, err = resolveSalesReceivableAccount(tx)
+		receivableAccount, err = resolveSalesReceivableAccount(tx, sale)
 		if err != nil {
 			return nil, "", err
 		}

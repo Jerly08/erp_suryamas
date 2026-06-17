@@ -391,22 +391,42 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 
 	// Return minimal data only - no balance or hierarchy
 	type AccountCatalogItem struct {
-		ID     uint   `json:"id"`
-		Code   string `json:"code"`
-		Name   string `json:"name"`
-		Active bool   `json:"active"`
+		ID         uint   `json:"id"`
+		Code       string `json:"code"`
+		Name       string `json:"name"`
+		Active     bool   `json:"active"`
+		ParentID   *uint  `json:"parent_id,omitempty"`
+		ParentCode string `json:"parent_code,omitempty"`
+		ParentName string `json:"parent_name,omitempty"`
+	}
+
+	accountByID := make(map[uint]models.Account, len(accounts))
+	accountsWithChildren := make(map[uint]bool)
+	for _, account := range accounts {
+		accountByID[account.ID] = account
+		if account.ParentID != nil {
+			accountsWithChildren[*account.ParentID] = true
+		}
 	}
 
 	catalog := make([]AccountCatalogItem, 0, len(accounts))
 	for _, account := range accounts {
 		// Catalog is used for transaction selection, so only active detail accounts
-		if account.IsActive && !account.IsHeader {
-			catalog = append(catalog, AccountCatalogItem{
-				ID:     account.ID,
-				Code:   account.Code,
-				Name:   account.Name,
-				Active: account.IsActive,
-			})
+		if account.IsActive && !account.IsHeader && !accountsWithChildren[account.ID] {
+			item := AccountCatalogItem{
+				ID:       account.ID,
+				Code:     account.Code,
+				Name:     account.Name,
+				Active:   account.IsActive,
+				ParentID: account.ParentID,
+			}
+			if account.ParentID != nil {
+				if parent, ok := accountByID[*account.ParentID]; ok {
+					item.ParentCode = parent.Code
+					item.ParentName = parent.Name
+				}
+			}
+			catalog = append(catalog, item)
 		}
 	}
 

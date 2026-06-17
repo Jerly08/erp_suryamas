@@ -77,6 +77,9 @@ export interface AccountCatalogItem {
   code: string;
   name: string;
   active: boolean;
+  parent_id?: number;
+  parent_code?: string;
+  parent_name?: string;
   is_header?: boolean;
   is_active?: boolean;
 }

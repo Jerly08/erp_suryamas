@@ -200,7 +200,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 			}
 		}
 	case "CREDIT", "PIUTANG":
-		debitAccount, err = resolveByCode("1102-001") // 1102-001 = Piutang Usaha - Pihak Ketiga (Leaf)
+		debitAccount, err = resolveSalesReceivableAccount(dbToUse, sale)
 
 		if err != nil {
 			return fmt.Errorf("receivables account not found: %v", err)
@@ -211,7 +211,7 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		// Better to record the transaction than to fail completely
 		log.Printf("⚠️ [SSOT] Warning: Unknown payment method type '%s' for Sale #%d, defaulting to CREDIT (Piutang)",
 			sale.PaymentMethodType, sale.ID)
-		debitAccount, err = resolveByCode("1102-001") // 1102-001 = Piutang Usaha - Pihak Ketiga (Leaf)
+		debitAccount, err = resolveSalesReceivableAccount(dbToUse, sale)
 
 		if err != nil {
 			return fmt.Errorf("receivables account not found: %v", err)

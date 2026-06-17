@@ -129,6 +129,10 @@ func RunAutoMigrations(db *gorm.DB) error {
 		log.Printf("⚠️  PAYROLL PPH COLUMNS MIGRATION FAILED: %v", err)
 	}
 
+	if err := ensureSalesReceivableAccountColumn(db); err != nil {
+		log.Printf("Warning: SALES RECEIVABLE ACCOUNT COLUMN MIGRATION FAILED: %v", err)
+	}
+
 	// Sync sequences for tables with seeded data to prevent duplicate PK errors
 	if err := SyncAllSeededSequences(db); err != nil {
 		log.Printf("⚠️  SEQUENCE SYNC FAILED: %v", err)
@@ -2173,6 +2177,24 @@ func SyncAllSeededSequences(db *gorm.DB) error {
 			// Log but don't fail entirely, as it might just be the sequence doesn't exist or is not supported in the dialect
 			log.Printf("ℹ️ Could not sync %s sequence (this is normal if not using PostgreSQL): %v", tableName, err)
 		}
+	}
+
+	return nil
+}
+
+func ensureSalesReceivableAccountColumn(db *gorm.DB) error {
+	if err := db.Exec(`
+		ALTER TABLE sales
+		ADD COLUMN IF NOT EXISTS receivable_account_id BIGINT NULL
+	`).Error; err != nil {
+		return fmt.Errorf("failed to ensure sales.receivable_account_id column: %w", err)
+	}
+
+	if err := db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sales_receivable_account_id
+		ON sales(receivable_account_id)
+	`).Error; err != nil {
+		return fmt.Errorf("failed to ensure sales.receivable_account_id index: %w", err)
 	}
 
 	return nil

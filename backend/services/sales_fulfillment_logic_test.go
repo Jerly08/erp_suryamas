@@ -189,12 +189,13 @@ func TestSalesBackorderEstimatedHPPFlowFromInvoiceToPurchaseSettlement(t *testin
 	estimatedUnitCost := 125.0
 	ppnRate := 0.0
 	sale, err := salesService.CreateSale(models.SaleCreateRequest{
-		CustomerID:        1,
-		Type:              "INVOICE",
-		Date:              time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC),
-		DueDate:           time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
-		PPNPercent:        &ppnRate,
-		PaymentMethodType: "CREDIT",
+		CustomerID:          1,
+		Type:                "INVOICE",
+		Date:                time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC),
+		DueDate:             time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
+		PPNPercent:          &ppnRate,
+		PaymentMethodType:   "CREDIT",
+		ReceivableAccountID: uintPtr(1),
 		Items: []models.SaleItemRequest{
 			{
 				ProductID:         1,

@@ -63,6 +63,7 @@ interface SalesTableProps {
   formatDate: (date: string) => string;
   canEdit?: boolean;
   canDelete?: boolean;
+  totalCount?: number;
 }
 
 const EnhancedSalesTable: React.FC<SalesTableProps> = ({
@@ -83,6 +84,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
   formatDate,
   canEdit = false,
   canDelete = false,
+  totalCount,
 }) => {
   const { t } = useTranslation();
   const displayTitle = title || t("sales.title");
@@ -206,7 +208,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
       <CardHeader>
         <Flex justify="space-between" align="center">
           <Heading size="md" color={headingColor}>
-            {displayTitle} ({sales?.length || 0})
+            {displayTitle} ({totalCount ?? sales?.length ?? 0})
           </Heading>
         </Flex>
       </CardHeader>
