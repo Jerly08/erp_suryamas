@@ -436,6 +436,7 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		PPHType            string                    `json:"pph_type"`
 		PPHRate            float64                   `json:"pph_rate"`
 		PPHAmount          float64                   `json:"pph_amount"`
+		AllowOverpayment   bool                      `json:"allow_liability_overpayment"`
 		TargetBillID       *uint                     `json:"target_bill_id"`
 		TargetInvoiceID    *uint                     `json:"target_invoice_id"`
 		InvoiceAllocations []services.AllocationItem `json:"invoice_allocations"`
@@ -506,6 +507,13 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 			p.Reference = reqData.Reference
 		} else {
 			p.Reference = models.StripInternalPaymentReference(p.Reference)
+		}
+		if p.PaymentType == models.PaymentTypeExpense {
+			if reqData.AllowOverpayment {
+				p.Reference = models.MarkExpenseLiabilityOverpaymentReference(p.Reference)
+			} else {
+				p.Reference = models.ClearExpenseLiabilityOverpaymentReference(p.Reference)
+			}
 		}
 
 		if p.PaymentType != models.PaymentTypeExpense && !strings.HasPrefix(p.PaymentType, "TAX_PPN") {

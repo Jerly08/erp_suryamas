@@ -124,7 +124,8 @@ func TestValidateLinkedPurchaseRequestSelectionRejectsRequestAlreadyLinkedToPurc
 		CurrentApprovalStage: models.PRApprovalStageFinalized,
 		Items: []models.PurchaseRequestItem{
 			{
-				ProductID:           product.ID,
+				ProductID:           uintPtr(product.ID),
+				ItemName:            product.Name,
 				Quantity:            1,
 				EstimatedPrice:      1000,
 				TotalEstimatedPrice: 1000,
@@ -215,7 +216,8 @@ func TestValidateLinkedPurchaseRequestSelectionRejectsRequestUsedByPurchaseItem(
 		CurrentApprovalStage: models.PRApprovalStageFinalized,
 		Items: []models.PurchaseRequestItem{
 			{
-				ProductID:           product.ID,
+				ProductID:           uintPtr(product.ID),
+				ItemName:            product.Name,
 				Quantity:            1,
 				EstimatedPrice:      1000,
 				TotalEstimatedPrice: 1000,

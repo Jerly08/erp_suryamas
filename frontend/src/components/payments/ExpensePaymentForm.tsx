@@ -128,6 +128,7 @@ interface ExpensePaymentFormData {
   notes: string;
   description: string;
   require_director_approval: boolean;
+  allow_liability_overpayment: boolean;
   enable_pph: boolean;
   pph_type: string;
   pph_rate: number;
@@ -207,6 +208,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       notes: '',
       description: '',
       require_director_approval: false,
+      allow_liability_overpayment: false,
       enable_pph: false,
       pph_type: '',
       pph_rate: 0,
@@ -217,6 +219,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const selectedMethod = watch('method');
   const paymentDate = watch('date');
   const enablePPH = watch('enable_pph');
+  const allowLiabilityOverpayment = watch('allow_liability_overpayment');
   const pphType = watch('pph_type');
   const pphRate = watch('pph_rate');
   const amount = watch('amount');
@@ -232,6 +235,18 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const selectedAccount = [...expenseAccounts, ...liabilityAccounts].find(
     acc => acc.id === Number(selectedAccountId)
   );
+  const selectedLiabilityAccount = liabilityAccounts.find(
+    acc => acc.id === Number(selectedAccountId)
+  );
+  const isSelectedLiabilityAccount = !!selectedLiabilityAccount;
+  const selectedLiabilityBalance = Number(selectedLiabilityAccount?.balance || 0);
+  const liabilityEndingBalance = isSelectedLiabilityAccount
+    ? selectedLiabilityBalance - (Number(amount) || 0)
+    : 0;
+  const liabilityOverpaymentAmount = Math.max(0, -liabilityEndingBalance);
+  const isLiabilityOverpayment =
+    isSelectedLiabilityAccount &&
+    (Number(amount) || 0) > selectedLiabilityBalance + 0.01;
   const selectedCashBank = cashBanks.find(
     cashBank => cashBank.id === Number(selectedCashBankId)
   );
@@ -331,6 +346,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       if (initialData.notes) setValue('notes', initialData.notes);
       if (initialData.description) setValue('description', initialData.description);
       setValue('require_director_approval', Boolean(initialData.require_director_approval));
+      setValue('allow_liability_overpayment', Boolean(initialData.reference?.includes('__EXP_LIAB_OVERPAY__')));
       if (initialData.pph_type) setValue('pph_type', initialData.pph_type);
       if (typeof initialData.pph_rate === 'number') setValue('pph_rate', initialData.pph_rate);
       setValue('enable_pph', Boolean(initialData.pph_type || initialData.pph_amount));
@@ -346,6 +362,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         notes: '',
         description: '',
         require_director_approval: false,
+        allow_liability_overpayment: false,
         enable_pph: false,
         pph_type: '',
         pph_rate: 0,
@@ -353,6 +370,28 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       setManualRateOverride(false);
     }
   }, [isOpen, initialData, setValue, reset]);
+
+  useEffect(() => {
+    if (!isSelectedLiabilityAccount && enablePPH) {
+      return;
+    }
+
+    if (isSelectedLiabilityAccount && enablePPH) {
+      setValue('enable_pph', false);
+      setValue('pph_type', '');
+      setValue('pph_rate', 0);
+    }
+  }, [isSelectedLiabilityAccount, enablePPH, setValue]);
+
+  useEffect(() => {
+    if (!selectedAccount) {
+      return;
+    }
+
+    if ((!isSelectedLiabilityAccount || !isLiabilityOverpayment) && allowLiabilityOverpayment) {
+      setValue('allow_liability_overpayment', false);
+    }
+  }, [selectedAccount, isSelectedLiabilityAccount, isLiabilityOverpayment, allowLiabilityOverpayment, setValue]);
 
   useEffect(() => {
     if (!isOpen || !requiresExchangeRate) {
@@ -539,6 +578,14 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         throw new Error(`Saldo ${selectedCashBank?.name || 'rekening USD'} tidak cukup. Tersedia ${formatUsd(availableNativeBalance)}, dibutuhkan ${formatUsd(requiredNativeOut)}.`);
       }
 
+      if (isSelectedLiabilityAccount && data.enable_pph) {
+        throw new Error('Pemotongan PPh hanya untuk akun beban langsung. Untuk pelunasan hutang/liability, matikan opsi PPh.');
+      }
+
+      if (isLiabilityOverpayment && !data.allow_liability_overpayment) {
+        throw new Error(`Nominal melebihi saldo hutang ${selectedAccount?.code || ''}. Centang konfirmasi overpayment jika ini memang uang muka/lebih bayar.`);
+      }
+
       const payload: any = {
         contact_id: data.contact_id ? Number(data.contact_id) : 0,
         expense_account_id: Number(data.expense_account_id || defaultExpenseAccountId || 0),
@@ -555,6 +602,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         description: data.description || selectedAccount?.name || 'Expense Payment',
         auto_create_journal: true,
         require_director_approval: !!data.require_director_approval,
+        allow_liability_overpayment: isLiabilityOverpayment && !!data.allow_liability_overpayment,
         pph_type: data.enable_pph ? data.pph_type : '',
         pph_rate: data.enable_pph ? data.pph_rate : 0,
         pph_amount: data.enable_pph ? pphAmount : 0,
@@ -724,7 +772,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                               </option>
                               {liabilityAccounts.map(account => (
                                 <option key={account.id} value={account.id}>
-                                  {account.code} - {account.name}
+                                  {account.code} - {account.name} | Saldo: {formatIDR(Number(account.balance || 0))}
                                 </option>
                               ))}
                             </>
@@ -755,6 +803,43 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                         : 'User ini tidak memilih COA manual. Sistem akan memakai akun beban default.'}
                     </FormHelperText>
                   </FormControl>
+
+                  {isSelectedLiabilityAccount && (
+                    <Box width="full" p={3} borderRadius="md" bg={selectedAccountBg} borderWidth={1} borderColor={borderColor}>
+                      <VStack spacing={2} align="stretch" fontSize="sm">
+                        <HStack justify="space-between">
+                          <Text color={textColor}>Saldo hutang tercatat</Text>
+                          <Text fontWeight="bold">{formatIDR(selectedLiabilityBalance)}</Text>
+                        </HStack>
+                        <HStack justify="space-between">
+                          <Text color={textColor}>Saldo setelah pembayaran</Text>
+                          <Text fontWeight="bold" color={liabilityEndingBalance < -0.01 ? 'orange.500' : 'green.500'}>
+                            {formatIDR(liabilityEndingBalance)}
+                          </Text>
+                        </HStack>
+                        {isLiabilityOverpayment ? (
+                          <Alert status="warning" borderRadius="md" py={2}>
+                            <AlertIcon />
+                            <AlertDescription fontSize="sm">
+                              Nominal melebihi saldo hutang sebesar {formatIDR(liabilityOverpaymentAmount)}. Jika tetap dilanjutkan, saldo liability menjadi debit dan akan diperlakukan sebagai lebih bayar/uang muka.
+                            </AlertDescription>
+                          </Alert>
+                        ) : (
+                          <Alert status="info" borderRadius="md" py={2}>
+                            <AlertIcon />
+                            <AlertDescription fontSize="sm">
+                              Jurnal pelunasan: Debit {selectedLiabilityAccount.code} dan Credit kas/bank.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        {isLiabilityOverpayment && (
+                          <Checkbox {...register('allow_liability_overpayment')} colorScheme="orange">
+                            Saya konfirmasi ini pembayaran dimuka/lebih bayar liability.
+                          </Checkbox>
+                        )}
+                      </VStack>
+                    </Box>
+                  )}
 
                   {/* Cash/Bank Account */}
                   <FormControl isInvalid={!!errors.cash_bank_id} isRequired>
@@ -1002,6 +1087,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                         <input
                           id="enable-pph"
                           type="checkbox"
+                          disabled={isSelectedLiabilityAccount}
                           checked={field.value}
                           onChange={(e) => {
                             field.onChange(e.target.checked);
@@ -1015,6 +1101,14 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       )}
                     />
                   </FormControl>
+                  {isSelectedLiabilityAccount && (
+                    <Alert status="info" borderRadius="md" py={2}>
+                      <AlertIcon />
+                      <AlertDescription fontSize="sm">
+                        PPh withholding dimatikan karena akun yang dipilih adalah liability. Untuk setoran hutang PPh, gunakan nominal pembayaran saja tanpa potongan PPh tambahan.
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
                   {enablePPH && (
                     <Box

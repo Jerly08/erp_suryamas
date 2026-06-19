@@ -104,6 +104,7 @@ const (
 )
 
 const pendingDraftAllocationReferencePrefix = "__ALLOC_PENDING__"
+const expenseLiabilityOverpaymentReferencePrefix = "__EXP_LIAB_OVERPAY__"
 
 // Payment Type Constants
 const (
@@ -143,6 +144,8 @@ func (p *Payment) GetPayeeName() string {
 }
 
 func ExtractExpenseDraftRoutingFromReference(reference string) (uint, uint) {
+	reference = ClearExpenseLiabilityOverpaymentReference(reference)
+
 	var expenseAccountID, cashBankID uint
 	n, _ := fmt.Sscanf(reference, "__EXP_ACC:%d,CB:%d__", &expenseAccountID, &cashBankID)
 	if n != 2 {
@@ -153,6 +156,8 @@ func ExtractExpenseDraftRoutingFromReference(reference string) (uint, uint) {
 }
 
 func ExtractCashBankDraftRoutingFromReference(reference string) uint {
+	reference = ClearExpenseLiabilityOverpaymentReference(reference)
+
 	var cashBankID uint
 	n, _ := fmt.Sscanf(reference, "__CB:%d__", &cashBankID)
 	if n != 1 {
@@ -184,7 +189,31 @@ func ClearPendingDraftAllocationsReference(reference string) string {
 	return strings.TrimSpace(strings.TrimPrefix(trimmedReference, pendingDraftAllocationReferencePrefix))
 }
 
+func HasExpenseLiabilityOverpaymentReference(reference string) bool {
+	return strings.HasPrefix(strings.TrimSpace(reference), expenseLiabilityOverpaymentReferencePrefix)
+}
+
+func MarkExpenseLiabilityOverpaymentReference(reference string) string {
+	cleanedReference := ClearExpenseLiabilityOverpaymentReference(reference)
+	if cleanedReference == "" {
+		return expenseLiabilityOverpaymentReferencePrefix
+	}
+
+	return expenseLiabilityOverpaymentReferencePrefix + " " + cleanedReference
+}
+
+func ClearExpenseLiabilityOverpaymentReference(reference string) string {
+	trimmedReference := strings.TrimSpace(reference)
+	if !strings.HasPrefix(trimmedReference, expenseLiabilityOverpaymentReferencePrefix) {
+		return trimmedReference
+	}
+
+	return strings.TrimSpace(strings.TrimPrefix(trimmedReference, expenseLiabilityOverpaymentReferencePrefix))
+}
+
 func StripInternalPaymentReference(reference string) string {
+	reference = ClearPendingDraftAllocationsReference(reference)
+	reference = ClearExpenseLiabilityOverpaymentReference(reference)
 	reference = ClearPendingDraftAllocationsReference(reference)
 
 	expenseAccountID, cashBankID := ExtractExpenseDraftRoutingFromReference(reference)

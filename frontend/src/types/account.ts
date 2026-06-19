@@ -77,6 +77,7 @@ export interface AccountCatalogItem {
   code: string;
   name: string;
   active: boolean;
+  balance?: number;
   parent_id?: number;
   parent_code?: string;
   parent_name?: string;

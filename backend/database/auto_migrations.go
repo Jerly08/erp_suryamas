@@ -2153,6 +2153,7 @@ func SyncAllSeededSequences(db *gorm.DB) error {
 		"component_template_items",
 		"payroll_runs",
 		"payroll_items",
+		"purchase_request_documents",
 	}
 
 	for _, tableName := range tablesToSync {

@@ -51,7 +51,8 @@ type PurchaseRequest struct {
 type PurchaseRequestItem struct {
 	ID                     uint       `json:"id" gorm:"primaryKey"`
 	PurchaseRequestID      uint       `json:"purchase_request_id" gorm:"not null;index"`
-	ProductID              uint       `json:"product_id" gorm:"not null;index"`
+	ProductID              *uint      `json:"product_id,omitempty" gorm:"index"`
+	ItemName               string     `json:"item_name" gorm:"not null;size:255;default:''"`
 	Quantity               int        `json:"quantity" gorm:"not null;default:1"`
 	EstimatedPrice         float64    `json:"estimated_price" gorm:"type:decimal(15,2);default:0"` // Referensi / Taksiran harga awal
 	TotalEstimatedPrice    float64    `json:"total_estimated_price" gorm:"type:decimal(15,2);default:0"`
@@ -69,7 +70,7 @@ type PurchaseRequestItem struct {
 
 	// Relations
 	PurchaseRequest PurchaseRequest `json:"purchase_request" gorm:"foreignKey:PurchaseRequestID"`
-	Product         Product         `json:"product" gorm:"foreignKey:ProductID"`
+	Product         *Product        `json:"product,omitempty" gorm:"foreignKey:ProductID"`
 	Purchase        *Purchase       `json:"purchase,omitempty" gorm:"foreignKey:PurchaseID"`
 }
 
@@ -131,7 +132,8 @@ type PurchaseRequestCreatePayload struct {
 }
 
 type PurchaseRequestItemPayload struct {
-	ProductID      uint    `json:"product_id" binding:"required"`
+	ProductID      uint    `json:"product_id"`
+	ItemName       string  `json:"item_name"`
 	Quantity       int     `json:"quantity" binding:"required,min=1"`
 	EstimatedPrice float64 `json:"estimated_price" binding:"required,min=0"`
 	Notes          string  `json:"notes"`

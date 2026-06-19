@@ -181,7 +181,7 @@ interface PurchaseItemFormData {
   discount: string;
   tax: string;
   expense_account_id: string;
-  item_type: string; // "INVENTORY" | "ASSET" | "PREPAID"
+  item_type: string; // "INVENTORY" | "ASSET" | "PREPAID" | "EXPENSE"
   is_fixed_asset: boolean;
   description: string; // Asset name/description / Prepaid name
   asset_category_id: string; // Asset category ID
@@ -419,7 +419,7 @@ const formatDate = (date: string) => {
 
 const isReceiptablePurchaseItem = (item?: { item_type?: string | null }) => {
   const itemType = String(item?.item_type || "INVENTORY").toUpperCase();
-  return itemType !== "PREPAID";
+  return itemType !== "PREPAID" && itemType !== "EXPENSE";
 };
 
 const getReceiptablePurchaseItems = <T extends { item_type?: string | null }>(
@@ -504,16 +504,20 @@ const isPurchaseRequestSelectableForPurchase = (
 const mapPurchaseRequestItemToFormData = (
   item: PurchaseRequestLineItem,
   defaultExpenseAccountId: number | null,
-) =>
-  createPurchaseItemFormData({
+) => {
+  const isManualItem = !item.product_id;
+  return createPurchaseItemFormData({
     product_id: item.product_id?.toString() || "",
     purchase_request_item_id: item.id?.toString() || "",
     quantity: item.quantity?.toString() || "1",
     unit_price: item.estimated_price?.toString() || "0",
+    item_type: isManualItem ? "EXPENSE" : "INVENTORY",
+    description: isManualItem ? item.item_name : "",
     expense_account_id: defaultExpenseAccountId
       ? defaultExpenseAccountId.toString()
       : "",
   });
+};
 
 const getPurchaseItemDisplayName = (item: PurchaseItem) => {
   if (item.is_fixed_asset || item.item_type === "ASSET") {
@@ -522,6 +526,10 @@ const getPurchaseItemDisplayName = (item: PurchaseItem) => {
 
   if (item.item_type === "PREPAID") {
     return item.description || "Prepaid Tanpa Deskripsi";
+  }
+
+  if (item.item_type === "EXPENSE") {
+    return item.description || "Beban/Jasa Tanpa Deskripsi";
   }
 
   return (
@@ -1120,6 +1128,16 @@ const PurchasesPage: React.FC = () => {
         });
         if (prepaidAccount) {
           return prepaidAccount;
+        }
+      }
+
+      if (normalizedType === "EXPENSE") {
+        const expenseAccount = matchAccount(
+          (account) =>
+            String(account.type || "").toUpperCase() === "EXPENSE",
+        );
+        if (expenseAccount) {
+          return expenseAccount;
         }
       }
 
@@ -4121,6 +4139,13 @@ const PurchasesPage: React.FC = () => {
           amortizationMonth <= 0
         );
       }
+      if (item.item_type === "EXPENSE") {
+        return (
+          !item.description?.trim() ||
+          (canSelectAccountFromCOA &&
+            !resolvePurchaseItemExpenseAccountId(item))
+        );
+      }
       // Inventory items require COA only for roles that are allowed to choose COA.
       return (
         !item.product_id ||
@@ -4133,6 +4158,9 @@ const PurchasesPage: React.FC = () => {
       const prepaidInvalid = invalidItems.some(
         (i) => i.item_type === "PREPAID",
       );
+      const expenseInvalid = invalidItems.some(
+        (i) => i.item_type === "EXPENSE",
+      );
 
       let errorMsg = "Please fill in all required fields for each item";
       if (assetInvalid)
@@ -4141,6 +4169,10 @@ const PurchasesPage: React.FC = () => {
         errorMsg = canSelectAccountFromCOA
           ? "Item Prepaid: Deskripsi dan Akun harus diisi."
           : "Item Prepaid: Deskripsi dan durasi amortisasi harus diisi.";
+      else if (expenseInvalid)
+        errorMsg = canSelectAccountFromCOA
+          ? "Item Beban/Jasa: Deskripsi dan akun beban harus diisi."
+          : "Item Beban/Jasa: Deskripsi harus diisi.";
 
       toast({
         title: "Error",
@@ -6118,7 +6150,7 @@ const PurchasesPage: React.FC = () => {
                                             {item.item_type === "ASSET" ||
                                             item.is_fixed_asset
                                               ? `${item.description || "Unknown Asset"} (Aset Tetap)`
-                                              : item.product?.name || "N/A"}
+                                              : getPurchaseItemDisplayName(item)}
                                           </Td>
                                           <Td isNumeric>{item.quantity}</Td>
                                           <Td isNumeric>
@@ -7255,8 +7287,7 @@ const PurchasesPage: React.FC = () => {
                                               is_fixed_asset: val === "ASSET",
                                               // Reset fields saat ganti tipe
                                               product_id:
-                                                val === "ASSET" ||
-                                                val === "PREPAID"
+                                                val !== "INVENTORY"
                                                   ? ""
                                                   : items[index].product_id,
                                               description:
@@ -7264,11 +7295,10 @@ const PurchasesPage: React.FC = () => {
                                                   ? ""
                                                   : items[index].description,
                                               asset_category_id:
-                                                val === "INVENTORY" ||
-                                                val === "PREPAID"
-                                                  ? ""
-                                                  : items[index]
-                                                      .asset_category_id,
+                                                val === "ASSET"
+                                                  ? items[index]
+                                                      .asset_category_id
+                                                  : "",
                                               amortization_month:
                                                 val === "PREPAID" ? "12" : "",
                                             };
@@ -7319,6 +7349,9 @@ const PurchasesPage: React.FC = () => {
                                           <option value="PREPAID">
                                             ⏳ Prepaid Expense
                                           </option>
+                                          <option value="EXPENSE">
+                                            Beban / Jasa Manual
+                                          </option>
                                         </Select>
                                       </Td>
 
@@ -7328,7 +7361,31 @@ const PurchasesPage: React.FC = () => {
                                         verticalAlign="top"
                                         pt={3}
                                       >
-                                        {item.item_type === "ASSET" ? (
+                                        {item.item_type === "EXPENSE" ? (
+                                          <Input
+                                            placeholder="Nama beban/jasa, contoh: Jasa servis AC"
+                                            value={item.description}
+                                            onChange={(e) => {
+                                              const items = [...formData.items];
+                                              items[index] = {
+                                                ...items[index],
+                                                description: e.target.value,
+                                              };
+                                              setFormData({ ...formData, items });
+                                            }}
+                                            size="sm"
+                                            bg={inputBg}
+                                            color={inputTextColor}
+                                            borderColor={inputBorderColor}
+                                            _hover={{
+                                              borderColor: inputHoverBorder,
+                                            }}
+                                            _focusVisible={fieldFocusStyles}
+                                            _placeholder={{
+                                              color: inputPlaceholderColor,
+                                            }}
+                                          />
+                                        ) : item.item_type === "ASSET" ? (
                                           /* === ASSET MODE: Input Deskripsi + Kategori Aset === */
                                           <VStack spacing={2} align="stretch">
                                             <Input

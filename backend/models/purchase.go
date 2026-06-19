@@ -327,6 +327,7 @@ const (
 	PurchaseItemTypeInventory = "INVENTORY"
 	PurchaseItemTypeAsset     = "ASSET"
 	PurchaseItemTypePrepaid   = "PREPAID"
+	PurchaseItemTypeExpense   = "EXPENSE"
 )
 
 // Document Management

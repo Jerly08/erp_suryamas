@@ -1852,6 +1852,7 @@ func executeTruncateAndResetIDWithGORM(db *gorm.DB) error {
 		"payroll_items",
 		"payroll_runs",
 		// Purchase Request system
+		"purchase_request_documents",
 		"purchase_request_items",
 		"purchase_requests",
 		// BOM & Project system
@@ -2440,6 +2441,7 @@ func executeDeleteModuleDataWithGORM(db *gorm.DB) error {
 		db.Exec("DELETE FROM approval_histories WHERE reference_type = 'purchase_request'")
 		db.Exec("DELETE FROM approval_requests WHERE reference_type = 'purchase_request'")
 		truncateAndReset([]string{
+			"purchase_request_documents",
 			"purchase_request_items",
 			"purchase_requests",
 		}, "Purchase Requests")

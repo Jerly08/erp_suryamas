@@ -4,6 +4,7 @@ import (
 	"app-sistem-akuntansi/models"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -118,8 +119,17 @@ func (s *PurchaseService) validateLinkedPurchaseRequestSelection(purchase *model
 			}
 		}
 
-		if purchaseItem.ProductID == nil || *purchaseItem.ProductID != requestItem.ProductID {
-			return nil, 0, fmt.Errorf("purchase item linked to request item %d must use the same product", requestItemID)
+		if requestItem.ProductID != nil {
+			if purchaseItem.ProductID == nil || *purchaseItem.ProductID != *requestItem.ProductID {
+				return nil, 0, fmt.Errorf("purchase item linked to request item %d must use the same product", requestItemID)
+			}
+		} else {
+			if purchaseItem.ProductID != nil {
+				return nil, 0, fmt.Errorf("manual purchase request item %d cannot be linked to a catalog product", requestItemID)
+			}
+			if !strings.EqualFold(strings.TrimSpace(purchaseItem.Description), strings.TrimSpace(requestItem.ItemName)) {
+				return nil, 0, fmt.Errorf("purchase item linked to manual request item %d must keep the same item name", requestItemID)
+			}
 		}
 
 		selectedBudget += requestItem.TotalEstimatedPrice

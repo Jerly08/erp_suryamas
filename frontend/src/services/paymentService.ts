@@ -68,6 +68,8 @@ export const stripInternalPaymentReference = (reference?: string): string => {
 
   return reference
     .replace(/^__ALLOC_PENDING__\s*/, '')
+    .replace(/^__EXP_LIAB_OVERPAY__\s*/, '')
+    .replace(/^__ALLOC_PENDING__\s*/, '')
     .replace(/^__EXP_ACC:\d+,CB:\d+__/, '')
     .replace(/^__CB:\d+__/, '')
     .trim();
@@ -354,6 +356,7 @@ class PaymentService {
         notes: data.notes || '',
         description: data.description || '',
         require_director_approval: !!data.require_director_approval,
+        allow_liability_overpayment: !!data.allow_liability_overpayment,
         pph_type: data.pph_type || '',
         pph_rate: data.pph_rate || 0,
         pph_amount: data.pph_amount || 0,
@@ -883,6 +886,7 @@ class PaymentService {
         payment_type: 'EXPENSE',
         auto_create_journal: data.auto_create_journal ?? true,
         require_director_approval: !!data.require_director_approval,
+        allow_liability_overpayment: !!data.allow_liability_overpayment,
         pph_type: data.pph_type || '',
         pph_rate: data.pph_rate || 0,
         pph_amount: data.pph_amount || 0,
@@ -1175,6 +1179,7 @@ export interface ExpensePaymentRequest {
   description?: string;
   auto_create_journal?: boolean;
   require_director_approval?: boolean;
+  allow_liability_overpayment?: boolean;
   // PPh withholding tax (optional)
   pph_type?: string;   // PPH_21, PPH_23, PPH_4_2, PPH_22
   pph_rate?: number;   // e.g. 2 for 2%

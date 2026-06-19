@@ -10,7 +10,7 @@ export interface PurchaseItemRequest {
   tax?: number;
   expense_account_id?: number;
   description?: string;
-  item_type?: string; // "INVENTORY" | "ASSET" | "PREPAID"
+  item_type?: string; // "INVENTORY" | "ASSET" | "PREPAID" | "EXPENSE"
   is_fixed_asset?: boolean;
   asset_category_id?: number;
   amortization_month?: number;

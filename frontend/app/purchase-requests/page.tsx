@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Box,
+  ButtonGroup,
   Checkbox,
   Button,
   Flex,
@@ -52,6 +53,8 @@ import {
   FiFileText,
   FiChevronLeft,
   FiChevronRight,
+  FiEdit3,
+  FiPackage,
 } from "react-icons/fi";
 import Layout from "@/components/layout/Layout";
 import ProtectedModule from "@/components/common/ProtectedModule";
@@ -82,6 +85,24 @@ const ACCEPTED_DOCUMENT_TYPES =
   ".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp";
 const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
 const PURCHASE_REQUEST_PAGE_SIZE_OPTIONS = [10, 25, 50];
+
+type PurchaseRequestFormItem = {
+  source: "catalog" | "manual";
+  product_id: string;
+  item_name: string;
+  quantity: number | string;
+  estimated_price: number | string;
+  notes: string;
+};
+
+const createEmptyPurchaseRequestItem = (): PurchaseRequestFormItem => ({
+  source: "catalog",
+  product_id: "",
+  item_name: "",
+  quantity: 1,
+  estimated_price: 0,
+  notes: "",
+});
 
 export default function PurchaseRequestsPage() {
   const router = useRouter();
@@ -140,8 +161,8 @@ export default function PurchaseRequestsPage() {
   const [vendorId, setVendorId] = useState("");
   const [notes, setNotes] = useState("");
   const [documents, setDocuments] = useState<File[]>([]);
-  const [items, setItems] = useState([
-    { product_id: "", quantity: 1, estimated_price: 0, notes: "" },
+  const [items, setItems] = useState<PurchaseRequestFormItem[]>([
+    createEmptyPurchaseRequestItem(),
   ]);
 
   // Theme colors
@@ -199,15 +220,12 @@ export default function PurchaseRequestsPage() {
     setVendorId("");
     setNotes("");
     setDocuments([]);
-    setItems([{ product_id: "", quantity: 1, estimated_price: 0, notes: "" }]);
+    setItems([createEmptyPurchaseRequestItem()]);
     onCreateOpen();
   };
 
   const handleAddItem = () => {
-    setItems([
-      ...items,
-      { product_id: "", quantity: 1, estimated_price: 0, notes: "" },
-    ]);
+    setItems([...items, createEmptyPurchaseRequestItem()]);
   };
 
   const handleRemoveItem = (index: number) => {
@@ -215,7 +233,26 @@ export default function PurchaseRequestsPage() {
     setItems(
       newItems.length
         ? newItems
-        : [{ product_id: "", quantity: 1, estimated_price: 0, notes: "" }],
+        : [createEmptyPurchaseRequestItem()],
+    );
+  };
+
+  const handleItemSourceChange = (
+    index: number,
+    source: PurchaseRequestFormItem["source"],
+  ) => {
+    setItems((currentItems) =>
+      currentItems.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              source,
+              product_id: "",
+              item_name: "",
+              estimated_price: 0,
+            }
+          : item,
+      ),
     );
   };
 
@@ -334,12 +371,25 @@ export default function PurchaseRequestsPage() {
   const getDocumentUrl = (path?: string) => getImageUrl(path || "") || "#";
 
   const handleCreateSubmit = async () => {
-    // Basic validation
-    if (!items.some((i) => i.product_id)) {
+    const invalidItemIndex = items.findIndex((item) => {
+      const hasItemIdentity =
+        item.source === "catalog"
+          ? Boolean(item.product_id)
+          : Boolean(item.item_name.trim());
+      return (
+        !hasItemIdentity ||
+        Number(item.quantity) < 1 ||
+        Number(item.estimated_price) < 0
+      );
+    });
+
+    if (invalidItemIndex >= 0) {
       return toast({
-        title: "Tambahkan minimal 1 item",
+        title: `Lengkapi kebutuhan baris ${invalidItemIndex + 1}`,
+        description:
+          "Pilih produk atau isi nama kebutuhan manual, lalu pastikan qty dan estimasi harganya valid.",
         status: "warning",
-        duration: 3000,
+        duration: 4000,
       });
     }
 
@@ -350,14 +400,17 @@ export default function PurchaseRequestsPage() {
         project_id: projectId ? parseInt(projectId) : undefined,
         vendor_id: vendorId ? parseInt(vendorId) : undefined,
         notes,
-        items: items
-          .filter((i) => i.product_id)
-          .map((i) => ({
-            product_id: parseInt(i.product_id),
-            quantity: Number(i.quantity),
-            estimated_price: Number(i.estimated_price),
-            notes: i.notes,
-          })),
+        items: items.map((item) => ({
+          product_id:
+            item.source === "catalog"
+              ? parseInt(item.product_id, 10)
+              : undefined,
+          item_name:
+            item.source === "manual" ? item.item_name.trim() : undefined,
+          quantity: Number(item.quantity),
+          estimated_price: Number(item.estimated_price),
+          notes: item.notes,
+        })),
       };
 
       await purchaseRequestService.create(payload, documents);
@@ -1157,45 +1210,105 @@ export default function PurchaseRequestsPage() {
                 <Table size="sm" variant="unstyled">
                   <Thead borderBottom="1px" borderColor={borderColor}>
                     <Tr>
-                      <Th color={mutedTextColor}>Item / Benchmark</Th>
-                      <Th color={mutedTextColor} w="100px">
+                      <Th color={mutedTextColor} px={1}>
+                        Item / Benchmark
+                      </Th>
+                      <Th color={mutedTextColor} w="100px" px={1}>
                         Qty
                       </Th>
-                      <Th color={mutedTextColor} w="180px">
+                      <Th color={mutedTextColor} w="180px" px={1}>
                         Estimasi Harga Satuan
                       </Th>
-                      <Th color={mutedTextColor}>Catatan</Th>
-                      <Th w="50px"></Th>
+                      <Th color={mutedTextColor} px={1}>
+                        Catatan
+                      </Th>
+                      <Th w="50px" px={1}></Th>
                     </Tr>
                   </Thead>
                   <Tbody>
                     {items.map((item, index) => (
                       <Tr key={index}>
-                        <Td p={1}>
-                          <Select
-                            placeholder="Pilih Item/Barang"
-                            value={item.product_id}
-                            onChange={(e) =>
-                              handleItemChange(
-                                index,
-                                "product_id",
-                                e.target.value,
-                              )
-                            }
-                            bg={inputBg}
-                            borderColor={inputBorderColor}
-                            color={textColor}
-                            _hover={{ borderColor: inputBorderColor }}
-                            _focusVisible={fieldFocusStyles}
+                        <Td p={1} verticalAlign="bottom">
+                          <ButtonGroup
+                            isAttached
+                            size="xs"
+                            variant="outline"
+                            mb={2}
                           >
-                            {products.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.code} - {p.name}
-                              </option>
-                            ))}
-                          </Select>
+                            <Button
+                              leftIcon={<FiPackage />}
+                              colorScheme={
+                                item.source === "catalog" ? "blue" : "gray"
+                              }
+                              variant={
+                                item.source === "catalog" ? "solid" : "outline"
+                              }
+                              onClick={() =>
+                                handleItemSourceChange(index, "catalog")
+                              }
+                            >
+                              Katalog
+                            </Button>
+                            <Button
+                              leftIcon={<FiEdit3 />}
+                              colorScheme={
+                                item.source === "manual" ? "blue" : "gray"
+                              }
+                              variant={
+                                item.source === "manual" ? "solid" : "outline"
+                              }
+                              onClick={() =>
+                                handleItemSourceChange(index, "manual")
+                              }
+                            >
+                              Input Manual
+                            </Button>
+                          </ButtonGroup>
+                          {item.source === "catalog" ? (
+                            <Select
+                              placeholder="Pilih Item/Barang"
+                              value={item.product_id}
+                              onChange={(e) =>
+                                handleItemChange(
+                                  index,
+                                  "product_id",
+                                  e.target.value,
+                                )
+                              }
+                              bg={inputBg}
+                              borderColor={inputBorderColor}
+                              color={textColor}
+                              _hover={{ borderColor: inputBorderColor }}
+                              _focusVisible={fieldFocusStyles}
+                            >
+                              {products.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.code} - {p.name}
+                                </option>
+                              ))}
+                            </Select>
+                          ) : (
+                            <Input
+                              placeholder="Nama kebutuhan, contoh: Jasa servis AC"
+                              value={item.item_name}
+                              onChange={(e) =>
+                                handleItemChange(
+                                  index,
+                                  "item_name",
+                                  e.target.value,
+                                )
+                              }
+                              maxLength={255}
+                              bg={inputBg}
+                              borderColor={inputBorderColor}
+                              color={textColor}
+                              _hover={{ borderColor: inputBorderColor }}
+                              _focusVisible={fieldFocusStyles}
+                              _placeholder={{ color: mutedTextColor }}
+                            />
+                          )}
                         </Td>
-                        <Td p={1}>
+                        <Td p={1} verticalAlign="bottom">
                           <Input
                             type="number"
                             min={1}
@@ -1223,7 +1336,7 @@ export default function PurchaseRequestsPage() {
                             _focusVisible={fieldFocusStyles}
                           />
                         </Td>
-                        <Td p={1}>
+                        <Td p={1} verticalAlign="bottom">
                           <CurrencyInput
                             value={Number(item.estimated_price) || 0}
                             onChange={(val) =>
@@ -1235,7 +1348,7 @@ export default function PurchaseRequestsPage() {
                             }
                           />
                         </Td>
-                        <Td p={1}>
+                        <Td p={1} verticalAlign="bottom">
                           <Input
                             placeholder="Cth: Mendesak"
                             value={item.notes}
@@ -1250,7 +1363,7 @@ export default function PurchaseRequestsPage() {
                             _placeholder={{ color: mutedTextColor }}
                           />
                         </Td>
-                        <Td p={1} textAlign="right">
+                        <Td p={1} textAlign="right" verticalAlign="bottom">
                           <IconButton
                             aria-label="Remove"
                             icon={<FiTrash2 />}
@@ -1629,7 +1742,14 @@ export default function PurchaseRequestsPage() {
                       {selectedRequest?.items?.map((it) => (
                         <Tr key={it.id}>
                           <Td verticalAlign="top">
-                            <Text fontWeight="medium">{it.product?.name}</Text>
+                            <Text fontWeight="medium">
+                              {it.product?.name || it.item_name}
+                            </Text>
+                            {!it.product_id && (
+                              <Badge colorScheme="gray" mt={1}>
+                                Input Manual
+                              </Badge>
+                            )}
                             {it.notes && (
                               <Text fontSize="xs" color={mutedTextColor}>
                                 {it.notes}

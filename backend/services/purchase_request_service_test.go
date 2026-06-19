@@ -138,6 +138,126 @@ func TestCreatePurchaseRequestWithVendor(t *testing.T) {
 	require.Equal(t, vendor.Name, pr.Vendor.Name)
 }
 
+func TestCreatePurchaseRequestSupportsCatalogAndManualItems(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "staff-pr-manual", models.RoleEmployee)
+	product := seedPurchaseRequestTestProduct(t, db, "MIXED")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 2, EstimatedPrice: 100000},
+			{ItemName: "  Jasa servis AC kantor  ", Quantity: 1, EstimatedPrice: 750000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Len(t, pr.Items, 2)
+	require.Equal(t, float64(950000), pr.TotalEstimatedAmount)
+
+	var catalogItem *models.PurchaseRequestItem
+	var manualItem *models.PurchaseRequestItem
+	for index := range pr.Items {
+		item := &pr.Items[index]
+		if item.ProductID == nil {
+			manualItem = item
+		} else {
+			catalogItem = item
+		}
+	}
+
+	require.NotNil(t, catalogItem)
+	require.Equal(t, product.ID, *catalogItem.ProductID)
+	require.Equal(t, product.Name, catalogItem.ItemName)
+	require.NotNil(t, catalogItem.Product)
+	require.NotNil(t, manualItem)
+	require.Equal(t, "Jasa servis AC kantor", manualItem.ItemName)
+	require.Nil(t, manualItem.Product)
+}
+
+func TestCreatePurchaseRequestRejectsItemWithoutProductOrManualName(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+	requester := seedPurchaseRequestTestUser(t, db, "staff-pr-empty-item", models.RoleEmployee)
+
+	_, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Items: []models.PurchaseRequestItemPayload{
+			{ItemName: "   ", Quantity: 1, EstimatedPrice: 1000},
+		},
+	}, requester.ID, requester.Role)
+	require.ErrorContains(t, err, "item_name is required")
+}
+
+func TestManualPurchaseRequestItemCanLinkToExpensePurchaseItem(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	requester := seedPurchaseRequestTestUser(t, db, "staff-pr-expense-link", models.RoleEmployee)
+
+	pr := models.PurchaseRequest{
+		PRNumber:             "PR-MANUAL-LINK",
+		RequesterID:          requester.ID,
+		Status:               models.PRStatusApproved,
+		CurrentApprovalStage: models.PRApprovalStageFinalized,
+		Items: []models.PurchaseRequestItem{
+			{
+				ItemName:               "Jasa servis AC kantor",
+				Quantity:               1,
+				EstimatedPrice:         750000,
+				TotalEstimatedPrice:    750000,
+				ApprovalStatus:         models.PRItemDecisionApproved,
+				FinanceManagerDecision: models.PRItemDecisionApproved,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&pr).Error)
+
+	requestItemID := pr.Items[0].ID
+	purchase := &models.Purchase{
+		PurchaseRequestID: &pr.ID,
+		PurchaseItems: []models.PurchaseItem{
+			{
+				PurchaseRequestItemID: &requestItemID,
+				ItemType:              models.PurchaseItemTypeExpense,
+				Description:           "Jasa servis AC kantor",
+				Quantity:              1,
+				UnitPrice:             750000,
+				TotalPrice:            750000,
+			},
+		},
+	}
+
+	purchaseService := &PurchaseService{db: db}
+	_, budget, err := purchaseService.validateLinkedPurchaseRequestSelection(purchase, false)
+	require.NoError(t, err)
+	require.Equal(t, float64(750000), budget)
+
+	purchase.PurchaseItems[0].Description = "Kebutuhan lain"
+	_, _, err = purchaseService.validateLinkedPurchaseRequestSelection(purchase, false)
+	require.ErrorContains(t, err, "must keep the same item name")
+}
+
+func TestCalculatePurchaseTotalsSupportsManualExpenseItem(t *testing.T) {
+	service := &PurchaseService{}
+	purchase := &models.Purchase{}
+
+	err := service.calculatePurchaseTotals(purchase, []models.PurchaseItemRequest{
+		{
+			ItemType:    models.PurchaseItemTypeExpense,
+			Description: "Jasa servis AC kantor",
+			Quantity:    1,
+			UnitPrice:   750000,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, purchase.PurchaseItems, 1)
+	require.Nil(t, purchase.PurchaseItems[0].ProductID)
+	require.Equal(t, models.PurchaseItemTypeExpense, purchase.PurchaseItems[0].ItemType)
+	require.Equal(t, "Jasa servis AC kantor", purchase.PurchaseItems[0].Description)
+	require.Equal(t, float64(750000), purchase.SubtotalBeforeDiscount)
+}
+
 func TestPurchaseRequestDocumentsArePersistedAndPreloaded(t *testing.T) {
 	db := newPurchaseRequestTestDB(t)
 	repo := repositories.NewPurchaseRequestRepository(db)
@@ -299,7 +419,8 @@ func TestGetPurchaseRequestsAvailableForPurchaseExcludesLinkedRequests(t *testin
 		FinanceManagerApprovedBy: &approvedBy,
 		Items: []models.PurchaseRequestItem{
 			{
-				ProductID:              product.ID,
+				ProductID:              uintPtr(product.ID),
+				ItemName:               product.Name,
 				Quantity:               1,
 				EstimatedPrice:         100000,
 				TotalEstimatedPrice:    100000,
@@ -321,7 +442,8 @@ func TestGetPurchaseRequestsAvailableForPurchaseExcludesLinkedRequests(t *testin
 		FinanceManagerApprovedBy: &approvedBy,
 		Items: []models.PurchaseRequestItem{
 			{
-				ProductID:              product.ID,
+				ProductID:              uintPtr(product.ID),
+				ItemName:               product.Name,
 				Quantity:               1,
 				EstimatedPrice:         100000,
 				TotalEstimatedPrice:    100000,
@@ -352,7 +474,8 @@ func TestGetPurchaseRequestsAvailableForPurchaseExcludesLinkedRequests(t *testin
 		FinanceManagerApprovedBy: &approvedBy,
 		Items: []models.PurchaseRequestItem{
 			{
-				ProductID:              product.ID,
+				ProductID:              uintPtr(product.ID),
+				ItemName:               product.Name,
 				Quantity:               1,
 				EstimatedPrice:         45000,
 				TotalEstimatedPrice:    45000,

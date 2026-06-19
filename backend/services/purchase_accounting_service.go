@@ -90,8 +90,9 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 		}
 		isAssetItem := itemType == models.PurchaseItemTypeAsset || itemReq.IsFixedAsset
 		isPrepaidItem := itemType == models.PurchaseItemTypePrepaid
+		isExpenseItem := itemType == models.PurchaseItemTypeExpense
 
-		if isAssetItem || isPrepaidItem {
+		if isAssetItem || isPrepaidItem || isExpenseItem {
 			itemTypeName := string(itemType)
 			fmt.Printf("ℹ Processing item %d/%d: %s item '%s', Qty %d, Price %.2f\n", i+1, len(items), itemTypeName, itemReq.Description, itemReq.Quantity, itemReq.UnitPrice)
 		} else {
@@ -103,7 +104,7 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 		}
 
 		// Validate product exists only for INVENTORY items
-		if !isAssetItem && !isPrepaidItem {
+		if !isAssetItem && !isPrepaidItem && !isExpenseItem {
 			if itemReq.ProductID == nil || *itemReq.ProductID == 0 {
 				return fmt.Errorf("item %d: product_id is required for inventory items", i+1)
 			}
@@ -116,9 +117,9 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 			if !product.IsService && !product.IsAssembly {
 				hasInventoryValuationItem = true
 			}
-		} else if isAssetItem || isPrepaidItem {
-			// Asset and Prepaid items: validate description is provided
-			if itemReq.Description == "" {
+		} else {
+			// Non-inventory items use a transaction description instead of a product master.
+			if strings.TrimSpace(itemReq.Description) == "" {
 				return fmt.Errorf("item %d: description is required for non-inventory items", i+1)
 			}
 		}
@@ -372,8 +373,9 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 		}
 		isAssetItem := itemType == models.PurchaseItemTypeAsset || itemReq.IsFixedAsset
 		isPrepaidItem := itemType == models.PurchaseItemTypePrepaid
+		isExpenseItem := itemType == models.PurchaseItemTypeExpense
 
-		if !isAssetItem && !isPrepaidItem {
+		if !isAssetItem && !isPrepaidItem && !isExpenseItem {
 			// Validate product exists for inventory items
 			if itemReq.ProductID == nil || *itemReq.ProductID == 0 {
 				return fmt.Errorf("product_id is required for inventory items")
@@ -382,6 +384,8 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 			if err != nil {
 				return fmt.Errorf("product %d not found", *itemReq.ProductID)
 			}
+		} else if strings.TrimSpace(itemReq.Description) == "" {
+			return fmt.Errorf("description is required for non-inventory items")
 		}
 
 		item := models.PurchaseItem{

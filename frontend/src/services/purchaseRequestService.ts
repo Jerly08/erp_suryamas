@@ -26,7 +26,8 @@ export interface Contact {
 export interface PurchaseRequestItem {
   id: number;
   purchase_request_id: number;
-  product_id: number;
+  product_id?: number | null;
+  item_name: string;
   quantity: number;
   estimated_price: number;
   total_estimated_price: number;
@@ -96,7 +97,8 @@ export interface PurchaseRequest {
 }
 
 export interface PurchaseRequestItemPayload {
-  product_id: number;
+  product_id?: number;
+  item_name?: string;
   quantity: number;
   estimated_price: number;
   notes?: string;

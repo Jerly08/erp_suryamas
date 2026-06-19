@@ -55,6 +55,10 @@ type ExpensePaymentRequest struct {
 	PPHType   string  `json:"pph_type"`   // PPH_21, PPH_23, PPH_4_2, PPH_22, or empty
 	PPHRate   float64 `json:"pph_rate"`   // Tax rate percentage (e.g. 2 for 2%)
 	PPHAmount float64 `json:"pph_amount"` // Calculated tax amount
+
+	// AllowLiabilityOverpayment permits paying a LIABILITY account beyond its
+	// current credit balance, intentionally creating a debit-balance overpayment.
+	AllowLiabilityOverpayment bool `json:"allow_liability_overpayment"`
 }
 
 // ListPayments returns paginated payments with filters (SSOT-compatible)
@@ -196,6 +200,32 @@ func routePaymentToDirector(tx *gorm.DB, payment *models.Payment, financeManager
 	return nil
 }
 
+func validateExpensePaymentAccountUsage(account models.Account, amount, pphAmount float64, allowLiabilityOverpayment bool) error {
+	if account.Type != models.AccountTypeLiability {
+		return nil
+	}
+
+	if pphAmount > 0 {
+		return fmt.Errorf("PPh withholding is only valid for direct expense accounts; for liability settlement, leave PPh disabled")
+	}
+
+	if amount <= account.Balance+0.01 {
+		return nil
+	}
+
+	if allowLiabilityOverpayment {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"liability account %s - %s has balance %.2f, payment %.2f would create an overpayment/debit balance; choose an expense/prepaid asset account or set allow_liability_overpayment=true",
+		account.Code,
+		account.Name,
+		account.Balance,
+		amount,
+	)
+}
+
 // CreateExpensePayment creates a direct expense payment (Expense/Liability from COA) with SSOT journal integration.
 // It records a row in payments table (PaymentTypeExpense) AND posts a journal entry:
 //
@@ -259,6 +289,9 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		}
 		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
 			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		}
+		if err := validateExpensePaymentAccountUsage(expenseAccount, req.Amount, req.PPHAmount, req.AllowLiabilityOverpayment); err != nil {
+			return err
 		}
 
 		// Load contact if provided (optional for bulk payments like salaries)
@@ -460,6 +493,9 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
 			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
 		}
+		if err := validateExpensePaymentAccountUsage(expenseAccount, req.Amount, req.PPHAmount, req.AllowLiabilityOverpayment); err != nil {
+			return err
+		}
 
 		// Load contact name if provided
 		contactName := "Umum"
@@ -488,6 +524,13 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			financeManagerApprovedAt = &now
 		}
 
+		reference := req.Reference
+		if req.AllowLiabilityOverpayment &&
+			expenseAccount.Type == models.AccountTypeLiability &&
+			req.Amount > expenseAccount.Balance+0.01 {
+			reference = models.MarkExpenseLiabilityOverpaymentReference(reference)
+		}
+
 		payment = &models.Payment{
 			ContactID:                req.ContactID,
 			UserID:                   req.UserID,
@@ -502,7 +545,7 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			Method:                   req.Method,
 			ExpenseAccountID:         &req.ExpenseAccountID,
 			CashBankID:               &req.CashBankID,
-			Reference:                req.Reference,
+			Reference:                reference,
 			Status:                   status,
 			ApprovalStage:            approvalStage,
 			RequireDirectorApproval:  req.RequireDirectorApproval,
@@ -601,6 +644,10 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		}
 		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
 			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		}
+		allowLiabilityOverpayment := models.HasExpenseLiabilityOverpaymentReference(payment.Reference)
+		if err := validateExpensePaymentAccountUsage(expenseAccount, payment.Amount, payment.PPHAmount, allowLiabilityOverpayment); err != nil {
+			return err
 		}
 
 		calculation, err := eps.calculateExpensePaymentAmounts(cashBank, payment.Amount, payment.PPHAmount, payment.ExchangeRate)

@@ -97,7 +97,8 @@ func (bpc *BOMProcurementController) GeneratePR(c *gin.Context) {
 				totalEstimatedAmount += itemTotal
 
 				prItems = append(prItems, models.PurchaseRequestItem{
-					ProductID:              product.ID,
+					ProductID:              &product.ID,
+					ItemName:               product.Name,
 					Quantity:               int(math.Ceil(shortage)), // Round up to ensure enough is purchased (0.7 → 1)
 					EstimatedPrice:         itemEstimatedPrice,
 					TotalEstimatedPrice:    itemTotal,

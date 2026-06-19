@@ -389,15 +389,17 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 		return
 	}
 
-	// Return minimal data only - no balance or hierarchy
+	// Return minimal data for transaction forms, including current balance for
+	// liability settlement checks.
 	type AccountCatalogItem struct {
-		ID         uint   `json:"id"`
-		Code       string `json:"code"`
-		Name       string `json:"name"`
-		Active     bool   `json:"active"`
-		ParentID   *uint  `json:"parent_id,omitempty"`
-		ParentCode string `json:"parent_code,omitempty"`
-		ParentName string `json:"parent_name,omitempty"`
+		ID         uint    `json:"id"`
+		Code       string  `json:"code"`
+		Name       string  `json:"name"`
+		Active     bool    `json:"active"`
+		Balance    float64 `json:"balance"`
+		ParentID   *uint   `json:"parent_id,omitempty"`
+		ParentCode string  `json:"parent_code,omitempty"`
+		ParentName string  `json:"parent_name,omitempty"`
 	}
 
 	accountByID := make(map[uint]models.Account, len(accounts))
@@ -418,6 +420,7 @@ func (h *AccountHandler) GetAccountCatalog(c *gin.Context) {
 				Code:     account.Code,
 				Name:     account.Name,
 				Active:   account.IsActive,
+				Balance:  account.Balance,
 				ParentID: account.ParentID,
 			}
 			if account.ParentID != nil {

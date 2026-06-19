@@ -4,6 +4,7 @@ import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -63,9 +64,6 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 	}
 
 	for _, rawItem := range payload.Items {
-		if rawItem.ProductID == 0 {
-			return nil, fmt.Errorf("product_id is required")
-		}
 		if rawItem.Quantity < 1 {
 			return nil, fmt.Errorf("quantity must be at least 1")
 		}
@@ -73,16 +71,25 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 			return nil, fmt.Errorf("estimated_price cannot be negative")
 		}
 
-		product, err := s.productRepo.FindByID(rawItem.ProductID)
-		if err != nil {
-			return nil, fmt.Errorf("invalid product id: %d", rawItem.ProductID)
+		var productID *uint
+		itemName := strings.TrimSpace(rawItem.ItemName)
+		if rawItem.ProductID > 0 {
+			product, err := s.productRepo.FindByID(rawItem.ProductID)
+			if err != nil {
+				return nil, fmt.Errorf("invalid product id: %d", rawItem.ProductID)
+			}
+			productID = &product.ID
+			itemName = strings.TrimSpace(product.Name)
+		} else if itemName == "" {
+			return nil, fmt.Errorf("item_name is required when product_id is not provided")
 		}
 
 		totalItemEst := float64(rawItem.Quantity) * rawItem.EstimatedPrice
 		totalEstimatedAmount += totalItemEst
 
 		item := models.PurchaseRequestItem{
-			ProductID:              product.ID,
+			ProductID:              productID,
+			ItemName:               itemName,
 			Quantity:               rawItem.Quantity,
 			EstimatedPrice:         rawItem.EstimatedPrice,
 			TotalEstimatedPrice:    totalItemEst,

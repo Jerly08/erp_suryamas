@@ -276,8 +276,8 @@ func validatePurchaseRequestPayload(payload models.PurchaseRequestCreatePayload)
 	}
 
 	for index, item := range payload.Items {
-		if item.ProductID == 0 {
-			return fmt.Errorf("product_id is required for item %d", index+1)
+		if item.ProductID == 0 && strings.TrimSpace(item.ItemName) == "" {
+			return fmt.Errorf("product_id or item_name is required for item %d", index+1)
 		}
 		if item.Quantity < 1 {
 			return fmt.Errorf("quantity must be at least 1 for item %d", index+1)
