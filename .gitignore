@@ -54,6 +54,14 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+/tmp_*.pdf
+*.bak
+*.backup
+*.backup_*
+*.codexbak
+*.deprecated
+*.old
+*.orig
 
 # Go binaries
 *.exe
@@ -85,14 +93,27 @@ noted.txt
 /backend/uploads/
 /backend/uploads/**
 
+# Generated test reports and local artifacts
+/outputs/
+/test-results/
+/playwright-report/
+
 # Backend temporary and build artifacts
 /backend/temp_binary
 /backend/temp_build
+/backend/tmp_build
 /backend/test_build
 /backend/test_fixed_build
+/backend/temp_test_build
+/backend/test_balance_fix
+/backend/test_reports
 /backend/temp*/
 /backend/test*/
 /backend/bin/
+/backend/accounting-server
+/backend/accounting_app
+/backend/demo_sales_double_entry
+/bin/
 /backend/logs/
 /backend/.gocache-*/
 /backend/**/*.bak
@@ -107,6 +128,13 @@ noted.txt
 # Swagger backups
 /backend/docs/swagger_backup_*.yaml
 /backend/docs/swagger_backup_*.yml
+/backend/docs/swagger*backup*
+/backend/docs/*_report.txt
+
+# Superseded documentation and local operational data
+/README_OLD.md
+/Std Cost Kelengkapan Unit*.csv
+/Update WS - General Goods*.csv
 
 /backup
 /backups/
