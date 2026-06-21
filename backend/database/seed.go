@@ -3,6 +3,7 @@ package database
 import (
 	"app-sistem-akuntansi/models"
 	"log"
+	"os"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -80,13 +81,19 @@ func seedUsers(db *gorm.DB) {
 	log.Println("🔄 Starting user seeding with robust UPSERT...")
 
 	// Seed all users for all roles
+	adminSeedPassword := os.Getenv("ADMIN_SEED_PASSWORD")
+	if adminSeedPassword == "" {
+		adminSeedPassword = "Averyfinance@123"
+	}
+
+	adminPassword, _ := bcrypt.GenerateFromPassword([]byte(adminSeedPassword), bcrypt.DefaultCost)
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
 
 	allUsers := []models.User{
 		{
 			Username:  "admin",
 			Email:     "admin@company.com",
-			Password:  string(hashedPassword),
+			Password:  string(adminPassword),
 			Role:      "admin",
 			FirstName: "Admin",
 			LastName:  "User",
