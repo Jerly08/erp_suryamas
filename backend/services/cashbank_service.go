@@ -64,12 +64,18 @@ const (
 	TransferStatusRejected        = "REJECTED"
 )
 
-func requiresFinanceManagerTransferApproval(role string) bool {
-	return !models.IsFinanceManagerRole(role)
-}
+func (s *CashBankService) canApproveCashBankTransfer(userID uint, role string) (bool, error) {
+	var permission models.ModulePermissionRecord
+	err := s.db.Where("user_id = ? AND module = ?", userID, "cash_bank").First(&permission).Error
+	if err == nil {
+		return permission.CanApprove, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
 
-func canApproveCashBankTransfer(role string) bool {
-	return models.IsFinanceManagerRole(role)
+	defaultPermission := models.GetDefaultPermissions(role)["cash_bank"]
+	return defaultPermission != nil && defaultPermission.CanApprove, nil
 }
 
 type transferExecutionPlan struct {
@@ -1061,7 +1067,12 @@ func (s *CashBankService) ProcessTransfer(request TransferRequest, userID uint, 
 		return nil, err
 	}
 
-	approvalRequired := requiresFinanceManagerTransferApproval(requesterRole)
+	canApprove, err := s.canApproveCashBankTransfer(userID, requesterRole)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to resolve cash bank approval permission: %w", err)
+	}
+	approvalRequired := !canApprove
 	status := TransferStatusCompleted
 	if approvalRequired {
 		status = TransferStatusPendingApproval
@@ -1122,7 +1133,11 @@ func (s *CashBankService) GetTransfers(userID uint, role string, status string, 
 		query = query.Where("status = ?", normalizedStatus)
 	}
 
-	if !canApproveCashBankTransfer(role) {
+	canApprove, err := s.canApproveCashBankTransfer(userID, role)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve cash bank approval permission: %w", err)
+	}
+	if !canApprove {
 		query = query.Where("user_id = ?", userID)
 	}
 
@@ -1135,7 +1150,11 @@ func (s *CashBankService) GetTransfers(userID uint, role string, status string, 
 }
 
 func (s *CashBankService) ApproveTransfer(transferID, approverID uint, approverRole string) (*CashBankTransfer, error) {
-	if !canApproveCashBankTransfer(approverRole) {
+	canApprove, err := s.canApproveCashBankTransfer(approverID, approverRole)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve cash bank approval permission: %w", err)
+	}
+	if !canApprove {
 		return nil, errors.New("you do not have permission to approve transfers")
 	}
 
@@ -1201,7 +1220,11 @@ func (s *CashBankService) ApproveTransfer(transferID, approverID uint, approverR
 }
 
 func (s *CashBankService) RejectTransfer(transferID, approverID uint, approverRole string, reason string) (*CashBankTransfer, error) {
-	if !canApproveCashBankTransfer(approverRole) {
+	canApprove, err := s.canApproveCashBankTransfer(approverID, approverRole)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve cash bank approval permission: %w", err)
+	}
+	if !canApprove {
 		return nil, errors.New("you do not have permission to reject transfers")
 	}
 

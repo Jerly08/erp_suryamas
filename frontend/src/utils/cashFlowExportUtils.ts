@@ -9,6 +9,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SSOTCashFlowData } from '../services/ssotCashFlowReportService';
+import { cleanCsvCell } from './exportText';
 
 // ─── Theme colours ───────────────────────────────────────────────────────────
 const COLORS = {
@@ -50,7 +51,7 @@ const fmtCSV = (amount: number | null | undefined): string => {
 
 const escapeCSV = (value: string | number | null | undefined): string => {
   if (value === null || value === undefined) return '';
-  const str = String(value);
+  const str = cleanCsvCell(value);
   return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${str.replace(/"/g, '""')}"` : str;
 };
 

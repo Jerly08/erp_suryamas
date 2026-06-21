@@ -7,6 +7,7 @@ import UnifiedLayout from '@/components/layout/UnifiedLayout';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
 import periodClosingService from '@/services/periodClosingService';
+import { cleanCsvCell } from '@/utils/exportText';
 import {
     Box, Heading, Text, Button, VStack, HStack, Card, CardBody, Icon, SimpleGrid,
     FormControl, FormLabel, Input, Select, Spinner, useToast, useColorModeValue,
@@ -287,7 +288,7 @@ const VendorHistoryPage: React.FC = () => {
                     rows.push(['', '', '', 'TOTAL PEMBAYARAN', String(paymentTotalAmount), '']);
                 }
 
-                const csv = bom + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+                const csv = bom + rows.map(r => r.map(c => `"${cleanCsvCell(c).replace(/"/g, '""')}"`).join(',')).join('\n');
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');

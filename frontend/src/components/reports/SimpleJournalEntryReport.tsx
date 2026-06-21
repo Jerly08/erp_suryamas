@@ -46,6 +46,7 @@ import {
 } from 'react-icons/fi';
 import { ssotJournalService, SSOTJournalEntry } from '@/services/ssotJournalService';
 import { formatCurrency } from '@/utils/formatters';
+import { cleanCsvCell } from '@/utils/exportText';
 
 interface SimpleJournalEntryReportProps {
   onClose?: () => void;
@@ -210,19 +211,20 @@ const SimpleJournalEntryReport: React.FC<SimpleJournalEntryReportProps> = ({
       'Balanced'
     ];
 
+    const formatCsvCell = (value: unknown) => `"${cleanCsvCell(value).replace(/"/g, '""')}"`;
     const csvContent = [
-      headers.join(','),
+      headers.map(formatCsvCell).join(','),
       ...filteredEntries.map(entry => [
         entry.entry_number || '',
         entry.entry_date || '',
-        `"${entry.description || ''}"`,
+        entry.description || '',
         entry.reference || '',
         entry.source_type || '',
         entry.status || '',
         entry.total_debit || 0,
         entry.total_credit || 0,
         entry.is_balanced ? 'Yes' : 'No'
-      ].join(','))
+      ].map(formatCsvCell).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

@@ -6,7 +6,6 @@ import (
 	"app-sistem-akuntansi/services"
 	"app-sistem-akuntansi/utils"
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"log"
 	"net/http"
@@ -1306,7 +1305,7 @@ func (sc *SalesController) ExportSalesReportCSV(c *gin.Context) {
 	}
 
 	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
+	w := utils.NewSanitizedCSVWriter(&buf)
 	language := "id"
 	if sc.pdfService != nil {
 		language = sc.pdfService.Language()

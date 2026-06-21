@@ -710,6 +710,7 @@ func AutoMigrate(db *gorm.DB) {
 		// Payroll
 		&models.PayrollRun{},
 		&models.PayrollItem{},
+		&models.PayrollSettlement{},
 
 		// Journals and reports
 		&models.Journal{},
@@ -788,6 +789,9 @@ func AutoMigrate(db *gorm.DB) {
 
 	// Ensure SSOT tables exist without forcing constraint drops
 	EnsureSSOTTables(db)
+	AlignPayrollRecognitionDatesWithJournals(db)
+	BackfillPayrollBPJSSettlementStatus(db)
+	MigrateLegacyPayrollCombinedJournals(db)
 
 	// Migrate approval models separately to debug any issues
 	log.Println("Starting approval models migration...")

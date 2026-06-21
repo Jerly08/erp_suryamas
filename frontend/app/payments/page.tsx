@@ -973,7 +973,7 @@ const PaymentsPage: React.FC = () => {
   if (loading && (!payments || payments.length === 0)) {
     return (
       <CompanyTypeGuard>
-        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'accounting', 'director', 'employee', 'inventory_manager']}>
+        <SimpleLayout>
           <Box display="flex" justifyContent="center" alignItems="center" height="400px">
             <Spinner size="xl" thickness="4px" speed="0.65s" color="brand.500" />
             <Text ml={4} fontSize="lg">{t('payments.loading')}</Text>
@@ -986,7 +986,7 @@ const PaymentsPage: React.FC = () => {
   return (
     <ProtectedModule module="payments">
       <CompanyTypeGuard>
-        <SimpleLayout allowedRoles={['admin', 'finance', 'finance_manager', 'finance_staff', 'accounting', 'director', 'employee', 'inventory_manager']}>
+        <SimpleLayout>
           <Box bg={bgColor} minH="100vh" p={6}>
             <VStack spacing={6} align="stretch">
               {/* Summary Cards */}

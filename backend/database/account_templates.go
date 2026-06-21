@@ -63,6 +63,7 @@ func GetStandardCOA(companyType string) []models.Account {
 
 		{Code: "2103", Name: "BIAYA YANG MASIH HARUS DIBAYAR", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 3, IsHeader: true, IsActive: true},
 		{Code: "2103-001", Name: "UTANG GAJI", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
+		{Code: "2103-002", Name: "UTANG BPJS & POTONGAN PAYROLL", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
 
 		{Code: "2200", Name: "LIABILITAS JANGKA PANJANG", Type: models.AccountTypeLiability, Category: models.CategoryLongTermLiability, Level: 2, IsHeader: true, IsActive: true},
 		{Code: "2201", Name: "PINJAMAN BANK JANGKA PANJANG", Type: models.AccountTypeLiability, Category: models.CategoryLongTermLiability, Level: 3, IsHeader: false, IsActive: true},

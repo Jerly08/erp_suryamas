@@ -48,6 +48,7 @@ import {
   FiPercent
 } from 'react-icons/fi';
 import paymentService, { stripInternalPaymentReference } from '@/services/paymentService';
+import payrollService, { PayrollRun } from '@/services/payrollService';
 import accountService from '@/services/accountService';
 import cashbankService, {
   CashBank,
@@ -190,6 +191,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const [referenceRate, setReferenceRate] = useState<ReferenceExchangeRate | null>(null);
   const [loadingReferenceRate, setLoadingReferenceRate] = useState(false);
   const [manualRateOverride, setManualRateOverride] = useState(false);
+  const [openPayrollPPh, setOpenPayrollPPh] = useState<PayrollRun[]>([]);
+  const [selectedPayrollRunId, setSelectedPayrollRunId] = useState<number>(0);
+  const [loadingPayrollPPh, setLoadingPayrollPPh] = useState(false);
   const {
     control,
     register,
@@ -239,6 +243,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     acc => acc.id === Number(selectedAccountId)
   );
   const isSelectedLiabilityAccount = !!selectedLiabilityAccount;
+  const isPayrollPPhAccount = selectedAccount?.code === '2102-003';
+  const selectedPayrollRun = openPayrollPPh.find((payroll) => payroll.id === selectedPayrollRunId);
   const selectedLiabilityBalance = Number(selectedLiabilityAccount?.balance || 0);
   const liabilityEndingBalance = isSelectedLiabilityAccount
     ? selectedLiabilityBalance - (Number(amount) || 0)
@@ -247,6 +253,32 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const isLiabilityOverpayment =
     isSelectedLiabilityAccount &&
     (Number(amount) || 0) > selectedLiabilityBalance + 0.01;
+
+  useEffect(() => {
+    if (!isOpen || !isPayrollPPhAccount || !isFinanceManagerSubmitter) {
+      setOpenPayrollPPh([]);
+      setSelectedPayrollRunId(0);
+      return;
+    }
+
+    let active = true;
+    setLoadingPayrollPPh(true);
+    payrollService.getPayrollRuns('APPROVED')
+      .then((runs) => {
+        if (!active) return;
+        const openRuns = runs.filter((run) => Number(run.total_pph || 0) - Number(run.pph_paid_amount || 0) > 0.01);
+        setOpenPayrollPPh(openRuns);
+        if (openRuns.length === 1) {
+          const run = openRuns[0];
+          setSelectedPayrollRunId(run.id);
+          setValue('amount', Number(run.total_pph || 0) - Number(run.pph_paid_amount || 0));
+          setValue('reference', `PAY-PPH-${run.payroll_number}`);
+        }
+      })
+      .catch(() => active && setOpenPayrollPPh([]))
+      .finally(() => active && setLoadingPayrollPPh(false));
+    return () => { active = false; };
+  }, [isOpen, isPayrollPPhAccount, isFinanceManagerSubmitter, setValue]);
   const selectedCashBank = cashBanks.find(
     cashBank => cashBank.id === Number(selectedCashBankId)
   );
@@ -582,6 +614,38 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         throw new Error('Pemotongan PPh hanya untuk akun beban langsung. Untuk pelunasan hutang/liability, matikan opsi PPh.');
       }
 
+      if (isPayrollPPhAccount) {
+        if (initialData?.id) {
+          throw new Error('Draft pembayaran PPh payroll lama tidak dapat dialihkan. Buat settlement payroll baru.');
+        }
+        if (!isFinanceManagerSubmitter) {
+          throw new Error('Settlement PPh payroll dari halaman Expense Payment hanya dapat diposting oleh Finance Manager.');
+        }
+        if (!selectedPayrollRun) {
+          throw new Error('Pilih kewajiban payroll yang akan dilunasi.');
+        }
+        const remainingPPh = Number(selectedPayrollRun.total_pph || 0) - Number(selectedPayrollRun.pph_paid_amount || 0);
+        if (Number(data.amount) > remainingPPh + 0.01) {
+          throw new Error(`Nominal melebihi sisa PPh payroll ${formatIDR(remainingPPh)}.`);
+        }
+        await payrollService.payPayrollPPh(selectedPayrollRun.id, {
+          payment_date: data.date,
+          amount: Number(data.amount),
+          cash_bank_id: Number(data.cash_bank_id),
+          reference: data.reference || `PAY-PPH-${selectedPayrollRun.payroll_number}`,
+          notes: data.notes || data.description || `Pembayaran PPh payroll ${selectedPayrollRun.payroll_number}`,
+        });
+        toast({
+          title: 'PPh payroll berhasil dibayar',
+          description: `Settlement ${selectedPayrollRun.payroll_number} diposting melalui Expense Payment tanpa membuat jurnal ganda.`,
+          status: 'success',
+          duration: 4000,
+        });
+        handleClose();
+        if (onSuccess) onSuccess();
+        return;
+      }
+
       if (isLiabilityOverpayment && !data.allow_liability_overpayment) {
         throw new Error(`Nominal melebihi saldo hutang ${selectedAccount?.code || ''}. Centang konfirmasi overpayment jika ini memang uang muka/lebih bayar.`);
       }
@@ -831,6 +895,35 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                               Jurnal pelunasan: Debit {selectedLiabilityAccount.code} dan Credit kas/bank.
                             </AlertDescription>
                           </Alert>
+                        )}
+                        {isPayrollPPhAccount && (
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm">Kewajiban Payroll</FormLabel>
+                            <Select
+                              value={selectedPayrollRunId}
+                              onChange={(event) => {
+                                const payrollId = Number(event.target.value);
+                                setSelectedPayrollRunId(payrollId);
+                                const payroll = openPayrollPPh.find((run) => run.id === payrollId);
+                                if (payroll) {
+                                  setValue('amount', Number(payroll.total_pph || 0) - Number(payroll.pph_paid_amount || 0));
+                                  setValue('reference', `PAY-PPH-${payroll.payroll_number}`);
+                                  setValue('notes', `Pembayaran PPh payroll ${payroll.payroll_number}`);
+                                }
+                              }}
+                              placeholder={loadingPayrollPPh ? 'Memuat kewajiban payroll...' : 'Pilih payroll yang belum lunas'}
+                              isDisabled={loadingPayrollPPh || !isFinanceManagerSubmitter}
+                            >
+                              {openPayrollPPh.map((payroll) => (
+                                <option key={payroll.id} value={payroll.id}>
+                                  {payroll.payroll_number} | Sisa {formatIDR(Number(payroll.total_pph || 0) - Number(payroll.pph_paid_amount || 0))}
+                                </option>
+                              ))}
+                            </Select>
+                            <FormHelperText>
+                              Settlement ini memakai alur payroll yang sama sehingga status PPh, riwayat pembayaran, jurnal, dan kas/bank selalu sinkron.
+                            </FormHelperText>
+                          </FormControl>
                         )}
                         {isLiabilityOverpayment && (
                           <Checkbox {...register('allow_liability_overpayment')} colorScheme="orange">

@@ -264,7 +264,33 @@ func (rm *RBACManager) RequireAnyPermission(permissions ...string) gin.HandlerFu
 		roleStr := userRole.(string)
 
 		for _, permission := range permissions {
-			// 1) Role table quick check
+			parts := strings.Split(permission, ":")
+
+			// A Manage Permissions record is authoritative, including an explicit
+			// denial. Do not let the role table grant the same permission again.
+			if userID != 0 && len(parts) == 2 {
+				exists, err := rm.userModuleRecordExists(userID, parts[0])
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking user permissions", "code": "PERMISSION_CHECK_ERROR"})
+					c.Abort()
+					return
+				}
+				if exists {
+					allowed, err := rm.userHasModulePermission(userID, roleStr, parts[0], parts[1])
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking user permissions", "code": "PERMISSION_CHECK_ERROR"})
+						c.Abort()
+						return
+					}
+					if allowed {
+						c.Next()
+						return
+					}
+					continue
+				}
+			}
+
+			// No per-user record: check the legacy role table, then role defaults.
 			hasPermission, err := rm.hasPermission(roleStr, permission)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking permissions", "code": "PERMISSION_CHECK_ERROR"})
@@ -277,31 +303,7 @@ func (rm *RBACManager) RequireAnyPermission(permissions ...string) gin.HandlerFu
 				return
 			}
 
-			// 2) Per-user Manage Permission
-			if userID != 0 {
-				parts := strings.Split(permission, ":")
-				if len(parts) == 2 {
-					if exists, err := rm.userModuleRecordExists(userID, parts[0]); err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking user permissions", "code": "PERMISSION_CHECK_ERROR"})
-						c.Abort()
-						return
-					} else if exists {
-						ok, err := rm.userHasModulePermission(userID, roleStr, parts[0], parts[1])
-						if err != nil {
-							c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking user permissions", "code": "PERMISSION_CHECK_ERROR"})
-							c.Abort()
-							return
-						}
-						if ok {
-							c.Next()
-							return
-						}
-					}
-				}
-			}
-
-			// 3) Fallback to role-based module defaults
-			parts := strings.Split(permission, ":")
+			// Fallback to role-based module defaults.
 			if len(parts) == 2 {
 				ok, err := rm.userHasModulePermission(userID, roleStr, parts[0], parts[1])
 				if err != nil {

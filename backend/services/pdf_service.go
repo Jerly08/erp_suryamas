@@ -2,7 +2,6 @@ package services
 
 import (
 	"bytes"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -860,6 +859,7 @@ func (p *PDFService) GenerateInvoicePDF(invoice interface{}) ([]byte, error) {
 
 // GenerateInvoicePDFWithLanguage generates a clean PDF for a sale invoice with specified language
 func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang string) ([]byte, error) {
+	utils.SanitizeExportData(invoice)
 	// Extract sale from interface{}
 	var sale *models.Sale
 	switch v := invoice.(type) {
@@ -1400,6 +1400,7 @@ func (p *PDFService) GenerateInvoicePDFWithType(sale *models.Sale, documentType 
 
 // GenerateInvoicePDFWithTypeAndLanguage generates a PDF for a sale with customizable document type and specified language
 func (p *PDFService) GenerateInvoicePDFWithTypeAndLanguage(sale *models.Sale, documentType string, lang string) ([]byte, error) {
+	utils.SanitizeExportData(sale)
 	// Get translations for the specified language
 	tr := getPDFTranslations(lang)
 
@@ -1691,6 +1692,7 @@ func (p *PDFService) GenerateInvoicePDFWithTypeAndLanguage(sale *models.Sale, do
 
 // GenerateSalesReportPDF generates a PDF for sales report (invoice-like style)
 func (p *PDFService) GenerateSalesReportPDF(sales []models.Sale, startDate, endDate string) ([]byte, error) {
+	utils.SanitizeExportData(sales)
 	language := utils.GetUserLanguageFromSettings(p.db)
 	loc := func(key, fallback string) string {
 		t := utils.T(key, language)
@@ -1854,6 +1856,7 @@ func (p *PDFService) GenerateSalesReportPDF(sales []models.Sale, startDate, endD
 
 // GenerateSalesSummaryPDF generates a PDF for SSOT Sales Summary (similar to trial balance format)
 func (p *PDFService) GenerateSalesSummaryPDF(summary interface{}) ([]byte, error) {
+	utils.SanitizeExportData(summary)
 	if summary == nil {
 		return nil, fmt.Errorf("sales summary data is required")
 	}
@@ -2298,6 +2301,8 @@ func (p *PDFService) GenerateSalesSummaryPDF(summary interface{}) ([]byte, error
 
 // GenerateGeneralLedgerPDF generates PDF for general ledger report
 func (p *PDFService) GenerateGeneralLedgerPDF(ledgerData interface{}, accountInfo string, startDate, endDate string) ([]byte, error) {
+	utils.SanitizeExportData(ledgerData)
+	accountInfo = utils.CleanExportText(accountInfo)
 	// Create new PDF document
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	// Adjust margins/padding for consistent layout
@@ -2806,6 +2811,7 @@ func (p *PDFService) addEntriesToLedgerPDF(pdf *gofpdf.Fpdf, entries []interface
 
 // GeneratePaymentReportPDF generates a PDF for payments report
 func (p *PDFService) GeneratePaymentReportPDF(data interface{}) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	// Extract payments data from interface{}
 	var payments []models.Payment
 	switch v := data.(type) {
@@ -2989,6 +2995,7 @@ func (p *PDFService) GeneratePaymentReportPDF(data interface{}) ([]byte, error) 
 
 // GeneratePaymentDetailPDF generates a PDF for a single payment detail (invoice-like style)
 func (p *PDFService) GeneratePaymentDetailPDF(data interface{}) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	// Extract payment from interface{}
 	var payment *models.Payment
 	switch v := data.(type) {
@@ -3312,6 +3319,7 @@ func (p *PDFService) GeneratePaymentDetailPDF(data interface{}) ([]byte, error) 
 
 // GeneratePurchaseOrderPDF generates a PDF for a purchase order
 func (p *PDFService) GeneratePurchaseOrderPDF(purchase *models.Purchase) ([]byte, error) {
+	utils.SanitizeExportData(purchase)
 	if purchase == nil {
 		return nil, fmt.Errorf("purchase data is required")
 	}
@@ -3322,6 +3330,7 @@ func (p *PDFService) GeneratePurchaseOrderPDF(purchase *models.Purchase) ([]byte
 
 // GeneratePurchaseReceiptPDF generates PDF for a purchase receipt
 func (p *PDFService) GeneratePurchaseReceiptPDF(receipt *models.PurchaseReceipt) ([]byte, error) {
+	utils.SanitizeExportData(receipt)
 	if receipt == nil {
 		return nil, fmt.Errorf("receipt data is required")
 	}
@@ -3337,6 +3346,7 @@ func (p *PDFService) GenerateReceiptPDF(data interface{}) ([]byte, error) {
 
 // GenerateReceiptPDFWithUser generates PDF for a receipt with specific user context
 func (p *PDFService) GenerateReceiptPDFWithUser(data interface{}, userID uint) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	// If it's a sales receipt, delegate to sales receipt renderer with user context
 	if s, ok := data.(*models.Sale); ok {
 		return p.generateSaleReceiptPDFWithUser(s, userID)
@@ -3636,6 +3646,7 @@ func (p *PDFService) GenerateReceiptPDFWithUser(data interface{}, userID uint) (
 
 // GenerateAllReceiptsPDF generates combined PDF for all receipts of a purchase
 func (p *PDFService) GenerateAllReceiptsPDF(data interface{}) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	// Extract purchase and receipts from interface{}
 	var purchase *models.Purchase
 	var receiptsList []models.PurchaseReceipt
@@ -4296,6 +4307,7 @@ func (p *PDFService) generateSaleReceiptPDFWithUser(sale *models.Sale, userID ui
 
 // GenerateTrialBalancePDF generates PDF for trial balance
 func (p *PDFService) GenerateTrialBalancePDF(trialBalanceData interface{}, asOfDate string) ([]byte, error) {
+	utils.SanitizeExportData(trialBalanceData)
 	// Create new PDF document with invoice-like layout
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(15, 15, 15)
@@ -4504,6 +4516,7 @@ func (p *PDFService) GenerateTrialBalancePDF(trialBalanceData interface{}, asOfD
 
 // GenerateTrialBalanceCSV generates a CSV file for trial balance.
 func (p *PDFService) GenerateTrialBalanceCSV(trialBalanceData interface{}, asOfDate string) ([]byte, error) {
+	utils.SanitizeExportData(trialBalanceData)
 	var tbMap map[string]interface{}
 	if m, ok := trialBalanceData.(map[string]interface{}); ok {
 		tbMap = m
@@ -4521,7 +4534,7 @@ func (p *PDFService) GenerateTrialBalanceCSV(trialBalanceData interface{}, asOfD
 	buf.WriteString("\uFEFF")
 	buf.WriteString("sep=;\n")
 
-	writer := csv.NewWriter(&buf)
+	writer := utils.NewSanitizedCSVWriter(&buf)
 	writer.Comma = ';'
 
 	companyName := "Perusahaan"
@@ -4624,6 +4637,7 @@ func (p *PDFService) GenerateTrialBalanceCSV(trialBalanceData interface{}, asOfD
 
 // GenerateBalanceSheetPDF generates a PDF for Balance Sheet report
 func (p *PDFService) GenerateBalanceSheetPDF(balanceSheetData interface{}, asOfDate string) ([]byte, error) {
+	utils.SanitizeExportData(balanceSheetData)
 	// Create new PDF document with invoice-like layout
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(15, 15, 15)
@@ -5062,6 +5076,7 @@ func (p *PDFService) addBalanceVerification(pdf *gofpdf.Fpdf, bsData map[string]
 
 // GenerateProfitLossPDF generates a PDF for Profit & Loss report
 func (p *PDFService) GenerateProfitLossPDF(plData interface{}, startDate, endDate string) ([]byte, error) {
+	utils.SanitizeExportData(plData)
 	// Create new PDF document with invoice-like layout
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(15, 15, 15)
@@ -5182,6 +5197,7 @@ func (p *PDFService) GenerateProfitLossPDF(plData interface{}, startDate, endDat
 
 // GenerateJournalAnalysisPDF generates a PDF for Journal Entry Analysis report
 func (p *PDFService) GenerateJournalAnalysisPDF(journalData interface{}, startDate, endDate string) ([]byte, error) {
+	utils.SanitizeExportData(journalData)
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(15, 15, 15)
 	pdf.AddPage()
@@ -5891,6 +5907,7 @@ func (p *PDFService) addAccountDetails(pdf *gofpdf.Fpdf, title string, items []i
 
 // GenerateSSOTProfitLossPDF generates a PDF for SSOT-based Profit & Loss report
 func (p *PDFService) GenerateSSOTProfitLossPDF(ssotData interface{}, language string) ([]byte, error) {
+	utils.SanitizeExportData(ssotData)
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(15, 15, 15)
 	pdf.AddPage()

@@ -2,9 +2,10 @@ package services
 
 import (
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"time"
+
+	"app-sistem-akuntansi/utils"
 )
 
 // GenerateCustomerHistoryCSV generates CSV for customer transaction history
@@ -15,7 +16,7 @@ func (p *PDFService) GenerateCustomerHistoryCSV(historyData interface{}) ([]byte
 	}
 
 	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
+	w := utils.NewSanitizedCSVWriter(&buf)
 
 	// Header
 	w.Write([]string{"CUSTOMER TRANSACTION HISTORY"})
@@ -81,7 +82,7 @@ func (p *PDFService) GenerateVendorHistoryCSV(historyData interface{}) ([]byte, 
 	}
 
 	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
+	w := utils.NewSanitizedCSVWriter(&buf)
 
 	// Header
 	w.Write([]string{"VENDOR TRANSACTION HISTORY"})

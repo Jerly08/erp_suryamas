@@ -420,7 +420,7 @@ const ProductCatalog: React.FC = () => {
   };
 
   return (
-    <SimpleLayout allowedRoles={['admin', 'inventory_manager', 'employee', 'finance', 'director']}>
+    <SimpleLayout>
       <Box>
         <Flex justify="space-between" align="center" mb={6}>
           <Box>

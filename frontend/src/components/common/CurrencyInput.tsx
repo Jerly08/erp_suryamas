@@ -25,6 +25,7 @@ interface CurrencyInputProps {
   min?: number;
   max?: number;
   showLabel?: boolean;
+  keepFormattedOnFocus?: boolean;
 }
 
 const CurrencyInput: React.FC<CurrencyInputProps> = ({
@@ -40,6 +41,7 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   min = 0,
   max,
   showLabel = true,
+  keepFormattedOnFocus = false,
 }) => {
   const [displayValue, setDisplayValue] = useState<string>('');
   const [isFocused, setIsFocused] = useState(false);
@@ -59,12 +61,6 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   const formatToIDR = (amount: number): string => {
     if (amount === 0) return '';
     return new Intl.NumberFormat('id-ID').format(amount);
-  };
-
-  // Parse formatted string back to number
-  const parseFromIDR = (formatted: string): number => {
-    const cleaned = formatted.replace(/[^\d]/g, '');
-    return cleaned === '' ? 0 : parseInt(cleaned, 10);
   };
 
   // Update display value when value prop changes
@@ -103,8 +99,7 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   // Handle focus
   const handleFocus = () => {
     setIsFocused(true);
-    // Show raw number when focused for easier editing
-    setDisplayValue(value === 0 ? '' : value.toString());
+    setDisplayValue(value === 0 ? '' : keepFormattedOnFocus ? formatToIDR(value) : value.toString());
   };
 
   // Handle blur

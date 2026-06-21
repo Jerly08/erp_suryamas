@@ -68,9 +68,9 @@ const InvoiceTypeManagement: React.FC = () => {
   
   // Permissions for invoice types management
   const canView = hasAnyAccess;
-  const canCreate = hasSettingsAccess || (user?.role === 'admin' || user?.role === 'finance' || user?.role === 'director');
-  const canEdit = hasSettingsAccess || (user?.role === 'admin' || user?.role === 'finance' || user?.role === 'director');
-  const canDelete = hasSettingsAccess && (user?.role === 'admin');
+  const canCreate = settingsPermissions.canCreate;
+  const canEdit = settingsPermissions.canEdit;
+  const canDelete = settingsPermissions.canDelete;
   
   const [invoiceTypes, setInvoiceTypes] = useState<InvoiceType[]>([]);
   const [loading, setLoading] = useState(true);

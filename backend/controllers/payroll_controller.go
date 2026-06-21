@@ -34,14 +34,6 @@ func canViewPayrollDetail(role string) bool {
 		models.IsFinanceManagerRole(role)
 }
 
-func canCreatePayroll(role string) bool {
-	return models.NormalizeRole(role) == models.RoleAdmin || models.IsHRRole(role)
-}
-
-func canApprovePayroll(role string) bool {
-	return models.IsFinanceManagerRole(role)
-}
-
 func currentUserID(ctx *gin.Context) (uint, bool) {
 	userID, exists := ctx.Get("user_id")
 	if !exists {
@@ -87,6 +79,7 @@ func payrollDate(value string, required bool) (*time.Time, error) {
 func payrollResponse(run models.PayrollRun, detailAllowed bool) models.PayrollRunResponse {
 	if !detailAllowed {
 		run.Items = nil
+		run.Settlements = nil
 	}
 
 	return models.PayrollRunResponse{
@@ -204,9 +197,20 @@ func parsePayrollImportNumber(value string) float64 {
 		return 0
 	}
 
-	cleaned = strings.ReplaceAll(cleaned, "Rp", "")
+	cleaned = strings.ToUpper(cleaned)
 	cleaned = strings.ReplaceAll(cleaned, "IDR", "")
-	cleaned = strings.ReplaceAll(cleaned, " ", "")
+	cleaned = strings.ReplaceAll(cleaned, "RP", "")
+	cleaned = strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, cleaned)
+
+	negative := strings.HasPrefix(cleaned, "(") && strings.HasSuffix(cleaned, ")")
+	if negative {
+		cleaned = strings.TrimSuffix(strings.TrimPrefix(cleaned, "("), ")")
+	}
 
 	if strings.Contains(cleaned, ",") && strings.Contains(cleaned, ".") {
 		lastComma := strings.LastIndex(cleaned, ",")
@@ -217,15 +221,28 @@ func parsePayrollImportNumber(value string) float64 {
 		} else {
 			cleaned = strings.ReplaceAll(cleaned, ",", "")
 		}
+	} else if strings.Count(cleaned, ",") > 1 {
+		cleaned = strings.ReplaceAll(cleaned, ",", "")
 	} else if strings.Count(cleaned, ",") == 1 {
-		cleaned = strings.ReplaceAll(cleaned, ",", ".")
+		separatorIndex := strings.LastIndex(cleaned, ",")
+		if len(cleaned)-separatorIndex-1 == 3 {
+			cleaned = strings.ReplaceAll(cleaned, ",", "")
+		} else {
+			cleaned = strings.ReplaceAll(cleaned, ",", ".")
+		}
 	} else if strings.Count(cleaned, ".") > 1 {
 		cleaned = strings.ReplaceAll(cleaned, ".", "")
-	} else {
-		cleaned = strings.ReplaceAll(cleaned, ",", "")
+	} else if strings.Count(cleaned, ".") == 1 {
+		separatorIndex := strings.LastIndex(cleaned, ".")
+		if len(cleaned)-separatorIndex-1 == 3 {
+			cleaned = strings.ReplaceAll(cleaned, ".", "")
+		}
 	}
 
 	amount, _ := strconv.ParseFloat(cleaned, 64)
+	if negative {
+		amount = -amount
+	}
 	return amount
 }
 
@@ -281,6 +298,79 @@ func payrollPPhPaymentStatus(totalPPh float64, paidAmount float64) string {
 	return models.PayrollPPhPaymentStatusUnpaid
 }
 
+func payrollSalaryPaymentStatus(totalSalary float64, paidAmount float64) string {
+	if totalSalary <= 0.01 || paidAmount >= totalSalary-0.01 {
+		return models.PayrollSalaryPaymentStatusPaid
+	}
+	if paidAmount > 0.01 {
+		return models.PayrollSalaryPaymentStatusPartialPaid
+	}
+	return models.PayrollSalaryPaymentStatusUnpaid
+}
+
+func payrollBPJSPaymentStatus(totalBPJS float64, paidAmount float64) string {
+	totalBPJS = roundPayrollMoney(totalBPJS)
+	paidAmount = roundPayrollMoney(paidAmount)
+	if totalBPJS <= 0.01 || paidAmount >= totalBPJS-0.01 {
+		return models.PayrollSalaryPaymentStatusPaid
+	}
+	if paidAmount > 0.01 {
+		return models.PayrollSalaryPaymentStatusPartialPaid
+	}
+	return models.PayrollSalaryPaymentStatusUnpaid
+}
+
+func remainingPayrollSalary(run *models.PayrollRun) float64 {
+	if run == nil {
+		return 0
+	}
+	remaining := roundPayrollMoney(run.TotalOverall - run.SalaryPaidAmount)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func remainingPayrollBPJS(run *models.PayrollRun) float64 {
+	if run == nil {
+		return 0
+	}
+	remaining := roundPayrollMoney(run.TotalBPJS - run.BPJSPaidAmount)
+	if remaining < 0.01 {
+		return 0
+	}
+	return remaining
+}
+
+func defaultPayrollRecognitionDate(run *models.PayrollRun) time.Time {
+	date := run.PeriodEnd
+	if run.PaymentDate != nil && run.PaymentDate.Before(date) {
+		date = *run.PaymentDate
+	}
+	if date.Before(run.PeriodStart) {
+		date = run.PeriodStart
+	}
+	return date
+}
+
+func resolvePayrollRecognitionDate(tx *gorm.DB, run *models.PayrollRun) (time.Time, error) {
+	if run == nil {
+		return time.Time{}, fmt.Errorf("payroll is required")
+	}
+	if run.PPhPayableJournalEntryID != nil {
+		var journal models.SSOTJournalEntry
+		if err := tx.Select("id", "entry_date").First(&journal, *run.PPhPayableJournalEntryID).Error; err == nil {
+			return journal.EntryDate, nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return time.Time{}, fmt.Errorf("failed to load payroll accrual journal: %w", err)
+		}
+	}
+	if run.PPhRecognitionDate != nil {
+		return *run.PPhRecognitionDate, nil
+	}
+	return defaultPayrollRecognitionDate(run), nil
+}
+
 func resolvePayrollAccountByCodes(tx *gorm.DB, codes ...string) (*models.Account, error) {
 	var account models.Account
 	for _, code := range codes {
@@ -319,10 +409,6 @@ func resolvePayrollPPhPayableAccount(tx *gorm.DB) (*models.Account, error) {
 }
 
 func resolvePayrollSalaryExpenseAccount(tx *gorm.DB) (*models.Account, error) {
-	if account, err := resolvePayrollAccountByCodes(tx, "6101", "5101-001", "5201"); err == nil {
-		return account, nil
-	}
-
 	var account models.Account
 	if err := tx.
 		Where("deleted_at IS NULL AND is_active = ? AND is_header = ? AND type = ? AND (LOWER(name) LIKE ? OR LOWER(name) LIKE ? OR LOWER(name) LIKE ?)",
@@ -336,6 +422,10 @@ func resolvePayrollSalaryExpenseAccount(tx *gorm.DB) (*models.Account, error) {
 		Order("code ASC").
 		First(&account).Error; err == nil {
 		return &account, nil
+	}
+
+	if account, err := resolvePayrollAccountByCodes(tx, "6105", "5101-001", "5201", "6101"); err == nil {
+		return account, nil
 	}
 
 	return nil, fmt.Errorf("akun Beban Gaji tidak ditemukan")
@@ -361,6 +451,28 @@ func resolvePayrollSalaryPayableAccount(tx *gorm.DB) (*models.Account, error) {
 	}
 
 	return nil, fmt.Errorf("akun Utang Gaji tidak ditemukan")
+}
+
+func resolvePayrollDeductionPayableAccount(tx *gorm.DB) (*models.Account, error) {
+	if account, err := resolvePayrollAccountByCodes(tx, "2103-002"); err == nil {
+		return account, nil
+	}
+
+	var account models.Account
+	if err := tx.
+		Where("deleted_at IS NULL AND is_active = ? AND is_header = ? AND type = ? AND (LOWER(name) LIKE ? OR LOWER(name) LIKE ?)",
+			true,
+			false,
+			models.AccountTypeLiability,
+			"%bpjs%",
+			"%potongan payroll%",
+		).
+		Order("code ASC").
+		First(&account).Error; err == nil {
+		return &account, nil
+	}
+
+	return nil, fmt.Errorf("akun Utang BPJS & Potongan Payroll (2103-002) tidak ditemukan")
 }
 
 func resolvePayrollPPh21ExpenseAccount(tx *gorm.DB, fallback *models.Account) (*models.Account, error) {
@@ -389,7 +501,7 @@ func resolvePayrollPPh21ExpenseAccount(tx *gorm.DB, fallback *models.Account) (*
 	return nil, fmt.Errorf("akun Beban PPh 21 tidak ditemukan")
 }
 
-func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *models.PayrollRun, userID uint, customExpenseAccountID *uint, customCashBankAccountID *uint, paymentMethod string) (*uint64, error) {
+func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models.PayrollRun, userID uint, customExpenseAccountID *uint, recognitionDate time.Time) (*uint64, error) {
 	if run == nil || (run.TotalOverall <= 0.01 && run.TotalPPh <= 0.01) {
 		return nil, nil
 	}
@@ -397,7 +509,7 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 	sourceID := uint64(run.ID)
 	var existing models.SSOTJournalEntry
 	if err := tx.
-		Where("source_type = ? AND source_id = ? AND deleted_at IS NULL", "PAYROLL_PPH_PAYABLE", sourceID).
+		Where("source_type IN ? AND source_id = ? AND deleted_at IS NULL", []string{"PAYROLL_ACCRUAL", "PAYROLL_PPH_PAYABLE"}, sourceID).
 		Order("id ASC").
 		First(&existing).Error; err == nil {
 		return &existing.ID, nil
@@ -420,21 +532,6 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 		}
 	}
 
-	var cashBankAccount *models.Account
-	if customCashBankAccountID != nil && *customCashBankAccountID > 0 {
-		var acc models.Account
-		if err = tx.First(&acc, *customCashBankAccountID).Error; err != nil {
-			return nil, fmt.Errorf("akun Kas/Bank kustom tidak ditemukan: %w", err)
-		}
-		cashBankAccount = &acc
-	} else {
-		if account, err := resolvePayrollAccountByCodes(tx, "1101-003", "1101-001", "1101-002"); err == nil {
-			cashBankAccount = account
-		} else {
-			return nil, fmt.Errorf("akun Kas/Bank untuk pembayaran gaji wajib dipilih")
-		}
-	}
-
 	var pphPayableAccount *models.Account
 	if run.TotalPPh > 0.01 {
 		pphPayableAccount, err = resolvePayrollPPhPayableAccount(tx)
@@ -443,11 +540,16 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 		}
 	}
 
-	var salaryPayableAccount *models.Account
+	salaryPayableAccount, err := resolvePayrollSalaryPayableAccount(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	var deductionPayableAccount *models.Account
 	grossSalary := roundPayrollMoney(run.TotalSalary + run.TotalBonus)
 	withheldDeductions := roundPayrollMoney(grossSalary - run.TotalOverall)
 	if withheldDeductions > 0.01 {
-		salaryPayableAccount, err = resolvePayrollSalaryPayableAccount(tx)
+		deductionPayableAccount, err = resolvePayrollDeductionPayableAccount(tx)
 		if err != nil {
 			return nil, err
 		}
@@ -482,80 +584,35 @@ func (c *PayrollController) createPayrollPPhPayableJournal(tx *gorm.DB, run *mod
 	}
 
 	lines = append(lines, services.JournalLineRequest{
-		AccountID:    uint64(cashBankAccount.ID),
+		AccountID:    uint64(salaryPayableAccount.ID),
 		DebitAmount:  decimal.Zero,
 		CreditAmount: decimal.NewFromFloat(roundPayrollMoney(run.TotalOverall)),
-		Description:  fmt.Sprintf("Pembayaran Net Gaji Karyawan Periode %s via %s", run.PayrollNumber, paymentMethod),
+		Description:  fmt.Sprintf("Utang Net Gaji Karyawan Periode %s", run.PayrollNumber),
 	})
 
-	if withheldDeductions > 0.01 && salaryPayableAccount != nil {
+	if withheldDeductions > 0.01 && deductionPayableAccount != nil {
 		lines = append(lines, services.JournalLineRequest{
-			AccountID:    uint64(salaryPayableAccount.ID),
+			AccountID:    uint64(deductionPayableAccount.ID),
 			DebitAmount:  decimal.Zero,
 			CreditAmount: decimal.NewFromFloat(withheldDeductions),
-			Description:  fmt.Sprintf("Potongan BPJS & Lainnya Periode %s", run.PayrollNumber),
+			Description:  fmt.Sprintf("Utang BPJS & Potongan Payroll Periode %s", run.PayrollNumber),
 		})
-	}
-
-	method := "Transfer"
-	if paymentMethod != "" {
-		method = paymentMethod
 	}
 
 	journalService := services.NewUnifiedJournalService(tx)
 	journalEntry, err := journalService.CreateJournalEntryWithTx(tx, &services.JournalEntryRequest{
-		EntryDate:   run.PeriodEnd,
+		EntryDate:   recognitionDate,
 		Reference:   fmt.Sprintf("PAYROLL-%s", run.PayrollNumber),
-		Description: fmt.Sprintf("Jurnal Pengakuan & Pembayaran Payroll - %s", run.PayrollNumber),
-		Notes:       fmt.Sprintf("Beban Gaji kotor diakui, PPh 21 terutang tidak mengurangi pembayaran salary, Net Gaji dibayarkan langsung dari Kas/Bank via %s.", method),
-		SourceType:  "PAYROLL_PPH_PAYABLE",
+		Description: fmt.Sprintf("Jurnal Pengakuan Payroll - %s", run.PayrollNumber),
+		Notes:       "Beban gaji dan PPh 21 yang ditanggung perusahaan diakui sebagai kewajiban. Tidak ada pengurangan kas/bank sampai settlement aktual.",
+		SourceType:  "PAYROLL_ACCRUAL",
 		SourceID:    sourceID,
 		AutoPost:    true,
 		CreatedBy:   uint64(userID),
 		Lines:       lines,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create payroll accrual/payment journal: %w", err)
-	}
-
-	var cashBank models.CashBank
-	if err = tx.Where("account_id = ? AND deleted_at IS NULL", cashBankAccount.ID).First(&cashBank).Error; err == nil {
-		paymentAmount := roundPayrollMoney(run.TotalOverall)
-		cashBank.Balance = roundPayrollMoney(cashBank.Balance - paymentAmount)
-		if !cashBank.IsForeignCurrency() {
-			cashBank.BookBalanceIDR = cashBank.Balance
-			cashBank.LastExchangeRate = 1
-		}
-		if err = tx.Save(&cashBank).Error; err != nil {
-			return nil, fmt.Errorf("failed to update cash/bank balance: %w", err)
-		}
-
-		currency := strings.ToUpper(strings.TrimSpace(cashBank.Currency))
-		if currency == "" {
-			currency = "IDR"
-		}
-		exchangeRate := cashBank.EffectiveExchangeRate()
-		cashMovement := -paymentAmount
-		bookAmountIDR := cashMovement
-		if cashBank.IsForeignCurrency() {
-			bookAmountIDR = roundPayrollMoney(cashMovement * exchangeRate)
-		}
-
-		cbTx := models.CashBankTransaction{
-			CashBankID:      cashBank.ID,
-			ReferenceType:   "PAYROLL_NET_PAYMENT",
-			ReferenceID:     run.ID,
-			Amount:          cashMovement,
-			Currency:        currency,
-			ExchangeRate:    exchangeRate,
-			BookAmountIDR:   bookAmountIDR,
-			BalanceAfter:    cashBank.Balance,
-			TransactionDate: run.PeriodEnd,
-			Notes:           fmt.Sprintf("Disbursement Gaji Karyawan Periode %s", run.PayrollNumber),
-		}
-		if err = tx.Create(&cbTx).Error; err != nil {
-			return nil, fmt.Errorf("failed to create cash/bank transaction record: %w", err)
-		}
+		return nil, fmt.Errorf("failed to create payroll accrual journal: %w", err)
 	}
 
 	return &journalEntry.ID, nil
@@ -618,7 +675,9 @@ func (c *PayrollController) GetPayrollRun(ctx *gin.Context) {
 	if detailAllowed {
 		query = query.Preload("Items", func(db *gorm.DB) *gorm.DB {
 			return db.Order("id ASC")
-		})
+		}).Preload("Settlements", func(db *gorm.DB) *gorm.DB {
+			return db.Order("payment_date ASC, id ASC")
+		}).Preload("Settlements.CashBank")
 	}
 
 	var run models.PayrollRun
@@ -635,12 +694,6 @@ func (c *PayrollController) GetPayrollRun(ctx *gin.Context) {
 }
 
 func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
-	role := ctx.GetString("role")
-	if !canCreatePayroll(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya HR yang dapat download template payroll"})
-		return
-	}
-
 	workbook := excelize.NewFile()
 	sheetName := "Salary"
 	workbook.SetSheetName("Sheet1", sheetName)
@@ -683,12 +736,6 @@ func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
 }
 
 func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
-	role := ctx.GetString("role")
-	if !canCreatePayroll(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya HR yang dapat import payroll"})
-		return
-	}
-
 	fileHeader, err := ctx.FormFile("file")
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "File Excel wajib diupload"})
@@ -725,7 +772,7 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		sheetName = sheets[0]
 	}
 
-	rows, err := workbook.GetRows(sheetName)
+	rows, err := workbook.GetRows(sheetName, excelize.Options{RawCellValue: true})
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Gagal membaca sheet payroll", "details": err.Error()})
 		return
@@ -840,12 +887,6 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 }
 
 func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
-	role := ctx.GetString("role")
-	if !canCreatePayroll(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya HR yang dapat membuat payroll"})
-		return
-	}
-
 	userID, ok := currentUserID(ctx)
 	if !ok {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
@@ -972,6 +1013,8 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 	pphRecognitionDate := *periodEnd
 	run.PPhRecognitionDate = &pphRecognitionDate
 	run.PPhPaymentStatus = payrollPPhPaymentStatus(run.TotalPPh, run.PPhPaidAmount)
+	run.SalaryPaymentStatus = payrollSalaryPaymentStatus(run.TotalOverall, run.SalaryPaidAmount)
+	run.BPJSPaymentStatus = payrollBPJSPaymentStatus(run.TotalBPJS, run.BPJSPaidAmount)
 
 	if err := tx.Create(&run).Error; err != nil {
 		tx.Rollback()
@@ -994,11 +1037,6 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 }
 
 func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
-	if !canApprovePayroll(ctx.GetString("role")) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya Finance Manager yang dapat approve payroll"})
-		return
-	}
-
 	userID, ok := currentUserID(ctx)
 	if !ok {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
@@ -1012,9 +1050,8 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 	}
 
 	var req struct {
-		ExpenseAccountID  *uint  `json:"expense_account_id"`
-		CashBankAccountID *uint  `json:"cash_bank_account_id"`
-		PaymentMethod     string `json:"payment_method"`
+		ExpenseAccountID *uint  `json:"expense_account_id"`
+		PostingDate      string `json:"posting_date"`
 	}
 	_ = ctx.ShouldBindJSON(&req) // Ignore EOF/errors to remain backward compatible
 
@@ -1046,31 +1083,43 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 		respondPayrollClosedPeriod(ctx, err)
 		return
 	}
-	if run.PaymentDate != nil {
-		if err := services.CheckClosedPeriod(tx, *run.PaymentDate); err != nil {
+	recognitionDate := defaultPayrollRecognitionDate(&run)
+	if strings.TrimSpace(req.PostingDate) != "" {
+		parsedPostingDate, err := payrollDate(req.PostingDate, true)
+		if err != nil {
 			tx.Rollback()
-			respondPayrollClosedPeriod(ctx, err)
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Tanggal posting payroll tidak valid", "details": err.Error()})
 			return
 		}
+		recognitionDate = *parsedPostingDate
+	}
+	if recognitionDate.Before(run.PeriodStart) || recognitionDate.After(run.PeriodEnd) {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Tanggal posting payroll harus berada di dalam periode payroll"})
+		return
+	}
+	if err := services.CheckClosedPeriod(tx, recognitionDate); err != nil {
+		tx.Rollback()
+		respondPayrollClosedPeriod(ctx, err)
+		return
 	}
 
 	updates := map[string]interface{}{
-		"status":             models.PayrollStatusApproved,
-		"approved_by_id":     userID,
-		"approved_at":        now,
-		"rejected_by_id":     nil,
-		"rejected_at":        nil,
-		"rejection_reason":   "",
-		"pph_payment_status": payrollPPhPaymentStatus(run.TotalPPh, run.PPhPaidAmount),
+		"status":                models.PayrollStatusApproved,
+		"approved_by_id":        userID,
+		"approved_at":           now,
+		"rejected_by_id":        nil,
+		"rejected_at":           nil,
+		"rejection_reason":      "",
+		"pph_payment_status":    payrollPPhPaymentStatus(run.TotalPPh, run.PPhPaidAmount),
+		"salary_payment_status": payrollSalaryPaymentStatus(run.TotalOverall, run.SalaryPaidAmount),
+		"bpjs_payment_status":   payrollBPJSPaymentStatus(run.TotalBPJS, run.BPJSPaidAmount),
 	}
-	if run.PPhRecognitionDate == nil {
-		recognitionDate := run.PeriodEnd
-		updates["pph_recognition_date"] = recognitionDate
-		run.PPhRecognitionDate = &recognitionDate
-	}
+	updates["pph_recognition_date"] = recognitionDate
+	run.PPhRecognitionDate = &recognitionDate
 
 	if (run.TotalOverall > 0.01 || run.TotalPPh > 0.01) && run.PPhPayableJournalEntryID == nil {
-		journalID, err := c.createPayrollPPhPayableJournal(tx, &run, userID, req.ExpenseAccountID, req.CashBankAccountID, req.PaymentMethod)
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, req.ExpenseAccountID, recognitionDate)
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{
@@ -1093,7 +1142,7 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 		return
 	}
 
-	if err := tx.Preload("CreatedBy").Preload("ApprovedBy").Preload("Items").First(&run, run.ID).Error; err != nil {
+	if err := tx.Preload("CreatedBy").Preload("ApprovedBy").Preload("Items").Preload("Settlements").First(&run, run.ID).Error; err != nil {
 		tx.Rollback()
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load approved payroll"})
 		return
@@ -1108,11 +1157,6 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 }
 
 func (c *PayrollController) RejectPayrollRun(ctx *gin.Context) {
-	if !canApprovePayroll(ctx.GetString("role")) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya Finance Manager yang dapat reject payroll"})
-		return
-	}
-
 	userID, ok := currentUserID(ctx)
 	if !ok {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
@@ -1172,11 +1216,6 @@ func (c *PayrollController) RejectPayrollRun(ctx *gin.Context) {
 }
 
 func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
-	if !canApprovePayroll(ctx.GetString("role")) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Hanya Finance Manager yang dapat membayar PPh payroll"})
-		return
-	}
-
 	userID, ok := currentUserID(ctx)
 	if !ok {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
@@ -1281,12 +1320,20 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 		return
 	}
 
-	if run.PPhRecognitionDate == nil {
-		recognitionDate := run.PeriodEnd
-		run.PPhRecognitionDate = &recognitionDate
+	recognitionDate, err := resolvePayrollRecognitionDate(tx, &run)
+	if err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membaca tanggal pengakuan payroll", "details": err.Error()})
+		return
+	}
+	run.PPhRecognitionDate = &recognitionDate
+	if paymentDate.Before(recognitionDate) {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Tanggal pembayaran PPh tidak boleh mendahului tanggal pengakuan payroll"})
+		return
 	}
 	if run.PPhPayableJournalEntryID == nil {
-		journalID, err := c.createPayrollPPhPayableJournal(tx, &run, userID, nil, nil, "")
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, recognitionDate)
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{
@@ -1380,6 +1427,24 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 		return
 	}
 
+	settlement := models.PayrollSettlement{
+		PayrollRunID:   run.ID,
+		SettlementType: models.PayrollSettlementTypePPh21,
+		Amount:         amount,
+		PaymentDate:    *paymentDate,
+		CashBankID:     cashBank.ID,
+		JournalEntryID: journalEntry.ID,
+		Reference:      reference,
+		Notes:          notes,
+		Source:         "PAYROLL",
+		CreatedByID:    userID,
+	}
+	if err := tx.Create(&settlement).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record payroll PPh settlement history"})
+		return
+	}
+
 	paidAmount := roundPayrollMoney(run.PPhPaidAmount + amount)
 	paymentJournalID := journalEntry.ID
 	updates := map[string]interface{}{
@@ -1400,7 +1465,7 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 		return
 	}
 
-	if err := tx.Preload("CreatedBy").Preload("ApprovedBy").Preload("Items").First(&run, run.ID).Error; err != nil {
+	if err := tx.Preload("CreatedBy").Preload("ApprovedBy").Preload("Items").Preload("Settlements").Preload("Settlements.CashBank").First(&run, run.ID).Error; err != nil {
 		tx.Rollback()
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load updated payroll"})
 		return
@@ -1412,4 +1477,496 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"data": payrollResponse(run, true), "message": "Pembayaran PPh payroll berhasil dicatat"})
+}
+
+// PayPayrollBPJS settles only the BPJS portion of payroll deductions. Other
+// deductions can remain in 2103-002 until a separate settlement or adjustment is
+// posted, which keeps BPJS payment history aligned with the payroll number.
+func (c *PayrollController) PayPayrollBPJS(ctx *gin.Context) {
+	userID, ok := currentUserID(ctx)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
+		return
+	}
+
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payroll ID"})
+		return
+	}
+
+	var req models.PayrollBPJSPaymentRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	paymentDate, err := payrollDate(req.PaymentDate, true)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment_date", "details": err.Error()})
+		return
+	}
+	if err := services.CheckClosedPeriod(c.db, *paymentDate); err != nil {
+		respondPayrollClosedPeriod(ctx, err)
+		return
+	}
+
+	amount := roundPayrollMoney(req.Amount)
+	if amount <= 0.01 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nominal pembayaran BPJS harus lebih besar dari 0"})
+		return
+	}
+
+	tx := c.db.Begin()
+	if tx.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start BPJS payment transaction"})
+		return
+	}
+
+	var run models.PayrollRun
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, uint(id)).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Payroll not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load payroll"})
+		return
+	}
+
+	if run.Status != models.PayrollStatusApproved {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "BPJS payroll hanya bisa dibayar setelah payroll approved"})
+		return
+	}
+	if run.TotalBPJS <= 0.01 {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Payroll ini tidak memiliki BPJS untuk dibayar"})
+		return
+	}
+	if run.PPhPayableJournalEntryID == nil {
+		if err := services.CheckClosedPeriodRange(tx, run.PeriodStart, run.PeriodEnd); err != nil {
+			tx.Rollback()
+			respondPayrollClosedPeriod(ctx, err)
+			return
+		}
+	}
+
+	remaining := remainingPayrollBPJS(&run)
+	if amount > remaining+0.01 {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Nominal pembayaran melebihi sisa BPJS. Sisa: %.2f", remaining)})
+		return
+	}
+
+	var cashBank models.CashBank
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND deleted_at IS NULL AND is_active = ?", req.CashBankID, true).
+		First(&cashBank).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Akun kas/bank tidak ditemukan atau tidak aktif"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load cash/bank account"})
+		return
+	}
+	if cashBank.AccountID == 0 {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Akun kas/bank belum terhubung ke GL/COA"})
+		return
+	}
+	if strings.ToUpper(strings.TrimSpace(cashBank.Currency)) != "IDR" {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Pembayaran BPJS payroll hanya didukung dari akun kas/bank IDR"})
+		return
+	}
+	if cashBank.AvailableBalance()+0.01 < amount {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Saldo kas/bank tidak cukup. Saldo tersedia: %.2f", cashBank.AvailableBalance())})
+		return
+	}
+
+	recognitionDate, err := resolvePayrollRecognitionDate(tx, &run)
+	if err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membaca tanggal pengakuan payroll", "details": err.Error()})
+		return
+	}
+	run.PPhRecognitionDate = &recognitionDate
+	if paymentDate.Before(recognitionDate) {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Tanggal pembayaran BPJS tidak boleh mendahului tanggal pengakuan payroll"})
+		return
+	}
+	if run.PPhPayableJournalEntryID == nil {
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, recognitionDate)
+		if err != nil {
+			tx.Rollback()
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Gagal membuat jurnal pengakuan payroll",
+				"details": err.Error(),
+			})
+			return
+		}
+		run.PPhPayableJournalEntryID = journalID
+	}
+
+	deductionPayableAccount, err := resolvePayrollDeductionPayableAccount(tx)
+	if err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	reference := strings.TrimSpace(req.Reference)
+	if reference == "" {
+		reference = fmt.Sprintf("PAY-BPJS-%s", run.PayrollNumber)
+	}
+	notes := strings.TrimSpace(req.Notes)
+	if notes == "" {
+		notes = fmt.Sprintf("Pembayaran BPJS payroll %s", run.PayrollNumber)
+	}
+
+	journalService := services.NewUnifiedJournalService(tx)
+	sourceID := uint64(run.ID)
+	journalEntry, err := journalService.CreateJournalEntryWithTx(tx, &services.JournalEntryRequest{
+		EntryDate:   *paymentDate,
+		Reference:   reference,
+		Description: fmt.Sprintf("Pembayaran BPJS Payroll - %s", run.PayrollNumber),
+		Notes:       notes,
+		SourceType:  "PAYROLL_BPJS_PAYMENT",
+		SourceID:    sourceID,
+		AutoPost:    true,
+		CreatedBy:   uint64(userID),
+		Lines: []services.JournalLineRequest{
+			{
+				AccountID:    uint64(deductionPayableAccount.ID),
+				DebitAmount:  decimal.NewFromFloat(amount),
+				CreditAmount: decimal.Zero,
+				Description:  fmt.Sprintf("Settlement hutang BPJS payroll - %s", run.PayrollNumber),
+			},
+			{
+				AccountID:    uint64(cashBank.AccountID),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: decimal.NewFromFloat(amount),
+				Description:  fmt.Sprintf("Kas/bank keluar bayar BPJS payroll - %s", run.PayrollNumber),
+			},
+		},
+	})
+	if err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Gagal membuat jurnal pembayaran BPJS", "details": err.Error()})
+		return
+	}
+
+	cashBank.Balance = roundPayrollMoney(cashBank.Balance - amount)
+	cashBank.BookBalanceIDR = cashBank.Balance
+	cashBank.LastExchangeRate = 1
+	if err := tx.Save(&cashBank).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update cash/bank balance"})
+		return
+	}
+
+	cashBankTransaction := &models.CashBankTransaction{
+		CashBankID:      cashBank.ID,
+		ReferenceType:   "PAYROLL_BPJS_PAYMENT",
+		ReferenceID:     run.ID,
+		Amount:          -amount,
+		Currency:        "IDR",
+		ExchangeRate:    1,
+		BookAmountIDR:   -amount,
+		BalanceAfter:    cashBank.Balance,
+		TransactionDate: *paymentDate,
+		Notes:           notes,
+	}
+	if err := tx.Create(cashBankTransaction).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record cash/bank transaction"})
+		return
+	}
+
+	guard := services.NewCashBankCurrencyGuard(c.db)
+	if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate cash/bank balance", "details": err.Error()})
+		return
+	}
+
+	settlement := models.PayrollSettlement{
+		PayrollRunID:   run.ID,
+		SettlementType: models.PayrollSettlementTypeBPJS,
+		Amount:         amount,
+		PaymentDate:    *paymentDate,
+		CashBankID:     cashBank.ID,
+		JournalEntryID: journalEntry.ID,
+		Reference:      reference,
+		Notes:          notes,
+		Source:         "PAYROLL",
+		CreatedByID:    userID,
+	}
+	if err := tx.Create(&settlement).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record payroll BPJS settlement history"})
+		return
+	}
+
+	paidAmount := roundPayrollMoney(run.BPJSPaidAmount + amount)
+	updates := map[string]interface{}{
+		"bpjs_paid_amount":              paidAmount,
+		"bpjs_payment_status":           payrollBPJSPaymentStatus(run.TotalBPJS, paidAmount),
+		"bpjs_payment_date":             *paymentDate,
+		"bpjs_payment_reference":        reference,
+		"bpjs_payment_notes":            notes,
+		"bpjs_payment_journal_entry_id": journalEntry.ID,
+		"pph_recognition_date":          *run.PPhRecognitionDate,
+	}
+	if run.PPhPayableJournalEntryID != nil {
+		updates["pph_payable_journal_entry_id"] = *run.PPhPayableJournalEntryID
+	}
+	if err := tx.Model(&run).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update payroll BPJS status"})
+		return
+	}
+
+	if err := tx.Preload("CreatedBy").Preload("ApprovedBy").Preload("Items").Preload("Settlements").Preload("Settlements.CashBank").First(&run, run.ID).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load updated payroll"})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save BPJS payment"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": payrollResponse(run, true), "message": "Pembayaran BPJS payroll berhasil dicatat"})
+}
+
+// PayPayrollSalary settles the net salary liability created by the payroll
+// accrual. Approval never credits cash/bank; cash only moves through this
+// endpoint on the actual payment date.
+func (c *PayrollController) PayPayrollSalary(ctx *gin.Context) {
+	userID, ok := currentUserID(ctx)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
+		return
+	}
+
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payroll ID"})
+		return
+	}
+
+	var req models.PayrollSalaryPaymentRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	paymentDate, err := payrollDate(req.PaymentDate, true)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment_date", "details": err.Error()})
+		return
+	}
+	if err := services.CheckClosedPeriod(c.db, *paymentDate); err != nil {
+		respondPayrollClosedPeriod(ctx, err)
+		return
+	}
+
+	amount := roundPayrollMoney(req.Amount)
+	if amount <= 0.01 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nominal pembayaran gaji harus lebih besar dari 0"})
+		return
+	}
+
+	tx := c.db.Begin()
+	if tx.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start salary payment transaction"})
+		return
+	}
+
+	var run models.PayrollRun
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&run, uint(id)).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Payroll not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load payroll"})
+		return
+	}
+	if run.Status != models.PayrollStatusApproved {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Gaji hanya bisa dibayar setelah payroll approved"})
+		return
+	}
+	if run.TotalOverall <= 0.01 {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Payroll ini tidak memiliki net salary untuk dibayar"})
+		return
+	}
+
+	remaining := remainingPayrollSalary(&run)
+	if amount > remaining+0.01 {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Nominal pembayaran melebihi sisa gaji. Sisa: %.2f", remaining)})
+		return
+	}
+
+	recognitionDate, err := resolvePayrollRecognitionDate(tx, &run)
+	if err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membaca tanggal pengakuan payroll", "details": err.Error()})
+		return
+	}
+	run.PPhRecognitionDate = &recognitionDate
+	if paymentDate.Before(recognitionDate) {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Tanggal pembayaran gaji tidak boleh mendahului tanggal pengakuan payroll"})
+		return
+	}
+	if run.PPhPayableJournalEntryID == nil {
+		if err := services.CheckClosedPeriod(tx, recognitionDate); err != nil {
+			tx.Rollback()
+			respondPayrollClosedPeriod(ctx, err)
+			return
+		}
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, recognitionDate)
+		if err != nil {
+			tx.Rollback()
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Gagal membuat jurnal pengakuan payroll", "details": err.Error()})
+			return
+		}
+		run.PPhPayableJournalEntryID = journalID
+	}
+
+	var cashBank models.CashBank
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND deleted_at IS NULL AND is_active = ?", req.CashBankID, true).
+		First(&cashBank).Error; err != nil {
+		tx.Rollback()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Akun kas/bank tidak ditemukan atau tidak aktif"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load cash/bank account"})
+		return
+	}
+	if cashBank.AccountID == 0 || strings.ToUpper(strings.TrimSpace(cashBank.Currency)) != "IDR" {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Pembayaran gaji hanya didukung dari akun kas/bank IDR yang terhubung ke GL/COA"})
+		return
+	}
+	if cashBank.AvailableBalance()+0.01 < amount {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Saldo kas/bank tidak cukup. Saldo tersedia: %.2f", cashBank.AvailableBalance())})
+		return
+	}
+
+	salaryPayableAccount, err := resolvePayrollSalaryPayableAccount(tx)
+	if err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	reference := strings.TrimSpace(req.Reference)
+	if reference == "" {
+		reference = fmt.Sprintf("PAY-SALARY-%s", run.PayrollNumber)
+	}
+	notes := strings.TrimSpace(req.Notes)
+	if notes == "" {
+		notes = fmt.Sprintf("Pembayaran net salary payroll %s", run.PayrollNumber)
+	}
+
+	journalService := services.NewUnifiedJournalService(tx)
+	sourceID := uint64(run.ID)
+	journalEntry, err := journalService.CreateJournalEntryWithTx(tx, &services.JournalEntryRequest{
+		EntryDate:   *paymentDate,
+		Reference:   reference,
+		Description: fmt.Sprintf("Pembayaran Net Salary Payroll - %s", run.PayrollNumber),
+		Notes:       notes,
+		SourceType:  "PAYROLL_SALARY_PAYMENT",
+		SourceID:    sourceID,
+		AutoPost:    true,
+		CreatedBy:   uint64(userID),
+		Lines: []services.JournalLineRequest{
+			{AccountID: uint64(salaryPayableAccount.ID), DebitAmount: decimal.NewFromFloat(amount), CreditAmount: decimal.Zero, Description: fmt.Sprintf("Settlement utang gaji - %s", run.PayrollNumber)},
+			{AccountID: uint64(cashBank.AccountID), DebitAmount: decimal.Zero, CreditAmount: decimal.NewFromFloat(amount), Description: fmt.Sprintf("Kas/bank keluar bayar gaji - %s", run.PayrollNumber)},
+		},
+	})
+	if err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Gagal membuat jurnal pembayaran gaji", "details": err.Error()})
+		return
+	}
+
+	cashBank.Balance = roundPayrollMoney(cashBank.Balance - amount)
+	cashBank.BookBalanceIDR = cashBank.Balance
+	cashBank.LastExchangeRate = 1
+	if err := tx.Save(&cashBank).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update cash/bank balance"})
+		return
+	}
+	cashBankTransaction := models.CashBankTransaction{
+		CashBankID: cashBank.ID, ReferenceType: "PAYROLL_SALARY_PAYMENT", ReferenceID: run.ID,
+		Amount: -amount, Currency: "IDR", ExchangeRate: 1, BookAmountIDR: -amount,
+		BalanceAfter: cashBank.Balance, TransactionDate: *paymentDate, Notes: notes,
+	}
+	if err := tx.Create(&cashBankTransaction).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record cash/bank transaction"})
+		return
+	}
+	guard := services.NewCashBankCurrencyGuard(c.db)
+	if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate cash/bank balance", "details": err.Error()})
+		return
+	}
+
+	settlement := models.PayrollSettlement{
+		PayrollRunID: run.ID, SettlementType: models.PayrollSettlementTypeSalary,
+		Amount: amount, PaymentDate: *paymentDate, CashBankID: cashBank.ID,
+		JournalEntryID: journalEntry.ID, Reference: reference, Notes: notes,
+		Source: "PAYROLL", CreatedByID: userID,
+	}
+	if err := tx.Create(&settlement).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record payroll salary settlement history"})
+		return
+	}
+
+	paidAmount := roundPayrollMoney(run.SalaryPaidAmount + amount)
+	updates := map[string]interface{}{
+		"salary_paid_amount":              paidAmount,
+		"salary_payment_status":           payrollSalaryPaymentStatus(run.TotalOverall, paidAmount),
+		"salary_payment_date":             *paymentDate,
+		"salary_payment_reference":        reference,
+		"salary_payment_notes":            notes,
+		"salary_payment_journal_entry_id": journalEntry.ID,
+		"pph_recognition_date":            *run.PPhRecognitionDate,
+	}
+	if run.PPhPayableJournalEntryID != nil {
+		updates["pph_payable_journal_entry_id"] = *run.PPhPayableJournalEntryID
+	}
+	if err := tx.Model(&run).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update payroll salary status"})
+		return
+	}
+	if err := tx.Preload("CreatedBy").Preload("ApprovedBy").Preload("Items").Preload("Settlements").Preload("Settlements.CashBank").First(&run, run.ID).Error; err != nil {
+		tx.Rollback()
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load updated payroll"})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save salary payment"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": payrollResponse(run, true), "message": "Pembayaran gaji payroll berhasil dicatat"})
 }

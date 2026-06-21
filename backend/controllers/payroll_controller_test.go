@@ -1,6 +1,11 @@
 package controllers
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"math"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -12,8 +17,140 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/require"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
+
+func TestParsePayrollImportNumber(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected float64
+	}{
+		{name: "single comma thousands", input: "500,000", expected: 500000},
+		{name: "single comma non round thousands", input: "100,287", expected: 100287},
+		{name: "multiple comma thousands", input: "10,000,000", expected: 10000000},
+		{name: "single dot thousands", input: "500.000", expected: 500000},
+		{name: "multiple dot thousands", input: "1.234.567", expected: 1234567},
+		{name: "indonesian decimal", input: "1.234,56", expected: 1234.56},
+		{name: "international decimal", input: "1,234.56", expected: 1234.56},
+		{name: "comma decimal without thousands", input: "150,50", expected: 150.50},
+		{name: "dot decimal without thousands", input: "150.50", expected: 150.50},
+		{name: "rupiah prefix", input: "Rp 250,000", expected: 250000},
+		{name: "idr prefix", input: "IDR 100.287", expected: 100287},
+		{name: "accounting negative", input: "(50,000)", expected: -50000},
+		{name: "empty marker", input: "-", expected: 0},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			actual := parsePayrollImportNumber(testCase.input)
+			if math.Abs(actual-testCase.expected) > 0.000001 {
+				t.Fatalf("parsePayrollImportNumber(%q) = %v, expected %v", testCase.input, actual, testCase.expected)
+			}
+		})
+	}
+}
+
+func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	workbook := excelize.NewFile()
+	defer workbook.Close()
+	workbook.SetSheetName("Sheet1", "Salary")
+
+	for columnIndex, header := range payrollImportTemplateHeaders {
+		cell, err := excelize.CoordinatesToCellName(columnIndex+1, 1)
+		if err != nil {
+			t.Fatalf("failed to build header cell: %v", err)
+		}
+		if err := workbook.SetCellValue("Salary", cell, header); err != nil {
+			t.Fatalf("failed to set header %q: %v", header, err)
+		}
+	}
+
+	row := []interface{}{
+		22, "KIS-001", "Head Office", "Payroll", "1122334455", "IT", "Budi Santoso", "Backend Developer",
+		10000000, 0, 500000, 250000, 200000, 100287, 100000, 0, 50000,
+	}
+	for columnIndex, value := range row {
+		cell, err := excelize.CoordinatesToCellName(columnIndex+1, 2)
+		if err != nil {
+			t.Fatalf("failed to build data cell: %v", err)
+		}
+		if err := workbook.SetCellValue("Salary", cell, value); err != nil {
+			t.Fatalf("failed to set data cell %s: %v", cell, err)
+		}
+	}
+
+	numberStyle, err := workbook.NewStyle(&excelize.Style{NumFmt: 3})
+	if err != nil {
+		t.Fatalf("failed to create thousands number style: %v", err)
+	}
+	if err := workbook.SetCellStyle("Salary", "I2", "Q2", numberStyle); err != nil {
+		t.Fatalf("failed to apply thousands number style: %v", err)
+	}
+
+	var excelBuffer bytes.Buffer
+	if err := workbook.Write(&excelBuffer); err != nil {
+		t.Fatalf("failed to write test workbook: %v", err)
+	}
+
+	var requestBody bytes.Buffer
+	multipartWriter := multipart.NewWriter(&requestBody)
+	filePart, err := multipartWriter.CreateFormFile("file", "payroll.xlsx")
+	if err != nil {
+		t.Fatalf("failed to create multipart file: %v", err)
+	}
+	if _, err := filePart.Write(excelBuffer.Bytes()); err != nil {
+		t.Fatalf("failed to write multipart file: %v", err)
+	}
+	if err := multipartWriter.Close(); err != nil {
+		t.Fatalf("failed to close multipart body: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/payroll/import/preview", &requestBody)
+	ctx.Request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+
+	NewPayrollController(nil).ImportPayrollPreview(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data models.PayrollImportPreviewResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode preview response: %v", err)
+	}
+	if len(response.Data.Items) != 1 {
+		t.Fatalf("expected one imported row, got %d", len(response.Data.Items))
+	}
+
+	item := response.Data.Items[0]
+	assertions := []struct {
+		name     string
+		actual   float64
+		expected float64
+	}{
+		{name: "base salary", actual: item.BaseSalary, expected: 10000000},
+		{name: "overtime", actual: item.Overtime, expected: 500000},
+		{name: "pph", actual: item.PPh, expected: 250000},
+		{name: "bpjs jht", actual: item.BPJSTKJHT, expected: 200000},
+		{name: "bpjs jp", actual: item.BPJSTKJP, expected: 100287},
+		{name: "bpjs kesehatan", actual: item.BPJSKesehatan, expected: 100000},
+		{name: "other deduction", actual: item.OtherDeduction, expected: 50000},
+	}
+	for _, assertion := range assertions {
+		if assertion.actual != assertion.expected {
+			t.Errorf("%s = %v, expected %v", assertion.name, assertion.actual, assertion.expected)
+		}
+	}
+}
 
 func setupPayrollApprovalTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -32,6 +169,9 @@ func setupPayrollApprovalTestDB(t *testing.T) *gorm.DB {
 		&models.AccountingPeriod{},
 		&models.PayrollRun{},
 		&models.PayrollItem{},
+		&models.CashBank{},
+		&models.CashBankTransaction{},
+		&models.PayrollSettlement{},
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 	); err != nil {
@@ -57,7 +197,7 @@ func createClosedPeriod(t *testing.T, db *gorm.DB, startDate, endDate time.Time)
 	}
 }
 
-func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
+func TestApprovePayrollRunFinanceManagerCreatesPayrollAccrualJournal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupPayrollApprovalTestDB(t)
 
@@ -106,11 +246,11 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 		IsActive: true,
 		IsHeader: false,
 	}
-	cashAccount := models.Account{
-		Code:     "1101-003",
-		Name:     "BANK GIRO",
-		Type:     models.AccountTypeAsset,
-		Category: models.CategoryCurrentAsset,
+	salaryPayable := models.Account{
+		Code:     "2103-001",
+		Name:     "UTANG GAJI",
+		Type:     models.AccountTypeLiability,
+		Category: models.CategoryCurrentLiability,
 		IsActive: true,
 		IsHeader: false,
 	}
@@ -123,8 +263,8 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 	if err := db.Create(&pphExpense).Error; err != nil {
 		t.Fatalf("failed to create PPh expense account: %v", err)
 	}
-	if err := db.Create(&cashAccount).Error; err != nil {
-		t.Fatalf("failed to create cash account: %v", err)
+	if err := db.Create(&salaryPayable).Error; err != nil {
+		t.Fatalf("failed to create salary payable account: %v", err)
 	}
 
 	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -183,8 +323,8 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 	if err := db.Preload("Lines").First(&journal, *approved.PPhPayableJournalEntryID).Error; err != nil {
 		t.Fatalf("failed to load payroll PPh payable journal: %v", err)
 	}
-	if journal.SourceType != "PAYROLL_PPH_PAYABLE" {
-		t.Fatalf("expected PAYROLL_PPH_PAYABLE journal, got %s", journal.SourceType)
+	if journal.SourceType != "PAYROLL_ACCRUAL" {
+		t.Fatalf("expected PAYROLL_ACCRUAL journal, got %s", journal.SourceType)
 	}
 	if journal.Status != models.SSOTStatusPosted {
 		t.Fatalf("expected posted journal, got %s", journal.Status)
@@ -228,7 +368,7 @@ func TestApprovePayrollRunFinanceManagerCreatesPPhPayableJournal(t *testing.T) {
 	assertLine(salaryExpense, 10000000, 0)
 	assertLine(pphExpense, 300000, 0)
 	assertLine(pphPayable, 0, 300000)
-	assertLine(cashAccount, 0, 10000000)
+	assertLine(salaryPayable, 0, 10000000)
 }
 
 func TestPayrollItemTotalsDoNotReduceNetPayByPPh21(t *testing.T) {
@@ -441,4 +581,157 @@ func TestPayPayrollPPhRejectsClosedPaymentDate(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), "CLOSED_PERIOD:2026-06-15") {
 		t.Fatalf("expected closed period error for payment date, got: %s", recorder.Body.String())
 	}
+}
+
+func TestPayrollAccountingPostsAccrualSalaryAndPPhOnDifferentDates(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPayrollApprovalTestDB(t)
+
+	hrUser := models.User{Username: "hr-dates", Email: "hr-dates@example.com", Password: "password", Role: models.RoleHR, IsActive: true}
+	financeManager := models.User{Username: "fm-dates", Email: "fm-dates@example.com", Password: "password", Role: models.RoleFinanceManager, IsActive: true}
+	requireCreate := func(value interface{}) {
+		t.Helper()
+		if err := db.Create(value).Error; err != nil {
+			t.Fatalf("failed to create fixture: %v", err)
+		}
+	}
+	requireCreate(&hrUser)
+	requireCreate(&financeManager)
+
+	salaryExpense := models.Account{Code: "6101", Name: "BEBAN GAJI & TUNJANGAN", Type: models.AccountTypeExpense, Category: models.CategoryOperatingExpense, IsActive: true}
+	pphExpense := models.Account{Code: "9101", Name: "BEBAN PAJAK PENGHASILAN", Type: models.AccountTypeExpense, Category: models.CategoryTaxExpense, IsActive: true}
+	pphPayable := models.Account{Code: "2102-003", Name: "HUTANG PPH PASAL 21", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, IsActive: true}
+	salaryPayable := models.Account{Code: "2103-001", Name: "UTANG GAJI", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, IsActive: true}
+	deductionPayable := models.Account{Code: "2103-002", Name: "UTANG BPJS & POTONGAN PAYROLL", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, IsActive: true}
+	bankGL := models.Account{Code: "1101-005", Name: "BANK - OCBC", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, IsActive: true}
+	for _, account := range []*models.Account{&salaryExpense, &pphExpense, &pphPayable, &salaryPayable, &deductionPayable, &bankGL} {
+		requireCreate(account)
+	}
+	bank := models.CashBank{Code: "BANK-OCBC", Name: "BANK - OCBC", Type: models.CashBankTypeBank, AccountID: bankGL.ID, Currency: "IDR", Balance: 100000000, BookBalanceIDR: 100000000, LastExchangeRate: 1, IsActive: true, AllowDirectTransactions: true}
+	requireCreate(&bank)
+	openingBankTransaction := models.CashBankTransaction{
+		CashBankID: bank.ID, ReferenceType: "OPENING_BALANCE", Amount: 100000000,
+		Currency: "IDR", ExchangeRate: 1, BookAmountIDR: 100000000,
+		BalanceAfter: 100000000, TransactionDate: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		Notes: "Saldo awal test",
+	}
+	requireCreate(&openingBankTransaction)
+
+	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+	plannedSalaryDate := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	run := models.PayrollRun{
+		PayrollNumber: "PAY/2026/06/DIFF-DATES", PeriodStart: periodStart, PeriodEnd: periodEnd,
+		PaymentDate: &plannedSalaryDate, Status: models.PayrollStatusPendingApproval,
+		TotalSalary: 37500000, TotalBonus: 3700000, TotalPPh: 950000, TotalBPJS: 1480287,
+		TotalOverall: 39669713, PPhPaymentStatus: models.PayrollPPhPaymentStatusUnpaid,
+		SalaryPaymentStatus: models.PayrollSalaryPaymentStatusUnpaid, BPJSPaymentStatus: models.PayrollSalaryPaymentStatusUnpaid,
+		PPhRecognitionDate: &periodEnd, CreatedByID: hrUser.ID,
+	}
+	requireCreate(&run)
+
+	controller := NewPayrollController(db)
+	call := func(path string, body string, handler func(*gin.Context)) *httptest.ResponseRecorder {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		ctx.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(uint64(run.ID), 10)}}
+		ctx.Set("role", models.RoleFinanceManager)
+		ctx.Set("user_id", financeManager.ID)
+		handler(ctx)
+		return recorder
+	}
+
+	approveBody := fmt.Sprintf(`{"expense_account_id":%d,"posting_date":"2026-06-15"}`, salaryExpense.ID)
+	approveRecorder := call("/api/v1/payroll/approve", approveBody, controller.ApprovePayrollRun)
+	if approveRecorder.Code != http.StatusOK {
+		t.Fatalf("approve expected 200, got %d: %s", approveRecorder.Code, approveRecorder.Body.String())
+	}
+
+	var approved models.PayrollRun
+	require.NoError(t, db.First(&approved, run.ID).Error)
+	require.NotNil(t, approved.PPhPayableJournalEntryID)
+	var accrual models.SSOTJournalEntry
+	require.NoError(t, db.Preload("Lines").First(&accrual, *approved.PPhPayableJournalEntryID).Error)
+	require.Equal(t, "PAYROLL_ACCRUAL", accrual.SourceType)
+	require.Equal(t, "2026-06-15", accrual.EntryDate.Format("2006-01-02"))
+	require.NotNil(t, approved.PPhRecognitionDate)
+	require.Equal(t, "2026-06-15", approved.PPhRecognitionDate.Format("2006-01-02"))
+	assertJournalLine := func(journal models.SSOTJournalEntry, accountID uint, debit, credit float64) {
+		t.Helper()
+		for _, line := range journal.Lines {
+			if line.AccountID == uint64(accountID) {
+				require.InDelta(t, debit, line.DebitAmount.InexactFloat64(), 0.01)
+				require.InDelta(t, credit, line.CreditAmount.InexactFloat64(), 0.01)
+				return
+			}
+		}
+		t.Fatalf("journal %d missing account %d", journal.ID, accountID)
+	}
+	assertJournalLine(accrual, salaryExpense.ID, 41200000, 0)
+	assertJournalLine(accrual, pphExpense.ID, 950000, 0)
+	assertJournalLine(accrual, salaryPayable.ID, 0, 39669713)
+	assertJournalLine(accrual, pphPayable.ID, 0, 950000)
+	assertJournalLine(accrual, deductionPayable.ID, 0, 1530287)
+	for _, line := range accrual.Lines {
+		require.NotEqual(t, uint64(bankGL.ID), line.AccountID, "accrual must not touch bank")
+	}
+
+	salaryBody := fmt.Sprintf(`{"payment_date":"2026-06-20","amount":39669713,"cash_bank_id":%d,"reference":"SAL-JUN-2026"}`, bank.ID)
+	salaryRecorder := call("/api/v1/payroll/pay-salary", salaryBody, controller.PayPayrollSalary)
+	if salaryRecorder.Code != http.StatusOK {
+		t.Fatalf("salary payment expected 200, got %d: %s", salaryRecorder.Code, salaryRecorder.Body.String())
+	}
+
+	bpjsBody := fmt.Sprintf(`{"payment_date":"2026-06-25","amount":1480287,"cash_bank_id":%d,"reference":"BPJS-JUN-2026"}`, bank.ID)
+	bpjsRecorder := call("/api/v1/payroll/pay-bpjs", bpjsBody, controller.PayPayrollBPJS)
+	if bpjsRecorder.Code != http.StatusOK {
+		t.Fatalf("BPJS payment expected 200, got %d: %s", bpjsRecorder.Code, bpjsRecorder.Body.String())
+	}
+
+	pphBody := fmt.Sprintf(`{"payment_date":"2026-07-10","amount":950000,"cash_bank_id":%d,"reference":"CORETAX-JUL-2026"}`, bank.ID)
+	pphRecorder := call("/api/v1/payroll/pay-pph", pphBody, controller.PayPayrollPPh)
+	if pphRecorder.Code != http.StatusOK {
+		t.Fatalf("PPh payment expected 200, got %d: %s", pphRecorder.Code, pphRecorder.Body.String())
+	}
+
+	var finalRun models.PayrollRun
+	require.NoError(t, db.First(&finalRun, run.ID).Error)
+	require.Equal(t, models.PayrollSalaryPaymentStatusPaid, finalRun.SalaryPaymentStatus)
+	require.Equal(t, models.PayrollPPhPaymentStatusPaid, finalRun.PPhPaymentStatus)
+	require.Equal(t, models.PayrollSalaryPaymentStatusPaid, finalRun.BPJSPaymentStatus)
+	require.InDelta(t, 39669713, finalRun.SalaryPaidAmount, 0.01)
+	require.InDelta(t, 1480287, finalRun.BPJSPaidAmount, 0.01)
+	require.InDelta(t, 950000, finalRun.PPhPaidAmount, 0.01)
+
+	var settlements []models.PayrollSettlement
+	require.NoError(t, db.Where("payroll_run_id = ?", run.ID).Order("payment_date ASC").Find(&settlements).Error)
+	require.Len(t, settlements, 3)
+	require.Equal(t, models.PayrollSettlementTypeSalary, settlements[0].SettlementType)
+	require.Equal(t, "2026-06-20", settlements[0].PaymentDate.Format("2006-01-02"))
+	require.Equal(t, models.PayrollSettlementTypeBPJS, settlements[1].SettlementType)
+	require.Equal(t, "2026-06-25", settlements[1].PaymentDate.Format("2006-01-02"))
+	require.Equal(t, models.PayrollSettlementTypePPh21, settlements[2].SettlementType)
+	require.Equal(t, "2026-07-10", settlements[2].PaymentDate.Format("2006-01-02"))
+
+	var salaryJournal, bpjsJournal, pphJournal models.SSOTJournalEntry
+	require.NoError(t, db.Preload("Lines").First(&salaryJournal, settlements[0].JournalEntryID).Error)
+	require.NoError(t, db.Preload("Lines").First(&bpjsJournal, settlements[1].JournalEntryID).Error)
+	require.NoError(t, db.Preload("Lines").First(&pphJournal, settlements[2].JournalEntryID).Error)
+	assertJournalLine(salaryJournal, salaryPayable.ID, 39669713, 0)
+	assertJournalLine(salaryJournal, bankGL.ID, 0, 39669713)
+	assertJournalLine(bpjsJournal, deductionPayable.ID, 1480287, 0)
+	assertJournalLine(bpjsJournal, bankGL.ID, 0, 1480287)
+	assertJournalLine(pphJournal, pphPayable.ID, 950000, 0)
+	assertJournalLine(pphJournal, bankGL.ID, 0, 950000)
+
+	require.NoError(t, db.First(&bank, bank.ID).Error)
+	require.InDelta(t, 57900000, bank.Balance, 0.01)
+
+	duplicateBPJSRecorder := call("/api/v1/payroll/pay-bpjs", bpjsBody, controller.PayPayrollBPJS)
+	require.Equal(t, http.StatusBadRequest, duplicateBPJSRecorder.Code)
+	duplicateRecorder := call("/api/v1/payroll/pay-pph", pphBody, controller.PayPayrollPPh)
+	require.Equal(t, http.StatusBadRequest, duplicateRecorder.Code)
 }

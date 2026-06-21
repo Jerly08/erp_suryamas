@@ -94,6 +94,7 @@ noted.txt
 /backend/test*/
 /backend/bin/
 /backend/logs/
+/backend/.gocache-*/
 /backend/**/*.bak
 /backend/**/*.backup
 /backend/**/*.log

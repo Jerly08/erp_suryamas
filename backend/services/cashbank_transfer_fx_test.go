@@ -26,6 +26,7 @@ func setupCashBankTransferFXTestDB(t *testing.T) *gorm.DB {
 
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
+		&models.ModulePermissionRecord{},
 		&models.Account{},
 		&models.AccountingPeriod{},
 		&models.CashBank{},
@@ -37,6 +38,51 @@ func setupCashBankTransferFXTestDB(t *testing.T) *gorm.DB {
 	ensureCashBankTransferApprovalColumns(t, db)
 
 	return db
+}
+
+func TestCashBankTransferApprovalUsesManagedPermission(t *testing.T) {
+	db := setupCashBankTransferFXTestDB(t)
+	service := NewCashBankService(
+		db,
+		repositories.NewCashBankRepository(db),
+		repositories.NewAccountRepository(db),
+	)
+
+	manager := models.User{
+		Username: "managed-cashbank-manager",
+		Email:    "managed-cashbank-manager@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceManager,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&manager).Error)
+	require.NoError(t, db.Create(&models.ModulePermissionRecord{
+		UserID:     manager.ID,
+		Module:     "cash_bank",
+		CanApprove: false,
+	}).Error)
+
+	allowed, err := service.canApproveCashBankTransfer(manager.ID, manager.Role)
+	require.NoError(t, err)
+	require.False(t, allowed, "managed denial must override finance manager default")
+
+	employee := models.User{
+		Username: "managed-cashbank-employee",
+		Email:    "managed-cashbank-employee@test.local",
+		Password: "secret",
+		Role:     models.RoleEmployee,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&employee).Error)
+	require.NoError(t, db.Create(&models.ModulePermissionRecord{
+		UserID:     employee.ID,
+		Module:     "cash_bank",
+		CanApprove: true,
+	}).Error)
+
+	allowed, err = service.canApproveCashBankTransfer(employee.ID, employee.Role)
+	require.NoError(t, err)
+	require.True(t, allowed, "managed grant must override employee default")
 }
 
 func ensureCashBankTransferApprovalColumns(t *testing.T, db *gorm.DB) {

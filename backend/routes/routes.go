@@ -1008,6 +1008,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				payroll.POST("", permMiddleware.CanCreate("payroll"), payrollController.CreatePayrollRun)
 				payroll.POST("/:id/approve", permMiddleware.CanApprove("payroll"), payrollController.ApprovePayrollRun)
 				payroll.POST("/:id/reject", permMiddleware.CanApprove("payroll"), payrollController.RejectPayrollRun)
+				payroll.POST("/:id/pay-salary", permMiddleware.CanApprove("payroll"), payrollController.PayPayrollSalary)
+				payroll.POST("/:id/pay-bpjs", permMiddleware.CanApprove("payroll"), payrollController.PayPayrollBPJS)
 				payroll.POST("/:id/pay-pph", permMiddleware.CanApprove("payroll"), payrollController.PayPayrollPPh)
 			}
 

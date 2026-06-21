@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import SimpleLayout from '@/components/layout/SimpleLayout';
+import ProtectedModule from '@/components/common/ProtectedModule';
 import api from '@/services/api';
 import {
   Box,
@@ -706,20 +707,23 @@ const TaxAccountSettingsPage: React.FC = () => {
   // Loading state
   if (loading) {
     return (
-      <SimpleLayout allowedRoles={['admin']}>
-        <Box display="flex" alignItems="center" justifyContent="center" minH="400px">
-          <VStack spacing={4}>
-            <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
-            <Text>Loading tax account settings...</Text>
-          </VStack>
-        </Box>
-      </SimpleLayout>
+      <ProtectedModule module="settings">
+        <SimpleLayout>
+          <Box display="flex" alignItems="center" justifyContent="center" minH="400px">
+            <VStack spacing={4}>
+              <Spinner size="xl" thickness="4px" speed="0.65s" color="blue.500" />
+              <Text>Loading tax account settings...</Text>
+            </VStack>
+          </Box>
+        </SimpleLayout>
+      </ProtectedModule>
     );
   }
 
   return (
-    <SimpleLayout allowedRoles={['admin']}>
-      <Box>
+    <ProtectedModule module="settings">
+      <SimpleLayout>
+        <Box>
         <VStack spacing={6} alignItems="start">
           {/* Header */}
           <HStack justify="space-between" width="full">
@@ -1421,8 +1425,9 @@ const TaxAccountSettingsPage: React.FC = () => {
             </ModalFooter>
           </ModalContent>
         </Modal>
-      </Box>
-    </SimpleLayout>
+        </Box>
+      </SimpleLayout>
+    </ProtectedModule>
   );
 };
 

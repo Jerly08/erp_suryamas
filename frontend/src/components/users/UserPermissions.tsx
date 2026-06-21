@@ -79,10 +79,10 @@ const modules = [
   { key: 'purchases', label: 'Purchases', description: 'Purchase Orders & Receipts', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
   { key: 'payments', label: 'Payments', description: 'Payment Processing', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
   { key: 'cash_bank', label: 'Cash & Bank', description: 'Cash & Bank Management', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
-  { key: 'journal', label: 'Journal', description: 'General Journal & Journal Entries', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
-  { key: 'payroll', label: 'Payroll', description: 'Payroll input, summary visibility, and finance manager approval', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
+  { key: 'journal', label: 'Journal', description: 'General Journal & Journal Entries', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
+  { key: 'payroll', label: 'Payroll', description: 'Payroll input, summary visibility, and approval', actions: ['view', 'create', 'edit', 'delete', 'approve', 'export', 'menu'] },
   { key: 'reports', label: 'Reports', description: 'Financial & Business Reports', actions: ['view', 'create', 'edit', 'delete', 'export', 'menu'] },
-  { key: 'users', label: 'Users', description: 'User Management (Admin Only)', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
+  { key: 'users', label: 'Users', description: 'User Management', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
   { key: 'settings', label: 'Settings', description: 'System Settings & Invoice Types Management', actions: ['view', 'create', 'edit', 'delete', 'menu'] },
 ];
 
@@ -182,6 +182,10 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
         isClosable: true,
       });
 
+      window.dispatchEvent(new CustomEvent('permissions-updated', {
+        detail: { userId: user.id },
+      }));
+
       setOriginalPermissions(JSON.parse(JSON.stringify(permissions)));
     } catch (error: any) {
       console.error('Error updating user permissions:', error);
@@ -214,6 +218,10 @@ const UserPermissions: React.FC<UserPermissionsProps> = ({ isOpen, onClose, user
         duration: 3000,
         isClosable: true,
       });
+
+      window.dispatchEvent(new CustomEvent('permissions-updated', {
+        detail: { userId: user.id },
+      }));
 
       // Refresh permissions
       fetchUserPermissions();

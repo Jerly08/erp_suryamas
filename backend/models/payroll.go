@@ -18,6 +18,18 @@ const (
 	PayrollPPhPaymentStatusPaid        = "PAID"
 )
 
+const (
+	PayrollSalaryPaymentStatusUnpaid      = "UNPAID"
+	PayrollSalaryPaymentStatusPartialPaid = "PARTIAL_PAID"
+	PayrollSalaryPaymentStatusPaid        = "PAID"
+)
+
+const (
+	PayrollSettlementTypeSalary = "SALARY"
+	PayrollSettlementTypePPh21  = "PPH21"
+	PayrollSettlementTypeBPJS   = "BPJS"
+)
+
 type PayrollRun struct {
 	ID                       uint           `json:"id" gorm:"primaryKey"`
 	PayrollNumber            string         `json:"payroll_number" gorm:"uniqueIndex;not null;size:50"`
@@ -31,6 +43,18 @@ type PayrollRun struct {
 	TotalPPh                 float64        `json:"total_pph" gorm:"column:total_pph;type:decimal(15,2);default:0"`
 	TotalBPJS                float64        `json:"total_bpjs" gorm:"type:decimal(15,2);default:0"`
 	TotalOverall             float64        `json:"total_overall" gorm:"type:decimal(15,2);default:0"`
+	SalaryPaymentStatus      string         `json:"salary_payment_status" gorm:"column:salary_payment_status;not null;default:'UNPAID';size:20"`
+	SalaryPaidAmount         float64        `json:"salary_paid_amount" gorm:"column:salary_paid_amount;type:decimal(15,2);default:0"`
+	SalaryPaymentDate        *time.Time     `json:"salary_payment_date" gorm:"column:salary_payment_date"`
+	SalaryPaymentReference   string         `json:"salary_payment_reference" gorm:"column:salary_payment_reference;size:100"`
+	SalaryPaymentNotes       string         `json:"salary_payment_notes" gorm:"column:salary_payment_notes;type:text"`
+	SalaryPaymentJournalID   *uint64        `json:"salary_payment_journal_entry_id" gorm:"column:salary_payment_journal_entry_id;index"`
+	BPJSPaymentStatus        string         `json:"bpjs_payment_status" gorm:"column:bpjs_payment_status;not null;default:'UNPAID';size:20"`
+	BPJSPaidAmount           float64        `json:"bpjs_paid_amount" gorm:"column:bpjs_paid_amount;type:decimal(15,2);default:0"`
+	BPJSPaymentDate          *time.Time     `json:"bpjs_payment_date" gorm:"column:bpjs_payment_date"`
+	BPJSPaymentReference     string         `json:"bpjs_payment_reference" gorm:"column:bpjs_payment_reference;size:100"`
+	BPJSPaymentNotes         string         `json:"bpjs_payment_notes" gorm:"column:bpjs_payment_notes;type:text"`
+	BPJSPaymentJournalID     *uint64        `json:"bpjs_payment_journal_entry_id" gorm:"column:bpjs_payment_journal_entry_id;index"`
 	PPhPaymentStatus         string         `json:"pph_payment_status" gorm:"column:pph_payment_status;not null;default:'UNPAID';size:20"`
 	PPhPaidAmount            float64        `json:"pph_paid_amount" gorm:"column:pph_paid_amount;type:decimal(15,2);default:0"`
 	PPhRecognitionDate       *time.Time     `json:"pph_recognition_date" gorm:"column:pph_recognition_date"`
@@ -49,10 +73,34 @@ type PayrollRun struct {
 	UpdatedAt                time.Time      `json:"updated_at"`
 	DeletedAt                gorm.DeletedAt `json:"-" gorm:"index"`
 
-	CreatedBy  User          `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
-	ApprovedBy *User         `json:"approved_by,omitempty" gorm:"foreignKey:ApprovedByID"`
-	RejectedBy *User         `json:"rejected_by,omitempty" gorm:"foreignKey:RejectedByID"`
-	Items      []PayrollItem `json:"items,omitempty" gorm:"foreignKey:PayrollRunID"`
+	CreatedBy   User                `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
+	ApprovedBy  *User               `json:"approved_by,omitempty" gorm:"foreignKey:ApprovedByID"`
+	RejectedBy  *User               `json:"rejected_by,omitempty" gorm:"foreignKey:RejectedByID"`
+	Items       []PayrollItem       `json:"items,omitempty" gorm:"foreignKey:PayrollRunID"`
+	Settlements []PayrollSettlement `json:"settlements,omitempty" gorm:"foreignKey:PayrollRunID"`
+}
+
+// PayrollSettlement is the immutable audit trail for every salary or PPh 21
+// settlement. PayrollRun keeps denormalized totals for fast list rendering,
+// while this table preserves partial-payment history and journal links.
+type PayrollSettlement struct {
+	ID             uint           `json:"id" gorm:"primaryKey"`
+	PayrollRunID   uint           `json:"payroll_run_id" gorm:"not null;index;index:idx_payroll_settlement_unique,unique"`
+	SettlementType string         `json:"settlement_type" gorm:"not null;size:20;index;index:idx_payroll_settlement_unique,unique"`
+	Amount         float64        `json:"amount" gorm:"type:decimal(15,2);not null"`
+	PaymentDate    time.Time      `json:"payment_date" gorm:"not null;index"`
+	CashBankID     uint           `json:"cash_bank_id" gorm:"not null;index"`
+	JournalEntryID uint64         `json:"journal_entry_id" gorm:"not null;index;index:idx_payroll_settlement_unique,unique"`
+	Reference      string         `json:"reference" gorm:"size:100"`
+	Notes          string         `json:"notes" gorm:"type:text"`
+	Source         string         `json:"source" gorm:"not null;default:'PAYROLL';size:30"`
+	CreatedByID    uint           `json:"created_by_id" gorm:"not null;index"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `json:"-" gorm:"index"`
+
+	CashBank  CashBank `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
+	CreatedBy User     `json:"created_by,omitempty" gorm:"foreignKey:CreatedByID"`
 }
 
 type PayrollItem struct {
@@ -129,6 +177,16 @@ type PayrollPPhPaymentRequest struct {
 	Reference   string  `json:"reference"`
 	Notes       string  `json:"notes"`
 }
+
+type PayrollSalaryPaymentRequest struct {
+	PaymentDate string  `json:"payment_date" binding:"required"`
+	Amount      float64 `json:"amount" binding:"required"`
+	CashBankID  uint    `json:"cash_bank_id" binding:"required"`
+	Reference   string  `json:"reference"`
+	Notes       string  `json:"notes"`
+}
+
+type PayrollBPJSPaymentRequest = PayrollSalaryPaymentRequest
 
 type PayrollRunResponse struct {
 	PayrollRun

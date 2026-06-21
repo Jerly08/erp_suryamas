@@ -68,6 +68,7 @@ import {
   PeriodFilterOption
 } from '../../services/periodClosingService';
 import { useTranslation } from '@/hooks/useTranslation';
+import { cleanCsvContent } from '@/utils/exportText';
 
 interface EnhancedBalanceSheetReportProps {
   onClose?: () => void;
@@ -216,7 +217,7 @@ export const EnhancedBalanceSheetReport: React.FC<EnhancedBalanceSheetReportProp
 
       console.log('Received CSV content, creating download link');
       // Create download link
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob([cleanCsvContent(csvContent)], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

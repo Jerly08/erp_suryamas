@@ -55,8 +55,8 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB, rbacMgr *middl
 		// Get current active tax account settings
 		taxSettings.GET("/current", taxAccountController.GetCurrentSettings)
 
-		// Get all tax account settings (admin only via AutoPermission fallbacks assuming default roles if not given)
-		taxSettings.GET("", rbacMgr.RequireRole("admin"), taxAccountController.GetAllSettings)
+		// AutoPermission("settings") is authoritative for all tax settings routes.
+		taxSettings.GET("", taxAccountController.GetAllSettings)
 
 		// Create new tax account settings
 		taxSettings.POST("", taxAccountController.CreateSettings)
@@ -74,7 +74,7 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB, rbacMgr *middl
 		taxSettings.POST("/validate", taxAccountController.ValidateAccountConfiguration)
 
 		// Refresh cache
-		taxSettings.POST("/refresh-cache", rbacMgr.RequireRole("admin"), taxAccountController.RefreshCache)
+		taxSettings.POST("/refresh-cache", taxAccountController.RefreshCache)
 
 		// Get account suggestions for setup wizard
 		taxSettings.GET("/suggestions", taxAccountController.GetAccountSuggestions)

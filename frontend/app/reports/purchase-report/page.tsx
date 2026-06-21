@@ -9,6 +9,7 @@ import { projectService, Project } from '@/services/projectService';
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
 import periodClosingService from '@/services/periodClosingService';
+import { cleanCsvCell } from '@/utils/exportText';
 import {
     Box, Heading, Text, Button, VStack, HStack, Card, CardBody, Icon, SimpleGrid,
     FormControl, FormLabel, Input, Select, Spinner, useToast, useColorModeValue,
@@ -266,7 +267,7 @@ const PurchaseReportPage: React.FC = () => {
             const totalOutstanding = data.purchases_by_vendor.reduce((s, v) => s + (v.outstanding || 0), 0);
             rows.push(['TOTAL', String(data.purchases_by_vendor.length), String(totalAmount), String(totalPaid), String(totalOutstanding), '']);
 
-            const csv = bom + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+            const csv = bom + rows.map(r => r.map(c => `"${cleanCsvCell(c).replace(/"/g, '""')}"`).join(',')).join('\n');
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');

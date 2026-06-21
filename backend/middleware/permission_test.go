@@ -61,7 +61,7 @@ func TestCheckModulePermissionUsesModulePermissionForPrepaidExpenses(t *testing.
 	}
 }
 
-func TestCheckModulePermissionKeepsJournalWorkflowOverride(t *testing.T) {
+func TestCheckModulePermissionUsesManagedJournalPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newPermissionMiddlewareTestDB(t)
 
@@ -87,12 +87,12 @@ func TestCheckModulePermissionKeepsJournalWorkflowOverride(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/journal", nil))
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected journal edit to stay blocked by workflow override, got status %d", recorder.Code)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected managed journal edit permission to override role default, got status %d body %s", recorder.Code, recorder.Body.String())
 	}
 }
 
-func TestCanUsePurchaseApprovalWorkflowAllowsOnlyWorkflowRoles(t *testing.T) {
+func TestCanUsePurchaseApprovalWorkflowUsesManagedPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newPermissionMiddlewareTestDB(t)
 
@@ -104,7 +104,7 @@ func TestCanUsePurchaseApprovalWorkflowAllowsOnlyWorkflowRoles(t *testing.T) {
 		{name: "finance staff can approve active purchase workflow step", role: models.RoleFinanceStaff, wantStatus: http.StatusNoContent},
 		{name: "finance manager can approve active purchase workflow step", role: models.RoleFinanceManager, wantStatus: http.StatusNoContent},
 		{name: "director can approve escalated purchase workflow step", role: models.RoleDirector, wantStatus: http.StatusNoContent},
-		{name: "admin cannot bypass purchase workflow", role: models.RoleAdmin, wantStatus: http.StatusForbidden},
+		{name: "admin follows default purchase approval permission", role: models.RoleAdmin, wantStatus: http.StatusNoContent},
 		{name: "employee cannot approve purchase workflow", role: models.RoleEmployee, wantStatus: http.StatusForbidden},
 	}
 
@@ -128,5 +128,29 @@ func TestCanUsePurchaseApprovalWorkflowAllowsOnlyWorkflowRoles(t *testing.T) {
 				t.Fatalf("expected status %d, got %d body %s", tt.wantStatus, recorder.Code, recorder.Body.String())
 			}
 		})
+	}
+
+	if err := db.Create(&models.ModulePermissionRecord{
+		UserID:     uint(99),
+		Module:     "purchases",
+		CanApprove: false,
+	}).Error; err != nil {
+		t.Fatalf("seed managed purchase denial: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(99))
+		c.Set("role", models.RoleFinanceManager)
+		c.Next()
+	})
+	router.POST("/purchases/1/approve", NewPermissionMiddleware(db).CanUsePurchaseApprovalWorkflow(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/purchases/1/approve", nil))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected managed denial to override finance manager role, got %d body %s", recorder.Code, recorder.Body.String())
 	}
 }

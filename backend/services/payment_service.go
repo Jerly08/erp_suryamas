@@ -3,6 +3,7 @@ package services
 import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/utils"
 	"bytes"
 	"context"
 	"errors"
@@ -1975,6 +1976,7 @@ func (s *PaymentService) ExportPaymentReportExcel(startDate, endDate, status, me
 
 // generatePaymentExcel creates Excel file for payments
 func (s *PaymentService) generatePaymentExcel(payments []models.Payment, startDate, endDate, status, method string) ([]byte, error) {
+	utils.SanitizeExportData(payments)
 	// Import excelize
 	f := excelize.NewFile()
 	defer func() {

@@ -16,6 +16,7 @@ import (
 	"app-sistem-akuntansi/routes"
 	"app-sistem-akuntansi/services"
 	"app-sistem-akuntansi/startup"
+	"app-sistem-akuntansi/utils"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,8 @@ import (
 // @description Type "Bearer" followed by a space and JWT token.
 
 func main() {
+	log.SetOutput(utils.NewSanitizingWriter(os.Stdout))
+
 	// Load configuration
 	cfg := config.LoadConfig()
 

@@ -186,18 +186,6 @@ func (ac *AssetController) CreateAsset(c *gin.Context) {
 		return
 	}
 
-	userRole := strings.ToLower(strings.TrimSpace(c.GetString("user_role")))
-	if userRole == "" {
-		userRole = strings.ToLower(strings.TrimSpace(c.GetString("role")))
-	}
-	if userRole != "admin" && userRole != "finance" {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":   "Opening balance asset creation is restricted",
-			"details": "Only admin and finance can record existing assets / opening balances from Asset Master.",
-		})
-		return
-	}
-
 	// Convert request to asset model
 	asset := &models.Asset{
 		Code:                             req.Code,

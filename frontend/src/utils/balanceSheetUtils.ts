@@ -12,6 +12,7 @@ import {
   EnhancedBalanceSheet,
   BalanceSheetValidationResult
 } from '../types/balanceSheet';
+import { cleanCsvCell } from './exportText';
 
 /**
  * Quick Balance Sheet Generator
@@ -269,7 +270,7 @@ export function exportBalanceSheetToCSV(balanceSheet: BalanceSheet): string {
   rows.push(['TOTAL LIABILITIES + EQUITY', '', '', balanceSheet.total_liabilities_equity.toString(), '', '']);
 
   // Convert to CSV string
-  return rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+  return rows.map(row => row.map(cell => `"${cleanCsvCell(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
 }
 
 /**

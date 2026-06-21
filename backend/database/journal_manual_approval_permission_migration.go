@@ -77,17 +77,7 @@ func JournalManualApprovalPermissionMigration(db *gorm.DB) {
 					(user_id, module, can_view, can_create, can_edit, can_delete, can_approve, can_export, can_menu, created_at, updated_at, deleted_at)
 				VALUES
 					(?, 'journal', ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NULL)
-				ON CONFLICT (user_id, module)
-				DO UPDATE SET
-					can_view = EXCLUDED.can_view,
-					can_create = EXCLUDED.can_create,
-					can_edit = EXCLUDED.can_edit,
-					can_delete = EXCLUDED.can_delete,
-					can_approve = EXCLUDED.can_approve,
-					can_export = EXCLUDED.can_export,
-					can_menu = EXCLUDED.can_menu,
-					updated_at = NOW(),
-					deleted_at = NULL
+				ON CONFLICT (user_id, module) DO NOTHING
 			`,
 				user.ID,
 				permission.CanView,

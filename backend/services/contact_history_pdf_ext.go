@@ -7,11 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"app-sistem-akuntansi/utils"
+
 	"github.com/jung-kurt/gofpdf"
 )
 
 // GenerateCustomerHistoryPDF generates PDF for customer transaction history
 func (p *PDFService) GenerateCustomerHistoryPDF(historyData interface{}) ([]byte, error) {
+	utils.SanitizeExportData(historyData)
 	view, err := buildCustomerHistoryExportView(historyData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse customer history data: %v", err)
@@ -266,6 +269,7 @@ func (p *PDFService) GenerateCustomerHistoryPDF(historyData interface{}) ([]byte
 
 // GenerateVendorHistoryPDF generates PDF for vendor transaction history
 func (p *PDFService) GenerateVendorHistoryPDF(historyData interface{}) ([]byte, error) {
+	utils.SanitizeExportData(historyData)
 	view, err := buildVendorHistoryExportView(historyData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse vendor history data: %v", err)

@@ -4,7 +4,6 @@ import (
 	"app-sistem-akuntansi/services"
 	"app-sistem-akuntansi/utils"
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"log"
 	"net/http"
@@ -111,7 +110,7 @@ func (c *SSOTProfitLossController) GetSSOTProfitLoss(ctx *gin.Context) {
 		if format == "csv" {
 			// Build CSV on the fly from responseData sections
 			var buf bytes.Buffer
-			w := csv.NewWriter(&buf)
+			w := utils.NewSanitizedCSVWriter(&buf)
 			// header
 			_ = w.Write([]string{"Section", "Subsection", "Account Code", "Account Name", "Amount"})
 			// flatten sections

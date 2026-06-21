@@ -129,22 +129,18 @@ export default function GeneralJournalView() {
   >([]);
   const pageSize = 100;
   const normalizedRole = String(user?.role || "").toLowerCase();
-  const isAdmin = normalizedRole === "admin";
-  const isFinanceStaff =
+	const isFinanceStaff =
     normalizedRole === "finance_staff" || normalizedRole === "accounting";
   const isFinanceManagerApprover =
     normalizedRole === "finance_manager" || normalizedRole === "finance";
   const isDirectorApprover = normalizedRole === "director";
   const canManageAdjustmentDraft = isFinanceStaff || isFinanceManagerApprover;
   const canCreateAdjustment = canCreate && canManageAdjustmentDraft;
-  const canCreateManualEntry = canCreate && !isFinanceStaff && !isAdmin;
-  const canPostDraftEntry =
-    canApprove && (isFinanceManagerApprover || isDirectorApprover);
-  const canManageGeneralDraft =
-    canEdit && !isFinanceManagerApprover && !isDirectorApprover && !isAdmin;
-  const canDeleteGeneralDraft =
-    canDelete && !isFinanceManagerApprover && !isDirectorApprover && !isAdmin;
-  const canReverseJournalEntry = canApprove && isFinanceManagerApprover;
+  const canCreateManualEntry = canCreate;
+  const canPostDraftEntry = canApprove;
+  const canManageGeneralDraft = canEdit;
+  const canDeleteGeneralDraft = canDelete;
+  const canReverseJournalEntry = canApprove;
   const canShowCreateAdjustmentAction = useCallback(
     (entry: SSOTJournalEntry) =>
       entry.status === "POSTED" &&

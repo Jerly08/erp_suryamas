@@ -74,26 +74,6 @@ func TestGetDefaultPermissionsJournalAdjustmentWorkflow(t *testing.T) {
 		}
 	})
 
-	t.Run("workflow managed journal permission ignores legacy overrides", func(t *testing.T) {
-		legacyFullAccess := &ModulePermission{
-			CanView:    true,
-			CanCreate:  true,
-			CanEdit:    true,
-			CanDelete:  true,
-			CanApprove: true,
-			CanExport:  true,
-			CanMenu:    true,
-		}
-
-		effective := EnforceWorkflowManagedModulePermission(RoleAdmin, "journal", legacyFullAccess)
-		if effective == nil {
-			t.Fatal("expected effective journal permission for admin")
-		}
-
-		if effective.CanCreate || effective.CanEdit || effective.CanDelete || effective.CanApprove {
-			t.Fatalf("expected workflow enforcement to remove admin journal operational access, got %+v", *effective)
-		}
-	})
 }
 
 func TestGetDefaultPermissionsCashBankTransferApprovalWorkflow(t *testing.T) {
@@ -247,8 +227,8 @@ func TestGetDefaultPermissionsAccountingMirrorsFinanceStaffOperations(t *testing
 	if !purchasePermission.CanView || !purchasePermission.CanCreate || !purchasePermission.CanEdit || !purchasePermission.CanMenu {
 		t.Fatalf("expected accounting to create and edit purchase drafts, got %+v", *purchasePermission)
 	}
-	if purchasePermission.CanApprove || purchasePermission.CanDelete {
-		t.Fatalf("expected accounting purchase permission to avoid approval/delete bypass, got %+v", *purchasePermission)
+	if !purchasePermission.CanApprove || purchasePermission.CanDelete {
+		t.Fatalf("expected accounting to review purchases without delete access, got %+v", *purchasePermission)
 	}
 }
 

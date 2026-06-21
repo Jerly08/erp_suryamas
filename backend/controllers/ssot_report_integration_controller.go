@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"app-sistem-akuntansi/services"
+	"app-sistem-akuntansi/utils"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -484,7 +484,7 @@ func (c *SSOTReportIntegrationController) generateGeneralLedgerCSV(data *service
 	buf.WriteString("\uFEFF")
 	buf.WriteString("sep=;\n")
 
-	writer := csv.NewWriter(&buf)
+	writer := utils.NewSanitizedCSVWriter(&buf)
 	writer.Comma = ';'
 
 	write := func(record []string) error {

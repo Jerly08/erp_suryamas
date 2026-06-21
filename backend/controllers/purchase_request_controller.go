@@ -318,11 +318,6 @@ func (c *PurchaseRequestController) Review(ctx *gin.Context) {
 	}
 
 	role := ctx.GetString("role")
-	if !models.CanReviewPurchaseRequests(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, accounting, finance manager, or director can review purchase requests"})
-		return
-	}
-
 	message, err := c.service.ReviewPurchaseRequest(uint(id), reviewerID.(uint), role, payload)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -347,11 +342,6 @@ func (c *PurchaseRequestController) Approve(ctx *gin.Context) {
 		return
 	}
 	role := ctx.GetString("role")
-	if !models.CanReviewPurchaseRequests(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, accounting, finance manager, or director can approve purchase requests"})
-		return
-	}
-
 	message, err := c.service.ApprovePurchaseRequest(uint(id), approverID.(uint), role)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -385,11 +375,6 @@ func (c *PurchaseRequestController) Reject(ctx *gin.Context) {
 		return
 	}
 	role := ctx.GetString("role")
-	if !models.CanReviewPurchaseRequests(role) {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Only finance staff, accounting, finance manager, or director can reject purchase requests"})
-		return
-	}
-
 	message, err := c.service.RejectPurchaseRequest(uint(id), approverID.(uint), role, payload.Reason)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

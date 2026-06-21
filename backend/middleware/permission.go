@@ -86,7 +86,7 @@ func (pm *PermissionMiddleware) CheckModulePermission(module string, action stri
 		var basePermission *models.ModulePermission
 
 		if err == nil {
-			// Permission record found, use it as the base before workflow overrides.
+			// Manage Permissions is authoritative whenever a module record exists.
 			log.Printf("[PERMISSION DEBUG] Found custom permission record for user %d, module %s", userID, module)
 			basePermission = &models.ModulePermission{
 				CanView:    permission.CanView,
@@ -111,8 +111,7 @@ func (pm *PermissionMiddleware) CheckModulePermission(module string, action stri
 			log.Printf("[PERMISSION DEBUG] Database error: %v", err)
 		}
 
-		effectivePermission := models.EnforceWorkflowManagedModulePermission(role, module, basePermission)
-		hasPermission = modulePermissionAllowsAction(effectivePermission, action)
+		hasPermission = modulePermissionAllowsAction(basePermission, action)
 		log.Printf("[PERMISSION DEBUG] Final result - hasPermission: %v", hasPermission)
 
 		if !hasPermission {
@@ -160,37 +159,9 @@ func (pm *PermissionMiddleware) CanExport(module string) gin.HandlerFunc {
 }
 
 func (pm *PermissionMiddleware) CanUsePurchaseApprovalWorkflow() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		role := c.GetString("role")
-		if role == "" {
-			role = c.GetString("user_role")
-		}
-
-		roleNorm := models.NormalizeRole(role)
-		if models.IsFinanceStaffRole(roleNorm) || models.IsFinanceManagerRole(roleNorm) || roleNorm == models.RoleDirector {
-			c.Next()
-			return
-		}
-
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":     "Only Finance Staff, Finance Manager, or Director can act on purchase approval workflow steps",
-			"user_role": role,
-		})
-		c.Abort()
-	}
+	return pm.CanApprove("purchases")
 }
 
 func (pm *PermissionMiddleware) CanReviewPurchaseRequests() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		role := c.GetString("role")
-		if models.CanReviewPurchaseRequests(role) {
-			c.Next()
-			return
-		}
-
-		c.JSON(403, gin.H{
-			"error": "Only finance staff, finance manager, or director can review purchase requests",
-		})
-		c.Abort()
-	}
+	return pm.CanApprove("purchase_requests")
 }

@@ -2,7 +2,6 @@ package services
 
 import (
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"os"
 	"strings"
@@ -15,8 +14,8 @@ import (
 )
 
 // CashFlowExportService handles export functionality for Cash Flow reports
-type CashFlowExportService struct{ 
-	db *gorm.DB 
+type CashFlowExportService struct {
+	db *gorm.DB
 }
 
 // NewCashFlowExportService creates a new cash flow export service
@@ -46,13 +45,13 @@ func (s *CashFlowExportService) getCompanyInfo() *models.Settings {
 	return &settings
 }
 
-
 // ExportToCSV exports cash flow data to CSV format with localization
 func (s *CashFlowExportService) ExportToCSV(data *SSOTCashFlowData, userID uint) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	// Get user language preference
 	language := utils.GetUserLanguageFromSettings(s.db)
 	var buf bytes.Buffer
-	writer := csv.NewWriter(&buf)
+	writer := utils.NewSanitizedCSVWriter(&buf)
 
 	// Write header information with localization
 	writer.Write([]string{utils.T("cash_flow_statement", language)})
@@ -67,7 +66,7 @@ func (s *CashFlowExportService) ExportToCSV(data *SSOTCashFlowData, userID uint)
 
 	// Operating Activities with localization
 	writer.Write([]string{utils.T("operating_activities", language), "", "", "", "", ""})
-	
+
 	// Net Income with localization
 	writer.Write([]string{
 		"Operating",
@@ -219,6 +218,7 @@ func (s *CashFlowExportService) ExportToCSV(data *SSOTCashFlowData, userID uint)
 
 // ExportToPDF exports cash flow data to PDF format (structured like trial balance)
 func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(15, 15, 15)
 	pdf.AddPage()
@@ -236,7 +236,9 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 	logoAdded := false
 	if strings.TrimSpace(settings.CompanyLogo) != "" {
 		logoPath := settings.CompanyLogo
-		if strings.HasPrefix(logoPath, "/") { logoPath = "." + logoPath }
+		if strings.HasPrefix(logoPath, "/") {
+			logoPath = "." + logoPath
+		}
 		if _, err := os.Stat(logoPath); err == nil {
 			if imgType := detectImageType(logoPath); imgType != "" {
 				pdf.ImageOptions(logoPath, logoX, logoY, logoSize, 0, false, gofpdf.ImageOptions{ImageType: imgType}, 0, "")
@@ -245,19 +247,21 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 		}
 	}
 	if !logoAdded {
-		pdf.SetDrawColor(220,220,220)
-		pdf.SetFillColor(248,249,250)
+		pdf.SetDrawColor(220, 220, 220)
+		pdf.SetFillColor(248, 249, 250)
 		pdf.SetLineWidth(0.3)
 		pdf.Rect(logoX, logoY, logoSize, logoSize, "FD")
 		pdf.SetFont("Arial", "B", 16)
-		pdf.SetTextColor(120,120,120)
+		pdf.SetTextColor(120, 120, 120)
 		pdf.SetXY(logoX+8, logoY+19)
-		pdf.CellFormat(19,8,"</>","",0,"C",false,0,"")
-		pdf.SetTextColor(0,0,0)
+		pdf.CellFormat(19, 8, "</>", "", 0, "C", false, 0, "")
+		pdf.SetTextColor(0, 0, 0)
 	}
 
 	companyName := strings.TrimSpace(settings.CompanyName)
-	if companyName == "" { companyName = data.Company.Name }
+	if companyName == "" {
+		companyName = data.Company.Name
+	}
 	pdf.SetFont("Arial", "B", 12)
 	nameW := pdf.GetStringWidth(companyName)
 	pdf.SetXY(pageW-rm-nameW, tm)
@@ -265,7 +269,9 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 
 	pdf.SetFont("Arial", "", 9)
 	addr := strings.TrimSpace(settings.CompanyAddress)
-	if addr == "" { addr = strings.TrimSpace(data.Company.Address) }
+	if addr == "" {
+		addr = strings.TrimSpace(data.Company.Address)
+	}
 	if addr != "" {
 		addrW := pdf.GetStringWidth(addr)
 		pdf.SetXY(pageW-rm-addrW, tm+8)
@@ -280,7 +286,7 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 	}
 
 	// Divider line
-	pdf.SetDrawColor(238,238,238)
+	pdf.SetDrawColor(238, 238, 238)
 	pdf.SetLineWidth(0.2)
 	pdf.Line(lm, tm+45, pageW-rm, tm+45)
 
@@ -288,9 +294,9 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 	pdf.SetY(tm + 55)
 	pdf.SetX(lm)
 	pdf.SetFont("Arial", "B", 22)
-	pdf.SetTextColor(51,51,51)
+	pdf.SetTextColor(51, 51, 51)
 	pdf.Cell(contentW, 10, "CASH FLOW STATEMENT")
-	pdf.SetTextColor(0,0,0)
+	pdf.SetTextColor(0, 0, 0)
 	pdf.Ln(12)
 
 	// Details two-column
@@ -298,17 +304,17 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 	pdf.SetX(lm)
 	pdf.Cell(20, 5, "Period:")
 	pdf.SetFont("Arial", "", 9)
-	pdf.SetTextColor(102,102,102)
+	pdf.SetTextColor(102, 102, 102)
 	pdf.Cell(60, 5, fmt.Sprintf("%s - %s", data.StartDate.Format("02/01/2006"), data.EndDate.Format("02/01/2006")))
 
 	pdf.SetFont("Arial", "B", 9)
-	pdf.SetTextColor(0,0,0)
+	pdf.SetTextColor(0, 0, 0)
 	rightX := lm + contentW - 60
 	pdf.SetX(rightX)
-	pdf.Cell(26,5,"Generated:")
-	pdf.SetFont("Arial","",9)
-	pdf.SetTextColor(102,102,102)
-	pdf.Cell(34,5,data.GeneratedAt.Format("02/01/2006 15:04"))
+	pdf.Cell(26, 5, "Generated:")
+	pdf.SetFont("Arial", "", 9)
+	pdf.SetTextColor(102, 102, 102)
+	pdf.Cell(34, 5, data.GeneratedAt.Format("02/01/2006 15:04"))
 	pdf.Ln(12)
 
 	// Table headers
@@ -325,19 +331,19 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 	pdf.SetFillColor(255, 255, 255)
 
 	// Operating Activities
-	if data.OperatingActivities.NetIncome != 0 || 
-		len(data.OperatingActivities.Adjustments.Items) > 0 || 
+	if data.OperatingActivities.NetIncome != 0 ||
+		len(data.OperatingActivities.Adjustments.Items) > 0 ||
 		len(data.OperatingActivities.WorkingCapitalChanges.Items) > 0 {
-		
+
 		// Section header
 		pdf.SetFont("Arial", "B", 9)
 		pdf.SetFillColor(240, 240, 240)
 		pdf.CellFormat(190, 6, "OPERATING ACTIVITIES", "1", 0, "L", true, 0, "")
 		pdf.Ln(6)
-		
+
 		pdf.SetFont("Arial", "", 8)
 		pdf.SetFillColor(255, 255, 255)
-		
+
 		// Net Income
 		if data.OperatingActivities.NetIncome != 0 {
 			pdf.CellFormat(25, 5, "Operating", "1", 0, "C", false, 0, "")
@@ -346,14 +352,14 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 			pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
 			pdf.Ln(5)
 		}
-		
+
 		// Adjustments for Non-Cash Items
 		if len(data.OperatingActivities.Adjustments.Items) > 0 {
 			// Section header for adjustments
 			pdf.SetFont("Arial", "I", 8)
 			pdf.CellFormat(190, 4, "Adjustments for Non-Cash Items:", "1", 0, "L", false, 0, "")
 			pdf.Ln(4)
-			
+
 			pdf.SetFont("Arial", "", 8)
 			for _, item := range data.OperatingActivities.Adjustments.Items {
 				pdf.CellFormat(25, 5, "Adjustment", "1", 0, "C", false, 0, "")
@@ -362,7 +368,7 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 				pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
 				pdf.Ln(5)
 			}
-			
+
 			// Total adjustments
 			pdf.SetFont("Arial", "B", 8)
 			pdf.CellFormat(100, 5, "Total Adjustments", "1", 0, "R", false, 0, "")
@@ -370,14 +376,14 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 			pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
 			pdf.Ln(5)
 		}
-		
+
 		// Changes in Working Capital
 		if len(data.OperatingActivities.WorkingCapitalChanges.Items) > 0 {
 			// Section header for working capital
 			pdf.SetFont("Arial", "I", 8)
 			pdf.CellFormat(190, 4, "Changes in Working Capital:", "1", 0, "L", false, 0, "")
 			pdf.Ln(4)
-			
+
 			pdf.SetFont("Arial", "", 8)
 			for _, item := range data.OperatingActivities.WorkingCapitalChanges.Items {
 				pdf.CellFormat(25, 5, "Working Capital", "1", 0, "C", false, 0, "")
@@ -386,7 +392,7 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 				pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
 				pdf.Ln(5)
 			}
-			
+
 			// Total working capital changes
 			pdf.SetFont("Arial", "B", 8)
 			pdf.CellFormat(100, 5, "Total Working Capital Changes", "1", 0, "R", false, 0, "")
@@ -394,7 +400,7 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 			pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
 			pdf.Ln(5)
 		}
-		
+
 		// Net cash from operating activities
 		pdf.SetFont("Arial", "B", 9)
 		pdf.SetFillColor(240, 240, 240)
@@ -410,10 +416,10 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 		pdf.SetFillColor(240, 240, 240)
 		pdf.CellFormat(190, 6, "INVESTING ACTIVITIES", "1", 0, "L", true, 0, "")
 		pdf.Ln(6)
-		
+
 		pdf.SetFont("Arial", "", 8)
 		pdf.SetFillColor(255, 255, 255)
-		
+
 		if len(data.InvestingActivities.Items) > 0 {
 			for _, item := range data.InvestingActivities.Items {
 				pdf.CellFormat(25, 5, "Investing", "1", 0, "C", false, 0, "")
@@ -429,7 +435,7 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 			pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
 			pdf.Ln(5)
 		}
-		
+
 		// Net cash from investing activities
 		pdf.SetFont("Arial", "B", 9)
 		pdf.SetFillColor(240, 240, 240)
@@ -445,10 +451,10 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 		pdf.SetFillColor(240, 240, 240)
 		pdf.CellFormat(190, 6, "FINANCING ACTIVITIES", "1", 0, "L", true, 0, "")
 		pdf.Ln(6)
-		
+
 		pdf.SetFont("Arial", "", 8)
 		pdf.SetFillColor(255, 255, 255)
-		
+
 		if len(data.FinancingActivities.Items) > 0 {
 			for _, item := range data.FinancingActivities.Items {
 				pdf.CellFormat(25, 5, "Financing", "1", 0, "C", false, 0, "")
@@ -464,7 +470,7 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 			pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
 			pdf.Ln(5)
 		}
-		
+
 		// Net cash from financing activities
 		pdf.SetFont("Arial", "B", 9)
 		pdf.SetFillColor(240, 240, 240)
@@ -481,7 +487,7 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 
 	pdf.SetFont("Arial", "", 8)
 	pdf.SetFillColor(255, 255, 255)
-	
+
 	// Cash at beginning
 	pdf.CellFormat(100, 5, "Cash at Beginning of Period", "1", 0, "L", false, 0, "")
 	pdf.CellFormat(45, 5, "", "1", 0, "R", false, 0, "")
@@ -516,7 +522,6 @@ func (s *CashFlowExportService) ExportToPDF(data *SSOTCashFlowData) ([]byte, err
 	return buf.Bytes(), nil
 }
 
-
 // formatAmount formats amount for CSV export
 func (s *CashFlowExportService) formatAmount(amount float64) string {
 	// Format with thousand separators and 2 decimal places
@@ -527,12 +532,12 @@ func (s *CashFlowExportService) formatAmount(amount float64) string {
 func (s *CashFlowExportService) formatAmountPDF(amount float64) string {
 	// Convert to string with 2 decimal places
 	str := fmt.Sprintf("%.2f", amount)
-	
+
 	// Add thousand separators
 	parts := strings.Split(str, ".")
 	intPart := parts[0]
 	decPart := parts[1]
-	
+
 	// Add commas for thousands
 	n := len(intPart)
 	if n > 3 {
@@ -545,7 +550,7 @@ func (s *CashFlowExportService) formatAmountPDF(amount float64) string {
 		}
 		return fmt.Sprintf("%s.%s", result.String(), decPart)
 	}
-	
+
 	return str
 }
 
@@ -556,7 +561,7 @@ func (s *CashFlowExportService) formatAmountAsRupiah(amount float64) string {
 	if amount != float64(int64(amount)) {
 		amountStr = fmt.Sprintf("%.2f", amount)
 	}
-	
+
 	// Add thousand separators
 	var result strings.Builder
 	negative := false
@@ -564,14 +569,14 @@ func (s *CashFlowExportService) formatAmountAsRupiah(amount float64) string {
 		negative = true
 		amountStr = amountStr[1:]
 	}
-	
+
 	parts := strings.Split(amountStr, ".")
 	intPart := parts[0]
 	decPart := ""
 	if len(parts) > 1 {
 		decPart = parts[1]
 	}
-	
+
 	// Add thousand separators to integer part
 	n := len(intPart)
 	for i, char := range intPart {
@@ -580,13 +585,13 @@ func (s *CashFlowExportService) formatAmountAsRupiah(amount float64) string {
 		}
 		result.WriteRune(char)
 	}
-	
+
 	// Combine parts
 	if decPart != "" {
 		result.WriteString(".")
 		result.WriteString(decPart)
 	}
-	
+
 	// Add currency prefix
 	if negative {
 		return "Rp -" + result.String()

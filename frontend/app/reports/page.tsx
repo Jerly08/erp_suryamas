@@ -77,9 +77,15 @@ import periodClosingService, { type PeriodFilterOption } from '@/services/period
 import cashFlowExportService from '../../src/services/cashFlowExportService';
 // Import Closing History Modal
 import ClosingHistoryModal from '../../src/components/reports/ClosingHistoryModal';
+import { cleanCsvCell, cleanCsvContent } from '@/utils/exportText';
 
 // Define reports data matching the UI design
 type TranslateFn = (key: string, options?: Record<string, string | number>) => string;
+
+const escapeReportCsv = (value: unknown): string => {
+  const str = cleanCsvCell(value);
+  return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${str.replace(/"/g, '""')}"` : str;
+};
 
 const getAvailableReports = (t: TranslateFn) => [
   {
@@ -1064,12 +1070,7 @@ const ReportsPage: React.FC = () => {
 
       // Helper function to escape CSV values
       const escapeCSV = (value: string | number | null | undefined): string => {
-        if (value === null || value === undefined) return '';
-        const str = String(value);
-        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
+        return escapeReportCsv(value);
       };
 
       // Helper function to format currency
@@ -1200,7 +1201,7 @@ const ReportsPage: React.FC = () => {
       csvLines.push(`Report Date: ${new Date().toLocaleString('id-ID')}`);
       csvLines.push(`Data Source: ${balanceSheetData.enhanced ? 'SSOT Enhanced' : 'SSOT Standard'}`);
 
-      const csvContent = csvLines.join('\n');
+      const csvContent = cleanCsvContent(csvLines.join('\n'));
 
       // Create and trigger download in the browser
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1493,15 +1494,15 @@ const ReportsPage: React.FC = () => {
         if (data.transactions && Array.isArray(data.transactions)) {
           data.transactions.forEach((tx) => {
             csvLines.push([
-              tx.date || '',
-              tx.transaction_type || '',
-              tx.transaction_code || '',
-              `"${tx.description || ''}"`,
-              tx.reference || '',
-              tx.amount || 0,
-              tx.paid_amount || 0,
-              tx.outstanding || 0,
-              tx.status || ''
+              escapeReportCsv(tx.date || ''),
+              escapeReportCsv(tx.transaction_type || ''),
+              escapeReportCsv(tx.transaction_code || ''),
+              escapeReportCsv(tx.description || ''),
+              escapeReportCsv(tx.reference || ''),
+              escapeReportCsv(tx.amount || 0),
+              escapeReportCsv(tx.paid_amount || 0),
+              escapeReportCsv(tx.outstanding || 0),
+              escapeReportCsv(tx.status || '')
             ].join(','));
           });
         }
@@ -1514,7 +1515,7 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`${t('reports.csv.totalPaid')},${data.summary?.total_paid || 0}`);
         csvLines.push(`${t('reports.csv.totalOutstanding')},${data.summary?.total_outstanding || 0}`);
 
-        const csvContent = csvLines.join('\n');
+        const csvContent = cleanCsvContent(csvLines.join('\n'));
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -1597,15 +1598,15 @@ const ReportsPage: React.FC = () => {
         if (data.transactions && Array.isArray(data.transactions)) {
           data.transactions.forEach((tx) => {
             csvLines.push([
-              tx.date || '',
-              tx.transaction_type || '',
-              tx.transaction_code || '',
-              `"${tx.description || ''}"`,
-              tx.reference || '',
-              tx.amount || 0,
-              tx.paid_amount || 0,
-              tx.outstanding || 0,
-              tx.status || ''
+              escapeReportCsv(tx.date || ''),
+              escapeReportCsv(tx.transaction_type || ''),
+              escapeReportCsv(tx.transaction_code || ''),
+              escapeReportCsv(tx.description || ''),
+              escapeReportCsv(tx.reference || ''),
+              escapeReportCsv(tx.amount || 0),
+              escapeReportCsv(tx.paid_amount || 0),
+              escapeReportCsv(tx.outstanding || 0),
+              escapeReportCsv(tx.status || '')
             ].join(','));
           });
         }
@@ -1618,7 +1619,7 @@ const ReportsPage: React.FC = () => {
         csvLines.push(`${t('reports.csv.totalPaid')},${data.summary?.total_paid || 0}`);
         csvLines.push(`${t('reports.csv.totalOutstanding')},${data.summary?.total_outstanding || 0}`);
 
-        const csvContent = csvLines.join('\n');
+        const csvContent = cleanCsvContent(csvLines.join('\n'));
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');

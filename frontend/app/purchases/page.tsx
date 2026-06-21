@@ -215,6 +215,86 @@ interface BankAccount {
   };
 }
 
+type PaymentAccountsErrorPayload = {
+  error?: string | { message?: string };
+  message?: string;
+  required_permission?: string;
+  module?: string;
+  data?: BankAccount[];
+};
+
+class PaymentAccountsLoadError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "PaymentAccountsLoadError";
+    this.status = status;
+  }
+}
+
+const paymentAccountsErrorMessage = (
+  status: number,
+  payload?: PaymentAccountsErrorPayload,
+) => {
+  switch (status) {
+    case 401:
+      return "Sesi login Anda sudah berakhir. Silakan login kembali, lalu coba lagi.";
+    case 403:
+      return "Akun Anda belum memiliki izin View pada modul Cash & Bank. Minta admin mengaktifkannya melalui Manage Permissions agar daftar rekening dapat digunakan di Purchase.";
+    case 404:
+      return "Layanan daftar rekening Kas & Bank tidak ditemukan. Hubungi administrator sistem.";
+    default:
+      if (status >= 500) {
+        return "Server belum dapat memuat daftar rekening Kas & Bank. Silakan coba lagi beberapa saat.";
+      }
+
+      if (typeof payload?.message === "string" && payload.message.trim()) {
+        return `Daftar rekening Kas & Bank belum dapat dimuat: ${payload.message}`;
+      }
+
+      return "Daftar rekening Kas & Bank belum dapat dimuat. Silakan coba lagi.";
+  }
+};
+
+const requestOperationalPaymentAccounts = async (
+  token: string,
+): Promise<BankAccount[]> => {
+  let response: Response;
+  try {
+    response = await fetch(API_ENDPOINTS.CASH_BANK.PAYMENT_ACCOUNTS, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  } catch {
+    throw new PaymentAccountsLoadError(
+      0,
+      "Tidak dapat terhubung ke server untuk memuat rekening Kas & Bank. Periksa koneksi Anda lalu coba lagi.",
+    );
+  }
+
+  let payload: PaymentAccountsErrorPayload | undefined;
+  try {
+    payload = (await response.json()) as PaymentAccountsErrorPayload;
+  } catch {
+    payload = undefined;
+  }
+
+  if (!response.ok) {
+    throw new PaymentAccountsLoadError(
+      response.status,
+      paymentAccountsErrorMessage(response.status, payload),
+    );
+  }
+
+  return filterOperationalCashBankAccounts(
+    Array.isArray(payload?.data) ? payload.data : [],
+  );
+};
+
 const normalizePurchasePaymentFields = (
   current: PurchaseFormData,
   nextPaymentMethod: string,
@@ -1064,6 +1144,21 @@ const PurchasesPage: React.FC = () => {
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport, canApprove } =
     useModulePermissions("purchases");
+
+  const logPaymentAccountsError = (error: unknown) => {
+    const loadError =
+      error instanceof PaymentAccountsLoadError
+        ? error
+        : new PaymentAccountsLoadError(
+            0,
+            "Daftar rekening Kas & Bank belum dapat dimuat. Silakan coba lagi.",
+          );
+    console.warn("[Purchases] Payment accounts unavailable", {
+      status: loadError.status,
+      message: loadError.message,
+    });
+  };
+
   const isAccounting = isAccountingRole(roleNorm);
   const accountingMonitoringEnabled =
     isAccounting || isFinanceManagerRole(roleNorm) || roleNorm === "admin";
@@ -2047,7 +2142,8 @@ const PurchasesPage: React.FC = () => {
 
       // Fetch cash banks for payment form
       if (cashBanks.length === 0) {
-        await fetchCashBanksForPayment();
+        const accountsLoaded = await fetchCashBanksForPayment();
+        if (!accountsLoaded) return;
       }
 
       setSelectedPurchaseForPayment(purchase);
@@ -2080,29 +2176,16 @@ const PurchasesPage: React.FC = () => {
   };
 
   // Fetch cash banks for payment form
-  const fetchCashBanksForPayment = async () => {
-    if (!token) return;
+  const fetchCashBanksForPayment = async (): Promise<boolean> => {
+    if (!token) return false;
     try {
-      const response = await fetch(
-        "/api/v1/cash-bank/reports/payment-accounts",
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch cash banks");
-      }
-
-      const data = await response.json();
-      setCashBanks(filterOperationalCashBankAccounts(data.data || []));
-    } catch (err: any) {
-      console.error("Error fetching cash banks for payment:", err);
-      // Don't show error toast here as it's called from handleRecordPayment
+      const accounts = await requestOperationalPaymentAccounts(token);
+      setCashBanks(accounts);
+      return true;
+    } catch (error: unknown) {
+      setCashBanks([]);
+      logPaymentAccountsError(error);
+      return false;
     }
   };
 
@@ -2459,7 +2542,11 @@ const PurchasesPage: React.FC = () => {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to fetch vendors");
+        setVendors([]);
+        console.warn("[Purchases] Vendors unavailable", {
+          status: response.status,
+        });
+        return;
       }
 
       const vendorsData = await response.json();
@@ -2477,15 +2564,9 @@ const PurchasesPage: React.FC = () => {
       }));
 
       setVendors(formattedVendors);
-    } catch (err: any) {
-      console.error("Error fetching vendors:", err);
-      toast({
-        title: "Error",
-        description: "Failed to fetch vendors",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+    } catch (error: unknown) {
+      setVendors([]);
+      console.warn("[Purchases] Vendors unavailable", error);
     } finally {
       setLoadingVendors(false);
     }
@@ -2594,38 +2675,11 @@ const PurchasesPage: React.FC = () => {
     if (!token) return;
     try {
       setLoadingBankAccounts(true);
-
-      const response = await fetch(
-        "/api/v1/cash-bank/reports/payment-accounts",
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch bank accounts");
-      }
-
-      const data = await response.json();
-
-      // API returns { success: true, data: [...] }
-      // The data array already contains both bank and cash accounts
-      const allAccounts = data.data || [];
-
-      setBankAccounts(filterOperationalCashBankAccounts(allAccounts));
-    } catch (err: any) {
-      console.error("Error fetching bank accounts:", err);
-      toast({
-        title: "Error",
-        description: "Failed to fetch bank accounts",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
+      const accounts = await requestOperationalPaymentAccounts(token);
+      setBankAccounts(accounts);
+    } catch (error: unknown) {
+      setBankAccounts([]);
+      logPaymentAccountsError(error);
     } finally {
       setLoadingBankAccounts(false);
     }
@@ -4826,18 +4880,7 @@ const PurchasesPage: React.FC = () => {
     return (
       <ProtectedModule module="purchases">
         <CompanyTypeGuard moduleName="Purchases">
-          <SimpleLayout
-            allowedRoles={[
-              "admin",
-              "finance",
-              "finance_manager",
-              "finance_staff",
-              "accounting",
-              "inventory_manager",
-              "employee",
-              "director",
-            ]}
-          >
+          <SimpleLayout>
             <Box>
               <Text>{t("purchases.loadingPurchases")}</Text>
             </Box>
@@ -4850,18 +4893,7 @@ const PurchasesPage: React.FC = () => {
   return (
     <ProtectedModule module="purchases">
       <CompanyTypeGuard moduleName="Purchases">
-        <SimpleLayout
-          allowedRoles={[
-            "admin",
-            "finance",
-            "finance_manager",
-            "finance_staff",
-            "accounting",
-            "inventory_manager",
-            "employee",
-            "director",
-          ]}
-        >
+        <SimpleLayout>
           <Box bg={bgColor} minH="100vh" p={6}>
             <VStack spacing={6} align="stretch">
               {/* Enhanced Header */}

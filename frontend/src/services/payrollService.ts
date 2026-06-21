@@ -3,6 +3,22 @@ import type { AxiosResponse } from 'axios';
 
 export type PayrollStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
 export type PayrollPPhPaymentStatus = 'UNPAID' | 'PARTIAL_PAID' | 'PAID';
+export type PayrollSalaryPaymentStatus = 'UNPAID' | 'PARTIAL_PAID' | 'PAID';
+export type PayrollBPJSPaymentStatus = 'UNPAID' | 'PARTIAL_PAID' | 'PAID';
+
+export interface PayrollSettlement {
+  id: number;
+  payroll_run_id: number;
+  settlement_type: 'SALARY' | 'PPH21' | 'BPJS';
+  amount: number;
+  payment_date: string;
+  cash_bank_id: number;
+  journal_entry_id: number;
+  reference?: string;
+  notes?: string;
+  source: string;
+  cash_bank?: { id: number; code: string; name: string };
+}
 
 export interface PayrollItem {
   id?: number;
@@ -44,6 +60,18 @@ export interface PayrollRun {
   total_pph: number;
   total_bpjs: number;
   total_overall: number;
+  salary_payment_status?: PayrollSalaryPaymentStatus | '';
+  salary_paid_amount?: number;
+  salary_payment_date?: string | null;
+  salary_payment_reference?: string;
+  salary_payment_notes?: string;
+  salary_payment_journal_entry_id?: number | null;
+  bpjs_payment_status?: PayrollBPJSPaymentStatus | '';
+  bpjs_paid_amount?: number;
+  bpjs_payment_date?: string | null;
+  bpjs_payment_reference?: string;
+  bpjs_payment_notes?: string;
+  bpjs_payment_journal_entry_id?: number | null;
   pph_payment_status?: PayrollPPhPaymentStatus | '';
   pph_paid_amount?: number;
   pph_recognition_date?: string | null;
@@ -80,6 +108,7 @@ export interface PayrollRun {
     last_name?: string;
   } | null;
   items?: PayrollItem[];
+  settlements?: PayrollSettlement[];
 }
 
 export interface PayrollCreatePayload {
@@ -97,6 +126,9 @@ export interface PayrollPPhPaymentPayload {
   reference?: string;
   notes?: string;
 }
+
+export type PayrollSalaryPaymentPayload = PayrollPPhPaymentPayload;
+export type PayrollBPJSPaymentPayload = PayrollPPhPaymentPayload;
 
 export interface PayrollImportPreview {
   items: PayrollItem[];
@@ -163,7 +195,7 @@ const payrollService = {
 
   async approvePayrollRun(
     id: number,
-    payload?: { expense_account_id?: number; cash_bank_account_id?: number; payment_method?: string },
+    payload?: { expense_account_id?: number; posting_date?: string },
   ): Promise<PayrollRun> {
     const response = await api.post(`/api/v1/payroll/${id}/approve`, payload);
     return unwrapData<PayrollRun>(response);
@@ -179,6 +211,22 @@ const payrollService = {
     payload: PayrollPPhPaymentPayload,
   ): Promise<PayrollRun> {
     const response = await api.post(`/api/v1/payroll/${id}/pay-pph`, payload);
+    return unwrapData<PayrollRun>(response);
+  },
+
+  async payPayrollSalary(
+    id: number,
+    payload: PayrollSalaryPaymentPayload,
+  ): Promise<PayrollRun> {
+    const response = await api.post(`/api/v1/payroll/${id}/pay-salary`, payload);
+    return unwrapData<PayrollRun>(response);
+  },
+
+  async payPayrollBPJS(
+    id: number,
+    payload: PayrollBPJSPaymentPayload,
+  ): Promise<PayrollRun> {
+    const response = await api.post(`/api/v1/payroll/${id}/pay-bpjs`, payload);
     return unwrapData<PayrollRun>(response);
   },
 };

@@ -47,13 +47,13 @@ func GetJournalAdjustmentCategories() []JournalAdjustmentCategoryDefinition {
 	return []JournalAdjustmentCategoryDefinition{
 		{
 			Code:                   JournalAdjustmentCategoryPPh21Accrual,
-			Label:                  "Pembebanan PPh 21",
-			Description:            "Accrued Utang PPh 21 dan Beban Pajak PPh 21 di bulan terkait.",
+			Label:                  "Koreksi Selisih PPh 21",
+			Description:            "Adjustment hanya untuk selisih antara PPh 21 payroll yang sudah diakui dan nilai final. Pembayaran PPh bukan adjustment.",
 			COA:                    "Utang PPh 21 & Biaya PPh 21",
-			RecommendedSourceTypes: []string{"PAYROLL", "PAYROLL_PPH_PAYABLE", SSOTSourceTypeManual},
+			RecommendedSourceTypes: []string{"PAYROLL", "PAYROLL_ACCRUAL", "PAYROLL_PPH_PAYABLE", SSOTSourceTypeManual},
 			Examples: []string{
-				"Pembebanan PPh 21 payroll bulan berjalan",
-				"Accrual utang PPh 21 sebelum pembayaran pajak",
+				"Tambahan beban dan utang saat nilai final lebih besar",
+				"Reversal beban dan utang saat nilai final lebih kecil",
 			},
 			RequiresOriginalJournal: true,
 		},

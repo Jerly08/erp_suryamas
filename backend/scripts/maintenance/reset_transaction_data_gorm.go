@@ -638,6 +638,9 @@ func executeTransactionResetWithGORM(db *gorm.DB) error {
 
 	fmt.Println("   🗑️  Menghapus payroll data...")
 	// Payroll related - items first, then runs
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollSettlement{}).Error; err != nil {
+		fmt.Printf("   ⚠️  Warning: Delete PayrollSettlement error: %v\n", err)
+	}
 	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollItem{}).Error; err != nil {
 		fmt.Printf("   ⚠️  Warning: Delete PayrollItem error: %v\n", err)
 	}
@@ -2329,6 +2332,9 @@ func deletePayrollModuleDataWithGORM(db *gorm.DB) error {
 	}
 
 	// Hapus payroll items lalu payroll runs
+	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollSettlement{}).Error; err != nil {
+		return fmt.Errorf("failed to delete payroll settlements: %w", err)
+	}
 	if err := tx.Unscoped().Where("1 = 1").Delete(&models.PayrollItem{}).Error; err != nil {
 		_ = tx.Rollback().Error
 		return fmt.Errorf("gagal hapus payroll_items: %w", err)

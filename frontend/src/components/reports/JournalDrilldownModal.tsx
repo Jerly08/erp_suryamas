@@ -62,6 +62,7 @@ import {
 } from 'react-icons/fi';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/utils/formatters';
+import { cleanCsvCell, cleanCsvContent } from '@/utils/exportText';
 
 // Types
 interface JournalEntry {
@@ -336,7 +337,8 @@ export const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
 
     // Create comprehensive CSV content with summary
     const headers = ['Date', 'Code', 'Description', 'Reference', 'Type', 'Debit', 'Credit', 'Status', 'Creator', 'Balanced'];
-    const csvContent = [
+    const formatCsvCell = (value: unknown) => `"${cleanCsvCell(value).replace(/"/g, '""')}"`;
+    const csvContent = cleanCsvContent([
       // Add summary section
       'Journal Entry Drilldown Report',
       `Generated: ${new Date().toLocaleString()}`,
@@ -347,11 +349,11 @@ export const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
       `Total Credit: ${data.summary?.total_credit || 0}`,
       `Net Amount: ${data.summary?.net_amount || 0}`,
       '',
-      headers.join(','),
+      headers.map(formatCsvCell).join(','),
       ...data.journal_entries.map(entry => [
         new Date(entry.entry_date).toLocaleDateString(),
         entry.code,
-        `"${entry.description.replace(/"/g, '""')}"`, // Escape quotes
+        entry.description,
         entry.reference,
         entry.reference_type,
         entry.total_debit.toString(),
@@ -359,8 +361,8 @@ export const JournalDrilldownModal: React.FC<JournalDrilldownModalProps> = ({
         entry.status,
         entry.creator?.name || 'Unknown',
         entry.is_balanced ? 'Yes' : 'No'
-      ].join(','))
-    ].join('\n');
+      ].map(formatCsvCell).join(','))
+    ].join('\n'));
 
     // Create and download file
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

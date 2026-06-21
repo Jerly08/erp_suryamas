@@ -50,17 +50,8 @@ type ModulePermission struct {
 	CanMenu    bool `json:"can_menu"`
 }
 
-func cloneModulePermission(permission *ModulePermission) *ModulePermission {
-	if permission == nil {
-		return nil
-	}
-
-	cloned := *permission
-	return &cloned
-}
-
 // GetJournalWorkflowPermission locks the journal module to the approved
-// business workflow regardless of legacy permission rows:
+// business workflow when generating role defaults:
 // - finance staff/accounting prepares draft journal adjustments
 // - finance manager/finance can submit their own journal directly or route it to director
 // - finance manager/finance approves and posts staff drafts
@@ -99,37 +90,6 @@ func GetJournalWorkflowPermission(role string) *ModulePermission {
 		}
 	default:
 		return nil
-	}
-}
-
-func GetCashBankWorkflowPermission(role string, current *ModulePermission) *ModulePermission {
-	permission := cloneModulePermission(current)
-	if permission == nil {
-		defaultPermissions := GetDefaultPermissions(role)
-		permission = cloneModulePermission(defaultPermissions["cash_bank"])
-	}
-	if permission == nil {
-		return nil
-	}
-
-	permission.CanApprove = IsFinanceManagerRole(role)
-	return permission
-}
-
-func EnforceWorkflowManagedModulePermission(role string, module string, permission *ModulePermission) *ModulePermission {
-	switch module {
-	case "journal":
-		if workflowPermission := GetJournalWorkflowPermission(role); workflowPermission != nil {
-			return workflowPermission
-		}
-		return cloneModulePermission(permission)
-	case "cash_bank":
-		if workflowPermission := GetCashBankWorkflowPermission(role, permission); workflowPermission != nil {
-			return workflowPermission
-		}
-		return cloneModulePermission(permission)
-	default:
-		return cloneModulePermission(permission)
 	}
 }
 
@@ -229,12 +189,13 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 			case module == "journal":
 				permissions[module] = GetJournalWorkflowPermission(role)
 			case contains(operationalModules, module):
+				canApprove := module == "purchases"
 				permissions[module] = &ModulePermission{
 					CanView:    true,
 					CanCreate:  true,
 					CanEdit:    true,
 					CanDelete:  false,
-					CanApprove: false,
+					CanApprove: canApprove,
 					CanExport:  true,
 					CanMenu:    true,
 				}

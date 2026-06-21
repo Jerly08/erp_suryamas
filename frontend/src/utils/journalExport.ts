@@ -7,6 +7,7 @@ import {
   formatAccountingDate,
   formatAccountingDateShort,
 } from '@/utils/accountingDate';
+import { cleanCsvCell } from '@/utils/exportText';
 
 // ===== HELPERS =====
 const formatCurrency = (amount: number): string => {
@@ -16,6 +17,10 @@ const formatCurrency = (amount: number): string => {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
   }).format(amount);
+};
+
+const formatCsvCell = (value: string | number | null | undefined): string => {
+  return `"${cleanCsvCell(value).replace(/"/g, '""')}"`;
 };
 
 const addHeader = (doc: jsPDF, title: string, subtitle: string, yStart: number = 20): number => {
@@ -156,7 +161,7 @@ export const exportGeneralJournalToCSV = (
 
   const csvContent = [
     headers.join(','),
-    ...rows.map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(','))
+    ...rows.map(row => row.map(formatCsvCell).join(','))
   ].join('\n');
 
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -306,7 +311,7 @@ export const exportGeneralLedgerToCSV = (
 
   const csvContent = [
     headers.join(','),
-    ...rows.map(row => row.map(cell => `"${String(cell || '').replace(/"/g, '""')}"`).join(','))
+    ...rows.map(row => row.map(formatCsvCell).join(','))
   ].join('\n');
 
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -485,7 +490,7 @@ export const exportBalanceSheetToCSV = (
     rows.push(['', '', 'Selisih', data.balance_difference.toString()]);
   }
 
-  const csvContent = rows.map(row => row.map(cell => `"${String(cell || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const csvContent = rows.map(row => row.map(formatCsvCell).join(',')).join('\n');
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   triggerDownload(blob, `Neraca_${asOfDate}.csv`);
 };

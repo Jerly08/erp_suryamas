@@ -36,12 +36,13 @@ func NewExportService(accountRepo repositories.AccountRepository, db *gorm.DB) E
 func (s *ExportServiceImpl) ExportAccountsPDF(ctx context.Context, userID uint) ([]byte, error) {
 	// Get user language preference
 	language := utils.GetUserLanguageFromDB(s.db, userID)
-	
+
 	// Get all accounts from database
 	accounts, err := s.accountRepo.FindAll(ctx)
 	if err != nil {
 		return nil, utils.NewInternalError("Failed to fetch accounts", err)
 	}
+	utils.SanitizeExportData(accounts)
 
 	// Create new PDF document
 	pdf := gofpdf.New("P", "mm", "A4", "")
@@ -49,7 +50,7 @@ func (s *ExportServiceImpl) ExportAccountsPDF(ctx context.Context, userID uint) 
 
 	// Set font
 	pdf.SetFont("Arial", "B", 16)
-	
+
 	// Title with localization
 	pdf.Cell(190, 10, utils.T("chart_of_accounts", language))
 	pdf.Ln(15)
@@ -72,7 +73,7 @@ func (s *ExportServiceImpl) ExportAccountsPDF(ctx context.Context, userID uint) 
 	// Table data
 	pdf.SetFont("Arial", "", 9)
 	pdf.SetFillColor(255, 255, 255)
-	
+
 	for _, account := range accounts {
 		// Check if we need a new page
 		if pdf.GetY() > 270 {
@@ -97,7 +98,7 @@ func (s *ExportServiceImpl) ExportAccountsPDF(ctx context.Context, userID uint) 
 		}
 
 		balance := fmt.Sprintf("%.2f", account.Balance)
-		
+
 		pdf.CellFormat(30, 6, account.Code, "1", 0, "L", false, 0, "")
 		pdf.CellFormat(60, 6, account.Name, "1", 0, "L", false, 0, "")
 		pdf.CellFormat(25, 6, account.Type, "1", 0, "C", false, 0, "")
@@ -120,12 +121,13 @@ func (s *ExportServiceImpl) ExportAccountsPDF(ctx context.Context, userID uint) 
 func (s *ExportServiceImpl) ExportAccountsExcel(ctx context.Context, userID uint) ([]byte, error) {
 	// Get user language preference
 	language := utils.GetUserLanguageFromDB(s.db, userID)
-	
+
 	// Get all accounts from database
 	accounts, err := s.accountRepo.FindAll(ctx)
 	if err != nil {
 		return nil, utils.NewInternalError("Failed to fetch accounts", err)
 	}
+	utils.SanitizeExportData(accounts)
 
 	// Create new Excel file
 	f := excelize.NewFile()
@@ -196,7 +198,7 @@ func (s *ExportServiceImpl) ExportAccountsExcel(ctx context.Context, userID uint
 	// Fill data
 	for i, account := range accounts {
 		row := i + 5 // Start from row 5 (after headers)
-		
+
 		status := utils.T("active", language)
 		if !account.IsActive {
 			status = utils.T("inactive", language)
@@ -222,7 +224,7 @@ func (s *ExportServiceImpl) ExportAccountsExcel(ctx context.Context, userID uint
 	for _, col := range cols {
 		f.SetColWidth(sheetName, col, col, 15)
 	}
-	
+
 	// Make name column wider
 	f.SetColWidth(sheetName, "B", "B", 25)
 	f.SetColWidth(sheetName, "G", "G", 30) // Description column

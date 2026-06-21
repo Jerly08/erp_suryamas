@@ -2,7 +2,6 @@ package services
 
 import (
 	"bytes"
-	"encoding/csv"
 	"fmt"
 	"time"
 
@@ -44,10 +43,11 @@ func (s *SalesReportExportService) getCurrencyFromSettings() string {
 
 // ExportToCSV exports sales report to CSV bytes with localization
 func (s *SalesReportExportService) ExportToCSV(data *SalesSummaryData, userID uint) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	// Get user language preference
 	language := utils.GetUserLanguageFromSettings(s.db)
 	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
+	w := utils.NewSanitizedCSVWriter(&buf)
 
 	// Header with localization
 	w.Write([]string{utils.T("sales_report", language)})
@@ -139,6 +139,7 @@ func (s *SalesReportExportService) ExportToCSV(data *SalesSummaryData, userID ui
 
 // ExportToPDF exports sales report to PDF bytes with localization
 func (s *SalesReportExportService) ExportToPDF(data *SalesSummaryData, userID uint) ([]byte, error) {
+	utils.SanitizeExportData(data)
 	// Get user language preference
 	language := utils.GetUserLanguageFromSettings(s.db)
 	pdf := gofpdf.New("P", "mm", "A4", "")

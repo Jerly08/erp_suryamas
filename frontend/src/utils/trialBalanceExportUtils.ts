@@ -8,6 +8,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SSOTTrialBalanceData } from '../services/ssotTrialBalanceService';
+import { cleanCsvCell } from './exportText';
 
 
 /**
@@ -28,7 +29,7 @@ export function exportTrialBalanceToCSV(
   // Helper function to escape CSV values
   const escapeCSV = (value: string | number | null | undefined): string => {
     if (value === null || value === undefined) return '';
-    const str = String(value);
+    const str = cleanCsvCell(value);
     if (str.includes(',') || str.includes('"') || str.includes('\n')) {
       return `"${str.replace(/"/g, '""')}"`;
     }

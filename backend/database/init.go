@@ -146,6 +146,7 @@ func RunMigrations(db *gorm.DB) {
 		// Payroll models
 		&models.PayrollRun{},
 		&models.PayrollItem{},
+		&models.PayrollSettlement{},
 
 		// Expense models
 		&models.ExpenseCategory{},
@@ -188,6 +189,8 @@ func RunMigrations(db *gorm.DB) {
 	if err != nil {
 		log.Fatalf("Database migration failed: %v", err)
 	}
+
+	BackfillPayrollBPJSSettlementStatus(db)
 
 	log.Println("Database migrations completed successfully")
 

@@ -81,6 +81,16 @@ export const usePermissions = (): UsePermissionsReturn => {
 
   useEffect(() => {
     fetchPermissions();
+
+    const handlePermissionsUpdated = (event: Event) => {
+      const updatedUserId = (event as CustomEvent<{ userId?: number | string }>).detail?.userId;
+      if (updatedUserId !== undefined && String(updatedUserId) === String(user?.id)) {
+        fetchPermissions();
+      }
+    };
+
+    window.addEventListener('permissions-updated', handlePermissionsUpdated);
+    return () => window.removeEventListener('permissions-updated', handlePermissionsUpdated);
   }, [user, token]);
 
   const getModulePermission = (module: string): ModulePermission => {

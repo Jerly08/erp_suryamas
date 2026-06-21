@@ -1,6 +1,7 @@
 import api from './api';
 import { API_ENDPOINTS } from '../config/api';
 import type { Asset as AssetModel } from '@/types/asset';
+import { cleanCsvCell } from '@/utils/exportText';
 
 export interface Asset extends AssetModel {
   id: number;
@@ -521,7 +522,7 @@ class AssetService {
 
     const csvContent = [
       headers.join(','),
-      ...csvData.map(row => row.map(cell => `"${cell}"`).join(','))
+      ...csvData.map(row => row.map(cell => `"${cleanCsvCell(cell).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

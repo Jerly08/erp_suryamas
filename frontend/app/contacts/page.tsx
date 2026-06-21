@@ -382,7 +382,7 @@ const ContactsPage = () => {
 
   return (
     <ProtectedModule module="contacts">
-      <Layout allowedRoles={['admin', 'finance', 'inventory_manager', 'employee', 'director']}>
+      <Layout>
         <Box>
           <Flex justify="space-between" align="center" mb={6}>
             <Heading size="lg" color={headingColor}>

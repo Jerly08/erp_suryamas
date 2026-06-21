@@ -89,7 +89,7 @@ const AssetsPage = () => {
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('assets');
-  const canCreateOpeningAsset = canCreate && ['admin', 'finance'].includes((user?.role || '').toLowerCase());
+  const canCreateOpeningAsset = canCreate;
 
   const [assets, setAssets] = useState<BackendAsset[]>([]);
   const [summary, setSummary] = useState<AssetsSummary | null>(null);
@@ -572,7 +572,7 @@ const AssetsPage = () => {
     if (!canCreateOpeningAsset) {
       toast({
         title: 'Akses dibatasi',
-        description: 'Pencatatan opening balance aset hanya tersedia untuk admin dan finance.',
+        description: 'Anda tidak memiliki permission Create pada modul Assets.',
         status: 'warning',
         duration: 4000,
         isClosable: true,
@@ -1297,7 +1297,7 @@ const AssetsPage = () => {
   return (
     <ProtectedModule module="assets">
       <CompanyTypeGuard>
-        <SimpleLayout allowedRoles={['admin', 'finance', 'inventory_manager', 'director', 'employee']}>
+        <SimpleLayout>
           <Box>
             <Flex justify="space-between" align="center" mb={6}>
               <Box>
@@ -1378,7 +1378,7 @@ const AssetsPage = () => {
               <Alert status="warning" mb={4} borderRadius="lg">
                 <AlertIcon />
                 <AlertDescription fontSize="sm">
-                  Pencatatan opening balance aset dibatasi untuk role `admin` dan `finance`. Role lain tetap bisa melihat master aset dan histori depresiasi.
+                  Pencatatan opening balance aset memerlukan permission Create pada modul Assets.
                 </AlertDescription>
               </Alert>
             )}

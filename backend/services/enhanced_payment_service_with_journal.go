@@ -204,6 +204,9 @@ func validateExpensePaymentAccountUsage(account models.Account, amount, pphAmoun
 	if account.Type != models.AccountTypeLiability {
 		return nil
 	}
+	if strings.EqualFold(strings.TrimSpace(account.Code), "2102-003") {
+		return fmt.Errorf("Hutang PPh 21 payroll wajib diselesaikan dengan memilih kewajiban payroll agar status payroll, jurnal, dan kas/bank tetap sinkron")
+	}
 
 	if pphAmount > 0 {
 		return fmt.Errorf("PPh withholding is only valid for direct expense accounts; for liability settlement, leave PPh disabled")

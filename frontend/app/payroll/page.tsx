@@ -6,11 +6,12 @@ import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import cashBankService, { CashBank } from '@/services/cashbankService';
-import payrollService, { PayrollImportPreview, PayrollItem, PayrollPPhPaymentStatus, PayrollRun, PayrollStatus } from '@/services/payrollService';
+import payrollService, { PayrollBPJSPaymentStatus, PayrollImportPreview, PayrollItem, PayrollPPhPaymentStatus, PayrollRun, PayrollSalaryPaymentStatus, PayrollStatus } from '@/services/payrollService';
 import { isAccountingRole, isFinanceManagerRole, isFinanceStaffRole, isHRRole, normalizeRole } from '@/utils/roles';
 import { filterOperationalCashBankAccounts, filterActiveLeafAccounts } from '@/utils/accountFilters';
 import accountService from '@/services/accountService';
 import type { AccountCatalogItem } from '@/types/account';
+import CurrencyInput from '@/components/common/CurrencyInput';
 import {
   Alert,
   AlertDescription,
@@ -56,7 +57,7 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react';
-import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiPlus, FiRefreshCw, FiShield, FiTrash2, FiUpload, FiUsers, FiXCircle } from 'react-icons/fi';
+import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiRefreshCw, FiUpload, FiUsers, FiXCircle } from 'react-icons/fi';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('id-ID', {
@@ -90,18 +91,6 @@ const currentMonthRange = () => {
     payment_date: toDateInputValue(now),
   };
 };
-
-const blankPayrollItem = (): PayrollItem => ({
-  employee_name: '',
-  employee_code: '',
-  department: '',
-  position: '',
-  base_salary: 0,
-  bonus: 0,
-  pph: 0,
-  bpjs: 0,
-  notes: '',
-});
 
 const getPayrollItemBonus = (item: PayrollItem) => {
   const bonus = Number(item.bonus || 0);
@@ -201,6 +190,56 @@ const getPPhRemainingAmount = (payroll?: PayrollRun | null) => {
   return Math.max(0, Number(payroll.total_pph || 0) - Number(payroll.pph_paid_amount || 0));
 };
 
+const getSalaryPaymentStatus = (payroll: PayrollRun): PayrollSalaryPaymentStatus => {
+  const total = Number(payroll.total_overall || 0);
+  const paid = Number(payroll.salary_paid_amount || 0);
+  if (total <= 0 || paid >= total - 1) return 'PAID';
+  if (paid > 0) return 'PARTIAL_PAID';
+  return (payroll.salary_payment_status || 'UNPAID') as PayrollSalaryPaymentStatus;
+};
+
+const salaryPaymentStatusLabel = (status: PayrollSalaryPaymentStatus) => {
+  if (status === 'PAID') return 'GAJI PAID';
+  if (status === 'PARTIAL_PAID') return 'GAJI PARTIAL';
+  return 'GAJI UNPAID';
+};
+
+const salaryPaymentStatusColor = (status: PayrollSalaryPaymentStatus) => {
+  if (status === 'PAID') return 'green';
+  if (status === 'PARTIAL_PAID') return 'yellow';
+  return 'red';
+};
+
+const getSalaryRemainingAmount = (payroll?: PayrollRun | null) => {
+  if (!payroll) return 0;
+  return Math.max(0, Number(payroll.total_overall || 0) - Number(payroll.salary_paid_amount || 0));
+};
+
+const getBPJSPaymentStatus = (payroll: PayrollRun): PayrollBPJSPaymentStatus => {
+  const total = Number(payroll.total_bpjs || 0);
+  const paid = Number(payroll.bpjs_paid_amount || 0);
+  if (total <= 0 || paid >= total - 1) return 'PAID';
+  if (paid > 0) return 'PARTIAL_PAID';
+  return (payroll.bpjs_payment_status || 'UNPAID') as PayrollBPJSPaymentStatus;
+};
+
+const bpjsPaymentStatusLabel = (status: PayrollBPJSPaymentStatus) => {
+  if (status === 'PAID') return 'BPJS PAID';
+  if (status === 'PARTIAL_PAID') return 'BPJS PARTIAL';
+  return 'BPJS UNPAID';
+};
+
+const bpjsPaymentStatusColor = (status: PayrollBPJSPaymentStatus) => {
+  if (status === 'PAID') return 'green';
+  if (status === 'PARTIAL_PAID') return 'orange';
+  return 'red';
+};
+
+const getBPJSRemainingAmount = (payroll?: PayrollRun | null) => {
+  if (!payroll) return 0;
+  return Math.max(0, Number(payroll.total_bpjs || 0) - Number(payroll.bpjs_paid_amount || 0));
+};
+
 const getApiErrorMessage = (error: unknown, fallback: string) => {
   const maybeError = error as {
     response?: {
@@ -249,8 +288,8 @@ export default function PayrollPage() {
   const isHR = isHRRole(role);
   const isFinanceManager = isFinanceManagerRole(role);
   const isSummaryOnly = isFinanceStaffRole(role) || isAccountingRole(role);
-  const canCreatePayroll = payrollPermissions.canCreate && (isAdmin || isHR);
-  const canApprovePayroll = payrollPermissions.canApprove && isFinanceManager;
+  const canCreatePayroll = payrollPermissions.canCreate;
+  const canApprovePayroll = payrollPermissions.canApprove;
   const canSeeEmployeeDetail = isAdmin || isHR || isFinanceManager;
 
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
@@ -260,11 +299,9 @@ export default function PayrollPage() {
   const [selectedPayroll, setSelectedPayroll] = useState<PayrollRun | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
-  const [approvalCashBanks, setApprovalCashBanks] = useState<CashBank[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [selectedExpenseAccount, setSelectedExpenseAccount] = useState<string>('');
-  const [selectedCashBankAccount, setSelectedCashBankAccount] = useState<string>('');
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('BANK_TRANSFER');
+  const [postingDate, setPostingDate] = useState(currentMonthRange().payment_date);
   const [rejectReason, setRejectReason] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<PayrollImportPreview | null>(null);
@@ -278,20 +315,29 @@ export default function PayrollPage() {
     reference: '',
     notes: '',
   });
+  const [salaryPaymentDraft, setSalaryPaymentDraft] = useState({
+    payment_date: toDateInputValue(new Date()),
+    amount: 0,
+    cash_bank_id: '',
+    reference: '',
+    notes: '',
+  });
+  const [bpjsPaymentDraft, setBPJSPaymentDraft] = useState({
+    payment_date: toDateInputValue(new Date()),
+    amount: 0,
+    cash_bank_id: '',
+    reference: '',
+    notes: '',
+  });
   const [importDraft, setImportDraft] = useState({
     ...currentMonthRange(),
     notes: 'Imported from Excel payroll template',
   });
-  const [draft, setDraft] = useState({
-    ...currentMonthRange(),
-    notes: '',
-    items: [blankPayrollItem()],
-  });
-
-  const createModal = useDisclosure();
   const detailModal = useDisclosure();
   const importModal = useDisclosure();
   const pphPaymentModal = useDisclosure();
+  const salaryPaymentModal = useDisclosure();
+  const bpjsPaymentModal = useDisclosure();
 
   const pageBg = useColorModeValue('gray.50', 'gray.900');
   const cardBg = useColorModeValue('white', 'gray.800');
@@ -347,25 +393,18 @@ export default function PayrollPage() {
     try {
       const token = window.localStorage.getItem('token') || '';
 
-      const [expenseData, cashBankData] = await Promise.all([accountService.getAccountCatalog(token, 'EXPENSE'), cashBankService.getCashBankAccounts()]);
+      const expenseData = await accountService.getAccountCatalog(token, 'EXPENSE');
 
       const filteredExpenses = filterActiveLeafAccounts(expenseData);
-      const usableCashBanks = filterOperationalCashBankAccounts(cashBankData).filter(
-        (account) => account.is_active && account.account_id && (account.currency || 'IDR').toUpperCase() === 'IDR' && account.allow_direct_transactions !== false,
-      );
 
       setExpenseAccounts(filteredExpenses);
-      setApprovalCashBanks(usableCashBanks);
 
-      const defaultExpense = filteredExpenses.find((acc) => acc.code === '6101' || acc.code === '5101-001' || acc.code === '5201' || acc.name.toLowerCase().includes('gaji') || acc.name.toLowerCase().includes('salary'));
+      const defaultExpense = filteredExpenses.find((acc) => acc.name.toLowerCase().includes('gaji') || acc.name.toLowerCase().includes('salary'))
+        || filteredExpenses.find((acc) => acc.code === '6105' || acc.code === '5101-001' || acc.code === '5201' || acc.code === '6101');
       if (defaultExpense) {
         setSelectedExpenseAccount(defaultExpense.id.toString());
       } else if (filteredExpenses.length > 0) {
         setSelectedExpenseAccount(filteredExpenses[0].id.toString());
-      }
-
-      if (usableCashBanks.length > 0) {
-        setSelectedCashBankAccount(usableCashBanks[0].account_id.toString());
       }
     } catch (error) {
       console.error('Failed to load accounts for approval:', error);
@@ -385,19 +424,6 @@ export default function PayrollPage() {
     { salary: 0, bonus: 0, pph: 0, bpjs: 0, overall: 0 },
   );
 
-  const updateDraftItem = (index: number, field: keyof PayrollItem, value: string | number) => {
-    setDraft((prev) => ({
-      ...prev,
-      items: prev.items.map((item, itemIndex) => {
-        if (itemIndex !== index) return item;
-        return recalculatePayrollItem({
-          ...item,
-          [field]: value,
-        } as PayrollItem);
-      }),
-    }));
-  };
-
   const updateImportPreviewItem = (index: number, field: keyof PayrollItem, value: string | number) => {
     setImportPreview((prev) => {
       if (!prev) return prev;
@@ -410,28 +436,6 @@ export default function PayrollPage() {
         return recalculatePayrollItem(updated);
       });
       return recalculatePayrollImportPreview(prev, items);
-    });
-  };
-
-  const addDraftItem = () => {
-    setDraft((prev) => ({
-      ...prev,
-      items: [...prev.items, blankPayrollItem()],
-    }));
-  };
-
-  const removeDraftItem = (index: number) => {
-    setDraft((prev) => ({
-      ...prev,
-      items: prev.items.length === 1 ? prev.items : prev.items.filter((_, itemIndex) => itemIndex !== index),
-    }));
-  };
-
-  const resetDraft = () => {
-    setDraft({
-      ...currentMonthRange(),
-      notes: '',
-      items: [blankPayrollItem()],
     });
   };
 
@@ -561,85 +565,11 @@ export default function PayrollPage() {
     }
   };
 
-  const handleCreatePayroll = async () => {
-    if (!draft.period_start || !draft.period_end) {
-      toast({
-        title: 'Periode wajib diisi',
-        description: 'Period Start dan Period End harus diisi sebelum submit payroll.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    const cleanItems = draft.items
-      .map((item) => {
-        const normalizedItem = recalculatePayrollItem(item);
-        return {
-          employee_name: normalizedItem.employee_name.trim(),
-          employee_code: normalizedItem.employee_code?.trim() || '',
-          department: normalizedItem.department?.trim() || '',
-          position: normalizedItem.position?.trim() || '',
-          base_salary: Number(normalizedItem.base_salary || 0),
-          bonus: Number(normalizedItem.bonus || 0),
-          pph: Number(normalizedItem.pph || 0),
-          bpjs: getPayrollItemBPJS(normalizedItem),
-          net_pay: getPayrollItemNetPay(normalizedItem),
-          notes: normalizedItem.notes?.trim() || '',
-        };
-      })
-      .filter((item) => item.employee_name);
-
-    if (!cleanItems.length) {
-      toast({
-        title: 'Detail payroll belum lengkap',
-        description: 'Minimal isi 1 nama karyawan sebelum submit payroll.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await payrollService.createPayrollRun({
-        period_start: draft.period_start,
-        period_end: draft.period_end,
-        payment_date: draft.payment_date,
-        notes: draft.notes,
-        items: cleanItems,
-      });
-      toast({
-        title: 'Payroll berhasil dibuat',
-        description: 'Payroll masuk ke antrian approval Finance Manager.',
-        status: 'success',
-        duration: 3000,
-        isClosable: true,
-      });
-      createModal.onClose();
-      resetDraft();
-      await loadPayroll();
-    } catch (error: unknown) {
-      toast({
-        title: 'Gagal membuat payroll',
-        description: getApiErrorMessage(error, 'Periksa kembali detail payroll.'),
-        status: 'error',
-        duration: 4000,
-        isClosable: true,
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const openDetail = async (payroll: PayrollRun) => {
     setSelectedPayroll(payroll);
     setRejectReason('');
     setSelectedExpenseAccount('');
-    setSelectedCashBankAccount('');
-    setSelectedPaymentMethod('BANK_TRANSFER');
+    setPostingDate((payroll.payment_date || payroll.period_end || '').slice(0, 10));
     detailModal.onOpen();
 
     if (canApprovePayroll && payroll.status === 'PENDING_APPROVAL') {
@@ -675,6 +605,135 @@ export default function PayrollPage() {
     });
     pphPaymentModal.onOpen();
     await loadCashBanks();
+  };
+
+  const openPaySalary = async (payroll: PayrollRun) => {
+    const remainingSalary = getSalaryRemainingAmount(payroll);
+    setSelectedPayroll(payroll);
+    setSalaryPaymentDraft({
+      payment_date: (payroll.payment_date || toDateInputValue(new Date())).slice(0, 10),
+      amount: remainingSalary,
+      cash_bank_id: '',
+      reference: `PAY-SALARY-${payroll.payroll_number}`,
+      notes: `Pembayaran net salary payroll ${payroll.payroll_number}`,
+    });
+    salaryPaymentModal.onOpen();
+    await loadCashBanks();
+  };
+
+  const openPayBPJS = async (payroll: PayrollRun) => {
+    const remainingBPJS = getBPJSRemainingAmount(payroll);
+    setSelectedPayroll(payroll);
+    setBPJSPaymentDraft({
+      payment_date: toDateInputValue(new Date()),
+      amount: remainingBPJS,
+      cash_bank_id: '',
+      reference: `PAY-BPJS-${payroll.payroll_number}`,
+      notes: `Pembayaran BPJS payroll ${payroll.payroll_number}`,
+    });
+    bpjsPaymentModal.onOpen();
+    await loadCashBanks();
+  };
+
+  const handlePaySalary = async () => {
+    if (!selectedPayroll) return;
+    const amount = Number(salaryPaymentDraft.amount || 0);
+    const remainingSalary = getSalaryRemainingAmount(selectedPayroll);
+    const cashBankId = Number(salaryPaymentDraft.cash_bank_id || 0);
+    if (!cashBankId || amount <= 0 || amount > remainingSalary + 1) {
+      toast({
+        title: 'Pembayaran gaji tidak valid',
+        description: `Pilih kas/bank dan isi nominal maksimal ${formatCurrency(remainingSalary)}.`,
+        status: 'warning', duration: 3500, isClosable: true,
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const updated = await payrollService.payPayrollSalary(selectedPayroll.id, {
+        payment_date: salaryPaymentDraft.payment_date,
+        amount,
+        cash_bank_id: cashBankId,
+        reference: salaryPaymentDraft.reference.trim(),
+        notes: salaryPaymentDraft.notes.trim(),
+      });
+      setSelectedPayroll(updated);
+      salaryPaymentModal.onClose();
+      toast({
+        title: 'Gaji payroll berhasil dibayar',
+        description: 'Utang gaji didebit dan kas/bank dikredit pada tanggal pembayaran aktual.',
+        status: 'success', duration: 4500, isClosable: true,
+      });
+      await loadPayroll();
+    } catch (error: unknown) {
+      toast({
+        title: 'Gagal bayar gaji',
+        description: getApiErrorMessage(error, 'Pembayaran gaji payroll belum bisa diproses.'),
+        status: 'error', duration: 5000, isClosable: true,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePayBPJS = async () => {
+    if (!selectedPayroll) return;
+
+    const amount = Number(bpjsPaymentDraft.amount || 0);
+    const remainingBPJS = getBPJSRemainingAmount(selectedPayroll);
+    const cashBankId = Number(bpjsPaymentDraft.cash_bank_id || 0);
+    if (!cashBankId) {
+      toast({
+        title: 'Akun kas/bank belum dipilih',
+        description: 'Pilih akun kas/bank IDR untuk settlement hutang BPJS.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (amount <= 0 || amount > remainingBPJS + 1) {
+      toast({
+        title: 'Nominal BPJS tidak valid',
+        description: `Nominal pembayaran harus lebih besar dari 0 dan maksimal ${formatCurrency(remainingBPJS)}.`,
+        status: 'warning',
+        duration: 3500,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const updated = await payrollService.payPayrollBPJS(selectedPayroll.id, {
+        payment_date: bpjsPaymentDraft.payment_date,
+        amount,
+        cash_bank_id: cashBankId,
+        reference: bpjsPaymentDraft.reference.trim(),
+        notes: bpjsPaymentDraft.notes.trim(),
+      });
+      setSelectedPayroll(updated);
+      bpjsPaymentModal.onClose();
+      toast({
+        title: 'BPJS payroll berhasil dibayar',
+        description: 'Jurnal settlement BPJS dibuat pada tanggal pembayaran aktual.',
+        status: 'success',
+        duration: 4500,
+        isClosable: true,
+      });
+      await loadPayroll();
+    } catch (error: unknown) {
+      toast({
+        title: 'Gagal bayar BPJS payroll',
+        description: getApiErrorMessage(error, 'Pembayaran BPJS payroll belum bisa diproses.'),
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handlePayPPh = async () => {
@@ -739,35 +798,22 @@ export default function PayrollPage() {
   const approveSelected = async () => {
     if (!selectedPayroll) return;
 
-    if (!selectedCashBankAccount) {
-      toast({
-        title: 'Akun Kas/Bank belum dipilih',
-        description: 'Pilih akun Kas/Bank IDR untuk pembayaran gaji karyawan.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
     setSubmitting(true);
     try {
       const payload: {
         expense_account_id?: number;
-        cash_bank_account_id?: number;
-        payment_method?: string;
+        posting_date?: string;
       } = {};
       if (selectedExpenseAccount) {
         payload.expense_account_id = Number(selectedExpenseAccount);
       }
-      payload.cash_bank_account_id = Number(selectedCashBankAccount);
-      payload.payment_method = selectedPaymentMethod || 'BANK_TRANSFER';
+      payload.posting_date = postingDate;
 
       const updated = await payrollService.approvePayrollRun(selectedPayroll.id, payload);
       setSelectedPayroll(updated);
       toast({
         title: 'Payroll approved',
-        description: 'Payroll sudah disetujui Finance Manager.',
+        description: 'Beban dan kewajiban payroll sudah diposting. Kas/bank belum berkurang sampai pembayaran aktual.',
         status: 'success',
         duration: 3000,
         isClosable: true,
@@ -826,7 +872,7 @@ export default function PayrollPage() {
 
   return (
     <ProtectedModule module="payroll">
-      <SimpleLayout allowedRoles={['admin', 'hr', 'finance', 'finance_manager', 'finance_staff', 'accounting']}>
+      <SimpleLayout>
         <Box bg={pageBg} minH="100vh" p={6}>
           <VStack align="stretch" spacing={6}>
             <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} gap={4} direction={{ base: 'column', md: 'row' }}>
@@ -835,7 +881,7 @@ export default function PayrollPage() {
                   <Icon as={FiUsers} boxSize={7} color="blue.500" />
                   <Heading size="xl">Payroll</Heading>
                 </HStack>
-                <Text color={mutedText}>HR membuat payroll, Finance Manager approval, Accounting dan Finance Staff hanya melihat summary.</Text>
+                <Text color={mutedText}>Payroll ditambahkan melalui Import Excel, lalu dikirim ke Finance Manager untuk approval.</Text>
               </Box>
               <HStack>
                 <Button leftIcon={<FiRefreshCw />} variant="outline" onClick={loadPayroll} isLoading={loading}>
@@ -849,11 +895,6 @@ export default function PayrollPage() {
                     <Button leftIcon={<FiUpload />} colorScheme="teal" onClick={importModal.onOpen}>
                       Import Excel
                     </Button>
-                    {isAdmin && (
-                      <Button leftIcon={<FiPlus />} colorScheme="blue" onClick={createModal.onOpen}>
-                        Create Payroll
-                      </Button>
-                    )}
                   </>
                 )}
               </HStack>
@@ -948,7 +989,9 @@ export default function PayrollPage() {
                           <Th isNumeric>PPh21 Terutang</Th>
                           <Th>Status PPh21</Th>
                           <Th isNumeric>Total BPJS</Th>
+                          <Th>Status BPJS</Th>
                           <Th isNumeric>Net Salary</Th>
+                          <Th>Status Gaji</Th>
                           <Th>Status</Th>
                           {canSeeEmployeeDetail && <Th>Aksi</Th>}
                         </Tr>
@@ -975,8 +1018,24 @@ export default function PayrollPage() {
                               </VStack>
                             </Td>
                             <Td isNumeric>{formatCurrency(payroll.total_bpjs)}</Td>
+                            <Td>
+                              <VStack align="start" spacing={1}>
+                                <Badge colorScheme={bpjsPaymentStatusColor(getBPJSPaymentStatus(payroll))}>{bpjsPaymentStatusLabel(getBPJSPaymentStatus(payroll))}</Badge>
+                                {Number(payroll.total_bpjs || 0) > 0 && (
+                                  <Text fontSize="xs" color={mutedText}>
+                                    Dibayar {formatCurrency(Number(payroll.bpjs_paid_amount || 0))}
+                                  </Text>
+                                )}
+                              </VStack>
+                            </Td>
                             <Td isNumeric fontWeight="bold" color="blue.600">
                               {formatCurrency(payroll.total_overall)}
+                            </Td>
+                            <Td>
+                              <VStack align="start" spacing={1}>
+                                <Badge colorScheme={salaryPaymentStatusColor(getSalaryPaymentStatus(payroll))}>{salaryPaymentStatusLabel(getSalaryPaymentStatus(payroll))}</Badge>
+                                <Text fontSize="xs" color={mutedText}>Dibayar {formatCurrency(Number(payroll.salary_paid_amount || 0))}</Text>
+                              </VStack>
                             </Td>
                             <Td>
                               <Badge colorScheme={statusColor(payroll.status)}>{statusLabel(payroll.status)}</Badge>
@@ -985,6 +1044,16 @@ export default function PayrollPage() {
                               <Td>
                                 <HStack spacing={2}>
                                   <IconButton aria-label="Lihat detail payroll" icon={<FiEye />} size="sm" variant="ghost" colorScheme="blue" onClick={() => openDetail(payroll)} />
+                                  {canApprovePayroll && payroll.status === 'APPROVED' && getSalaryRemainingAmount(payroll) > 0 && (
+                                    <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="blue" variant="outline" onClick={() => openPaySalary(payroll)}>
+                                      Pay Salary
+                                    </Button>
+                                  )}
+                                  {canApprovePayroll && payroll.status === 'APPROVED' && getBPJSRemainingAmount(payroll) > 0 && (
+                                    <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="purple" variant="outline" onClick={() => openPayBPJS(payroll)}>
+                                      Pay BPJS
+                                    </Button>
+                                  )}
                                   {canApprovePayroll && payroll.status === 'APPROVED' && getPPhRemainingAmount(payroll) > 0 && (
                                     <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="orange" variant="outline" onClick={() => openPayPPh(payroll)}>
                                       Pay PPh
@@ -997,7 +1066,7 @@ export default function PayrollPage() {
                         ))}
                         {payrollRuns.length === 0 && (
                           <Tr>
-                            <Td colSpan={canSeeEmployeeDetail ? 11 : 10}>
+                            <Td colSpan={canSeeEmployeeDetail ? 13 : 12}>
                               <Flex py={10} align="center" justify="center" direction="column" gap={2} color={mutedText}>
                                 <Icon as={FiFileText} boxSize={8} />
                                 <Text>Belum ada data payroll untuk filter ini.</Text>
@@ -1264,175 +1333,6 @@ export default function PayrollPage() {
             </ModalContent>
           </Modal>
 
-          <Modal isOpen={createModal.isOpen} onClose={createModal.onClose} size="full" scrollBehavior="inside">
-            <ModalOverlay />
-            <ModalContent>
-              <ModalHeader bgGradient="linear(to-r, blue.50, cyan.50)" borderBottomWidth="1px" borderColor={borderColor}>
-                <HStack>
-                  <Icon as={FiShield} color="blue.500" />
-                  <Box>
-                    <Text>Create Payroll</Text>
-                    <Text fontSize="sm" color={mutedText} fontWeight="normal">
-                      Input detail payroll oleh HR, lalu submit ke Finance Manager.
-                    </Text>
-                  </Box>
-                </HStack>
-              </ModalHeader>
-              <ModalCloseButton />
-              <ModalBody py={6}>
-                <VStack align="stretch" spacing={5}>
-                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-                    <FormControl isRequired>
-                      <FormLabel>Period Start</FormLabel>
-                      <Input
-                        type="date"
-                        value={draft.period_start}
-                        onChange={(event) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            period_start: event.target.value,
-                          }))
-                        }
-                        bg={inputBg}
-                      />
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel>Period End</FormLabel>
-                      <Input
-                        type="date"
-                        value={draft.period_end}
-                        onChange={(event) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            period_end: event.target.value,
-                          }))
-                        }
-                        bg={inputBg}
-                      />
-                    </FormControl>
-                    <FormControl>
-                      <FormLabel>Payment Date</FormLabel>
-                      <Input
-                        type="date"
-                        value={draft.payment_date}
-                        onChange={(event) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            payment_date: event.target.value,
-                          }))
-                        }
-                        bg={inputBg}
-                      />
-                    </FormControl>
-                  </SimpleGrid>
-
-                  <FormControl>
-                    <FormLabel>Catatan Payroll</FormLabel>
-                    <Textarea
-                      value={draft.notes}
-                      onChange={(event) =>
-                        setDraft((prev) => ({
-                          ...prev,
-                          notes: event.target.value,
-                        }))
-                      }
-                      placeholder="Catatan internal HR untuk payroll ini"
-                      bg={inputBg}
-                    />
-                  </FormControl>
-
-                  <Flex justify="space-between" align="center">
-                    <Box>
-                      <Heading size="sm">Detail Payroll Karyawan</Heading>
-                      <Text color={mutedText} fontSize="sm">
-                        Detail ini hanya terlihat oleh HR, Admin, dan Finance Manager.
-                      </Text>
-                    </Box>
-                    <Button leftIcon={<FiPlus />} size="sm" onClick={addDraftItem}>
-                      Tambah Karyawan
-                    </Button>
-                  </Flex>
-
-                  <TableContainer borderWidth="1px" borderColor={borderColor} borderRadius="xl">
-                    <Table size="sm">
-                      <Thead bg={tableHeaderBg}>
-                        <Tr>
-                          <Th minW="180px">Nama</Th>
-                          <Th minW="110px">Kode</Th>
-                          <Th minW="140px">Departemen</Th>
-                          <Th minW="140px">Posisi</Th>
-                          <Th minW="140px" isNumeric>
-                            Salary
-                          </Th>
-                          <Th minW="130px" isNumeric>
-                            Bonus
-                          </Th>
-                          <Th minW="150px" isNumeric>
-                            PPh21 Terutang
-                          </Th>
-                          <Th minW="130px" isNumeric>
-                            BPJS
-                          </Th>
-                          <Th minW="140px" isNumeric>
-                            Net Salary
-                          </Th>
-                          <Th w="50px"></Th>
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {draft.items.map((item, index) => {
-                          const netPay = getPayrollItemNetPay(item);
-                          return (
-                            <Tr key={index}>
-                              <Td>
-                                <Input size="sm" value={item.employee_name} onChange={(event) => updateDraftItem(index, 'employee_name', event.target.value)} placeholder="Nama karyawan" bg={inputBg} />
-                              </Td>
-                              <Td>
-                                <Input size="sm" value={item.employee_code || ''} onChange={(event) => updateDraftItem(index, 'employee_code', event.target.value)} placeholder="EMP001" bg={inputBg} />
-                              </Td>
-                              <Td>
-                                <Input size="sm" value={item.department || ''} onChange={(event) => updateDraftItem(index, 'department', event.target.value)} placeholder="HR" bg={inputBg} />
-                              </Td>
-                              <Td>
-                                <Input size="sm" value={item.position || ''} onChange={(event) => updateDraftItem(index, 'position', event.target.value)} placeholder="Staff" bg={inputBg} />
-                              </Td>
-                              <Td>
-                                <Input size="sm" type="number" value={item.base_salary} onChange={(event) => updateDraftItem(index, 'base_salary', Number(event.target.value))} textAlign="right" bg={inputBg} />
-                              </Td>
-                              <Td>
-                                <Input size="sm" type="number" value={item.bonus} onChange={(event) => updateDraftItem(index, 'bonus', Number(event.target.value))} textAlign="right" bg={inputBg} />
-                              </Td>
-                              <Td>
-                                <Input size="sm" type="number" value={item.pph} onChange={(event) => updateDraftItem(index, 'pph', Number(event.target.value))} textAlign="right" bg={inputBg} />
-                              </Td>
-                              <Td>
-                                <Input size="sm" type="number" value={item.bpjs} onChange={(event) => updateDraftItem(index, 'bpjs', Number(event.target.value))} textAlign="right" bg={inputBg} />
-                              </Td>
-                              <Td isNumeric fontWeight="bold">
-                                {formatCurrency(netPay)}
-                              </Td>
-                              <Td>
-                                <IconButton aria-label="Hapus detail" icon={<FiTrash2 />} size="sm" variant="ghost" colorScheme="red" onClick={() => removeDraftItem(index)} isDisabled={draft.items.length === 1} />
-                              </Td>
-                            </Tr>
-                          );
-                        })}
-                      </Tbody>
-                    </Table>
-                  </TableContainer>
-                </VStack>
-              </ModalBody>
-              <ModalFooter borderTopWidth="1px" borderColor={borderColor}>
-                <Button variant="ghost" mr={3} onClick={createModal.onClose}>
-                  Batal
-                </Button>
-                <Button colorScheme="blue" onClick={handleCreatePayroll} isLoading={submitting}>
-                  Submit ke Finance Manager
-                </Button>
-              </ModalFooter>
-            </ModalContent>
-          </Modal>
-
           <Modal isOpen={detailModal.isOpen} onClose={detailModal.onClose} size="full" scrollBehavior="inside">
             <ModalOverlay />
             <ModalContent maxW={{ base: '98vw', xl: '95vw' }} my={4}>
@@ -1476,7 +1376,7 @@ export default function PayrollPage() {
                         <CardBody>
                           <Stat>
                             <StatLabel>PPh21 Terutang</StatLabel>
-                            <StatNumber color="orange.500">{formatCurrency(selectedPayroll.total_pph)}</StatNumber>
+                            <StatNumber fontSize="lg" whiteSpace="nowrap" color="orange.500">{formatCurrency(selectedPayroll.total_pph)}</StatNumber>
                           </Stat>
                         </CardBody>
                       </Card>
@@ -1498,6 +1398,10 @@ export default function PayrollPage() {
                           <Stat>
                             <StatLabel>Total BPJS</StatLabel>
                             <StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber>
+                            <StatHelpText>
+                              <Badge colorScheme={bpjsPaymentStatusColor(getBPJSPaymentStatus(selectedPayroll))}>{bpjsPaymentStatusLabel(getBPJSPaymentStatus(selectedPayroll))}</Badge>
+                              {' '}Paid {formatCurrency(Number(selectedPayroll.bpjs_paid_amount || 0))} | Sisa {formatCurrency(getBPJSRemainingAmount(selectedPayroll))}
+                            </StatHelpText>
                           </Stat>
                         </CardBody>
                       </Card>
@@ -1506,17 +1410,21 @@ export default function PayrollPage() {
                           <Stat>
                             <StatLabel>Net Salary</StatLabel>
                             <StatNumber color="blue.600">{formatCurrency(selectedPayroll.total_overall)}</StatNumber>
+                            <StatHelpText>
+                              <Badge colorScheme={salaryPaymentStatusColor(getSalaryPaymentStatus(selectedPayroll))}>{salaryPaymentStatusLabel(getSalaryPaymentStatus(selectedPayroll))}</Badge>
+                              {' '}Paid {formatCurrency(Number(selectedPayroll.salary_paid_amount || 0))}
+                            </StatHelpText>
                           </Stat>
                         </CardBody>
                       </Card>
                     </SimpleGrid>
 
-                    {Number(selectedPayroll.total_pph || 0) > 0 && (
+                    {(Number(selectedPayroll.total_pph || 0) > 0 || Number(selectedPayroll.total_bpjs || 0) > 0) && (
                       <Alert status="info" borderRadius="xl">
                         <AlertIcon />
                         <AlertDescription>
                           Hutang PPh payroll diakui pada periode payroll ({formatDate(selectedPayroll.pph_recognition_date || selectedPayroll.period_end)}
-                          ). Tombol Pay PPh hanya mencatat settlement pada tanggal pajak benar-benar dibayar.
+                          ). Tombol Pay BPJS dan Pay PPh hanya mencatat settlement pada tanggal kewajiban benar-benar dibayar.
                         </AlertDescription>
                       </Alert>
                     )}
@@ -1604,7 +1512,11 @@ export default function PayrollPage() {
                           <Text fontWeight="semibold">Approval Finance Manager</Text>
                         </HStack>
 
-                        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} mb={4}>
+                        <Alert status="info" borderRadius="lg" mb={4}>
+                          <AlertIcon />
+                          <AlertDescription>Approval hanya memposting beban dan kewajiban payroll. Kas/bank baru berkurang saat tombol Pay Salary atau Pay PPh dijalankan.</AlertDescription>
+                        </Alert>
+                        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} mb={4}>
                           <FormControl isRequired>
                             <FormLabel fontSize="sm" fontWeight="medium">
                               Akun Beban Gaji (Debit)
@@ -1624,31 +1536,9 @@ export default function PayrollPage() {
 
                           <FormControl isRequired>
                             <FormLabel fontSize="sm" fontWeight="medium">
-                              Akun Kas/Bank Gaji (Kredit)
+                              Tanggal Posting Payroll
                             </FormLabel>
-                            {accountsLoading ? (
-                              <Spinner size="sm" />
-                            ) : (
-                              <Select placeholder="Pilih Kas/Bank Pembayaran" value={selectedCashBankAccount} onChange={(e) => setSelectedCashBankAccount(e.target.value)} bg={inputBg}>
-                                {approvalCashBanks.map((acc) => (
-                                  <option key={acc.id} value={acc.account_id}>
-                                    {acc.code} - {acc.name} ({formatCurrency(acc.balance)})
-                                  </option>
-                                ))}
-                              </Select>
-                            )}
-                          </FormControl>
-
-                          <FormControl isRequired>
-                            <FormLabel fontSize="sm" fontWeight="medium">
-                              Metode Pembayaran
-                            </FormLabel>
-                            <Select value={selectedPaymentMethod} onChange={(e) => setSelectedPaymentMethod(e.target.value)} bg={inputBg}>
-                              <option value="BANK_TRANSFER">Bank Transfer</option>
-                              <option value="CASH">Cash / Kas Tunai</option>
-                              <option value="CHECK">Check</option>
-                              <option value="OTHER">Lainnya</option>
-                            </Select>
+                            <Input type="date" min={selectedPayroll.period_start.slice(0, 10)} max={selectedPayroll.period_end.slice(0, 10)} value={postingDate} onChange={(e) => setPostingDate(e.target.value)} bg={inputBg} />
                           </FormControl>
                         </SimpleGrid>
 
@@ -1675,11 +1565,205 @@ export default function PayrollPage() {
                     </Button>
                   </>
                 )}
+                {selectedPayroll && canApprovePayroll && selectedPayroll.status === 'APPROVED' && getSalaryRemainingAmount(selectedPayroll) > 0 && (
+                  <Button leftIcon={<FiDollarSign />} colorScheme="blue" mr={3} onClick={() => openPaySalary(selectedPayroll)} isLoading={submitting}>
+                    Pay Salary
+                  </Button>
+                )}
+                {selectedPayroll && canApprovePayroll && selectedPayroll.status === 'APPROVED' && getBPJSRemainingAmount(selectedPayroll) > 0 && (
+                  <Button leftIcon={<FiDollarSign />} colorScheme="purple" mr={3} onClick={() => openPayBPJS(selectedPayroll)} isLoading={submitting}>
+                    Pay BPJS
+                  </Button>
+                )}
                 {selectedPayroll && canApprovePayroll && selectedPayroll.status === 'APPROVED' && getPPhRemainingAmount(selectedPayroll) > 0 && (
                   <Button leftIcon={<FiDollarSign />} colorScheme="orange" onClick={() => openPayPPh(selectedPayroll)} isLoading={submitting}>
                     Pay PPh
                   </Button>
                 )}
+              </ModalFooter>
+            </ModalContent>
+          </Modal>
+
+          <Modal isOpen={salaryPaymentModal.isOpen} onClose={salaryPaymentModal.onClose} size="2xl" scrollBehavior="inside">
+            <ModalOverlay />
+            <ModalContent>
+              <ModalHeader borderBottomWidth="1px" borderColor={borderColor}>
+                <HStack>
+                  <Icon as={FiDollarSign} color="blue.500" />
+                  <Box>
+                    <Text>Pay Salary Payroll</Text>
+                    <Text fontSize="sm" color={mutedText} fontWeight="normal">Settlement utang gaji pada tanggal pembayaran aktual.</Text>
+                  </Box>
+                </HStack>
+              </ModalHeader>
+              <ModalCloseButton />
+              <ModalBody py={6}>
+                {selectedPayroll && (
+                  <VStack align="stretch" spacing={5}>
+                    <Alert status="info" borderRadius="xl">
+                      <AlertIcon />
+                      <AlertDescription>Jurnal: Debit Utang Gaji dan Kredit Kas/Bank. Pembayaran tidak mengubah beban gaji yang sudah diakui saat approval.</AlertDescription>
+                    </Alert>
+                    <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                      <Card variant="outline"><CardBody><Stat><StatLabel>Net Salary</StatLabel><StatNumber fontSize="lg" whiteSpace="nowrap" color="blue.600">{formatCurrency(selectedPayroll.total_overall)}</StatNumber></Stat></CardBody></Card>
+                      <Card variant="outline"><CardBody><Stat><StatLabel>Sudah Dibayar</StatLabel><StatNumber fontSize="lg" whiteSpace="nowrap" color="green.500">{formatCurrency(Number(selectedPayroll.salary_paid_amount || 0))}</StatNumber></Stat></CardBody></Card>
+                      <Card variant="outline"><CardBody><Stat><StatLabel>Sisa Gaji</StatLabel><StatNumber fontSize="lg" whiteSpace="nowrap" color="red.500">{formatCurrency(getSalaryRemainingAmount(selectedPayroll))}</StatNumber></Stat></CardBody></Card>
+                    </SimpleGrid>
+                    <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                      <FormControl isRequired>
+                        <FormLabel>Tanggal Bayar Gaji</FormLabel>
+                        <Input type="date" value={salaryPaymentDraft.payment_date} onChange={(event) => setSalaryPaymentDraft((prev) => ({ ...prev, payment_date: event.target.value }))} bg={inputBg} />
+                      </FormControl>
+                      <FormControl isRequired>
+                        <FormLabel>Nominal Pembayaran</FormLabel>
+                        <CurrencyInput
+                          value={salaryPaymentDraft.amount}
+                          onChange={(amount) => setSalaryPaymentDraft((prev) => ({ ...prev, amount }))}
+                          min={1}
+                          max={getSalaryRemainingAmount(selectedPayroll)}
+                          showLabel={false}
+                          keepFormattedOnFocus
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                    <FormControl isRequired>
+                      <FormLabel>Kas/Bank Pembayaran</FormLabel>
+                      <Select placeholder="Pilih Kas/Bank IDR" value={salaryPaymentDraft.cash_bank_id} onChange={(event) => setSalaryPaymentDraft((prev) => ({ ...prev, cash_bank_id: event.target.value }))} bg={inputBg} isDisabled={cashBankLoading}>
+                        {cashBanks.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name} ({formatCurrency(account.balance)})</option>)}
+                      </Select>
+                    </FormControl>
+                    <FormControl>
+                      <FormLabel>Reference</FormLabel>
+                      <Input value={salaryPaymentDraft.reference} onChange={(event) => setSalaryPaymentDraft((prev) => ({ ...prev, reference: event.target.value }))} bg={inputBg} />
+                    </FormControl>
+                    <FormControl>
+                      <FormLabel>Catatan</FormLabel>
+                      <Textarea value={salaryPaymentDraft.notes} onChange={(event) => setSalaryPaymentDraft((prev) => ({ ...prev, notes: event.target.value }))} bg={inputBg} />
+                    </FormControl>
+                  </VStack>
+                )}
+              </ModalBody>
+              <ModalFooter borderTopWidth="1px" borderColor={borderColor}>
+                <Button variant="ghost" mr={3} onClick={salaryPaymentModal.onClose}>Batal</Button>
+                <Button leftIcon={<FiDollarSign />} colorScheme="blue" onClick={handlePaySalary} isLoading={submitting} isDisabled={!selectedPayroll || cashBankLoading || cashBanks.length === 0}>Bayar Gaji</Button>
+              </ModalFooter>
+            </ModalContent>
+          </Modal>
+
+          <Modal isOpen={bpjsPaymentModal.isOpen} onClose={bpjsPaymentModal.onClose} size="2xl" scrollBehavior="inside">
+            <ModalOverlay />
+            <ModalContent>
+              <ModalHeader borderBottomWidth="1px" borderColor={borderColor}>
+                <HStack>
+                  <Icon as={FiDollarSign} color="purple.500" />
+                  <Box>
+                    <Text>Pay BPJS Payroll</Text>
+                    <Text fontSize="sm" color={mutedText} fontWeight="normal">
+                      Settlement hutang BPJS dapat berbeda tanggal dari periode payroll.
+                    </Text>
+                  </Box>
+                </HStack>
+              </ModalHeader>
+              <ModalCloseButton />
+              <ModalBody py={6}>
+                {selectedPayroll && (
+                  <VStack align="stretch" spacing={5}>
+                    <Alert status="info" borderRadius="xl">
+                      <AlertIcon />
+                      <AlertDescription>
+                        Jurnal: Debit 2103-002 - Utang BPJS & Potongan Payroll dan Kredit Kas/Bank. Nominal default hanya Total BPJS, tidak termasuk Other Deduction.
+                      </AlertDescription>
+                    </Alert>
+
+                    <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Total BPJS</StatLabel>
+                            <StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Sudah Dibayar</StatLabel>
+                            <StatNumber fontSize="lg" whiteSpace="nowrap" color="green.500">{formatCurrency(Number(selectedPayroll.bpjs_paid_amount || 0))}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Sisa BPJS</StatLabel>
+                            <StatNumber fontSize="lg" whiteSpace="nowrap" color="red.500">{formatCurrency(getBPJSRemainingAmount(selectedPayroll))}</StatNumber>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                    </SimpleGrid>
+
+                    <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                      <FormControl isRequired>
+                        <FormLabel>Tanggal Bayar BPJS</FormLabel>
+                        <Input
+                          type="date"
+                          value={bpjsPaymentDraft.payment_date}
+                          onChange={(event) => setBPJSPaymentDraft((prev) => ({ ...prev, payment_date: event.target.value }))}
+                          bg={inputBg}
+                        />
+                      </FormControl>
+                      <FormControl isRequired>
+                        <FormLabel>Nominal Bayar</FormLabel>
+                        <CurrencyInput
+                          value={bpjsPaymentDraft.amount}
+                          onChange={(amount) => setBPJSPaymentDraft((prev) => ({ ...prev, amount }))}
+                          min={1}
+                          max={getBPJSRemainingAmount(selectedPayroll)}
+                          showLabel={false}
+                          keepFormattedOnFocus
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+
+                    <FormControl isRequired>
+                      <FormLabel>Akun Kas/Bank IDR</FormLabel>
+                      <Select
+                        placeholder={cashBankLoading ? 'Memuat kas/bank...' : 'Pilih kas/bank pembayaran BPJS'}
+                        value={bpjsPaymentDraft.cash_bank_id}
+                        onChange={(event) => setBPJSPaymentDraft((prev) => ({ ...prev, cash_bank_id: event.target.value }))}
+                        bg={inputBg}
+                        isDisabled={cashBankLoading}
+                      >
+                        {cashBanks.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.code} - {account.name} ({formatCurrency(account.balance)})
+                          </option>
+                        ))}
+                      </Select>
+                      <Text fontSize="sm" color={mutedText} mt={1}>
+                        Hanya kas/bank IDR yang aktif dan punya GL/COA link yang ditampilkan.
+                      </Text>
+                    </FormControl>
+
+                    <FormControl>
+                      <FormLabel>Reference</FormLabel>
+                      <Input value={bpjsPaymentDraft.reference} onChange={(event) => setBPJSPaymentDraft((prev) => ({ ...prev, reference: event.target.value }))} bg={inputBg} />
+                    </FormControl>
+
+                    <FormControl>
+                      <FormLabel>Catatan</FormLabel>
+                      <Textarea value={bpjsPaymentDraft.notes} onChange={(event) => setBPJSPaymentDraft((prev) => ({ ...prev, notes: event.target.value }))} bg={inputBg} />
+                    </FormControl>
+                  </VStack>
+                )}
+              </ModalBody>
+              <ModalFooter borderTopWidth="1px" borderColor={borderColor}>
+                <Button variant="ghost" mr={3} onClick={bpjsPaymentModal.onClose}>
+                  Batal
+                </Button>
+                <Button leftIcon={<FiDollarSign />} colorScheme="purple" onClick={handlePayBPJS} isLoading={submitting} isDisabled={!selectedPayroll || cashBankLoading || cashBanks.length === 0}>
+                  Bayar BPJS
+                </Button>
               </ModalFooter>
             </ModalContent>
           </Modal>
@@ -1722,7 +1806,7 @@ export default function PayrollPage() {
                         <CardBody>
                           <Stat>
                             <StatLabel>Sudah Dibayar</StatLabel>
-                            <StatNumber color="green.500">{formatCurrency(Number(selectedPayroll.pph_paid_amount || 0))}</StatNumber>
+                            <StatNumber fontSize="lg" whiteSpace="nowrap" color="green.500">{formatCurrency(Number(selectedPayroll.pph_paid_amount || 0))}</StatNumber>
                           </Stat>
                         </CardBody>
                       </Card>
@@ -1730,7 +1814,7 @@ export default function PayrollPage() {
                         <CardBody>
                           <Stat>
                             <StatLabel>Sisa PPh</StatLabel>
-                            <StatNumber color="red.500">{formatCurrency(getPPhRemainingAmount(selectedPayroll))}</StatNumber>
+                            <StatNumber fontSize="lg" whiteSpace="nowrap" color="red.500">{formatCurrency(getPPhRemainingAmount(selectedPayroll))}</StatNumber>
                           </Stat>
                         </CardBody>
                       </Card>
@@ -1753,18 +1837,13 @@ export default function PayrollPage() {
                       </FormControl>
                       <FormControl isRequired>
                         <FormLabel>Nominal Bayar</FormLabel>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={getPPhRemainingAmount(selectedPayroll)}
+                        <CurrencyInput
                           value={pphPaymentDraft.amount}
-                          onChange={(event) =>
-                            setPPhPaymentDraft((prev) => ({
-                              ...prev,
-                              amount: Number(event.target.value),
-                            }))
-                          }
-                          bg={inputBg}
+                          onChange={(amount) => setPPhPaymentDraft((prev) => ({ ...prev, amount }))}
+                          min={1}
+                          max={getPPhRemainingAmount(selectedPayroll)}
+                          showLabel={false}
+                          keepFormattedOnFocus
                         />
                       </FormControl>
                     </SimpleGrid>
