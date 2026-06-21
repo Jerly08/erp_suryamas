@@ -1,9 +1,33 @@
 version: '3.8'
 
 services:
+  proxy:
+    profiles:
+      - proxy
+    image: caddy:2-alpine
+    container_name: erp_proxy
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50MB}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/vps/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - erp_network
+
   db:
     image: postgres:15-alpine
     container_name: erp_db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
@@ -12,7 +36,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5434:5432"
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-sistem_akuntansi}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - erp_network
 
@@ -21,25 +50,38 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: erp_backend
+    restart: unless-stopped
     environment:
-      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-sistem_akuntansi}?sslmode=disable
-      - ENVIRONMENT=${ENVIRONMENT:-staging}
-      - GIN_MODE=${GIN_MODE:-release}
-      - SERVER_PORT=${SERVER_PORT:-8080}
-      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-your-very-secure-access-secret-minimum-32-chars-long!}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-very-secure-refresh-secret-minimum-32-chars-long!}
-      - SESSION_SECRET=${SESSION_SECRET:-your-very-secure-session-secret-minimum-32-chars-long!}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3003,http://erp_frontend:3000,http://frontend:3000,http://frontend:3003}
-      - ENABLE_SWAGGER=${ENABLE_SWAGGER:-false}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-sistem_akuntansi}?sslmode=disable
+      ENVIRONMENT: ${ENVIRONMENT:-staging}
+      GIN_MODE: ${GIN_MODE:-release}
+      SERVER_PORT: ${SERVER_PORT:-8080}
+      JWT_SECRET: ${JWT_SECRET:-your-very-secure-secret-minimum-32-chars-long!}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-your-very-secure-access-secret-minimum-32-chars-long!}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your-very-secure-refresh-secret-minimum-32-chars-long!}
+      SESSION_SECRET: ${SESSION_SECRET:-your-very-secure-session-secret-minimum-32-chars-long!}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3003}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3003,http://127.0.0.1:3003}
+      ENABLE_HTTPS: ${ENABLE_HTTPS:-false}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_HTTP_ONLY: ${COOKIE_HTTP_ONLY:-true}
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-lax}
+      ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "127.0.0.1:8084:8080"
     depends_on:
-      - db
-    restart: unless-stopped
+      db:
+        condition: service_healthy
     volumes:
       - erp_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/v1/health | grep -q 'ok'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - erp_network
 
@@ -49,25 +91,34 @@ services:
       dockerfile: Dockerfile
       args:
         # Default fallback to the docker internal network backend
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8080}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8080}
     container_name: erp_frontend
+    restart: unless-stopped
     environment:
       # Use an explicit internal URL for Server-Side and Proxy Rewrites (not accessible to browsers)
-      - API_INTERNAL_URL=http://backend:8080
+      API_INTERNAL_URL: http://backend:8080
       # This points the frontend's Next.js API proxy to the backend container (accessible via 'backend' hostname in docker network)
       # For client side, Next.js proxy rewrite will redirect /api/* to this container
-      - NEXT_PUBLIC_API_URL=http://backend:8080
+      NEXT_PUBLIC_API_URL: http://backend:8080
     ports:
-      - "3003:3000"
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3003}:3000"
     depends_on:
-      - backend
-    restart: unless-stopped
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - erp_network
 
 volumes:
   postgres_data:
   erp_uploads:
+  caddy_data:
+  caddy_config:
 
 networks:
   erp_network:
