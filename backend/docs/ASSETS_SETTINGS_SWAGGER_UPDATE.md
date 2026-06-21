@@ -7,7 +7,6 @@ Dokumentasi API untuk modul **Assets (Aset)** dan **Settings (Pengaturan)** tela
 - **Original Endpoints**: 131
 - **New Endpoints Added**: 8
 - **Final Total**: 136 endpoints
-- **Backup Created**: `swagger.json.backup_assets_settings_20251006_161937`
 
 ## 📂 Assets (Aset) Module - Complete Documentation
 
@@ -134,14 +133,10 @@ During the addition process, 4 conflicts were detected where endpoints already e
 ### Created:
 - `assets_settings_endpoints.json` - Source endpoint definitions  
 - `add_assets_settings.py` - Addition automation script
-- `assets_settings_add_report.txt` - Process report
 - `ASSETS_SETTINGS_SWAGGER_UPDATE.md` - This documentation
 
 ### Modified:
-- `swagger.json` - Main Swagger definition (with backup)
-
-### Backup:
-- `swagger.json.backup_assets_settings_20251006_161937` - Safety backup
+- `swagger.json` - Main Swagger definition
 
 ## 🎯 What's New and Working
 
