@@ -261,7 +261,99 @@ func inferJournalAdjustmentRequirement(entry *models.SSOTJournalEntry) (models.J
 	return models.JournalAdjustmentCategoryDefinition{}, "", false
 }
 
-func hydrateJournalAdjustmentRequirement(entry *models.SSOTJournalEntry) {
+const journalSettlementTolerance = 0.005
+
+func journalAmountIsSettled(total, paid float64) bool {
+	return total <= journalSettlementTolerance || paid+journalSettlementTolerance >= total
+}
+
+// journalBusinessTransactionResolved prevents the adjustment mapping from
+// becoming a permanent label. A mapped journal only needs follow-up while its
+// underlying business transaction is still open.
+func journalBusinessTransactionResolved(db *gorm.DB, entry *models.SSOTJournalEntry, categoryCode string) bool {
+	if db == nil || entry == nil || entry.SourceID == nil || *entry.SourceID == 0 {
+		return false
+	}
+
+	sourceType := strings.ToUpper(strings.TrimSpace(entry.SourceType))
+	sourceID := *entry.SourceID
+
+	if strings.HasPrefix(sourceType, "PAYROLL") {
+		var run models.PayrollRun
+		if err := db.First(&run, uint(sourceID)).Error; err != nil {
+			return false
+		}
+
+		return journalAmountIsSettled(run.TotalOverall, run.SalaryPaidAmount) &&
+			journalAmountIsSettled(run.TotalBPJS, run.BPJSPaidAmount) &&
+			journalAmountIsSettled(run.TotalPPh, run.PPhPaidAmount)
+	}
+
+	switch categoryCode {
+	case models.JournalAdjustmentCategoryPPh23Accrual:
+		if sourceType != models.SSOTSourceTypeSale {
+			return false
+		}
+		var sale models.Sale
+		if err := db.First(&sale, uint(sourceID)).Error; err != nil {
+			return false
+		}
+		return sale.PPh23Amount <= journalSettlementTolerance || sale.PPh23SettlementJournalEntryID != nil
+
+	case models.JournalAdjustmentCategorySalesRevenueRecognition:
+		if sourceType != models.SSOTSourceTypeSale {
+			return false
+		}
+		var sale models.Sale
+		if err := db.First(&sale, uint(sourceID)).Error; err != nil {
+			return false
+		}
+		return sale.OutstandingAmount <= journalSettlementTolerance
+
+	case models.JournalAdjustmentCategoryCOGSHPPRecognition:
+		if sourceType != models.SSOTSourceTypeSale {
+			return false
+		}
+		var openBackorders int64
+		if err := db.Model(&models.SaleItem{}).
+			Where("sale_id = ? AND backorder_quantity > 0 AND deleted_at IS NULL", uint(sourceID)).
+			Count(&openBackorders).Error; err != nil {
+			return false
+		}
+		return openBackorders == 0
+
+	case models.JournalAdjustmentCategoryPrepaidMonthlyRealization:
+		switch sourceType {
+		case models.SSOTSourceTypePrepaidAmortization:
+			var schedule models.PrepaidSchedule
+			if err := db.First(&schedule, uint(sourceID)).Error; err != nil {
+				return false
+			}
+			status := strings.ToUpper(strings.TrimSpace(schedule.Status))
+			return status == "POSTED" || status == "CANCELLED"
+		case models.SSOTSourceTypePrepaidTermination:
+			var prepaid models.PrepaidExpense
+			if err := db.First(&prepaid, uint(sourceID)).Error; err != nil {
+				return false
+			}
+			status := strings.ToUpper(strings.TrimSpace(prepaid.Status))
+			return status == "COMPLETED" || status == "TERMINATED"
+		}
+	}
+
+	return false
+}
+
+func clearJournalAdjustmentRequirement(entry *models.SSOTJournalEntry) {
+	entry.AdjustmentRequired = false
+	entry.AdjustmentRequirementCode = ""
+	entry.AdjustmentRequirementLabel = ""
+	entry.AdjustmentRequirementCOA = ""
+	entry.AdjustmentRequirementReason = ""
+	entry.AdjustmentRequirementTagline = ""
+}
+
+func hydrateJournalAdjustmentRequirement(db *gorm.DB, entry *models.SSOTJournalEntry) {
 	if entry == nil {
 		return
 	}
@@ -270,12 +362,12 @@ func hydrateJournalAdjustmentRequirement(entry *models.SSOTJournalEntry) {
 
 	category, reason, required := inferJournalAdjustmentRequirement(entry)
 	if !required {
-		entry.AdjustmentRequired = false
-		entry.AdjustmentRequirementCode = ""
-		entry.AdjustmentRequirementLabel = ""
-		entry.AdjustmentRequirementCOA = ""
-		entry.AdjustmentRequirementReason = ""
-		entry.AdjustmentRequirementTagline = ""
+		clearJournalAdjustmentRequirement(entry)
+		return
+	}
+
+	if !entry.AdjustmentCompleted && journalBusinessTransactionResolved(db, entry, category.Code) {
+		clearJournalAdjustmentRequirement(entry)
 		return
 	}
 
@@ -287,9 +379,9 @@ func hydrateJournalAdjustmentRequirement(entry *models.SSOTJournalEntry) {
 	entry.AdjustmentRequirementTagline = models.JournalAdjustmentRequirementTagline
 }
 
-func hydrateJournalAdjustmentRequirements(entries []models.SSOTJournalEntry) {
+func hydrateJournalAdjustmentRequirements(db *gorm.DB, entries []models.SSOTJournalEntry) {
 	for idx := range entries {
-		hydrateJournalAdjustmentRequirement(&entries[idx])
+		hydrateJournalAdjustmentRequirement(db, &entries[idx])
 	}
 }
 
@@ -1214,7 +1306,7 @@ func (s *UnifiedJournalService) GetJournalEntry(entryID uint64) (*models.SSOTJou
 		First(&entry, entryID).Error; err != nil {
 		return nil, fmt.Errorf("journal entry not found: %w", err)
 	}
-	hydrateJournalAdjustmentRequirement(&entry)
+	hydrateJournalAdjustmentRequirement(s.db, &entry)
 	return &entry, nil
 }
 
@@ -1443,7 +1535,7 @@ func (s *UnifiedJournalService) GetJournalEntries(filters interface{}) (*Journal
 		return nil, fmt.Errorf("failed to query journal entries: %w", err)
 	}
 
-	hydrateJournalAdjustmentRequirements(entries)
+	hydrateJournalAdjustmentRequirements(s.db, entries)
 
 	return &JournalResponse{
 		Data:       entries,

@@ -127,6 +127,33 @@ func TestGetStandardCOAIncludesDedicatedNonOperatingAccounts(t *testing.T) {
 	}
 }
 
+func TestGetStandardCOATradingIncludesPayrollExpenseAccount(t *testing.T) {
+	coa := GetStandardCOA(models.CompanyTypeTrading)
+
+	for _, account := range coa {
+		if account.Code != "6105" {
+			continue
+		}
+
+		if account.Name != "BEBAN GAJI & TUNJANGAN" {
+			t.Fatalf("expected account 6105 to be BEBAN GAJI & TUNJANGAN, got %s", account.Name)
+		}
+		if account.Type != models.AccountTypeExpense {
+			t.Fatalf("expected account 6105 to use type %s, got %s", models.AccountTypeExpense, account.Type)
+		}
+		if account.Category != models.CategoryOperatingExpense {
+			t.Fatalf("expected account 6105 to use category %s, got %s", models.CategoryOperatingExpense, account.Category)
+		}
+		if account.IsHeader || !account.IsActive {
+			t.Fatal("expected account 6105 to be an active leaf account")
+		}
+
+		return
+	}
+
+	t.Fatal("expected trading COA to include payroll expense account 6105")
+}
+
 func TestProfitLossCOAAlignmentMigrationBackfills4101AndAddsDedicatedAccounts(t *testing.T) {
 	db := setupDatabaseTestDB(t)
 

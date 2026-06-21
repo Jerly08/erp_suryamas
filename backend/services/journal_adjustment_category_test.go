@@ -218,6 +218,217 @@ func TestCreateJournalAdjustmentAllowsSameAccountingDateWithDifferentTimes(t *te
 	}
 }
 
+func TestPayrollAdjustmentRequirementClearsWhenAllComponentsAreSettled(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+
+	if err := db.Exec(`
+		CREATE TABLE payroll_runs (
+			id INTEGER PRIMARY KEY,
+			total_overall REAL NOT NULL,
+			salary_paid_amount REAL NOT NULL,
+			total_bpjs REAL NOT NULL,
+			bpjs_paid_amount REAL NOT NULL,
+			total_pph REAL NOT NULL,
+			pph_paid_amount REAL NOT NULL,
+			deleted_at DATETIME
+		)
+	`).Error; err != nil {
+		t.Fatalf("create payroll_runs: %v", err)
+	}
+	if err := db.Exec(`
+		INSERT INTO payroll_runs (
+			id, total_overall, salary_paid_amount,
+			total_bpjs, bpjs_paid_amount,
+			total_pph, pph_paid_amount
+		) VALUES (7, 40000000, 39900000, 1500000, 1500000, 500000, 500000)
+	`).Error; err != nil {
+		t.Fatalf("insert payroll run: %v", err)
+	}
+
+	sourceID := uint64(7)
+	entry := models.SSOTJournalEntry{
+		SourceType: "PAYROLL_ACCRUAL",
+		SourceID:   &sourceID,
+		Status:     models.SSOTStatusPosted,
+	}
+
+	hydrateJournalAdjustmentRequirement(db, &entry)
+	if !entry.AdjustmentRequired {
+		t.Fatal("expected adjustment tag while salary still has an outstanding amount")
+	}
+
+	if err := db.Exec("UPDATE payroll_runs SET salary_paid_amount = total_overall WHERE id = 7").Error; err != nil {
+		t.Fatalf("settle payroll salary: %v", err)
+	}
+
+	hydrateJournalAdjustmentRequirement(db, &entry)
+	if entry.AdjustmentRequired {
+		t.Fatal("expected adjustment tag to clear after salary, BPJS, and PPh are fully settled")
+	}
+	if entry.AdjustmentRequirementCode != "" || entry.AdjustmentRequirementLabel != "" {
+		t.Fatalf("expected cleared adjustment metadata, got code=%q label=%q", entry.AdjustmentRequirementCode, entry.AdjustmentRequirementLabel)
+	}
+}
+
+func TestAllMappedAdjustmentTagsClearWhenTransactionsResolve(t *testing.T) {
+	newDB := func(t *testing.T, schema string) *gorm.DB {
+		t.Helper()
+		db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+		if err != nil {
+			t.Fatalf("open sqlite db: %v", err)
+		}
+		if err := db.Exec(schema).Error; err != nil {
+			t.Fatalf("create business transaction schema: %v", err)
+		}
+		return db
+	}
+
+	assertAdjustmentRequired := func(t *testing.T, db *gorm.DB, entry *models.SSOTJournalEntry, want bool) {
+		t.Helper()
+		hydrateJournalAdjustmentRequirement(db, entry)
+		if entry.AdjustmentRequired != want {
+			t.Fatalf("expected adjustment_required=%v, got %v (category=%q)", want, entry.AdjustmentRequired, entry.AdjustmentRequirementCode)
+		}
+		if !want && (entry.AdjustmentRequirementCode != "" || entry.AdjustmentRequirementLabel != "") {
+			t.Fatalf("expected adjustment metadata to be cleared, got code=%q label=%q", entry.AdjustmentRequirementCode, entry.AdjustmentRequirementLabel)
+		}
+	}
+
+	postedEntry := func(sourceType string, sourceID uint64, description string) models.SSOTJournalEntry {
+		return models.SSOTJournalEntry{
+			SourceType:  sourceType,
+			SourceID:    &sourceID,
+			Description: description,
+			Status:      models.SSOTStatusPosted,
+			IsBalanced:  true,
+		}
+	}
+
+	t.Run("PPh 21 payroll", func(t *testing.T) {
+		db := newDB(t, `
+			CREATE TABLE payroll_runs (
+				id INTEGER PRIMARY KEY,
+				total_overall REAL NOT NULL,
+				salary_paid_amount REAL NOT NULL,
+				total_bpjs REAL NOT NULL,
+				bpjs_paid_amount REAL NOT NULL,
+				total_pph REAL NOT NULL,
+				pph_paid_amount REAL NOT NULL,
+				deleted_at DATETIME
+			)
+		`)
+		if err := db.Exec(`INSERT INTO payroll_runs VALUES (1, 1000, 900, 100, 100, 50, 50, NULL)`).Error; err != nil {
+			t.Fatalf("insert payroll run: %v", err)
+		}
+
+		entry := postedEntry("PAYROLL_ACCRUAL", 1, "Pengakuan payroll")
+		assertAdjustmentRequired(t, db, &entry, true)
+
+		if err := db.Exec(`UPDATE payroll_runs SET salary_paid_amount = total_overall WHERE id = 1`).Error; err != nil {
+			t.Fatalf("settle payroll: %v", err)
+		}
+		assertAdjustmentRequired(t, db, &entry, false)
+	})
+
+	t.Run("PPh 23", func(t *testing.T) {
+		db := newDB(t, `
+			CREATE TABLE sales (
+				id INTEGER PRIMARY KEY,
+				p_ph23_amount REAL NOT NULL,
+				p_ph23_settlement_journal_entry_id INTEGER,
+				deleted_at DATETIME
+			)
+		`)
+		if err := db.Exec(`INSERT INTO sales VALUES (2, 200, NULL, NULL)`).Error; err != nil {
+			t.Fatalf("insert sale: %v", err)
+		}
+
+		entry := postedEntry(models.SSOTSourceTypeSale, 2, "Pembebanan PPh 23")
+		category, _, required := inferJournalAdjustmentRequirement(&entry)
+		if !required || category.Code != models.JournalAdjustmentCategoryPPh23Accrual {
+			t.Fatalf("expected PPh 23 mapping before settlement, got required=%v category=%q", required, category.Code)
+		}
+		if journalBusinessTransactionResolved(db, &entry, category.Code) {
+			t.Fatal("expected unsettled PPh 23 transaction to remain open")
+		}
+		assertAdjustmentRequired(t, db, &entry, true)
+
+		if err := db.Exec(`UPDATE sales SET p_ph23_settlement_journal_entry_id = 99 WHERE id = 2`).Error; err != nil {
+			t.Fatalf("settle PPh 23: %v", err)
+		}
+		assertAdjustmentRequired(t, db, &entry, false)
+	})
+
+	t.Run("sales revenue recognition", func(t *testing.T) {
+		db := newDB(t, `
+			CREATE TABLE sales (
+				id INTEGER PRIMARY KEY,
+				outstanding_amount REAL NOT NULL,
+				deleted_at DATETIME
+			)
+		`)
+		if err := db.Exec(`INSERT INTO sales VALUES (3, 500, NULL)`).Error; err != nil {
+			t.Fatalf("insert sale: %v", err)
+		}
+
+		entry := postedEntry(models.SSOTSourceTypeSale, 3, "Pengakuan pendapatan sales")
+		entry.Lines = []models.SSOTJournalLine{{
+			Account: &models.Account{Code: "1102-001", Name: "PIUTANG USAHA"},
+		}}
+		assertAdjustmentRequired(t, db, &entry, true)
+
+		if err := db.Exec(`UPDATE sales SET outstanding_amount = 0 WHERE id = 3`).Error; err != nil {
+			t.Fatalf("settle sale: %v", err)
+		}
+		assertAdjustmentRequired(t, db, &entry, false)
+	})
+
+	t.Run("COGS HPP backorder", func(t *testing.T) {
+		db := newDB(t, `
+			CREATE TABLE sale_items (
+				id INTEGER PRIMARY KEY,
+				sale_id INTEGER NOT NULL,
+				backorder_quantity INTEGER NOT NULL,
+				deleted_at DATETIME
+			)
+		`)
+		if err := db.Exec(`INSERT INTO sale_items VALUES (1, 4, 2, NULL)`).Error; err != nil {
+			t.Fatalf("insert sale item: %v", err)
+		}
+
+		entry := postedEntry(models.SSOTSourceTypeSale, 4, "Estimated HPP Backorder")
+		assertAdjustmentRequired(t, db, &entry, true)
+
+		if err := db.Exec(`UPDATE sale_items SET backorder_quantity = 0 WHERE sale_id = 4`).Error; err != nil {
+			t.Fatalf("settle backorder: %v", err)
+		}
+		assertAdjustmentRequired(t, db, &entry, false)
+	})
+
+	t.Run("prepaid monthly realization", func(t *testing.T) {
+		db := newDB(t, `
+			CREATE TABLE prepaid_schedules (
+				id INTEGER PRIMARY KEY,
+				status TEXT NOT NULL
+			)
+		`)
+		if err := db.Exec(`INSERT INTO prepaid_schedules VALUES (5, 'PENDING')`).Error; err != nil {
+			t.Fatalf("insert prepaid schedule: %v", err)
+		}
+
+		entry := postedEntry(models.SSOTSourceTypePrepaidAmortization, 5, "Amortisasi prepaid")
+		assertAdjustmentRequired(t, db, &entry, true)
+
+		if err := db.Exec(`UPDATE prepaid_schedules SET status = 'POSTED' WHERE id = 5`).Error; err != nil {
+			t.Fatalf("post prepaid schedule: %v", err)
+		}
+		assertAdjustmentRequired(t, db, &entry, false)
+	})
+}
+
 func TestJournalAdjustmentRequirementFilterUsesClientMapping(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
