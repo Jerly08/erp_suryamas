@@ -3,8 +3,10 @@ package services
 import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
-	"strconv"
+	"app-sistem-akuntansi/utils"
 	"fmt"
+	"net/mail"
+	"strconv"
 	"strings"
 )
 
@@ -50,9 +52,17 @@ func (s *contactService) GetContactByID(id string) (*models.Contact, error) {
 
 // CreateContact creates a new contact
 func (s *contactService) CreateContact(contact models.Contact) (*models.Contact, error) {
+	var err error
+	contact, err = prepareContact(contact)
+	if err != nil {
+		return nil, err
+	}
+
 	// Validate contact type early
 	if !isValidContactType(contact.Type) {
-		return nil, fmt.Errorf("invalid contact type: %s", contact.Type)
+		return nil, utils.NewValidationError("Contact type is invalid", map[string]string{
+			"type": "Contact type must be CUSTOMER, VENDOR, or EMPLOYEE",
+		})
 	}
 
 	// If client didn't provide a code, generate one
@@ -86,9 +96,12 @@ func (s *contactService) CreateContact(contact models.Contact) (*models.Contact,
 			return nil, genErr
 		}
 		contact.Code = newCode
-		return s.repo.Create(contact)
+		created, err = s.repo.Create(contact)
 	}
-	return created, err
+	if err != nil {
+		return nil, friendlyContactSaveError(contact.Type, err)
+	}
+	return created, nil
 }
 
 // UpdateContact updates an existing contact
@@ -98,13 +111,111 @@ func (s *contactService) UpdateContact(id string, contact models.Contact) (*mode
 		return nil, fmt.Errorf("invalid contact ID: %v", err)
 	}
 
+	contact, err = prepareContact(contact)
+	if err != nil {
+		return nil, err
+	}
+
 	// Validate contact type
 	if !isValidContactType(contact.Type) {
-		return nil, fmt.Errorf("invalid contact type: %s", contact.Type)
+		return nil, utils.NewValidationError("Contact type is invalid", map[string]string{
+			"type": "Contact type must be CUSTOMER, VENDOR, or EMPLOYEE",
+		})
 	}
 
 	contact.ID = uint(contactID)
-	return s.repo.Update(contact)
+	updated, err := s.repo.Update(contact)
+	if err != nil {
+		return nil, friendlyContactSaveError(contact.Type, err)
+	}
+	return updated, nil
+}
+
+// prepareContact normalizes user input and validates only the fields that are
+// required by the contact form. Optional fields are intentionally allowed to
+// remain empty.
+func prepareContact(contact models.Contact) (models.Contact, error) {
+	contact.Code = strings.TrimSpace(contact.Code)
+	contact.Name = strings.TrimSpace(contact.Name)
+	contact.Type = strings.ToUpper(strings.TrimSpace(contact.Type))
+	contact.Category = strings.TrimSpace(contact.Category)
+	contact.Email = strings.TrimSpace(contact.Email)
+	contact.Phone = strings.TrimSpace(contact.Phone)
+	contact.Mobile = strings.TrimSpace(contact.Mobile)
+	contact.Fax = strings.TrimSpace(contact.Fax)
+	contact.Website = strings.TrimSpace(contact.Website)
+	contact.TaxNumber = strings.TrimSpace(contact.TaxNumber)
+	contact.PICName = strings.TrimSpace(contact.PICName)
+	contact.ExternalID = strings.TrimSpace(contact.ExternalID)
+	contact.Address = strings.TrimSpace(contact.Address)
+	contact.Notes = strings.TrimSpace(contact.Notes)
+
+	contactLabel := "Contact"
+	if contact.Type == models.ContactTypeVendor {
+		contactLabel = "Vendor"
+	}
+
+	if contact.Name == "" {
+		return contact, utils.NewValidationError(contactLabel+" name is required", map[string]string{
+			"name": contactLabel + " name is required",
+		})
+	}
+	if len(contact.Name) > 100 {
+		return contact, utils.NewValidationError(contactLabel+" name is too long", map[string]string{
+			"name": contactLabel + " name must be at most 100 characters",
+		})
+	}
+
+	// The quick-create vendor form marks email with an asterisk, so it is the
+	// only user-entered field besides name that is mandatory for a vendor.
+	if contact.Type == models.ContactTypeVendor && contact.Email == "" {
+		return contact, utils.NewValidationError("Vendor email is required", map[string]string{
+			"email": "Vendor email is required",
+		})
+	}
+	if contact.Email != "" {
+		parsed, parseErr := mail.ParseAddress(contact.Email)
+		if parseErr != nil || parsed.Address != contact.Email {
+			return contact, utils.NewValidationError("Email format is invalid", map[string]string{
+				"email": "Enter an email such as vendor@company.com",
+			})
+		}
+	}
+
+	fieldLimits := []struct {
+		field string
+		value string
+		limit int
+	}{
+		{"code", contact.Code, 20},
+		{"email", contact.Email, 100},
+		{"phone", contact.Phone, 20},
+		{"mobile", contact.Mobile, 20},
+		{"pic_name", contact.PICName, 100},
+		{"external_id", contact.ExternalID, 50},
+	}
+	for _, item := range fieldLimits {
+		if len(item.value) > item.limit {
+			return contact, utils.NewValidationError("One of the fields is too long", map[string]string{
+				item.field: fmt.Sprintf("Maximum length is %d characters", item.limit),
+			})
+		}
+	}
+
+	return contact, nil
+}
+
+func friendlyContactSaveError(contactType string, err error) error {
+	errorText := strings.ToLower(err.Error())
+	if strings.Contains(errorText, "duplicate") || strings.Contains(errorText, "unique constraint") {
+		return utils.NewConflictError("Contact code is already in use. Leave the code empty to generate it automatically.")
+	}
+
+	label := "contact"
+	if contactType == models.ContactTypeVendor {
+		label = "vendor"
+	}
+	return utils.NewInternalError(fmt.Sprintf("Unable to save %s. Please try again.", label), err)
 }
 
 // DeleteContact deletes a contact by ID
@@ -164,13 +275,13 @@ func (s *contactService) AddContactAddress(contactID string, address models.Cont
 	if err != nil {
 		return nil, fmt.Errorf("invalid contact ID: %v", err)
 	}
-	
+
 	// Validate that contact exists
 	_, err = s.repo.GetByID(uint(contactIDUint))
 	if err != nil {
 		return nil, fmt.Errorf("contact not found: %v", err)
 	}
-	
+
 	address.ContactID = uint(contactIDUint)
 	return s.repo.AddAddress(address)
 }
@@ -181,18 +292,18 @@ func (s *contactService) UpdateContactAddress(contactID string, addressID string
 	if err != nil {
 		return nil, fmt.Errorf("invalid contact ID: %v", err)
 	}
-	
+
 	addressIDUint, err := strconv.ParseUint(addressID, 10, 32)
 	if err != nil {
 		return nil, fmt.Errorf("invalid address ID: %v", err)
 	}
-	
+
 	// Validate that contact exists
 	_, err = s.repo.GetByID(uint(contactIDUint))
 	if err != nil {
 		return nil, fmt.Errorf("contact not found: %v", err)
 	}
-	
+
 	address.ID = uint(addressIDUint)
 	address.ContactID = uint(contactIDUint)
 	return s.repo.UpdateAddress(address)
@@ -204,18 +315,18 @@ func (s *contactService) DeleteContactAddress(contactID string, addressID string
 	if err != nil {
 		return fmt.Errorf("invalid contact ID: %v", err)
 	}
-	
+
 	addressIDUint, err := strconv.ParseUint(addressID, 10, 32)
 	if err != nil {
 		return fmt.Errorf("invalid address ID: %v", err)
 	}
-	
+
 	// Validate that contact exists
 	_, err = s.repo.GetByID(uint(contactIDUint))
 	if err != nil {
 		return fmt.Errorf("contact not found: %v", err)
 	}
-	
+
 	return s.repo.DeleteAddress(uint(addressIDUint))
 }
 

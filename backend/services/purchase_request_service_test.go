@@ -35,6 +35,8 @@ func newPurchaseRequestTestDB(t *testing.T) *gorm.DB {
 		&models.PurchaseRequest{},
 		&models.PurchaseRequestItem{},
 		&models.PurchaseRequestDocument{},
+		&models.Notification{},
+		&models.NotificationPreference{},
 	))
 
 	return db
@@ -286,6 +288,7 @@ func TestPurchaseRequestDocumentsArePersistedAndPreloaded(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, models.PurchaseRequestDocumentSupporting, document.DocumentType)
+	require.Equal(t, 1, document.ApprovalRevision)
 
 	updated, err := service.GetPurchaseRequestByID(pr.ID, requester.ID, requester.Role)
 	require.NoError(t, err)
@@ -295,6 +298,103 @@ func TestPurchaseRequestDocumentsArePersistedAndPreloaded(t *testing.T) {
 	documents, err := service.GetPurchaseRequestDocuments(pr.ID, requester.ID, requester.Role)
 	require.NoError(t, err)
 	require.Len(t, documents, 1)
+}
+
+func TestAdditionalDocumentsAfterApprovalRestartWorkflowAndNotifyReviewers(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	notificationRepo := repositories.NewNotificationRepository(db)
+	notificationService := NewNotificationService(db, notificationRepo)
+	service := NewPurchaseRequestService(db, repo, notificationService)
+
+	requester := seedPurchaseRequestTestUser(t, db, "staff-pr-reapproval", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "finance-staff-reapproval", models.RoleFinanceStaff)
+	financeManager := seedPurchaseRequestTestUser(t, db, "finance-manager-reapproval", models.RoleFinanceManager)
+	product := seedPurchaseRequestTestProduct(t, db, "REAPPROVAL")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 250000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+
+	approveItems := []models.PurchaseRequestReviewItemPayload{
+		{ItemID: pr.Items[0].ID, Decision: models.PRItemDecisionApproved},
+	}
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{Items: approveItems})
+	require.NoError(t, err)
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeManager.ID, financeManager.Role, models.PurchaseRequestReviewPayload{Items: approveItems})
+	require.NoError(t, err)
+
+	approved, err := service.GetPurchaseRequestByID(pr.ID, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusApproved, approved.Status)
+	require.Equal(t, 1, approved.ApprovalRevision)
+
+	require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.Notification{}).Error)
+
+	document, err := service.UploadPurchaseRequestDocument(
+		pr.ID,
+		models.PurchaseRequestDocumentSupporting,
+		"quotation-revised.pdf",
+		"/uploads/purchase-requests/quotation-revised.pdf",
+		4096,
+		"application/pdf",
+		requester.ID,
+		requester.Role,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2, document.ApprovalRevision)
+
+	reapprovalStarted, err := service.SubmitAdditionalDocumentsForApproval(pr.ID, requester.ID, requester.Role, 1)
+	require.NoError(t, err)
+	require.True(t, reapprovalStarted)
+
+	reopened, err := service.GetPurchaseRequestByID(pr.ID, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusPendingApproval, reopened.Status)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, reopened.CurrentApprovalStage)
+	require.Equal(t, 2, reopened.ApprovalRevision)
+	require.Equal(t, models.PRReapprovalReasonAdditionalDocuments, reopened.ReapprovalReason)
+	require.Nil(t, reopened.FinanceStaffApprovedBy)
+	require.Nil(t, reopened.FinanceManagerApprovedBy)
+	require.Nil(t, reopened.ApprovedBy)
+	require.Equal(t, models.PRItemDecisionApproved, reopened.Items[0].FinanceStaffDecision)
+	require.Equal(t, models.PRItemDecisionApproved, reopened.Items[0].FinanceManagerDecision)
+
+	var staffNotifications []models.Notification
+	require.NoError(t, db.Where("user_id = ?", financeStaff.ID).Find(&staffNotifications).Error)
+	require.Len(t, staffNotifications, 1)
+	require.Contains(t, staffNotifications[0].Title, "Reapproval")
+	require.Contains(t, staffNotifications[0].Data, "additional_documents_review_required")
+
+	err = service.DeletePurchaseRequestDocument(document.ID, requester.ID, requester.Role)
+	require.ErrorContains(t, err, "cannot be deleted while approval is in progress")
+
+	require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.Notification{}).Error)
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{Items: approveItems})
+	require.NoError(t, err)
+
+	var managerNotifications []models.Notification
+	require.NoError(t, db.Where("user_id = ?", financeManager.ID).Find(&managerNotifications).Error)
+	require.Len(t, managerNotifications, 1)
+	require.Contains(t, managerNotifications[0].Title, "Document Reapproval")
+	require.Contains(t, managerNotifications[0].Data, "finance_manager_document_reapproval_required")
+}
+
+func TestFinanceManagerInitialStageIsNotTreatedAsPriorApproval(t *testing.T) {
+	pr := &models.PurchaseRequest{
+		Status:               models.PRStatusPendingApproval,
+		CurrentApprovalStage: models.PRApprovalStageFinanceManager,
+	}
+
+	require.False(t, purchaseRequestApprovalHasProgressed(pr))
+
+	approverID := uint(9)
+	pr.FinanceStaffApprovedBy = &approverID
+	require.True(t, purchaseRequestApprovalHasProgressed(pr))
 }
 
 func TestFinanceManagerReviewCanEscalatePurchaseRequestToDirector(t *testing.T) {

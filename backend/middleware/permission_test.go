@@ -92,6 +92,45 @@ func TestCheckModulePermissionUsesManagedJournalPermission(t *testing.T) {
 	}
 }
 
+func TestPurchaseVendorQuickCreateUsesPurchasePermissionWithoutContactAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newPermissionMiddlewareTestDB(t)
+
+	requirements := []models.ModulePermissionRecord{
+		{UserID: uint(7), Module: "purchases", CanView: true, CanCreate: true},
+		{UserID: uint(7), Module: "contacts", CanView: false, CanCreate: false},
+	}
+	if err := db.Create(&requirements).Error; err != nil {
+		t.Fatalf("seed purchase/contact permissions: %v", err)
+	}
+
+	permissionMiddleware := NewPermissionMiddleware(db)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(7))
+		c.Set("role", models.RoleFinanceStaff)
+		c.Next()
+	})
+	router.POST("/purchases/vendors", permissionMiddleware.CanCreate("purchases"), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	router.POST("/contacts", permissionMiddleware.CanCreate("contacts"), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	purchaseRecorder := httptest.NewRecorder()
+	router.ServeHTTP(purchaseRecorder, httptest.NewRequest(http.MethodPost, "/purchases/vendors", nil))
+	if purchaseRecorder.Code != http.StatusNoContent {
+		t.Fatalf("expected Purchase quick-create to pass, got %d body %s", purchaseRecorder.Code, purchaseRecorder.Body.String())
+	}
+
+	contactRecorder := httptest.NewRecorder()
+	router.ServeHTTP(contactRecorder, httptest.NewRequest(http.MethodPost, "/contacts", nil))
+	if contactRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected Contact create to remain denied, got %d body %s", contactRecorder.Code, contactRecorder.Body.String())
+	}
+}
+
 func TestCanUsePurchaseApprovalWorkflowUsesManagedPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newPermissionMiddlewareTestDB(t)

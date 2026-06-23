@@ -3254,11 +3254,19 @@
     },
     "validation": {
       "nameRequired": "Contact name is required",
+      "vendorNameRequired": "Vendor name is required.",
+      "emailRequired": "Vendor email is required.",
+      "emailInvalid": "Email format is invalid. Example: vendor@company.com.",
+      "vendorCodeExists": "Vendor code is already in use. Use another code or leave it empty for automatic generation.",
+      "fieldTooLong": "One of the fields is too long. Check the length of the entered data.",
       "typeRequired": "Contact type is required",
       "phoneMinLength": "Phone number should be at least 10 digits"
     },
     "messages": {
       "saveFailed": "Failed to save contact",
+      "saveFailedFriendly": "The vendor could not be saved. Check the entered data and try again.",
+      "sessionExpired": "Your session has expired. Please sign in again.",
+      "permissionDenied": "You do not have permission to create a vendor.",
       "contactCreated": "Contact Created",
       "contactUpdated": "Contact Updated",
       "contactDeleted": "Contact Deleted",

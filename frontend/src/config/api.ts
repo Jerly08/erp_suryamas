@@ -422,6 +422,7 @@ export const API_ENDPOINTS = {
 
   // 🛒 Purchases endpoints (with /api/v1 prefix)
   PURCHASES: "/api/v1/purchases",
+  PURCHASES_VENDORS: "/api/v1/purchases/vendors",
   PURCHASES_BY_ID: (id: number) => `/api/v1/purchases/${id}`,
   PURCHASES_PENDING_APPROVAL: "/api/v1/purchases/pending-approval",
   PURCHASES_APPROVE: (id: number) => `/api/v1/purchases/${id}/approve`,

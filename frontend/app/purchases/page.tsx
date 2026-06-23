@@ -1352,6 +1352,19 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    const normalizedEmail = newVendorData.email.trim();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(normalizedEmail)) {
+      toast({
+        title: t("common.error"),
+        description: t("contacts.validation.emailInvalid"),
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setSavingVendor(true);
 
@@ -1376,8 +1389,8 @@ const PurchasesPage: React.FC = () => {
         );
         if (existingVendor) {
           toast({
-            title: "Error",
-            description: `Vendor code "${vendorCode}" already exists. Please use a different code or leave empty for auto-generation.`,
+            title: t("common.error"),
+            description: t("contacts.validation.vendorCodeExists"),
             status: "error",
             duration: 5000,
             isClosable: true,
@@ -1387,17 +1400,25 @@ const PurchasesPage: React.FC = () => {
       }
 
       const vendorPayload = {
-        ...newVendorData,
+        name: newVendorData.name.trim(),
+        email: normalizedEmail,
+        phone: newVendorData.phone.trim(),
+        mobile: newVendorData.mobile.trim(),
+        address: newVendorData.address.trim(),
+        pic_name: newVendorData.pic_name.trim(),
+        external_id: newVendorData.external_id.trim(),
+        notes: newVendorData.notes.trim(),
         code: vendorCode,
-        type: "VENDOR" as const,
-        is_active: true,
       };
 
       console.log("Creating vendor with payload:", vendorPayload);
 
       let newVendor;
       try {
-        newVendor = await contactService.createContact(token!, vendorPayload);
+        newVendor = await contactService.createVendorForPurchase(
+          token!,
+          vendorPayload,
+        );
         console.log("Vendor creation response:", newVendor);
 
         // Check if the response indicates an error (some APIs return error in success response)
@@ -1483,10 +1504,54 @@ const PurchasesPage: React.FC = () => {
       });
     } catch (err: any) {
       console.error("Error creating vendor:", err);
+      const rawMessage =
+        err?.response?.data?.error ||
+        (err instanceof Error ? err.message : "");
+      const normalizedMessage = rawMessage.toLowerCase();
+      let userMessage = rawMessage;
+
+      if (normalizedMessage.includes("name") && normalizedMessage.includes("required")) {
+        userMessage = t("contacts.validation.vendorNameRequired");
+      } else if (normalizedMessage.includes("email") && normalizedMessage.includes("required")) {
+        userMessage = t("contacts.validation.emailRequired");
+      } else if (normalizedMessage.includes("email") && normalizedMessage.includes("invalid")) {
+        userMessage = t("contacts.validation.emailInvalid");
+      } else if (
+        normalizedMessage.includes("duplicate") ||
+        normalizedMessage.includes("already in use") ||
+        normalizedMessage.includes("already exists")
+      ) {
+        userMessage = t("contacts.validation.vendorCodeExists");
+      } else if (
+        normalizedMessage.includes("unauthorized") ||
+        normalizedMessage.includes("authentication token")
+      ) {
+        userMessage = t("contacts.messages.sessionExpired");
+      } else if (
+        normalizedMessage.includes("forbidden") ||
+        normalizedMessage.includes("permission")
+      ) {
+        userMessage = t("contacts.messages.permissionDenied");
+      } else if (
+        normalizedMessage.includes("too long") ||
+        normalizedMessage.includes("maximum length")
+      ) {
+        userMessage = t("contacts.validation.fieldTooLong");
+      } else if (
+        !rawMessage ||
+        normalizedMessage.includes("server error") ||
+        normalizedMessage.includes("unable to save") ||
+        normalizedMessage.includes("network error") ||
+        normalizedMessage.includes("failed to fetch") ||
+        normalizedMessage.includes("invalid response") ||
+        normalizedMessage.includes("no response")
+      ) {
+        userMessage = t("contacts.messages.saveFailedFriendly");
+      }
+
       toast({
         title: t("common.error"),
-        description:
-          err.response?.data?.error || t("contacts.messages.saveFailed"),
+        description: userMessage || t("contacts.messages.saveFailedFriendly"),
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -2533,7 +2598,7 @@ const PurchasesPage: React.FC = () => {
     try {
       setLoadingVendors(true);
 
-      const response = await fetch(`/api/v1/contacts?type=VENDOR`, {
+      const response = await fetch(API_ENDPOINTS.PURCHASES_VENDORS, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -8906,6 +8971,7 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Enter vendor name"
                             value={newVendorData.name}
+                            maxLength={100}
                             onChange={(e) =>
                               setNewVendorData({
                                 ...newVendorData,
@@ -8921,6 +8987,7 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Auto-generated if empty"
                             value={newVendorData.code}
+                            maxLength={20}
                             onChange={(e) =>
                               setNewVendorData({
                                 ...newVendorData,
@@ -8939,6 +9006,7 @@ const PurchasesPage: React.FC = () => {
                             type="email"
                             placeholder="vendor@company.com"
                             value={newVendorData.email}
+                            maxLength={100}
                             onChange={(e) =>
                               setNewVendorData({
                                 ...newVendorData,
@@ -8954,6 +9022,7 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Enter phone number"
                             value={newVendorData.phone}
+                            maxLength={20}
                             onChange={(e) =>
                               setNewVendorData({
                                 ...newVendorData,
@@ -8971,6 +9040,7 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Enter mobile number"
                             value={newVendorData.mobile}
+                            maxLength={20}
                             onChange={(e) =>
                               setNewVendorData({
                                 ...newVendorData,
@@ -8986,6 +9056,7 @@ const PurchasesPage: React.FC = () => {
                             size="sm"
                             placeholder="Person in charge"
                             value={newVendorData.pic_name}
+                            maxLength={100}
                             onChange={(e) =>
                               setNewVendorData({
                                 ...newVendorData,
@@ -9002,6 +9073,7 @@ const PurchasesPage: React.FC = () => {
                           size="sm"
                           placeholder="External vendor ID (optional)"
                           value={newVendorData.external_id}
+                          maxLength={50}
                           onChange={(e) =>
                             setNewVendorData({
                               ...newVendorData,

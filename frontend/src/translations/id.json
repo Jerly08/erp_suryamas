@@ -3318,11 +3318,19 @@
     },
     "validation": {
       "nameRequired": "Nama kontak wajib diisi",
+      "vendorNameRequired": "Nama vendor wajib diisi.",
+      "emailRequired": "Email vendor wajib diisi.",
+      "emailInvalid": "Format email tidak valid. Contoh: vendor@perusahaan.com.",
+      "vendorCodeExists": "Kode vendor sudah digunakan. Gunakan kode lain atau kosongkan agar dibuat otomatis.",
+      "fieldTooLong": "Salah satu isian terlalu panjang. Periksa kembali panjang data yang dimasukkan.",
       "typeRequired": "Tipe kontak wajib dipilih",
       "phoneMinLength": "Nomor telepon minimal 10 digit"
     },
     "messages": {
       "saveFailed": "Gagal menyimpan kontak",
+      "saveFailedFriendly": "Vendor belum dapat disimpan. Periksa kembali data yang diisi, lalu coba lagi.",
+      "sessionExpired": "Sesi Anda telah berakhir. Silakan masuk kembali.",
+      "permissionDenied": "Anda tidak memiliki izin untuk membuat vendor.",
       "contactCreated": "Kontak Dibuat",
       "contactUpdated": "Kontak Diperbarui",
       "contactDeleted": "Kontak Dihapus",

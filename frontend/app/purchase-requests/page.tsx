@@ -119,6 +119,9 @@ export default function PurchaseRequestsPage() {
   const [pageSize, setPageSize] = useState(10);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
+  const [pendingAdditionalDocuments, setPendingAdditionalDocuments] = useState<
+    File[]
+  >([]);
   const { canCreate, canEdit } = usePermissions();
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("id-ID", {
@@ -319,7 +322,7 @@ export default function PurchaseRequestsPage() {
     setDocuments((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
   };
 
-  const handleExistingDocumentUpload = async (
+  const handleExistingDocumentChange = (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     if (!selectedRequest) return;
@@ -339,15 +342,46 @@ export default function PurchaseRequestsPage() {
       return;
     }
 
+    setPendingAdditionalDocuments((currentFiles) => {
+      const existing = new Set(
+        currentFiles.map((file) => `${file.name}-${file.size}`),
+      );
+      const uniqueFiles = selectedFiles.filter(
+        (file) => !existing.has(`${file.name}-${file.size}`),
+      );
+      return [...currentFiles, ...uniqueFiles];
+    });
+  };
+
+  const handleRemovePendingAdditionalDocument = (index: number) => {
+    setPendingAdditionalDocuments((files) =>
+      files.filter((_, fileIndex) => fileIndex !== index),
+    );
+  };
+
+  const handleSubmitAdditionalDocuments = async () => {
+    if (!selectedRequest || pendingAdditionalDocuments.length === 0) return;
+
     try {
       setIsUploadingDocuments(true);
-      await purchaseRequestService.uploadDocuments(selectedRequest.id, selectedFiles);
+      const result = await purchaseRequestService.uploadDocuments(
+        selectedRequest.id,
+        pendingAdditionalDocuments,
+      );
       const refreshed = await purchaseRequestService.getById(selectedRequest.id);
       setSelectedRequest(refreshed);
+      initializeReviewForm(refreshed);
+      setPendingAdditionalDocuments([]);
+      await fetchData();
       toast({
-        title: "Dokumen berhasil ditambahkan",
+        title: result.reapproval_started
+          ? "Dokumen dikirim untuk approval ulang"
+          : "Dokumen berhasil dikirim",
+        description: result.reapproval_started
+          ? "Approval PR dimulai kembali dari Finance Staff. Finance Manager akan menerima notifikasi setelah review staff selesai."
+          : "Dokumen baru sudah dikirim dan reviewer terkait telah diberi notifikasi.",
         status: "success",
-        duration: 3000,
+        duration: 5000,
       });
     } catch (err: any) {
       toast({
@@ -584,6 +618,7 @@ export default function PurchaseRequestsPage() {
       setLoading(true);
       const detail = await purchaseRequestService.getById(pr.id);
       setSelectedRequest(detail);
+      setPendingAdditionalDocuments([]);
       initializeReviewForm(detail);
       onViewOpen();
     } catch {
@@ -1885,7 +1920,15 @@ export default function PurchaseRequestsPage() {
                       {selectedRequest?.documents?.length || 0} file
                     </Badge>
                   </Flex>
-                  {selectedRequest && canEdit("purchase_requests") && (
+                  {selectedRequest &&
+                    canEdit("purchase_requests") &&
+                    selectedRequest.status !== "COMPLETED" &&
+                    selectedRequest.status !== "REJECTED" &&
+                    !(
+                      selectedRequest.status === "PENDING_APPROVAL" &&
+                      selectedRequest.reapproval_reason ===
+                        "ADDITIONAL_DOCUMENTS"
+                    ) && (
                     <Button
                       as="label"
                       leftIcon={<FiPaperclip />}
@@ -1895,17 +1938,38 @@ export default function PurchaseRequestsPage() {
                       cursor="pointer"
                       isLoading={isUploadingDocuments}
                     >
-                      Tambah Dokumen
+                      Pilih Dokumen Tambahan
                       <Input
                         type="file"
                         multiple
                         accept={ACCEPTED_DOCUMENT_TYPES}
                         display="none"
-                        onChange={handleExistingDocumentUpload}
+                        onChange={handleExistingDocumentChange}
                       />
                     </Button>
                   )}
                 </Flex>
+
+                {selectedRequest?.status === "PENDING_APPROVAL" &&
+                  selectedRequest.reapproval_reason ===
+                    "ADDITIONAL_DOCUMENTS" && (
+                    <Box
+                      mb={3}
+                      p={3}
+                      rounded="md"
+                      bg={notePanelBg}
+                      color={notePanelColor}
+                    >
+                      <Text fontSize="sm" fontWeight="semibold">
+                        Dokumen tambahan sedang dalam approval ulang:{" "}
+                        {getStageLabel(selectedRequest) || "Menunggu Finance"}.
+                      </Text>
+                      <Text fontSize="xs" mt={1}>
+                        Dokumen baru tidak dapat ditambah atau dihapus sampai
+                        proses approval ini selesai.
+                      </Text>
+                    </Box>
+                  )}
 
                 {selectedRequest?.documents?.length ? (
                   <Box>
@@ -1931,6 +1995,11 @@ export default function PurchaseRequestsPage() {
                               {document.uploader &&
                                 ` - diunggah oleh ${document.uploader.first_name} ${document.uploader.last_name}`}
                             </Text>
+                            {document.approval_revision > 1 && (
+                              <Badge mt={1} colorScheme="orange">
+                                Dokumen tambahan - Approval ulang
+                              </Badge>
+                            )}
                           </Box>
                         </Flex>
                         <Button
@@ -1954,6 +2023,77 @@ export default function PurchaseRequestsPage() {
                   <Text fontSize="sm" color={mutedTextColor}>
                     Belum ada dokumen pendukung untuk PR ini.
                   </Text>
+                )}
+
+                {pendingAdditionalDocuments.length > 0 && (
+                  <Box
+                    mt={4}
+                    pt={4}
+                    borderTopWidth="1px"
+                    borderColor={borderColor}
+                  >
+                    <Flex justify="space-between" align="center" gap={3} mb={2}>
+                      <Box>
+                        <Text fontSize="sm" fontWeight="bold">
+                          Draft Dokumen Tambahan
+                        </Text>
+                        <Text fontSize="xs" color={mutedTextColor}>
+                          File belum dikirim. Hapus dengan tombol X bila perlu,
+                          lalu submit untuk memulai approval ulang.
+                        </Text>
+                      </Box>
+                      <Badge colorScheme="orange">
+                        {pendingAdditionalDocuments.length} draft
+                      </Badge>
+                    </Flex>
+
+                    {pendingAdditionalDocuments.map((file, index) => (
+                      <Flex
+                        key={`${file.name}-${file.size}-${index}`}
+                        align="center"
+                        justify="space-between"
+                        gap={3}
+                        py={2}
+                        borderTopWidth={index === 0 ? "0" : "1px"}
+                        borderColor={borderColor}
+                      >
+                        <Flex align="center" gap={2} minW={0}>
+                          <Icon as={FiFileText} color="orange.500" />
+                          <Box minW={0}>
+                            <Text fontSize="sm" fontWeight="medium" noOfLines={1}>
+                              {file.name}
+                            </Text>
+                            <Text fontSize="xs" color={mutedTextColor}>
+                              {formatFileSize(file.size)}
+                            </Text>
+                          </Box>
+                        </Flex>
+                        <IconButton
+                          aria-label={`Hapus draft ${file.name}`}
+                          icon={<FiX />}
+                          size="sm"
+                          variant="ghost"
+                          colorScheme="red"
+                          onClick={() =>
+                            handleRemovePendingAdditionalDocument(index)
+                          }
+                        />
+                      </Flex>
+                    ))}
+
+                    <Flex justify="flex-end" mt={3}>
+                      <Button
+                        leftIcon={<FiCheck />}
+                        size="sm"
+                        colorScheme="blue"
+                        onClick={handleSubmitAdditionalDocuments}
+                        isLoading={isUploadingDocuments}
+                        loadingText="Mengirim..."
+                      >
+                        Submit Dokumen Tambahan
+                      </Button>
+                    </Flex>
+                  </Box>
                 )}
               </Box>
 

@@ -171,9 +171,16 @@ func (c *PurchaseRequestController) UploadDocuments(ctx *gin.Context) {
 		return
 	}
 
+	reapprovalStarted, err := c.service.SubmitAdditionalDocumentsForApproval(uint(id), userID, userRole, len(documents))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ctx.JSON(http.StatusCreated, gin.H{
-		"message":   "Documents uploaded successfully",
-		"documents": documents,
+		"message":            "Documents submitted successfully",
+		"documents":          documents,
+		"reapproval_started": reapprovalStarted,
 	})
 }
 
