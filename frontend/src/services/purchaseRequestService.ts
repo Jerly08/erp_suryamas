@@ -50,6 +50,7 @@ export interface PurchaseRequestDocument {
   file_size: number;
   mime_type: string;
   uploaded_by: number;
+  approval_revision: number;
   created_at: string;
   updated_at: string;
   uploader?: User;
@@ -69,6 +70,8 @@ export interface PurchaseRequest {
     | "FINANCE_MANAGER"
     | "DIRECTOR"
     | "FINALIZED";
+  approval_revision?: number;
+  reapproval_reason?: "ADDITIONAL_DOCUMENTS" | "";
   notes: string;
   approved_by: number | null;
   approved_at: string | null;
@@ -180,7 +183,11 @@ export const purchaseRequestService = {
   uploadDocuments: async (
     id: number,
     documents: File[],
-  ): Promise<{ message: string; documents: PurchaseRequestDocument[] }> => {
+  ): Promise<{
+    message: string;
+    documents: PurchaseRequestDocument[];
+    reapproval_started: boolean;
+  }> => {
     const formData = new FormData();
     documents.forEach((file) => {
       formData.append("documents", file);

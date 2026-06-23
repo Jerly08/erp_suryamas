@@ -46,13 +46,13 @@ class ContactService {
         throw new Error('Not found: The requested resource does not exist');
       }
       if (response.status === 400) {
-        throw new Error(errorData.error || 'Bad request: Invalid data provided');
+        throw new Error(errorData.error || errorData.message || 'Bad request: Invalid data provided');
       }
       if (response.status >= 500) {
-        throw new Error('Server error: Please try again later');
+        throw new Error(errorData.error || errorData.message || 'Server error: Please try again later');
       }
 
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      throw new Error(errorData.error || errorData.message || `HTTP error! status: ${response.status}`);
     }
     
     // Check if response has content
@@ -147,6 +147,26 @@ class ContactService {
     
     console.error('ContactService: Invalid response structure:', result);
     throw new Error('Invalid response format from server');
+  }
+
+  // Quick-create a vendor from the Purchase form. This route is authorized by
+  // the Purchase module, not by access to the standalone Contact module.
+  async createVendorForPurchase(token: string, vendorData: Partial<Contact>): Promise<Contact> {
+    if (!token) {
+      throw new Error('Authentication token is required to create a vendor');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/purchases/vendors`, {
+      method: 'POST',
+      headers: this.getHeaders(token),
+      body: JSON.stringify(vendorData),
+    });
+
+    const result = await this.handleResponse<Contact | ApiResponse<Contact>>(response);
+    if ('data' in result && result.data) {
+      return result.data;
+    }
+    return result as Contact;
   }
 
   // Update existing contact

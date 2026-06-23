@@ -18,6 +18,8 @@ type PurchaseRequest struct {
 	TotalEstimatedAmount float64 `json:"total_estimated_amount" gorm:"type:decimal(15,2);default:0"`
 	Status               string  `json:"status" gorm:"size:30;default:'DRAFT'"` // DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
 	CurrentApprovalStage string  `json:"current_approval_stage" gorm:"size:30;default:'FINANCE_STAFF'"`
+	ApprovalRevision     int     `json:"approval_revision" gorm:"default:1"`
+	ReapprovalReason     string  `json:"reapproval_reason" gorm:"size:50"`
 	Notes                string  `json:"notes" gorm:"type:text"`
 
 	// Approval Tracking
@@ -84,6 +86,7 @@ type PurchaseRequestDocument struct {
 	FileSize          int64          `json:"file_size"`
 	MimeType          string         `json:"mime_type" gorm:"size:100"`
 	UploadedBy        uint           `json:"uploaded_by" gorm:"not null;index"`
+	ApprovalRevision  int            `json:"approval_revision" gorm:"default:1;index"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
@@ -120,6 +123,11 @@ const (
 // Purchase request document type constants
 const (
 	PurchaseRequestDocumentSupporting = "SUPPORTING_DOCUMENT"
+)
+
+// Purchase request reapproval reasons
+const (
+	PRReapprovalReasonAdditionalDocuments = "ADDITIONAL_DOCUMENTS"
 )
 
 // Request DTOs
