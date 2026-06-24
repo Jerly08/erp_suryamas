@@ -581,6 +581,29 @@ const isPurchaseRequestSelectableForPurchase = (
   getSelectablePurchaseRequestItems(purchaseRequest, currentPurchaseId).length >
     0;
 
+const getPurchaseRequestTitle = (purchaseRequest?: PurchaseRequest | null) => {
+  const explicitTitle = purchaseRequest?.title?.trim();
+  if (explicitTitle) return explicitTitle;
+
+  const firstItem = purchaseRequest?.items?.[0];
+  const firstItemName = firstItem?.product?.name || firstItem?.item_name;
+  if (firstItemName?.trim()) return firstItemName.trim();
+
+  return purchaseRequest?.notes?.trim() || "";
+};
+
+const getPurchaseRequestOptionLabel = (purchaseRequest: PurchaseRequest) => {
+  const title = getPurchaseRequestTitle(purchaseRequest);
+  const titlePart = title ? ` - ${title}` : "";
+  const departmentPart = purchaseRequest.department
+    ? ` - ${purchaseRequest.department}`
+    : "";
+
+  return `${purchaseRequest.pr_number}${titlePart}${departmentPart} (${formatCurrency(
+    purchaseRequest.total_estimated_amount,
+  )})`;
+};
+
 const mapPurchaseRequestItemToFormData = (
   item: PurchaseRequestLineItem,
   defaultExpenseAccountId: number | null,
@@ -7044,6 +7067,8 @@ const PurchasesPage: React.FC = () => {
                                           defaultExpenseAccountId,
                                         ),
                                       );
+                                    const selectedPrTitle =
+                                      getPurchaseRequestTitle(selectedPr);
 
                                     setFormData((prev) => ({
                                       ...prev,
@@ -7058,7 +7083,11 @@ const PurchasesPage: React.FC = () => {
                                               !item.purchase_request_item_id,
                                           ),
                                       notes: selectedPr?.notes
-                                        ? `Dari PR: ${selectedPr.pr_number}. ${selectedPr.notes}`
+                                        ? `Dari PR: ${selectedPr.pr_number}${
+                                            selectedPrTitle
+                                              ? ` - ${selectedPrTitle}`
+                                              : ""
+                                          }. ${selectedPr.notes}`
                                         : prev.notes,
                                     }));
                                   }}
@@ -7074,13 +7103,7 @@ const PurchasesPage: React.FC = () => {
                                 >
                                   {purchaseRequests.map((pr) => (
                                     <option key={pr.id} value={pr.id}>
-                                      {pr.pr_number} -{" "}
-                                      {pr.department ? `${pr.department}` : ""}{" "}
-                                      (
-                                      {formatCurrency(
-                                        pr.total_estimated_amount,
-                                      )}
-                                      )
+                                      {getPurchaseRequestOptionLabel(pr)}
                                     </option>
                                   ))}
                                 </Select>
