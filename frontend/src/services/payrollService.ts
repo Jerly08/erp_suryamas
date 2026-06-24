@@ -34,6 +34,7 @@ export interface PayrollItem {
   position?: string;
   base_salary: number;
   bonus: number;
+  attendance_allowance?: number;
   compensation_pkwt?: number;
   overtime?: number;
   pph: number;
@@ -143,6 +144,9 @@ export interface PayrollImportPreview {
   };
   warnings: string[];
   headers: string[];
+  suggested_period_start?: string;
+  suggested_period_end?: string;
+  suggested_payment_date?: string;
 }
 
 interface ApiEnvelope<T> {

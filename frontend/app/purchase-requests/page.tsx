@@ -91,6 +91,10 @@ const PURCHASE_REQUEST_PROGRESS_FILTERS = [
   { value: "FINANCE_STAFF_APPROVED", label: "Sudah Review Finance Staff" },
   { value: "WAITING_FINANCE_MANAGER", label: "Belum Review Finance Manager" },
   { value: "FINANCE_MANAGER_APPROVED", label: "Sudah Review Finance Manager" },
+  {
+    value: "FINANCE_MANAGER_APPROVED_WITHOUT_PURCHASE",
+    label: "FM Approved - Belum Pembelian",
+  },
   { value: "WAITING_DIRECTOR", label: "Menunggu Director" },
   { value: "APPROVED", label: "PR Approved" },
   { value: "REJECTED", label: "PR Rejected" },
@@ -588,21 +592,33 @@ export default function PurchaseRequestsPage() {
     return <Badge colorScheme="blue">Sudah Dibuat Pembelian</Badge>;
   };
 
+  const hasFinanceStaffReview = (pr?: PurchaseRequest | null) => {
+    return (
+      Boolean(pr?.finance_staff_approved_by || pr?.finance_staff_approved_at) ||
+      (pr?.items || []).some(
+        (item) => normalizeDecision(item.finance_staff_decision) !== "PENDING",
+      )
+    );
+  };
+
+  const hasFinanceManagerReview = (pr?: PurchaseRequest | null) => {
+    return (
+      Boolean(
+        pr?.finance_manager_approved_by || pr?.finance_manager_approved_at,
+      ) ||
+      (pr?.items || []).some(
+        (item) => normalizeDecision(item.finance_manager_decision) !== "PENDING",
+      )
+    );
+  };
+
   const matchesProgressFilter = (pr: PurchaseRequest) => {
     if (!progressFilter) return true;
 
     const stage = getCurrentReviewStage(pr);
     const realization = getPurchaseRealizationSummary(pr);
-    const hasStaffReview =
-      Boolean(pr.finance_staff_approved_by || pr.finance_staff_approved_at) ||
-      (pr.items || []).some(
-        (item) => normalizeDecision(item.finance_staff_decision) !== "PENDING",
-      );
-    const hasManagerReview =
-      Boolean(pr.finance_manager_approved_by || pr.finance_manager_approved_at) ||
-      (pr.items || []).some(
-        (item) => normalizeDecision(item.finance_manager_decision) !== "PENDING",
-      );
+    const hasStaffReview = hasFinanceStaffReview(pr);
+    const hasManagerReview = hasFinanceManagerReview(pr);
 
     switch (progressFilter) {
       case "WAITING_FINANCE_STAFF":
@@ -617,6 +633,8 @@ export default function PurchaseRequestsPage() {
         );
       case "FINANCE_MANAGER_APPROVED":
         return hasManagerReview;
+      case "FINANCE_MANAGER_APPROVED_WITHOUT_PURCHASE":
+        return hasManagerReview && !realization.hasPurchase;
       case "WAITING_DIRECTOR":
         return pr.status === "PENDING_APPROVAL" && stage === "DIRECTOR";
       case "APPROVED":
@@ -911,7 +929,7 @@ export default function PurchaseRequestsPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, startDateFilter, endDateFilter, pageSize]);
+  }, [searchQuery, progressFilter, startDateFilter, endDateFilter, pageSize]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));

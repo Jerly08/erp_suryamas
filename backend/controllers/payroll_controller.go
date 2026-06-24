@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -89,32 +90,36 @@ func payrollResponse(run models.PayrollRun, detailAllowed bool) models.PayrollRu
 }
 
 var payrollImportHeaderAliases = map[string]string{
-	"workingday":       "working_day",
-	"employeeid":       "employee_code",
-	"workunit":         "work_unit",
-	"paymentvia":       "payment_via",
-	"accno":            "account_no",
-	"accountno":        "account_no",
-	"div":              "division",
-	"division":         "division",
-	"employeename":     "employee_name",
-	"position":         "position",
-	"basicsalary":      "base_salary",
-	"compensationpkwt": "compensation_pkwt",
-	"overtime":         "overtime",
-	"bpjstkjht2":       "bpjs_tk_jht",
-	"bpjstkjht":        "bpjs_tk_jht",
-	"bpjstkjp1":        "bpjs_tk_jp",
-	"bpjstkjp":         "bpjs_tk_jp",
-	"bpjskesehatan1":   "bpjs_kesehatan",
-	"bpjskesehatan":    "bpjs_kesehatan",
-	"proportional":     "proportional",
-	"otherdeduction":   "other_deduction",
-	"netpay":           "net_pay",
-	"pph":              "pph",
-	"pph21":            "pph",
-	"pph21terutang":    "pph",
-	"incometax":        "pph",
+	"paymentdate":         "payment_date",
+	"paymentperiod":       "payment_period",
+	"workingday":          "working_day",
+	"employeeid":          "employee_code",
+	"workunit":            "work_unit",
+	"paymentvia":          "payment_via",
+	"accno":               "account_no",
+	"accountno":           "account_no",
+	"div":                 "division",
+	"division":            "division",
+	"employeename":        "employee_name",
+	"position":            "position",
+	"basicsalary":         "base_salary",
+	"attendanceallowance": "attendance_allowance",
+	"attendance":          "attendance_allowance",
+	"compensationpkwt":    "compensation_pkwt",
+	"overtime":            "overtime",
+	"bpjstkjht2":          "bpjs_tk_jht",
+	"bpjstkjht":           "bpjs_tk_jht",
+	"bpjstkjp1":           "bpjs_tk_jp",
+	"bpjstkjp":            "bpjs_tk_jp",
+	"bpjskesehatan1":      "bpjs_kesehatan",
+	"bpjskesehatan":       "bpjs_kesehatan",
+	"proportional":        "proportional",
+	"otherdeduction":      "other_deduction",
+	"netpay":              "net_pay",
+	"pph":                 "pph",
+	"pph21":               "pph",
+	"pph21terutang":       "pph",
+	"incometax":           "pph",
 }
 
 var requiredPayrollImportColumns = []string{
@@ -138,15 +143,18 @@ var requiredPayrollImportColumns = []string{
 }
 
 var payrollImportTemplateHeaders = []string{
+	"PAYMENT DATE",
+	"PAYMENT PERIOD",
 	"WORKING DAY",
 	"EMPLOYEE ID",
 	"WORK UNIT",
+	"DIV",
 	"PAYMENT VIA",
 	"ACC NO",
-	"DIV",
 	"EMPLOYEE NAME",
 	"POSITION",
 	"BASIC SALARY",
+	"ATTENDANCE ALLOWANCE",
 	"COMPENSATION PKWT",
 	"OVERTIME",
 	"PPH21 TERUTANG",
@@ -258,8 +266,51 @@ func getPayrollImportNumber(row []string, headerIndex map[string]int, key string
 	return parsePayrollImportNumber(getPayrollImportValue(row, headerIndex, key))
 }
 
+var payrollImportDatePattern = regexp.MustCompile(`\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}`)
+
+func parsePayrollImportDate(value string) string {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return ""
+	}
+
+	if serial, err := strconv.ParseFloat(cleaned, 64); err == nil && serial > 20000 {
+		date := time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(math.Floor(serial)))
+		return date.Format("2006-01-02")
+	}
+
+	layouts := []string{
+		"2006-01-02",
+		"2006-1-2",
+		"02/01/2006",
+		"2/1/2006",
+		"02-01-2006",
+		"2-1-2006",
+		"02/01/06",
+		"2/1/06",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, cleaned); err == nil {
+			return parsed.Format("2006-01-02")
+		}
+	}
+
+	return ""
+}
+
+func parsePayrollImportPeriod(value string) (string, string) {
+	matches := payrollImportDatePattern.FindAllString(value, 2)
+	if len(matches) < 2 {
+		return "", ""
+	}
+	return parsePayrollImportDate(matches[0]), parsePayrollImportDate(matches[1])
+}
+
 func payrollImportItemTotals(item *models.PayrollItemCreateRequest) {
-	if item.Bonus == 0 {
+	componentBonus := item.AttendanceAllowance + item.CompensationPKWT + item.Overtime + item.Proportional
+	if componentBonus > 0 {
+		item.Bonus = componentBonus
+	} else if item.Bonus == 0 {
 		item.Bonus = item.CompensationPKWT + item.Overtime + item.Proportional
 	}
 	if item.BPJS == 0 {
@@ -716,13 +767,36 @@ func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
 			WrapText:   true,
 		},
 	})
-	workbook.SetCellStyle(sheetName, "A1", "R1", headerStyle)
+	highlightHeaderStyle, _ := workbook.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Color: "000000"},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"9DC3E6"},
+			Pattern: 1,
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+			WrapText:   true,
+		},
+	})
+	dateStyle, _ := workbook.NewStyle(&excelize.Style{
+		NumFmt: 14,
+	})
+	workbook.SetCellStyle(sheetName, "A1", "U1", headerStyle)
+	workbook.SetCellStyle(sheetName, "A1", "B1", highlightHeaderStyle)
+	workbook.SetCellStyle(sheetName, "L1", "L1", highlightHeaderStyle)
 	workbook.SetRowHeight(sheetName, 1, 34)
-	workbook.SetColWidth(sheetName, "A", "R", 18)
+	workbook.SetColWidth(sheetName, "A", "U", 18)
+	workbook.SetColWidth(sheetName, "B", "B", 24)
+	workbook.SetColWidth(sheetName, "L", "L", 24)
 
 	// Light sample values help HR keep the expected data shape without saving real employee data.
-	workbook.SetCellValue(sheetName, "D2", "Payroll")
-	workbook.SetCellValue(sheetName, "D3", "Transfer by Finance")
+	workbook.SetCellValue(sheetName, "A2", time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC))
+	workbook.SetCellStyle(sheetName, "A2", "A2", dateStyle)
+	workbook.SetCellValue(sheetName, "B2", "26/05/2026 to 25/06/2026")
+	workbook.SetCellValue(sheetName, "G2", "Payroll")
+	workbook.SetCellValue(sheetName, "G3", "Transfer by Finance")
 
 	buffer, err := workbook.WriteToBuffer()
 	if err != nil {
@@ -833,6 +907,17 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		row := rows[rowIndex]
 		response.Summary.TotalRows++
 
+		if response.SuggestedPaymentDate == "" {
+			response.SuggestedPaymentDate = parsePayrollImportDate(getPayrollImportValue(row, headerIndex, "payment_date"))
+		}
+		if response.SuggestedPeriodStart == "" || response.SuggestedPeriodEnd == "" {
+			periodStart, periodEnd := parsePayrollImportPeriod(getPayrollImportValue(row, headerIndex, "payment_period"))
+			if periodStart != "" && periodEnd != "" {
+				response.SuggestedPeriodStart = periodStart
+				response.SuggestedPeriodEnd = periodEnd
+			}
+		}
+
 		employeeName := getPayrollImportValue(row, headerIndex, "employee_name")
 		employeeCode := getPayrollImportValue(row, headerIndex, "employee_code")
 		baseSalary := getPayrollImportNumber(row, headerIndex, "base_salary")
@@ -848,24 +933,25 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		}
 
 		item := models.PayrollItemCreateRequest{
-			EmployeeName:     employeeName,
-			EmployeeCode:     employeeCode,
-			WorkingDay:       getPayrollImportNumber(row, headerIndex, "working_day"),
-			WorkUnit:         getPayrollImportValue(row, headerIndex, "work_unit"),
-			PaymentVia:       getPayrollImportValue(row, headerIndex, "payment_via"),
-			AccountNo:        getPayrollImportValue(row, headerIndex, "account_no"),
-			Division:         getPayrollImportValue(row, headerIndex, "division"),
-			Position:         getPayrollImportValue(row, headerIndex, "position"),
-			BaseSalary:       baseSalary,
-			CompensationPKWT: getPayrollImportNumber(row, headerIndex, "compensation_pkwt"),
-			Overtime:         getPayrollImportNumber(row, headerIndex, "overtime"),
-			PPh:              getPayrollImportNumber(row, headerIndex, "pph"),
-			BPJSTKJHT:        getPayrollImportNumber(row, headerIndex, "bpjs_tk_jht"),
-			BPJSTKJP:         getPayrollImportNumber(row, headerIndex, "bpjs_tk_jp"),
-			BPJSKesehatan:    getPayrollImportNumber(row, headerIndex, "bpjs_kesehatan"),
-			Proportional:     getPayrollImportNumber(row, headerIndex, "proportional"),
-			OtherDeduction:   getPayrollImportNumber(row, headerIndex, "other_deduction"),
-			NetPay:           netPay,
+			EmployeeName:        employeeName,
+			EmployeeCode:        employeeCode,
+			WorkingDay:          getPayrollImportNumber(row, headerIndex, "working_day"),
+			WorkUnit:            getPayrollImportValue(row, headerIndex, "work_unit"),
+			PaymentVia:          getPayrollImportValue(row, headerIndex, "payment_via"),
+			AccountNo:           getPayrollImportValue(row, headerIndex, "account_no"),
+			Division:            getPayrollImportValue(row, headerIndex, "division"),
+			Position:            getPayrollImportValue(row, headerIndex, "position"),
+			BaseSalary:          baseSalary,
+			AttendanceAllowance: getPayrollImportNumber(row, headerIndex, "attendance_allowance"),
+			CompensationPKWT:    getPayrollImportNumber(row, headerIndex, "compensation_pkwt"),
+			Overtime:            getPayrollImportNumber(row, headerIndex, "overtime"),
+			PPh:                 getPayrollImportNumber(row, headerIndex, "pph"),
+			BPJSTKJHT:           getPayrollImportNumber(row, headerIndex, "bpjs_tk_jht"),
+			BPJSTKJP:            getPayrollImportNumber(row, headerIndex, "bpjs_tk_jp"),
+			BPJSKesehatan:       getPayrollImportNumber(row, headerIndex, "bpjs_kesehatan"),
+			Proportional:        getPayrollImportNumber(row, headerIndex, "proportional"),
+			OtherDeduction:      getPayrollImportNumber(row, headerIndex, "other_deduction"),
+			NetPay:              netPay,
 		}
 		payrollImportItemTotals(&item)
 
@@ -969,6 +1055,7 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		}
 		payrollImportItemTotals(&reqItem)
 		if reqItem.BaseSalary < 0 || reqItem.Bonus < 0 || reqItem.PPh < 0 || reqItem.BPJS < 0 ||
+			reqItem.AttendanceAllowance < 0 ||
 			reqItem.CompensationPKWT < 0 || reqItem.Overtime < 0 || reqItem.BPJSTKJHT < 0 ||
 			reqItem.BPJSTKJP < 0 || reqItem.BPJSKesehatan < 0 || reqItem.Proportional < 0 ||
 			reqItem.OtherDeduction < 0 || reqItem.NetPay < 0 {
@@ -978,28 +1065,29 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		}
 
 		item := models.PayrollItem{
-			EmployeeName:     strings.TrimSpace(reqItem.EmployeeName),
-			EmployeeCode:     strings.TrimSpace(reqItem.EmployeeCode),
-			WorkingDay:       reqItem.WorkingDay,
-			WorkUnit:         strings.TrimSpace(reqItem.WorkUnit),
-			PaymentVia:       strings.TrimSpace(reqItem.PaymentVia),
-			AccountNo:        strings.TrimSpace(reqItem.AccountNo),
-			Division:         strings.TrimSpace(reqItem.Division),
-			Department:       strings.TrimSpace(reqItem.Department),
-			Position:         strings.TrimSpace(reqItem.Position),
-			BaseSalary:       reqItem.BaseSalary,
-			Bonus:            reqItem.Bonus,
-			CompensationPKWT: reqItem.CompensationPKWT,
-			Overtime:         reqItem.Overtime,
-			PPh:              reqItem.PPh,
-			BPJS:             reqItem.BPJS,
-			BPJSTKJHT:        reqItem.BPJSTKJHT,
-			BPJSTKJP:         reqItem.BPJSTKJP,
-			BPJSKesehatan:    reqItem.BPJSKesehatan,
-			Proportional:     reqItem.Proportional,
-			OtherDeduction:   reqItem.OtherDeduction,
-			NetPay:           reqItem.NetPay,
-			Notes:            strings.TrimSpace(reqItem.Notes),
+			EmployeeName:        strings.TrimSpace(reqItem.EmployeeName),
+			EmployeeCode:        strings.TrimSpace(reqItem.EmployeeCode),
+			WorkingDay:          reqItem.WorkingDay,
+			WorkUnit:            strings.TrimSpace(reqItem.WorkUnit),
+			PaymentVia:          strings.TrimSpace(reqItem.PaymentVia),
+			AccountNo:           strings.TrimSpace(reqItem.AccountNo),
+			Division:            strings.TrimSpace(reqItem.Division),
+			Department:          strings.TrimSpace(reqItem.Department),
+			Position:            strings.TrimSpace(reqItem.Position),
+			BaseSalary:          reqItem.BaseSalary,
+			Bonus:               reqItem.Bonus,
+			AttendanceAllowance: reqItem.AttendanceAllowance,
+			CompensationPKWT:    reqItem.CompensationPKWT,
+			Overtime:            reqItem.Overtime,
+			PPh:                 reqItem.PPh,
+			BPJS:                reqItem.BPJS,
+			BPJSTKJHT:           reqItem.BPJSTKJHT,
+			BPJSTKJP:            reqItem.BPJSTKJP,
+			BPJSKesehatan:       reqItem.BPJSKesehatan,
+			Proportional:        reqItem.Proportional,
+			OtherDeduction:      reqItem.OtherDeduction,
+			NetPay:              reqItem.NetPay,
+			Notes:               strings.TrimSpace(reqItem.Notes),
 		}
 
 		run.TotalSalary += item.BaseSalary

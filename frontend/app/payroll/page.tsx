@@ -93,9 +93,16 @@ const currentMonthRange = () => {
 };
 
 const getPayrollItemBonus = (item: PayrollItem) => {
+  const componentTotal =
+    Number(item.attendance_allowance || 0) +
+    Number(item.compensation_pkwt || 0) +
+    Number(item.overtime || 0) +
+    Number(item.proportional || 0);
+  if (componentTotal > 0) return componentTotal;
+
   const bonus = Number(item.bonus || 0);
   if (bonus > 0) return bonus;
-  return Number(item.compensation_pkwt || 0) + Number(item.overtime || 0) + Number(item.proportional || 0);
+  return 0;
 };
 
 const getPayrollItemBPJS = (item: PayrollItem) => {
@@ -259,15 +266,18 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
 };
 
 const payrollImportHeaders = [
+  'PAYMENT DATE',
+  'PAYMENT PERIOD',
   'WORKING DAY',
   'EMPLOYEE ID',
   'WORK UNIT',
+  'DIV',
   'PAYMENT VIA',
   'ACC NO',
-  'DIV',
   'EMPLOYEE NAME',
   'POSITION',
   'BASIC SALARY',
+  'ATTENDANCE ALLOWANCE',
   'COMPENSATION PKWT',
   'OVERTIME',
   'PPH21 TERUTANG',
@@ -491,6 +501,12 @@ export default function PayrollPage() {
       const normalizedItems = preview.items.map(recalculatePayrollItem);
       const normalizedPreview = recalculatePayrollImportPreview(preview, normalizedItems);
       setImportPreview(normalizedPreview);
+      setImportDraft((prev) => ({
+        ...prev,
+        period_start: preview.suggested_period_start || prev.period_start,
+        period_end: preview.suggested_period_end || prev.period_end,
+        payment_date: preview.suggested_payment_date || prev.payment_date,
+      }));
       toast({
         title: 'Preview import berhasil',
         description: `${normalizedPreview.summary.imported_rows} baris payroll siap direview.`,
@@ -922,7 +938,7 @@ export default function PayrollPage() {
                   <Stat>
                     <StatLabel>Total Bonus</StatLabel>
                     <StatNumber color="green.500">{formatCurrency(totals.bonus)}</StatNumber>
-                    <StatHelpText>Bonus/allowance</StatHelpText>
+                    <StatHelpText>Attendance allowance + tunjangan lain</StatHelpText>
                   </Stat>
                 </CardBody>
               </Card>
@@ -1270,6 +1286,7 @@ export default function PayrollPage() {
                                 <Th>Employee Name</Th>
                                 <Th>Position</Th>
                                 <Th isNumeric>Basic Salary</Th>
+                                <Th isNumeric>Attendance Allowance</Th>
                                 <Th isNumeric>Comp. PKWT</Th>
                                 <Th isNumeric>Overtime</Th>
                                 <Th isNumeric>PPh21 Terutang</Th>
@@ -1293,6 +1310,7 @@ export default function PayrollPage() {
                                   <Td fontWeight="semibold">{item.employee_name}</Td>
                                   <Td>{item.position || '-'}</Td>
                                   <Td isNumeric>{formatCurrency(item.base_salary)}</Td>
+                                  <Td isNumeric>{formatCurrency(item.attendance_allowance || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.compensation_pkwt || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.overtime || 0)}</Td>
                                   <Td isNumeric minW="140px">
@@ -1450,6 +1468,7 @@ export default function PayrollPage() {
                               <Th>Karyawan</Th>
                               <Th>Posisi</Th>
                               <Th isNumeric>Basic Salary</Th>
+                              <Th isNumeric>Attendance Allowance</Th>
                               <Th isNumeric>Comp. PKWT</Th>
                               <Th isNumeric>Overtime</Th>
                               <Th isNumeric>PPh21 Terutang</Th>
@@ -1478,6 +1497,7 @@ export default function PayrollPage() {
                                 </Td>
                                 <Td>{item.position || '-'}</Td>
                                 <Td isNumeric>{formatCurrency(item.base_salary)}</Td>
+                                <Td isNumeric>{formatCurrency(item.attendance_allowance || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.compensation_pkwt || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.overtime || 0)}</Td>
                                 <Td isNumeric color="orange.600">
