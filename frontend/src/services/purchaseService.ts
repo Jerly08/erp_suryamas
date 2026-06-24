@@ -91,6 +91,8 @@ export interface PurchaseItem {
     id: number;
     purchase_request_id: number;
     approval_status: string;
+    item_name?: string;
+    notes?: string;
   };
 }
 

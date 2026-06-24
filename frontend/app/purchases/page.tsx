@@ -544,6 +544,18 @@ const mapPurchaseItemToFormData = (
 ): PurchaseItemFormData => {
   const itemType =
     item.item_type || (item.is_fixed_asset ? "ASSET" : "INVENTORY");
+  const normalizedItemType = itemType.toUpperCase();
+  const isDescriptiveItem =
+    normalizedItemType === "EXPENSE" ||
+    normalizedItemType === "ASSET" ||
+    normalizedItemType === "PREPAID";
+  const itemDescription =
+    item.description?.trim() ||
+    (isDescriptiveItem
+      ? item.purchase_request_item?.item_name?.trim() ||
+        item.product?.name?.trim()
+      : "") ||
+    "";
 
   return createPurchaseItemFormData({
     product_id: item.product_id?.toString() || "",
@@ -555,7 +567,7 @@ const mapPurchaseItemToFormData = (
     expense_account_id: item.expense_account_id?.toString() || "",
     item_type: itemType,
     is_fixed_asset: item.is_fixed_asset || itemType === "ASSET",
-    description: item.description || "",
+    description: itemDescription,
     asset_category_id: item.asset_category_id?.toString() || "",
     amortization_month:
       itemType === "PREPAID" ? item.amortization_month?.toString() || "12" : "",
@@ -4256,6 +4268,9 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    const shouldRequireItemAccount =
+      canSelectAccountFromCOA && canListExpenseAccounts;
+
     // Validate all items based on item_type
     const invalidItems = formData.items.filter((item) => {
       const quantity = parseFloat(item.quantity);
@@ -4276,7 +4291,7 @@ const PurchasesPage: React.FC = () => {
         // Prepaid items require COA only for roles that are allowed to choose COA.
         return (
           !item.description?.trim() ||
-          (canSelectAccountFromCOA &&
+          (shouldRequireItemAccount &&
             !resolvePurchaseItemExpenseAccountId(item)) ||
           amortizationMonth <= 0
         );
@@ -4284,14 +4299,14 @@ const PurchasesPage: React.FC = () => {
       if (item.item_type === "EXPENSE") {
         return (
           !item.description?.trim() ||
-          (canSelectAccountFromCOA &&
+          (shouldRequireItemAccount &&
             !resolvePurchaseItemExpenseAccountId(item))
         );
       }
       // Inventory items require COA only for roles that are allowed to choose COA.
       return (
         !item.product_id ||
-        (canSelectAccountFromCOA && !resolvePurchaseItemExpenseAccountId(item))
+        (shouldRequireItemAccount && !resolvePurchaseItemExpenseAccountId(item))
       );
     });
 
@@ -4308,11 +4323,11 @@ const PurchasesPage: React.FC = () => {
       if (assetInvalid)
         errorMsg = "Item Aset Tetap: Nama aset dan Kategori Aset harus diisi.";
       else if (prepaidInvalid)
-        errorMsg = canSelectAccountFromCOA
+        errorMsg = shouldRequireItemAccount
           ? "Item Prepaid: Deskripsi dan Akun harus diisi."
           : "Item Prepaid: Deskripsi dan durasi amortisasi harus diisi.";
       else if (expenseInvalid)
-        errorMsg = canSelectAccountFromCOA
+        errorMsg = shouldRequireItemAccount
           ? "Item Beban/Jasa: Deskripsi dan akun beban harus diisi."
           : "Item Beban/Jasa: Deskripsi harus diisi.";
 
