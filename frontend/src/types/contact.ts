@@ -1,6 +1,8 @@
 export interface ApiError {
-  error: string;
-  code: string;
+  error?: string;
+  message?: string;
+  code?: string;
+  details?: Record<string, string>;
 }
 
 export interface ApiResponse<T> {

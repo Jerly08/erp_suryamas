@@ -14,11 +14,13 @@ type PurchaseRequestService interface {
 	CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint, userRole string) (*models.PurchaseRequest, error)
 	GetPurchaseRequests(userID uint, userRole string, department string, status string, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error)
 	GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error)
+	UpdatePurchaseRequestProject(id uint, userID uint, userRole string, payload models.PurchaseRequestProjectUpdatePayload) (*models.PurchaseRequest, error)
 	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
 	ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error)
 	RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error)
 	DeletePurchaseRequest(id uint) error
 	UploadPurchaseRequestDocument(purchaseRequestID uint, documentType, fileName, filePath string, fileSize int64, mimeType string, userID uint, userRole string) (*models.PurchaseRequestDocument, error)
+	SubmitAdditionalDocumentsForApproval(purchaseRequestID uint, userID uint, userRole string, documentCount int) (bool, error)
 	GetPurchaseRequestDocuments(purchaseRequestID uint, userID uint, userRole string) ([]models.PurchaseRequestDocument, error)
 	DeletePurchaseRequestDocument(documentID uint, userID uint, userRole string) error
 	SyncPurchaseRequestItemsWithPurchase(purchase *models.Purchase) error
@@ -104,12 +106,14 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 
 	pr := &models.PurchaseRequest{
 		RequesterID:          userID,
-		Department:           payload.Department,
+		Department:           strings.TrimSpace(payload.Department),
+		Title:                strings.TrimSpace(payload.Title),
 		ProjectID:            payload.ProjectID,
 		VendorID:             payload.VendorID,
 		TotalEstimatedAmount: totalEstimatedAmount,
 		Status:               models.PRStatusPendingApproval,
 		CurrentApprovalStage: initialStage,
+		ApprovalRevision:     1,
 		Notes:                payload.Notes,
 		Items:                items,
 	}
@@ -150,6 +154,38 @@ func (s *purchaseRequestService) GetPurchaseRequestByID(id uint, userID uint, us
 	return pr, nil
 }
 
+func (s *purchaseRequestService) UpdatePurchaseRequestProject(id uint, userID uint, userRole string, payload models.PurchaseRequestProjectUpdatePayload) (*models.PurchaseRequest, error) {
+	if !canUpdatePurchaseRequestProject(userRole) {
+		return nil, fmt.Errorf("only finance staff, accounting, finance manager, or admin can update purchase request project")
+	}
+
+	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
+	if err != nil {
+		return nil, err
+	}
+
+	if payload.ProjectID != nil {
+		var project models.Project
+		if err := s.db.First(&project, *payload.ProjectID).Error; err != nil {
+			return nil, fmt.Errorf("invalid project id: %d", *payload.ProjectID)
+		}
+	}
+
+	pr.ProjectID = payload.ProjectID
+	pr.Project = nil
+	if err := s.repo.Update(pr); err != nil {
+		return nil, err
+	}
+
+	if payload.ProjectID != nil {
+		if err := s.syncUnsetLinkedPurchaseProjects(pr.ID, *payload.ProjectID); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.repo.GetByID(pr.ID)
+}
+
 func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error) {
 	pr, err := s.repo.GetByID(id)
 	if err != nil {
@@ -167,6 +203,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 	}
 
 	now := time.Now()
+	reviewNotes := strings.TrimSpace(payload.Reason)
 
 	switch stage {
 	case models.PRApprovalStageFinanceStaff:
@@ -183,6 +220,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 		pr.CurrentApprovalStage = models.PRApprovalStageFinanceManager
 		pr.FinanceStaffApprovedBy = &reviewerID
 		pr.FinanceStaffApprovedAt = &now
+		pr.FinanceStaffReviewNotes = reviewNotes
 		pr.RejectionReason = ""
 
 		if err := s.repo.Update(pr); err != nil {
@@ -222,6 +260,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 
 		pr.FinanceManagerApprovedBy = &reviewerID
 		pr.FinanceManagerApprovedAt = &now
+		pr.FinanceManagerReviewNotes = reviewNotes
 		if payload.EscalateToDirector {
 			pr.Status = models.PRStatusPendingApproval
 			pr.CurrentApprovalStage = models.PRApprovalStageDirector
@@ -243,13 +282,13 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.Status = models.PRStatusApproved
 			pr.ApprovedBy = &reviewerID
 			pr.ApprovedAt = &now
-			pr.RejectionReason = payload.Reason
+			pr.RejectionReason = reviewNotes
 		} else {
 			pr.Status = models.PRStatusRejected
 			pr.ApprovedBy = nil
 			pr.ApprovedAt = nil
-			if payload.Reason != "" {
-				pr.RejectionReason = payload.Reason
+			if reviewNotes != "" {
+				pr.RejectionReason = reviewNotes
 			} else {
 				pr.RejectionReason = "Semua item ditolak oleh finance manager"
 			}
@@ -305,13 +344,13 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.Status = models.PRStatusApproved
 			pr.ApprovedBy = &reviewerID
 			pr.ApprovedAt = &now
-			pr.RejectionReason = payload.Reason
+			pr.RejectionReason = reviewNotes
 		} else {
 			pr.Status = models.PRStatusRejected
 			pr.ApprovedBy = nil
 			pr.ApprovedAt = nil
-			if payload.Reason != "" {
-				pr.RejectionReason = payload.Reason
+			if reviewNotes != "" {
+				pr.RejectionReason = reviewNotes
 			} else {
 				pr.RejectionReason = "Semua item ditolak oleh director"
 			}
@@ -367,12 +406,30 @@ func (s *purchaseRequestService) DeletePurchaseRequest(id uint) error {
 }
 
 func (s *purchaseRequestService) UploadPurchaseRequestDocument(purchaseRequestID uint, documentType, fileName, filePath string, fileSize int64, mimeType string, userID uint, userRole string) (*models.PurchaseRequestDocument, error) {
-	if _, err := s.GetPurchaseRequestByID(purchaseRequestID, userID, userRole); err != nil {
+	pr, err := s.GetPurchaseRequestByID(purchaseRequestID, userID, userRole)
+	if err != nil {
 		return nil, err
+	}
+	if pr.Status == models.PRStatusCompleted {
+		return nil, fmt.Errorf("supporting documents cannot be added to a completed purchase request")
+	}
+	if pr.Status == models.PRStatusRejected {
+		return nil, fmt.Errorf("supporting documents cannot be added to a rejected purchase request")
+	}
+	if pr.Status == models.PRStatusPendingApproval && pr.ReapprovalReason == models.PRReapprovalReasonAdditionalDocuments {
+		return nil, fmt.Errorf("additional documents have already been submitted and are awaiting approval")
 	}
 
 	if documentType == "" {
 		documentType = models.PurchaseRequestDocumentSupporting
+	}
+
+	revision := pr.ApprovalRevision
+	if revision < 1 {
+		revision = 1
+	}
+	if purchaseRequestApprovalHasProgressed(pr) {
+		revision++
 	}
 
 	document := &models.PurchaseRequestDocument{
@@ -383,6 +440,7 @@ func (s *purchaseRequestService) UploadPurchaseRequestDocument(purchaseRequestID
 		FileSize:          fileSize,
 		MimeType:          mimeType,
 		UploadedBy:        userID,
+		ApprovalRevision:  revision,
 	}
 
 	if err := s.repo.CreateDocument(document); err != nil {
@@ -390,6 +448,107 @@ func (s *purchaseRequestService) UploadPurchaseRequestDocument(purchaseRequestID
 	}
 
 	return s.repo.GetDocumentByID(document.ID)
+}
+
+// SubmitAdditionalDocumentsForApproval reopens a PR approval when documents
+// are added after Finance Staff or Finance Manager has already reviewed it.
+// The existing item decisions are retained as the reviewers' starting point,
+// while all approval identities/timestamps are reset for a fresh sign-off.
+func (s *purchaseRequestService) SubmitAdditionalDocumentsForApproval(purchaseRequestID uint, userID uint, userRole string, documentCount int) (bool, error) {
+	if documentCount < 1 {
+		return false, fmt.Errorf("at least one supporting document is required")
+	}
+
+	pr, err := s.GetPurchaseRequestByID(purchaseRequestID, userID, userRole)
+	if err != nil {
+		return false, err
+	}
+	if pr.Status == models.PRStatusCompleted {
+		return false, fmt.Errorf("supporting documents cannot be submitted for a completed purchase request")
+	}
+	if pr.Status == models.PRStatusRejected {
+		return false, fmt.Errorf("supporting documents cannot be submitted for a rejected purchase request")
+	}
+	if pr.Status == models.PRStatusPendingApproval && pr.ReapprovalReason == models.PRReapprovalReasonAdditionalDocuments {
+		return false, fmt.Errorf("additional documents have already been submitted and are awaiting approval")
+	}
+
+	reapprovalStarted := purchaseRequestApprovalHasProgressed(pr)
+	if pr.ApprovalRevision < 1 {
+		pr.ApprovalRevision = 1
+	}
+	if reapprovalStarted {
+		pr.ApprovalRevision++
+		pr.Status = models.PRStatusPendingApproval
+		pr.CurrentApprovalStage = models.PRApprovalStageFinanceStaff
+		pr.ApprovedBy = nil
+		pr.ApprovedAt = nil
+		pr.Approver = nil
+		pr.FinanceStaffApprovedBy = nil
+		pr.FinanceStaffApprovedAt = nil
+		pr.FinanceStaffReviewNotes = ""
+		pr.FinanceStaffApprover = nil
+		pr.FinanceManagerApprovedBy = nil
+		pr.FinanceManagerApprovedAt = nil
+		pr.FinanceManagerReviewNotes = ""
+		pr.FinanceManagerApprover = nil
+		pr.DirectorApprovedBy = nil
+		pr.DirectorApprovedAt = nil
+		pr.DirectorApprover = nil
+		pr.RejectionReason = ""
+	}
+	pr.ReapprovalReason = models.PRReapprovalReasonAdditionalDocuments
+
+	if err := s.repo.Update(pr); err != nil {
+		return false, err
+	}
+
+	s.notifyAdditionalPurchaseRequestDocuments(pr, documentCount, reapprovalStarted)
+	return reapprovalStarted, nil
+}
+
+func purchaseRequestApprovalHasProgressed(pr *models.PurchaseRequest) bool {
+	if pr == nil {
+		return false
+	}
+	if pr.Status == models.PRStatusApproved {
+		return true
+	}
+	if pr.CurrentApprovalStage == models.PRApprovalStageDirector ||
+		pr.CurrentApprovalStage == models.PRApprovalStageFinalized {
+		return true
+	}
+	return pr.FinanceStaffApprovedBy != nil || pr.FinanceManagerApprovedBy != nil || pr.DirectorApprovedBy != nil
+}
+
+func canUpdatePurchaseRequestProject(role string) bool {
+	roleNorm := models.NormalizeRole(role)
+	return roleNorm == models.RoleAdmin || models.IsFinanceTeamRole(roleNorm)
+}
+
+func (s *purchaseRequestService) syncUnsetLinkedPurchaseProjects(purchaseRequestID uint, projectID uint) error {
+	if err := s.db.Model(&models.Purchase{}).
+		Where("purchase_request_id = ? AND project_id IS NULL", purchaseRequestID).
+		Update("project_id", projectID).Error; err != nil {
+		return fmt.Errorf("failed to sync linked purchase project: %w", err)
+	}
+
+	if err := s.db.Model(&models.Purchase{}).
+		Where(`
+			project_id IS NULL
+			AND id IN (
+				SELECT purchase_id
+				FROM purchase_request_items
+				WHERE purchase_request_id = ?
+					AND purchase_id IS NOT NULL
+					AND deleted_at IS NULL
+			)
+		`, purchaseRequestID).
+		Update("project_id", projectID).Error; err != nil {
+		return fmt.Errorf("failed to sync linked purchase item projects: %w", err)
+	}
+
+	return nil
 }
 
 func (s *purchaseRequestService) GetPurchaseRequestDocuments(purchaseRequestID uint, userID uint, userRole string) ([]models.PurchaseRequestDocument, error) {
@@ -408,6 +567,10 @@ func (s *purchaseRequestService) DeletePurchaseRequestDocument(documentID uint, 
 
 	if _, err := s.GetPurchaseRequestByID(document.PurchaseRequestID, userID, userRole); err != nil {
 		return err
+	}
+	if document.PurchaseRequest.Status == models.PRStatusPendingApproval &&
+		document.PurchaseRequest.ReapprovalReason == models.PRReapprovalReasonAdditionalDocuments {
+		return fmt.Errorf("submitted supporting documents cannot be deleted while approval is in progress")
 	}
 
 	return s.repo.DeleteDocument(documentID)
@@ -632,17 +795,28 @@ func (s *purchaseRequestService) notifyFinanceManagerReview(pr *models.PurchaseR
 		return
 	}
 
+	title := "Purchase Request Final Approval Required"
+	message := fmt.Sprintf("Purchase request %s is ready for finance manager review", pr.PRNumber)
+	actionType := "finance_manager_review_required"
+	if pr.ReapprovalReason == models.PRReapprovalReasonAdditionalDocuments {
+		title = "Purchase Request Document Reapproval Required"
+		message = fmt.Sprintf("Purchase request %s has additional supporting documents and has been reviewed again by Finance Staff", pr.PRNumber)
+		actionType = "finance_manager_document_reapproval_required"
+	}
+
 	if err := s.notificationService.smartService.CreateSmartNotification(
 		models.NotificationTypeApprovalPending,
-		"Purchase Request Final Approval Required",
-		fmt.Sprintf("Purchase request %s is ready for finance manager review", pr.PRNumber),
+		title,
+		message,
 		map[string]interface{}{
 			"pr_id":                  pr.ID,
 			"pr_number":              pr.PRNumber,
 			"total_amount":           pr.TotalEstimatedAmount,
 			"department":             pr.Department,
 			"current_approval_stage": pr.CurrentApprovalStage,
-			"action_type":            "finance_manager_review_required",
+			"approval_revision":      pr.ApprovalRevision,
+			"reapproval_reason":      pr.ReapprovalReason,
+			"action_type":            actionType,
 		},
 		pr.TotalEstimatedAmount,
 		models.RoleFinance,
@@ -650,6 +824,40 @@ func (s *purchaseRequestService) notifyFinanceManagerReview(pr *models.PurchaseR
 		pr.Department,
 	); err != nil {
 		fmt.Printf("Failed to create finance manager PR notification: %v\n", err)
+	}
+}
+
+func (s *purchaseRequestService) notifyAdditionalPurchaseRequestDocuments(pr *models.PurchaseRequest, documentCount int, reapprovalStarted bool) {
+	if s.notificationService == nil {
+		return
+	}
+
+	title := "Purchase Request Supporting Documents Added"
+	message := fmt.Sprintf("%d supporting document(s) were added to purchase request %s", documentCount, pr.PRNumber)
+	if reapprovalStarted {
+		title = "Purchase Request Reapproval Required"
+		message = fmt.Sprintf("%d new supporting document(s) were added to purchase request %s after approval. Finance Staff review is required again.", documentCount, pr.PRNumber)
+	}
+
+	if err := s.notificationService.smartService.CreateSmartNotification(
+		models.NotificationTypeApprovalPending,
+		title,
+		message,
+		map[string]interface{}{
+			"pr_id":                  pr.ID,
+			"pr_number":              pr.PRNumber,
+			"document_count":         documentCount,
+			"approval_revision":      pr.ApprovalRevision,
+			"reapproval_started":     reapprovalStarted,
+			"current_approval_stage": pr.CurrentApprovalStage,
+			"action_type":            "additional_documents_review_required",
+		},
+		pr.TotalEstimatedAmount,
+		models.RoleFinanceStaff,
+		0,
+		pr.Department,
+	); err != nil {
+		fmt.Printf("Failed to create additional PR document notification: %v\n", err)
 	}
 }
 

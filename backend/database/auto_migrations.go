@@ -980,14 +980,6 @@ func standardPurchaseApprovalSteps(workflowID uint) []ApprovalStep {
 		{
 			WorkflowID:   workflowID,
 			StepOrder:    2,
-			StepName:     "Finance Staff Review",
-			ApproverRole: "purchase_finance_staff",
-			IsOptional:   false,
-			TimeLimit:    48,
-		},
-		{
-			WorkflowID:   workflowID,
-			StepOrder:    3,
 			StepName:     "Finance Manager Approval",
 			ApproverRole: "finance",
 			IsOptional:   false,
@@ -995,7 +987,7 @@ func standardPurchaseApprovalSteps(workflowID uint) []ApprovalStep {
 		},
 		{
 			WorkflowID:   workflowID,
-			StepOrder:    4,
+			StepOrder:    3,
 			StepName:     "Director Approval",
 			ApproverRole: "director",
 			IsOptional:   true,
@@ -1005,7 +997,12 @@ func standardPurchaseApprovalSteps(workflowID uint) []ApprovalStep {
 }
 
 func syncStandardPurchaseApprovalWorkflowSteps(db *gorm.DB, workflowID uint) error {
-	for _, expected := range standardPurchaseApprovalSteps(workflowID) {
+	if err := archiveLegacyStandardPurchaseApprovalSteps(db, workflowID); err != nil {
+		return err
+	}
+
+	expectedSteps := standardPurchaseApprovalSteps(workflowID)
+	for _, expected := range expectedSteps {
 		var step ApprovalStep
 		err := db.Where("workflow_id = ? AND step_order = ?", workflowID, expected.StepOrder).First(&step).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1038,7 +1035,168 @@ func syncStandardPurchaseApprovalWorkflowSteps(db *gorm.DB, workflowID uint) err
 		}
 	}
 
+	if err := reroutePendingPurchaseFinanceStaffActions(db, workflowID); err != nil {
+		return err
+	}
+
+	maxExpectedOrder := 0
+	for _, expected := range expectedSteps {
+		if expected.StepOrder > maxExpectedOrder {
+			maxExpectedOrder = expected.StepOrder
+		}
+	}
+	if err := skipObsoleteStandardPurchaseApprovalSteps(db, workflowID, maxExpectedOrder); err != nil {
+		return err
+	}
+
 	log.Println("Standard Purchase Approval workflow synchronized")
+	return nil
+}
+
+func archiveLegacyStandardPurchaseApprovalSteps(db *gorm.DB, workflowID uint) error {
+	if err := archiveLegacyPurchaseApprovalStep(db, workflowID, 2, "purchase_finance_staff", 998, "Legacy Finance Staff Review"); err != nil {
+		return err
+	}
+	if err := archiveLegacyPurchaseApprovalStep(db, workflowID, 3, "finance", 999, "Legacy Finance Manager Approval"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func archiveLegacyPurchaseApprovalStep(db *gorm.DB, workflowID uint, currentOrder int, role string, legacyOrder int, legacyName string) error {
+	var step ApprovalStep
+	err := db.Where("workflow_id = ? AND step_order = ? AND LOWER(approver_role) = ?", workflowID, currentOrder, strings.ToLower(role)).
+		First(&step).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to check legacy purchase approval step %d: %v", currentOrder, err)
+	}
+
+	var actionCount int64
+	if err := db.Table("approval_actions").Where("step_id = ?", step.ID).Count(&actionCount).Error; err != nil {
+		return fmt.Errorf("failed to check legacy purchase approval step actions for '%s': %v", step.StepName, err)
+	}
+	if actionCount == 0 {
+		return nil
+	}
+
+	targetOrder, err := nextAvailablePurchaseApprovalStepOrder(db, workflowID, step.ID, legacyOrder)
+	if err != nil {
+		return err
+	}
+
+	if err := db.Model(&step).Updates(map[string]interface{}{
+		"step_order": targetOrder,
+		"step_name":  legacyName,
+	}).Error; err != nil {
+		return fmt.Errorf("failed to archive legacy purchase approval step '%s': %v", step.StepName, err)
+	}
+
+	return nil
+}
+
+func nextAvailablePurchaseApprovalStepOrder(db *gorm.DB, workflowID uint, stepID uint, preferredOrder int) (int, error) {
+	for order := preferredOrder; order < preferredOrder+100; order++ {
+		var count int64
+		if err := db.Table("approval_steps").
+			Where("workflow_id = ? AND step_order = ? AND id <> ?", workflowID, order, stepID).
+			Count(&count).Error; err != nil {
+			return 0, fmt.Errorf("failed to check purchase approval step order %d: %v", order, err)
+		}
+		if count == 0 {
+			return order, nil
+		}
+	}
+
+	return 0, fmt.Errorf("failed to find available legacy purchase approval step order near %d", preferredOrder)
+}
+
+func reroutePendingPurchaseFinanceStaffActions(db *gorm.DB, workflowID uint) error {
+	var financeStep ApprovalStep
+	if err := db.Where("workflow_id = ? AND step_order = ? AND LOWER(approver_role) = ?", workflowID, 2, "finance").
+		First(&financeStep).Error; err != nil {
+		return fmt.Errorf("failed to load canonical finance manager purchase approval step: %v", err)
+	}
+
+	var staffSteps []ApprovalStep
+	if err := db.Where("workflow_id = ? AND LOWER(approver_role) = ?", workflowID, "purchase_finance_staff").
+		Find(&staffSteps).Error; err != nil {
+		return fmt.Errorf("failed to load legacy finance staff purchase approval steps: %v", err)
+	}
+	if len(staffSteps) == 0 {
+		return nil
+	}
+
+	staffStepIDs := make([]uint, 0, len(staffSteps))
+	for _, step := range staffSteps {
+		staffStepIDs = append(staffStepIDs, step.ID)
+	}
+
+	now := time.Now()
+	if err := db.Table("approval_actions").
+		Where("step_id IN ? AND status = ?", staffStepIDs, "PENDING").
+		Updates(map[string]interface{}{
+			"step_id":    financeStep.ID,
+			"comments":   gorm.Expr("CASE WHEN comments IS NULL OR comments = '' THEN ? ELSE comments END", "Rerouted from deprecated Finance Staff purchase approval step"),
+			"updated_at": now,
+		}).Error; err != nil {
+		return fmt.Errorf("failed to reroute pending purchase approval actions to Finance Manager: %v", err)
+	}
+
+	var legacyFinanceSteps []ApprovalStep
+	if err := db.Where("workflow_id = ? AND LOWER(approver_role) = ? AND id <> ?", workflowID, "finance", financeStep.ID).
+		Find(&legacyFinanceSteps).Error; err != nil {
+		return fmt.Errorf("failed to load legacy finance manager purchase approval steps: %v", err)
+	}
+	if len(legacyFinanceSteps) == 0 {
+		return nil
+	}
+
+	legacyFinanceStepIDs := make([]uint, 0, len(legacyFinanceSteps))
+	for _, step := range legacyFinanceSteps {
+		legacyFinanceStepIDs = append(legacyFinanceStepIDs, step.ID)
+	}
+
+	if err := db.Table("approval_actions").
+		Where("step_id IN ? AND status = ? AND is_active = ?", legacyFinanceStepIDs, "PENDING", false).
+		Where("EXISTS (SELECT 1 FROM approval_actions canonical WHERE canonical.request_id = approval_actions.request_id AND canonical.step_id = ?)", financeStep.ID).
+		Updates(map[string]interface{}{
+			"status":      "SKIPPED",
+			"is_active":   false,
+			"comments":    gorm.Expr("CASE WHEN comments IS NULL OR comments = '' THEN ? ELSE comments END", "Skipped duplicate legacy Finance Manager purchase approval step"),
+			"action_date": gorm.Expr("COALESCE(action_date, ?)", now),
+			"updated_at":  now,
+		}).Error; err != nil {
+		return fmt.Errorf("failed to skip duplicate legacy finance manager purchase approval actions: %v", err)
+	}
+
+	return nil
+}
+
+func skipObsoleteStandardPurchaseApprovalSteps(db *gorm.DB, workflowID uint, maxExpectedOrder int) error {
+	var obsoleteSteps []ApprovalStep
+	if err := db.Where("workflow_id = ? AND step_order > ?", workflowID, maxExpectedOrder).
+		Find(&obsoleteSteps).Error; err != nil {
+		return fmt.Errorf("failed to load obsolete purchase approval steps: %v", err)
+	}
+
+	for _, step := range obsoleteSteps {
+		var actionCount int64
+		if err := db.Table("approval_actions").Where("step_id = ?", step.ID).Count(&actionCount).Error; err != nil {
+			return fmt.Errorf("failed to check obsolete approval actions for step '%s': %v", step.StepName, err)
+		}
+		if actionCount > 0 {
+			log.Printf("Keeping obsolete purchase approval step '%s' because %d action(s) still reference it", step.StepName, actionCount)
+			continue
+		}
+
+		if err := db.Delete(&step).Error; err != nil {
+			return fmt.Errorf("failed to remove obsolete workflow step '%s': %v", step.StepName, err)
+		}
+	}
+
 	return nil
 }
 

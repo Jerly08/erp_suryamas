@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -110,6 +111,33 @@ func (s *ApprovalService) GetWorkflowByAmount(module string, amount float64) (*m
 	return &workflow, nil
 }
 
+func approvalStepsForRequest(workflow *models.ApprovalWorkflow) []models.ApprovalStep {
+	if workflow == nil {
+		return nil
+	}
+
+	steps := append([]models.ApprovalStep(nil), workflow.Steps...)
+	sort.SliceStable(steps, func(i, j int) bool {
+		return steps[i].StepOrder < steps[j].StepOrder
+	})
+
+	if !strings.EqualFold(workflow.Module, models.ApprovalModulePurchase) ||
+		!strings.EqualFold(workflow.Name, "Standard Purchase Approval") {
+		return steps
+	}
+
+	filtered := make([]models.ApprovalStep, 0, len(steps))
+	for _, step := range steps {
+		role := models.NormalizeRole(step.ApproverRole)
+		if role == "purchase_finance_staff" || step.StepOrder > 3 {
+			continue
+		}
+		filtered = append(filtered, step)
+	}
+
+	return filtered
+}
+
 // Request Management
 
 // CreateApprovalRequest creates a new approval request
@@ -136,6 +164,12 @@ func (s *ApprovalService) CreateApprovalRequest(req models.CreateApprovalRequest
 	if err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("no workflow found for amount %.2f: %v", req.Amount, err)
+	}
+
+	workflowSteps := approvalStepsForRequest(workflow)
+	if len(workflowSteps) == 0 {
+		tx.Rollback()
+		return nil, errors.New("approval workflow has no active steps")
 	}
 
 	// Generate request code
@@ -165,7 +199,7 @@ func (s *ApprovalService) CreateApprovalRequest(req models.CreateApprovalRequest
 	}
 
 	// Create approval actions for each step
-	for _, step := range workflow.Steps {
+	for _, step := range workflowSteps {
 		action := models.ApprovalAction{
 			RequestID: approvalReq.ID,
 			StepID:    step.ID,
@@ -198,7 +232,7 @@ func (s *ApprovalService) CreateApprovalRequest(req models.CreateApprovalRequest
 	}
 
 	// Send notifications to approvers
-	go s.notifyApprovers(&approvalReq, workflow.Steps[0])
+	go s.notifyApprovers(&approvalReq, workflowSteps[0])
 
 	// Load with relations
 	err = s.db.Preload("Workflow").Preload("Requester").

@@ -201,17 +201,6 @@ func TestPurchaseApprovalWorkflowWithoutDirectorRoutesToAccounting(t *testing.T)
 	result, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
 		purchase.ID,
 		true,
-		fixture.financeStaff.ID,
-		fixture.financeStaff.Role,
-		"Finance staff reviewed",
-		false,
-	)
-	require.NoError(t, err)
-	require.Equal(t, false, result["escalated"])
-
-	result, err = fixture.service.ProcessPurchaseApprovalWithEscalation(
-		purchase.ID,
-		true,
 		fixture.manager.ID,
 		fixture.manager.Role,
 		"Finance manager approved without director escalation",
@@ -251,16 +240,6 @@ func TestPurchaseApprovalWorkflowWithExplicitDirectorStillWaitsForAccounting(t *
 	purchase, item := fixture.createDraftPurchase(t, "PO-WF-DIRECTOR", 250000)
 
 	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
-	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
-		purchase.ID,
-		true,
-		fixture.financeStaff.ID,
-		fixture.financeStaff.Role,
-		"Finance staff reviewed",
-		false,
-	)
-	require.NoError(t, err)
-
 	result, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
 		purchase.ID,
 		true,
@@ -326,15 +305,6 @@ func TestFinanceManagerCanCorrectCOABeforeFinalApproval(t *testing.T) {
 
 	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
 	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
-		purchase.ID,
-		true,
-		fixture.financeStaff.ID,
-		fixture.financeStaff.Role,
-		"Finance staff reviewed",
-		false,
-	)
-	require.NoError(t, err)
-	_, err = fixture.service.ProcessPurchaseApprovalWithEscalation(
 		purchase.ID,
 		true,
 		fixture.manager.ID,
@@ -418,15 +388,6 @@ func TestFinanceManagerCanCorrectTaxPaymentBeforeFinalApproval(t *testing.T) {
 	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
 		purchase.ID,
 		true,
-		fixture.financeStaff.ID,
-		fixture.financeStaff.Role,
-		"Finance staff reviewed",
-		false,
-	)
-	require.NoError(t, err)
-	_, err = fixture.service.ProcessPurchaseApprovalWithEscalation(
-		purchase.ID,
-		true,
 		fixture.manager.ID,
 		fixture.manager.Role,
 		"Finance manager approved for accounting",
@@ -498,27 +459,54 @@ func TestFinanceManagerCanCorrectTaxPaymentBeforeFinalApproval(t *testing.T) {
 	require.InDelta(t, 2000, pphLine.CreditAmount.InexactFloat64(), 0.01)
 }
 
-func TestPurchaseDirectorEscalationRequiresActiveFinanceManagerStep(t *testing.T) {
+func TestFinanceStaffPurchaseCreatorRoutesApprovalToFinanceManager(t *testing.T) {
 	fixture := newPurchaseWorkflowFixture(t)
-	purchase, _ := fixture.createDraftPurchase(t, "PO-WF-BAD-ESCALATION", 75000)
+	purchase, _ := fixture.createDraftPurchaseForUser(t, "PO-WF-FS-CREATOR", 75000, fixture.financeStaff.ID)
+
+	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.financeStaff.ID))
+
+	submitted, err := fixture.service.GetPurchaseByID(purchase.ID)
+	require.NoError(t, err)
+	require.NotNil(t, submitted.ApprovalRequestID)
+
+	financeAction := fixture.approvalActionByRole(t, *submitted.ApprovalRequestID, models.RoleFinance)
+	require.Equal(t, models.ApprovalStatusPending, financeAction.Status)
+	require.True(t, financeAction.IsActive)
+	require.Nil(t, financeAction.ApproverID)
+
+	_, err = fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.financeStaff.ID,
+		fixture.financeStaff.Role,
+		"Finance staff should not approve own purchase",
+		false,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no active approval step found for your role")
+}
+
+func TestFinanceManagerCanEscalateFromActiveFinanceManagerStep(t *testing.T) {
+	fixture := newPurchaseWorkflowFixture(t)
+	purchase, _ := fixture.createDraftPurchase(t, "PO-WF-FM-ESCALATION", 75000)
 
 	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
-	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
+	result, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
 		purchase.ID,
 		true,
 		fixture.manager.ID,
 		fixture.manager.Role,
-		"Stale UI flag should not activate director while finance staff step is active",
+		"Finance manager escalated to director",
 		true,
 	)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "no active approval step found for your role")
+	require.NoError(t, err)
+	require.Equal(t, true, result["escalated"])
 
 	afterAttempt, err := fixture.service.GetPurchaseByID(purchase.ID)
 	require.NoError(t, err)
 	directorAction := fixture.approvalActionByRole(t, *afterAttempt.ApprovalRequestID, models.RoleDirector)
-	require.False(t, directorAction.IsActive)
 	require.Equal(t, models.ApprovalStatusPending, directorAction.Status)
+	require.True(t, directorAction.IsActive)
 }
 
 type purchaseWorkflowFixture struct {
@@ -574,9 +562,8 @@ func newPurchaseWorkflowFixture(t *testing.T) *purchaseWorkflowFixture {
 	require.NoError(t, db.Create(&workflow).Error)
 	steps := []models.ApprovalStep{
 		{WorkflowID: workflow.ID, StepOrder: 1, StepName: "Employee Submission", ApproverRole: models.RoleEmployee, IsOptional: false},
-		{WorkflowID: workflow.ID, StepOrder: 2, StepName: "Finance Staff Review", ApproverRole: "purchase_finance_staff", IsOptional: false},
-		{WorkflowID: workflow.ID, StepOrder: 3, StepName: "Finance Manager Approval", ApproverRole: models.RoleFinance, IsOptional: false},
-		{WorkflowID: workflow.ID, StepOrder: 4, StepName: "Director Approval", ApproverRole: models.RoleDirector, IsOptional: true},
+		{WorkflowID: workflow.ID, StepOrder: 2, StepName: "Finance Manager Approval", ApproverRole: models.RoleFinance, IsOptional: false},
+		{WorkflowID: workflow.ID, StepOrder: 3, StepName: "Director Approval", ApproverRole: models.RoleDirector, IsOptional: true},
 	}
 	require.NoError(t, db.Create(&steps).Error)
 
@@ -674,11 +661,16 @@ func newPurchaseWorkflowFixture(t *testing.T) *purchaseWorkflowFixture {
 
 func (f *purchaseWorkflowFixture) createDraftPurchase(t *testing.T, code string, amount float64) (*models.Purchase, models.PurchaseItem) {
 	t.Helper()
+	return f.createDraftPurchaseForUser(t, code, amount, f.staff.ID)
+}
+
+func (f *purchaseWorkflowFixture) createDraftPurchaseForUser(t *testing.T, code string, amount float64, userID uint) (*models.Purchase, models.PurchaseItem) {
+	t.Helper()
 
 	purchase := models.Purchase{
 		Code:                   code,
 		VendorID:               f.vendor.ID,
-		UserID:                 f.staff.ID,
+		UserID:                 userID,
 		Date:                   f.purchaseDate,
 		DueDate:                f.purchaseDate.AddDate(0, 0, 14),
 		Status:                 models.PurchaseStatusDraft,

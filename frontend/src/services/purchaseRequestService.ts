@@ -39,6 +39,15 @@ export interface PurchaseRequestItem {
   purchased_at?: string | null;
   notes: string;
   product?: Product;
+  purchase?: {
+    id: number;
+    code: string;
+    status: string;
+    paid_amount: number;
+    outstanding_amount: number;
+    total_amount: number;
+    project_id?: number | null;
+  };
 }
 
 export interface PurchaseRequestDocument {
@@ -50,6 +59,7 @@ export interface PurchaseRequestDocument {
   file_size: number;
   mime_type: string;
   uploaded_by: number;
+  approval_revision: number;
   created_at: string;
   updated_at: string;
   uploader?: User;
@@ -60,6 +70,7 @@ export interface PurchaseRequest {
   pr_number: string;
   requester_id: number;
   department: string;
+  title?: string;
   project_id: number | null;
   vendor_id: number | null;
   total_estimated_amount: number;
@@ -69,13 +80,17 @@ export interface PurchaseRequest {
     | "FINANCE_MANAGER"
     | "DIRECTOR"
     | "FINALIZED";
+  approval_revision?: number;
+  reapproval_reason?: "ADDITIONAL_DOCUMENTS" | "";
   notes: string;
   approved_by: number | null;
   approved_at: string | null;
   finance_staff_approved_by?: number | null;
   finance_staff_approved_at?: string | null;
+  finance_staff_review_notes?: string;
   finance_manager_approved_by?: number | null;
   finance_manager_approved_at?: string | null;
+  finance_manager_review_notes?: string;
   director_approved_by?: number | null;
   director_approved_at?: string | null;
   rejection_reason: string;
@@ -106,6 +121,7 @@ export interface PurchaseRequestItemPayload {
 
 export interface PurchaseRequestCreatePayload {
   department?: string;
+  title?: string;
   project_id?: number | null;
   vendor_id?: number | null;
   notes?: string;
@@ -125,6 +141,10 @@ export interface PurchaseRequestReviewPayload {
   items: PurchaseRequestReviewItemPayload[];
   reason?: string;
   escalate_to_director?: boolean;
+}
+
+export interface PurchaseRequestProjectUpdatePayload {
+  project_id?: number | null;
 }
 
 const BASE_URL = "/api/v1/purchase-requests";
@@ -180,7 +200,11 @@ export const purchaseRequestService = {
   uploadDocuments: async (
     id: number,
     documents: File[],
-  ): Promise<{ message: string; documents: PurchaseRequestDocument[] }> => {
+  ): Promise<{
+    message: string;
+    documents: PurchaseRequestDocument[];
+    reapproval_started: boolean;
+  }> => {
     const formData = new FormData();
     documents.forEach((file) => {
       formData.append("documents", file);
@@ -207,6 +231,14 @@ export const purchaseRequestService = {
     payload: PurchaseRequestReviewPayload,
   ): Promise<{ message: string }> => {
     const response = await api.put(`${BASE_URL}/${id}/review`, payload);
+    return response.data;
+  },
+
+  updateProject: async (
+    id: number,
+    payload: PurchaseRequestProjectUpdatePayload,
+  ): Promise<PurchaseRequest> => {
+    const response = await api.put(`${BASE_URL}/${id}/project`, payload);
     return response.data;
   },
 

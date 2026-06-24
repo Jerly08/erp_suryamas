@@ -713,6 +713,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchaseRequests.GET("/:id/documents", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetDocuments)
 				purchaseRequests.POST("/:id/documents", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UploadDocuments)
 				purchaseRequests.DELETE("/documents/:document_id", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.DeleteDocument)
+				purchaseRequests.PUT("/:id/project", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UpdateProject)
 
 				// Approval & Rejection workflows
 				purchaseRequests.PUT("/:id/review", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Review)
@@ -887,6 +888,10 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.GET("", permMiddleware.CanView("purchases"), purchaseController.GetPurchases)
 				// Approval statistics (must be defined before parameterized "/:id" route)
 				purchases.GET("/approval-stats", permMiddleware.CanUsePurchaseApprovalWorkflow(), purchaseApprovalHandler.GetApprovalStats)
+				// Vendor lookup/quick-create belongs to the Purchase workflow and does
+				// not require access to the standalone Contact module.
+				purchases.GET("/vendors", permMiddleware.CanView("purchases"), contactController.GetVendorsForPurchase)
+				purchases.POST("/vendors", permMiddleware.CanCreate("purchases"), contactController.CreateVendorForPurchase)
 				purchases.GET("/:id", permMiddleware.CanView("purchases"), purchaseController.GetPurchase)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
 				purchases.PUT("/:id", permMiddleware.CanEdit("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)

@@ -135,6 +135,32 @@ func (c *PurchaseRequestController) GetByID(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, pr)
 }
 
+func (c *PurchaseRequestController) UpdateProject(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestProjectUpdatePayload
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+
+	pr, err := c.service.UpdatePurchaseRequestProject(uint(id), userID, userRole, payload)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, pr)
+}
+
 func (c *PurchaseRequestController) UploadDocuments(ctx *gin.Context) {
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -171,9 +197,16 @@ func (c *PurchaseRequestController) UploadDocuments(ctx *gin.Context) {
 		return
 	}
 
+	reapprovalStarted, err := c.service.SubmitAdditionalDocumentsForApproval(uint(id), userID, userRole, len(documents))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ctx.JSON(http.StatusCreated, gin.H{
-		"message":   "Documents uploaded successfully",
-		"documents": documents,
+		"message":            "Documents submitted successfully",
+		"documents":          documents,
+		"reapproval_started": reapprovalStarted,
 	})
 }
 
@@ -271,6 +304,10 @@ func validatePurchaseRequestDocumentFiles(files []*multipart.FileHeader) error {
 }
 
 func validatePurchaseRequestPayload(payload models.PurchaseRequestCreatePayload) error {
+	if len(strings.TrimSpace(payload.Title)) > 255 {
+		return fmt.Errorf("title cannot exceed 255 characters")
+	}
+
 	if len(payload.Items) == 0 {
 		return fmt.Errorf("items are required")
 	}
