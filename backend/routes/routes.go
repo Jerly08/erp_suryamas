@@ -894,7 +894,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.POST("/vendors", permMiddleware.CanCreate("purchases"), contactController.CreateVendorForPurchase)
 				purchases.GET("/:id", permMiddleware.CanView("purchases"), purchaseController.GetPurchase)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
-				purchases.PUT("/:id", permMiddleware.CanEdit("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
+				purchases.PUT("/:id", permMiddleware.CanEditPurchaseOrFinanceStaffDraft(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
 				purchases.DELETE("/:id", permMiddleware.CanDelete("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.DeletePurchase)
 
 				// Approval operations dengan permission checks

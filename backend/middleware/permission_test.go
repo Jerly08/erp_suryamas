@@ -131,6 +131,80 @@ func TestPurchaseVendorQuickCreateUsesPurchasePermissionWithoutContactAccess(t *
 	}
 }
 
+func TestCanEditPurchaseOrFinanceStaffDraftAllowsDraftWithoutManagedEdit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newPermissionMiddlewareTestDB(t)
+
+	if err := db.Exec("CREATE TABLE purchases (id integer primary key autoincrement, status text, deleted_at datetime)").Error; err != nil {
+		t.Fatalf("create purchases table: %v", err)
+	}
+	if err := db.Exec("INSERT INTO purchases (id, status) VALUES (?, ?)", 11, models.PurchaseStatusDraft).Error; err != nil {
+		t.Fatalf("seed draft purchase: %v", err)
+	}
+	if err := db.Create(&models.ModulePermissionRecord{
+		UserID:  uint(11),
+		Module:  "purchases",
+		CanView: true,
+		CanEdit: false,
+	}).Error; err != nil {
+		t.Fatalf("seed managed purchase permission: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(11))
+		c.Set("role", models.RoleFinanceStaff)
+		c.Next()
+	})
+	router.PUT("/purchases/:id", NewPermissionMiddleware(db).CanEditPurchaseOrFinanceStaffDraft(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/purchases/11", nil))
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected finance staff to edit draft purchase, got %d body %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCanEditPurchaseOrFinanceStaffDraftDoesNotBypassNonDraft(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newPermissionMiddlewareTestDB(t)
+
+	if err := db.Exec("CREATE TABLE purchases (id integer primary key autoincrement, status text, deleted_at datetime)").Error; err != nil {
+		t.Fatalf("create purchases table: %v", err)
+	}
+	if err := db.Exec("INSERT INTO purchases (id, status) VALUES (?, ?)", 12, models.PurchaseStatusPendingApproval).Error; err != nil {
+		t.Fatalf("seed non-draft purchase: %v", err)
+	}
+	if err := db.Create(&models.ModulePermissionRecord{
+		UserID:  uint(12),
+		Module:  "purchases",
+		CanView: true,
+		CanEdit: false,
+	}).Error; err != nil {
+		t.Fatalf("seed managed purchase permission: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(12))
+		c.Set("role", models.RoleFinanceStaff)
+		c.Next()
+	})
+	router.PUT("/purchases/:id", NewPermissionMiddleware(db).CanEditPurchaseOrFinanceStaffDraft(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/purchases/12", nil))
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected non-draft purchase edit to remain denied, got %d body %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestCanUsePurchaseApprovalWorkflowUsesManagedPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newPermissionMiddlewareTestDB(t)
