@@ -118,81 +118,22 @@ func (h *PurchaseApprovalHandler) ApprovePurchase(c *gin.Context) {
 	// Get user role to check if finance
 	userRole, _ := utils.GetUserRoleFromToken(c)
 
-	// If finance role and escalate flag is set, handle escalation
-	if models.IsFinanceManagerRole(userRole) && request.EscalateToDirector {
-		// Check if purchase is already approved
-		if purchase.ApprovalStatus == models.PurchaseApprovalApproved {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Purchase is already approved - cannot escalate"})
-			return
-		}
-
-		// Create approval request if it doesn't exist
-		if purchase.ApprovalRequestID == nil {
-			// This should not happen in normal flow, but handle it gracefully
-			result, err := h.purchaseService.ProcessPurchaseApprovalWithEscalation(
-				uint(purchaseID), true, userID, userRole, request.Comments, true)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, result)
-			return
-		}
-
-		// Check if approval request is still pending
-		approvalRequest, err := h.approvalService.GetApprovalRequest(*purchase.ApprovalRequestID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get approval request: " + err.Error()})
-			return
-		}
-
-		if approvalRequest.Status != models.ApprovalStatusPending {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Cannot escalate - approval request is already %s", approvalRequest.Status)})
-			return
-		}
-
-		// First escalate to director, then approve the finance step
-		escalationReason := "Requires Director approval as requested by Finance"
-		if request.Comments != "" {
-			escalationReason = fmt.Sprintf("%s - %s", escalationReason, request.Comments)
-		}
-		if err := h.approvalService.EscalateToDirector(*purchase.ApprovalRequestID, userID, escalationReason); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to escalate to Director: " + err.Error()})
-			return
-		}
-
-		// Reload purchase with updated approval steps to get accurate status
-		updatedPurchase, err := h.purchaseService.GetPurchaseByID(uint(purchaseID))
-		if err == nil && updatedPurchase != nil {
-			purchase = updatedPurchase
-		}
-
-		// Get current active step after escalation
-		currentStep := h.getCurrentApprovalStep(approvalRequest)
-
-		c.JSON(http.StatusOK, gin.H{
-			"message":         "Purchase escalated to Director for approval",
-			"purchase_id":     purchaseID,
-			"escalated":       true,
-			"status":          "PENDING",
-			"approval_status": "PENDING",
-			"current_step":    currentStep,
-			"waiting_for":     "director",
-		})
-		return
-	}
-
-	// Normal approval process
-	action := models.ApprovalActionDTO{Action: "APPROVE", Comments: request.Comments}
-	if err := h.approvalService.ProcessApprovalAction(*purchase.ApprovalRequestID, userID, action); err != nil {
+	// Purchase approval must go through PurchaseService so optional Director
+	// escalation and Accounting routing stay consistent with purchase state.
+	result, err := h.purchaseService.ProcessPurchaseApprovalWithEscalation(
+		uint(purchaseID),
+		true,
+		userID,
+		userRole,
+		request.Comments,
+		models.IsFinanceManagerRole(userRole) && request.EscalateToDirector,
+	)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message":     "Purchase approved successfully",
-		"purchase_id": purchaseID,
-	})
+	c.JSON(http.StatusOK, result)
 }
 
 // RejectPurchase rejects a purchase via approval workflow

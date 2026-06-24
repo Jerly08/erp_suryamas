@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,16 @@ type TaxAccountService struct {
 	taxConfig   *models.TaxConfig
 	cacheMux    sync.RWMutex
 	cacheLoaded bool
+}
+
+type taxAccountRole struct {
+	FieldName    string
+	ColumnName   string
+	Label        string
+	AccountID    uint
+	AllowedTypes []string
+	DefaultCodes []string
+	Required     bool
 }
 
 // NewTaxAccountService creates a new TaxAccountService instance
@@ -40,9 +51,58 @@ func (s *TaxAccountService) loadSettings() error {
 	s.cacheMux.Lock()
 	defer s.cacheMux.Unlock()
 
-	// Load tax account settings
+	settings, err := s.loadActiveSettings()
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Create default settings if none exist
+		defaultSettings, buildErr := s.buildDefaultTaxAccountSettings()
+		if buildErr != nil {
+			return buildErr
+		}
+
+		if createErr := s.db.Create(defaultSettings).Error; createErr != nil {
+			return fmt.Errorf("failed to create default settings: %v", createErr)
+		}
+
+		// Load the created settings with relations
+		settings, err = s.loadActiveSettings()
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to load tax account settings: %v", err)
+	}
+
+	repaired, repairErr := s.repairInvalidRequiredAccounts(settings)
+	if repairErr != nil {
+		log.Printf("Warning: Failed to repair tax account settings: %v", repairErr)
+	}
+	if repaired {
+		settings, err = s.loadActiveSettings()
+		if err != nil {
+			return fmt.Errorf("failed to reload repaired tax account settings: %v", err)
+		}
+	}
+
+	s.cache = settings
+	s.cacheLoaded = true
+	return nil
+}
+
+func (s *TaxAccountService) loadActiveSettings() (*models.TaxAccountSettings, error) {
 	var settings models.TaxAccountSettings
-	err := s.db.Preload("SalesReceivableAccount").
+	err := s.preloadTaxAccountRelations(s.db).
+		Where("is_active = ?", true).
+		Order("updated_at DESC, id DESC").
+		First(&settings).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &settings, nil
+}
+
+func (s *TaxAccountService) preloadTaxAccountRelations(db *gorm.DB) *gorm.DB {
+	return db.Preload("SalesReceivableAccount").
 		Preload("SalesCashAccount").
 		Preload("SalesBankAccount").
 		Preload("SalesRevenueAccount").
@@ -58,30 +118,317 @@ func (s *TaxAccountService) loadSettings() error {
 		Preload("TaxPayableAccount").
 		Preload("InventoryAccount").
 		Preload("COGSAccount").
-		Preload("UpdatedByUser").
-		Where("is_active = ?", true).
-		First(&settings).Error
+		Preload("UpdatedByUser")
+}
 
-	if err == nil {
-		s.cache = &settings
-		s.cacheLoaded = true
-		return nil
+func (s *TaxAccountService) buildDefaultTaxAccountSettings() (*models.TaxAccountSettings, error) {
+	settings := &models.TaxAccountSettings{
+		IsActive:            true,
+		ApplyToAllCompanies: true,
+		UpdatedBy:           1,
+		Notes:               "Default configuration created by system",
 	}
 
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Create default settings if none exist
-		defaultSettings := models.GetDefaultTaxAccountSettings()
-		defaultSettings.UpdatedBy = 1 // System user ID
+	for _, role := range s.requiredAccountRoles(settings) {
+		accountID, err := s.findDefaultAccountID(role.DefaultCodes, role.AllowedTypes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve default %s: %w", role.Label, err)
+		}
+		s.assignRoleAccountID(settings, role.FieldName, accountID)
+	}
 
-		if createErr := s.db.Create(defaultSettings).Error; createErr != nil {
-			return fmt.Errorf("failed to create default settings: %v", createErr)
+	return settings, nil
+}
+
+func (s *TaxAccountService) requiredAccountRoles(settings *models.TaxAccountSettings) []taxAccountRole {
+	return []taxAccountRole{
+		{
+			FieldName:    "sales_receivable",
+			ColumnName:   "sales_receivable_account_id",
+			Label:        "Sales Receivable",
+			AccountID:    settings.SalesReceivableAccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+			DefaultCodes: []string{"1102-001", "1102", "1201"},
+			Required:     true,
+		},
+		{
+			FieldName:    "sales_cash",
+			ColumnName:   "sales_cash_account_id",
+			Label:        "Sales Cash",
+			AccountID:    settings.SalesCashAccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+			DefaultCodes: []string{"1101-002", "1101-001", "1101"},
+			Required:     true,
+		},
+		{
+			FieldName:    "sales_bank",
+			ColumnName:   "sales_bank_account_id",
+			Label:        "Sales Bank",
+			AccountID:    settings.SalesBankAccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+			DefaultCodes: []string{"1101-003-100", "1101-004-100", "1101-003", "1102", "1101-002"},
+			Required:     true,
+		},
+		{
+			FieldName:    "sales_revenue",
+			ColumnName:   "sales_revenue_account_id",
+			Label:        "Sales Revenue",
+			AccountID:    settings.SalesRevenueAccountID,
+			AllowedTypes: []string{models.AccountTypeRevenue},
+			DefaultCodes: []string{"4101-001", "4101"},
+			Required:     true,
+		},
+		{
+			FieldName:    "sales_output_vat",
+			ColumnName:   "sales_output_vat_account_id",
+			Label:        "Sales Output VAT",
+			AccountID:    settings.SalesOutputVATAccountID,
+			AllowedTypes: []string{models.AccountTypeLiability},
+			DefaultCodes: []string{"2102-001", "2103"},
+			Required:     true,
+		},
+		{
+			FieldName:    "purchase_payable",
+			ColumnName:   "purchase_payable_account_id",
+			Label:        "Purchase Payable",
+			AccountID:    settings.PurchasePayableAccountID,
+			AllowedTypes: []string{models.AccountTypeLiability},
+			DefaultCodes: []string{"2101-001", "2101", "2001"},
+			Required:     true,
+		},
+		{
+			FieldName:    "purchase_cash",
+			ColumnName:   "purchase_cash_account_id",
+			Label:        "Purchase Cash",
+			AccountID:    settings.PurchaseCashAccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+			DefaultCodes: []string{"1101-002", "1101-001", "1101"},
+			Required:     true,
+		},
+		{
+			FieldName:    "purchase_bank",
+			ColumnName:   "purchase_bank_account_id",
+			Label:        "Purchase Bank",
+			AccountID:    settings.PurchaseBankAccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+			DefaultCodes: []string{"1101-003-100", "1101-004-100", "1101-003", "1102", "1101-002"},
+			Required:     true,
+		},
+		{
+			FieldName:    "purchase_input_vat",
+			ColumnName:   "purchase_input_vat_account_id",
+			Label:        "Purchase Input VAT",
+			AccountID:    settings.PurchaseInputVATAccountID,
+			AllowedTypes: []string{models.AccountTypeLiability, models.AccountTypeAsset},
+			DefaultCodes: []string{"2102-002", "1240", "2102"},
+			Required:     true,
+		},
+		{
+			FieldName:    "purchase_expense",
+			ColumnName:   "purchase_expense_account_id",
+			Label:        "Purchase Expense",
+			AccountID:    settings.PurchaseExpenseAccountID,
+			AllowedTypes: []string{models.AccountTypeExpense},
+			DefaultCodes: []string{"6102", "6001", "6000", "8102", "5100"},
+			Required:     true,
+		},
+	}
+}
+
+func (s *TaxAccountService) optionalAccountRoles(settings *models.TaxAccountSettings) []taxAccountRole {
+	roles := []taxAccountRole{}
+	if settings.WithholdingTax21AccountID != nil && *settings.WithholdingTax21AccountID > 0 {
+		roles = append(roles, taxAccountRole{
+			FieldName:    "withholding_tax21",
+			ColumnName:   "withholding_tax21_account_id",
+			Label:        "Withholding Tax 21",
+			AccountID:    *settings.WithholdingTax21AccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+		})
+	}
+	if settings.WithholdingTax23AccountID != nil && *settings.WithholdingTax23AccountID > 0 {
+		roles = append(roles, taxAccountRole{
+			FieldName:    "withholding_tax23",
+			ColumnName:   "withholding_tax23_account_id",
+			Label:        "Withholding Tax 23",
+			AccountID:    *settings.WithholdingTax23AccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+		})
+	}
+	if settings.WithholdingTax25AccountID != nil && *settings.WithholdingTax25AccountID > 0 {
+		roles = append(roles, taxAccountRole{
+			FieldName:    "withholding_tax25",
+			ColumnName:   "withholding_tax25_account_id",
+			Label:        "Withholding Tax 25",
+			AccountID:    *settings.WithholdingTax25AccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+		})
+	}
+	if settings.TaxPayableAccountID != nil && *settings.TaxPayableAccountID > 0 {
+		roles = append(roles, taxAccountRole{
+			FieldName:    "tax_payable",
+			ColumnName:   "tax_payable_account_id",
+			Label:        "Tax Payable",
+			AccountID:    *settings.TaxPayableAccountID,
+			AllowedTypes: []string{models.AccountTypeLiability},
+		})
+	}
+	if settings.InventoryAccountID != nil && *settings.InventoryAccountID > 0 {
+		roles = append(roles, taxAccountRole{
+			FieldName:    "inventory",
+			ColumnName:   "inventory_account_id",
+			Label:        "Inventory",
+			AccountID:    *settings.InventoryAccountID,
+			AllowedTypes: []string{models.AccountTypeAsset},
+		})
+	}
+	if settings.COGSAccountID != nil && *settings.COGSAccountID > 0 {
+		roles = append(roles, taxAccountRole{
+			FieldName:    "cogs",
+			ColumnName:   "cogs_account_id",
+			Label:        "COGS",
+			AccountID:    *settings.COGSAccountID,
+			AllowedTypes: []string{models.AccountTypeExpense},
+		})
+	}
+	return roles
+}
+
+func (s *TaxAccountService) assignRoleAccountID(settings *models.TaxAccountSettings, fieldName string, accountID uint) {
+	switch fieldName {
+	case "sales_receivable":
+		settings.SalesReceivableAccountID = accountID
+	case "sales_cash":
+		settings.SalesCashAccountID = accountID
+	case "sales_bank":
+		settings.SalesBankAccountID = accountID
+	case "sales_revenue":
+		settings.SalesRevenueAccountID = accountID
+	case "sales_output_vat":
+		settings.SalesOutputVATAccountID = accountID
+	case "purchase_payable":
+		settings.PurchasePayableAccountID = accountID
+	case "purchase_cash":
+		settings.PurchaseCashAccountID = accountID
+	case "purchase_bank":
+		settings.PurchaseBankAccountID = accountID
+	case "purchase_input_vat":
+		settings.PurchaseInputVATAccountID = accountID
+	case "purchase_expense":
+		settings.PurchaseExpenseAccountID = accountID
+	}
+}
+
+func (s *TaxAccountService) repairInvalidRequiredAccounts(settings *models.TaxAccountSettings) (bool, error) {
+	updates := map[string]interface{}{}
+	for _, role := range s.requiredAccountRoles(settings) {
+		if role.AccountID == 0 {
+			replacementID, err := s.findDefaultAccountID(role.DefaultCodes, role.AllowedTypes)
+			if err != nil {
+				return false, fmt.Errorf("%s is empty and no valid replacement account was found: %w", role.Label, err)
+			}
+			updates[role.ColumnName] = replacementID
+			continue
 		}
 
-		// Load the created settings with relations
-		return s.loadSettings()
+		account, err := s.loadAccount(role.AccountID)
+		if err == nil && accountMatchesRole(account, role.AllowedTypes) {
+			continue
+		}
+
+		replacementID, replaceErr := s.findDefaultAccountID(role.DefaultCodes, role.AllowedTypes)
+		if replaceErr != nil {
+			if err != nil {
+				return false, fmt.Errorf("%s account %d cannot be loaded and no replacement was found: %w", role.Label, role.AccountID, replaceErr)
+			}
+			return false, fmt.Errorf("%s account %s (%s) has invalid type %s and no replacement was found: %w", role.Label, account.Code, account.Name, account.Type, replaceErr)
+		}
+		if replacementID != role.AccountID {
+			updates[role.ColumnName] = replacementID
+		}
 	}
 
-	return fmt.Errorf("failed to load tax account settings: %v", err)
+	if len(updates) == 0 {
+		return false, nil
+	}
+
+	updates["updated_at"] = time.Now()
+	updates["notes"] = strings.TrimSpace(settings.Notes + "\nAuto-repaired invalid tax account mapping types during service startup.")
+	if err := s.db.Model(&models.TaxAccountSettings{}).
+		Where("id = ?", settings.ID).
+		Updates(updates).Error; err != nil {
+		return false, err
+	}
+
+	log.Printf("Repaired tax account settings %d fields: %v", settings.ID, updates)
+	return true, nil
+}
+
+func (s *TaxAccountService) validateSettingsAccounts(settings *models.TaxAccountSettings) error {
+	roles := append(s.requiredAccountRoles(settings), s.optionalAccountRoles(settings)...)
+	for _, role := range roles {
+		if role.AccountID == 0 {
+			if role.Required {
+				return fmt.Errorf("%s account is required", role.Label)
+			}
+			continue
+		}
+
+		account, err := s.loadAccount(role.AccountID)
+		if err != nil {
+			return fmt.Errorf("%s account not found or inactive", role.Label)
+		}
+		if !accountMatchesRole(account, role.AllowedTypes) {
+			return fmt.Errorf("%s account must be %s account, got %s (%s - %s)", role.Label, strings.Join(role.AllowedTypes, " or "), account.Type, account.Code, account.Name)
+		}
+	}
+
+	return nil
+}
+
+func (s *TaxAccountService) loadAccount(accountID uint) (*models.Account, error) {
+	var account models.Account
+	if err := s.db.Where("id = ? AND deleted_at IS NULL", accountID).First(&account).Error; err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
+func accountMatchesRole(account *models.Account, allowedTypes []string) bool {
+	if account == nil || !account.IsActive || account.IsHeader {
+		return false
+	}
+
+	accountType := strings.ToUpper(strings.TrimSpace(account.Type))
+	for _, allowedType := range allowedTypes {
+		if accountType == strings.ToUpper(strings.TrimSpace(allowedType)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *TaxAccountService) findDefaultAccountID(codes []string, allowedTypes []string) (uint, error) {
+	for _, code := range codes {
+		var account models.Account
+		err := s.db.
+			Where("code = ? AND type IN ? AND is_active = ? AND is_header = ? AND deleted_at IS NULL", code, allowedTypes, true, false).
+			First(&account).Error
+		if err == nil {
+			return account.ID, nil
+		}
+	}
+
+	var account models.Account
+	err := s.db.
+		Where("type IN ? AND is_active = ? AND is_header = ? AND deleted_at IS NULL", allowedTypes, true, false).
+		Order("code ASC, id ASC").
+		First(&account).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return account.ID, nil
 }
 
 // GetSettings returns the current tax account settings
@@ -107,13 +454,6 @@ func (s *TaxAccountService) CreateSettings(req *models.TaxAccountSettingsCreateR
 	// Validate that accounts exist
 	if err := s.validateAccounts(req); err != nil {
 		return nil, err
-	}
-
-	// Deactivate existing active settings
-	if err := s.db.Model(&models.TaxAccountSettings{}).
-		Where("is_active = ?", true).
-		Update("is_active", false).Error; err != nil {
-		return nil, fmt.Errorf("failed to deactivate existing settings: %v", err)
 	}
 
 	// Create new settings
@@ -143,6 +483,16 @@ func (s *TaxAccountService) CreateSettings(req *models.TaxAccountSettingsCreateR
 	// Validate settings
 	if err := settings.ValidateAccountSettings(); err != nil {
 		return nil, err
+	}
+	if err := s.validateSettingsAccounts(settings); err != nil {
+		return nil, err
+	}
+
+	// Deactivate existing active settings only after the replacement is proven valid.
+	if err := s.db.Model(&models.TaxAccountSettings{}).
+		Where("is_active = ?", true).
+		Update("is_active", false).Error; err != nil {
+		return nil, fmt.Errorf("failed to deactivate existing settings: %v", err)
 	}
 
 	if err := s.db.Create(settings).Error; err != nil {
@@ -246,9 +596,12 @@ func (s *TaxAccountService) UpdateSettings(id uint, req *models.TaxAccountSettin
 	settings.UpdatedBy = userID
 	settings.UpdatedAt = time.Now()
 
-	// Note: Skip validation for update mode since we only update specific fields
-	// The existing record already has all required fields set from initial creation
-	// Validation is only needed for CREATE, not UPDATE
+	if err := settings.ValidateAccountSettings(); err != nil {
+		return nil, err
+	}
+	if err := s.validateSettingsAccounts(&settings); err != nil {
+		return nil, err
+	}
 
 	if err := s.db.Save(&settings).Error; err != nil {
 		return nil, fmt.Errorf("failed to update tax account settings: %v", err)
@@ -317,14 +670,27 @@ func (s *TaxAccountService) validateAccounts(req *models.TaxAccountSettingsCreat
 		accountIDs = append(accountIDs, *req.COGSAccountID)
 	}
 
+	uniqueAccountIDs := make([]uint, 0, len(accountIDs))
+	seenAccountIDs := map[uint]struct{}{}
+	for _, accountID := range accountIDs {
+		if accountID == 0 {
+			continue
+		}
+		if _, seen := seenAccountIDs[accountID]; seen {
+			continue
+		}
+		seenAccountIDs[accountID] = struct{}{}
+		uniqueAccountIDs = append(uniqueAccountIDs, accountID)
+	}
+
 	var count int64
 	if err := s.db.Model(&models.Account{}).
-		Where("id IN ? AND is_active = ?", accountIDs, true).
+		Where("id IN ? AND is_active = ?", uniqueAccountIDs, true).
 		Count(&count).Error; err != nil {
 		return fmt.Errorf("failed to validate accounts: %v", err)
 	}
 
-	if int(count) != len(accountIDs) {
+	if int(count) != len(uniqueAccountIDs) {
 		return fmt.Errorf("some accounts are not found or inactive")
 	}
 

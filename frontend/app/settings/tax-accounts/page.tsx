@@ -877,6 +877,46 @@ const TaxAccountSettingsPage: React.FC = () => {
               </CardBody>
             </Card>
 
+            {/* Default Purchase Expense Account */}
+            <Card mb={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
+              <CardHeader>
+                <HStack spacing={3} justify="space-between">
+                  <HStack spacing={3}>
+                    <Icon as={FiDollarSign} boxSize={5} color={orangeColor} />
+                    <Heading size="md">Akun Default Pembelian</Heading>
+                    <Badge colorScheme="green" size="sm">{t('settings.taxAccounts.status.configurable')}</Badge>
+                  </HStack>
+                  <Tooltip
+                    label="Akun default untuk item Beban/Jasa saat membuat pembelian dari Purchase Request atau transaksi pembelian non-inventory."
+                    placement="left"
+                    hasArrow
+                  >
+                    <IconButton
+                      aria-label="Info"
+                      icon={<FiInfo />}
+                      size="sm"
+                      variant="ghost"
+                      colorScheme="orange"
+                    />
+                  </Tooltip>
+                </HStack>
+              </CardHeader>
+              <CardBody>
+                <SimpleGrid columns={[1, 1, 2]} spacing={6}>
+                  {renderAccountSelect(
+                    'purchase_expense',
+                    'Default Beban/Jasa Pembelian',
+                    true,
+                    ['EXPENSE'],
+                    ['OPERATING_EXPENSE', 'ADMINISTRATIVE_EXPENSE', 'GENERAL_EXPENSE', 'OTHER_EXPENSE', 'COST_OF_GOODS_SOLD'],
+                    'Dipakai sebagai akun beban default untuk item pembelian non-inventory.',
+                    'Harus akun bertipe EXPENSE, bukan REVENUE.',
+                    ['6102', '6001', '6000', '8102', '5100']
+                  )}
+                </SimpleGrid>
+              </CardBody>
+            </Card>
+
             {/* Company-type-specific alert for withholding taxes */}
             {companyType === 'SERVICE' && (
               <Alert status="info" variant="subtle" borderRadius="md" mb={6}>

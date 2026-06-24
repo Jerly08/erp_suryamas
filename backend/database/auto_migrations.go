@@ -1049,8 +1049,139 @@ func syncStandardPurchaseApprovalWorkflowSteps(db *gorm.DB, workflowID uint) err
 		return err
 	}
 
+	if err := repairUnrequestedPurchaseDirectorApprovals(db, workflowID); err != nil {
+		return err
+	}
+
 	log.Println("Standard Purchase Approval workflow synchronized")
 	return nil
+}
+
+type unrequestedPurchaseDirectorApprovalCandidate struct {
+	RequestID  uint
+	PurchaseID uint
+	ApproverID uint
+	ActionDate time.Time
+	DirectorID uint
+}
+
+func repairUnrequestedPurchaseDirectorApprovals(db *gorm.DB, workflowID uint) error {
+	var candidates []unrequestedPurchaseDirectorApprovalCandidate
+	if err := db.Raw(`
+		SELECT
+			ar.id AS request_id,
+			p.id AS purchase_id,
+			finance_action.approver_id AS approver_id,
+			finance_action.action_date AS action_date,
+			director_action.id AS director_id
+		FROM approval_requests ar
+		JOIN purchases p
+			ON p.id = ar.entity_id
+			AND p.deleted_at IS NULL
+		JOIN approval_workflows aw
+			ON aw.id = ar.workflow_id
+			AND aw.deleted_at IS NULL
+		JOIN approval_actions director_action
+			ON director_action.request_id = ar.id
+			AND director_action.deleted_at IS NULL
+		JOIN approval_steps director_step
+			ON director_step.id = director_action.step_id
+			AND director_step.deleted_at IS NULL
+		JOIN approval_actions finance_action
+			ON finance_action.request_id = ar.id
+			AND finance_action.deleted_at IS NULL
+		JOIN approval_steps finance_step
+			ON finance_step.id = finance_action.step_id
+			AND finance_step.deleted_at IS NULL
+		WHERE ar.workflow_id = ?
+			AND ar.entity_type = 'PURCHASE'
+			AND ar.status = 'PENDING'
+			AND ar.deleted_at IS NULL
+			AND COALESCE(aw.require_director, false) = false
+			AND p.status = 'PENDING'
+			AND p.approval_status = 'PENDING'
+			AND LOWER(director_step.approver_role) = 'director'
+			AND director_action.status = 'PENDING'
+			AND director_action.is_active = true
+			AND director_action.approver_id IS NULL
+			AND LOWER(finance_step.approver_role) IN ('finance', 'finance_manager')
+			AND finance_action.status = 'APPROVED'
+			AND finance_action.approver_id IS NOT NULL
+			AND finance_action.action_date IS NOT NULL
+			AND finance_action.id = (
+				SELECT fa2.id
+				FROM approval_actions fa2
+				JOIN approval_steps fs2
+					ON fs2.id = fa2.step_id
+					AND fs2.deleted_at IS NULL
+				WHERE fa2.request_id = ar.id
+					AND fa2.deleted_at IS NULL
+					AND LOWER(fs2.approver_role) IN ('finance', 'finance_manager')
+					AND fa2.status = 'APPROVED'
+					AND fa2.approver_id IS NOT NULL
+					AND fa2.action_date IS NOT NULL
+				ORDER BY fa2.action_date DESC, fa2.id DESC
+				LIMIT 1
+			)
+			AND NOT EXISTS (
+				SELECT 1
+				FROM approval_histories ah
+				WHERE ah.request_id = ar.id
+					AND ah.deleted_at IS NULL
+					AND ah.action IN ('ESCALATED_TO_DIRECTOR', 'ESCALATED')
+			)
+	`, workflowID).Scan(&candidates).Error; err != nil {
+		return fmt.Errorf("failed to find unrequested purchase director approvals: %v", err)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		for _, candidate := range candidates {
+			completedAt := candidate.ActionDate
+			if completedAt.IsZero() {
+				completedAt = now
+			}
+
+			if err := tx.Table("approval_actions").
+				Where("id = ? AND status = ? AND is_active = ?", candidate.DirectorID, "PENDING", true).
+				Updates(map[string]interface{}{
+					"is_active":  false,
+					"comments":   gorm.Expr("CASE WHEN comments IS NULL OR comments = '' THEN ? ELSE comments END", "Skipped unrequested optional Director approval after Finance Manager approval"),
+					"updated_at": now,
+				}).Error; err != nil {
+				return fmt.Errorf("failed to deactivate unrequested director approval action %d: %v", candidate.DirectorID, err)
+			}
+
+			if err := tx.Table("approval_requests").
+				Where("id = ? AND status = ?", candidate.RequestID, "PENDING").
+				Updates(map[string]interface{}{
+					"status":       "APPROVED",
+					"completed_at": completedAt,
+					"updated_at":   now,
+				}).Error; err != nil {
+				return fmt.Errorf("failed to approve repaired purchase approval request %d: %v", candidate.RequestID, err)
+			}
+
+			if err := tx.Table("purchases").
+				Where("id = ? AND status = ? AND approval_status = ?", candidate.PurchaseID, "PENDING", "PENDING").
+				Updates(map[string]interface{}{
+					"status":            "PENDING_ACCOUNTING",
+					"approval_status":   "APPROVED",
+					"approved_by":       candidate.ApproverID,
+					"approved_at":       completedAt,
+					"requires_approval": true,
+					"updated_at":        now,
+				}).Error; err != nil {
+				return fmt.Errorf("failed to route repaired purchase %d to accounting: %v", candidate.PurchaseID, err)
+			}
+		}
+
+		log.Printf("✅ Repaired %d unrequested purchase Director approval(s)", len(candidates))
+		return nil
+	})
 }
 
 func archiveLegacyStandardPurchaseApprovalSteps(db *gorm.DB, workflowID uint) error {
@@ -1850,18 +1981,18 @@ func ensureTaxAccountSettingsTable(db *gorm.DB) error {
 		) 
 		SELECT 
 			-- Sales accounts (based on typical account codes)
-			COALESCE((SELECT id FROM accounts WHERE code = '1201' AND deleted_at IS NULL LIMIT 1), 1) as sales_receivable_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '1101' AND deleted_at IS NULL LIMIT 1), 1) as sales_cash_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '1102' AND deleted_at IS NULL LIMIT 1), 1) as sales_bank_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '4101-001' AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '4101' AND deleted_at IS NULL LIMIT 1), 1) as sales_revenue_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '2103' AND deleted_at IS NULL LIMIT 1), 1) as sales_output_vat_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('1102-001', '1102', '1201') AND type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), (SELECT id FROM accounts WHERE type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as sales_receivable_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('1101-002', '1101-001', '1101') AND type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code DESC LIMIT 1), (SELECT id FROM accounts WHERE type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as sales_cash_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('1101-003-100', '1101-004-100', '1101-003', '1102', '1101-002') AND type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), (SELECT id FROM accounts WHERE type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as sales_bank_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('4101-001', '4101') AND type = 'REVENUE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), (SELECT id FROM accounts WHERE type = 'REVENUE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as sales_revenue_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('2102-001', '2103') AND type = 'LIABILITY' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), (SELECT id FROM accounts WHERE type = 'LIABILITY' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as sales_output_vat_account_id,
 			
 			-- Purchase accounts
-			COALESCE((SELECT id FROM accounts WHERE code = '2001' AND deleted_at IS NULL LIMIT 1), 1) as purchase_payable_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '1101' AND deleted_at IS NULL LIMIT 1), 1) as purchase_cash_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '1102' AND deleted_at IS NULL LIMIT 1), 1) as purchase_bank_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '2102' AND deleted_at IS NULL LIMIT 1), 1) as purchase_input_vat_account_id,
-			COALESCE((SELECT id FROM accounts WHERE code = '5001' AND deleted_at IS NULL LIMIT 1), 1) as purchase_expense_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('2101-001', '2101', '2001') AND type = 'LIABILITY' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), (SELECT id FROM accounts WHERE type = 'LIABILITY' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as purchase_payable_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('1101-002', '1101-001', '1101') AND type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code DESC LIMIT 1), (SELECT id FROM accounts WHERE type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as purchase_cash_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code IN ('1101-003-100', '1101-004-100', '1101-003', '1102', '1101-002') AND type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), (SELECT id FROM accounts WHERE type = 'ASSET' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as purchase_bank_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code = '2102-002' AND type IN ('LIABILITY', 'ASSET') AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '1240' AND type IN ('LIABILITY', 'ASSET') AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '2102' AND type IN ('LIABILITY', 'ASSET') AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE type IN ('LIABILITY', 'ASSET') AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as purchase_input_vat_account_id,
+			COALESCE((SELECT id FROM accounts WHERE code = '6102' AND type = 'EXPENSE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '6001' AND type = 'EXPENSE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '6000' AND type = 'EXPENSE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '8102' AND type = 'EXPENSE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE code = '5100' AND type = 'EXPENSE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL LIMIT 1), (SELECT id FROM accounts WHERE type = 'EXPENSE' AND is_active = TRUE AND is_header = FALSE AND deleted_at IS NULL ORDER BY code LIMIT 1), 1) as purchase_expense_account_id,
 			
 			-- Configuration
 			TRUE as is_active,

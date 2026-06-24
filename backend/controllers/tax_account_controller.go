@@ -393,7 +393,7 @@ func (c *TaxAccountController) GetAccountSuggestions(ctx *gin.Context) {
 			"receivable_account": map[string]interface{}{
 				"recommended_types":      []string{"ASSET"},
 				"recommended_categories": []string{"CURRENT_ASSET"},
-				"suggested_codes":        []string{"1201", "1200"},
+				"suggested_codes":        []string{"1102-001", "1102"},
 				"description":            "Piutang Usaha - untuk mencatat piutang dari penjualan kredit",
 			},
 			"cash_account": map[string]interface{}{
@@ -449,7 +449,7 @@ func (c *TaxAccountController) GetAccountSuggestions(ctx *gin.Context) {
 			"expense_account": map[string]interface{}{
 				"recommended_types":      []string{"EXPENSE"},
 				"recommended_categories": []string{"OPERATING_EXPENSE", "ADMINISTRATIVE_EXPENSE"},
-				"suggested_codes":        []string{"6001", "6000", "5101"},
+				"suggested_codes":        []string{"6102", "6001", "6000", "8102", "5100"},
 				"description":            "Beban Operasional - untuk mencatat biaya operasional dari pembelian",
 			},
 		},
