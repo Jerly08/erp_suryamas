@@ -4744,9 +4744,28 @@ const PurchasesPage: React.FC = () => {
       canApprove &&
       purchaseStatus === "PENDING_FINAL_APPROVAL" &&
       isFinanceManagerRole(roleNorm);
+    const adminCanEditDraftPurchase =
+      roleNorm === "admin" && purchaseStatus === "DRAFT";
 
     return (
       <HStack spacing={2}>
+        {adminCanEditDraftPurchase && (
+          <Button
+            size="sm"
+            colorScheme="blue"
+            variant="outline"
+            leftIcon={<FiEdit />}
+            onClick={() => handleEdit(purchase)}
+            fontWeight="medium"
+            _hover={{
+              transform: "translateY(-1px)",
+              boxShadow: "md",
+            }}
+          >
+            {t("purchases.edit")}
+          </Button>
+        )}
+
         {/* Smart Single Action Button */}
         <Button
           size="sm"
