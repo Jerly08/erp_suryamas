@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net/http"
+	"strconv"
 )
 
 type PermissionMiddleware struct {
@@ -144,6 +145,46 @@ func (pm *PermissionMiddleware) CanCreate(module string) gin.HandlerFunc {
 
 func (pm *PermissionMiddleware) CanEdit(module string) gin.HandlerFunc {
 	return pm.CheckModulePermission(module, "edit")
+}
+
+func (pm *PermissionMiddleware) CanEditPurchaseOrFinanceStaffDraft() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roleInterface, _ := c.Get("role")
+		role := ""
+		if roleStr, ok := roleInterface.(string); ok {
+			role = roleStr
+		}
+
+		if models.IsFinanceStaffRole(role) {
+			purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+				c.Abort()
+				return
+			}
+
+			var purchase models.Purchase
+			err = pm.db.
+				Select("id", "status").
+				Where("id = ?", uint(purchaseID)).
+				First(&purchase).
+				Error
+			if err == nil && purchase.Status == models.PurchaseStatusDraft {
+				c.Next()
+				return
+			}
+			if err == gorm.ErrRecordNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Purchase not found"})
+				c.Abort()
+				return
+			}
+			if err != nil {
+				log.Printf("[PERMISSION DEBUG] Failed to check purchase draft access for finance staff: %v", err)
+			}
+		}
+
+		pm.CanEdit("purchases")(c)
+	}
 }
 
 func (pm *PermissionMiddleware) CanDelete(module string) gin.HandlerFunc {

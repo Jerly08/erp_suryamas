@@ -4765,12 +4765,13 @@ const PurchasesPage: React.FC = () => {
       canApprove &&
       purchaseStatus === "PENDING_FINAL_APPROVAL" &&
       isFinanceManagerRole(roleNorm);
-    const adminCanEditDraftPurchase =
-      roleNorm === "admin" && purchaseStatus === "DRAFT";
+    const canEditDraftPurchase =
+      purchaseStatus === "DRAFT" &&
+      (roleNorm === "admin" || roleNorm === "finance_staff");
 
     return (
       <HStack spacing={2}>
-        {adminCanEditDraftPurchase && (
+        {canEditDraftPurchase && (
           <Button
             size="sm"
             colorScheme="blue"
