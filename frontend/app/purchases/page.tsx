@@ -4268,8 +4268,14 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    const isEditingDraftPurchase =
+      !!selectedPurchase &&
+      (selectedPurchase.status || "").toUpperCase() === "DRAFT";
     const shouldRequireItemAccount =
-      canSelectAccountFromCOA && canListExpenseAccounts;
+      canSelectAccountFromCOA &&
+      canListExpenseAccounts &&
+      expenseAccounts.length > 0 &&
+      !isEditingDraftPurchase;
 
     // Validate all items based on item_type
     const invalidItems = formData.items.filter((item) => {
