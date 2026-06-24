@@ -12,6 +12,7 @@ type PurchaseRequest struct {
 	PRNumber    string `json:"pr_number" gorm:"unique;not null;size:50"`
 	RequesterID uint   `json:"requester_id" gorm:"not null;index"` // employee who created it
 	Department  string `json:"department" gorm:"size:100"`
+	Title       string `json:"title" gorm:"size:255"`
 	ProjectID   *uint  `json:"project_id" gorm:"index"` // Optional tracking cost center
 	VendorID    *uint  `json:"vendor_id" gorm:"index"`  // Optional preferred/target vendor
 
@@ -23,15 +24,17 @@ type PurchaseRequest struct {
 	Notes                string  `json:"notes" gorm:"type:text"`
 
 	// Approval Tracking
-	ApprovedBy               *uint      `json:"approved_by" gorm:"index"`
-	ApprovedAt               *time.Time `json:"approved_at"`
-	FinanceStaffApprovedBy   *uint      `json:"finance_staff_approved_by" gorm:"index"`
-	FinanceStaffApprovedAt   *time.Time `json:"finance_staff_approved_at"`
-	FinanceManagerApprovedBy *uint      `json:"finance_manager_approved_by" gorm:"index"`
-	FinanceManagerApprovedAt *time.Time `json:"finance_manager_approved_at"`
-	DirectorApprovedBy       *uint      `json:"director_approved_by" gorm:"index"`
-	DirectorApprovedAt       *time.Time `json:"director_approved_at"`
-	RejectionReason          string     `json:"rejection_reason" gorm:"type:text"`
+	ApprovedBy                *uint      `json:"approved_by" gorm:"index"`
+	ApprovedAt                *time.Time `json:"approved_at"`
+	FinanceStaffApprovedBy    *uint      `json:"finance_staff_approved_by" gorm:"index"`
+	FinanceStaffApprovedAt    *time.Time `json:"finance_staff_approved_at"`
+	FinanceStaffReviewNotes   string     `json:"finance_staff_review_notes" gorm:"type:text"`
+	FinanceManagerApprovedBy  *uint      `json:"finance_manager_approved_by" gorm:"index"`
+	FinanceManagerApprovedAt  *time.Time `json:"finance_manager_approved_at"`
+	FinanceManagerReviewNotes string     `json:"finance_manager_review_notes" gorm:"type:text"`
+	DirectorApprovedBy        *uint      `json:"director_approved_by" gorm:"index"`
+	DirectorApprovedAt        *time.Time `json:"director_approved_at"`
+	RejectionReason           string     `json:"rejection_reason" gorm:"type:text"`
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
@@ -133,6 +136,7 @@ const (
 // Request DTOs
 type PurchaseRequestCreatePayload struct {
 	Department string                       `json:"department"`
+	Title      string                       `json:"title"`
 	ProjectID  *uint                        `json:"project_id"`
 	VendorID   *uint                        `json:"vendor_id"`
 	Notes      string                       `json:"notes"`
@@ -156,4 +160,8 @@ type PurchaseRequestReviewPayload struct {
 	Items              []PurchaseRequestReviewItemPayload `json:"items" binding:"required,min=1"`
 	Reason             string                             `json:"reason"`
 	EscalateToDirector bool                               `json:"escalate_to_director"`
+}
+
+type PurchaseRequestProjectUpdatePayload struct {
+	ProjectID *uint `json:"project_id"`
 }

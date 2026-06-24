@@ -227,8 +227,19 @@ func TestGetDefaultPermissionsAccountingMirrorsFinanceStaffOperations(t *testing
 	if !purchasePermission.CanView || !purchasePermission.CanCreate || !purchasePermission.CanEdit || !purchasePermission.CanMenu {
 		t.Fatalf("expected accounting to create and edit purchase drafts, got %+v", *purchasePermission)
 	}
-	if !purchasePermission.CanApprove || purchasePermission.CanDelete {
-		t.Fatalf("expected accounting to review purchases without delete access, got %+v", *purchasePermission)
+	if purchasePermission.CanApprove || purchasePermission.CanDelete {
+		t.Fatalf("expected accounting purchases to avoid approve/delete bypass, got %+v", *purchasePermission)
+	}
+
+	purchaseRequestPermission := permissions["purchase_requests"]
+	if purchaseRequestPermission == nil {
+		t.Fatal("expected accounting purchase_requests permission to exist")
+	}
+	if !purchaseRequestPermission.CanView || !purchaseRequestPermission.CanCreate || !purchaseRequestPermission.CanEdit || !purchaseRequestPermission.CanApprove || !purchaseRequestPermission.CanMenu {
+		t.Fatalf("expected accounting to create and review purchase requests, got %+v", *purchaseRequestPermission)
+	}
+	if purchaseRequestPermission.CanDelete {
+		t.Fatalf("expected accounting purchase request permission to avoid delete bypass, got %+v", *purchaseRequestPermission)
 	}
 }
 

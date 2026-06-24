@@ -129,12 +129,14 @@ func TestCreatePurchaseRequestWithVendor(t *testing.T) {
 
 	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
 		Department: "Operations",
+		Title:      "  Vendor onboarding request  ",
 		VendorID:   &vendor.ID,
 		Items: []models.PurchaseRequestItemPayload{
 			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 100000},
 		},
 	}, requester.ID, requester.Role)
 	require.NoError(t, err)
+	require.Equal(t, "Vendor onboarding request", pr.Title)
 	require.NotNil(t, pr.Vendor)
 	require.Equal(t, vendor.ID, pr.Vendor.ID)
 	require.Equal(t, vendor.Name, pr.Vendor.Name)
@@ -323,15 +325,23 @@ func TestAdditionalDocumentsAfterApprovalRestartWorkflowAndNotifyReviewers(t *te
 	approveItems := []models.PurchaseRequestReviewItemPayload{
 		{ItemID: pr.Items[0].ID, Decision: models.PRItemDecisionApproved},
 	}
-	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{Items: approveItems})
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{
+		Items:  approveItems,
+		Reason: "Dokumen pendukung awal sudah sesuai",
+	})
 	require.NoError(t, err)
-	_, err = service.ReviewPurchaseRequest(pr.ID, financeManager.ID, financeManager.Role, models.PurchaseRequestReviewPayload{Items: approveItems})
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeManager.ID, financeManager.Role, models.PurchaseRequestReviewPayload{
+		Items:  approveItems,
+		Reason: "Disetujui finance manager",
+	})
 	require.NoError(t, err)
 
 	approved, err := service.GetPurchaseRequestByID(pr.ID, requester.ID, requester.Role)
 	require.NoError(t, err)
 	require.Equal(t, models.PRStatusApproved, approved.Status)
 	require.Equal(t, 1, approved.ApprovalRevision)
+	require.Equal(t, "Dokumen pendukung awal sudah sesuai", approved.FinanceStaffReviewNotes)
+	require.Equal(t, "Disetujui finance manager", approved.FinanceManagerReviewNotes)
 
 	require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.Notification{}).Error)
 
@@ -361,6 +371,8 @@ func TestAdditionalDocumentsAfterApprovalRestartWorkflowAndNotifyReviewers(t *te
 	require.Nil(t, reopened.FinanceStaffApprovedBy)
 	require.Nil(t, reopened.FinanceManagerApprovedBy)
 	require.Nil(t, reopened.ApprovedBy)
+	require.Empty(t, reopened.FinanceStaffReviewNotes)
+	require.Empty(t, reopened.FinanceManagerReviewNotes)
 	require.Equal(t, models.PRItemDecisionApproved, reopened.Items[0].FinanceStaffDecision)
 	require.Equal(t, models.PRItemDecisionApproved, reopened.Items[0].FinanceManagerDecision)
 
@@ -395,6 +407,61 @@ func TestFinanceManagerInitialStageIsNotTreatedAsPriorApproval(t *testing.T) {
 	approverID := uint(9)
 	pr.FinanceStaffApprovedBy = &approverID
 	require.True(t, purchaseRequestApprovalHasProgressed(pr))
+}
+
+func TestFinanceTeamCanUpdatePurchaseRequestProject(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "staff-pr-project", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "finance-staff-pr-project", models.RoleFinanceStaff)
+	product := seedPurchaseRequestTestProduct(t, db, "PROJECT")
+	vendor := seedPurchaseRequestTestVendor(t, db, "PROJECT")
+	project := models.Project{
+		Code:   "PRJ-PR-EDIT",
+		Name:   "Project PR Edit",
+		Status: models.ProjectStatusActive,
+	}
+	require.NoError(t, db.Create(&project).Error)
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		VendorID:   &vendor.ID,
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 100000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Nil(t, pr.ProjectID)
+
+	linkedPurchase := models.Purchase{
+		Code:              "PO-PRJ-EDIT",
+		VendorID:          vendor.ID,
+		UserID:            financeStaff.ID,
+		PurchaseRequestID: &pr.ID,
+		Status:            models.PurchaseStatusDraft,
+	}
+	require.NoError(t, db.Create(&linkedPurchase).Error)
+
+	updated, err := service.UpdatePurchaseRequestProject(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestProjectUpdatePayload{
+		ProjectID: &project.ID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.ProjectID)
+	require.Equal(t, project.ID, *updated.ProjectID)
+	require.NotNil(t, updated.Project)
+	require.Equal(t, project.Name, updated.Project.Name)
+
+	var syncedPurchase models.Purchase
+	require.NoError(t, db.First(&syncedPurchase, linkedPurchase.ID).Error)
+	require.NotNil(t, syncedPurchase.ProjectID)
+	require.Equal(t, project.ID, *syncedPurchase.ProjectID)
+
+	_, err = service.UpdatePurchaseRequestProject(pr.ID, requester.ID, requester.Role, models.PurchaseRequestProjectUpdatePayload{
+		ProjectID: nil,
+	})
+	require.ErrorContains(t, err, "only finance staff")
 }
 
 func TestFinanceManagerReviewCanEscalatePurchaseRequestToDirector(t *testing.T) {
@@ -467,6 +534,7 @@ func TestFinanceManagerFinalReviewStoresApprovedItemBudget(t *testing.T) {
 			{ItemID: pr.Items[1].ID, Decision: models.PRItemDecisionRejected},
 			{ItemID: pr.Items[2].ID, Decision: models.PRItemDecisionApproved},
 		},
+		Reason: "Staff menyetujui dua item, satu item tidak sesuai",
 	}
 	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, staffPayload)
 	require.NoError(t, err)
@@ -477,6 +545,7 @@ func TestFinanceManagerFinalReviewStoresApprovedItemBudget(t *testing.T) {
 			{ItemID: pr.Items[1].ID, Decision: models.PRItemDecisionRejected},
 			{ItemID: pr.Items[2].ID, Decision: models.PRItemDecisionApproved},
 		},
+		Reason: "Manager approve parsial",
 	}
 	message, err := service.ReviewPurchaseRequest(pr.ID, financeManager.ID, financeManager.Role, managerPayload)
 	require.NoError(t, err)
@@ -490,6 +559,9 @@ func TestFinanceManagerFinalReviewStoresApprovedItemBudget(t *testing.T) {
 	require.Equal(t, models.PRItemDecisionApproved, updated.Items[0].ApprovalStatus)
 	require.Equal(t, models.PRItemDecisionRejected, updated.Items[1].ApprovalStatus)
 	require.Equal(t, models.PRItemDecisionApproved, updated.Items[2].ApprovalStatus)
+	require.Equal(t, "Staff menyetujui dua item, satu item tidak sesuai", updated.FinanceStaffReviewNotes)
+	require.Equal(t, "Manager approve parsial", updated.FinanceManagerReviewNotes)
+	require.Equal(t, "Manager approve parsial", updated.RejectionReason)
 
 	list, err := service.GetPurchaseRequests(financeManager.ID, financeManager.Role, "", "", false, 0)
 	require.NoError(t, err)

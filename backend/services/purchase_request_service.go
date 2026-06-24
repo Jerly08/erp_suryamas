@@ -14,6 +14,7 @@ type PurchaseRequestService interface {
 	CreatePurchaseRequest(payload models.PurchaseRequestCreatePayload, userID uint, userRole string) (*models.PurchaseRequest, error)
 	GetPurchaseRequests(userID uint, userRole string, department string, status string, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error)
 	GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error)
+	UpdatePurchaseRequestProject(id uint, userID uint, userRole string, payload models.PurchaseRequestProjectUpdatePayload) (*models.PurchaseRequest, error)
 	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
 	ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error)
 	RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error)
@@ -105,7 +106,8 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 
 	pr := &models.PurchaseRequest{
 		RequesterID:          userID,
-		Department:           payload.Department,
+		Department:           strings.TrimSpace(payload.Department),
+		Title:                strings.TrimSpace(payload.Title),
 		ProjectID:            payload.ProjectID,
 		VendorID:             payload.VendorID,
 		TotalEstimatedAmount: totalEstimatedAmount,
@@ -152,6 +154,38 @@ func (s *purchaseRequestService) GetPurchaseRequestByID(id uint, userID uint, us
 	return pr, nil
 }
 
+func (s *purchaseRequestService) UpdatePurchaseRequestProject(id uint, userID uint, userRole string, payload models.PurchaseRequestProjectUpdatePayload) (*models.PurchaseRequest, error) {
+	if !canUpdatePurchaseRequestProject(userRole) {
+		return nil, fmt.Errorf("only finance staff, accounting, finance manager, or admin can update purchase request project")
+	}
+
+	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
+	if err != nil {
+		return nil, err
+	}
+
+	if payload.ProjectID != nil {
+		var project models.Project
+		if err := s.db.First(&project, *payload.ProjectID).Error; err != nil {
+			return nil, fmt.Errorf("invalid project id: %d", *payload.ProjectID)
+		}
+	}
+
+	pr.ProjectID = payload.ProjectID
+	pr.Project = nil
+	if err := s.repo.Update(pr); err != nil {
+		return nil, err
+	}
+
+	if payload.ProjectID != nil {
+		if err := s.syncUnsetLinkedPurchaseProjects(pr.ID, *payload.ProjectID); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.repo.GetByID(pr.ID)
+}
+
 func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error) {
 	pr, err := s.repo.GetByID(id)
 	if err != nil {
@@ -169,6 +203,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 	}
 
 	now := time.Now()
+	reviewNotes := strings.TrimSpace(payload.Reason)
 
 	switch stage {
 	case models.PRApprovalStageFinanceStaff:
@@ -185,6 +220,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 		pr.CurrentApprovalStage = models.PRApprovalStageFinanceManager
 		pr.FinanceStaffApprovedBy = &reviewerID
 		pr.FinanceStaffApprovedAt = &now
+		pr.FinanceStaffReviewNotes = reviewNotes
 		pr.RejectionReason = ""
 
 		if err := s.repo.Update(pr); err != nil {
@@ -224,6 +260,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 
 		pr.FinanceManagerApprovedBy = &reviewerID
 		pr.FinanceManagerApprovedAt = &now
+		pr.FinanceManagerReviewNotes = reviewNotes
 		if payload.EscalateToDirector {
 			pr.Status = models.PRStatusPendingApproval
 			pr.CurrentApprovalStage = models.PRApprovalStageDirector
@@ -245,13 +282,13 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.Status = models.PRStatusApproved
 			pr.ApprovedBy = &reviewerID
 			pr.ApprovedAt = &now
-			pr.RejectionReason = payload.Reason
+			pr.RejectionReason = reviewNotes
 		} else {
 			pr.Status = models.PRStatusRejected
 			pr.ApprovedBy = nil
 			pr.ApprovedAt = nil
-			if payload.Reason != "" {
-				pr.RejectionReason = payload.Reason
+			if reviewNotes != "" {
+				pr.RejectionReason = reviewNotes
 			} else {
 				pr.RejectionReason = "Semua item ditolak oleh finance manager"
 			}
@@ -307,13 +344,13 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.Status = models.PRStatusApproved
 			pr.ApprovedBy = &reviewerID
 			pr.ApprovedAt = &now
-			pr.RejectionReason = payload.Reason
+			pr.RejectionReason = reviewNotes
 		} else {
 			pr.Status = models.PRStatusRejected
 			pr.ApprovedBy = nil
 			pr.ApprovedAt = nil
-			if payload.Reason != "" {
-				pr.RejectionReason = payload.Reason
+			if reviewNotes != "" {
+				pr.RejectionReason = reviewNotes
 			} else {
 				pr.RejectionReason = "Semua item ditolak oleh director"
 			}
@@ -446,12 +483,18 @@ func (s *purchaseRequestService) SubmitAdditionalDocumentsForApproval(purchaseRe
 		pr.CurrentApprovalStage = models.PRApprovalStageFinanceStaff
 		pr.ApprovedBy = nil
 		pr.ApprovedAt = nil
+		pr.Approver = nil
 		pr.FinanceStaffApprovedBy = nil
 		pr.FinanceStaffApprovedAt = nil
+		pr.FinanceStaffReviewNotes = ""
+		pr.FinanceStaffApprover = nil
 		pr.FinanceManagerApprovedBy = nil
 		pr.FinanceManagerApprovedAt = nil
+		pr.FinanceManagerReviewNotes = ""
+		pr.FinanceManagerApprover = nil
 		pr.DirectorApprovedBy = nil
 		pr.DirectorApprovedAt = nil
+		pr.DirectorApprover = nil
 		pr.RejectionReason = ""
 	}
 	pr.ReapprovalReason = models.PRReapprovalReasonAdditionalDocuments
@@ -476,6 +519,36 @@ func purchaseRequestApprovalHasProgressed(pr *models.PurchaseRequest) bool {
 		return true
 	}
 	return pr.FinanceStaffApprovedBy != nil || pr.FinanceManagerApprovedBy != nil || pr.DirectorApprovedBy != nil
+}
+
+func canUpdatePurchaseRequestProject(role string) bool {
+	roleNorm := models.NormalizeRole(role)
+	return roleNorm == models.RoleAdmin || models.IsFinanceTeamRole(roleNorm)
+}
+
+func (s *purchaseRequestService) syncUnsetLinkedPurchaseProjects(purchaseRequestID uint, projectID uint) error {
+	if err := s.db.Model(&models.Purchase{}).
+		Where("purchase_request_id = ? AND project_id IS NULL", purchaseRequestID).
+		Update("project_id", projectID).Error; err != nil {
+		return fmt.Errorf("failed to sync linked purchase project: %w", err)
+	}
+
+	if err := s.db.Model(&models.Purchase{}).
+		Where(`
+			project_id IS NULL
+			AND id IN (
+				SELECT purchase_id
+				FROM purchase_request_items
+				WHERE purchase_request_id = ?
+					AND purchase_id IS NOT NULL
+					AND deleted_at IS NULL
+			)
+		`, purchaseRequestID).
+		Update("project_id", projectID).Error; err != nil {
+		return fmt.Errorf("failed to sync linked purchase item projects: %w", err)
+	}
+
+	return nil
 }
 
 func (s *purchaseRequestService) GetPurchaseRequestDocuments(purchaseRequestID uint, userID uint, userRole string) ([]models.PurchaseRequestDocument, error) {

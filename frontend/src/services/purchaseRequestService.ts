@@ -39,6 +39,15 @@ export interface PurchaseRequestItem {
   purchased_at?: string | null;
   notes: string;
   product?: Product;
+  purchase?: {
+    id: number;
+    code: string;
+    status: string;
+    paid_amount: number;
+    outstanding_amount: number;
+    total_amount: number;
+    project_id?: number | null;
+  };
 }
 
 export interface PurchaseRequestDocument {
@@ -61,6 +70,7 @@ export interface PurchaseRequest {
   pr_number: string;
   requester_id: number;
   department: string;
+  title?: string;
   project_id: number | null;
   vendor_id: number | null;
   total_estimated_amount: number;
@@ -77,8 +87,10 @@ export interface PurchaseRequest {
   approved_at: string | null;
   finance_staff_approved_by?: number | null;
   finance_staff_approved_at?: string | null;
+  finance_staff_review_notes?: string;
   finance_manager_approved_by?: number | null;
   finance_manager_approved_at?: string | null;
+  finance_manager_review_notes?: string;
   director_approved_by?: number | null;
   director_approved_at?: string | null;
   rejection_reason: string;
@@ -109,6 +121,7 @@ export interface PurchaseRequestItemPayload {
 
 export interface PurchaseRequestCreatePayload {
   department?: string;
+  title?: string;
   project_id?: number | null;
   vendor_id?: number | null;
   notes?: string;
@@ -128,6 +141,10 @@ export interface PurchaseRequestReviewPayload {
   items: PurchaseRequestReviewItemPayload[];
   reason?: string;
   escalate_to_director?: boolean;
+}
+
+export interface PurchaseRequestProjectUpdatePayload {
+  project_id?: number | null;
 }
 
 const BASE_URL = "/api/v1/purchase-requests";
@@ -214,6 +231,14 @@ export const purchaseRequestService = {
     payload: PurchaseRequestReviewPayload,
   ): Promise<{ message: string }> => {
     const response = await api.put(`${BASE_URL}/${id}/review`, payload);
+    return response.data;
+  },
+
+  updateProject: async (
+    id: number,
+    payload: PurchaseRequestProjectUpdatePayload,
+  ): Promise<PurchaseRequest> => {
+    const response = await api.put(`${BASE_URL}/${id}/project`, payload);
     return response.data;
   },
 

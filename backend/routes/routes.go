@@ -713,6 +713,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchaseRequests.GET("/:id/documents", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetDocuments)
 				purchaseRequests.POST("/:id/documents", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UploadDocuments)
 				purchaseRequests.DELETE("/documents/:document_id", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.DeleteDocument)
+				purchaseRequests.PUT("/:id/project", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UpdateProject)
 
 				// Approval & Rejection workflows
 				purchaseRequests.PUT("/:id/review", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Review)
