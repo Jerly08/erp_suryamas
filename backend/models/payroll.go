@@ -104,33 +104,34 @@ type PayrollSettlement struct {
 }
 
 type PayrollItem struct {
-	ID               uint           `json:"id" gorm:"primaryKey"`
-	PayrollRunID     uint           `json:"payroll_run_id" gorm:"not null;index"`
-	EmployeeName     string         `json:"employee_name" gorm:"not null;size:150"`
-	EmployeeCode     string         `json:"employee_code" gorm:"size:50"`
-	WorkingDay       float64        `json:"working_day" gorm:"type:decimal(10,2);default:0"`
-	WorkUnit         string         `json:"work_unit" gorm:"size:100"`
-	PaymentVia       string         `json:"payment_via" gorm:"size:100"`
-	AccountNo        string         `json:"account_no" gorm:"size:100"`
-	Division         string         `json:"division" gorm:"size:100"`
-	Department       string         `json:"department" gorm:"size:100"`
-	Position         string         `json:"position" gorm:"size:100"`
-	BaseSalary       float64        `json:"base_salary" gorm:"type:decimal(15,2);default:0"`
-	Bonus            float64        `json:"bonus" gorm:"type:decimal(15,2);default:0"`
-	CompensationPKWT float64        `json:"compensation_pkwt" gorm:"type:decimal(15,2);default:0"`
-	Overtime         float64        `json:"overtime" gorm:"type:decimal(15,2);default:0"`
-	PPh              float64        `json:"pph" gorm:"type:decimal(15,2);default:0"`
-	BPJS             float64        `json:"bpjs" gorm:"type:decimal(15,2);default:0"`
-	BPJSTKJHT        float64        `json:"bpjs_tk_jht" gorm:"type:decimal(15,2);default:0"`
-	BPJSTKJP         float64        `json:"bpjs_tk_jp" gorm:"type:decimal(15,2);default:0"`
-	BPJSKesehatan    float64        `json:"bpjs_kesehatan" gorm:"type:decimal(15,2);default:0"`
-	Proportional     float64        `json:"proportional" gorm:"type:decimal(15,2);default:0"`
-	OtherDeduction   float64        `json:"other_deduction" gorm:"type:decimal(15,2);default:0"`
-	NetPay           float64        `json:"net_pay" gorm:"type:decimal(15,2);default:0"`
-	Notes            string         `json:"notes" gorm:"type:text"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                  uint           `json:"id" gorm:"primaryKey"`
+	PayrollRunID        uint           `json:"payroll_run_id" gorm:"not null;index"`
+	EmployeeName        string         `json:"employee_name" gorm:"not null;size:150"`
+	EmployeeCode        string         `json:"employee_code" gorm:"size:50"`
+	WorkingDay          float64        `json:"working_day" gorm:"type:decimal(10,2);default:0"`
+	WorkUnit            string         `json:"work_unit" gorm:"size:100"`
+	PaymentVia          string         `json:"payment_via" gorm:"size:100"`
+	AccountNo           string         `json:"account_no" gorm:"size:100"`
+	Division            string         `json:"division" gorm:"size:100"`
+	Department          string         `json:"department" gorm:"size:100"`
+	Position            string         `json:"position" gorm:"size:100"`
+	BaseSalary          float64        `json:"base_salary" gorm:"type:decimal(15,2);default:0"`
+	Bonus               float64        `json:"bonus" gorm:"type:decimal(15,2);default:0"`
+	AttendanceAllowance float64        `json:"attendance_allowance" gorm:"type:decimal(15,2);default:0"`
+	CompensationPKWT    float64        `json:"compensation_pkwt" gorm:"type:decimal(15,2);default:0"`
+	Overtime            float64        `json:"overtime" gorm:"type:decimal(15,2);default:0"`
+	PPh                 float64        `json:"pph" gorm:"type:decimal(15,2);default:0"`
+	BPJS                float64        `json:"bpjs" gorm:"type:decimal(15,2);default:0"`
+	BPJSTKJHT           float64        `json:"bpjs_tk_jht" gorm:"type:decimal(15,2);default:0"`
+	BPJSTKJP            float64        `json:"bpjs_tk_jp" gorm:"type:decimal(15,2);default:0"`
+	BPJSKesehatan       float64        `json:"bpjs_kesehatan" gorm:"type:decimal(15,2);default:0"`
+	Proportional        float64        `json:"proportional" gorm:"type:decimal(15,2);default:0"`
+	OtherDeduction      float64        `json:"other_deduction" gorm:"type:decimal(15,2);default:0"`
+	NetPay              float64        `json:"net_pay" gorm:"type:decimal(15,2);default:0"`
+	Notes               string         `json:"notes" gorm:"type:text"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	DeletedAt           gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 type PayrollRunCreateRequest struct {
@@ -142,28 +143,29 @@ type PayrollRunCreateRequest struct {
 }
 
 type PayrollItemCreateRequest struct {
-	EmployeeName     string  `json:"employee_name" binding:"required"`
-	EmployeeCode     string  `json:"employee_code"`
-	WorkingDay       float64 `json:"working_day"`
-	WorkUnit         string  `json:"work_unit"`
-	PaymentVia       string  `json:"payment_via"`
-	AccountNo        string  `json:"account_no"`
-	Division         string  `json:"division"`
-	Department       string  `json:"department"`
-	Position         string  `json:"position"`
-	BaseSalary       float64 `json:"base_salary"`
-	Bonus            float64 `json:"bonus"`
-	CompensationPKWT float64 `json:"compensation_pkwt"`
-	Overtime         float64 `json:"overtime"`
-	PPh              float64 `json:"pph"`
-	BPJS             float64 `json:"bpjs"`
-	BPJSTKJHT        float64 `json:"bpjs_tk_jht"`
-	BPJSTKJP         float64 `json:"bpjs_tk_jp"`
-	BPJSKesehatan    float64 `json:"bpjs_kesehatan"`
-	Proportional     float64 `json:"proportional"`
-	OtherDeduction   float64 `json:"other_deduction"`
-	NetPay           float64 `json:"net_pay"`
-	Notes            string  `json:"notes"`
+	EmployeeName        string  `json:"employee_name" binding:"required"`
+	EmployeeCode        string  `json:"employee_code"`
+	WorkingDay          float64 `json:"working_day"`
+	WorkUnit            string  `json:"work_unit"`
+	PaymentVia          string  `json:"payment_via"`
+	AccountNo           string  `json:"account_no"`
+	Division            string  `json:"division"`
+	Department          string  `json:"department"`
+	Position            string  `json:"position"`
+	BaseSalary          float64 `json:"base_salary"`
+	Bonus               float64 `json:"bonus"`
+	AttendanceAllowance float64 `json:"attendance_allowance"`
+	CompensationPKWT    float64 `json:"compensation_pkwt"`
+	Overtime            float64 `json:"overtime"`
+	PPh                 float64 `json:"pph"`
+	BPJS                float64 `json:"bpjs"`
+	BPJSTKJHT           float64 `json:"bpjs_tk_jht"`
+	BPJSTKJP            float64 `json:"bpjs_tk_jp"`
+	BPJSKesehatan       float64 `json:"bpjs_kesehatan"`
+	Proportional        float64 `json:"proportional"`
+	OtherDeduction      float64 `json:"other_deduction"`
+	NetPay              float64 `json:"net_pay"`
+	Notes               string  `json:"notes"`
 }
 
 type PayrollRejectRequest struct {
@@ -194,10 +196,13 @@ type PayrollRunResponse struct {
 }
 
 type PayrollImportPreviewResponse struct {
-	Items    []PayrollItemCreateRequest `json:"items"`
-	Summary  PayrollImportSummary       `json:"summary"`
-	Warnings []string                   `json:"warnings"`
-	Headers  []string                   `json:"headers"`
+	Items                []PayrollItemCreateRequest `json:"items"`
+	Summary              PayrollImportSummary       `json:"summary"`
+	Warnings             []string                   `json:"warnings"`
+	Headers              []string                   `json:"headers"`
+	SuggestedPeriodStart string                     `json:"suggested_period_start,omitempty"`
+	SuggestedPeriodEnd   string                     `json:"suggested_period_end,omitempty"`
+	SuggestedPaymentDate string                     `json:"suggested_payment_date,omitempty"`
 }
 
 type PayrollImportSummary struct {

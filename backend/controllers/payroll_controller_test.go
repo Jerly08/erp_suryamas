@@ -71,8 +71,9 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	}
 
 	row := []interface{}{
-		22, "KIS-001", "Head Office", "Payroll", "1122334455", "IT", "Budi Santoso", "Backend Developer",
-		10000000, 0, 500000, 250000, 200000, 100287, 100000, 0, 50000,
+		"2026-06-25", "26/05/2026 to 25/06/2026", 22, "KIS-001", "Head Office", "IT", "Payroll", "1122334455",
+		"Budi Santoso", "Backend Developer", 10000000, 300000, 0, 500000, 250000, 200000, 100287,
+		100000, 0, 50000, 0,
 	}
 	for columnIndex, value := range row {
 		cell, err := excelize.CoordinatesToCellName(columnIndex+1, 2)
@@ -88,7 +89,7 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create thousands number style: %v", err)
 	}
-	if err := workbook.SetCellStyle("Salary", "I2", "Q2", numberStyle); err != nil {
+	if err := workbook.SetCellStyle("Salary", "K2", "U2", numberStyle); err != nil {
 		t.Fatalf("failed to apply thousands number style: %v", err)
 	}
 
@@ -132,24 +133,67 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	}
 
 	item := response.Data.Items[0]
+	if response.Data.SuggestedPaymentDate != "2026-06-25" {
+		t.Fatalf("suggested payment date = %q, expected 2026-06-25", response.Data.SuggestedPaymentDate)
+	}
+	if response.Data.SuggestedPeriodStart != "2026-05-26" || response.Data.SuggestedPeriodEnd != "2026-06-25" {
+		t.Fatalf("suggested period = %q to %q, expected 2026-05-26 to 2026-06-25", response.Data.SuggestedPeriodStart, response.Data.SuggestedPeriodEnd)
+	}
 	assertions := []struct {
 		name     string
 		actual   float64
 		expected float64
 	}{
 		{name: "base salary", actual: item.BaseSalary, expected: 10000000},
+		{name: "attendance allowance", actual: item.AttendanceAllowance, expected: 300000},
+		{name: "bonus", actual: item.Bonus, expected: 800000},
 		{name: "overtime", actual: item.Overtime, expected: 500000},
 		{name: "pph", actual: item.PPh, expected: 250000},
 		{name: "bpjs jht", actual: item.BPJSTKJHT, expected: 200000},
 		{name: "bpjs jp", actual: item.BPJSTKJP, expected: 100287},
 		{name: "bpjs kesehatan", actual: item.BPJSKesehatan, expected: 100000},
 		{name: "other deduction", actual: item.OtherDeduction, expected: 50000},
+		{name: "net pay", actual: item.NetPay, expected: 10349713},
 	}
 	for _, assertion := range assertions {
 		if assertion.actual != assertion.expected {
 			t.Errorf("%s = %v, expected %v", assertion.name, assertion.actual, assertion.expected)
 		}
 	}
+}
+
+func TestDownloadPayrollImportTemplateMatchesRequestedHeaderOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/payroll/import/template", nil)
+
+	NewPayrollController(nil).DownloadPayrollImportTemplate(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	workbook, err := excelize.OpenReader(bytes.NewReader(recorder.Body.Bytes()))
+	require.NoError(t, err)
+	defer workbook.Close()
+
+	rows, err := workbook.GetRows("Salary")
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	require.Equal(t, payrollImportTemplateHeaders, rows[0][:len(payrollImportTemplateHeaders)])
+
+	highlightedPaymentDateStyle, err := workbook.GetCellStyle("Salary", "A1")
+	require.NoError(t, err)
+	standardHeaderStyle, err := workbook.GetCellStyle("Salary", "C1")
+	require.NoError(t, err)
+	highlightedAttendanceStyle, err := workbook.GetCellStyle("Salary", "L1")
+	require.NoError(t, err)
+	require.NotEqual(t, standardHeaderStyle, highlightedPaymentDateStyle)
+	require.NotEqual(t, standardHeaderStyle, highlightedAttendanceStyle)
+
+	paymentViaExample, err := workbook.GetCellValue("Salary", "G2")
+	require.NoError(t, err)
+	require.Equal(t, "Payroll", paymentViaExample)
 }
 
 func setupPayrollApprovalTestDB(t *testing.T) *gorm.DB {
