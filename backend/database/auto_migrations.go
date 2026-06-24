@@ -980,14 +980,6 @@ func standardPurchaseApprovalSteps(workflowID uint) []ApprovalStep {
 		{
 			WorkflowID:   workflowID,
 			StepOrder:    2,
-			StepName:     "Finance Staff Review",
-			ApproverRole: "purchase_finance_staff",
-			IsOptional:   false,
-			TimeLimit:    48,
-		},
-		{
-			WorkflowID:   workflowID,
-			StepOrder:    3,
 			StepName:     "Finance Manager Approval",
 			ApproverRole: "finance",
 			IsOptional:   false,
@@ -995,7 +987,7 @@ func standardPurchaseApprovalSteps(workflowID uint) []ApprovalStep {
 		},
 		{
 			WorkflowID:   workflowID,
-			StepOrder:    4,
+			StepOrder:    3,
 			StepName:     "Director Approval",
 			ApproverRole: "director",
 			IsOptional:   true,
@@ -1005,7 +997,8 @@ func standardPurchaseApprovalSteps(workflowID uint) []ApprovalStep {
 }
 
 func syncStandardPurchaseApprovalWorkflowSteps(db *gorm.DB, workflowID uint) error {
-	for _, expected := range standardPurchaseApprovalSteps(workflowID) {
+	expectedSteps := standardPurchaseApprovalSteps(workflowID)
+	for _, expected := range expectedSteps {
 		var step ApprovalStep
 		err := db.Where("workflow_id = ? AND step_order = ?", workflowID, expected.StepOrder).First(&step).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1038,7 +1031,57 @@ func syncStandardPurchaseApprovalWorkflowSteps(db *gorm.DB, workflowID uint) err
 		}
 	}
 
+	maxExpectedOrder := 0
+	for _, expected := range expectedSteps {
+		if expected.StepOrder > maxExpectedOrder {
+			maxExpectedOrder = expected.StepOrder
+		}
+	}
+	if err := skipObsoleteStandardPurchaseApprovalSteps(db, workflowID, maxExpectedOrder); err != nil {
+		return err
+	}
+
 	log.Println("Standard Purchase Approval workflow synchronized")
+	return nil
+}
+
+func skipObsoleteStandardPurchaseApprovalSteps(db *gorm.DB, workflowID uint, maxExpectedOrder int) error {
+	var obsoleteSteps []ApprovalStep
+	if err := db.Where("workflow_id = ? AND step_order > ?", workflowID, maxExpectedOrder).
+		Find(&obsoleteSteps).Error; err != nil {
+		return fmt.Errorf("failed to load obsolete purchase approval steps: %v", err)
+	}
+
+	for _, step := range obsoleteSteps {
+		var activePendingCount int64
+		if err := db.Table("approval_actions").
+			Where("step_id = ? AND status = 'PENDING' AND is_active = ?", step.ID, true).
+			Count(&activePendingCount).Error; err != nil {
+			return fmt.Errorf("failed to check active obsolete approval actions for step '%s': %v", step.StepName, err)
+		}
+		if activePendingCount > 0 {
+			log.Printf("Keeping obsolete purchase approval step '%s' because %d active pending action(s) still reference it", step.StepName, activePendingCount)
+			continue
+		}
+
+		now := time.Now()
+		if err := db.Table("approval_actions").
+			Where("step_id = ? AND status = ?", step.ID, "PENDING").
+			Updates(map[string]interface{}{
+				"status":      "SKIPPED",
+				"is_active":   false,
+				"comments":    gorm.Expr("CASE WHEN comments IS NULL OR comments = '' THEN ? ELSE comments END", "Skipped deprecated purchase approval step"),
+				"action_date": gorm.Expr("COALESCE(action_date, ?)", now),
+				"updated_at":  now,
+			}).Error; err != nil {
+			return fmt.Errorf("failed to skip obsolete approval actions for step '%s': %v", step.StepName, err)
+		}
+
+		if err := db.Delete(&step).Error; err != nil {
+			return fmt.Errorf("failed to remove obsolete workflow step '%s': %v", step.StepName, err)
+		}
+	}
+
 	return nil
 }
 

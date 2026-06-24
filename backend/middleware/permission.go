@@ -159,7 +159,26 @@ func (pm *PermissionMiddleware) CanExport(module string) gin.HandlerFunc {
 }
 
 func (pm *PermissionMiddleware) CanUsePurchaseApprovalWorkflow() gin.HandlerFunc {
-	return pm.CanApprove("purchases")
+	return func(c *gin.Context) {
+		roleInterface, _ := c.Get("role")
+		role := ""
+		if roleStr, ok := roleInterface.(string); ok {
+			role = roleStr
+		}
+
+		if models.IsFinanceStaffRole(role) || models.IsAccountingRole(role) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":               "Purchase approval must be handled by Finance Manager or Director workflow step",
+				"required_permission": "approve",
+				"module":              "purchases",
+				"user_role":           role,
+			})
+			c.Abort()
+			return
+		}
+
+		pm.CanApprove("purchases")(c)
+	}
 }
 
 func (pm *PermissionMiddleware) CanReviewPurchaseRequests() gin.HandlerFunc {

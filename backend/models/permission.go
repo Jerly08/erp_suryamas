@@ -189,13 +189,12 @@ func GetDefaultPermissions(role string) map[string]*ModulePermission {
 			case module == "journal":
 				permissions[module] = GetJournalWorkflowPermission(role)
 			case contains(operationalModules, module):
-				canApprove := module == "purchases"
 				permissions[module] = &ModulePermission{
 					CanView:    true,
 					CanCreate:  true,
 					CanEdit:    true,
 					CanDelete:  false,
-					CanApprove: canApprove,
+					CanApprove: false,
 					CanExport:  true,
 					CanMenu:    true,
 				}

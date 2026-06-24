@@ -140,7 +140,8 @@ func TestCanUsePurchaseApprovalWorkflowUsesManagedPermission(t *testing.T) {
 		role       string
 		wantStatus int
 	}{
-		{name: "finance staff can approve active purchase workflow step", role: models.RoleFinanceStaff, wantStatus: http.StatusNoContent},
+		{name: "finance staff cannot approve purchases", role: models.RoleFinanceStaff, wantStatus: http.StatusForbidden},
+		{name: "accounting cannot approve purchases", role: models.RoleAccounting, wantStatus: http.StatusForbidden},
 		{name: "finance manager can approve active purchase workflow step", role: models.RoleFinanceManager, wantStatus: http.StatusNoContent},
 		{name: "director can approve escalated purchase workflow step", role: models.RoleDirector, wantStatus: http.StatusNoContent},
 		{name: "admin follows default purchase approval permission", role: models.RoleAdmin, wantStatus: http.StatusNoContent},
@@ -191,5 +192,29 @@ func TestCanUsePurchaseApprovalWorkflowUsesManagedPermission(t *testing.T) {
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/purchases/1/approve", nil))
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected managed denial to override finance manager role, got %d body %s", recorder.Code, recorder.Body.String())
+	}
+
+	if err := db.Create(&models.ModulePermissionRecord{
+		UserID:     uint(98),
+		Module:     "purchases",
+		CanApprove: true,
+	}).Error; err != nil {
+		t.Fatalf("seed stale finance staff permission: %v", err)
+	}
+
+	stalePermissionRouter := gin.New()
+	stalePermissionRouter.Use(func(c *gin.Context) {
+		c.Set("user_id", uint(98))
+		c.Set("role", models.RoleFinanceStaff)
+		c.Next()
+	})
+	stalePermissionRouter.POST("/purchases/1/approve", NewPermissionMiddleware(db).CanUsePurchaseApprovalWorkflow(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	stalePermissionRecorder := httptest.NewRecorder()
+	stalePermissionRouter.ServeHTTP(stalePermissionRecorder, httptest.NewRequest(http.MethodPost, "/purchases/1/approve", nil))
+	if stalePermissionRecorder.Code != http.StatusForbidden {
+		t.Fatalf("expected finance staff stale approve permission to remain denied, got %d body %s", stalePermissionRecorder.Code, stalePermissionRecorder.Body.String())
 	}
 }
