@@ -76,8 +76,32 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
   const approvedBy = paymentService.getActorDisplayName(payment.approver);
   const financeManagerApprovedBy = paymentService.getActorDisplayName(payment.finance_manager_approver);
   const directorApprovedBy = paymentService.getActorDisplayName(payment.director_approver);
+  const accountingReviewedBy = paymentService.getActorDisplayName(payment.accounting_reviewer);
   const rejectedBy = paymentService.getActorDisplayName(payment.rejector);
   const pphStatus = getPaymentPPhStatus(payment);
+  const expenseAccountLabel = payment.expense_account
+    ? `${payment.expense_account.code ? `${payment.expense_account.code} - ` : ''}${payment.expense_account.name}`
+    : payment.expense_account_id
+      ? `Account ID #${payment.expense_account_id}`
+      : '';
+  const cashBankLabel = payment.cash_bank_code || payment.cash_bank_name
+    ? `${payment.cash_bank_code ? `${payment.cash_bank_code} - ` : ''}${payment.cash_bank_name || ''}${payment.cash_bank_currency ? ` (${payment.cash_bank_currency})` : ''}`
+    : payment.cash_bank
+      ? `${payment.cash_bank.code ? `${payment.cash_bank.code} - ` : ''}${payment.cash_bank.name}${payment.cash_bank.currency ? ` (${payment.cash_bank.currency})` : ''}`
+      : payment.cash_bank_id
+        ? `Cash/Bank ID #${payment.cash_bank_id}`
+        : '';
+  const cashBankGLLabel = payment.cash_bank_gl_account_code || payment.cash_bank_gl_account_name
+    ? `${payment.cash_bank_gl_account_code ? `${payment.cash_bank_gl_account_code} - ` : ''}${payment.cash_bank_gl_account_name || ''}`
+    : payment.cash_bank?.account
+      ? `${payment.cash_bank.account.code ? `${payment.cash_bank.account.code} - ` : ''}${payment.cash_bank.account.name}`
+      : '';
+  const hasAccountingSettings = Boolean(
+    expenseAccountLabel ||
+    cashBankLabel ||
+    cashBankGLLabel ||
+    payment.accounting_reviewed_at,
+  );
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="xl">
@@ -213,6 +237,56 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
 
             <Divider />
 
+            {hasAccountingSettings && (
+              <>
+                {/* Accounting Review */}
+                <Box>
+                  <Text fontWeight="bold" fontSize="lg" mb={3} color={headingColor}>
+                    Accounting Review
+                  </Text>
+                  <TableContainer>
+                    <Table size="sm" variant="simple" bg={tableBg}>
+                      <Tbody>
+                        {expenseAccountLabel && (
+                          <Tr>
+                            <Td fontWeight="medium" w="30%">Expense / COA:</Td>
+                            <Td>{expenseAccountLabel}</Td>
+                          </Tr>
+                        )}
+                        {cashBankLabel && (
+                          <Tr>
+                            <Td fontWeight="medium" w="30%">Cash/Bank:</Td>
+                            <Td>{cashBankLabel}</Td>
+                          </Tr>
+                        )}
+                        {cashBankGLLabel && (
+                          <Tr>
+                            <Td fontWeight="medium" w="30%">Cash/Bank GL:</Td>
+                            <Td>{cashBankGLLabel}</Td>
+                          </Tr>
+                        )}
+                        {payment.accounting_reviewed_at && (
+                          <Tr>
+                            <Td fontWeight="medium" w="30%">Reviewed By:</Td>
+                            <Td>
+                              <Flex direction="column">
+                                <Text>{accountingReviewedBy}</Text>
+                                <Text fontSize="sm" color={textSecondary}>
+                                  {formatDateTime(payment.accounting_reviewed_at)}
+                                </Text>
+                              </Flex>
+                            </Td>
+                          </Tr>
+                        )}
+                      </Tbody>
+                    </Table>
+                  </TableContainer>
+                </Box>
+
+                <Divider />
+              </>
+            )}
+
             {/* System Information */}
             <Box>
               <Text fontWeight="bold" fontSize="lg" mb={3} color={headingColor}>
@@ -246,9 +320,9 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                         </Td>
                       </Tr>
                     )}
-                    {payment.director_approved_at && (
-                      <Tr>
-                        <Td fontWeight="medium">Director Approval:</Td>
+	                    {payment.director_approved_at && (
+	                      <Tr>
+	                        <Td fontWeight="medium">Director Approval:</Td>
                         <Td>
                           <Flex direction="column">
                             <Text>{directorApprovedBy}</Text>
@@ -257,8 +331,31 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                             </Text>
                           </Flex>
                         </Td>
-                      </Tr>
-                    )}
+	                      </Tr>
+	                    )}
+	                    {payment.accounting_reviewed_at && (
+	                      <Tr>
+	                        <Td fontWeight="medium">Accounting COA:</Td>
+	                        <Td>
+	                          <Flex direction="column">
+	                            <Text>{accountingReviewedBy}</Text>
+	                            <Text fontSize="sm" color={textSecondary}>
+	                              {formatDateTime(payment.accounting_reviewed_at)}
+	                            </Text>
+	                          </Flex>
+	                        </Td>
+	                      </Tr>
+	                    )}
+	                    {!payment.accounting_reviewed_at && hasAccountingSettings && (
+	                      <Tr>
+	                        <Td fontWeight="medium">Accounting COA:</Td>
+	                        <Td>
+	                          <Text fontSize="sm" color={textSecondary}>
+	                            Setting COA sudah tersedia, namun audit reviewer Accounting belum terekam pada data ini.
+	                          </Text>
+	                        </Td>
+	                      </Tr>
+	                    )}
                     {payment.approved_at && (
                       <Tr>
                         <Td fontWeight="medium">Approved By:</Td>
@@ -299,18 +396,18 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
 
         <ModalFooter>
           <HStack spacing={3}>
-            <Button
-              variant="outline"
-              leftIcon={<FiFilePlus />}
-onClick={async () => {
-              try {
-                await paymentService.downloadPaymentDetailPDF(payment.id, payment.code);
-              } catch (e) {
-                console.error('Download payment PDF failed', e);
-              }
-            }}
-              colorScheme="red"
-            >
+	            <Button
+	              variant="outline"
+	              leftIcon={<FiFilePlus />}
+	              onClick={async () => {
+	                try {
+	                  await paymentService.downloadPaymentDetailPDF(payment.id, payment.code);
+	                } catch (e) {
+	                  console.error('Download payment PDF failed', e);
+	                }
+	              }}
+	              colorScheme="red"
+	            >
               Export to PDF
             </Button>
             <Button onClick={onClose}>Close</Button>

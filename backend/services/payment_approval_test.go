@@ -20,6 +20,8 @@ func TestRejectPaymentStoresApprovalTrail(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.Contact{},
+		&models.Account{},
+		&models.CashBank{},
 		&models.Payment{},
 	))
 
@@ -32,6 +34,14 @@ func TestRejectPaymentStoresApprovalTrail(t *testing.T) {
 		LastName:  "Staff",
 	}
 	require.NoError(t, db.Create(&requester).Error)
+
+	accounting := models.User{
+		Username: "accounting-reviewer",
+		Email:    "accounting-reviewer@test.local",
+		Password: "secret",
+		Role:     models.RoleAccounting,
+	}
+	require.NoError(t, db.Create(&accounting).Error)
 
 	approver := models.User{
 		Username:  "finance-manager",
@@ -49,6 +59,26 @@ func TestRejectPaymentStoresApprovalTrail(t *testing.T) {
 		Type: "VENDOR",
 	}
 	require.NoError(t, db.Create(&contact).Error)
+
+	cashAccount := models.Account{
+		Code:     "1101-TEST",
+		Name:     "Bank Test",
+		Type:     models.AccountTypeAsset,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&cashAccount).Error)
+
+	cashBank := models.CashBank{
+		Code:      "BANK-TEST",
+		Name:      "Bank Test",
+		Type:      "BANK",
+		AccountID: cashAccount.ID,
+		Currency:  "IDR",
+		IsActive:  true,
+		Balance:   250000,
+		UserID:    requester.ID,
+	}
+	require.NoError(t, db.Create(&cashBank).Error)
 
 	payment := models.Payment{
 		Code:      "PAY/2026/04/0001",
@@ -86,6 +116,8 @@ func TestRejectPaymentRequiresReason(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.Contact{},
+		&models.Account{},
+		&models.CashBank{},
 		&models.Payment{},
 	))
 
@@ -214,12 +246,40 @@ func TestUpdatePendingAccountingPaymentMovesToFinalReview(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&requester).Error)
 
+	accounting := models.User{
+		Username: "accounting-reviewer",
+		Email:    "accounting-reviewer@test.local",
+		Password: "secret",
+		Role:     models.RoleAccounting,
+	}
+	require.NoError(t, db.Create(&accounting).Error)
+
 	contact := models.Contact{
 		Code: "VEN-APPROVAL-004",
 		Name: "Vendor Accounting Review",
 		Type: "VENDOR",
 	}
 	require.NoError(t, db.Create(&contact).Error)
+
+	cashAccount := models.Account{
+		Code:     "1101-TEST",
+		Name:     "Bank Test",
+		Type:     models.AccountTypeAsset,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&cashAccount).Error)
+
+	cashBank := models.CashBank{
+		Code:      "BANK-TEST",
+		Name:      "Bank Test",
+		Type:      "BANK",
+		AccountID: cashAccount.ID,
+		Currency:  "IDR",
+		IsActive:  true,
+		Balance:   250000,
+		UserID:    requester.ID,
+	}
+	require.NoError(t, db.Create(&cashBank).Error)
 
 	payment := models.Payment{
 		Code:          "PAY/2026/04/0004",
@@ -235,15 +295,27 @@ func TestUpdatePendingAccountingPaymentMovesToFinalReview(t *testing.T) {
 	require.NoError(t, db.Create(&payment).Error)
 
 	service := &EnhancedPaymentServiceWithJournal{db: db}
-	cashBankID := uint(77)
 
-	updatedPayment, err := service.UpdateDraftPayment(payment.ID, func(tx *gorm.DB, p *models.Payment) error {
-		p.CashBankID = &cashBankID
+	updatedPayment, err := service.UpdateDraftPayment(payment.ID, accounting.ID, func(tx *gorm.DB, p *models.Payment) error {
+		p.CashBankID = &cashBank.ID
+		p.CashBankCode = cashBank.Code
+		p.CashBankName = cashBank.Name
+		p.CashBankCurrency = cashBank.Currency
+		p.CashBankGLAccountID = &cashAccount.ID
+		p.CashBankGLAccountCode = cashAccount.Code
+		p.CashBankGLAccountName = cashAccount.Name
 		return nil
 	})
 	require.NoError(t, err)
 	require.Equal(t, models.PaymentStatusPendingFinalReview, updatedPayment.Status)
 	require.Equal(t, models.PaymentApprovalStageFinanceManagerFinal, updatedPayment.ApprovalStage)
+	require.NotNil(t, updatedPayment.AccountingReviewedBy)
+	require.Equal(t, accounting.ID, *updatedPayment.AccountingReviewedBy)
+	require.NotNil(t, updatedPayment.AccountingReviewedAt)
+	require.NotNil(t, updatedPayment.AccountingReviewer)
+	require.Equal(t, accounting.ID, updatedPayment.AccountingReviewer.ID)
 	require.NotNil(t, updatedPayment.CashBankID)
-	require.Equal(t, cashBankID, *updatedPayment.CashBankID)
+	require.Equal(t, cashBank.ID, *updatedPayment.CashBankID)
+	require.Equal(t, "BANK-TEST", updatedPayment.CashBankCode)
+	require.Equal(t, "1101-TEST", updatedPayment.CashBankGLAccountCode)
 }

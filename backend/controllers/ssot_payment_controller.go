@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -461,11 +462,37 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		})
 		return
 	}
-	if _, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID)); !ok {
+	paymentResponse, ok := ctrl.getAccessiblePaymentResponse(c, uint(paymentID))
+	if !ok {
 		return
 	}
 
-	payment, err := ctrl.enhancedPaymentService.UpdateDraftPayment(uint(paymentID), func(tx *gorm.DB, p *models.Payment) error {
+	actorUserID := getSSOTUserIDFromContext(c)
+	if actorUserID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	roleNorm := models.NormalizeRole(c.GetString("role"))
+	currentPayment := paymentResponse.Payment
+	if currentPayment == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+		return
+	}
+	if currentPayment.Status == models.PaymentStatusPendingAccounting &&
+		roleNorm != models.RoleAdmin &&
+		!models.IsAccountingRole(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Accounting can set COA for this payment stage"})
+		return
+	}
+	if currentPayment.Status == models.PaymentStatusPendingFinalReview &&
+		roleNorm != models.RoleAdmin &&
+		!models.IsFinanceManagerRole(roleNorm) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can revise COA before journal posting"})
+		return
+	}
+
+	payment, err := ctrl.enhancedPaymentService.UpdateDraftPayment(uint(paymentID), actorUserID, func(tx *gorm.DB, p *models.Payment) error {
 		// Update fields if provided
 		if reqData.ContactID != 0 {
 			p.ContactID = reqData.ContactID
@@ -486,7 +513,21 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 			p.ExchangeRate = 1
 		}
 		if reqData.CashBankID != 0 {
+			var cashBank models.CashBank
+			if err := tx.Preload("Account").First(&cashBank, reqData.CashBankID).Error; err != nil {
+				return fmt.Errorf("cash/bank account not found: %w", err)
+			}
 			p.CashBankID = &reqData.CashBankID
+			p.CashBankCode = cashBank.Code
+			p.CashBankName = cashBank.Name
+			p.CashBankCurrency = cashBank.Currency
+			if cashBank.AccountID != 0 {
+				p.CashBankGLAccountID = &cashBank.AccountID
+			}
+			if cashBank.Account.ID != 0 {
+				p.CashBankGLAccountCode = cashBank.Account.Code
+				p.CashBankGLAccountName = cashBank.Account.Name
+			}
 		}
 		if reqData.Method != "" {
 			p.Method = reqData.Method

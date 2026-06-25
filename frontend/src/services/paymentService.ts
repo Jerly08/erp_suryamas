@@ -11,12 +11,33 @@ export interface PaymentActor {
   role?: string;
 }
 
+export interface PaymentAccountSummary {
+  id: number;
+  code?: string;
+  name: string;
+  type?: string;
+  currency?: string;
+  account?: {
+    id: number;
+    code?: string;
+    name: string;
+  };
+}
+
 export interface Payment {
   id: number;
   code: string;
   contact_id: number;
   expense_account_id?: number;
   cash_bank_id?: number;
+  cash_bank_code?: string;
+  cash_bank_name?: string;
+  cash_bank_currency?: string;
+  cash_bank_gl_account_id?: number;
+  cash_bank_gl_account_code?: string;
+  cash_bank_gl_account_name?: string;
+  expense_account?: PaymentAccountSummary | null;
+  cash_bank?: PaymentAccountSummary | null;
   contact?: {
     id: number;
     name: string;
@@ -40,12 +61,14 @@ export interface Payment {
   pph_amount?: number;
   pph_paid_amount?: number;
   pph_payment_status?: 'PAID' | 'UNPAID' | 'PARTIAL_PAID' | 'NONE';
-  approval_stage?: 'FINANCE_MANAGER' | 'DIRECTOR' | '';
+  approval_stage?: 'FINANCE_MANAGER' | 'ACCOUNTING' | 'FINANCE_MANAGER_FINAL' | 'DIRECTOR' | '';
   require_director_approval?: boolean;
   finance_manager_approved_by?: number | null;
   finance_manager_approved_at?: string | null;
   director_approved_by?: number | null;
   director_approved_at?: string | null;
+  accounting_reviewed_by?: number | null;
+  accounting_reviewed_at?: string | null;
   approved_by?: number | null;
   approved_at?: string | null;
   rejected_by?: number | null;
@@ -54,6 +77,7 @@ export interface Payment {
   user?: PaymentActor;
   finance_manager_approver?: PaymentActor | null;
   director_approver?: PaymentActor | null;
+  accounting_reviewer?: PaymentActor | null;
   approver?: PaymentActor | null;
   rejector?: PaymentActor | null;
   notes: string;

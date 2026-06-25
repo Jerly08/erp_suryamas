@@ -878,7 +878,16 @@ func (eps *EnhancedPaymentServiceWithJournal) calculateExpensePaymentAmounts(cas
 // Finance manager can route to director; director finalizes routed approvals.
 func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID uint, approverUserID uint, requireDirectorApproval bool) (*PaymentWithJournalResponse, error) {
 	var payment models.Payment
-	if err := eps.db.Preload("Contact").Preload("User").Preload("FinanceManagerApprover").Preload("DirectorApprover").First(&payment, paymentID).Error; err != nil {
+	if err := eps.db.
+		Preload("Contact").
+		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
+		Preload("AccountingReviewer").
+		Preload("ExpenseAccount").
+		Preload("CashBank").
+		Preload("CashBank.Account").
+		First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}
 
@@ -1150,8 +1159,12 @@ func (eps *EnhancedPaymentServiceWithJournal) RejectPayment(paymentID uint, appr
 		Preload("User").
 		Preload("FinanceManagerApprover").
 		Preload("DirectorApprover").
+		Preload("AccountingReviewer").
 		Preload("Approver").
 		Preload("Rejector").
+		Preload("ExpenseAccount").
+		Preload("CashBank").
+		Preload("CashBank.Account").
 		First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("failed to reload rejected payment: %w", err)
 	}
@@ -1160,7 +1173,7 @@ func (eps *EnhancedPaymentServiceWithJournal) RejectPayment(paymentID uint, appr
 }
 
 // UpdateDraftPayment allows modifying fields before a payment is posted to journal.
-func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint, req func(tx *gorm.DB, p *models.Payment) error) (*models.Payment, error) {
+func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint, actorUserID uint, req func(tx *gorm.DB, p *models.Payment) error) (*models.Payment, error) {
 	var payment models.Payment
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&payment, paymentID).Error; err != nil {
@@ -1168,16 +1181,21 @@ func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint,
 		}
 
 		originalStatus := payment.Status
-		if originalStatus != models.PaymentStatusDraft && originalStatus != models.PaymentStatusPendingAccounting {
-			return fmt.Errorf("only payments in DRAFT or PENDING_ACCOUNTING status can be updated (current status: %s)", payment.Status)
+		if originalStatus != models.PaymentStatusDraft &&
+			originalStatus != models.PaymentStatusPendingAccounting &&
+			originalStatus != models.PaymentStatusPendingFinalReview {
+			return fmt.Errorf("only payments before journal posting can be updated (current status: %s)", payment.Status)
 		}
 
 		if err := req(tx, &payment); err != nil {
 			return fmt.Errorf("failed to apply updates: %w", err)
 		}
 		if originalStatus == models.PaymentStatusPendingAccounting {
+			now := time.Now()
 			payment.Status = models.PaymentStatusPendingFinalReview
 			payment.ApprovalStage = models.PaymentApprovalStageFinanceManagerFinal
+			payment.AccountingReviewedBy = &actorUserID
+			payment.AccountingReviewedAt = &now
 		}
 
 		if err := tx.Save(&payment).Error; err != nil {
@@ -1188,6 +1206,21 @@ func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint,
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if err := eps.db.
+		Preload("Contact").
+		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
+		Preload("AccountingReviewer").
+		Preload("Approver").
+		Preload("Rejector").
+		Preload("ExpenseAccount").
+		Preload("CashBank").
+		Preload("CashBank.Account").
+		First(&payment, paymentID).Error; err != nil {
+		return nil, fmt.Errorf("failed to reload updated payment: %w", err)
 	}
 
 	return &payment, nil
@@ -1581,8 +1614,12 @@ func (eps *EnhancedPaymentServiceWithJournal) GetPaymentWithJournal(paymentID ui
 		Preload("User").
 		Preload("FinanceManagerApprover").
 		Preload("DirectorApprover").
+		Preload("AccountingReviewer").
 		Preload("Approver").
 		Preload("Rejector").
+		Preload("ExpenseAccount").
+		Preload("CashBank").
+		Preload("CashBank.Account").
 		First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}

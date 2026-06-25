@@ -444,6 +444,9 @@ const PaymentsPage: React.FC = () => {
     if (payment.status === 'PENDING_ACCOUNTING') {
       return isAccountingReviewer;
     }
+    if (payment.status === 'PENDING_FINAL_REVIEW') {
+      return isFinanceManagerApprover || roleNorm === 'admin';
+    }
     return false;
   };
 
@@ -660,7 +663,11 @@ const PaymentsPage: React.FC = () => {
             )}
             {canEditPaymentBeforePosting(row) && (
               <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
-                {row.status === 'PENDING_ACCOUNTING' ? 'Set COA / Pembayaran' : t('payments.edit')}
+                {row.status === 'PENDING_ACCOUNTING'
+                  ? 'Set COA / Pembayaran'
+                  : row.status === 'PENDING_FINAL_REVIEW'
+                    ? 'Ubah / Review COA'
+                    : t('payments.edit')}
               </MenuItem>
             )}
             <MenuItem
