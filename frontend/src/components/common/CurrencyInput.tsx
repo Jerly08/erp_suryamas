@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   Input,
   InputGroup,
@@ -26,6 +26,8 @@ interface CurrencyInputProps {
   max?: number;
   showLabel?: boolean;
   keepFormattedOnFocus?: boolean;
+  allowDecimals?: boolean;
+  decimalScale?: number;
 }
 
 const CurrencyInput: React.FC<CurrencyInputProps> = ({
@@ -42,6 +44,8 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   max,
   showLabel = true,
   keepFormattedOnFocus = false,
+  allowDecimals = true,
+  decimalScale = 2,
 }) => {
   const [displayValue, setDisplayValue] = useState<string>('');
   const [isFocused, setIsFocused] = useState(false);
@@ -56,11 +60,71 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   const prefixColor = useColorModeValue('gray.500', 'var(--text-secondary)');
   const disabledBg = useColorModeValue('gray.100', 'whiteAlpha.100');
   const labelColor = useColorModeValue('gray.700', 'var(--text-primary)');
+  const normalizedDecimalScale = Math.max(0, decimalScale);
 
   // Format number to IDR currency display
-  const formatToIDR = (amount: number): string => {
+  const formatToIDR = useCallback((amount: number): string => {
     if (amount === 0) return '';
-    return new Intl.NumberFormat('id-ID').format(amount);
+    const hasFraction = Math.abs(amount % 1) > Number.EPSILON;
+    return new Intl.NumberFormat('id-ID', {
+      minimumFractionDigits: allowDecimals && hasFraction ? normalizedDecimalScale : 0,
+      maximumFractionDigits: allowDecimals ? normalizedDecimalScale : 0,
+    }).format(amount);
+  }, [allowDecimals, normalizedDecimalScale]);
+
+  const formatDigits = (digits: string): string => {
+    const cleaned = digits.replace(/[^\d]/g, '');
+    if (cleaned === '') return '';
+    return new Intl.NumberFormat('id-ID').format(parseInt(cleaned, 10));
+  };
+
+  const parseDecimalInput = (rawValue: string) => {
+    const sanitized = rawValue.replace(/[^\d.,]/g, '');
+    if (sanitized === '') {
+      return { display: '', numericValue: 0 };
+    }
+
+    const hasComma = sanitized.includes(',');
+    const dotCount = (sanitized.match(/\./g) || []).length;
+    const lastDotIndex = sanitized.lastIndexOf('.');
+    const dotDecimalCandidate =
+      !hasComma &&
+      dotCount === 1 &&
+      lastDotIndex >= 0 &&
+      sanitized.length - lastDotIndex - 1 <= normalizedDecimalScale;
+
+    let integerDigits = sanitized.replace(/[^\d]/g, '');
+    let decimalDigits = '';
+    let hasDecimalSeparator = false;
+
+    if (hasComma) {
+      const lastCommaIndex = sanitized.lastIndexOf(',');
+      integerDigits = sanitized.slice(0, lastCommaIndex).replace(/[^\d]/g, '');
+      decimalDigits = sanitized
+        .slice(lastCommaIndex + 1)
+        .replace(/[^\d]/g, '')
+        .slice(0, normalizedDecimalScale);
+      hasDecimalSeparator = true;
+    } else if (dotDecimalCandidate) {
+      integerDigits = sanitized.slice(0, lastDotIndex).replace(/[^\d]/g, '');
+      decimalDigits = sanitized
+        .slice(lastDotIndex + 1)
+        .replace(/[^\d]/g, '')
+        .slice(0, normalizedDecimalScale);
+      hasDecimalSeparator = true;
+    }
+
+    const integerDisplay = formatDigits(integerDigits) || '0';
+    const decimalDisplay =
+      hasDecimalSeparator && normalizedDecimalScale > 0 ? `,${decimalDigits}` : '';
+    const numericValue = Number(
+      `${integerDigits || '0'}${decimalDigits ? `.${decimalDigits}` : ''}`,
+    );
+
+    return {
+      display: `${integerDisplay}${decimalDisplay}`,
+      numericValue: Number.isFinite(numericValue) ? numericValue : 0,
+    };
   };
 
   // Update display value when value prop changes
@@ -68,28 +132,30 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
     if (!isFocused) {
       setDisplayValue(formatToIDR(value));
     }
-  }, [value, isFocused]);
+  }, [value, isFocused, formatToIDR]);
 
   // Handle input change
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputValue = e.target.value;
     
-    // Allow only numbers, dots, and commas for formatting
-    const cleaned = inputValue.replace(/[^\d]/g, '');
-    
-    // Update display with formatting
-    const formatted = cleaned === '' ? '' : new Intl.NumberFormat('id-ID').format(parseInt(cleaned, 10));
-    setDisplayValue(formatted);
-    
-    // Convert back to number and call onChange
-    const numericValue = cleaned === '' ? 0 : parseInt(cleaned, 10);
+    const parsed = allowDecimals
+      ? parseDecimalInput(inputValue)
+      : {
+          display: formatDigits(inputValue),
+          numericValue:
+            inputValue.replace(/[^\d]/g, '') === ''
+              ? 0
+              : parseInt(inputValue.replace(/[^\d]/g, ''), 10),
+        };
+
+    setDisplayValue(parsed.display);
     
     // Apply min/max constraints
-    let constrainedValue = numericValue;
-    if (min !== undefined && numericValue < min) {
+    let constrainedValue = parsed.numericValue;
+    if (min !== undefined && parsed.numericValue < min) {
       constrainedValue = min;
     }
-    if (max !== undefined && numericValue > max) {
+    if (max !== undefined && parsed.numericValue > max) {
       constrainedValue = max;
     }
     
@@ -99,7 +165,13 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   // Handle focus
   const handleFocus = () => {
     setIsFocused(true);
-    setDisplayValue(value === 0 ? '' : keepFormattedOnFocus ? formatToIDR(value) : value.toString());
+    setDisplayValue(
+      value === 0
+        ? ''
+        : keepFormattedOnFocus || allowDecimals
+          ? formatToIDR(value)
+          : value.toString(),
+    );
   };
 
   // Handle blur
@@ -111,11 +183,24 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
 
   // Handle key press
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Allow only numbers, backspace, delete, arrow keys
-    const allowedKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab'];
+    if (e.ctrlKey || e.metaKey) return;
+
+    // Allow only numbers, editing/navigation keys, and decimal separators when enabled.
+    const allowedKeys = [
+      'Backspace',
+      'Delete',
+      'ArrowLeft',
+      'ArrowRight',
+      'ArrowUp',
+      'ArrowDown',
+      'Home',
+      'End',
+      'Tab',
+    ];
     const isNumber = /^\d$/.test(e.key);
+    const isDecimalSeparator = allowDecimals && [',', '.'].includes(e.key);
     
-    if (!isNumber && !allowedKeys.includes(e.key)) {
+    if (!isNumber && !isDecimalSeparator && !allowedKeys.includes(e.key)) {
       e.preventDefault();
     }
   };
@@ -133,6 +218,7 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
         onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKeyPress}
+        inputMode={allowDecimals ? 'decimal' : 'numeric'}
         placeholder={placeholder}
         isDisabled={isDisabled}
         isInvalid={isInvalid}

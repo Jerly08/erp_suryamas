@@ -18,7 +18,7 @@ export const formatIDR = (
 ): string => {
   const {
     minimumFractionDigits = 0,
-    maximumFractionDigits = 0,
+    maximumFractionDigits = 2,
     showSymbol = true,
   } = options;
 
@@ -26,15 +26,14 @@ export const formatIDR = (
     return showSymbol ? 'Rp 0' : '0';
   }
 
-  // Round value to remove any floating point precision errors
-  const roundedValue = Math.round(value);
+  const normalizedValue = Number(value);
 
   const formatted = new Intl.NumberFormat('id-ID', {
     style: showSymbol ? 'currency' : 'decimal',
     currency: 'IDR',
     minimumFractionDigits,
     maximumFractionDigits,
-  }).format(roundedValue);
+  }).format(normalizedValue);
 
   return formatted;
 };
@@ -67,9 +66,25 @@ export const formatIDRCompact = (value: number): string => {
  */
 export const parseIDR = (formatted: string): number => {
   if (!formatted) return 0;
-  
-  // Remove all non-digit characters except decimal separator
-  const cleaned = formatted.replace(/[^\d,]/g, '').replace(/,/g, '.');
+
+  const sanitized = formatted.replace(/[^\d.,]/g, '');
+  let cleaned = sanitized.replace(/[^\d]/g, '');
+
+  if (sanitized.includes(',')) {
+    const lastCommaIndex = sanitized.lastIndexOf(',');
+    const integerPart = sanitized.slice(0, lastCommaIndex).replace(/[^\d]/g, '');
+    const decimalPart = sanitized.slice(lastCommaIndex + 1).replace(/[^\d]/g, '').slice(0, 2);
+    cleaned = `${integerPart || '0'}${decimalPart ? `.${decimalPart}` : ''}`;
+  } else {
+    const dotCount = (sanitized.match(/\./g) || []).length;
+    const lastDotIndex = sanitized.lastIndexOf('.');
+    if (dotCount === 1 && lastDotIndex >= 0 && sanitized.length - lastDotIndex - 1 <= 2) {
+      const integerPart = sanitized.slice(0, lastDotIndex).replace(/[^\d]/g, '');
+      const decimalPart = sanitized.slice(lastDotIndex + 1).replace(/[^\d]/g, '').slice(0, 2);
+      cleaned = `${integerPart || '0'}${decimalPart ? `.${decimalPart}` : ''}`;
+    }
+  }
+
   const parsed = parseFloat(cleaned);
   
   return isNaN(parsed) ? 0 : parsed;
@@ -100,7 +115,7 @@ export const formatPercentage = (value: number): string => {
 export const formatCurrencyTable = (value: number): string => {
   return formatIDR(value, { 
     minimumFractionDigits: 0, 
-    maximumFractionDigits: 0 
+    maximumFractionDigits: 2
   });
 };
 

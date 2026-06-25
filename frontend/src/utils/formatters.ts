@@ -3,12 +3,13 @@
  */
 export const formatCurrency = (amount: number): string => {
   if (amount === 0) return 'Rp 0';
+  const hasFraction = Math.abs(amount % 1) > Number.EPSILON;
   
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
   }).format(amount);
 };
 

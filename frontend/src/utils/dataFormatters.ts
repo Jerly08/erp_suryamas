@@ -228,12 +228,13 @@ export const formatCurrency = (amount: number, currency: string = 'IDR'): string
   if (amount === null || amount === undefined || isNaN(amount) || !isFinite(amount)) {
     amount = 0;
   }
+  const hasFraction = Math.abs(amount % 1) > Number.EPSILON;
   
   const formatter = new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: currency === 'IDR' ? 'IDR' : 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
   });
   
   return formatter.format(amount);

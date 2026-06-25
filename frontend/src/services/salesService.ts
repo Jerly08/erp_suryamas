@@ -868,11 +868,13 @@ class SalesService {
       amount = 0;
     }
 
+    const hasFraction = Math.abs((amount || 0) % 1) > Number.EPSILON;
+
     return new Intl.NumberFormat("id-ID", {
       style: "currency",
       currency: currency,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
+      minimumFractionDigits: hasFraction ? 2 : 0,
+      maximumFractionDigits: 2,
     }).format(amount);
   }
 

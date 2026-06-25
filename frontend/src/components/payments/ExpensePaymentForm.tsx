@@ -77,21 +77,26 @@ const formatCashBankBalance = (amount: number, currency?: string) => {
     })}`;
   }
 
+  const hasFraction = Math.abs((amount || 0) % 1) > Number.EPSILON;
+
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
   }).format(amount || 0);
 };
 
-const formatIDR = (amount: number) =>
-  new Intl.NumberFormat('id-ID', {
+const formatIDR = (amount: number) => {
+  const hasFraction = Math.abs((amount || 0) % 1) > Number.EPSILON;
+
+  return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
   }).format(amount || 0);
+};
 
 const formatUsd = (amount: number) =>
   `USD ${(amount || 0).toLocaleString('en-US', {
@@ -232,7 +237,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
   // Calculate PPh amounts
   const pphAmount = enablePPH && pphRate > 0 && amount > 0
-    ? Math.round(amount * (pphRate / 100))
+    ? Math.round(amount * (pphRate / 100) * 100) / 100
     : 0;
   const netPayment = amount - pphAmount;
 

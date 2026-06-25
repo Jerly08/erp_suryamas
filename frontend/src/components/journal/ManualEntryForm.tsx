@@ -49,18 +49,71 @@ import { useAuth } from "@/contexts/AuthContext";
 const formatNumberWithSeparator = (value: number | string): string => {
   if (value === "" || value === null || value === undefined) return "";
   const num =
-    typeof value === "string" ? parseFloat(value.replace(/\./g, "")) : value;
+    typeof value === "string" ? parseFormattedNumber(value) : value;
   if (isNaN(num) || num === 0) return "";
-  return num.toLocaleString("id-ID");
+  const hasFraction = Math.abs(num % 1) > Number.EPSILON;
+  return num.toLocaleString("id-ID", {
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 };
 
 // Helper function to parse formatted number back to number
 const parseFormattedNumber = (value: string): number => {
   if (!value || value === "") return 0;
-  // Remove all dots (thousand separators) and parse
-  const cleaned = value.replace(/\./g, "").replace(/,/g, ".");
+  const sanitized = value.replace(/[^\d.,]/g, "");
+  let cleaned = sanitized.replace(/[^\d]/g, "");
+
+  if (sanitized.includes(",")) {
+    const lastCommaIndex = sanitized.lastIndexOf(",");
+    const integerPart = sanitized.slice(0, lastCommaIndex).replace(/[^\d]/g, "");
+    const decimalPart = sanitized.slice(lastCommaIndex + 1).replace(/[^\d]/g, "").slice(0, 2);
+    cleaned = `${integerPart || "0"}${decimalPart ? `.${decimalPart}` : ""}`;
+  } else {
+    const dotCount = (sanitized.match(/\./g) || []).length;
+    const lastDotIndex = sanitized.lastIndexOf(".");
+    if (dotCount === 1 && lastDotIndex >= 0 && sanitized.length - lastDotIndex - 1 <= 2) {
+      const integerPart = sanitized.slice(0, lastDotIndex).replace(/[^\d]/g, "");
+      const decimalPart = sanitized.slice(lastDotIndex + 1).replace(/[^\d]/g, "").slice(0, 2);
+      cleaned = `${integerPart || "0"}${decimalPart ? `.${decimalPart}` : ""}`;
+    }
+  }
+
   const num = parseFloat(cleaned);
   return isNaN(num) ? 0 : num;
+};
+
+const formatCurrencyInputValue = (value: string): string => {
+  const sanitized = value.replace(/[^\d.,]/g, "");
+  if (!sanitized) return "";
+
+  const hasComma = sanitized.includes(",");
+  const dotCount = (sanitized.match(/\./g) || []).length;
+  const lastDotIndex = sanitized.lastIndexOf(".");
+  const dotDecimalCandidate =
+    !hasComma &&
+    dotCount === 1 &&
+    lastDotIndex >= 0 &&
+    sanitized.length - lastDotIndex - 1 <= 2;
+
+  let integerDigits = sanitized.replace(/[^\d]/g, "");
+  let decimalDigits = "";
+  let hasDecimalSeparator = false;
+
+  if (hasComma) {
+    const lastCommaIndex = sanitized.lastIndexOf(",");
+    integerDigits = sanitized.slice(0, lastCommaIndex).replace(/[^\d]/g, "");
+    decimalDigits = sanitized.slice(lastCommaIndex + 1).replace(/[^\d]/g, "").slice(0, 2);
+    hasDecimalSeparator = true;
+  } else if (dotDecimalCandidate) {
+    integerDigits = sanitized.slice(0, lastDotIndex).replace(/[^\d]/g, "");
+    decimalDigits = sanitized.slice(lastDotIndex + 1).replace(/[^\d]/g, "").slice(0, 2);
+    hasDecimalSeparator = true;
+  }
+
+  const integerDisplay =
+    integerDigits === "" ? "0" : parseInt(integerDigits, 10).toLocaleString("id-ID");
+  return `${integerDisplay}${hasDecimalSeparator ? `,${decimalDigits}` : ""}`;
 };
 
 // Currency Input Component
@@ -97,8 +150,7 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputValue = e.target.value;
 
-    // Allow only numbers and dots
-    const cleanedInput = inputValue.replace(/[^\d]/g, "");
+    const cleanedInput = inputValue.replace(/[^\d.,]/g, "");
 
     if (cleanedInput === "") {
       setDisplayValue("");
@@ -106,10 +158,9 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
       return;
     }
 
-    // Parse and format with thousand separators
-    const numValue = parseInt(cleanedInput, 10);
+    const numValue = parseFormattedNumber(cleanedInput);
     if (!isNaN(numValue)) {
-      setDisplayValue(numValue.toLocaleString("id-ID"));
+      setDisplayValue(formatCurrencyInputValue(cleanedInput));
       onChange(numValue);
     }
   };
@@ -126,6 +177,7 @@ const CurrencyInput: React.FC<CurrencyInputProps> = ({
       value={displayValue}
       onChange={handleChange}
       onBlur={handleBlur}
+      inputMode="decimal"
       placeholder={placeholder}
       size={size}
       textAlign="right"

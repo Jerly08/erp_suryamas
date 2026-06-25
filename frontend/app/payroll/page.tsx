@@ -1314,16 +1314,16 @@ export default function PayrollPage() {
                                   <Td isNumeric>{formatCurrency(item.compensation_pkwt || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.overtime || 0)}</Td>
                                   <Td isNumeric minW="140px">
-                                    <Input size="sm" type="number" value={item.pph || 0} onChange={(event) => updateImportPreviewItem(index, 'pph', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                    <CurrencyInput size="sm" value={item.pph || 0} onChange={(value) => updateImportPreviewItem(index, 'pph', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric minW="130px">
-                                    <Input size="sm" type="number" value={item.bpjs_tk_jht || 0} onChange={(event) => updateImportPreviewItem(index, 'bpjs_tk_jht', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jht || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jht', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric minW="130px">
-                                    <Input size="sm" type="number" value={item.bpjs_tk_jp || 0} onChange={(event) => updateImportPreviewItem(index, 'bpjs_tk_jp', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jp || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jp', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric minW="130px">
-                                    <Input size="sm" type="number" value={item.bpjs_kesehatan || 0} onChange={(event) => updateImportPreviewItem(index, 'bpjs_kesehatan', Number(event.target.value))} textAlign="right" bg={inputBg} />
+                                    <CurrencyInput size="sm" value={item.bpjs_kesehatan || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_kesehatan', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric>{formatCurrency(item.proportional || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.other_deduction || 0)}</Td>

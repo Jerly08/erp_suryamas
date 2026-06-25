@@ -27,6 +27,7 @@ import {
 } from "@chakra-ui/react";
 import {
   FiBell,
+  FiCheckCircle,
   FiClipboard,
   FiClock,
   FiDollarSign,
@@ -41,6 +42,7 @@ interface FinanceStaffQuickStats {
   pending_transfer_requests_count: number;
   monthly_reviewed_purchase_count: number;
   unread_notifications_count: number;
+  approved_purchase_notifications_count: number;
 }
 
 interface FinanceStaffSnapshot {
@@ -84,12 +86,25 @@ interface RecentNotificationItem {
   created_at: string;
 }
 
+interface FinanceManagerApprovedPurchaseNotification {
+  notification_id: number;
+  purchase_id: number;
+  purchase_code: string;
+  vendor_name: string;
+  total_amount: number;
+  approved_at?: string | null;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
 interface FinanceStaffDashboardData {
   quick_stats?: FinanceStaffQuickStats;
   snapshot?: FinanceStaffSnapshot;
   pending_purchase_requests?: PendingPurchaseRequestItem[];
   recent_transfer_requests?: RecentTransferRequestItem[];
   recent_notifications?: RecentNotificationItem[];
+  finance_manager_approved_purchases?: FinanceManagerApprovedPurchaseNotification[];
 }
 
 interface ApiErrorShape {
@@ -230,6 +245,9 @@ export const FinanceStaffDashboard: React.FC = () => {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorderColor = useColorModeValue("gray.200", "whiteAlpha.200");
   const softPanelBg = useColorModeValue("gray.50", "whiteAlpha.50");
+  const approvedNoticeBg = useColorModeValue("green.50", "green.900");
+  const approvedNoticeBorder = useColorModeValue("green.200", "green.700");
+  const approvedNoticeText = useColorModeValue("green.700", "green.100");
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -287,6 +305,8 @@ export const FinanceStaffDashboard: React.FC = () => {
   const pendingPurchaseRequests = data?.pending_purchase_requests || [];
   const recentTransferRequests = data?.recent_transfer_requests || [];
   const recentNotifications = data?.recent_notifications || [];
+  const financeManagerApprovedPurchases =
+    data?.finance_manager_approved_purchases || [];
 
   return (
     <Box>
@@ -298,6 +318,90 @@ export const FinanceStaffDashboard: React.FC = () => {
         payment follow-up, and transfer requests waiting finance manager
         approval.
       </Text>
+
+      {financeManagerApprovedPurchases.length > 0 && (
+        <Card
+          bg={approvedNoticeBg}
+          border="1px"
+          borderColor={approvedNoticeBorder}
+          boxShadow="sm"
+          mb={6}
+        >
+          <CardHeader pb={2}>
+            <Flex justify="space-between" align="start" gap={4}>
+              <Box>
+                <HStack spacing={2} mb={1}>
+                  <Icon as={FiCheckCircle} color={approvedNoticeText} />
+                  <Heading size="md" color={approvedNoticeText}>
+                    Purchase Approved by Finance Manager
+                  </Heading>
+                </HStack>
+                <Text fontSize="sm" color={approvedNoticeText}>
+                  Purchase yang kamu buat sudah berhasil di-approve Finance
+                  Manager.
+                </Text>
+              </Box>
+              <Badge colorScheme="green" variant="solid">
+                {quickStats?.approved_purchase_notifications_count ||
+                  financeManagerApprovedPurchases.length}{" "}
+                Baru
+              </Badge>
+            </Flex>
+          </CardHeader>
+          <CardBody pt={2}>
+            <VStack spacing={3} align="stretch">
+              {financeManagerApprovedPurchases.map((purchase) => (
+                <Box
+                  key={purchase.notification_id}
+                  p={4}
+                  borderRadius="lg"
+                  bg={cardBg}
+                  border="1px"
+                  borderColor={approvedNoticeBorder}
+                >
+                  <Flex justify="space-between" align="start" gap={4}>
+                    <Box>
+                      <HStack spacing={2} mb={1} wrap="wrap">
+                        <Text fontWeight="semibold">
+                          {purchase.purchase_code}
+                        </Text>
+                        <Badge colorScheme="green">FM Approved</Badge>
+                      </HStack>
+                      <Text fontSize="sm" color={mutedTextColor}>
+                        Vendor: {purchase.vendor_name || "-"}
+                      </Text>
+                      <Text fontSize="sm" color={mutedTextColor}>
+                        {purchase.message}
+                      </Text>
+                    </Box>
+                    <Box textAlign="right" minW={{ base: "auto", md: "150px" }}>
+                      <Text fontWeight="semibold">
+                        {formatCurrency(purchase.total_amount)}
+                      </Text>
+                      <Text fontSize="xs" color={mutedTextColor}>
+                        {new Date(purchase.created_at).toLocaleString("id-ID")}
+                      </Text>
+                      <Button
+                        size="xs"
+                        colorScheme="green"
+                        variant="outline"
+                        mt={2}
+                        onClick={() =>
+                          router.push(
+                            `/purchases?notificationPurchaseId=${purchase.purchase_id}`,
+                          )
+                        }
+                      >
+                        Lihat Purchase
+                      </Button>
+                    </Box>
+                  </Flex>
+                </Box>
+              ))}
+            </VStack>
+          </CardBody>
+        </Card>
+      )}
 
       <SimpleGrid columns={{ base: 1, md: 2, xl: 4 }} spacing={4} mb={6}>
         <FinanceStaffStatCard

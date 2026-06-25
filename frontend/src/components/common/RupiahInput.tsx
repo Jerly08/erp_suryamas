@@ -42,19 +42,43 @@ const RupiahInput: React.FC<RupiahInputProps> = ({
   min = 0,
   max,
   size = 'md',
-  allowDecimals = false,
+  allowDecimals = true,
 }) => {
   // Format number as Rupiah
   const formatRupiah = (val: number | string): string => {
     if (!val || val === 0) return '';
     const numValue = typeof val === 'string' ? parseFloat(val) : val;
     if (isNaN(numValue)) return '';
-    return `Rp ${numValue.toLocaleString('id-ID')}`;
+    const hasFraction = Math.abs(numValue % 1) > Number.EPSILON;
+    return `Rp ${numValue.toLocaleString('id-ID', {
+      minimumFractionDigits: allowDecimals && hasFraction ? 2 : 0,
+      maximumFractionDigits: allowDecimals ? 2 : 0,
+    })}`;
   };
 
   // Parse Rupiah string to number
   const parseRupiah = (val: string): string => {
-    return val.replace(/^Rp\s?/, '').replace(/[.,]/g, '');
+    const sanitized = val.replace(/^Rp\s?/, '').replace(/[^\d.,]/g, '');
+    if (!allowDecimals) {
+      return sanitized.replace(/[^\d]/g, '');
+    }
+
+    if (sanitized.includes(',')) {
+      const lastCommaIndex = sanitized.lastIndexOf(',');
+      const integerPart = sanitized.slice(0, lastCommaIndex).replace(/[^\d]/g, '');
+      const decimalPart = sanitized.slice(lastCommaIndex + 1).replace(/[^\d]/g, '').slice(0, 2);
+      return `${integerPart || '0'}${decimalPart ? `.${decimalPart}` : ''}`;
+    }
+
+    const dotCount = (sanitized.match(/\./g) || []).length;
+    const lastDotIndex = sanitized.lastIndexOf('.');
+    if (dotCount === 1 && lastDotIndex >= 0 && sanitized.length - lastDotIndex - 1 <= 2) {
+      const integerPart = sanitized.slice(0, lastDotIndex).replace(/[^\d]/g, '');
+      const decimalPart = sanitized.slice(lastDotIndex + 1).replace(/[^\d]/g, '').slice(0, 2);
+      return `${integerPart || '0'}${decimalPart ? `.${decimalPart}` : ''}`;
+    }
+
+    return sanitized.replace(/[^\d]/g, '');
   };
 
   const handleChange = (valueString: string, valueNumber: number) => {

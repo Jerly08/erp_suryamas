@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Heading,
-  Input,
   Table,
   Tbody,
   Td,
@@ -14,6 +13,7 @@ import {
   Flex,
   useToast,
 } from '@chakra-ui/react';
+import CurrencyInput from '@/components/common/CurrencyInput';
 import ProductService, { BulkPriceUpdate } from '@/services/productService';
 
 const BulkPriceUpdates: React.FC = () => {
@@ -25,10 +25,10 @@ const BulkPriceUpdates: React.FC = () => {
   const handleUpdateChange = (
     index: number,
     field: 'purchase_price' | 'sale_price',
-    value: string
+    value: number
   ) => {
     const updates = [...priceUpdates];
-    updates[index][field] = value !== '' ? parseFloat(value) : undefined;
+    updates[index][field] = value;
     setPriceUpdates(updates);
   };
 
@@ -76,23 +76,23 @@ const BulkPriceUpdates: React.FC = () => {
               <Tr key={index}>
                 <Td>{update.product_id}</Td>
                 <Td>
-                  <Input
+                  <CurrencyInput
                     size="sm"
-                    type="number"
-                    value={update.purchase_price || ''}
-                    onChange={(e) =>
-                      handleUpdateChange(index, 'purchase_price', e.target.value)
+                    value={update.purchase_price || 0}
+                    onChange={(value) =>
+                      handleUpdateChange(index, 'purchase_price', value)
                     }
+                    showLabel={false}
                   />
                 </Td>
                 <Td>
-                  <Input
+                  <CurrencyInput
                     size="sm"
-                    type="number"
-                    value={update.sale_price || ''}
-                    onChange={(e) =>
-                      handleUpdateChange(index, 'sale_price', e.target.value)
+                    value={update.sale_price || 0}
+                    onChange={(value) =>
+                      handleUpdateChange(index, 'sale_price', value)
                     }
+                    showLabel={false}
                   />
                 </Td>
               </Tr>
