@@ -137,11 +137,13 @@ export const hasFieldError = (errors: ValidationError[], field: keyof AssetFormD
 };
 
 export const formatCurrency = (amount: number): string => {
+  const hasFraction = Math.abs(amount % 1) > Number.EPSILON;
+
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: 2,
   }).format(amount);
 };
 

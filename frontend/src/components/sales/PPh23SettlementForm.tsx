@@ -22,6 +22,7 @@ import {
   useColorModeValue,
   useToast,
 } from "@chakra-ui/react";
+import CurrencyInput from "@/components/common/CurrencyInput";
 import salesService, {
   Sale,
   SaleLatePPh23Request,
@@ -347,12 +348,11 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                           ? "Nominal PPh23 Final"
                           : "Nominal PPh23"}
                       </FormLabel>
-                      <Input
-                        type="number"
+                      <CurrencyInput
+                        value={Number(amount) || 0}
+                        onChange={(value: number) => setAmount(value ? value.toString() : "")}
                         min={0}
-                        step="0.01"
-                        value={amount}
-                        onChange={(event) => setAmount(event.target.value)}
+                        showLabel={false}
                         placeholder="Contoh: 2000000"
                       />
                       <FormHelperText>

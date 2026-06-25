@@ -275,6 +275,17 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 		Where("user_id = ? AND is_read = false AND deleted_at IS NULL", userID).
 		Count(&unreadNotificationsCount)
 
+	var approvedPurchaseNotificationsCount int64
+	dc.DB.Table("notifications n").
+		Joins("JOIN purchases p ON p.id = CAST(COALESCE(NULLIF(n.data::json->>'entity_id', ''), NULLIF(n.data::json->>'purchase_id', '')) AS bigint)").
+		Where(
+			"n.user_id = ? AND n.type = ? AND n.is_read = false AND n.deleted_at IS NULL AND p.user_id = ? AND p.deleted_at IS NULL",
+			userID,
+			models.NotificationTypeApprovalApproved,
+			userID,
+		).
+		Count(&approvedPurchaseNotificationsCount)
+
 	var outstandingReceivables float64
 	dc.DB.Model(&models.Sale{}).
 		Where("status IN (?) AND outstanding_amount > 0 AND deleted_at IS NULL", []string{"INVOICED", "OVERDUE"}).
@@ -326,6 +337,18 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 		Priority  string    `json:"priority"`
 		IsRead    bool      `json:"is_read"`
 		CreatedAt time.Time `json:"created_at"`
+	}
+
+	type approvedPurchaseNotificationItem struct {
+		NotificationID uint       `json:"notification_id"`
+		PurchaseID     uint       `json:"purchase_id"`
+		PurchaseCode   string     `json:"purchase_code"`
+		VendorName     string     `json:"vendor_name"`
+		TotalAmount    float64    `json:"total_amount"`
+		ApprovedAt     *time.Time `json:"approved_at"`
+		Message        string     `json:"message"`
+		IsRead         bool       `json:"is_read"`
+		CreatedAt      time.Time  `json:"created_at"`
 	}
 
 	var pendingPurchaseRequests []pendingPurchaseRequestItem
@@ -386,13 +409,44 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 		return
 	}
 
+	var approvedPurchaseNotifications []approvedPurchaseNotificationItem
+	if err := dc.DB.Table("notifications n").
+		Select(`
+			n.id AS notification_id,
+			p.id AS purchase_id,
+			COALESCE(NULLIF(p.code, ''), n.data::json->>'purchase_code', '-') AS purchase_code,
+			COALESCE(v.name, '-') AS vendor_name,
+			p.total_amount,
+			p.approved_at,
+			n.message,
+			n.is_read,
+			n.created_at
+		`).
+		Joins("JOIN purchases p ON p.id = CAST(COALESCE(NULLIF(n.data::json->>'entity_id', ''), NULLIF(n.data::json->>'purchase_id', '')) AS bigint)").
+		Joins("LEFT JOIN contacts v ON v.id = p.vendor_id").
+		Where(`
+			n.user_id = ?
+			AND n.type = ?
+			AND n.is_read = false
+			AND n.deleted_at IS NULL
+			AND p.user_id = ?
+			AND p.deleted_at IS NULL
+		`, userID, models.NotificationTypeApprovalApproved, userID).
+		Order("n.created_at DESC").
+		Limit(5).
+		Scan(&approvedPurchaseNotifications).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch approved purchase notifications", "details": err.Error()})
+		return
+	}
+
 	dashboardData["quick_stats"] = gin.H{
-		"pending_purchase_requests_count": pendingPurchaseRequestsCount,
-		"draft_journals_count":            draftJournalsCount,
-		"unpaid_purchase_count":           unpaidPurchaseCount,
-		"pending_transfer_requests_count": pendingTransferRequestsCount,
-		"monthly_reviewed_purchase_count": monthlyReviewedCount,
-		"unread_notifications_count":      unreadNotificationsCount,
+		"pending_purchase_requests_count":       pendingPurchaseRequestsCount,
+		"draft_journals_count":                  draftJournalsCount,
+		"unpaid_purchase_count":                 unpaidPurchaseCount,
+		"pending_transfer_requests_count":       pendingTransferRequestsCount,
+		"monthly_reviewed_purchase_count":       monthlyReviewedCount,
+		"unread_notifications_count":            unreadNotificationsCount,
+		"approved_purchase_notifications_count": approvedPurchaseNotificationsCount,
 	}
 	dashboardData["snapshot"] = gin.H{
 		"outstanding_receivables": outstandingReceivables,
@@ -402,6 +456,7 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 	dashboardData["pending_purchase_requests"] = pendingPurchaseRequests
 	dashboardData["recent_transfer_requests"] = recentTransfers
 	dashboardData["recent_notifications"] = recentNotifications
+	dashboardData["finance_manager_approved_purchases"] = approvedPurchaseNotifications
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Finance staff dashboard data retrieved successfully",

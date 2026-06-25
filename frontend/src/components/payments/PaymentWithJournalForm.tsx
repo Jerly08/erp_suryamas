@@ -21,11 +21,6 @@ import {
   Divider,
   Text,
   Switch,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
-  NumberIncrementStepper,
-  NumberDecrementStepper,
   Icon,
   Badge,
   Flex,
@@ -33,6 +28,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { FiSave, FiEye, FiRefreshCw } from 'react-icons/fi';
+import CurrencyInput from '@/components/common/CurrencyInput';
 import paymentService from '@/services/paymentService';
 import JournalEntryPreview from './JournalEntryPreview';
 import type {
@@ -268,19 +264,12 @@ const PaymentWithJournalForm: React.FC<PaymentWithJournalFormProps> = ({
                   </FormControl>
                   <FormControl>
                     <FormLabel>Amount</FormLabel>
-                    <NumberInput
+                    <CurrencyInput
                       value={formData.amount}
-                      onChange={(_, valueNumber) => handleInputChange('amount', valueNumber || 0)}
+                      onChange={(value) => handleInputChange('amount', value || 0)}
                       min={0}
-                      precision={0}
-                      step={1000}
-                    >
-                      <NumberInputField />
-                      <NumberInputStepper>
-                    <NumberIncrementStepper />
-                    <NumberDecrementStepper />
-                      </NumberInputStepper>
-                    </NumberInput>
+                      showLabel={false}
+                    />
                   </FormControl>
                 </HStack>
 

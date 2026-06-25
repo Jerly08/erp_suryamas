@@ -146,10 +146,15 @@ export default function PurchaseRequestsPage() {
   >([]);
   const { canCreate, canEdit } = usePermissions();
   const formatCurrency = (value: number) => {
+    const numericValue = Number(value) || 0;
+    const hasFraction = Math.abs(numericValue % 1) > Number.EPSILON;
+
     return new Intl.NumberFormat("id-ID", {
       style: "currency",
       currency: "IDR",
-    }).format(value);
+      minimumFractionDigits: hasFraction ? 2 : 0,
+      maximumFractionDigits: 2,
+    }).format(numericValue);
   };
   const toast = useToast();
   const { user } = useAuth();
@@ -1714,6 +1719,8 @@ export default function PurchaseRequestsPage() {
                                 val.toString(),
                               )
                             }
+                            allowDecimals
+                            decimalScale={2}
                           />
                         </Td>
                         <Td p={1} verticalAlign="bottom">

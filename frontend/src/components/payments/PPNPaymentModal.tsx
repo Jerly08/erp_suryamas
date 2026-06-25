@@ -73,13 +73,15 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
   const { token } = useAuth();
   const toast = useToast();
 
-  // Helper to format currency without decimals
+  // Helper to format currency with decimals when present
   const formatRupiah = (amount: number) => {
+    const hasFraction = Math.abs((amount || 0) % 1) > Number.EPSILON;
+
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
+      minimumFractionDigits: hasFraction ? 2 : 0,
+      maximumFractionDigits: 2,
     }).format(amount);
   };
 
@@ -239,8 +241,8 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
         //   NOT:     6,600,000 - (-1,100,000) = 7,700,000
         const ppnMasukan = Math.abs(masukanData.balance || 0);
         const ppnKeluaran = Math.abs(keluaranData.balance || 0);
-        // Round to avoid floating point precision issues
-        const ppnTerutang = Math.round(ppnKeluaran - ppnMasukan);
+        // Round to 2 decimals to avoid floating point precision issues without losing cents.
+        const ppnTerutang = Math.round((ppnKeluaran - ppnMasukan) * 100) / 100;
 
         console.log('✅ Calculated:', { ppnMasukan, ppnKeluaran, ppnTerutang });
 
