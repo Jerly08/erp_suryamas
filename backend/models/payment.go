@@ -80,17 +80,21 @@ type PaymentAllocation struct {
 
 // Payment Status Constants
 const (
-	PaymentStatusDraft     = "DRAFT"   // Waiting finance manager approval
-	PaymentStatusPending   = "PENDING" // Waiting director approval
-	PaymentStatusCompleted = "COMPLETED"
-	PaymentStatusRejected  = "REJECTED"
-	PaymentStatusFailed    = "FAILED"
-	PaymentStatusReversed  = "REVERSED"
+	PaymentStatusDraft              = "DRAFT"              // Waiting finance manager approval
+	PaymentStatusPending            = "PENDING"            // Waiting director approval
+	PaymentStatusPendingAccounting  = "PENDING_ACCOUNTING" // Waiting accounting to review/select COA
+	PaymentStatusPendingFinalReview = "PENDING_FINAL_REVIEW"
+	PaymentStatusCompleted          = "COMPLETED"
+	PaymentStatusRejected           = "REJECTED"
+	PaymentStatusFailed             = "FAILED"
+	PaymentStatusReversed           = "REVERSED"
 )
 
 const (
-	PaymentApprovalStageFinanceManager = "FINANCE_MANAGER"
-	PaymentApprovalStageDirector       = "DIRECTOR"
+	PaymentApprovalStageFinanceManager      = "FINANCE_MANAGER"
+	PaymentApprovalStageAccounting          = "ACCOUNTING"
+	PaymentApprovalStageFinanceManagerFinal = "FINANCE_MANAGER_FINAL"
+	PaymentApprovalStageDirector            = "DIRECTOR"
 )
 
 // Payment Method Constants

@@ -74,6 +74,8 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
 
   const statusLabel = paymentService.getStatusLabel(payment.status);
   const approvedBy = paymentService.getActorDisplayName(payment.approver);
+  const financeManagerApprovedBy = paymentService.getActorDisplayName(payment.finance_manager_approver);
+  const directorApprovedBy = paymentService.getActorDisplayName(payment.director_approver);
   const rejectedBy = paymentService.getActorDisplayName(payment.rejector);
   const pphStatus = getPaymentPPhStatus(payment);
 
@@ -231,6 +233,32 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                       <Td fontWeight="medium">User ID:</Td>
                       <Td>{payment.user_id}</Td>
                     </Tr>
+                    {payment.finance_manager_approved_at && (
+                      <Tr>
+                        <Td fontWeight="medium">FM Approval:</Td>
+                        <Td>
+                          <Flex direction="column">
+                            <Text>{financeManagerApprovedBy}</Text>
+                            <Text fontSize="sm" color={textSecondary}>
+                              {formatDateTime(payment.finance_manager_approved_at)}
+                            </Text>
+                          </Flex>
+                        </Td>
+                      </Tr>
+                    )}
+                    {payment.director_approved_at && (
+                      <Tr>
+                        <Td fontWeight="medium">Director Approval:</Td>
+                        <Td>
+                          <Flex direction="column">
+                            <Text>{directorApprovedBy}</Text>
+                            <Text fontSize="sm" color={textSecondary}>
+                              {formatDateTime(payment.director_approved_at)}
+                            </Text>
+                          </Flex>
+                        </Td>
+                      </Tr>
+                    )}
                     {payment.approved_at && (
                       <Tr>
                         <Td fontWeight="medium">Approved By:</Td>

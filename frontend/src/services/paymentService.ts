@@ -33,7 +33,7 @@ export interface Payment {
   forex_gain_loss_type?: string;
   method: string;
   reference: string;
-  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED' | 'REVERSED';
+  status: 'PENDING' | 'PENDING_ACCOUNTING' | 'PENDING_FINAL_REVIEW' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED' | 'REVERSED';
   payment_type?: string; // REGULAR, TAX_PPN, TAX_PPN_INPUT, TAX_PPN_OUTPUT
   pph_type?: string;
   pph_rate?: number;
@@ -649,6 +649,10 @@ class PaymentService {
         return 'green';
       case 'PENDING':
         return 'yellow';
+      case 'PENDING_ACCOUNTING':
+        return 'blue';
+      case 'PENDING_FINAL_REVIEW':
+        return 'purple';
       case 'DRAFT':
         return 'orange';
       case 'REJECTED':
@@ -953,7 +957,7 @@ class PaymentService {
       const response = await api.post(`${this.getSSOTPaymentBase()}/${paymentId}/approve-standard`, {
         require_director_approval: requireDirectorApproval,
       });
-      return response.data?.data || response.data;
+      return response.data?.data?.payment || response.data?.data || response.data;
     } catch (error: any) {
       throw new Error(error.response?.data?.details || error.response?.data?.error || 'Failed to approve payment');
     }
@@ -984,7 +988,11 @@ class PaymentService {
       case 'COMPLETED':
         return 'Approved';
       case 'PENDING':
-        return 'Pending';
+        return 'Menunggu Director';
+      case 'PENDING_ACCOUNTING':
+        return 'Menunggu Accounting';
+      case 'PENDING_FINAL_REVIEW':
+        return 'Menunggu Review FM';
       case 'DRAFT':
         return 'Menunggu Finance Manager';
       case 'REJECTED':

@@ -215,7 +215,7 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	})
 }
 
-// ApproveExpensePayment approves a DRAFT expense payment (finance manager only)
+// ApproveExpensePayment advances an expense payment through approval/accounting/posting stages.
 func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
 	paymentIDStr := c.Param("id")
 	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
@@ -270,9 +270,13 @@ func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
 		return
 	}
 
-	message := "Expense payment approved and journal posted successfully"
+	message := "Expense payment reviewed by finance manager and journal posted successfully"
 	if approvedPayment.Status == models.PaymentStatusPending {
 		message = "Expense payment approved by finance manager and sent to director"
+	} else if approvedPayment.Status == models.PaymentStatusPendingAccounting {
+		message = "Expense payment approved and sent to accounting for COA review"
+	} else if approvedPayment.Status == models.PaymentStatusPendingFinalReview {
+		message = "Expense payment COA reviewed and sent to finance manager for journal posting"
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -281,7 +285,7 @@ func (ctrl *SSOTPaymentController) ApproveExpensePayment(c *gin.Context) {
 	})
 }
 
-// ApproveStandardPayment approves a DRAFT receivable/payable payment (finance manager only)
+// ApproveStandardPayment advances a receivable/payable payment through approval/accounting/posting stages.
 func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
 	paymentIDStr := c.Param("id")
 	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
@@ -336,9 +340,16 @@ func (ctrl *SSOTPaymentController) ApproveStandardPayment(c *gin.Context) {
 		return
 	}
 
-	message := "Payment approved and journal posted successfully"
-	if payment != nil && payment.Payment != nil && payment.Payment.Status == models.PaymentStatusPending {
-		message = "Payment approved by finance manager and sent to director"
+	message := "Payment reviewed by finance manager and journal posted successfully"
+	if payment != nil && payment.Payment != nil {
+		switch payment.Payment.Status {
+		case models.PaymentStatusPending:
+			message = "Payment approved by finance manager and sent to director"
+		case models.PaymentStatusPendingAccounting:
+			message = "Payment approved and sent to accounting for COA review"
+		case models.PaymentStatusPendingFinalReview:
+			message = "Payment COA reviewed and sent to finance manager for journal posting"
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -413,7 +424,7 @@ func (ctrl *SSOTPaymentController) RejectPayment(c *gin.Context) {
 	})
 }
 
-// UpdateDraftPayment updates a payment in DRAFT status
+// UpdateDraftPayment updates a payment before journal posting.
 func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 	paymentIDStr := c.Param("id")
 	paymentID, err := strconv.ParseUint(paymentIDStr, 10, 32)
@@ -540,8 +551,13 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		return
 	}
 
+	message := "Draft payment updated successfully"
+	if payment.Status == models.PaymentStatusPendingFinalReview {
+		message = "Payment COA updated and sent to finance manager for journal posting"
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Draft payment updated successfully",
+		"message": message,
 		"data":    payment,
 	})
 }

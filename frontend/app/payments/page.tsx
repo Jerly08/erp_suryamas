@@ -83,11 +83,11 @@ import PaymentDetailModal from '@/components/payments/PaymentDetailModal';
 import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
 import ExpensePaymentForm from '@/components/payments/ExpensePaymentForm';
 import { exportPaymentsToPDF, PDFExportOptions } from '@/utils/pdfExport';
-import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
+import { isAccountingRole, isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { getPaymentPPhStatus } from '@/utils/taxPaymentStatus';
 
 // Status type for filtering
-type PaymentStatusType = 'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED';
+type PaymentStatusType = 'ALL' | 'PENDING' | 'PENDING_ACCOUNTING' | 'PENDING_FINAL_REVIEW' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED';
 
 // Payment method type for filtering
 type PaymentMethodType = 'ALL' | 'CASH' | 'BANK_TRANSFER' | 'CHECK' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'OTHER';
@@ -201,6 +201,7 @@ const PaymentsPage: React.FC = () => {
   const roleNorm = normalizeRole(user?.role);
   const isFinanceManagerApprover = isFinanceManagerRole(roleNorm);
   const isDirectorApprover = roleNorm === 'director';
+  const isAccountingReviewer = isAccountingRole(roleNorm) || roleNorm === 'admin';
 
   const getStatusBadgeLabel = (payment: Payment) => paymentService.getStatusLabel(payment.status);
 
@@ -217,6 +218,18 @@ const PaymentsPage: React.FC = () => {
       }
       return 'Menunggu approval director';
     }
+    if (payment.status === 'PENDING_ACCOUNTING') {
+      const financeManagerName = paymentService.getActorDisplayName(
+        payment.finance_manager_approver || payment.approver,
+      );
+      if (payment.finance_manager_approved_at) {
+        return `FM ${financeManagerName} sudah approve pada ${paymentService.formatDateTime(payment.finance_manager_approved_at)}. Menunggu Accounting pilih COA.`;
+      }
+      return 'Menunggu Accounting pilih COA';
+    }
+    if (payment.status === 'PENDING_FINAL_REVIEW') {
+      return 'COA sudah disiapkan Accounting. Menunggu FM review dan posting jurnal.';
+    }
     if (payment.status === 'COMPLETED' && payment.approved_at) {
       return `Approved by ${paymentService.getActorDisplayName(payment.approver)} pada ${paymentService.formatDateTime(payment.approved_at)}`;
     }
@@ -229,17 +242,41 @@ const PaymentsPage: React.FC = () => {
     return '';
   };
 
-  // Approve DRAFT expense payment (finance only)
+  const getApprovalSuccessMessage = (payment: Payment, result?: Payment) => {
+    switch (result?.status) {
+      case 'PENDING':
+        return {
+          title: 'Dikirim ke Director',
+          description: `Pembayaran ${payment.code} sudah disetujui finance manager dan dikirim ke director.`,
+        };
+      case 'PENDING_ACCOUNTING':
+        return {
+          title: 'Disetujui FM',
+          description: `Pembayaran ${payment.code} masuk ke Accounting untuk set/review COA.`,
+        };
+      case 'COMPLETED':
+        return {
+          title: 'Jurnal Diposting',
+          description: `Pembayaran ${payment.code} sudah direview FM dan jurnal telah diposting.`,
+        };
+      default:
+        return {
+          title: 'Pembayaran Disetujui',
+          description: `Status pembayaran ${payment.code} berhasil diperbarui.`,
+        };
+    }
+  };
+
+  // Advance expense payment approval flow.
   const handleApproveExpensePayment = async (payment: Payment, requireDirectorApproval = false) => {
     if (!isFinanceManagerApprover && !isDirectorApprover) return;
     setPaymentDecisionLoadingId(payment.id);
     try {
       const result = await paymentService.approveExpensePayment(payment.id, requireDirectorApproval);
+      const successMessage = getApprovalSuccessMessage(payment, result);
       toast({
-        title: result?.status === 'PENDING' ? 'Dikirim ke Director' : 'Pembayaran Disetujui',
-        description: result?.status === 'PENDING'
-          ? `Pembayaran ${payment.code} sudah disetujui finance manager dan dikirim ke director.`
-          : `Pembayaran ${payment.code} telah disetujui dan jurnal telah dibuat.`,
+        title: successMessage.title,
+        description: successMessage.description,
         status: 'success',
         duration: 4000,
       });
@@ -256,17 +293,16 @@ const PaymentsPage: React.FC = () => {
     }
   };
 
-  // Approve DRAFT standard payment (finance only)
+  // Advance receivable/payable payment approval flow.
   const handleApproveStandardPayment = async (payment: Payment, requireDirectorApproval = false) => {
     if (!isFinanceManagerApprover && !isDirectorApprover) return;
     setPaymentDecisionLoadingId(payment.id);
     try {
       const result = await paymentService.approveStandardPayment(payment.id, requireDirectorApproval);
+      const successMessage = getApprovalSuccessMessage(payment, result);
       toast({
-        title: result?.status === 'PENDING' ? 'Dikirim ke Director' : 'Pembayaran Disetujui',
-        description: result?.status === 'PENDING'
-          ? `Pembayaran ${payment.code} sudah disetujui finance manager dan dikirim ke director.`
-          : `Pembayaran ${payment.code} telah disetujui dan jurnal telah diposting.`,
+        title: successMessage.title,
+        description: successMessage.description,
         status: 'success',
         duration: 4000,
       });
@@ -398,11 +434,36 @@ const PaymentsPage: React.FC = () => {
     setShowConfirmDelete(true);
   };
 
+  const canEditPaymentBeforePosting = (payment: Payment) => {
+    if (!canEdit || payment.payment_type?.startsWith('TAX_PPN') || payment.code?.startsWith('SETOR-PPN')) {
+      return false;
+    }
+    if (payment.status === 'DRAFT') {
+      return true;
+    }
+    if (payment.status === 'PENDING_ACCOUNTING') {
+      return isAccountingReviewer;
+    }
+    return false;
+  };
+
   const columns = [
     {
       header: t('payments.code'),
       accessor: (row: Payment) => (
-        <Text fontWeight="medium" color={statColors.blue}>{row.code}</Text>
+        <Button
+          variant="link"
+          size="sm"
+          color={statColors.blue}
+          fontWeight="medium"
+          onClick={() => handleViewPayment(row)}
+          whiteSpace="normal"
+          textAlign="left"
+          height="auto"
+          minW={0}
+        >
+          {row.code}
+        </Button>
       )
     },
     {
@@ -512,7 +573,7 @@ const PaymentsPage: React.FC = () => {
                     }
                   }}
                 >
-                  {paymentDecisionLoadingId === row.id ? 'Menyetujui...' : 'Setujui & Posting Jurnal'}
+                  {paymentDecisionLoadingId === row.id ? 'Menyetujui...' : 'Setujui'}
                 </MenuItem>
                 <MenuItem
                   icon={<FiArrowRight />}
@@ -527,6 +588,35 @@ const PaymentsPage: React.FC = () => {
                   }}
                 >
                   {paymentDecisionLoadingId === row.id ? 'Mengirim...' : 'Setujui & Kirim ke Director'}
+                </MenuItem>
+                <MenuItem
+                  icon={<FiTrash2 />}
+                  color="red.500"
+                  isDisabled={paymentDecisionLoadingId === row.id}
+                  onClick={() => handleOpenRejectPayment(row)}
+                >
+                  Reject Payment
+                </MenuItem>
+                <MenuDivider />
+              </>
+            )}
+            {/* Final finance manager posting lane */}
+            {isFinanceManagerApprover && row.status === 'PENDING_FINAL_REVIEW' && (
+              <>
+                <MenuDivider />
+                <MenuItem
+                  icon={<FiArrowRight />}
+                  color="green.500"
+                  isDisabled={paymentDecisionLoadingId === row.id}
+                  onClick={() => {
+                    if (row.payment_type === 'EXPENSE') {
+                      handleApproveExpensePayment(row);
+                    } else {
+                      handleApproveStandardPayment(row);
+                    }
+                  }}
+                >
+                  {paymentDecisionLoadingId === row.id ? 'Posting...' : 'Review & Posting Jurnal'}
                 </MenuItem>
                 <MenuItem
                   icon={<FiTrash2 />}
@@ -555,7 +645,7 @@ const PaymentsPage: React.FC = () => {
                     }
                   }}
                 >
-                  {paymentDecisionLoadingId === row.id ? 'Menyetujui...' : 'Approve Director & Posting Jurnal'}
+                  {paymentDecisionLoadingId === row.id ? 'Menyetujui...' : 'Approve Director'}
                 </MenuItem>
                 <MenuItem
                   icon={<FiTrash2 />}
@@ -568,9 +658,9 @@ const PaymentsPage: React.FC = () => {
                 <MenuDivider />
               </>
             )}
-            {canEdit && row.status !== 'COMPLETED' && !isCancelledPaymentStatus(row.status) && !(row.payment_type?.startsWith('TAX_PPN') || row.code?.startsWith('SETOR-PPN')) && (
+            {canEditPaymentBeforePosting(row) && (
               <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
-                {t('payments.edit')}
+                {row.status === 'PENDING_ACCOUNTING' ? 'Set COA / Pembayaran' : t('payments.edit')}
               </MenuItem>
             )}
             <MenuItem
@@ -1176,6 +1266,8 @@ const PaymentsPage: React.FC = () => {
                       borderColor={borderColor}
                     >
                       <option value="PENDING">{t('payments.filters.pending')}</option>
+                      <option value="PENDING_ACCOUNTING">Menunggu Accounting</option>
+                      <option value="PENDING_FINAL_REVIEW">Menunggu Review FM</option>
                       <option value="COMPLETED">{t('payments.filters.completed')}</option>
                       <option value="DRAFT">{t('payments.filters.draft')}</option>
                       <option value="REJECTED">Rejected</option>
