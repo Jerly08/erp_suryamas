@@ -22,6 +22,11 @@
 		-Server
 	}
 
+	# This app does not intentionally use Next.js Server Actions.
+	# Block public Server Action probes that can be abused to drop runtime payloads.
+	@nextAction header Next-Action *
+	respond @nextAction "Forbidden" 403
+
 	reverse_proxy frontend:3000
 
 	log {

@@ -94,6 +94,12 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8080}
     container_name: erp_frontend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     environment:
       # Use an explicit internal URL for Server-Side and Proxy Rewrites (not accessible to browsers)
       API_INTERNAL_URL: http://backend:8080
