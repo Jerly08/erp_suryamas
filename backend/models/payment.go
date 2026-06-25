@@ -39,6 +39,8 @@ type Payment struct {
 	FinanceManagerApprovedAt *time.Time `json:"finance_manager_approved_at"`
 	DirectorApprovedBy       *uint      `json:"director_approved_by" gorm:"index"`
 	DirectorApprovedAt       *time.Time `json:"director_approved_at"`
+	AccountingReviewedBy     *uint      `json:"accounting_reviewed_by" gorm:"index"`
+	AccountingReviewedAt     *time.Time `json:"accounting_reviewed_at"`
 	ApprovedBy               *uint      `json:"approved_by" gorm:"index"`
 	ApprovedAt               *time.Time `json:"approved_at"`
 	RejectedBy               *uint      `json:"rejected_by" gorm:"index"`
@@ -55,12 +57,15 @@ type Payment struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Contact                Contact `json:"contact" gorm:"foreignKey:ContactID"`
-	User                   User    `json:"user" gorm:"foreignKey:UserID"`
-	FinanceManagerApprover *User   `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
-	DirectorApprover       *User   `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
-	Approver               *User   `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	Rejector               *User   `json:"rejector,omitempty" gorm:"foreignKey:RejectedBy"`
+	Contact                Contact   `json:"contact" gorm:"foreignKey:ContactID"`
+	User                   User      `json:"user" gorm:"foreignKey:UserID"`
+	FinanceManagerApprover *User     `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User     `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+	AccountingReviewer     *User     `json:"accounting_reviewer,omitempty" gorm:"foreignKey:AccountingReviewedBy"`
+	Approver               *User     `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	Rejector               *User     `json:"rejector,omitempty" gorm:"foreignKey:RejectedBy"`
+	ExpenseAccount         *Account  `json:"expense_account,omitempty" gorm:"foreignKey:ExpenseAccountID"`
+	CashBank               *CashBank `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
 }
 
 // PaymentAllocation represents payment allocation to invoices or bills
