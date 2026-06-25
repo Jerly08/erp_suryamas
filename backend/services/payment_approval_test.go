@@ -131,3 +131,119 @@ func TestRejectPaymentRequiresReason(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "rejection reason is required")
 }
+
+func TestApproveStandardPaymentRoutesDraftToAccountingWithoutPosting(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Skipf("sqlite test unavailable: %v", err)
+	}
+
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.Contact{},
+		&models.Payment{},
+	))
+
+	requester := models.User{
+		Username: "finance-staff-standard",
+		Email:    "finance-staff-standard@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceStaff,
+	}
+	require.NoError(t, db.Create(&requester).Error)
+
+	approver := models.User{
+		Username: "finance-manager-standard",
+		Email:    "finance-manager-standard@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceManager,
+	}
+	require.NoError(t, db.Create(&approver).Error)
+
+	contact := models.Contact{
+		Code: "VEN-APPROVAL-003",
+		Name: "Vendor Approval Routing",
+		Type: "VENDOR",
+	}
+	require.NoError(t, db.Create(&contact).Error)
+
+	payment := models.Payment{
+		Code:        "PAY/2026/04/0003",
+		ContactID:   contact.ID,
+		UserID:      requester.ID,
+		Date:        time.Date(2026, 4, 15, 11, 0, 0, 0, time.UTC),
+		Amount:      75000,
+		Method:      models.PaymentMethodBankTransfer,
+		Status:      models.PaymentStatusDraft,
+		PaymentType: models.PaymentTypeRegular,
+	}
+	require.NoError(t, db.Create(&payment).Error)
+
+	service := &EnhancedPaymentServiceWithJournal{db: db}
+
+	response, err := service.ApproveStandardPayment(payment.ID, approver.ID, false)
+	require.NoError(t, err)
+	require.NotNil(t, response.Payment)
+	require.Equal(t, models.PaymentStatusPendingAccounting, response.Payment.Status)
+	require.Equal(t, models.PaymentApprovalStageAccounting, response.Payment.ApprovalStage)
+	require.NotNil(t, response.Payment.FinanceManagerApprovedBy)
+	require.Equal(t, approver.ID, *response.Payment.FinanceManagerApprovedBy)
+	require.NotNil(t, response.Payment.FinanceManagerApprovedAt)
+	require.Nil(t, response.Payment.ApprovedBy)
+	require.Nil(t, response.Payment.ApprovedAt)
+	require.Nil(t, response.Payment.JournalEntryID)
+}
+
+func TestUpdatePendingAccountingPaymentMovesToFinalReview(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Skipf("sqlite test unavailable: %v", err)
+	}
+
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.Contact{},
+		&models.Payment{},
+	))
+
+	requester := models.User{
+		Username: "accounting-review-staff",
+		Email:    "accounting-review-staff@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceStaff,
+	}
+	require.NoError(t, db.Create(&requester).Error)
+
+	contact := models.Contact{
+		Code: "VEN-APPROVAL-004",
+		Name: "Vendor Accounting Review",
+		Type: "VENDOR",
+	}
+	require.NoError(t, db.Create(&contact).Error)
+
+	payment := models.Payment{
+		Code:          "PAY/2026/04/0004",
+		ContactID:     contact.ID,
+		UserID:        requester.ID,
+		Date:          time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC),
+		Amount:        91000,
+		Method:        models.PaymentMethodBankTransfer,
+		Status:        models.PaymentStatusPendingAccounting,
+		PaymentType:   models.PaymentTypeRegular,
+		ApprovalStage: models.PaymentApprovalStageAccounting,
+	}
+	require.NoError(t, db.Create(&payment).Error)
+
+	service := &EnhancedPaymentServiceWithJournal{db: db}
+	cashBankID := uint(77)
+
+	updatedPayment, err := service.UpdateDraftPayment(payment.ID, func(tx *gorm.DB, p *models.Payment) error {
+		p.CashBankID = &cashBankID
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.PaymentStatusPendingFinalReview, updatedPayment.Status)
+	require.Equal(t, models.PaymentApprovalStageFinanceManagerFinal, updatedPayment.ApprovalStage)
+	require.NotNil(t, updatedPayment.CashBankID)
+	require.Equal(t, cashBankID, *updatedPayment.CashBankID)
+}

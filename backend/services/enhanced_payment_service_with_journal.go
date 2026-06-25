@@ -200,6 +200,42 @@ func routePaymentToDirector(tx *gorm.DB, payment *models.Payment, financeManager
 	return nil
 }
 
+func routePaymentToAccounting(tx *gorm.DB, payment *models.Payment, approverUserID uint, directorApproval bool) error {
+	if payment == nil {
+		return fmt.Errorf("payment is required")
+	}
+
+	now := time.Now()
+	payment.Status = models.PaymentStatusPendingAccounting
+	payment.ApprovalStage = models.PaymentApprovalStageAccounting
+	if directorApproval {
+		payment.DirectorApprovedBy = &approverUserID
+		payment.DirectorApprovedAt = &now
+	} else {
+		payment.FinanceManagerApprovedBy = &approverUserID
+		payment.FinanceManagerApprovedAt = &now
+	}
+	payment.ApprovedBy = nil
+	payment.ApprovedAt = nil
+	payment.RejectedBy = nil
+	payment.RejectedAt = nil
+	payment.RejectionReason = ""
+
+	if err := tx.Save(payment).Error; err != nil {
+		return fmt.Errorf("failed to route payment to accounting review: %w", err)
+	}
+
+	return nil
+}
+
+func isPaymentAwaitingPostingReview(payment *models.Payment) bool {
+	if payment == nil {
+		return false
+	}
+
+	return payment.Status == models.PaymentStatusPendingFinalReview
+}
+
 func validateExpensePaymentAccountUsage(account models.Account, amount, pphAmount float64, allowLiabilityOverpayment bool) error {
 	if account.Type != models.AccountTypeLiability {
 		return nil
@@ -595,7 +631,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}
 
-	if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) {
+	if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) && !isPaymentAwaitingPostingReview(&payment) {
 		return nil, fmt.Errorf("payment is not awaiting approval (current: %s)", payment.Status)
 	}
 	if payment.PaymentType != models.PaymentTypeExpense {
@@ -606,31 +642,40 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		return nil, err
 	}
 
-	expenseAccountID := uint(0)
-	cashBankID := uint(0)
-	if payment.ExpenseAccountID != nil {
-		expenseAccountID = *payment.ExpenseAccountID
-	}
-	if payment.CashBankID != nil {
-		cashBankID = *payment.CashBankID
-	}
-	if expenseAccountID == 0 || cashBankID == 0 {
-		legacyExpenseAccountID, legacyCashBankID := models.ExtractExpenseDraftRoutingFromReference(payment.Reference)
-		if expenseAccountID == 0 {
-			expenseAccountID = legacyExpenseAccountID
-		}
-		if cashBankID == 0 {
-			cashBankID = legacyCashBankID
-		}
-	}
-	if expenseAccountID == 0 || cashBankID == 0 {
-		return nil, fmt.Errorf("cannot find expense account or cash bank info in draft payment %s; please update and re-submit", payment.Code)
-	}
-
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
-		directorFinalApproval := isPaymentDirectorApprovalPending(&payment)
+		directorApprovalStep := isPaymentDirectorApprovalPending(&payment)
 		if payment.Status == models.PaymentStatusDraft && (payment.RequireDirectorApproval || requireDirectorApproval) {
 			return routePaymentToDirector(tx, &payment, approverUserID)
+		}
+		if payment.Status == models.PaymentStatusDraft {
+			return routePaymentToAccounting(tx, &payment, approverUserID, false)
+		}
+		if directorApprovalStep {
+			return routePaymentToAccounting(tx, &payment, approverUserID, true)
+		}
+		if !isPaymentAwaitingPostingReview(&payment) {
+			return fmt.Errorf("payment is not ready for final finance manager review (current: %s)", payment.Status)
+		}
+
+		expenseAccountID := uint(0)
+		cashBankID := uint(0)
+		if payment.ExpenseAccountID != nil {
+			expenseAccountID = *payment.ExpenseAccountID
+		}
+		if payment.CashBankID != nil {
+			cashBankID = *payment.CashBankID
+		}
+		if expenseAccountID == 0 || cashBankID == 0 {
+			legacyExpenseAccountID, legacyCashBankID := models.ExtractExpenseDraftRoutingFromReference(payment.Reference)
+			if expenseAccountID == 0 {
+				expenseAccountID = legacyExpenseAccountID
+			}
+			if cashBankID == 0 {
+				cashBankID = legacyCashBankID
+			}
+		}
+		if expenseAccountID == 0 || cashBankID == 0 {
+			return fmt.Errorf("cannot find expense account or cash bank info in draft payment %s; please update and re-submit", payment.Code)
 		}
 
 		cashBank, err := eps.cashBankRepo.FindByID(cashBankID)
@@ -743,10 +788,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		payment.Status = models.PaymentStatusCompleted
 		now := time.Now()
 		payment.ApprovalStage = ""
-		if directorFinalApproval {
-			payment.DirectorApprovedBy = &approverUserID
-			payment.DirectorApprovedAt = &now
-		} else {
+		if payment.FinanceManagerApprovedBy == nil {
 			payment.FinanceManagerApprovedBy = &approverUserID
 			payment.FinanceManagerApprovedAt = &now
 		}
@@ -840,7 +882,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}
 
-	if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) {
+	if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) && !isPaymentAwaitingPostingReview(&payment) {
 		return nil, fmt.Errorf("payment is not awaiting approval (current: %s)", payment.Status)
 	}
 	if payment.PaymentType == models.PaymentTypeExpense || strings.HasPrefix(payment.PaymentType, "TAX_PPN") {
@@ -851,28 +893,37 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		return nil, err
 	}
 
-	cashBankID := uint(0)
-	if payment.CashBankID != nil {
-		cashBankID = *payment.CashBankID
-	}
-	if cashBankID == 0 {
-		cashBankID = models.ExtractCashBankDraftRoutingFromReference(payment.Reference)
-	}
-	if cashBankID == 0 {
-		return nil, fmt.Errorf("cannot find cash bank info in draft payment %s; please update and re-submit", payment.Code)
-	}
-
-	pendingDraftAllocations := models.HasPendingDraftAllocationsReference(payment.Reference)
 	var journalResult *PaymentJournalResult
 	response := &PaymentWithJournalResponse{
 		Success: false,
 	}
 
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
-		directorFinalApproval := isPaymentDirectorApprovalPending(&payment)
+		directorApprovalStep := isPaymentDirectorApprovalPending(&payment)
 		if payment.Status == models.PaymentStatusDraft && (payment.RequireDirectorApproval || requireDirectorApproval) {
 			return routePaymentToDirector(tx, &payment, approverUserID)
 		}
+		if payment.Status == models.PaymentStatusDraft {
+			return routePaymentToAccounting(tx, &payment, approverUserID, false)
+		}
+		if directorApprovalStep {
+			return routePaymentToAccounting(tx, &payment, approverUserID, true)
+		}
+		if !isPaymentAwaitingPostingReview(&payment) {
+			return fmt.Errorf("payment is not ready for final finance manager review (current: %s)", payment.Status)
+		}
+
+		cashBankID := uint(0)
+		if payment.CashBankID != nil {
+			cashBankID = *payment.CashBankID
+		}
+		if cashBankID == 0 {
+			cashBankID = models.ExtractCashBankDraftRoutingFromReference(payment.Reference)
+		}
+		if cashBankID == 0 {
+			return fmt.Errorf("cannot find cash bank info in draft payment %s; please update and re-submit", payment.Code)
+		}
+		pendingDraftAllocations := models.HasPendingDraftAllocationsReference(payment.Reference)
 
 		cashBank, err := eps.cashBankRepo.FindByID(cashBankID)
 		if err != nil {
@@ -993,10 +1044,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		payment.Status = models.PaymentStatusCompleted
 		now := time.Now()
 		payment.ApprovalStage = ""
-		if directorFinalApproval {
-			payment.DirectorApprovedBy = &approverUserID
-			payment.DirectorApprovedAt = &now
-		} else {
+		if payment.FinanceManagerApprovedBy == nil {
 			payment.FinanceManagerApprovedBy = &approverUserID
 			payment.FinanceManagerApprovedAt = &now
 		}
@@ -1037,6 +1085,19 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 	if err != nil {
 		return nil, err
 	}
+	if response.Payment == nil {
+		response.Payment = &payment
+		response.Contact = &payment.Contact
+		response.Success = true
+		switch payment.Status {
+		case models.PaymentStatusPending:
+			response.Message = fmt.Sprintf("Payment %s approved and sent to director", payment.Code)
+		case models.PaymentStatusPendingAccounting:
+			response.Message = fmt.Sprintf("Payment %s approved and sent to accounting", payment.Code)
+		default:
+			response.Message = fmt.Sprintf("Payment %s updated", payment.Code)
+		}
+	}
 	return response, nil
 }
 
@@ -1052,7 +1113,11 @@ func (eps *EnhancedPaymentServiceWithJournal) RejectPayment(paymentID uint, appr
 			return fmt.Errorf("payment not found: %w", err)
 		}
 
-		if payment.Status != models.PaymentStatusDraft && !isPaymentDirectorApprovalPending(&payment) {
+		canReject := payment.Status == models.PaymentStatusDraft ||
+			payment.Status == models.PaymentStatusPendingAccounting ||
+			payment.Status == models.PaymentStatusPendingFinalReview ||
+			isPaymentDirectorApprovalPending(&payment)
+		if !canReject {
 			return fmt.Errorf("payment is not awaiting approval (current: %s)", payment.Status)
 		}
 
@@ -1094,7 +1159,7 @@ func (eps *EnhancedPaymentServiceWithJournal) RejectPayment(paymentID uint, appr
 	return &payment, nil
 }
 
-// UpdateDraftPayment allows modifying fields of a payment that is in DRAFT status without creating journals
+// UpdateDraftPayment allows modifying fields before a payment is posted to journal.
 func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint, req func(tx *gorm.DB, p *models.Payment) error) (*models.Payment, error) {
 	var payment models.Payment
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
@@ -1102,16 +1167,21 @@ func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint,
 			return fmt.Errorf("payment not found: %w", err)
 		}
 
-		if payment.Status != models.PaymentStatusDraft {
-			return fmt.Errorf("only payments in DRAFT status can be updated (current status: %s)", payment.Status)
+		originalStatus := payment.Status
+		if originalStatus != models.PaymentStatusDraft && originalStatus != models.PaymentStatusPendingAccounting {
+			return fmt.Errorf("only payments in DRAFT or PENDING_ACCOUNTING status can be updated (current status: %s)", payment.Status)
 		}
 
 		if err := req(tx, &payment); err != nil {
 			return fmt.Errorf("failed to apply updates: %w", err)
 		}
+		if originalStatus == models.PaymentStatusPendingAccounting {
+			payment.Status = models.PaymentStatusPendingFinalReview
+			payment.ApprovalStage = models.PaymentApprovalStageFinanceManagerFinal
+		}
 
 		if err := tx.Save(&payment).Error; err != nil {
-			return fmt.Errorf("failed to save updated draft payment: %w", err)
+			return fmt.Errorf("failed to save updated payment: %w", err)
 		}
 
 		return nil
