@@ -113,10 +113,11 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
       border="1px" 
       borderColor={borderColor}
       overflow="hidden"
+      maxW="full"
     >
       {title && (
-        <CardHeader pb={0}>
-          <Heading size="md" color={textColor}>{title}</Heading>
+        <CardHeader pb={0} px={{ base: 4, md: 5 }}>
+          <Heading size={{ base: 'sm', md: 'md' }} color={textColor}>{title}</Heading>
         </CardHeader>
       )}
       <CardBody p={0}>
@@ -125,8 +126,8 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
             <Text color={mutedTextColor}>{emptyMessage || 'No data available'}</Text>
           </Flex>
         ) : (
-          <Box overflowX="auto">
-            <ChakraTable variant="simple" size="md">
+          <Box overflowX="auto" maxW="full" className="mobile-scroll-x">
+            <ChakraTable variant="simple" size={{ base: 'sm', md: 'md' }} minW={{ base: '720px', md: 'full' }}>
               <Thead bg={bgHeader}>
                 <Tr>
                   {columns.map((column, index) => (
@@ -136,8 +137,8 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
                       textTransform="none"
                       fontSize="sm"
                       color={headerTextColor}
-                      px={6}
-                      py={4}
+                      px={{ base: 3, md: 6 }}
+                      py={{ base: 3, md: 4 }}
                       borderBottom="1px"
                       borderColor={borderColor}
                     >
@@ -150,8 +151,8 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
                       textTransform="none"
                       fontSize="sm"
                       color={headerTextColor}
-                      px={6}
-                      py={4}
+                      px={{ base: 3, md: 6 }}
+                      py={{ base: 3, md: 4 }}
                       borderBottom="1px"
                       borderColor={borderColor}
                       textAlign="center"
@@ -171,8 +172,8 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
                     {columns.map((column, index) => (
                       <Td 
                         key={index}
-                        px={6}
-                        py={4}
+                        px={{ base: 3, md: 6 }}
+                        py={{ base: 3, md: 4 }}
                         fontSize="sm"
                         color={textColor}
                         borderBottom={rowIndex === data.length - 1 ? 'none' : '1px'}
@@ -183,8 +184,8 @@ function Table<T>({ columns, data, keyField, title, actions, isLoading, emptyMes
                     ))}
                     {actions && (
                       <Td
-                        px={6}
-                        py={4}
+                        px={{ base: 3, md: 6 }}
+                        py={{ base: 3, md: 4 }}
                         borderBottom={rowIndex === data.length - 1 ? 'none' : '1px'}
                         borderColor={borderColor}
                       >

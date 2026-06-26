@@ -54,6 +54,7 @@ interface FinanceStaffSnapshot {
 interface PendingPurchaseRequestItem {
   id: number;
   pr_number: string;
+  title?: string;
   requester_name: string;
   department?: string;
   project_name?: string;
@@ -90,6 +91,9 @@ interface FinanceManagerApprovedPurchaseNotification {
   notification_id: number;
   purchase_id: number;
   purchase_code: string;
+  pr_number?: string;
+  pr_title?: string;
+  pr_department?: string;
   vendor_name: string;
   total_amount: number;
   approved_at?: string | null;
@@ -245,9 +249,19 @@ export const FinanceStaffDashboard: React.FC = () => {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorderColor = useColorModeValue("gray.200", "whiteAlpha.200");
   const softPanelBg = useColorModeValue("gray.50", "whiteAlpha.50");
+  const highlightedPanelBg = useColorModeValue("blue.50", "blue.950");
+  const highlightedPanelBorder = useColorModeValue("blue.200", "blue.700");
+  const highlightedPanelIcon = useColorModeValue("blue.500", "blue.300");
   const approvedNoticeBg = useColorModeValue("green.50", "green.900");
   const approvedNoticeBorder = useColorModeValue("green.200", "green.700");
   const approvedNoticeText = useColorModeValue("green.700", "green.100");
+  const reviewedNoticeBg = useColorModeValue("green.50", "green.950");
+  const reviewedNoticeBorder = useColorModeValue("green.200", "green.700");
+  const reviewedNoticeText = useColorModeValue("green.700", "green.200");
+  const unreadSummaryBg = useColorModeValue("yellow.50", "yellow.950");
+  const unreadSummaryBorder = useColorModeValue("yellow.200", "yellow.700");
+  const unreadSummaryText = useColorModeValue("yellow.700", "yellow.200");
+  const unreadSummaryIcon = useColorModeValue("yellow.600", "yellow.300");
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -370,6 +384,32 @@ export const FinanceStaffDashboard: React.FC = () => {
                       <Text fontSize="sm" color={mutedTextColor}>
                         Vendor: {purchase.vendor_name || "-"}
                       </Text>
+                      {(purchase.pr_number ||
+                        purchase.pr_title ||
+                        purchase.pr_department) && (
+                        <VStack align="start" spacing={0.5} mt={2}>
+                          {purchase.pr_number && (
+                            <Text fontSize="xs" color={mutedTextColor}>
+                              PR: {purchase.pr_number}
+                            </Text>
+                          )}
+                          {purchase.pr_title && (
+                            <Text
+                              fontSize="xs"
+                              color={approvedNoticeText}
+                              fontWeight="semibold"
+                              noOfLines={2}
+                            >
+                              Judul PR: {purchase.pr_title}
+                            </Text>
+                          )}
+                          {purchase.pr_department && (
+                            <Text fontSize="xs" color={mutedTextColor}>
+                              Divisi: {purchase.pr_department}
+                            </Text>
+                          )}
+                        </VStack>
+                      )}
                       <Text fontSize="sm" color={mutedTextColor}>
                         {purchase.message}
                       </Text>
@@ -482,6 +522,17 @@ export const FinanceStaffDashboard: React.FC = () => {
                             </Text>
                             <Badge colorScheme="orange">Need Review</Badge>
                           </HStack>
+                          {request.title && (
+                            <Text
+                              fontSize="sm"
+                              color={headingColor}
+                              fontWeight="semibold"
+                              noOfLines={2}
+                              mb={1}
+                            >
+                              Judul PR: {request.title}
+                            </Text>
+                          )}
                           <Text fontSize="sm" color={mutedTextColor}>
                             Requester: {request.requester_name}{" "}
                             {request.department
@@ -561,14 +612,14 @@ export const FinanceStaffDashboard: React.FC = () => {
                 <Box
                   p={4}
                   borderRadius="lg"
-                  bg="green.50"
+                  bg={reviewedNoticeBg}
                   border="1px solid"
-                  borderColor="green.200"
+                  borderColor={reviewedNoticeBorder}
                 >
-                  <Text fontSize="sm" color="green.700">
+                  <Text fontSize="sm" color={reviewedNoticeText}>
                     Reviewed This Month
                   </Text>
-                  <Heading size="md" mt={1} color="green.700">
+                  <Heading size="md" mt={1} color={reviewedNoticeText}>
                     {quickStats?.monthly_reviewed_purchase_count || 0} PR
                   </Heading>
                 </Box>
@@ -724,10 +775,14 @@ export const FinanceStaffDashboard: React.FC = () => {
                       key={notification.id}
                       p={4}
                       borderRadius="lg"
-                      bg={notification.is_read ? softPanelBg : "blue.50"}
+                      bg={
+                        notification.is_read ? softPanelBg : highlightedPanelBg
+                      }
                       border={notification.is_read ? "none" : "1px solid"}
                       borderColor={
-                        notification.is_read ? "transparent" : "blue.200"
+                        notification.is_read
+                          ? "transparent"
+                          : highlightedPanelBorder
                       }
                     >
                       <Flex justify="space-between" align="start" gap={3}>
@@ -753,7 +808,11 @@ export const FinanceStaffDashboard: React.FC = () => {
                         </Box>
                         <Icon
                           as={FiBell}
-                          color={notification.is_read ? "gray.400" : "blue.500"}
+                          color={
+                            notification.is_read
+                              ? "gray.400"
+                              : highlightedPanelIcon
+                          }
                           mt={1}
                         />
                       </Flex>
@@ -773,17 +832,17 @@ export const FinanceStaffDashboard: React.FC = () => {
                 <Box
                   p={4}
                   borderRadius="lg"
-                  bg="yellow.50"
+                  bg={unreadSummaryBg}
                   border="1px solid"
-                  borderColor="yellow.200"
+                  borderColor={unreadSummaryBorder}
                 >
                   <HStack spacing={2} mb={1}>
-                    <Icon as={FiClock} color="yellow.600" />
-                    <Text fontWeight="semibold" color="yellow.700">
+                    <Icon as={FiClock} color={unreadSummaryIcon} />
+                    <Text fontWeight="semibold" color={unreadSummaryText}>
                       Unread Notifications
                     </Text>
                   </HStack>
-                  <Text color="yellow.700">
+                  <Text color={unreadSummaryText}>
                     {quickStats?.unread_notifications_count || 0} notifications
                     still need your attention.
                   </Text>

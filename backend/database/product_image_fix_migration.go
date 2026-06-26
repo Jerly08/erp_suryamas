@@ -17,14 +17,14 @@ func ProductImageFixMigration(db *gorm.DB) {
 	log.Println("🔧 Starting Product Image Fix Migration...")
 
 	migrationID := "product_image_fix_v1.0"
-	
+
 	// Check if this migration has already been run (with better error handling)
 	var existingMigration models.MigrationRecord
 	// Use silent logging for the initial check to avoid "record not found" error logs
 	silentDB := db.Session(&gorm.Session{Logger: db.Logger.LogMode(logger.Silent)})
 	err := silentDB.Where("migration_id = ?", migrationID).First(&existingMigration).Error
 	if err == nil {
-		log.Printf("✅ Product Image Fix Migration already completed at %s - skipping", 
+		log.Printf("✅ Product Image Fix Migration already completed at %s - skipping",
 			existingMigration.AppliedAt.Format("2006-01-02 15:04:05"))
 		log.Printf("ℹ️  Previous migration description: %s", existingMigration.Description)
 		return
@@ -32,7 +32,7 @@ func ProductImageFixMigration(db *gorm.DB) {
 		log.Printf("⚠️  Warning: Could not check migration status: %v", err)
 		log.Printf("ℹ️  Proceeding with migration anyway (this is safe)...")
 	} else {
-		log.Printf("ℹ️  Product Image Fix Migration not found in records, proceeding with migration...")
+		log.Printf("ℹ️  Product Image Fix Migration is pending, proceeding with migration...")
 	}
 
 	// Use separate transactions for each fix to avoid rollback cascades
@@ -63,7 +63,7 @@ func ProductImageFixMigration(db *gorm.DB) {
 
 	// Log what we're about to record
 	log.Printf("📝 Recording migration completion: %s (applied %d fixes)", migrationID, len(fixesApplied))
-	
+
 	// Use a session with silent logging for the migration record creation to avoid cluttering logs
 	silentDBCreate := db.Session(&gorm.Session{Logger: db.Logger.LogMode(logger.Silent)}) // Silent mode
 	if err := silentDBCreate.Create(&migrationRecord).Error; err != nil {
@@ -89,14 +89,14 @@ func ProductImageFixMigration(db *gorm.DB) {
 // ensureImagePathColumn ensures the image_path column has the correct specifications
 func ensureImagePathColumn(db *gorm.DB) error {
 	log.Println("  🔧 Ensuring image_path column specifications...")
-	
+
 	// Check current column specification
 	var columnInfo struct {
 		DataType      string `json:"data_type"`
 		IsNullable    string `json:"is_nullable"`
 		ColumnDefault string `json:"column_default"`
 	}
-	
+
 	err := db.Raw(`
 		SELECT data_type, is_nullable, column_default 
 		FROM information_schema.columns 
@@ -108,13 +108,13 @@ func ensureImagePathColumn(db *gorm.DB) error {
 		return err
 	}
 
-	log.Printf("    📊 Current image_path column: type=%s, nullable=%s, default=%s", 
+	log.Printf("    📊 Current image_path column: type=%s, nullable=%s, default=%s",
 		columnInfo.DataType, columnInfo.IsNullable, columnInfo.ColumnDefault)
 
 	// Ensure column is adequately sized (VARCHAR(255) should be sufficient)
 	if !strings.Contains(strings.ToLower(columnInfo.DataType), "varchar") {
 		log.Println("    🔧 Adjusting image_path column specifications...")
-		
+
 		// Modify column to ensure proper size (PostgreSQL syntax)
 		// Use separate statements to avoid transaction issues
 		err = db.Exec("ALTER TABLE products ALTER COLUMN image_path TYPE VARCHAR(255)").Error
@@ -124,7 +124,7 @@ func ensureImagePathColumn(db *gorm.DB) error {
 		} else {
 			log.Println("    ✅ Modified image_path column type to VARCHAR(255)")
 		}
-		
+
 		// Set default value in separate statement
 		err = db.Exec("ALTER TABLE products ALTER COLUMN image_path SET DEFAULT ''").Error
 		if err != nil {
@@ -181,7 +181,7 @@ func cleanupInvalidImagePaths(db *gorm.DB) error {
 	fixedCount := 0
 	for _, product := range problematicProducts {
 		var newImagePath string
-		
+
 		// Try to fix common issues
 		if len(product.ImagePath) > 255 {
 			// Path too long - reset to empty
@@ -190,15 +190,15 @@ func cleanupInvalidImagePaths(db *gorm.DB) error {
 		} else {
 			// Fix path separators and format
 			path := product.ImagePath
-			
+
 			// Convert backslashes to forward slashes
 			path = strings.ReplaceAll(path, "\\", "/")
-			
+
 			// Remove double slashes
 			for strings.Contains(path, "//") {
 				path = strings.ReplaceAll(path, "//", "/")
 			}
-			
+
 			// Ensure path starts with /uploads/ if it contains uploads
 			if strings.Contains(path, "uploads") && !strings.HasPrefix(path, "/uploads/") {
 				if strings.Contains(path, "/uploads/") {
@@ -211,20 +211,20 @@ func cleanupInvalidImagePaths(db *gorm.DB) error {
 					path = "/" + path[index:]
 				}
 			}
-			
+
 			newImagePath = path
 		}
-		
+
 		// Update the product if the path changed
 		if newImagePath != product.ImagePath {
 			err := db.Model(&models.Product{}).
 				Where("id = ?", product.ID).
 				Update("image_path", newImagePath).Error
-			
+
 			if err != nil {
 				log.Printf("    ❌ Failed to fix image path for product %d: %v", product.ID, err)
 			} else {
-				log.Printf("    ✅ Fixed image path for product %d (%s): %s -> %s", 
+				log.Printf("    ✅ Fixed image path for product %d (%s): %s -> %s",
 					product.ID, product.Code, product.ImagePath, newImagePath)
 				fixedCount++
 			}
@@ -256,4 +256,3 @@ func ensureUploadsDirectory() error {
 	log.Println("    ✅ Upload directory structure ensured")
 	return nil
 }
-

@@ -77,17 +77,17 @@ export const DataTable = <T extends Record<string, any>>({
   };
 
   return (
-    <Box>
+    <Box maxW="full">
       {title && (
-        <Heading size="md" mb={4} px={4} pt={4}>
+        <Heading size={{ base: 'sm', md: 'md' }} mb={4} px={{ base: 3, md: 4 }} pt={4}>
           {title}
         </Heading>
       )}
 
       {searchable && (
-        <Box px={4} pb={4}>
-          <HStack>
-            <Box position="relative" maxW="300px">
+        <Box px={{ base: 3, md: 4 }} pb={4}>
+          <HStack align="stretch">
+            <Box position="relative" maxW={{ base: 'full', md: '300px' }} w="full">
               <FiSearch
                 style={{
                   position: 'absolute',
@@ -110,14 +110,14 @@ export const DataTable = <T extends Record<string, any>>({
         </Box>
       )}
 
-      <TableContainer>
-        <Table variant="simple">
+      <TableContainer maxW="full" overflowX="auto" className="mobile-scroll-x">
+        <Table variant="simple" size={{ base: 'sm', md: 'md' }} minW={{ base: '720px', md: 'full' }}>
           <Thead>
             <Tr>
               {columns.map((column, index) => (
-                <Th key={index}>{column.header}</Th>
+                <Th key={index} px={{ base: 3, md: 4 }} py={{ base: 3, md: 4 }}>{column.header}</Th>
               ))}
-              {actions && <Th>Actions</Th>}
+              {actions && <Th px={{ base: 3, md: 4 }} py={{ base: 3, md: 4 }}>Actions</Th>}
             </Tr>
           </Thead>
           <Tbody>
@@ -125,9 +125,9 @@ export const DataTable = <T extends Record<string, any>>({
               filteredData.map((row) => (
                 <Tr key={String(row[keyField])}>
                   {columns.map((column, index) => (
-                    <Td key={index}>{renderCellContent(row, column)}</Td>
+                    <Td key={index} px={{ base: 3, md: 4 }} py={{ base: 3, md: 4 }}>{renderCellContent(row, column)}</Td>
                   ))}
-                  {actions && <Td>{actions(row)}</Td>}
+                  {actions && <Td px={{ base: 3, md: 4 }} py={{ base: 3, md: 4 }}>{actions(row)}</Td>}
                 </Tr>
               ))
             ) : (
@@ -144,7 +144,14 @@ export const DataTable = <T extends Record<string, any>>({
       </TableContainer>
 
       {pagination && totalPages > 1 && (
-        <Flex justify="space-between" align="center" px={4} py={4}>
+        <Flex
+          justify="space-between"
+          align={{ base: 'stretch', md: 'center' }}
+          direction={{ base: 'column', md: 'row' }}
+          gap={3}
+          px={{ base: 3, md: 4 }}
+          py={4}
+        >
           <Text fontSize="sm" color="gray.600">
             Page {currentPage} of {totalPages}
           </Text>

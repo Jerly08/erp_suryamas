@@ -11,6 +11,9 @@
 
 html {
   scroll-behavior: smooth;
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 body {
@@ -19,6 +22,24 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color 0.3s ease, color 0.3s ease;
+  width: 100%;
+  min-width: 0;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  max-width: 100%;
 }
 
 /* Light theme (default) */
@@ -186,7 +207,8 @@ body {
   border-bottom: 1px solid var(--border-color);
   font-size: 0.875rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .table td {
@@ -211,7 +233,7 @@ body {
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
 }
 
 .badge-success {
@@ -348,6 +370,31 @@ body {
   box-shadow: var(--shadow);
 }
 
+.app-page-content {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-page-content > * {
+  min-width: 0;
+}
+
+.chakra-table__container,
+.table-container,
+.mobile-scroll-x {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chakra-modal__content {
+  max-width: min(calc(100vw - 1rem), var(--chakra-sizes-6xl));
+}
+
+.chakra-modal__body {
+  min-height: 0;
+}
+
 /* Form styles */
 .form-input,
 .form-select,
@@ -401,12 +448,44 @@ body {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .navbar {
+    padding: 0.5rem 0.75rem;
+  }
+
   .table-container {
     overflow-x: auto;
   }
   
-  .table {
-    min-width: 600px;
+  .table,
+  .chakra-table {
+    min-width: max-content;
+  }
+
+  .table th,
+  .table td {
+    padding: 0.625rem 0.75rem;
+    white-space: nowrap;
+  }
+
+  .chakra-modal__content {
+    margin: 0.5rem !important;
+    max-width: calc(100vw - 1rem) !important;
+    max-height: calc(100dvh - 1rem) !important;
+    border-radius: 8px !important;
+  }
+
+  .chakra-modal__footer {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .chakra-modal__footer .chakra-button {
+    flex: 1 1 auto;
+    min-width: 120px;
+  }
+
+  .chakra-drawer__content {
+    max-width: min(86vw, 320px) !important;
   }
 }
 

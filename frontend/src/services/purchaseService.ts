@@ -104,6 +104,25 @@ export interface Vendor {
   phone?: string;
 }
 
+export interface PurchaseRequestSummary {
+  id: number;
+  pr_number?: string;
+  request_number?: string;
+  title?: string;
+  department?: string;
+  project?: {
+    id: number;
+    code: string;
+    name: string;
+  };
+}
+
+export interface ProjectSummary {
+  id: number;
+  code: string;
+  name: string;
+}
+
 export interface Purchase {
   id: number;
   code: string;
@@ -159,6 +178,8 @@ export interface Purchase {
   purchase_request_id?: number;
   project_id?: number;
   vendor?: Vendor;
+  purchase_request?: PurchaseRequestSummary | null;
+  project?: ProjectSummary | null;
   purchase_items?: PurchaseItem[];
   approval_request?: {
     id: number;

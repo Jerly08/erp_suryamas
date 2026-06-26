@@ -78,15 +78,16 @@ type Purchase struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Vendor          Contact          `json:"vendor" gorm:"foreignKey:VendorID"`
-	User            User             `json:"user" gorm:"foreignKey:UserID"`
-	PurchaseItems   []PurchaseItem   `json:"purchase_items" gorm:"foreignKey:PurchaseID"`
-	BankAccount     *CashBank        `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
-	CreditAccount   *Account         `json:"credit_account,omitempty" gorm:"foreignKey:CreditAccountID"`
-	ApprovalRequest *ApprovalRequest `json:"approval_request,omitempty" gorm:"foreignKey:ApprovalRequestID"`
-	Approver        *User            `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	PurchaseRequest *PurchaseRequest `json:"purchase_request,omitempty" gorm:"foreignKey:PurchaseRequestID"`
-	Project         *Project         `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	Vendor           Contact           `json:"vendor" gorm:"foreignKey:VendorID"`
+	User             User              `json:"user" gorm:"foreignKey:UserID"`
+	PurchaseItems    []PurchaseItem    `json:"purchase_items" gorm:"foreignKey:PurchaseID"`
+	PurchasePayments []PurchasePayment `json:"purchase_payments,omitempty" gorm:"foreignKey:PurchaseID"`
+	BankAccount      *CashBank         `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
+	CreditAccount    *Account          `json:"credit_account,omitempty" gorm:"foreignKey:CreditAccountID"`
+	ApprovalRequest  *ApprovalRequest  `json:"approval_request,omitempty" gorm:"foreignKey:ApprovalRequestID"`
+	Approver         *User             `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	PurchaseRequest  *PurchaseRequest  `json:"purchase_request,omitempty" gorm:"foreignKey:PurchaseRequestID"`
+	Project          *Project          `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
 }
 
 type PurchaseItem struct {

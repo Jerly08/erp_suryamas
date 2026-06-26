@@ -151,6 +151,17 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
     return translateOrFallback(translationKey, fallback);
   };
 
+  const getPurchaseRequestNumber = (purchase: Purchase) =>
+    purchase.purchase_request?.pr_number ||
+    purchase.purchase_request?.request_number ||
+    (purchase.purchase_request_id ? `#${purchase.purchase_request_id}` : '');
+
+  const getPurchaseRequestTitle = (purchase: Purchase) =>
+    purchase.purchase_request?.title?.trim() || '';
+
+  const getPurchaseRequestDepartment = (purchase: Purchase) =>
+    purchase.purchase_request?.department?.trim() || '';
+
   return (
     <Card boxShadow="sm" borderRadius="lg" borderWidth="1px" borderColor={borderColor}>
       <CardHeader>
@@ -177,7 +188,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                 <Tr>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.purchaseNumber', 'PURCHASE #')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.vendor', 'VENDOR')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">PR / Project</Th>
+                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">PR / Divisi / Project</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.date', 'DATE')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.total', 'TOTAL')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.paidAmount', 'PAID AMOUNT')}</Th>
@@ -210,17 +221,34 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                         {purchase.vendor?.name || 'N/A'}
                       </Text>
                     </Td>
-                    <Td borderColor={borderColor} py={3}>
-                      {(purchase as any).purchase_request_id || (purchase as any).project_id ? (
+                    <Td borderColor={borderColor} py={3} minW="190px">
+                      {purchase.purchase_request_id || purchase.project_id ? (
                         <Flex direction="column" align="flex-start" gap={1}>
-                          {(purchase as any).purchase_request_id && (
-                            <Badge colorScheme="blue" variant="subtle" fontSize="2xs">
-                              PR: {(purchase as any).purchase_request?.request_number || `#${(purchase as any).purchase_request_id}`}
-                            </Badge>
+                          {purchase.purchase_request_id && (
+                            <>
+                              <Badge colorScheme="blue" variant="subtle" fontSize="2xs">
+                                PR: {getPurchaseRequestNumber(purchase)}
+                              </Badge>
+                              {getPurchaseRequestTitle(purchase) && (
+                                <Text
+                                  fontSize="xs"
+                                  color={primaryTextColor}
+                                  fontWeight="semibold"
+                                  noOfLines={2}
+                                >
+                                  Judul: {getPurchaseRequestTitle(purchase)}
+                                </Text>
+                              )}
+                              {getPurchaseRequestDepartment(purchase) && (
+                                <Text fontSize="xs" color={textColor} noOfLines={1}>
+                                  Divisi: {getPurchaseRequestDepartment(purchase)}
+                                </Text>
+                              )}
+                            </>
                           )}
-                          {(purchase as any).project_id && (
+                          {purchase.project_id && (
                             <Badge colorScheme="purple" variant="subtle" fontSize="2xs">
-                              PROJ: {(purchase as any).project?.code || `#${(purchase as any).project_id}`}
+                              PROJ: {purchase.project?.code || `#${purchase.project_id}`}
                             </Badge>
                           )}
                         </Flex>

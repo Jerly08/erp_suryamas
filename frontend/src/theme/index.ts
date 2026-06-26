@@ -32,6 +32,15 @@ const theme = extendTheme({
         bg: props.colorMode === 'dark' ? 'var(--bg-primary)' : 'var(--bg-secondary)',
         color: props.colorMode === 'dark' ? 'var(--text-primary)' : 'var(--text-primary)',
         transition: 'background-color 0.3s ease, color 0.3s ease',
+        minW: 0,
+        overflowX: 'hidden',
+      },
+      'html, body': {
+        width: '100%',
+        minH: '100dvh',
+      },
+      'img, svg, video, canvas': {
+        maxW: '100%',
       },
       '*::placeholder': {
         color: props.colorMode === 'dark' ? 'var(--text-secondary)' : 'var(--text-secondary)',
@@ -45,6 +54,10 @@ const theme = extendTheme({
     Button: {
       defaultProps: {
         colorScheme: 'brand',
+      },
+      baseStyle: {
+        minW: 0,
+        whiteSpace: 'normal',
       },
       variants: {
         solid: {
@@ -70,6 +83,17 @@ const theme = extendTheme({
       }),
     },
     Table: {
+      baseStyle: {
+        table: {
+          width: '100%',
+        },
+        th: {
+          whiteSpace: 'nowrap',
+        },
+        td: {
+          verticalAlign: 'middle',
+        },
+      },
       variants: {
         simple: (props: StyleFunctionProps) => ({
           th: {
@@ -95,10 +119,59 @@ const theme = extendTheme({
         }),
       },
     },
+    Modal: {
+      baseStyle: {
+        dialogContainer: {
+          p: { base: 2, md: 4 },
+        },
+        dialog: {
+          w: { base: 'calc(100vw - 1rem)', md: 'auto' },
+          maxW: { base: 'calc(100vw - 1rem)', md: 'calc(100vw - 3rem)' },
+          maxH: { base: 'calc(100dvh - 1rem)', md: 'calc(100vh - 3rem)' },
+          my: { base: 2, md: 8 },
+          overflow: 'hidden',
+        },
+        header: {
+          px: { base: 4, md: 6 },
+          py: { base: 3, md: 4 },
+        },
+        body: {
+          px: { base: 4, md: 6 },
+          py: { base: 3, md: 4 },
+          overflowY: 'auto',
+          minH: 0,
+        },
+        footer: {
+          px: { base: 4, md: 6 },
+          py: { base: 3, md: 4 },
+          flexWrap: 'wrap',
+          gap: 2,
+        },
+      },
+    },
+    Input: {
+      baseStyle: {
+        field: {
+          minH: { base: '40px', md: 'auto' },
+        },
+      },
+    },
+    Select: {
+      baseStyle: {
+        field: {
+          minH: { base: '40px', md: 'auto' },
+        },
+      },
+    },
+    Textarea: {
+      baseStyle: {
+        minH: { base: '88px', md: '80px' },
+      },
+    },
     Heading: {
       baseStyle: {
         fontWeight: '600',
-        letterSpacing: 'tight',
+        letterSpacing: 0,
       },
     },
     Text: {

@@ -706,6 +706,7 @@ func AutoMigrate(db *gorm.DB) {
 		&models.CashBankFrozenHistory{},
 		&models.Payment{},
 		&models.PaymentAllocation{},
+		&models.PurchasePayment{},
 
 		// Payroll
 		&models.PayrollRun{},
@@ -789,6 +790,7 @@ func AutoMigrate(db *gorm.DB) {
 
 	// Ensure SSOT tables exist without forcing constraint drops
 	EnsureSSOTTables(db)
+	BackfillPurchasePaymentLinks(db)
 	AlignPayrollRecognitionDatesWithJournals(db)
 	BackfillPayrollBPJSSettlementStatus(db)
 	MigrateLegacyPayrollCombinedJournals(db)
@@ -2028,7 +2030,9 @@ func FixSalesDataIntegrity(db *gorm.DB) {
 
 	// Check if this migration has already been run
 	var existingMigration models.MigrationRecord
-	if err := db.Where("migration_id = ?", migrationID).First(&existingMigration).Error; err == nil {
+	if err := db.Where("migration_id = ?", migrationID).Find(&existingMigration).Error; err != nil {
+		log.Printf("Warning: failed to check sales data integrity migration record: %v", err)
+	} else if existingMigration.ID != 0 {
 		log.Printf("âœ… Sales Data Integrity Fix already applied at %v, skipping", existingMigration.AppliedAt)
 		return
 	}

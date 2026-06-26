@@ -1112,10 +1112,13 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 		return nil, err
 	}
 
-	// Allow receipt creation for APPROVED, PENDING, and PAID purchases
-	// PAID status might exist if payment was recorded before receipt creation
-	if purchase.Status != models.PurchaseStatusApproved && purchase.Status != models.PurchaseStatusPending && purchase.Status != "PAID" {
-		return nil, errors.New("can only receive items for approved, pending, or paid purchases")
+	// Allow receipt creation after approval/payment while there are still items to receive.
+	// COMPLETED can happen when payment is already fully settled before the goods/service receipt is recorded.
+	if purchase.Status != models.PurchaseStatusApproved &&
+		purchase.Status != models.PurchaseStatusPending &&
+		purchase.Status != "PAID" &&
+		purchase.Status != models.PurchaseStatusCompleted {
+		return nil, errors.New("can only receive items for approved, pending, paid, or completed purchases")
 	}
 
 	// Generate receipt number
@@ -1137,6 +1140,43 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 		return nil, err
 	}
 
+	type validatedReceiptItem struct {
+		remaining int
+	}
+	validatedItems := make(map[uint]validatedReceiptItem)
+	for _, itemReq := range request.ReceiptItems {
+		if itemReq.QuantityReceived <= 0 {
+			return nil, fmt.Errorf("received quantity must be greater than 0 for item %d", itemReq.PurchaseItemID)
+		}
+
+		purchaseItem, err := s.purchaseRepo.GetPurchaseItemByID(itemReq.PurchaseItemID)
+		if err != nil {
+			return nil, err
+		}
+		if purchaseItem.PurchaseID != request.PurchaseID {
+			return nil, errors.New("purchase item does not belong to this purchase")
+		}
+		if !isGoodsReceiptPurchaseItem(purchaseItem.ItemType) {
+			return nil, fmt.Errorf("purchase item %d is %s and does not require a goods receipt", itemReq.PurchaseItemID, purchaseItem.ItemType)
+		}
+
+		receivedSoFar, err := s.purchaseRepo.SumReceivedQtyByPurchaseItem(purchaseItem.ID)
+		if err != nil {
+			return nil, err
+		}
+		remaining := int(purchaseItem.Quantity) - receivedSoFar
+		if remaining <= 0 {
+			return nil, fmt.Errorf("purchase item %d is already fully received", itemReq.PurchaseItemID)
+		}
+		if itemReq.QuantityReceived > remaining {
+			return nil, fmt.Errorf("received quantity (%d) exceeds remaining (%d) for item %d", itemReq.QuantityReceived, remaining, itemReq.PurchaseItemID)
+		}
+
+		validatedItems[itemReq.PurchaseItemID] = validatedReceiptItem{
+			remaining: remaining,
+		}
+	}
+
 	// Create receipt with items
 	createdReceipt, err := s.purchaseRepo.CreateReceipt(receipt)
 	if err != nil {
@@ -1146,29 +1186,7 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 	// Process receipt items and check completion
 	allReceived := true
 	for _, itemReq := range request.ReceiptItems {
-		purchaseItem, err := s.purchaseRepo.GetPurchaseItemByID(itemReq.PurchaseItemID)
-		if err != nil {
-			return nil, err
-		}
-
-		if purchaseItem.PurchaseID != request.PurchaseID {
-			return nil, errors.New("purchase item does not belong to this purchase")
-		}
-
-		// Validate remaining quantity for this item
-		receivedSoFar, err := s.purchaseRepo.SumReceivedQtyByPurchaseItem(purchaseItem.ID)
-		if err != nil {
-			return nil, err
-		}
-		remaining := int(purchaseItem.Quantity) - receivedSoFar
-		if remaining <= 0 {
-			// Nothing left to receive for this item; skip
-			allReceived = allReceived && true
-			continue
-		}
-		if itemReq.QuantityReceived > remaining {
-			return nil, fmt.Errorf("received quantity (%d) exceeds remaining (%d) for item %d", itemReq.QuantityReceived, remaining, itemReq.PurchaseItemID)
-		}
+		validatedItem := validatedItems[itemReq.PurchaseItemID]
 
 		// Create receipt item
 		receiptItem := &models.PurchaseReceiptItem{
@@ -1185,7 +1203,7 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 		}
 
 		// Check if all items are fully received
-		if itemReq.QuantityReceived < purchaseItem.Quantity {
+		if itemReq.QuantityReceived < validatedItem.remaining {
 			allReceived = false
 		}
 	}
@@ -1990,6 +2008,9 @@ func (s *PurchaseService) postFinalApprovedPurchase(purchaseID uint) error {
 		} else {
 			fmt.Printf("?? Marked immediate payment as fully paid\n")
 		}
+		if err := s.ensureImmediatePurchasePaymentRecord(purchase); err != nil {
+			fmt.Printf("?? Warning: Failed to create immediate purchase payment proof: %v\n", err)
+		}
 	}
 
 	// 5. Update Project Actual Cost (if linked to project)
@@ -2618,8 +2639,8 @@ func (s *PurchaseService) validateReceiptItems(receiptItems []models.PurchaseRec
 		found := false
 		for _, purchaseItem := range purchaseItems {
 			if purchaseItem.ID == receiptItem.PurchaseItemID {
-				if strings.EqualFold(strings.TrimSpace(purchaseItem.ItemType), models.PurchaseItemTypePrepaid) {
-					return fmt.Errorf("purchase item %d is PREPAID and does not require a receipt", receiptItem.PurchaseItemID)
+				if !isGoodsReceiptPurchaseItem(purchaseItem.ItemType) {
+					return fmt.Errorf("purchase item %d is %s and does not require a goods receipt", receiptItem.PurchaseItemID, purchaseItem.ItemType)
 				}
 				if receiptItem.QuantityReceived > purchaseItem.Quantity {
 					return fmt.Errorf("received quantity cannot exceed ordered quantity for item %d", receiptItem.PurchaseItemID)
@@ -2633,6 +2654,15 @@ func (s *PurchaseService) validateReceiptItems(receiptItems []models.PurchaseRec
 		}
 	}
 	return nil
+}
+
+func isGoodsReceiptPurchaseItem(itemType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(itemType)) {
+	case "", models.PurchaseItemTypeInventory, models.PurchaseItemTypeAsset:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *PurchaseService) updateReceiptStatus(receiptID uint) error {
@@ -3961,6 +3991,68 @@ func (s *PurchaseService) PayPurchasePPh(purchaseID uint, request models.Purchas
 // GetDB returns the database connection for external services
 func (s *PurchaseService) GetDB() *gorm.DB {
 	return s.db
+}
+
+func (s *PurchaseService) ensureImmediatePurchasePaymentRecord(purchase *models.Purchase) error {
+	if purchase == nil || purchase.ID == 0 || !isImmediatePayment(purchase.PaymentMethod) {
+		return nil
+	}
+
+	amount := purchase.PaidAmount
+	if amount <= 0 {
+		amount = purchase.TotalAmount
+	}
+	if amount <= 0 {
+		return nil
+	}
+
+	if !s.db.Migrator().HasTable(&models.PurchasePayment{}) {
+		if err := s.db.AutoMigrate(&models.PurchasePayment{}); err != nil {
+			return err
+		}
+	}
+
+	var existing models.PurchasePayment
+	if err := s.db.Where("purchase_id = ? AND payment_id IS NULL AND deleted_at IS NULL", purchase.ID).
+		Find(&existing).Error; err != nil {
+		return err
+	}
+
+	paymentNumber := fmt.Sprintf("PAY-%s", strings.ReplaceAll(purchase.Code, "/", "-"))
+	notes := strings.TrimSpace(purchase.PaymentReference)
+	if notes == "" {
+		notes = fmt.Sprintf("Pembayaran langsung purchase %s", purchase.Code)
+	}
+
+	values := map[string]interface{}{
+		"payment_number": paymentNumber,
+		"date":           purchase.Date,
+		"amount":         amount,
+		"method":         purchase.PaymentMethod,
+		"reference":      purchase.PaymentReference,
+		"notes":          notes,
+		"cash_bank_id":   purchase.BankAccountID,
+		"user_id":        purchase.UserID,
+		"payment_id":     nil,
+	}
+
+	if existing.ID != 0 {
+		return s.db.Model(&existing).Updates(values).Error
+	}
+
+	record := models.PurchasePayment{
+		PurchaseID:    purchase.ID,
+		PaymentNumber: paymentNumber,
+		Date:          purchase.Date,
+		Amount:        amount,
+		Method:        purchase.PaymentMethod,
+		Reference:     purchase.PaymentReference,
+		Notes:         notes,
+		CashBankID:    purchase.BankAccountID,
+		UserID:        purchase.UserID,
+	}
+
+	return s.db.Create(&record).Error
 }
 
 // CreateAndPostLegacyForCLI exposes legacy posting for CLI scripts (backfill)

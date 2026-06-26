@@ -52,6 +52,7 @@ interface PendingApproval {
   total_amount: number;
   priority: string;
   requester_name: string;
+  requester_department?: string;
   created_at: string;
   step_name: string;
   time_limit: number;
@@ -67,6 +68,7 @@ interface SubmittedRequest {
   total_amount: number;
   status: string;
   priority: string;
+  requester_department?: string;
   created_at: string;
   completed_at?: string;
   current_step_name: string;
@@ -219,6 +221,11 @@ export const EmployeeDashboard = () => {
                         <Text fontSize="xs" color={mutedTextColor}>
                           {t('common.labels.requestedBy')}: {approval.requester_name} • {new Date(approval.created_at).toLocaleString('id-ID')}
                         </Text>
+                        {approval.requester_department && (
+                          <Text fontSize="xs" color={mutedTextColor}>
+                            Divisi: {approval.requester_department}
+                          </Text>
+                        )}
                       </Box>
                       <Badge
                         colorScheme={approval.priority === 'HIGH' ? 'red' : 'orange'}
@@ -255,6 +262,11 @@ export const EmployeeDashboard = () => {
                         <Text fontSize="xs" color={mutedTextColor}>
                           {new Date(req.created_at).toLocaleString('id-ID')}
                         </Text>
+                        {req.requester_department && (
+                          <Text fontSize="xs" color={mutedTextColor}>
+                            Divisi: {req.requester_department}
+                          </Text>
+                        )}
                       </Box>
                       <Badge
                         colorScheme={req.status === 'APPROVED' ? 'green' : req.status === 'REJECTED' ? 'red' : 'yellow'}

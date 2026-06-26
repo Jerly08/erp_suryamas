@@ -79,30 +79,30 @@ const Modal: React.FC<ModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black bg-opacity-40 p-2 sm:items-center sm:p-4">
       <div 
         ref={modalRef}
-        className={`bg-white rounded-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] flex flex-col`}
+        className={`bg-white rounded-lg shadow-xl w-full ${sizeClasses[size]} max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col`}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b flex justify-between items-center">
-          <h2 className="text-lg font-medium">{title}</h2>
+        <div className="px-4 py-3 border-b flex justify-between items-center gap-3 sm:px-6 sm:py-4">
+          <h2 className="text-base font-medium sm:text-lg">{title}</h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 focus:outline-none"
+            className="min-h-10 min-w-10 shrink-0 text-gray-400 hover:text-gray-600 focus:outline-none"
           >
             ✕
           </button>
         </div>
         
         {/* Body */}
-        <div className="px-6 py-4 overflow-y-auto flex-1">
+        <div className="px-4 py-3 overflow-y-auto flex-1 sm:px-6 sm:py-4">
           {children}
         </div>
         
         {/* Footer */}
         {footer && (
-          <div className="px-6 py-3 border-t bg-gray-50 flex justify-end space-x-2">
+          <div className="px-4 py-3 border-t bg-gray-50 flex flex-col gap-2 sm:flex-row sm:justify-end sm:px-6">
             {footer}
           </div>
         )}
@@ -111,4 +111,4 @@ const Modal: React.FC<ModalProps> = ({
   );
 };
 
-export default Modal; 
+export default Modal;

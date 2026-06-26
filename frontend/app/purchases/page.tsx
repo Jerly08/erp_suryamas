@@ -342,7 +342,9 @@ interface ReceiptItem {
   purchase_item: {
     id: number;
     quantity: number;
-    product: {
+    item_type?: string;
+    description?: string;
+    product?: {
       id: number;
       name: string;
       code: string;
@@ -501,7 +503,7 @@ const formatDate = (date: string) => {
 
 const isReceiptablePurchaseItem = (item?: { item_type?: string | null }) => {
   const itemType = String(item?.item_type || "INVENTORY").toUpperCase();
-  return itemType !== "PREPAID" && itemType !== "EXPENSE";
+  return itemType === "INVENTORY" || itemType === "ASSET";
 };
 
 const getReceiptablePurchaseItems = <T extends { item_type?: string | null }>(
@@ -521,6 +523,12 @@ const purchaseHasReceiptableItems = (purchase: Purchase) => {
   }
 
   return getReceiptablePurchaseItems(purchase.purchase_items).length > 0;
+};
+
+const receiptHasReceiptableItems = (receipt: Receipt) => {
+  return (receipt.receipt_items || []).some((item) =>
+    isReceiptablePurchaseItem(item.purchase_item),
+  );
 };
 
 const createPurchaseItemFormData = (
@@ -2291,16 +2299,16 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
-  // Handle create receipt for approved purchases
+  // Handle create receipt for approved/paid/completed purchases with pending receipt quantity.
   const handleCreateReceipt = async (purchase: Purchase) => {
     try {
       // Fetch detailed purchase data to get items and latest status from backend
       const detailResponse = await purchaseService.getById(purchase.id);
       setSelectedPurchase(detailResponse);
 
-      // Safety guard: backend hanya mengizinkan status APPROVED, PENDING, atau PAID
+      // Safety guard: backend mengizinkan status ini selama masih ada qty yang belum direceive.
       const serverStatus = (detailResponse.status || "").toUpperCase();
-      const allowedStatuses = ["APPROVED", "PENDING", "PAID"];
+      const allowedStatuses = ["APPROVED", "PENDING", "PAID", "COMPLETED"];
       if (!allowedStatuses.includes(serverStatus)) {
         toast({
           title: t("purchases.createReceiptErrorTitle"),
@@ -2350,7 +2358,7 @@ const PurchasesPage: React.FC = () => {
         toast({
           title: "Receipt tidak diperlukan",
           description:
-            "Purchase ini hanya berisi item prepaid seperti sewa dibayar di muka, jadi tidak perlu goods receipt.",
+            "Purchase ini hanya berisi jasa/beban/prepaid, jadi tidak perlu goods receipt.",
           status: "info",
           duration: 5000,
           isClosable: true,
@@ -2359,35 +2367,6 @@ const PurchasesPage: React.FC = () => {
       }
 
       // Initialize receipt form data with remaining quantity per item
-      const receiptItems = receiptableItems.map((item: any) => {
-        const receivedSoFar = receivedMap[item.id] || 0;
-        const remaining = Math.max((item.quantity || 0) - receivedSoFar, 0);
-        // Determine if the item's expense account is a Fixed Asset (150x) to default-enable asset creation
-        const acc = expenseAccounts.find(
-          (a) => a.id === item.expense_account_id,
-        );
-        const accCode = (acc?.code || "").toString();
-        const accName = (acc?.name || "").toLowerCase();
-        const isFixedAsset =
-          accCode.startsWith("15") ||
-          accName.includes("asset tetap") ||
-          accName.includes("fixed asset") ||
-          accName.includes("bangunan") ||
-          accName.includes("gedung") ||
-          accName.includes("peralatan") ||
-          accName.includes("kendaraan") ||
-          accName.includes("mesin") ||
-          accName.includes("furniture") ||
-          accName.includes("computer") ||
-          accName.includes("komputer");
-        return {
-          purchase_item_id: item.id,
-          quantity_received: remaining, // default to remaining qty
-          condition: "GOOD",
-          notes: "",
-          create_asset: isFixedAsset, // auto-enable when account is fixed asset
-        };
-      });
       const remainingMap: Record<number, number> = {};
       receiptableItems.forEach((it: any) => {
         const receivedSoFar = receivedMap[it.id] || 0;
@@ -2408,6 +2387,37 @@ const PurchasesPage: React.FC = () => {
         });
         return; // Jangan buka modal
       }
+
+      const receiptItems = receiptableItems
+        .map((item: any) => {
+          const remaining = remainingMap[item.id] || 0;
+          // Determine if the item's expense account is a Fixed Asset (150x) to default-enable asset creation
+          const acc = expenseAccounts.find(
+            (a) => a.id === item.expense_account_id,
+          );
+          const accCode = (acc?.code || "").toString();
+          const accName = (acc?.name || "").toLowerCase();
+          const isFixedAsset =
+            accCode.startsWith("15") ||
+            accName.includes("asset tetap") ||
+            accName.includes("fixed asset") ||
+            accName.includes("bangunan") ||
+            accName.includes("gedung") ||
+            accName.includes("peralatan") ||
+            accName.includes("kendaraan") ||
+            accName.includes("mesin") ||
+            accName.includes("furniture") ||
+            accName.includes("computer") ||
+            accName.includes("komputer");
+          return {
+            purchase_item_id: item.id,
+            quantity_received: remaining, // default to remaining qty
+            condition: "GOOD",
+            notes: "",
+            create_asset: isFixedAsset, // auto-enable when account is fixed asset
+          };
+        })
+        .filter((item) => item.quantity_received > 0);
 
       setReceiptFormData({
         received_date: new Date().toISOString().split("T")[0],
@@ -2451,41 +2461,52 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    const invalidQtyItem = receiptFormData.receipt_items.find(
+      (item) => Number(item.quantity_received || 0) < 1,
+    );
+    if (invalidQtyItem) {
+      toast({
+        title: "Qty receipt belum valid",
+        description:
+          "Jumlah diterima minimal 1. Jika belum ingin membuat receipt, klik Cancel.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setSavingReceipt(true);
-
-      // Filter setelah validasi agar minimal ada 1 item
       const filteredItems = receiptFormData.receipt_items
-        .filter((item) => (item.quantity_received || 0) > 0)
         .map((item) => {
           const maxRemaining =
             remainingQtyMap[item.purchase_item_id] ?? item.quantity_received;
-          const safeQty = Math.min(item.quantity_received, maxRemaining);
+          const safeQty = Math.min(
+            Number(item.quantity_received || 0),
+            maxRemaining,
+          );
 
           return {
             purchase_item_id: item.purchase_item_id,
-            // Ensure backend validation (min=1) is satisfied; items that would
-            // become 0 are already filtered out by the previous .filter.
-            quantity_received: safeQty <= 0 ? 0 : safeQty,
+            quantity_received: safeQty,
             condition: item.condition,
             notes: item.notes,
             // NOTE: Do NOT send asset-specific flags here to keep API payload compatible.
             // Asset creation is handled separately via assetService after receipt is successfully created.
           };
-        });
+        })
+        .filter((item) => item.quantity_received > 0);
 
       if (filteredItems.length === 0) {
         toast({
-          title: t("purchases.noItemsToReceiveTitle"),
-          description: t("purchases.noItemsToReceiveDesc"),
-          status: "info",
+          title: "Qty receipt belum valid",
+          description:
+            "Tidak ada item dengan jumlah diterima yang valid. Minimal isi qty 1.",
+          status: "warning",
           duration: 4000,
           isClosable: true,
         });
-        setFullyReceivedPurchases((prev) =>
-          selectedPurchase ? new Set(prev).add(selectedPurchase.id) : prev,
-        );
-        onReceiptClose();
         return;
       }
 
@@ -2571,7 +2592,7 @@ const PurchasesPage: React.FC = () => {
 
       // Update remaining map after this receipt
       const newRemaining: Record<number, number> = { ...remainingQtyMap };
-      for (const ri of receiptFormData.receipt_items) {
+      for (const ri of filteredItems) {
         newRemaining[ri.purchase_item_id] = Math.max(
           (newRemaining[ri.purchase_item_id] ?? 0) -
             (ri.quantity_received || 0),
@@ -3149,9 +3170,14 @@ const PurchasesPage: React.FC = () => {
       }
 
       const data = await response.json();
-      setReceipts(data.data || []);
+      const validReceipts = ((data.data || []) as Receipt[]).filter(
+        receiptHasReceiptableItems,
+      );
+      setReceipts(validReceipts);
       // Mark purchase as having receipts locally
-      setPurchasesWithReceipts((prev) => new Set(prev).add(purchase.id));
+      if (validReceipts.length > 0) {
+        setPurchasesWithReceipts((prev) => new Set(prev).add(purchase.id));
+      }
       onReceiptsOpen();
     } catch (err: any) {
       console.error("Error fetching receipts:", err);
@@ -4901,8 +4927,10 @@ const PurchasesPage: React.FC = () => {
             </Button>
           )}
 
-        {/* Create Receipt button for APPROVED or PAID purchases for roles allowed by purchase edit permission */}
-        {(purchaseStatus === "APPROVED" || purchaseStatus === "PAID") &&
+        {/* Create Receipt button for approved/paid/completed purchases with remaining receiptable quantity */}
+        {(purchaseStatus === "APPROVED" ||
+          purchaseStatus === "PAID" ||
+          purchaseStatus === "COMPLETED") &&
           canEdit &&
           (roleNorm === "inventory_manager" ||
             roleNorm === "admin" ||
@@ -5992,6 +6020,26 @@ const PurchasesPage: React.FC = () => {
                               {selectedPurchase.vendor?.name || "N/A"}
                             </Text>
                           </FormControl>
+
+                          {selectedPurchase.purchase_request_id && (
+                            <>
+                              <FormControl>
+                                <FormLabel>Judul PR</FormLabel>
+                                <Text fontWeight="medium">
+                                  {selectedPurchase.purchase_request?.title ||
+                                    "-"}
+                                </Text>
+                              </FormControl>
+
+                              <FormControl>
+                                <FormLabel>Divisi Pengaju</FormLabel>
+                                <Text fontWeight="medium">
+                                  {selectedPurchase.purchase_request
+                                    ?.department || "-"}
+                                </Text>
+                              </FormControl>
+                            </>
+                          )}
 
                           <FormControl>
                             <FormLabel>{t("purchases.date")}</FormLabel>
@@ -9507,8 +9555,11 @@ const PurchasesPage: React.FC = () => {
                                     return (
                                       <Tr key={receiptItem.purchase_item_id}>
                                         <Td fontSize="sm">
-                                          {purchaseItem?.product?.name ||
-                                            "Unknown Product"}
+                                          {purchaseItem
+                                            ? getPurchaseItemDisplayName(
+                                                purchaseItem,
+                                              )
+                                            : "Item tidak ditemukan"}
                                         </Td>
                                         <Td fontSize="sm" isNumeric>
                                           {purchaseItem?.quantity || 0}
@@ -9517,7 +9568,7 @@ const PurchasesPage: React.FC = () => {
                                           <FormControl>
                                             <NumberInput
                                               size="sm"
-                                              min={0}
+                                              min={1}
                                               max={
                                                 remainingQtyMap[
                                                   purchaseItem?.id as number
@@ -9531,10 +9582,22 @@ const PurchasesPage: React.FC = () => {
                                                 const newItems = [
                                                   ...receiptFormData.receipt_items,
                                                 ];
+                                                const maxQty =
+                                                  remainingQtyMap[
+                                                    purchaseItem?.id as number
+                                                  ] ??
+                                                  (purchaseItem?.quantity || 1);
+                                                const nextQty = Number.isFinite(
+                                                  value,
+                                                )
+                                                  ? Math.min(
+                                                      Math.max(value, 1),
+                                                      Math.max(maxQty, 1),
+                                                    )
+                                                  : 1;
                                                 newItems[
                                                   index
-                                                ].quantity_received =
-                                                  value || 0;
+                                                ].quantity_received = nextQty;
                                                 setReceiptFormData({
                                                   ...receiptFormData,
                                                   receipt_items: newItems,

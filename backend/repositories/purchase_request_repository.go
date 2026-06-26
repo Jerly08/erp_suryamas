@@ -30,27 +30,8 @@ func (r *purchaseRequestRepository) Create(pr *models.PurchaseRequest) error {
 	return r.db.Create(pr).Error
 }
 
-func (r *purchaseRequestRepository) GetByID(id uint) (*models.PurchaseRequest, error) {
-	var pr models.PurchaseRequest
-	err := r.db.Preload("Requester").
-		Preload("Project").
-		Preload("Vendor").
-		Preload("Items").
-		Preload("Items.Product").
-		Preload("Items.Purchase").
-		Preload("Documents").
-		Preload("Documents.Uploader").
-		Preload("Approver").
-		Preload("FinanceStaffApprover").
-		Preload("FinanceManagerApprover").
-		Preload("DirectorApprover").
-		First(&pr, id).Error
-	return &pr, err
-}
-
-func (r *purchaseRequestRepository) GetAll(department string, status string, requesterID uint, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error) {
-	var prs []models.PurchaseRequest
-	query := r.db.Preload("Requester").
+func (r *purchaseRequestRepository) withDefaultPreloads(query *gorm.DB) *gorm.DB {
+	query = query.Preload("Requester").
 		Preload("Project").
 		Preload("Vendor").
 		Preload("Items").
@@ -62,6 +43,23 @@ func (r *purchaseRequestRepository) GetAll(department string, status string, req
 		Preload("FinanceStaffApprover").
 		Preload("FinanceManagerApprover").
 		Preload("DirectorApprover")
+
+	if r.db.Migrator().HasTable(&models.PurchasePayment{}) {
+		query = query.Preload("Items.Purchase.PurchasePayments.Payment", "status = ?", models.PaymentStatusCompleted)
+	}
+
+	return query
+}
+
+func (r *purchaseRequestRepository) GetByID(id uint) (*models.PurchaseRequest, error) {
+	var pr models.PurchaseRequest
+	err := r.withDefaultPreloads(r.db).First(&pr, id).Error
+	return &pr, err
+}
+
+func (r *purchaseRequestRepository) GetAll(department string, status string, requesterID uint, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error) {
+	var prs []models.PurchaseRequest
+	query := r.withDefaultPreloads(r.db)
 
 	if department != "" {
 		query = query.Where("department = ?", department)

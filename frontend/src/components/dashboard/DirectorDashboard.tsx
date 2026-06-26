@@ -14,13 +14,12 @@ import {
   Icon,
   List,
   ListItem,
-  ListIcon,
-  Badge
+  Badge,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   FiDollarSign,
   FiShoppingCart,
-  FiTrendingUp,
   FiPlus,
   FiBarChart2,
   FiActivity,
@@ -59,6 +58,10 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({ analytics 
   const { t } = useTranslation();
   const [approvalStats, setApprovalStats] = useState<{ pending_approvals: number; total_amount_pending: number } | null>(null);
   const [loadingStats, setLoadingStats] = useState<boolean>(false);
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const mutedTextColor = useColorModeValue('gray.600', 'whiteAlpha.700');
 
   useEffect(() => {
     const fetchApprovalStats = async () => {
@@ -69,7 +72,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({ analytics 
           pending_approvals: res.data?.pending_approvals ?? 0,
           total_amount_pending: res.data?.total_amount_pending ?? 0,
         });
-      } catch (_) {
+      } catch {
         setApprovalStats({ pending_approvals: 0, total_amount_pending: 0 });
       } finally {
         setLoadingStats(false);
@@ -83,38 +86,38 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({ analytics 
 
   return (
     <Box>
-      <Heading as="h2" size="xl" mb={6} color="gray.800">
+      <Heading as="h2" size="xl" mb={6} color={headingColor}>
         {t('navigation.dashboard')} - {t('users.director')}
       </Heading>
 
       <Flex gap={4} flexWrap="wrap" mt={2}>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
+        <Box bg={cardBg} border="1px" borderColor={borderColor} p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
           <Heading as="h3" size="sm" mb={2}>{t('dashboard.stats.totalRevenue')}</Heading>
           <Text fontSize="xl" fontWeight="bold">{formatCurrency(analytics?.totalSales || 0)}</Text>
-          <Text fontSize="sm" color="gray.600">{formatPct(analytics?.salesGrowth || 0)}</Text>
+          <Text fontSize="sm" color={mutedTextColor}>{formatPct(analytics?.salesGrowth || 0)}</Text>
         </Box>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
+        <Box bg={cardBg} border="1px" borderColor={borderColor} p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
           <Heading as="h3" size="sm" mb={2}>{t('dashboard.stats.totalPurchases')}</Heading>
           <Text fontSize="xl" fontWeight="bold">{formatCurrency(analytics?.totalPurchases || 0)}</Text>
-          <Text fontSize="sm" color="gray.600">{formatPct(analytics?.purchasesGrowth || 0)}</Text>
+          <Text fontSize="sm" color={mutedTextColor}>{formatPct(analytics?.purchasesGrowth || 0)}</Text>
         </Box>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
+        <Box bg={cardBg} border="1px" borderColor={borderColor} p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
           <Heading as="h3" size="sm" mb={2}>{t('dashboard.stats.accountsReceivable')}</Heading>
           <Text fontSize="xl" fontWeight="bold">{formatCurrency(analytics?.accountsReceivable || 0)}</Text>
-          <Text fontSize="sm" color="gray.600">{formatPct(analytics?.receivablesGrowth || 0)}</Text>
+          <Text fontSize="sm" color={mutedTextColor}>{formatPct(analytics?.receivablesGrowth || 0)}</Text>
         </Box>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
+        <Box bg={cardBg} border="1px" borderColor={borderColor} p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
           <Heading as="h3" size="sm" mb={2}>{t('dashboard.stats.accountsPayable')}</Heading>
           <Text fontSize="xl" fontWeight="bold">{formatCurrency(analytics?.accountsPayable || 0)}</Text>
-          <Text fontSize="sm" color="gray.600">{formatPct(analytics?.payablesGrowth || 0)}</Text>
+          <Text fontSize="sm" color={mutedTextColor}>{formatPct(analytics?.payablesGrowth || 0)}</Text>
         </Box>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
+        <Box bg={cardBg} border="1px" borderColor={borderColor} p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
           <Heading as="h3" size="sm" mb={2}>{t('dashboard.pendingApprovals')}</Heading>
           <Text fontSize="xl" fontWeight="bold" display="flex" alignItems="center" gap={2}>
             <Icon as={FiCheckCircle} color="orange.500" />
             {loadingStats ? t('common.loading') : (approvalStats?.pending_approvals ?? 0)} item
           </Text>
-          <Text fontSize="sm" color="gray.600">{t('common.labels.total')}: {formatCurrency(approvalStats?.total_amount_pending || 0)}</Text>
+          <Text fontSize="sm" color={mutedTextColor}>{t('common.labels.total')}: {formatCurrency(approvalStats?.total_amount_pending || 0)}</Text>
         </Box>
       </Flex>
 
@@ -132,7 +135,7 @@ export const DirectorDashboard: React.FC<DirectorDashboardProps> = ({ analytics 
                 <ListItem key={`${txn.type}-${txn.id}`} display="flex" justifyContent="space-between" gap={4}>
                   <Box>
                     <Text fontWeight="medium">{txn.description || txn.transaction_id}</Text>
-                    <Text fontSize="sm" color="gray.600">{txn.type} • {new Date(txn.date).toLocaleDateString('id-ID')}</Text>
+                    <Text fontSize="sm" color={mutedTextColor}>{txn.type} • {new Date(txn.date).toLocaleDateString('id-ID')}</Text>
                   </Box>
                   <Badge colorScheme={txn.type === 'SALE' ? 'green' : 'orange'}>{formatCurrency(txn.amount)}</Badge>
                 </ListItem>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuthService } from '@/hooks/useAuthService';
 import { UserRole } from '@/contexts/AuthContext';
@@ -29,7 +29,7 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
   const { user } = useAuth();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const normalizedAllowed = normalizeRoles(allowedRoles as string[]);
-  const isMobile = useBreakpointValue({ base: true, md: false });
+  const isMobile = useBreakpointValue({ base: true, lg: false }, { fallback: 'lg' });
   
   // Dynamic background colors based on theme
   const bgColor = useColorModeValue('var(--bg-secondary)', 'var(--bg-primary)');
@@ -51,7 +51,7 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
           <Sidebar 
             isOpen
             onClose={onClose} 
-            display={{ base: 'none', md: 'block' }}
+            display={{ base: 'none', lg: 'block' }}
             width={60}
             collapsed={false}
             onToggleCollapse={() => {}}
@@ -64,7 +64,7 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
           <Sidebar
             isOpen={isOpen}
             onClose={onClose}
-            display={{ base: 'block', md: 'none' }}
+            display={{ base: 'block', lg: 'none' }}
             width={60}
             collapsed={false}
             onToggleCollapse={() => {}}
@@ -73,7 +73,7 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
         )}
 
         {/* Main content */}
-        <Box ml={{ base: 0, md: showSidebar ? 60 : 0 }}>
+        <Box ml={{ base: 0, lg: showSidebar ? 60 : 0 }} minW={0}>
           {/* Top navigation bar - always show if user is authenticated */}
           {user && (
             <SimpleNavbar 
@@ -83,7 +83,14 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
           )}
           
           {/* Page content */}
-          <Box p={user ? 6 : 0}>
+          <Box
+            as="main"
+            className="app-page-content"
+            p={user ? { base: 3, sm: 4, md: 5, lg: 6 } : 0}
+            minW={0}
+            w="full"
+            overflowX="clip"
+          >
             {children}
           </Box>
         </Box>

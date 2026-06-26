@@ -125,13 +125,21 @@ function DataTable<T>({
   };
 
   return (
-    <Box bg={bg} shadow="md" borderRadius="lg" overflow="hidden" borderWidth="1px" borderColor={borderColor}>
+    <Box bg={bg} shadow="md" borderRadius="lg" overflow="hidden" borderWidth="1px" borderColor={borderColor} maxW="full">
       {/* Header with title and search */}
-      <Flex p={4} borderBottomWidth="1px" borderColor={borderColor} justify="space-between" align="center">
-        {title && <Heading size="lg" color={headingColor}>{title}</Heading>}
+      <Flex
+        p={{ base: 3, md: 4 }}
+        borderBottomWidth="1px"
+        borderColor={borderColor}
+        justify="space-between"
+        align={{ base: 'stretch', md: 'center' }}
+        direction={{ base: 'column', md: 'row' }}
+        gap={3}
+      >
+        {title && <Heading size={{ base: 'md', md: 'lg' }} color={headingColor}>{title}</Heading>}
         
         {searchable && (
-          <InputGroup maxW="300px">
+          <InputGroup maxW={{ base: 'full', md: '300px' }}>
             <InputLeftElement pointerEvents="none">
               <SearchIcon color={mutedTextColor} />
             </InputLeftElement>
@@ -153,8 +161,8 @@ function DataTable<T>({
       </Flex>
       
       {/* Table */}
-      <Box overflowX="auto">
-        <Table variant="simple">
+      <Box overflowX="auto" maxW="full" className="mobile-scroll-x">
+        <Table variant="simple" size={{ base: 'sm', md: 'md' }} minW={{ base: '720px', md: 'full' }}>
           <Thead>
             <Tr bg={headerBg}>
               {columns.map((column, index) => (
@@ -164,13 +172,25 @@ function DataTable<T>({
                   fontWeight="500"
                   fontSize="xs"
                   textTransform="uppercase"
-                  letterSpacing="wider"
+                  letterSpacing={0}
                   borderColor={borderColor}
+                  px={{ base: 3, md: 4 }}
+                  py={{ base: 3, md: 4 }}
                 >
                   {column.header}
                 </Th>
               ))}
-              {actions && <Th textAlign="right" color={mutedTextColor} borderColor={borderColor}>{t('common.actions')}</Th>}
+              {actions && (
+                <Th
+                  textAlign="right"
+                  color={mutedTextColor}
+                  borderColor={borderColor}
+                  px={{ base: 3, md: 4 }}
+                  py={{ base: 3, md: 4 }}
+                >
+                  {t('common.actions')}
+                </Th>
+              )}
             </Tr>
           </Thead>
           <Tbody>
@@ -188,12 +208,20 @@ function DataTable<T>({
                       color={textColor}
                       fontSize="sm"
                       borderColor={borderColor}
+                      px={{ base: 3, md: 4 }}
+                      py={{ base: 3, md: 4 }}
                     >
                       {renderCell(row, column)}
                     </Td>
                   ))}
                   {actions && (
-                    <Td textAlign="right" fontSize="sm" borderColor={borderColor}>
+                    <Td
+                      textAlign="right"
+                      fontSize="sm"
+                      borderColor={borderColor}
+                      px={{ base: 3, md: 4 }}
+                      py={{ base: 3, md: 4 }}
+                    >
                       {actions(row)}
                     </Td>
                   )}
@@ -207,6 +235,8 @@ function DataTable<T>({
                   fontSize="sm"
                   color={mutedTextColor}
                   borderColor={borderColor}
+                  px={{ base: 3, md: 4 }}
+                  py={{ base: 4, md: 6 }}
                 >
                   {t('common.table.noData')}
                 </Td>
@@ -218,12 +248,21 @@ function DataTable<T>({
       
       {/* Pagination */}
       {pagination && totalPages > 1 && (
-        <Flex px={4} py={3} borderTopWidth="1px" borderColor={borderColor} justify="space-between" align="center">
+        <Flex
+          px={{ base: 3, md: 4 }}
+          py={3}
+          borderTopWidth="1px"
+          borderColor={borderColor}
+          justify="space-between"
+          align={{ base: 'stretch', md: 'center' }}
+          direction={{ base: 'column', md: 'row' }}
+          gap={3}
+        >
           <Text fontSize="sm" color={mutedTextColor}>
             {t('common.pagination.showing')} {((currentPage - 1) * pageSize) + 1} {t('common.pagination.to')} {Math.min(currentPage * pageSize, filteredData.length)} {t('common.pagination.of')} {filteredData.length} {t('common.pagination.entries')}
           </Text>
           
-          <HStack spacing={1}>
+          <HStack spacing={1} overflowX="auto" maxW="full" pb={{ base: 1, md: 0 }}>
             <Button
               onClick={() => handlePageChange(currentPage - 1)}
               isDisabled={currentPage === 1}

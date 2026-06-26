@@ -20,7 +20,7 @@ func ResetProductImageMigration(db *gorm.DB) {
 	} else if result.RowsAffected > 0 {
 		log.Printf("✅ Reset product image migration record (deleted %d records)", result.RowsAffected)
 	} else {
-		log.Println("ℹ️  Product image migration record not found, nothing to reset")
+		log.Println("ℹ️  Product image migration reset not needed")
 	}
 
 	log.Println("✅ Product image migration reset completed")

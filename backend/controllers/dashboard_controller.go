@@ -307,6 +307,7 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 	type pendingPurchaseRequestItem struct {
 		ID                   uint      `json:"id"`
 		PRNumber             string    `json:"pr_number"`
+		Title                string    `json:"title"`
 		RequesterName        string    `json:"requester_name"`
 		Department           string    `json:"department"`
 		ProjectName          string    `json:"project_name"`
@@ -343,6 +344,9 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 		NotificationID uint       `json:"notification_id"`
 		PurchaseID     uint       `json:"purchase_id"`
 		PurchaseCode   string     `json:"purchase_code"`
+		PRNumber       string     `json:"pr_number"`
+		PRTitle        string     `json:"pr_title"`
+		PRDepartment   string     `json:"pr_department"`
 		VendorName     string     `json:"vendor_name"`
 		TotalAmount    float64    `json:"total_amount"`
 		ApprovedAt     *time.Time `json:"approved_at"`
@@ -354,11 +358,12 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 	var pendingPurchaseRequests []pendingPurchaseRequestItem
 	if err := dc.DB.Table("purchase_requests pr").
 		Select(`
-			pr.id,
-			pr.pr_number,
-			COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username, u.email) AS requester_name,
-			pr.department,
-			COALESCE(p.name, '-') AS project_name,
+				pr.id,
+				pr.pr_number,
+				COALESCE(pr.title, '') AS title,
+				COALESCE(NULLIF(TRIM(CONCAT(u.first_name, ' ', u.last_name)), ''), u.username, u.email) AS requester_name,
+				pr.department,
+				COALESCE(p.name, '-') AS project_name,
 			pr.total_estimated_amount,
 			pr.created_at
 		`).
@@ -412,17 +417,21 @@ func (dc *DashboardController) GetFinanceStaffDashboardData(c *gin.Context) {
 	var approvedPurchaseNotifications []approvedPurchaseNotificationItem
 	if err := dc.DB.Table("notifications n").
 		Select(`
-			n.id AS notification_id,
-			p.id AS purchase_id,
-			COALESCE(NULLIF(p.code, ''), n.data::json->>'purchase_code', '-') AS purchase_code,
-			COALESCE(v.name, '-') AS vendor_name,
-			p.total_amount,
-			p.approved_at,
+				n.id AS notification_id,
+				p.id AS purchase_id,
+				COALESCE(NULLIF(p.code, ''), n.data::json->>'purchase_code', '-') AS purchase_code,
+				COALESCE(pr.pr_number, '') AS pr_number,
+				COALESCE(pr.title, '') AS pr_title,
+				COALESCE(pr.department, '') AS pr_department,
+				COALESCE(v.name, '-') AS vendor_name,
+				p.total_amount,
+				p.approved_at,
 			n.message,
 			n.is_read,
 			n.created_at
-		`).
+			`).
 		Joins("JOIN purchases p ON p.id = CAST(COALESCE(NULLIF(n.data::json->>'entity_id', ''), NULLIF(n.data::json->>'purchase_id', '')) AS bigint)").
+		Joins("LEFT JOIN purchase_requests pr ON pr.id = p.purchase_request_id").
 		Joins("LEFT JOIN contacts v ON v.id = p.vendor_id").
 		Where(`
 			n.user_id = ?

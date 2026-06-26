@@ -140,8 +140,10 @@ func RunMigrations(db *gorm.DB) {
 
 		// Payment & Cash Bank models
 		&models.Payment{},
+		&models.PaymentAllocation{},
 		&models.CashBank{},
 		&models.CashBankTransaction{},
+		&models.PurchasePayment{},
 
 		// Payroll models
 		&models.PayrollRun{},
@@ -191,6 +193,7 @@ func RunMigrations(db *gorm.DB) {
 	}
 
 	BackfillPayrollBPJSSettlementStatus(db)
+	BackfillPurchasePaymentLinks(db)
 
 	log.Println("Database migrations completed successfully")
 

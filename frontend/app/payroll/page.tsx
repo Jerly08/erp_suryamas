@@ -356,6 +356,7 @@ export default function PayrollPage() {
   const tableHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
   const softPanelBg = useColorModeValue('blue.50', 'whiteAlpha.100');
   const inputBg = useColorModeValue('white', 'whiteAlpha.50');
+  const modalHeaderGradient = useColorModeValue('linear(to-r, teal.50, blue.50)', 'linear(to-r, whiteAlpha.100, whiteAlpha.50)');
 
   const loadPayroll = useCallback(async () => {
     setLoading(true);
@@ -1100,8 +1101,8 @@ export default function PayrollPage() {
 
           <Modal isOpen={importModal.isOpen} onClose={closeImportModal} size="full" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent>
-              <ModalHeader bgGradient="linear(to-r, teal.50, blue.50)" borderBottomWidth="1px" borderColor={borderColor}>
+            <ModalContent bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+              <ModalHeader bgGradient={modalHeaderGradient} borderBottomWidth="1px" borderColor={borderColor}>
                 <HStack>
                   <Icon as={FiUpload} color="teal.500" />
                   <Box>
@@ -1353,7 +1354,7 @@ export default function PayrollPage() {
 
           <Modal isOpen={detailModal.isOpen} onClose={detailModal.onClose} size="full" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent maxW={{ base: '98vw', xl: '95vw' }} my={4}>
+            <ModalContent maxW={{ base: '98vw', xl: '95vw' }} my={4} bg={cardBg} borderWidth="1px" borderColor={borderColor}>
               <ModalHeader borderBottomWidth="1px" borderColor={borderColor}>
                 <Flex justify="space-between" align="center" pr={8}>
                   <Box>
@@ -1606,7 +1607,7 @@ export default function PayrollPage() {
 
           <Modal isOpen={salaryPaymentModal.isOpen} onClose={salaryPaymentModal.onClose} size="2xl" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent>
+            <ModalContent bg={cardBg} borderWidth="1px" borderColor={borderColor}>
               <ModalHeader borderBottomWidth="1px" borderColor={borderColor}>
                 <HStack>
                   <Icon as={FiDollarSign} color="blue.500" />
@@ -1672,7 +1673,7 @@ export default function PayrollPage() {
 
           <Modal isOpen={bpjsPaymentModal.isOpen} onClose={bpjsPaymentModal.onClose} size="2xl" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent>
+            <ModalContent bg={cardBg} borderWidth="1px" borderColor={borderColor}>
               <ModalHeader borderBottomWidth="1px" borderColor={borderColor}>
                 <HStack>
                   <Icon as={FiDollarSign} color="purple.500" />
@@ -1790,7 +1791,7 @@ export default function PayrollPage() {
 
           <Modal isOpen={pphPaymentModal.isOpen} onClose={pphPaymentModal.onClose} size="2xl" scrollBehavior="inside">
             <ModalOverlay />
-            <ModalContent>
+            <ModalContent bg={cardBg} borderWidth="1px" borderColor={borderColor}>
               <ModalHeader borderBottomWidth="1px" borderColor={borderColor}>
                 <HStack>
                   <Icon as={FiDollarSign} color="orange.500" />

@@ -3590,11 +3590,17 @@ func (p *PDFService) GenerateReceiptPDFWithUser(data interface{}, userID uint) (
 		num := strconv.Itoa(i + 1)
 		prod := "Product"
 		ordered := "0"
-		if item.PurchaseItem.Product.ID != 0 {
+		if item.PurchaseItem.Product != nil && item.PurchaseItem.Product.ID != 0 {
 			prod = item.PurchaseItem.Product.Name
-			if len(prod) > 45 {
-				prod = prod[:42] + "..."
-			}
+		} else if strings.TrimSpace(item.PurchaseItem.Description) != "" {
+			prod = strings.TrimSpace(item.PurchaseItem.Description)
+		} else if strings.TrimSpace(item.PurchaseItem.ItemType) != "" {
+			prod = strings.TrimSpace(item.PurchaseItem.ItemType)
+		}
+		if len(prod) > 45 {
+			prod = prod[:42] + "..."
+		}
+		if item.PurchaseItem.ID != 0 {
 			ordered = strconv.Itoa(item.PurchaseItem.Quantity)
 		}
 		received := strconv.Itoa(item.QuantityReceived)

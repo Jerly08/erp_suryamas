@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Box,
@@ -13,21 +12,14 @@ import {
   Text,
   Drawer,
   DrawerContent,
-  useDisclosure,
-  BoxProps,
-  FlexProps,
-  Collapse,
   DrawerOverlay,
-  DrawerCloseButton,
 } from "@chakra-ui/react";
 import {
   FiTrendingUp,
   FiCompass,
   FiStar,
   FiClock,
-  FiBell,
   FiSettings,
-  FiMenu,
   FiShoppingCart,
   FiUsers,
   FiDollarSign,
@@ -327,7 +319,8 @@ export default function Sidebar({
         bg={sidebarBg}
         borderRight="1px"
         borderRightColor={sidebarBorder}
-        w={{ base: "full", md: width || 60 }}
+        w={{ base: "full", lg: width || 60 }}
+        maxW={{ base: "min(86vw, 320px)", lg: "none" }}
         pos="fixed"
         h="full"
         overflowY="auto"
@@ -338,16 +331,21 @@ export default function Sidebar({
         flexDirection="column"
         {...rest}
       >
-        <Flex h="20" alignItems="center" mx="8" justifyContent="space-between">
+        <Flex
+          h={{ base: "16", md: "20" }}
+          alignItems="center"
+          mx={{ base: "4", md: "8" }}
+          justifyContent="space-between"
+        >
           <Image
             src={AVERY_LOGO_PATH}
             alt={AVERY_LOGO_ALT}
-            h="42px"
+            h={{ base: "34px", md: "42px" }}
             maxW="150px"
             objectFit="contain"
           />
           <CloseButton
-            display={{ base: "flex", md: "none" }}
+            display={{ base: "flex", lg: "none" }}
             onClick={onClose}
             color={closeButtonColor}
             _hover={{ bg: closeButtonHoverBg }}
@@ -376,6 +374,7 @@ export default function Sidebar({
                   icon={link.icon}
                   href={link.href}
                   isActive={pathname === link.href}
+                  onNavigate={onClose}
                 >
                   {link.name}
                 </NavItem>
@@ -393,11 +392,14 @@ export default function Sidebar({
     );
   };
 
-  const NavItem = ({ icon, children, href, isActive, ...rest }) => {
+  const NavItem = ({ icon, children, href, isActive, onNavigate, ...rest }) => {
     const handleClick = (e) => {
       e.preventDefault();
       console.log("NavItem clicked:", href);
       router.push(href);
+      if (typeof onNavigate === "function") {
+        onNavigate();
+      }
     };
 
     // Theme-aware colors for nav items
@@ -419,6 +421,7 @@ export default function Sidebar({
         align="center"
         p="3"
         mx="4"
+        minH="44px"
         borderRadius="lg"
         role="group"
         cursor="pointer"
@@ -437,6 +440,7 @@ export default function Sidebar({
         fontSize="sm"
         pointerEvents="auto"
         zIndex={10}
+        wordBreak="break-word"
         {...rest}
       >
         {icon && (
@@ -465,10 +469,10 @@ export default function Sidebar({
         onClose={onClose}
         returnFocusOnClose={false}
         onOverlayClick={onClose}
-        size="full"
+        size="xs"
       >
         <DrawerOverlay />
-        <DrawerContent>
+        <DrawerContent maxW={{ base: "min(86vw, 320px)", sm: "320px" }}>
           <SidebarContent onClose={onClose} />
         </DrawerContent>
       </Drawer>

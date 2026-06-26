@@ -23,6 +23,28 @@ export interface Contact {
   is_active?: boolean;
 }
 
+export interface PurchaseRequestPaymentSummary {
+  id: number;
+  purchase_id: number;
+  payment_number?: string;
+  date?: string;
+  amount: number;
+  method?: string;
+  reference?: string;
+  payment_id?: number | null;
+  payment?: {
+    id: number;
+    code: string;
+    status: string;
+    amount: number;
+    date: string;
+    method: string;
+    reference?: string;
+    finance_manager_approved_at?: string | null;
+    approved_at?: string | null;
+  } | null;
+}
+
 export interface PurchaseRequestItem {
   id: number;
   purchase_request_id: number;
@@ -47,6 +69,7 @@ export interface PurchaseRequestItem {
     outstanding_amount: number;
     total_amount: number;
     project_id?: number | null;
+    purchase_payments?: PurchaseRequestPaymentSummary[];
   };
 }
 

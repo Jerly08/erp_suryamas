@@ -12,9 +12,7 @@ import {
   Button,
   HStack,
   Icon,
-  List,
-  ListItem,
-  Badge
+  useColorModeValue,
 } from '@chakra-ui/react';
 import {
   FiPackage,
@@ -31,6 +29,10 @@ export const InventoryManagerDashboard = () => {
   const [valuation, setValuation] = useState<number>(0);
   const [lowStock, setLowStock] = useState<{ count: number; items: Array<{ id: number; name: string; stock: number; min_stock: number }> }>({ count: 0, items: [] });
   const [loading, setLoading] = useState<boolean>(true);
+  const headingColor = useColorModeValue('gray.800', 'whiteAlpha.900');
+  const cardBg = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'whiteAlpha.200');
+  const mutedTextColor = useColorModeValue('gray.600', 'whiteAlpha.700');
 
   useEffect(() => {
     const load = async () => {
@@ -44,7 +46,7 @@ export const InventoryManagerDashboard = () => {
         setValuation(totalValue);
         const items = Array.isArray(lowRes.data?.data) ? lowRes.data.data : [];
         setLowStock({ count: lowRes.data?.count ?? items.length, items: items.slice(0, 5) });
-      } catch (_) {
+      } catch {
         setValuation(0);
         setLowStock({ count: 0, items: [] });
       } finally {
@@ -58,20 +60,20 @@ export const InventoryManagerDashboard = () => {
 
   return (
     <Box>
-      <Heading as="h2" size="xl" mb={6} color="gray.800">
+      <Heading as="h2" size="xl" mb={6} color={headingColor}>
         {t('navigation.dashboard')} - {t('users.inventoryManager')}
       </Heading>
 
       <Flex gap={4} flexWrap="wrap" mt={2}>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
+        <Box bg={cardBg} border="1px" borderColor={borderColor} p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
           <Heading as="h3" size="sm" mb={2}>{t('reports.inventory.totalValue')}</Heading>
           <Text fontSize="xl" fontWeight="bold">{loading ? t('common.loading') : formatCurrency(valuation)}</Text>
         </Box>
-        <Box bg="white" p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
+        <Box bg={cardBg} border="1px" borderColor={borderColor} p={4} borderRadius="lg" boxShadow="sm" flex="1" minW="240px">
           <Heading as="h3" size="sm" mb={2}>{t('reports.inventory.lowStockAlerts')}</Heading>
           <Text fontSize="xl" fontWeight="bold">{loading ? t('common.loading') : `${lowStock.count} ${t('common.item')}`}</Text>
           {lowStock.items.length > 0 && (
-            <Text fontSize="sm" color="gray.600">Top 5: {lowStock.items.map(i => i.name).join(', ')}</Text>
+            <Text fontSize="sm" color={mutedTextColor}>Top 5: {lowStock.items.map(i => i.name).join(', ')}</Text>
           )}
         </Box>
       </Flex>

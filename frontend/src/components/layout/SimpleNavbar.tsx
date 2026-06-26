@@ -55,10 +55,11 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
 
   return (
     <Flex
-      h="16"
+      h={{ base: '14', md: '16' }}
       alignItems="center"
       justifyContent="space-between"
-      px={4}
+      px={{ base: 2, sm: 3, md: 4 }}
+      gap={2}
       bg={bgColor}
       borderBottom="1px"
       borderColor={borderColor}
@@ -67,15 +68,18 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
       zIndex={1000}
       className="navbar"
       transition="all 0.3s ease"
+      minW={0}
     >
       {/* Mobile menu button */}
       {onMenuClick && (
         <IconButton
-          display={{ base: 'flex', md: 'none' }}
+          display={{ base: 'flex', lg: 'none' }}
           onClick={onMenuClick}
           variant="outline"
           aria-label={isMenuOpen ? t('navigation.navbar.closeMenu') : t('navigation.navbar.openMenu')}
           icon={<FiMenu />}
+          size="sm"
+          flexShrink={0}
         />
       )}
 
@@ -83,17 +87,18 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
       <Image
         src={AVERY_LOGO_PATH}
         alt={AVERY_LOGO_ALT}
-        h="32px"
-        maxW="132px"
+        h={{ base: '28px', md: '32px' }}
+        maxW={{ base: '112px', md: '132px' }}
         objectFit="contain"
-        display={{ base: onMenuClick ? 'none' : 'block', md: 'none' }}
+        display={{ base: onMenuClick ? 'none' : 'block', lg: 'none' }}
+        flexShrink={0}
       />
 
       {/* Spacer for desktop */}
-      <div style={{ flex: 1 }} />
+      <div style={{ flex: 1, minWidth: 0 }} />
 
       {/* Right side */}
-      <HStack spacing={4}>
+      <HStack spacing={{ base: 1, sm: 2, md: 4 }} minW={0} flexShrink={0}>
         {/* Notifications */}
         <UnifiedNotifications />
         
@@ -103,20 +108,27 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
         {/* User menu */}
         {user && (
           <Menu>
-            <MenuButton as={Button} variant="ghost" rightIcon={<FiChevronDown />}>
-              <HStack spacing={2}>
-                <Avatar size="sm" name={displayName} bg="brand.500" />
+            <MenuButton
+              as={Button}
+              variant="ghost"
+              rightIcon={<FiChevronDown />}
+              size={{ base: 'sm', md: 'md' }}
+              px={{ base: 1, sm: 2, md: 4 }}
+              minW={0}
+            >
+              <HStack spacing={{ base: 1, md: 2 }} minW={0}>
+                <Avatar size={{ base: 'xs', md: 'sm' }} name={displayName} bg="brand.500" flexShrink={0} />
                 <VStack spacing={0} align="start" display={{ base: 'none', md: 'flex' }}>
-                  <Text fontSize="sm" fontWeight="medium" color={textColor}>
+                  <Text fontSize="sm" fontWeight="medium" color={textColor} noOfLines={1}>
                     {displayName}
                   </Text>
-                  <Text fontSize="xs" color={subtextColor}>
+                  <Text fontSize="xs" color={subtextColor} noOfLines={1}>
                     {roleLabel}
                   </Text>
                 </VStack>
               </HStack>
             </MenuButton>
-            <MenuList>
+            <MenuList zIndex={9999}>
               <MenuItem icon={<FiLogOut />} onClick={logout}>
                 {t('navigation.navbar.signOut')}
               </MenuItem>

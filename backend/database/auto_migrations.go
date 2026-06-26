@@ -313,6 +313,11 @@ func runMigration(db *gorm.DB, filename string) error {
 		return nil
 	}
 
+	if shouldSkipLegacySSOTMigration(db, filename) {
+		logMigrationResult(db, filename, "SUCCESS", "Skipped legacy SSOT migration because safe SSOT tables already exist", 0)
+		return nil
+	}
+
 	startTime := time.Now()
 	log.Printf("🔄 Running: %s", filename)
 
@@ -420,6 +425,15 @@ GOT_CONTENT:
 
 	log.Printf("✅ Migration completed: %s (%dms)", filename, executionTime)
 	return nil
+}
+
+func shouldSkipLegacySSOTMigration(db *gorm.DB, filename string) bool {
+	if filename != "020_create_unified_journal_ssot.sql" {
+		return false
+	}
+
+	return db.Migrator().HasTable("unified_journal_ledger") &&
+		db.Migrator().HasTable("unified_journal_lines")
 }
 
 // runComplexMigration runs complex migrations with better SQL parsing
@@ -1197,12 +1211,12 @@ func archiveLegacyStandardPurchaseApprovalSteps(db *gorm.DB, workflowID uint) er
 func archiveLegacyPurchaseApprovalStep(db *gorm.DB, workflowID uint, currentOrder int, role string, legacyOrder int, legacyName string) error {
 	var step ApprovalStep
 	err := db.Where("workflow_id = ? AND step_order = ? AND LOWER(approver_role) = ?", workflowID, currentOrder, strings.ToLower(role)).
-		First(&step).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
+		Find(&step).Error
 	if err != nil {
 		return fmt.Errorf("failed to check legacy purchase approval step %d: %v", currentOrder, err)
+	}
+	if step.ID == 0 {
+		return nil
 	}
 
 	var actionCount int64

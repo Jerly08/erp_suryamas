@@ -181,10 +181,10 @@ function GroupedTable<T>({
   const sortedGroups = Object.values(groups).sort((a, b) => a.key.localeCompare(b.key));
 
   return (
-    <Card bg={cardBg} borderColor={cardBorderColor} variant="outline">
+    <Card bg={cardBg} borderColor={cardBorderColor} variant="outline" maxW="full">
       {title && (
-        <CardHeader borderBottomWidth="1px" borderColor={cardBorderColor}>
-          <Heading size="md" color={headingColor}>
+        <CardHeader borderBottomWidth="1px" borderColor={cardBorderColor} px={{ base: 4, md: 5 }}>
+          <Heading size={{ base: 'sm', md: 'md' }} color={headingColor}>
             {title}
           </Heading>
         </CardHeader>
@@ -204,7 +204,7 @@ function GroupedTable<T>({
                   {/* Group Header */}
                   <Flex
                     align="center"
-                    px={4}
+                    px={{ base: 3, md: 4 }}
                     py={3}
                     bg={groupHeaderBg}
                     cursor="pointer"
@@ -212,6 +212,8 @@ function GroupedTable<T>({
                     _hover={{ bg: groupHeaderHoverBg }}
                     borderBottom="1px solid"
                     borderColor={tableBorderColor}
+                    gap={2}
+                    wrap="wrap"
                   >
                     <IconButton
                       aria-label={group.isOpen ? 'Collapse group' : 'Expand group'}
@@ -237,8 +239,8 @@ function GroupedTable<T>({
 
                   {/* Group Content */}
                   {group.isOpen && (
-                    <Box overflowX="auto">
-                      <ChakraTable variant="simple" size="sm">
+                    <Box overflowX="auto" maxW="full" className="mobile-scroll-x">
+                      <ChakraTable variant="simple" size="sm" minW={{ base: '720px', md: 'full' }}>
                         <Thead bg={tableHeaderBg}>
                           <Tr>
                             {groupColumns.map((column, index) => (
@@ -246,7 +248,7 @@ function GroupedTable<T>({
                                 key={index}
                                 fontWeight="bold"
                                 whiteSpace="nowrap"
-                                px={4}
+                                px={{ base: 3, md: 4 }}
                                 py={3}
                                 fontSize="sm"
                                 color={tableHeaderTextColor}
@@ -276,7 +278,7 @@ function GroupedTable<T>({
                               {groupColumns.map((column, index) => (
                                 <Td
                                   key={index}
-                                  px={4}
+                                  px={{ base: 3, md: 4 }}
                                   py={3}
                                   fontSize="sm"
                                   verticalAlign="middle"
@@ -288,7 +290,7 @@ function GroupedTable<T>({
                               ))}
                               {actions && (
                                 <Td
-                                  px={4}
+                                  px={{ base: 3, md: 4 }}
                                   py={3}
                                   verticalAlign="middle"
                                   borderColor={tableBorderColor}

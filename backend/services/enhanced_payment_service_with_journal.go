@@ -2324,6 +2324,9 @@ func (eps *EnhancedPaymentServiceWithJournal) applyStoredDraftAllocations(
 			if err := eps.updatePurchaseOutstanding(tx, purchase.ID, appliedAmount); err != nil {
 				return nil, fmt.Errorf("failed to apply bill allocation: %w", err)
 			}
+			if err := eps.ensurePurchasePaymentLink(tx, payment, purchase.ID, appliedAmount); err != nil {
+				return nil, fmt.Errorf("failed to link purchase payment proof: %w", err)
+			}
 		}
 	}
 
@@ -2607,6 +2610,9 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 						log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
 						return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
 					}
+					if err := eps.ensurePurchasePaymentLink(tx, payment, *alloc.BillID, allocatedAmount); err != nil {
+						return nil, fmt.Errorf("failed to link purchase payment proof: %w", err)
+					}
 					log.Printf("✅ Purchase outstanding updated for bill %d", *alloc.BillID)
 				}
 
@@ -2632,6 +2638,9 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 				if err := eps.updatePurchaseOutstanding(tx, *req.TargetBillID, payment.Amount); err != nil {
 					log.Printf("❌ CRITICAL: Failed to update purchase outstanding: %v", err)
 					return nil, fmt.Errorf("failed to update purchase outstanding: %w", err)
+				}
+				if err := eps.ensurePurchasePaymentLink(tx, payment, *req.TargetBillID, payment.Amount); err != nil {
+					return nil, fmt.Errorf("failed to link purchase payment proof: %w", err)
 				}
 			}
 		}
@@ -2662,6 +2671,67 @@ func (eps *EnhancedPaymentServiceWithJournal) updateSaleOutstanding(tx *gorm.DB,
 	}
 
 	return syncSalePaymentScheduleProgress(tx, &sale)
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) ensurePurchasePaymentLink(tx *gorm.DB, payment *models.Payment, purchaseID uint, amount float64) error {
+	if tx == nil || payment == nil || purchaseID == 0 || payment.ID == 0 || amount <= 0 {
+		return nil
+	}
+
+	if !tx.Migrator().HasTable(&models.PurchasePayment{}) {
+		if err := tx.AutoMigrate(&models.PurchasePayment{}); err != nil {
+			return err
+		}
+	}
+
+	var allocationTotal float64
+	if err := tx.Model(&models.PaymentAllocation{}).
+		Where("payment_id = ? AND bill_id = ?", payment.ID, purchaseID).
+		Select("COALESCE(SUM(allocated_amount), 0)").
+		Scan(&allocationTotal).Error; err != nil {
+		return err
+	}
+	if allocationTotal <= 0 {
+		allocationTotal = amount
+	}
+
+	var existing models.PurchasePayment
+	if err := tx.Where("purchase_id = ? AND payment_id = ? AND deleted_at IS NULL", purchaseID, payment.ID).
+		Find(&existing).Error; err != nil {
+		return err
+	}
+
+	linkValues := map[string]interface{}{
+		"payment_number": payment.Code,
+		"date":           payment.Date,
+		"amount":         allocationTotal,
+		"method":         payment.Method,
+		"reference":      payment.Reference,
+		"notes":          payment.Notes,
+		"cash_bank_id":   payment.CashBankID,
+		"user_id":        payment.UserID,
+		"payment_id":     payment.ID,
+	}
+
+	if existing.ID != 0 {
+		return tx.Model(&existing).Updates(linkValues).Error
+	}
+
+	paymentID := payment.ID
+	link := models.PurchasePayment{
+		PurchaseID:    purchaseID,
+		PaymentNumber: payment.Code,
+		Date:          payment.Date,
+		Amount:        allocationTotal,
+		Method:        payment.Method,
+		Reference:     payment.Reference,
+		Notes:         payment.Notes,
+		CashBankID:    payment.CashBankID,
+		UserID:        payment.UserID,
+		PaymentID:     &paymentID,
+	}
+
+	return tx.Create(&link).Error
 }
 
 // updatePurchaseOutstanding updates purchase outstanding amount after payment allocation

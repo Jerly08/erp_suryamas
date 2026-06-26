@@ -57,6 +57,11 @@ const formatDate = (value?: string): string => {
   });
 };
 
+const getPurchaseRequestNumber = (purchase: Purchase): string =>
+  purchase.purchase_request?.pr_number ||
+  purchase.purchase_request?.request_number ||
+  (purchase.purchase_request_id ? `#${purchase.purchase_request_id}` : "");
+
 export const COAApprovalQueueCard: React.FC = () => {
   const router = useRouter();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -229,6 +234,28 @@ export const COAApprovalQueueCard: React.FC = () => {
                             Vendor: {purchase.vendor?.name || "-"} | Tanggal:{" "}
                             {formatDate(purchase.date)}
                           </Text>
+                          {purchase.purchase_request_id && (
+                            <VStack align="start" spacing={0.5} mt={2}>
+                              <Text fontSize="xs" color={mutedTextColor}>
+                                PR: {getPurchaseRequestNumber(purchase)}
+                              </Text>
+                              {purchase.purchase_request?.title && (
+                                <Text
+                                  fontSize="xs"
+                                  color={headingColor}
+                                  fontWeight="semibold"
+                                  noOfLines={2}
+                                >
+                                  Judul PR: {purchase.purchase_request.title}
+                                </Text>
+                              )}
+                              {purchase.purchase_request?.department && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Divisi: {purchase.purchase_request.department}
+                                </Text>
+                              )}
+                            </VStack>
+                          )}
                         </Box>
                       </HStack>
                       <Box textAlign={{ base: "left", md: "right" }}>
