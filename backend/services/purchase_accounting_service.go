@@ -176,6 +176,11 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 	if purchase.FreightCost > 0 && !hasInventoryValuationItem {
 		return fmt.Errorf("freight cost hanya bisa ditambahkan ke purchase yang memiliki item inventory")
 	}
+	purchase.OtherCostAmount = sanitizeFloat(clampNonNegative(purchase.OtherCostAmount))
+	if purchase.OtherCostAmount <= 0 {
+		purchase.OtherCostDescription = ""
+		purchase.OtherCostAccountID = nil
+	}
 	purchase.SubtotalBeforeDiscount = sanitizeFloat(clampNonNegative(subtotalBeforeDiscount))
 	purchase.ItemDiscountAmount = sanitizeFloat(clampNonNegative(itemDiscountAmount))
 	purchase.OrderDiscountAmount = sanitizeFloat(clampNonNegative(orderDiscountAmount))
@@ -226,13 +231,14 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 	fmt.Printf("ℹ Calculating final total amount\n")
 	fmt.Printf("   NetBeforeTax: %.2f\n", purchase.NetBeforeTax)
 	fmt.Printf("   FreightCost: %.2f\n", purchase.FreightCost)
+	fmt.Printf("   OtherCostAmount: %.2f\n", purchase.OtherCostAmount)
 	fmt.Printf("   TotalTaxAdditions: %.2f\n", purchase.TotalTaxAdditions)
 	fmt.Printf("   TotalTaxDeductions: %.2f\n", purchase.TotalTaxDeductions)
 	// Calculate final total amount (never negative)
-	// Total = Net Before Tax + Freight Cost + Tax Additions - Tax Deductions
-	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.FreightCost + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
-	fmt.Printf("✅ Final total calculated: %.2f + %.2f - %.2f = %.2f\n",
-		purchase.NetBeforeTax, purchase.TotalTaxAdditions, purchase.TotalTaxDeductions, purchase.TotalAmount)
+	// Total = Net Before Tax + Freight Cost + Other Costs + Tax Additions - Tax Deductions
+	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.FreightCost + purchase.OtherCostAmount + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
+	fmt.Printf("✅ Final total calculated: %.2f + %.2f + %.2f + %.2f - %.2f = %.2f\n",
+		purchase.NetBeforeTax, purchase.FreightCost, purchase.OtherCostAmount, purchase.TotalTaxAdditions, purchase.TotalTaxDeductions, purchase.TotalAmount)
 
 	// For legacy compatibility, set TaxAmount to PPN amount
 	purchase.TaxAmount = purchase.PPNAmount
@@ -297,6 +303,11 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 	if purchase.FreightCost > 0 && !hasInventoryValuationItem {
 		return fmt.Errorf("freight cost hanya bisa ditambahkan ke purchase yang memiliki item inventory")
 	}
+	purchase.OtherCostAmount = sanitizeFloat(clampNonNegative(purchase.OtherCostAmount))
+	if purchase.OtherCostAmount <= 0 {
+		purchase.OtherCostDescription = ""
+		purchase.OtherCostAccountID = nil
+	}
 	purchase.SubtotalBeforeDiscount = sanitizeFloat(clampNonNegative(subtotalBeforeDiscount))
 	purchase.ItemDiscountAmount = sanitizeFloat(clampNonNegative(itemDiscountAmount))
 	purchase.OrderDiscountAmount = sanitizeFloat(clampNonNegative(orderDiscountAmount))
@@ -338,8 +349,8 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 	purchase.TotalTaxDeductions = sanitizeFloat(clampNonNegative(purchase.PPh21Amount + purchase.PPh23Amount + purchase.OtherTaxDeductions))
 
 	// Calculate final total amount (never negative)
-	// Total = Net Before Tax + Freight Cost + Tax Additions - Tax Deductions
-	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.FreightCost + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
+	// Total = Net Before Tax + Freight Cost + Other Costs + Tax Additions - Tax Deductions
+	purchase.TotalAmount = sanitizeFloat(clampNonNegative(purchase.NetBeforeTax + purchase.FreightCost + purchase.OtherCostAmount + purchase.TotalTaxAdditions - purchase.TotalTaxDeductions))
 
 	// For legacy compatibility, set TaxAmount to PPN amount
 	purchase.TaxAmount = purchase.PPNAmount
@@ -463,6 +474,34 @@ func (s *PurchaseService) createPurchaseAccountingEntriesWithLines(purchase *mod
 	return journalEntry, nil
 }
 
+func (s *PurchaseService) resolvePurchaseOtherCostAccountForJournal(purchase *models.Purchase) (uint, string, error) {
+	if purchase.OtherCostAccountID != nil && *purchase.OtherCostAccountID > 0 {
+		var selected models.Account
+		if err := s.db.First(&selected, *purchase.OtherCostAccountID).Error; err != nil {
+			return 0, "", fmt.Errorf("COA biaya lain-lain pembelian tidak ditemukan: %v", err)
+		}
+		if selected.IsHeader || !strings.EqualFold(strings.TrimSpace(selected.Type), models.AccountTypeExpense) {
+			return 0, "", fmt.Errorf("COA biaya lain-lain pembelian harus akun EXPENSE non-header")
+		}
+		return selected.ID, selected.Name, nil
+	}
+
+	for _, code := range []string{"6106", "8102", "6102"} {
+		if account, err := s.accountRepo.FindByCode(context.TODO(), code); err == nil && account != nil && !account.IsHeader && strings.EqualFold(strings.TrimSpace(account.Type), models.AccountTypeExpense) {
+			return account.ID, account.Name, nil
+		}
+	}
+
+	var fallback models.Account
+	if err := s.db.Where("type = ? AND is_header = ? AND is_active = ? AND deleted_at IS NULL", models.AccountTypeExpense, false, true).
+		Order("code ASC").
+		First(&fallback).Error; err == nil {
+		return fallback.ID, fallback.Name, nil
+	}
+
+	return 0, "", fmt.Errorf("COA default biaya lain-lain pembelian tidak ditemukan")
+}
+
 // createPurchaseAccountingEntries creates journal entries for purchase
 // Adapted to match database schema that expects account_id in journal_entries table
 func (s *PurchaseService) createPurchaseAccountingEntries(purchase *models.Purchase, userID uint) (*models.JournalEntry, error) {
@@ -501,8 +540,8 @@ func (s *PurchaseService) createPurchaseAccountingEntries(purchase *models.Purch
 	}
 
 	// Calculate proper accounting totals
-	// Debit side: Inventory/Asset accounts + PPN Masukan (not expense until sold)
-	totalDebits := purchase.NetBeforeTax + purchase.PPNAmount
+	// Debit side: Inventory/Asset accounts + PPN Masukan + other costs
+	totalDebits := purchase.NetBeforeTax + purchase.PPNAmount + purchase.OtherCostAmount
 
 	// Credit side depends on payment method
 	var totalCredits float64
@@ -518,6 +557,7 @@ func (s *PurchaseService) createPurchaseAccountingEntries(purchase *models.Purch
 	fmt.Printf("🧮 Purchase Calculation Debug:\n")
 	fmt.Printf("   NetBeforeTax: %.2f\n", purchase.NetBeforeTax)
 	fmt.Printf("   PPNAmount: %.2f\n", purchase.PPNAmount)
+	fmt.Printf("   OtherCostAmount: %.2f\n", purchase.OtherCostAmount)
 	fmt.Printf("   TotalAmount: %.2f\n", purchase.TotalAmount)
 	fmt.Printf("   Calculated totalDebits: %.2f\n", totalDebits)
 	fmt.Printf("   Calculated totalCredits: %.2f\n", totalCredits)
@@ -1056,6 +1096,25 @@ func (s *PurchaseService) createPurchaseJournalLines(purchase *models.Purchase, 
 			AccountID:    accountIDs.PPNInputAccountID,
 			Description:  "PPN Masukan (Input VAT)",
 			DebitAmount:  purchase.PPNAmount,
+			CreditAmount: 0,
+			LineNumber:   lineNumber,
+		})
+		lineNumber++
+	}
+
+	if purchase.OtherCostAmount > 0 {
+		otherCostAccountID, otherCostAccountName, err := s.resolvePurchaseOtherCostAccountForJournal(purchase)
+		if err != nil {
+			return nil, err
+		}
+		description := strings.TrimSpace(purchase.OtherCostDescription)
+		if description == "" {
+			description = "Biaya lain-lain pembelian"
+		}
+		lines = append(lines, models.JournalLine{
+			AccountID:    otherCostAccountID,
+			Description:  fmt.Sprintf("%s - %s", otherCostAccountName, description),
+			DebitAmount:  purchase.OtherCostAmount,
 			CreditAmount: 0,
 			LineNumber:   lineNumber,
 		})

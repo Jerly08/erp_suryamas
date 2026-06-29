@@ -168,6 +168,88 @@ func TestCreatePurchaseJournalWithPPh23UsesPayableCredit(t *testing.T) {
 	}
 }
 
+func TestCreatePurchaseJournalWithOtherCostUsesExpenseAccount(t *testing.T) {
+	db := newPurchaseJournalSSOTTestDB(t)
+	service := NewPurchaseJournalServiceSSOT(db, nil, NewSettingsService(db))
+
+	inventory := createSSOTTestAccount(t, db, "1103-001", "PERSEDIAAN BARANG DAGANG", models.AccountTypeAsset, models.CategoryCurrentAsset)
+	otherCost := createSSOTTestAccount(t, db, "6106", "BEBAN MATERAI & BIAYA LAIN-LAIN", models.AccountTypeExpense, models.CategoryAdministrativeExp)
+	payable := createSSOTTestAccount(t, db, "2101-001", "HUTANG USAHA - LOKAL", models.AccountTypeLiability, models.CategoryCurrentLiability)
+
+	productID := uint(1)
+	purchaseID := uint(89)
+	purchase := &models.Purchase{
+		ID:                   purchaseID,
+		Code:                 "PO/TEST/OTHER-COST",
+		VendorID:             1,
+		UserID:               1,
+		Date:                 time.Now(),
+		NetBeforeTax:         100000,
+		OtherCostAmount:      6000,
+		OtherCostDescription: "Biaya materai",
+		TotalAmount:          106000,
+		PaymentMethod:        models.PurchasePaymentCredit,
+		Status:               models.PurchaseStatusApproved,
+		Vendor:               models.Contact{Name: "PT Materai Test"},
+		PurchaseItems: []models.PurchaseItem{
+			{
+				ID:         1,
+				ProductID:  &productID,
+				Quantity:   1,
+				UnitPrice:  100000,
+				TotalPrice: 100000,
+				Product: &models.Product{
+					ID:   productID,
+					Name: "Jasa Legal",
+				},
+			},
+		},
+	}
+
+	if err := service.CreatePurchaseJournal(purchase, nil); err != nil {
+		t.Fatalf("create purchase journal: %v", err)
+	}
+
+	sourceID := uint64(purchaseID)
+	var entry models.SSOTJournalEntry
+	if err := db.Where("source_type = ? AND source_id = ?", models.SSOTSourceTypePurchase, sourceID).First(&entry).Error; err != nil {
+		t.Fatalf("load purchase journal entry: %v", err)
+	}
+	if got := entry.TotalDebit.Round(2).StringFixed(2); got != "106000.00" {
+		t.Fatalf("expected debit 106000.00, got %s", got)
+	}
+	if got := entry.TotalCredit.Round(2).StringFixed(2); got != "106000.00" {
+		t.Fatalf("expected credit 106000.00, got %s", got)
+	}
+
+	var lines []models.SSOTJournalLine
+	if err := db.Where("journal_id = ?", entry.ID).Find(&lines).Error; err != nil {
+		t.Fatalf("load purchase journal lines: %v", err)
+	}
+
+	var inventoryLine, otherCostLine, payableLine *models.SSOTJournalLine
+	for i := range lines {
+		switch lines[i].AccountID {
+		case uint64(inventory.ID):
+			inventoryLine = &lines[i]
+		case uint64(otherCost.ID):
+			otherCostLine = &lines[i]
+		case uint64(payable.ID):
+			payableLine = &lines[i]
+		}
+	}
+
+	if inventoryLine == nil || inventoryLine.DebitAmount.Round(2).StringFixed(2) != "100000.00" {
+		t.Fatalf("expected inventory debit 100000.00, got %#v", inventoryLine)
+	}
+	if otherCostLine == nil || otherCostLine.DebitAmount.Round(2).StringFixed(2) != "6000.00" {
+		t.Fatalf("expected other cost debit 6000.00, got %#v", otherCostLine)
+	}
+	if payableLine == nil || payableLine.CreditAmount.Round(2).StringFixed(2) != "106000.00" {
+		t.Fatalf("expected payable credit 106000.00, got %#v", payableLine)
+	}
+}
+
 func TestDeletePurchaseJournalRemovesLinkedReversalEntries(t *testing.T) {
 	db := newPurchaseJournalSSOTTestDB(t)
 	service := NewPurchaseJournalServiceSSOT(db, nil, nil)

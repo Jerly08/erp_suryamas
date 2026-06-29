@@ -17,6 +17,18 @@ func NewPurchaseRepository(db *gorm.DB) *PurchaseRepository {
 	return &PurchaseRepository{db: db}
 }
 
+func (r *PurchaseRepository) withPurchasePaymentPreloads(query *gorm.DB) *gorm.DB {
+	if !r.db.Migrator().HasTable(&models.PurchasePayment{}) {
+		return query
+	}
+
+	return query.
+		Preload("PurchasePayments").
+		Preload("PurchasePayments.Payment").
+		Preload("PurchasePayments.PaymentProofUploader").
+		Preload("PurchasePayments.PaymentProofReviewer")
+}
+
 func isDateOnlyFilter(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -150,7 +162,7 @@ func (r *PurchaseRepository) Create(purchase *models.Purchase) (*models.Purchase
 
 func (r *PurchaseRepository) FindByID(id uint) (*models.Purchase, error) {
 	var purchase models.Purchase
-	err := r.db.Preload("Vendor").
+	query := r.db.Preload("Vendor").
 		Preload("User").
 		Preload("PurchaseRequest").
 		Preload("PurchaseRequest.Project").
@@ -158,12 +170,14 @@ func (r *PurchaseRepository) FindByID(id uint) (*models.Purchase, error) {
 		Preload("PurchaseItems.Product").
 		Preload("PurchaseItems.PurchaseRequestItem").
 		Preload("PurchaseItems.ExpenseAccount").
+		Preload("OtherCostAccount").
 		Preload("ApprovalRequest.Workflow").
 		Preload("ApprovalRequest.Requester").
 		Preload("ApprovalRequest.ApprovalSteps.Step").
 		Preload("ApprovalRequest.ApprovalSteps.Approver").
-		Preload("Approver").
-		First(&purchase, id).Error
+		Preload("Approver")
+	query = r.withPurchasePaymentPreloads(query)
+	err := query.First(&purchase, id).Error
 
 	if err != nil {
 		return nil, err
@@ -173,14 +187,16 @@ func (r *PurchaseRepository) FindByID(id uint) (*models.Purchase, error) {
 
 func (r *PurchaseRepository) FindAll() ([]models.Purchase, error) {
 	var purchases []models.Purchase
-	err := r.db.Preload("Vendor").
+	query := r.db.Preload("Vendor").
 		Preload("User").
 		Preload("PurchaseRequest").
 		Preload("PurchaseRequest.Project").
 		Preload("Project").
 		Preload("PurchaseItems").
-		Preload("ApprovalRequest").
-		Find(&purchases).Error
+		Preload("OtherCostAccount").
+		Preload("ApprovalRequest")
+	query = r.withPurchasePaymentPreloads(query)
+	err := query.Find(&purchases).Error
 
 	return purchases, err
 }
@@ -197,6 +213,7 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 		Preload("Project").
 		Preload("PurchaseItems.Product").
 		Preload("PurchaseItems.PurchaseRequestItem").
+		Preload("OtherCostAccount").
 		// Load approval request with all nested data for role-based filtering
 		Preload("ApprovalRequest").
 		Preload("ApprovalRequest.Workflow").
@@ -205,6 +222,7 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 		Preload("ApprovalRequest.ApprovalSteps.Step").
 		Preload("ApprovalRequest.ApprovalSteps.Approver").
 		Preload("Approver")
+	query = r.withPurchasePaymentPreloads(query)
 
 	query = r.applyPurchaseFilter(query, filter)
 

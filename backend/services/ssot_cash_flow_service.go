@@ -191,7 +191,7 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endExclusive ti
 	// EXCLUDE: Cash accounts (1101-xxx) — they ARE the result
 	// EXCLUDE: Revenue/COGS/Expense accounts (4xxx-8xxx) — already captured in Net Income
 	query := `
-		SELECT 
+		SELECT
 			a.id as account_id,
 			a.code as account_code,
 			a.name as account_name,
@@ -208,10 +208,10 @@ func (s *SSOTCashFlowService) getCashFlowTransactions(startDate, endExclusive ti
 		FROM accounts a
 		LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
 		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id AND uje.deleted_at IS NULL
-		WHERE uje.status = 'POSTED' 
+		WHERE uje.status = 'POSTED'
 			AND uje.entry_date >= ? 
 			AND uje.entry_date < ?
-			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('CLOSING', 'REVERSAL')
+			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('OPENING', 'OPENING_BALANCE', 'CLOSING', 'REVERSAL')
 			AND a.code NOT LIKE '1101%'
 			AND a.code NOT LIKE '4%'
 			AND a.code NOT LIKE '5%'
@@ -265,7 +265,7 @@ func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endExclusive time.
 		WHERE uje.status = 'POSTED' 
 			AND uje.entry_date >= ? 
 			AND uje.entry_date < ?
-			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('CLOSING', 'REVERSAL')
+			AND UPPER(COALESCE(uje.source_type, '')) NOT IN ('OPENING', 'OPENING_BALANCE', 'CLOSING', 'REVERSAL')
 			AND a.deleted_at IS NULL
 			AND COALESCE(a.is_header, false) = false
 			AND (a.code LIKE '4%' OR a.code LIKE '5%' OR a.code LIKE '6%' OR a.code LIKE '7%' OR a.code LIKE '8%' OR a.code LIKE '9%')
@@ -284,7 +284,7 @@ func (s *SSOTCashFlowService) getNetIncomeFromSSOT(startDate, endExclusive time.
 func (s *SSOTCashFlowService) getCashBalances(startDate, endExclusive time.Time) (float64, float64, error) {
 	var beginningCash, endingCash float64
 
-	// Beginning cash = all cash account movements BEFORE the start date
+	// Beginning cash = all cash account movements BEFORE the start date.
 	beginningQuery := `
 		SELECT 
 			COALESCE(SUM(
@@ -298,6 +298,25 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endExclusive time.Time)
 			AND a.deleted_at IS NULL
 			AND uje.entry_date < ?
 			AND a.code LIKE '1101%'
+	`
+
+	// Opening entries are migration/startup balances, not cash activity during the report period.
+	// If they fall inside the selected period, treat them as beginning cash so reconciliation remains valid.
+	openingWithinPeriodQuery := `
+		SELECT
+			COALESCE(SUM(
+				COALESCE(ujl.debit_amount, 0) - COALESCE(ujl.credit_amount, 0)
+			), 0) as cash_balance
+		FROM accounts a
+		LEFT JOIN unified_journal_lines ujl ON ujl.account_id = a.id
+		LEFT JOIN unified_journal_ledger uje ON uje.id = ujl.journal_id
+		WHERE uje.status = 'POSTED'
+			AND uje.deleted_at IS NULL
+			AND a.deleted_at IS NULL
+			AND uje.entry_date >= ?
+			AND uje.entry_date < ?
+			AND a.code LIKE '1101%'
+			AND UPPER(COALESCE(uje.source_type, '')) IN ('OPENING', 'OPENING_BALANCE')
 	`
 
 	// Ending cash = all cash account movements up to (but not including) the end date
@@ -320,6 +339,9 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endExclusive time.Time)
 	var beginResult struct {
 		CashBalance float64 `json:"cash_balance"`
 	}
+	var openingResult struct {
+		CashBalance float64 `json:"cash_balance"`
+	}
 	var endResult struct {
 		CashBalance float64 `json:"cash_balance"`
 	}
@@ -328,15 +350,19 @@ func (s *SSOTCashFlowService) getCashBalances(startDate, endExclusive time.Time)
 		return 0, 0, fmt.Errorf("error getting beginning cash balance: %v", err)
 	}
 
+	if err := s.db.Raw(openingWithinPeriodQuery, startDate, endExclusive).Scan(&openingResult).Error; err != nil {
+		return 0, 0, fmt.Errorf("error getting opening cash balance within period: %v", err)
+	}
+
 	if err := s.db.Raw(endingQuery, endExclusive).Scan(&endResult).Error; err != nil {
 		return 0, 0, fmt.Errorf("error getting ending cash balance: %v", err)
 	}
 
-	beginningCash = beginResult.CashBalance
+	beginningCash = beginResult.CashBalance + openingResult.CashBalance
 	endingCash = endResult.CashBalance
 
-	log.Printf("Beginning Cash (before %s): %.2f, Ending Cash (before %s): %.2f",
-		startDate.Format("2006-01-02"), beginningCash, endExclusive.Format("2006-01-02"), endingCash)
+	log.Printf("Beginning Cash (before %s + opening in period %.2f): %.2f, Ending Cash (before %s): %.2f",
+		startDate.Format("2006-01-02"), openingResult.CashBalance, beginningCash, endExclusive.Format("2006-01-02"), endingCash)
 
 	return beginningCash, endingCash, nil
 }

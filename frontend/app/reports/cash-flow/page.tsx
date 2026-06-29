@@ -373,7 +373,7 @@ const CashFlowPage: React.FC = () => {
         return {
             value,
             absoluteValue: Math.abs(value),
-            badgeLabel: isPositive ? 'Kas Masuk' : isNegative ? 'Kas Keluar' : 'Nihil',
+            badgeLabel: isPositive ? 'Menambah Kas' : isNegative ? 'Mengurangi Kas' : 'Nihil',
             badgeScheme: isPositive ? 'green' : isNegative ? 'red' : 'gray',
             textColor: isPositive ? 'green.600' : isNegative ? 'red.500' : subtleTextColor,
         };
@@ -717,7 +717,7 @@ const CashFlowPage: React.FC = () => {
                                 Cara membaca angka di laporan ini
                             </Text>
                             <Text fontSize="sm" color={notePanelTextColor}>
-                                Nilai negatif sekarang ditampilkan sebagai <b>Kas Keluar</b> dan nilai positif sebagai <b>Kas Masuk</b>, jadi lebih mudah dibaca tanpa harus menebak arti tanda minus.
+                                Nilai positif ditampilkan sebagai <b>Menambah Kas</b> dan nilai negatif sebagai <b>Mengurangi Kas</b>. Istilah ini dipakai karena metode tidak langsung berisi penyesuaian, bukan hanya transaksi kas literal.
                             </Text>
                         </Box>
 

@@ -443,6 +443,14 @@ export const API_ENDPOINTS = {
   PURCHASES_INTEGRATED_PAYMENT: (id: number) =>
     `/api/v1/purchases/${id}/integrated-payment`,
   PURCHASES_PAYMENTS: (id: number) => `/api/v1/purchases/${id}/payments`,
+  PURCHASES_PAYMENT_PROOF: (id: number) =>
+    `/api/v1/purchases/${id}/payment-proof`,
+  PURCHASES_PAYMENT_PROOF_DOWNLOAD: (paymentId: number) =>
+    `/api/v1/purchases/payment-proofs/${paymentId}/download`,
+  PURCHASES_PAYMENT_PROOF_REVIEW: (paymentId: number) =>
+    `/api/v1/purchases/payment-proofs/${paymentId}/review`,
+  PURCHASE_REQUEST_PAYMENT_PROOF_DOWNLOAD: (paymentId: number) =>
+    `/api/v1/purchase-requests/payment-proofs/${paymentId}/download`,
   PURCHASES_PAY_PPH: (id: number) => `/api/v1/purchases/${id}/pay-pph`,
   PURCHASES_EXPORT_PDF: "/api/v1/purchases/export/pdf",
   PURCHASES_EXPORT_CSV: "/api/v1/purchases/export/csv",

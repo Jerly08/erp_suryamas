@@ -708,6 +708,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			purchaseRequests := protected.Group("/purchase-requests")
 			{
 				purchaseRequests.GET("", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetAll)
+				purchaseRequests.GET("/payment-proofs/:payment_id/download", permMiddleware.CanView("purchase_requests"), purchaseController.DownloadPaymentProof)
 				purchaseRequests.GET("/:id", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetByID)
 				purchaseRequests.POST("", permMiddleware.CanCreate("purchase_requests"), purchaseRequestController.Create)
 				purchaseRequests.GET("/:id/documents", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetDocuments)
@@ -892,6 +893,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				// not require access to the standalone Contact module.
 				purchases.GET("/vendors", permMiddleware.CanView("purchases"), contactController.GetVendorsForPurchase)
 				purchases.POST("/vendors", permMiddleware.CanCreate("purchases"), contactController.CreateVendorForPurchase)
+				purchases.GET("/payment-proofs/:payment_id/download", rbacMgr.RequireAnyPermission("purchases:view", "purchase_requests:view"), purchaseController.DownloadPaymentProof)
 				purchases.GET("/:id", permMiddleware.CanView("purchases"), purchaseController.GetPurchase)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
 				purchases.PUT("/:id", permMiddleware.CanEditPurchaseOrFinanceStaffDraft(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
@@ -931,10 +933,12 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.GET("/export/csv", permMiddleware.CanExport("purchases"), purchaseController.ExportPurchasesReportCSV)
 				purchases.GET("/dashboard", permMiddleware.CanView("purchases"), purchaseController.GetPurchaseDashboard)
 				purchases.GET("/vendor/:vendor_id/summary", permMiddleware.CanView("purchases"), purchaseController.GetVendorPurchaseSummary)
+				purchases.POST("/payment-proofs/:payment_id/review", permMiddleware.CanApprove("purchases"), purchaseController.ReviewPaymentProof)
 
 				// Payment management (similar to sales payment management)
 				purchases.GET("/:id/payments", rbacMgr.RequireAnyPermission("purchases:view", "payments:view"), purchaseController.GetPurchasePayments)
 				purchases.POST("/:id/payments", rbacMgr.RequireAnyPermission("purchases:edit", "payments:create"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchasePayment)
+				purchases.POST("/:id/payment-proof", rbacMgr.RequireAnyPermission("purchases:create", "purchases:edit", "purchases:approve", "payments:create"), purchaseController.UploadPaymentProof)
 				purchases.POST("/:id/pay-pph", rbacMgr.RequireAnyPermission("purchases:edit", "payments:create"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.PayPurchasePPh)
 
 				// Integrated Payment Management routes

@@ -73,6 +73,7 @@ import searchableSelectService, {
 } from "@/services/searchableSelectService";
 import { useAuth } from "@/contexts/AuthContext";
 import api from "@/services/api";
+import purchaseService from "@/services/purchaseService";
 import {
   isAccountingRole,
   isFinanceManagerRole,
@@ -121,6 +122,10 @@ type FinalizedPaymentReceipt = {
   purchasePaymentId: number;
   paymentId?: number | null;
   paymentCode: string;
+  hasPaymentProof?: boolean;
+  hasUploadedPaymentProof?: boolean;
+  paymentProofFileName?: string;
+  paymentProofReviewStatus?: string;
   amount: number;
   date?: string;
   method?: string;
@@ -453,12 +458,37 @@ export default function PurchaseRequestsPage() {
   const handleDownloadPaymentReceipt = async (
     receipt: FinalizedPaymentReceipt,
   ) => {
+    if (receipt.hasPaymentProof) {
+      try {
+        await purchaseService.downloadPaymentProof(
+          receipt.purchasePaymentId,
+          receipt.paymentProofFileName || `${receipt.paymentCode}-bukti-bank`,
+          true,
+        );
+      } catch (err: unknown) {
+        const error = err as {
+          response?: { data?: { error?: string } };
+          message?: string;
+        };
+        toast({
+          title: "Gagal membuka bukti pembayaran bank",
+          description:
+            error.response?.data?.error ||
+            error.message ||
+            "Bukti pembayaran bank belum bisa diunduh.",
+          status: "error",
+          duration: 4000,
+        });
+      }
+      return;
+    }
+
     if (!receipt.paymentId) {
       toast({
-        title: "Bukti pembayaran langsung",
+        title: "Bukti pembayaran belum diunggah",
         description:
-          "Pembayaran ini tercatat langsung dari purchase dan jurnal kas/bank.",
-        status: "info",
+          "Pembayaran sudah tercatat, tetapi file bukti pembayaran bank belum tersedia.",
+        status: "warning",
         duration: 3500,
       });
       return;
@@ -624,6 +654,14 @@ export default function PurchaseRequestsPage() {
     purchases.forEach((purchase) => {
       (purchase.purchase_payments || []).forEach((purchasePayment) => {
         const payment = purchasePayment.payment;
+        const proofReviewStatus = (
+          purchasePayment.payment_proof_review_status || "PENDING"
+        ).toUpperCase();
+        const hasUploadedPaymentProof = Boolean(
+          purchasePayment.payment_proof_file_path,
+        );
+        const hasApprovedPaymentProof =
+          hasUploadedPaymentProof && proofReviewStatus === "APPROVED";
         const hasFinalPaymentRecord =
           Boolean(payment?.id) && payment?.status?.toUpperCase() === "COMPLETED";
         const hasDirectPurchasePayment =
@@ -644,6 +682,10 @@ export default function PurchaseRequestsPage() {
             payment?.code ||
             purchasePayment.payment_number ||
             `${purchase.code}-PAY`,
+          hasPaymentProof: hasApprovedPaymentProof,
+          hasUploadedPaymentProof,
+          paymentProofFileName: purchasePayment.payment_proof_file_name,
+          paymentProofReviewStatus: proofReviewStatus,
           amount: Number(payment?.amount || purchasePayment.amount || 0),
           date: payment?.date || purchasePayment.date,
           method: payment?.method || purchasePayment.method,
@@ -652,68 +694,148 @@ export default function PurchaseRequestsPage() {
       });
     });
     const finalizedReceipts = Array.from(finalizedReceiptByKey.values());
+    const paymentProofReceipts = finalizedReceipts.filter((receipt) =>
+      Boolean(receipt.hasPaymentProof),
+    );
+    const pendingPaymentProofCount = finalizedReceipts.filter(
+      (receipt) =>
+        receipt.hasUploadedPaymentProof &&
+        receipt.paymentProofReviewStatus === "PENDING",
+    ).length;
+    const rejectedPaymentProofCount = finalizedReceipts.filter(
+      (receipt) =>
+        receipt.hasUploadedPaymentProof &&
+        receipt.paymentProofReviewStatus === "REJECTED",
+    ).length;
+    const paymentWithoutProofCount =
+      finalizedReceipts.filter((receipt) => !receipt.hasUploadedPaymentProof)
+        .length;
 
     return {
       hasPurchase: purchaseIDs.size > 0,
       hasPayment:
         totalPaid > 0 ||
         purchases.some((purchase) => ["PAID", "COMPLETED"].includes(purchase.status)),
-      hasFinalizedReceipt: finalizedReceipts.length > 0,
+      hasPaymentProof: paymentProofReceipts.length > 0,
+      paymentProofReceipts,
+      paymentWithoutProofCount,
+      pendingPaymentProofCount,
+      rejectedPaymentProofCount,
       purchaseCount: purchaseIDs.size,
       totalPaid,
       totalOutstanding,
       totalAmount,
       purchaseCodes: purchases.map((purchase) => purchase.code).filter(Boolean),
-      finalizedReceipts,
     };
   };
 
-  const getRealizationBadge = (pr?: PurchaseRequest | null) => {
+  const renderPaymentProofRealization = (
+    pr?: PurchaseRequest | null,
+    compact = false,
+  ) => {
     const summary = getPurchaseRealizationSummary(pr);
-    if (!summary.hasPurchase) {
-      return <Badge colorScheme="gray">Belum Pembelian</Badge>;
+
+    if (summary.hasPaymentProof) {
+      const visibleReceipts = compact
+        ? summary.paymentProofReceipts.slice(0, 2)
+        : summary.paymentProofReceipts;
+      const hiddenCount = summary.paymentProofReceipts.length - visibleReceipts.length;
+
+      return (
+        <Flex
+          direction="column"
+          gap={1.5}
+          align="flex-start"
+          maxW={compact ? "180px" : "100%"}
+          minW={0}
+        >
+          <Badge colorScheme="green" variant="subtle">
+            Bukti Pembayaran Bank
+          </Badge>
+          <Flex gap={1.5} wrap="wrap" maxW="100%" minW={0}>
+            {visibleReceipts.map((receipt) => (
+              <Tooltip
+                key={`${receipt.paymentId || "direct"}-${receipt.purchasePaymentId}`}
+                label={receipt.paymentProofFileName || receipt.paymentCode}
+                placement="top"
+              >
+                <Button
+                  leftIcon={<FiDownload />}
+                  size="xs"
+                  colorScheme="green"
+                  variant="outline"
+                  onClick={() => handleDownloadPaymentReceipt(receipt)}
+                  maxW={compact ? "170px" : "240px"}
+                  minW={0}
+                  justifyContent="flex-start"
+                >
+                  <Text as="span" noOfLines={1} minW={0}>
+                    {compact
+                      ? receipt.paymentCode
+                      : receipt.paymentProofFileName || receipt.paymentCode}
+                  </Text>
+                </Button>
+              </Tooltip>
+            ))}
+            {hiddenCount > 0 && (
+              <Badge colorScheme="green" alignSelf="center">
+                +{hiddenCount} bukti
+              </Badge>
+            )}
+          </Flex>
+          {summary.paymentWithoutProofCount > 0 && (
+            <Badge colorScheme="yellow" variant="subtle">
+              {summary.paymentWithoutProofCount} belum ada bukti
+            </Badge>
+          )}
+          {summary.pendingPaymentProofCount > 0 && (
+            <Badge colorScheme="yellow" variant="subtle">
+              {summary.pendingPaymentProofCount} menunggu review FM
+            </Badge>
+          )}
+          {summary.rejectedPaymentProofCount > 0 && (
+            <Badge colorScheme="red" variant="subtle">
+              {summary.rejectedPaymentProofCount} ditolak FM
+            </Badge>
+          )}
+        </Flex>
+      );
     }
 
     if (summary.hasPayment) {
-      return <Badge colorScheme="green">Sudah Ada Pembayaran</Badge>;
+      return (
+        <Flex direction="column" gap={1} align="flex-start">
+          {summary.pendingPaymentProofCount > 0 ? (
+            <Badge colorScheme="yellow" variant="subtle">
+              Menunggu review FM
+            </Badge>
+          ) : summary.rejectedPaymentProofCount > 0 ? (
+            <Badge colorScheme="red" variant="subtle">
+              Bukti ditolak FM
+            </Badge>
+          ) : (
+            <Badge colorScheme="yellow" variant="subtle">
+              Belum upload bukti
+            </Badge>
+          )}
+        </Flex>
+      );
     }
 
-    return <Badge colorScheme="blue">Sudah Dibuat Pembelian</Badge>;
-  };
-
-  const renderFinalizedReceiptButtons = (
-    receipts: FinalizedPaymentReceipt[],
-    compact = false,
-  ) => {
-    if (!receipts.length) return null;
-
-    const visibleReceipts = compact ? receipts.slice(0, 2) : receipts;
-    const hiddenCount = receipts.length - visibleReceipts.length;
-
-    return (
-      <Flex mt={2} gap={1.5} wrap="wrap">
-        {visibleReceipts.map((receipt) => (
-          <Button
-            key={`${receipt.paymentId || "direct"}-${receipt.purchasePaymentId}`}
-            leftIcon={receipt.paymentId ? <FiDownload /> : <FiFileText />}
-            size="xs"
-            colorScheme="green"
-            variant="outline"
-            onClick={() => handleDownloadPaymentReceipt(receipt)}
-            whiteSpace="normal"
-          >
-            {compact
-              ? receipt.paymentCode
-              : `${receipt.paymentCode} - ${formatCurrency(receipt.amount)}`}
-          </Button>
-        ))}
-        {hiddenCount > 0 && (
-          <Badge colorScheme="green" alignSelf="center">
-            +{hiddenCount} bukti
+    if (summary.hasPurchase) {
+      return (
+        <Flex direction="column" gap={1} align="flex-start">
+          <Badge colorScheme="blue" variant="subtle">
+            Belum ada bukti
           </Badge>
-        )}
-      </Flex>
-    );
+          <Text fontSize="xs" color={mutedTextColor}>
+            {summary.purchaseCount} pembelian sudah dibuat
+          </Text>
+        </Flex>
+      );
+    }
+
+    return <Badge colorScheme="gray">Belum Pembelian</Badge>;
   };
 
   const hasFinanceStaffReview = (pr?: PurchaseRequest | null) => {
@@ -1471,37 +1593,8 @@ export default function PurchaseRequestsPage() {
 	                            </Badge>
 	                          )}
 	                        </Td>
-	                        <Td minW="220px">
-	                          {(() => {
-	                            const realization =
-	                              getPurchaseRealizationSummary(pr);
-	                            return (
-	                              <>
-	                                {getRealizationBadge(pr)}
-	                                {realization.hasPayment && (
-	                                  <Text
-	                                    fontSize="xs"
-	                                    color={mutedTextColor}
-	                                    mt={1}
-	                                  >
-	                                    Terbayar{" "}
-	                                    {formatCurrency(realization.totalPaid)}
-	                                  </Text>
-	                                )}
-	                                {realization.hasFinalizedReceipt && (
-	                                  <Box mt={2}>
-	                                    <Badge colorScheme="green" variant="subtle">
-	                                      Bukti pembayaran FM final
-	                                    </Badge>
-	                                    {renderFinalizedReceiptButtons(
-	                                      realization.finalizedReceipts,
-	                                      true,
-	                                    )}
-	                                  </Box>
-	                                )}
-	                              </>
-	                            );
-	                          })()}
+	                        <Td minW="260px">
+	                          {renderPaymentProofRealization(pr, true)}
 	                        </Td>
 	                        <Td>{getStatusBadge(pr)}</Td>
                         <Td>
@@ -2134,92 +2227,9 @@ export default function PurchaseRequestsPage() {
 	                    <Text fontSize="sm" color={mutedTextColor}>
 	                      Realisasi Pembelian/Pembayaran
 	                    </Text>
-	                    <Flex mt={1} gap={2} align="center" wrap="wrap">
-	                      {getRealizationBadge(selectedRequest)}
-	                      {getPurchaseRealizationSummary(selectedRequest)
-	                        .purchaseCount > 0 && (
-	                        <Text fontSize="xs" color={mutedTextColor}>
-	                          {
-	                            getPurchaseRealizationSummary(selectedRequest)
-	                              .purchaseCount
-	                          }{" "}
-	                          pembelian
-	                        </Text>
-	                      )}
-	                    </Flex>
-		                    {getPurchaseRealizationSummary(selectedRequest).hasPayment && (
-		                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
-		                        Terbayar{" "}
-	                        {formatCurrency(
-	                          getPurchaseRealizationSummary(selectedRequest)
-	                            .totalPaid,
-	                        )}
-	                        {getPurchaseRealizationSummary(selectedRequest)
-	                          .totalOutstanding > 0 &&
-	                          `, sisa ${formatCurrency(
-	                            getPurchaseRealizationSummary(selectedRequest)
-	                              .totalOutstanding,
-		                          )}`}
-		                      </Text>
-		                    )}
-		                    {getPurchaseRealizationSummary(selectedRequest)
-		                      .hasFinalizedReceipt && (
-		                      <Box mt={3}>
-		                        <Text fontSize="xs" fontWeight="semibold">
-		                          Bukti pembayaran final FM
-		                        </Text>
-		                        <Flex mt={2} direction="column" gap={2}>
-		                          {getPurchaseRealizationSummary(
-		                            selectedRequest,
-		                          ).finalizedReceipts.map((receipt) => (
-		                            <Flex
-		                              key={`${receipt.paymentId || "direct"}-${receipt.purchasePaymentId}`}
-		                              align={{ base: "stretch", sm: "center" }}
-		                              justify="space-between"
-		                              gap={2}
-		                              direction={{ base: "column", sm: "row" }}
-		                              p={2}
-		                              borderWidth="1px"
-		                              borderColor={borderColor}
-		                              borderRadius="md"
-		                            >
-		                              <Box minW={0}>
-		                                <Text fontSize="sm" fontWeight="medium">
-		                                  {receipt.paymentCode}
-		                                </Text>
-		                                <Text fontSize="xs" color={mutedTextColor}>
-		                                  {receipt.purchaseCode} -{" "}
-		                                  {formatCurrency(receipt.amount)}
-		                                  {receipt.date &&
-		                                    ` - ${new Date(
-		                                      receipt.date,
-		                                    ).toLocaleDateString()}`}
-		                                </Text>
-		                              </Box>
-		                              <Button
-		                                leftIcon={
-		                                  receipt.paymentId ? (
-		                                    <FiDownload />
-		                                  ) : (
-		                                    <FiFileText />
-		                                  )
-		                                }
-		                                size="xs"
-		                                colorScheme="green"
-		                                variant="outline"
-		                                onClick={() =>
-		                                  handleDownloadPaymentReceipt(receipt)
-		                                }
-		                              >
-		                                {receipt.paymentId
-		                                  ? "Unduh Bukti"
-		                                  : "Lihat Bukti"}
-		                              </Button>
-		                            </Flex>
-		                          ))}
-		                        </Flex>
-		                      </Box>
-		                    )}
+	                    <Box mt={1}>
+	                      {renderPaymentProofRealization(selectedRequest)}
+	                    </Box>
 		                  </Box>
 	                  {getStageLabel(selectedRequest) && (
                     <Box>

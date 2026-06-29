@@ -41,9 +41,12 @@ type Purchase struct {
 	PPhPaymentJournalEntryID *uint64    `json:"pph_payment_journal_entry_id" gorm:"column:pph_payment_journal_entry_id;index"`
 
 	// Legacy tax field (kept for backward compatibility)
-	TaxAmount   float64 `json:"tax_amount" gorm:"type:decimal(15,2);default:0"`
-	FreightCost float64 `json:"freight_cost" gorm:"type:decimal(15,2);default:0"` // Capitalized delivery/shipping cost for inventory valuation
-	TotalAmount float64 `json:"total_amount" gorm:"type:decimal(15,2);default:0"` // kept for compatibility (grand total)
+	TaxAmount            float64 `json:"tax_amount" gorm:"type:decimal(15,2);default:0"`
+	FreightCost          float64 `json:"freight_cost" gorm:"type:decimal(15,2);default:0"` // Capitalized delivery/shipping cost for inventory valuation
+	OtherCostAmount      float64 `json:"other_cost_amount" gorm:"type:decimal(15,2);default:0"`
+	OtherCostDescription string  `json:"other_cost_description" gorm:"type:text"`
+	OtherCostAccountID   *uint   `json:"other_cost_account_id" gorm:"index"`
+	TotalAmount          float64 `json:"total_amount" gorm:"type:decimal(15,2);default:0"` // kept for compatibility (grand total)
 
 	// Payment tracking fields
 	PaidAmount        float64 `json:"paid_amount" gorm:"type:decimal(15,2);default:0"`
@@ -84,6 +87,7 @@ type Purchase struct {
 	PurchasePayments []PurchasePayment `json:"purchase_payments,omitempty" gorm:"foreignKey:PurchaseID"`
 	BankAccount      *CashBank         `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
 	CreditAccount    *Account          `json:"credit_account,omitempty" gorm:"foreignKey:CreditAccountID"`
+	OtherCostAccount *Account          `json:"other_cost_account,omitempty" gorm:"foreignKey:OtherCostAccountID"`
 	ApprovalRequest  *ApprovalRequest  `json:"approval_request,omitempty" gorm:"foreignKey:ApprovalRequestID"`
 	Approver         *User             `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
 	PurchaseRequest  *PurchaseRequest  `json:"purchase_request,omitempty" gorm:"foreignKey:PurchaseRequestID"`
@@ -120,26 +124,38 @@ type PurchaseItem struct {
 
 // PurchasePayment represents payments made for purchases (cross-reference with payments table)
 type PurchasePayment struct {
-	ID            uint           `json:"id" gorm:"primaryKey"`
-	PurchaseID    uint           `json:"purchase_id" gorm:"not null;index"`
-	PaymentNumber string         `json:"payment_number" gorm:"size:50"`
-	Date          time.Time      `json:"date"`
-	Amount        float64        `json:"amount" gorm:"type:decimal(15,2);default:0"`
-	Method        string         `json:"method" gorm:"size:20"`
-	Reference     string         `json:"reference" gorm:"size:100"`
-	Notes         string         `json:"notes" gorm:"type:text"`
-	CashBankID    *uint          `json:"cash_bank_id" gorm:"index"`
-	UserID        uint           `json:"user_id" gorm:"not null;index"`
-	PaymentID     *uint          `json:"payment_id" gorm:"index"` // Cross-reference to payments table
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                       uint           `json:"id" gorm:"primaryKey"`
+	PurchaseID               uint           `json:"purchase_id" gorm:"not null;index"`
+	PaymentNumber            string         `json:"payment_number" gorm:"size:50"`
+	Date                     time.Time      `json:"date"`
+	Amount                   float64        `json:"amount" gorm:"type:decimal(15,2);default:0"`
+	Method                   string         `json:"method" gorm:"size:20"`
+	Reference                string         `json:"reference" gorm:"size:100"`
+	Notes                    string         `json:"notes" gorm:"type:text"`
+	CashBankID               *uint          `json:"cash_bank_id" gorm:"index"`
+	UserID                   uint           `json:"user_id" gorm:"not null;index"`
+	PaymentID                *uint          `json:"payment_id" gorm:"index"` // Cross-reference to payments table
+	PaymentProofFileName     string         `json:"payment_proof_file_name" gorm:"size:255"`
+	PaymentProofFilePath     string         `json:"payment_proof_file_path" gorm:"size:500"`
+	PaymentProofFileSize     int64          `json:"payment_proof_file_size"`
+	PaymentProofMimeType     string         `json:"payment_proof_mime_type" gorm:"size:100"`
+	PaymentProofUploadedBy   *uint          `json:"payment_proof_uploaded_by" gorm:"index"`
+	PaymentProofUploadedAt   *time.Time     `json:"payment_proof_uploaded_at"`
+	PaymentProofReviewStatus string         `json:"payment_proof_review_status" gorm:"size:20;default:'PENDING'"`
+	PaymentProofReviewedBy   *uint          `json:"payment_proof_reviewed_by" gorm:"index"`
+	PaymentProofReviewedAt   *time.Time     `json:"payment_proof_reviewed_at"`
+	PaymentProofReviewNotes  string         `json:"payment_proof_review_notes" gorm:"type:text"`
+	CreatedAt                time.Time      `json:"created_at"`
+	UpdatedAt                time.Time      `json:"updated_at"`
+	DeletedAt                gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Purchase Purchase  `json:"purchase" gorm:"foreignKey:PurchaseID"`
-	CashBank *CashBank `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
-	User     User      `json:"user" gorm:"foreignKey:UserID"`
-	Payment  *Payment  `json:"payment,omitempty" gorm:"foreignKey:PaymentID"`
+	Purchase             Purchase  `json:"purchase" gorm:"foreignKey:PurchaseID"`
+	CashBank             *CashBank `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
+	User                 User      `json:"user" gorm:"foreignKey:UserID"`
+	Payment              *Payment  `json:"payment,omitempty" gorm:"foreignKey:PaymentID"`
+	PaymentProofUploader *User     `json:"payment_proof_uploader,omitempty" gorm:"foreignKey:PaymentProofUploadedBy"`
+	PaymentProofReviewer *User     `json:"payment_proof_reviewer,omitempty" gorm:"foreignKey:PaymentProofReviewedBy"`
 }
 
 // Purchase Status Constants
@@ -196,6 +212,13 @@ const (
 	PurchasePaymentCheck    = "CHECK"         // Check payment - immediate payment via check
 )
 
+// Purchase Payment Proof Review Status Constants
+const (
+	PurchasePaymentProofPending  = "PENDING"
+	PurchasePaymentProofApproved = "APPROVED"
+	PurchasePaymentProofRejected = "REJECTED"
+)
+
 // Filter and Request DTOs
 type PurchaseFilter struct {
 	Status           string `json:"status"`
@@ -230,8 +253,11 @@ type PurchaseCreateRequest struct {
 	PaymentReference string `json:"payment_reference"`
 
 	// Legacy tax field (for backward compatibility - ignored in calculation)
-	Tax         float64 `json:"tax"`
-	FreightCost float64 `json:"freight_cost"`
+	Tax                  float64 `json:"tax"`
+	FreightCost          float64 `json:"freight_cost"`
+	OtherCostAmount      float64 `json:"other_cost_amount"`
+	OtherCostDescription string  `json:"other_cost_description"`
+	OtherCostAccountID   *uint   `json:"other_cost_account_id"`
 
 	// Tax additions (Penambahan) - using pointers to distinguish null vs zero
 	PPNRate           *float64 `json:"ppn_rate"` // nil = default to 11%, 0 = no VAT
@@ -259,8 +285,11 @@ type PurchaseUpdateRequest struct {
 	PaymentReference *string `json:"payment_reference"`
 
 	// Legacy tax field (for backward compatibility - ignored in calculation)
-	Tax         *float64 `json:"tax"`
-	FreightCost *float64 `json:"freight_cost"`
+	Tax                  *float64 `json:"tax"`
+	FreightCost          *float64 `json:"freight_cost"`
+	OtherCostAmount      *float64 `json:"other_cost_amount"`
+	OtherCostDescription *string  `json:"other_cost_description"`
+	OtherCostAccountID   *uint    `json:"other_cost_account_id"`
 
 	// Tax additions (Penambahan) - pointers to distinguish null vs zero
 	PPNRate           **float64 `json:"ppn_rate"` // double pointer for update operations
@@ -301,13 +330,16 @@ type PurchaseFinalReviewConfigRequest struct {
 	CreditAccountID  *uint   `json:"credit_account_id"`
 	PaymentReference *string `json:"payment_reference"`
 
-	FreightCost        *float64 `json:"freight_cost"`
-	PPNRate            *float64 `json:"ppn_rate"`
-	OtherTaxAdditions  *float64 `json:"other_tax_additions"`
-	PPh21Rate          *float64 `json:"pph21_rate"`
-	PPh23Rate          *float64 `json:"pph23_rate"`
-	OtherTaxDeductions *float64 `json:"other_tax_deductions"`
-	Notes              *string  `json:"notes"`
+	FreightCost          *float64 `json:"freight_cost"`
+	OtherCostAmount      *float64 `json:"other_cost_amount"`
+	OtherCostAccountID   *uint    `json:"other_cost_account_id"`
+	PPNRate              *float64 `json:"ppn_rate"`
+	OtherTaxAdditions    *float64 `json:"other_tax_additions"`
+	PPh21Rate            *float64 `json:"pph21_rate"`
+	PPh23Rate            *float64 `json:"pph23_rate"`
+	OtherTaxDeductions   *float64 `json:"other_tax_deductions"`
+	OtherCostDescription *string  `json:"other_cost_description"`
+	Notes                *string  `json:"notes"`
 }
 
 type PurchasePPhPaymentRequest struct {

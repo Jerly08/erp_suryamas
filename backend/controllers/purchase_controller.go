@@ -8,6 +8,8 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -900,6 +902,183 @@ func (pc *PurchaseController) UploadDocument(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": "Document uploaded successfully"})
+}
+
+func (pc *PurchaseController) UploadPaymentProof(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
+
+	file, header, err := c.Request.FormFile("payment_proof")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Bukti pembayaran bank wajib diunggah"})
+		return
+	}
+	defer file.Close()
+
+	if header.Size <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File bukti pembayaran kosong"})
+		return
+	}
+	const maxPaymentProofSize = 20 * 1024 * 1024
+	if header.Size > maxPaymentProofSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Ukuran bukti pembayaran maksimal 20MB"})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	allowedExt := map[string]bool{
+		".pdf": true, ".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
+	}
+	if !allowedExt[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format bukti pembayaran harus PDF/JPG/PNG/WEBP"})
+		return
+	}
+
+	mimeType := strings.TrimSpace(header.Header.Get("Content-Type"))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	uploadDir := "uploads/purchase-payment-proofs"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare upload directory"})
+		return
+	}
+
+	safeName := buildSafePaymentProofFilename(uint(id), header.Filename)
+	filePath := filepath.Join(uploadDir, safeName)
+	if err := c.SaveUploadedFile(header, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save payment proof"})
+		return
+	}
+
+	payment, err := pc.purchaseService.AttachPurchasePaymentProof(
+		uint(id),
+		c.GetUint("user_id"),
+		c.GetString("role"),
+		header.Filename,
+		filePath,
+		header.Size,
+		mimeType,
+	)
+	if err != nil {
+		_ = os.Remove(filePath)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Bukti pembayaran bank berhasil diunggah",
+		"payment": payment,
+	})
+}
+
+func (pc *PurchaseController) DownloadPaymentProof(c *gin.Context) {
+	paymentID, err := strconv.ParseUint(c.Param("payment_id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment proof ID"})
+		return
+	}
+
+	payment, err := pc.purchaseService.GetPurchasePaymentProofForDownload(
+		uint(paymentID),
+		c.GetUint("user_id"),
+		c.GetString("role"),
+	)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(strings.ToLower(err.Error()), "access denied") {
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	filePath := strings.TrimSpace(payment.PaymentProofFilePath)
+	if strings.HasPrefix(filePath, "/") {
+		filePath = strings.TrimPrefix(filePath, "/")
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "File bukti pembayaran tidak ditemukan di server"})
+		return
+	}
+
+	fileName := strings.TrimSpace(payment.PaymentProofFileName)
+	if fileName == "" {
+		fileName = filepath.Base(filePath)
+	}
+	if payment.PaymentProofMimeType != "" {
+		c.Header("Content-Type", payment.PaymentProofMimeType)
+	}
+	c.FileAttachment(filePath, fileName)
+}
+
+func (pc *PurchaseController) ReviewPaymentProof(c *gin.Context) {
+	paymentID, err := strconv.ParseUint(c.Param("payment_id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment proof ID"})
+		return
+	}
+
+	var request struct {
+		Status string `json:"status" binding:"required"`
+		Notes  string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Status review bukti pembayaran wajib diisi"})
+		return
+	}
+
+	userRole := c.GetString("role")
+	if userRole == "" {
+		userRole = c.GetString("user_role")
+	}
+
+	payment, err := pc.purchaseService.ReviewPurchasePaymentProof(
+		uint(paymentID),
+		c.GetUint("user_id"),
+		userRole,
+		request.Status,
+		request.Notes,
+	)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(strings.ToLower(err.Error()), "hanya finance manager") {
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Review bukti pembayaran bank berhasil disimpan",
+		"payment": payment,
+	})
+}
+
+func buildSafePaymentProofFilename(purchaseID uint, originalName string) string {
+	ext := strings.ToLower(filepath.Ext(originalName))
+	base := strings.TrimSuffix(filepath.Base(originalName), filepath.Ext(originalName))
+	base = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '_'
+	}, base)
+	base = strings.Trim(base, "._-")
+	if base == "" {
+		base = "payment-proof"
+	}
+	if len(base) > 80 {
+		base = base[:80]
+	}
+	return fmt.Sprintf("purchase_%d_%d_%s%s", purchaseID, time.Now().UnixNano(), base, ext)
 }
 
 // GetPurchaseDocuments returns documents for a purchase

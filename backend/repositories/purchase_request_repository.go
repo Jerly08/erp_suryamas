@@ -45,7 +45,10 @@ func (r *purchaseRequestRepository) withDefaultPreloads(query *gorm.DB) *gorm.DB
 		Preload("DirectorApprover")
 
 	if r.db.Migrator().HasTable(&models.PurchasePayment{}) {
-		query = query.Preload("Items.Purchase.PurchasePayments.Payment", "status = ?", models.PaymentStatusCompleted)
+		query = query.
+			Preload("Items.Purchase.PurchasePayments.Payment", "status = ?", models.PaymentStatusCompleted).
+			Preload("Items.Purchase.PurchasePayments.PaymentProofUploader").
+			Preload("Items.Purchase.PurchasePayments.PaymentProofReviewer")
 	}
 
 	return query

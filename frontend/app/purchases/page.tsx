@@ -94,6 +94,7 @@ import {
   FiAlertCircle,
   FiPackage,
   FiDownload,
+  FiUpload,
   FiFileText,
   FiSearch,
   FiDollarSign,
@@ -104,6 +105,7 @@ import purchaseService, {
   Purchase,
   PurchaseFilterParams,
   PurchaseItem,
+  PurchasePayment,
   PurchaseSummary,
 } from "@/services/purchaseService";
 import {
@@ -122,6 +124,7 @@ import { assetService } from "@/services/assetService";
 import {
   isAccountingRole,
   isFinanceManagerRole,
+  isFinanceStaffRole,
   isFinanceTeamRole,
   normalizeRole,
   workflowRoleMatchesUserRole,
@@ -141,6 +144,8 @@ import PurchaseJournalEntriesModal from "../../src/components/purchase/PurchaseJ
 import purchaseJournalService from "../../src/services/purchaseJournalService";
 import { API_ENDPOINTS } from "@/config/api";
 
+const PAYMENT_PROOF_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp";
+
 // Types for form data
 interface PurchaseFormData {
   vendor_id: string;
@@ -154,6 +159,9 @@ interface PurchaseFormData {
   // Legacy tax field (backward compatibility)
   tax: string;
   freight_cost: string;
+  other_cost_amount: string;
+  other_cost_description: string;
+  other_cost_account_id: string;
 
   // Tax additions (Penambahan)
   ppn_rate: string;
@@ -1027,6 +1035,9 @@ const PurchasesPage: React.FC = () => {
     ppn_rate: "0",
     other_tax_additions: "0",
     freight_cost: "0",
+    other_cost_amount: "0",
+    other_cost_description: "",
+    other_cost_account_id: "",
 
     // Tax deductions (Pemotongan)
     pph21_rate: "0",
@@ -1130,6 +1141,9 @@ const PurchasesPage: React.FC = () => {
     ppn_rate: "0",
     other_tax_additions: "0",
     freight_cost: "0",
+    other_cost_amount: "0",
+    other_cost_description: "",
+    other_cost_account_id: "",
     pph21_rate: "0",
     pph23_rate: "0",
     other_tax_deductions: "0",
@@ -1152,6 +1166,9 @@ const PurchasesPage: React.FC = () => {
     ppn_rate: "0",
     other_tax_additions: "0",
     freight_cost: "0",
+    other_cost_amount: "0",
+    other_cost_description: "",
+    other_cost_account_id: "",
     pph21_rate: "0",
     pph23_rate: "0",
     other_tax_deductions: "0",
@@ -1179,6 +1196,11 @@ const PurchasesPage: React.FC = () => {
   const [loadingReceipts, setLoadingReceipts] = useState(false);
   const [selectedPurchaseForReceipts, setSelectedPurchaseForReceipts] =
     useState<Purchase | null>(null);
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
+  const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
+  const [reviewingPaymentProofId, setReviewingPaymentProofId] = useState<
+    number | null
+  >(null);
   const handledNotificationPurchaseId = useRef<string | null>(null);
 
   // Role-based permissions (kept for approval workflow logic)
@@ -1324,6 +1346,10 @@ const PurchasesPage: React.FC = () => {
       return account ? `${account.code} - ${account.name}` : "default sistem";
     },
     [getDefaultPurchaseItemAccount],
+  );
+
+  const otherCostExpenseAccounts = expenseAccounts.filter(
+    (account) => String(account.type || "").toUpperCase() === "EXPENSE",
   );
 
   const resolvePurchaseItemExpenseAccountId = useCallback(
@@ -2171,6 +2197,7 @@ const PurchasesPage: React.FC = () => {
       // Fetch detailed purchase data
       const detailResponse = await purchaseService.getById(purchase.id);
       setSelectedPurchase(detailResponse);
+      setPaymentProofFile(null);
       onViewOpen();
     } catch (err: any) {
       toast({
@@ -2218,6 +2245,7 @@ const PurchasesPage: React.FC = () => {
       try {
         const detailResponse = await purchaseService.getById(purchaseId);
         setSelectedPurchase(detailResponse);
+        setPaymentProofFile(null);
         onViewOpen();
       } catch (error) {
         toast({
@@ -3554,12 +3582,325 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
+  const getPurchasePaymentProofRecord = (
+    purchase?: Purchase | null,
+  ): PurchasePayment | undefined => {
+    return (purchase?.purchase_payments || []).find((payment) =>
+      Boolean(payment.payment_proof_file_path),
+    );
+  };
+
+  const requiresPaymentProofFile = (paymentMethod: string) => {
+    return paymentMethod === "BANK_TRANSFER" || paymentMethod === "CHECK";
+  };
+
+  const handleDownloadPaymentProof = async (payment: PurchasePayment) => {
+    try {
+      await purchaseService.downloadPaymentProof(
+        payment.id,
+        payment.payment_proof_file_name || payment.payment_number,
+      );
+    } catch (err: any) {
+      toast({
+        title: "Gagal membuka bukti pembayaran bank",
+        description:
+          err.response?.data?.error ||
+          err.message ||
+          "Bukti pembayaran bank belum bisa diunduh.",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    }
+  };
+
+  const canUploadPaymentProofForPurchase = (purchase?: Purchase | null) => {
+    if (!purchase || purchase.payment_method === "CREDIT") return false;
+    return (
+      roleNorm === "admin" ||
+      isFinanceStaffRole(roleNorm) ||
+      isFinanceManagerRole(roleNorm)
+    );
+  };
+
+  const handleUploadPaymentProofForPurchase = async (
+    purchase?: Purchase | null,
+  ) => {
+    if (!purchase) return;
+    if (!paymentProofFile) {
+      toast({
+        title: "Pilih file bukti pembayaran",
+        description:
+          "Upload slip/transfer proof terlebih dahulu sebelum menyimpan.",
+        status: "warning",
+        duration: 3500,
+        isClosable: true,
+      });
+      return;
+    }
+
+    try {
+      setUploadingPaymentProof(true);
+      await purchaseService.uploadPaymentProof(purchase.id, paymentProofFile);
+      const detailResponse = await purchaseService.getById(purchase.id);
+      setSelectedPurchase(detailResponse);
+      setPaymentProofFile(null);
+      await fetchPurchases();
+      toast({
+        title: "Bukti pembayaran tersimpan",
+        description:
+          isFinanceManagerRole(roleNorm) &&
+          ["APPROVED", "PAID", "COMPLETED"].includes(
+            (purchase.status || "").toUpperCase(),
+          )
+            ? "Bukti pembayaran bank sudah diupload dan ditandai approved oleh Finance Manager."
+            : ["APPROVED", "PAID", "COMPLETED"].includes(
+                  (purchase.status || "").toUpperCase(),
+                )
+              ? "Bukti pembayaran bank sudah diupload dan menunggu review Finance Manager."
+              : "Bukti pembayaran bank sudah diupload.",
+        status: "success",
+        duration: 4000,
+        isClosable: true,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal upload bukti pembayaran",
+        description:
+          err.response?.data?.error ||
+          err.message ||
+          "Bukti pembayaran bank belum bisa diupload.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setUploadingPaymentProof(false);
+    }
+  };
+
+  const handleReviewPaymentProofForPurchase = async (
+    payment: PurchasePayment,
+    status: "APPROVED" | "REJECTED",
+  ) => {
+    if (!selectedPurchase) return;
+
+    try {
+      setReviewingPaymentProofId(payment.id);
+      const reviewedPayment = await purchaseService.reviewPaymentProof(
+        payment.id,
+        {
+          status,
+          notes:
+            status === "APPROVED"
+              ? "Bukti pembayaran bank sudah diverifikasi Finance Manager"
+              : "Bukti pembayaran bank perlu diperbaiki",
+        },
+      );
+      const detailResponse = await purchaseService.getById(selectedPurchase.id);
+      setSelectedPurchase({
+        ...detailResponse,
+        purchase_payments: (detailResponse.purchase_payments || []).map((item) =>
+          item.id === reviewedPayment.id ? reviewedPayment : item,
+        ),
+      });
+      await fetchPurchases();
+      toast({
+        title:
+          status === "APPROVED"
+            ? "Bukti pembayaran disetujui"
+            : "Bukti pembayaran ditolak",
+        description:
+          status === "APPROVED"
+            ? "Bukti bank sekarang bisa tampil dan diunduh dari halaman PR."
+            : "Finance Staff perlu mengganti bukti pembayaran bank.",
+        status: status === "APPROVED" ? "success" : "warning",
+        duration: 4500,
+        isClosable: true,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Review bukti pembayaran gagal",
+        description:
+          err.response?.data?.error ||
+          err.message ||
+          "Status bukti pembayaran belum bisa diperbarui.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setReviewingPaymentProofId(null);
+    }
+  };
+
+  const renderExistingPurchasePaymentProofUpload = (
+    purchase?: Purchase | null,
+  ) => {
+    if (!canUploadPaymentProofForPurchase(purchase)) return null;
+
+    const proofRequired = requiresPaymentProofFile(
+      purchase?.payment_method || "",
+    );
+
+    return (
+      <Box
+        mt={4}
+        p={3}
+        borderWidth="1px"
+        borderRadius="md"
+        borderColor={borderColor}
+        bg={inputBg}
+      >
+        <FormControl isRequired={proofRequired}>
+          <FormLabel fontSize="sm" fontWeight="medium">
+            <HStack as="span" spacing={1.5}>
+              <Icon as={FiUpload} />
+              <Text as="span">
+                {getPurchasePaymentProofRecord(purchase)
+                  ? "Ganti Bukti Pembayaran Bank"
+                  : "Upload Bukti Pembayaran Bank"}
+              </Text>
+            </HStack>
+          </FormLabel>
+          <Input
+            type="file"
+            accept={PAYMENT_PROOF_ACCEPT}
+            size="sm"
+            pt={1}
+            onChange={(e) => setPaymentProofFile(e.target.files?.[0] || null)}
+          />
+          <FormHelperText fontSize="xs">
+            {isFinanceManagerRole(roleNorm)
+              ? "Fallback untuk data lama: FM dapat upload bukti bank jika finance staff belum sempat mengunggah."
+              : "Finance Staff dapat upload bukti pembayaran untuk purchase yang sudah terlanjur dibuat."}
+          </FormHelperText>
+        </FormControl>
+        <Flex
+          mt={3}
+          gap={3}
+          align={{ base: "stretch", md: "center" }}
+          justify="space-between"
+          direction={{ base: "column", md: "row" }}
+        >
+          <Box minW={0} flex="1">
+            {paymentProofFile ? (
+              <Badge
+                colorScheme="blue"
+                variant="subtle"
+                display="block"
+                maxW="100%"
+                px={2}
+                py={1}
+                whiteSpace="normal"
+                overflowWrap="anywhere"
+                wordBreak="break-word"
+                lineHeight="short"
+              >
+                File dipilih: {paymentProofFile.name}
+              </Badge>
+            ) : (
+              <Text fontSize="xs" color={textSecondary}>
+                Format PDF/JPG/PNG/WEBP, maksimal 20MB.
+              </Text>
+            )}
+          </Box>
+          <Button
+            size="sm"
+            colorScheme="blue"
+            leftIcon={<FiUpload />}
+            flexShrink={0}
+            isDisabled={!paymentProofFile}
+            isLoading={uploadingPaymentProof}
+            onClick={() => handleUploadPaymentProofForPurchase(purchase)}
+          >
+            Upload
+          </Button>
+        </Flex>
+      </Box>
+    );
+  };
+
+  const renderPaymentProofUpload = (purchase?: Purchase | null) => {
+    if (formData.payment_method === "CREDIT") return null;
+
+    const existingProof = getPurchasePaymentProofRecord(purchase);
+    const proofRequired = requiresPaymentProofFile(formData.payment_method);
+
+    return (
+      <FormControl mt={4} isRequired={proofRequired}>
+        <FormLabel fontSize="sm" fontWeight="medium">
+          <HStack as="span" spacing={1.5}>
+            <Icon as={FiUpload} />
+            <Text as="span">Bukti Pembayaran Bank</Text>
+          </HStack>
+        </FormLabel>
+        <Input
+          type="file"
+          accept={PAYMENT_PROOF_ACCEPT}
+          size="sm"
+          pt={1}
+          onChange={(e) => setPaymentProofFile(e.target.files?.[0] || null)}
+        />
+        <FormHelperText fontSize="xs">
+          {proofRequired
+            ? "Wajib untuk Bank Transfer/Check. Format PDF/JPG/PNG/WEBP, maksimal 20MB."
+            : "Opsional untuk cash payment. Format PDF/JPG/PNG/WEBP, maksimal 20MB."}
+        </FormHelperText>
+        {(paymentProofFile || existingProof) && (
+          <Flex mt={2} gap={2} align="center" wrap="wrap" minW={0}>
+            {paymentProofFile && (
+              <Badge
+                colorScheme="blue"
+                variant="subtle"
+                maxW="100%"
+                whiteSpace="normal"
+                overflowWrap="anywhere"
+                wordBreak="break-word"
+                lineHeight="short"
+              >
+                File baru: {paymentProofFile.name}
+              </Badge>
+            )}
+            {existingProof && (
+              <>
+                <Badge
+                  colorScheme="green"
+                  variant="subtle"
+                  maxW="100%"
+                  whiteSpace="normal"
+                  overflowWrap="anywhere"
+                  wordBreak="break-word"
+                  lineHeight="short"
+                >
+                  Tersimpan:{" "}
+                  {existingProof.payment_proof_file_name ||
+                    existingProof.payment_number}
+                </Badge>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  colorScheme="green"
+                  leftIcon={<FiDownload />}
+                  onClick={() => handleDownloadPaymentProof(existingProof)}
+                >
+                  Download
+                </Button>
+              </>
+            )}
+          </Flex>
+        )}
+      </FormControl>
+    );
+  };
+
   // Handle edit purchase
   const handleEdit = async (purchase: Purchase) => {
     try {
       // Fetch detailed purchase data for editing
       const detailResponse = await purchaseService.getById(purchase.id);
       setSelectedPurchase(detailResponse);
+      setPaymentProofFile(null);
 
       // Set form data for editing
       setFormData({
@@ -3580,6 +3921,10 @@ const PurchasesPage: React.FC = () => {
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() || "0",
         freight_cost: detailResponse.freight_cost?.toString() || "0",
+        other_cost_amount: detailResponse.other_cost_amount?.toString() || "0",
+        other_cost_description: detailResponse.other_cost_description || "",
+        other_cost_account_id:
+          detailResponse.other_cost_account_id?.toString() || "",
         // Tax deductions (Pemotongan)
         pph21_rate: detailResponse.pph21_rate?.toString() || "0",
         pph23_rate: detailResponse.pph23_rate?.toString() || "0",
@@ -3631,6 +3976,10 @@ const PurchasesPage: React.FC = () => {
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() ?? "0",
         freight_cost: detailResponse.freight_cost?.toString() ?? "0",
+        other_cost_amount: detailResponse.other_cost_amount?.toString() ?? "0",
+        other_cost_description: detailResponse.other_cost_description || "",
+        other_cost_account_id:
+          detailResponse.other_cost_account_id?.toString() || "",
         pph21_rate: detailResponse.pph21_rate?.toString() ?? "0",
         pph23_rate: detailResponse.pph23_rate?.toString() ?? "0",
         other_tax_deductions:
@@ -3663,6 +4012,7 @@ const PurchasesPage: React.FC = () => {
     const otherTaxAdditions =
       parseFloat(financeTaxForm.other_tax_additions) || 0;
     const freightCost = parseFloat(financeTaxForm.freight_cost) || 0;
+    const otherCostAmount = parseFloat(financeTaxForm.other_cost_amount) || 0;
     const pph21Rate = parseFloat(financeTaxForm.pph21_rate) || 0;
     const pph23Rate = parseFloat(financeTaxForm.pph23_rate) || 0;
     const otherTaxDeductions =
@@ -3675,6 +4025,7 @@ const PurchasesPage: React.FC = () => {
     return (
       netBeforeTax +
       freightCost +
+      otherCostAmount +
       ppnAmount +
       otherTaxAdditions -
       pph21Amount -
@@ -3742,6 +4093,8 @@ const PurchasesPage: React.FC = () => {
     const otherTaxAdditions =
       parseFloat(accountingCOAForm.other_tax_additions) || 0;
     const freightCost = parseFloat(accountingCOAForm.freight_cost) || 0;
+    const otherCostAmount =
+      parseFloat(accountingCOAForm.other_cost_amount) || 0;
     const pph21Rate = parseFloat(accountingCOAForm.pph21_rate) || 0;
     const pph23Rate = parseFloat(accountingCOAForm.pph23_rate) || 0;
     const otherTaxDeductions =
@@ -3750,6 +4103,7 @@ const PurchasesPage: React.FC = () => {
     return (
       netBeforeTax +
       freightCost +
+      otherCostAmount +
       netBeforeTax * (ppnRate / 100) +
       otherTaxAdditions -
       netBeforeTax * (pph21Rate / 100) -
@@ -3940,6 +4294,13 @@ const PurchasesPage: React.FC = () => {
         other_tax_additions:
           parseFloat(financeTaxForm.other_tax_additions) || 0,
         freight_cost: parseFloat(financeTaxForm.freight_cost) || 0,
+        other_cost_amount: parseFloat(financeTaxForm.other_cost_amount) || 0,
+        other_cost_description:
+          financeTaxForm.other_cost_description.trim() || undefined,
+        other_cost_account_id:
+          canSelectAccountFromCOA && financeTaxForm.other_cost_account_id
+            ? parseInt(financeTaxForm.other_cost_account_id, 10)
+            : undefined,
         pph21_rate: parseFloat(financeTaxForm.pph21_rate) || 0,
         pph23_rate: parseFloat(financeTaxForm.pph23_rate) || 0,
         other_tax_deductions:
@@ -3996,6 +4357,10 @@ const PurchasesPage: React.FC = () => {
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() ?? "0",
         freight_cost: detailResponse.freight_cost?.toString() ?? "0",
+        other_cost_amount: detailResponse.other_cost_amount?.toString() ?? "0",
+        other_cost_description: detailResponse.other_cost_description || "",
+        other_cost_account_id:
+          detailResponse.other_cost_account_id?.toString() || "",
         pph21_rate: detailResponse.pph21_rate?.toString() ?? "0",
         pph23_rate: detailResponse.pph23_rate?.toString() ?? "0",
         other_tax_deductions:
@@ -4108,6 +4473,14 @@ const PurchasesPage: React.FC = () => {
           other_tax_additions:
             parseFloat(accountingCOAForm.other_tax_additions) || 0,
           freight_cost: parseFloat(accountingCOAForm.freight_cost) || 0,
+          other_cost_amount:
+            parseFloat(accountingCOAForm.other_cost_amount) || 0,
+          other_cost_description:
+            accountingCOAForm.other_cost_description.trim() || undefined,
+          other_cost_account_id:
+            accountingCOAForm.other_cost_account_id
+              ? parseInt(accountingCOAForm.other_cost_account_id, 10)
+              : undefined,
           pph21_rate: parseFloat(accountingCOAForm.pph21_rate) || 0,
           pph23_rate: parseFloat(accountingCOAForm.pph23_rate) || 0,
           other_tax_deductions:
@@ -4246,6 +4619,9 @@ const PurchasesPage: React.FC = () => {
       ppn_rate: defaultTaxRate.toString(),
       other_tax_additions: "0",
       freight_cost: "0",
+      other_cost_amount: "0",
+      other_cost_description: "",
+      other_cost_account_id: "",
 
       // Tax deductions (Pemotongan)
       pph21_rate: "0",
@@ -4261,6 +4637,7 @@ const PurchasesPage: React.FC = () => {
       items: [],
     });
     setSelectedPurchase(null);
+    setPaymentProofFile(null);
     await fetchVendors(); // Load vendors for dropdown
     await fetchPurchaseRequests(); // Load Purchase Requests
     await fetchProjects(); // Load Projects
@@ -4406,6 +4783,29 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    const normalizedPaymentPreview = normalizePurchasePaymentFields(
+      formData,
+      formData.payment_method,
+    );
+    const normalizedPaymentMethodPreview =
+      normalizedPaymentPreview.payment_method;
+    const existingPaymentProof = getPurchasePaymentProofRecord(selectedPurchase);
+    if (
+      requiresPaymentProofFile(normalizedPaymentMethodPreview) &&
+      !paymentProofFile &&
+      !existingPaymentProof
+    ) {
+      toast({
+        title: "Bukti pembayaran bank wajib diunggah",
+        description:
+          "Upload slip/transfer proof sebelum menyimpan purchase dengan metode Bank Transfer atau Check.",
+        status: "warning",
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setLoading(true);
 
@@ -4432,6 +4832,13 @@ const PurchasesPage: React.FC = () => {
           : defaultTaxRate,
         other_tax_additions: parseFloat(formData.other_tax_additions) || 0,
         freight_cost: parseFloat(formData.freight_cost) || 0,
+        other_cost_amount: parseFloat(formData.other_cost_amount) || 0,
+        other_cost_description:
+          formData.other_cost_description.trim() || undefined,
+        other_cost_account_id:
+          canSelectAccountFromCOA && formData.other_cost_account_id
+            ? parseInt(formData.other_cost_account_id, 10)
+            : undefined,
         pph21_rate: parseFloat(formData.pph21_rate) || 0,
         pph23_rate: parseFloat(formData.pph23_rate) || 0,
         other_tax_deductions: parseFloat(formData.other_tax_deductions) || 0,
@@ -4488,24 +4895,36 @@ const PurchasesPage: React.FC = () => {
       if (selectedPurchase) {
         // Update existing purchase
         response = await purchaseService.update(selectedPurchase.id, payload);
+        if (paymentProofFile) {
+          await purchaseService.uploadPaymentProof(response.id, paymentProofFile);
+        }
         toast({
           title: "Success",
-          description: `Purchase ${response.code} updated successfully`,
+          description: paymentProofFile
+            ? `Purchase ${response.code} updated dan bukti pembayaran bank tersimpan`
+            : `Purchase ${response.code} updated successfully`,
           status: "success",
           duration: 3000,
           isClosable: true,
         });
+        setPaymentProofFile(null);
         onEditClose();
       } else {
         // Create new purchase
         response = await purchaseService.create(payload);
+        if (paymentProofFile) {
+          await purchaseService.uploadPaymentProof(response.id, paymentProofFile);
+        }
         toast({
           title: "Success",
-          description: `Purchase ${response.code} created successfully. Use "Submit for Approval" button to submit when ready.`,
+          description: paymentProofFile
+            ? `Purchase ${response.code} created dan bukti pembayaran bank tersimpan. Use "Submit for Approval" button to submit when ready.`
+            : `Purchase ${response.code} created successfully. Use "Submit for Approval" button to submit when ready.`,
           status: "success",
           duration: 5000,
           isClosable: true,
         });
+        setPaymentProofFile(null);
         onCreateClose();
 
         // NOTE: Purchase is now created as DRAFT - Employee must manually submit for approval
@@ -4556,6 +4975,10 @@ const PurchasesPage: React.FC = () => {
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() || "0",
         freight_cost: detailResponse.freight_cost?.toString() || "0",
+        other_cost_amount: detailResponse.other_cost_amount?.toString() || "0",
+        other_cost_description: detailResponse.other_cost_description || "",
+        other_cost_account_id:
+          detailResponse.other_cost_account_id?.toString() || "",
         // Tax deductions
         pph21_rate: detailResponse.pph21_rate?.toString() || "0",
         pph23_rate: detailResponse.pph23_rate?.toString() || "0",
@@ -4575,6 +4998,7 @@ const PurchasesPage: React.FC = () => {
 
       // Reset selected purchase so it treats it as NEW
       setSelectedPurchase(null);
+      setPaymentProofFile(null);
 
       // We can run these in parallel to speed up
       await Promise.all([
@@ -6158,17 +6582,205 @@ const PurchasesPage: React.FC = () => {
                                 </FormControl>
                               )}
 
-                              {selectedPurchase.payment_reference && (
-                                <FormControl>
-                                  <FormLabel fontSize="sm">
-                                    {t("purchases.paymentReference")}
+	                              {selectedPurchase.payment_reference && (
+	                                <FormControl>
+	                                  <FormLabel fontSize="sm">
+	                                    {t("purchases.paymentReference")}
                                   </FormLabel>
                                   <Text fontWeight="medium">
                                     {selectedPurchase.payment_reference}
-                                  </Text>
-                                </FormControl>
-                              )}
-                            </SimpleGrid>
+	                                  </Text>
+	                                </FormControl>
+	                              )}
+
+	                              {(selectedPurchase.other_cost_amount || 0) >
+	                                0 && (
+	                                <>
+	                                  <FormControl>
+	                                    <FormLabel fontSize="sm">
+	                                      Biaya Lain-lain
+	                                    </FormLabel>
+	                                    <Text fontWeight="medium">
+	                                      {formatCurrency(
+	                                        selectedPurchase.other_cost_amount ||
+	                                          0,
+	                                      )}
+	                                    </Text>
+	                                  </FormControl>
+	                                  <FormControl>
+	                                    <FormLabel fontSize="sm">
+	                                      Keterangan Biaya Lain-lain
+	                                    </FormLabel>
+	                                    <Text
+	                                      fontWeight="medium"
+	                                      overflowWrap="anywhere"
+	                                    >
+	                                      {selectedPurchase.other_cost_description ||
+	                                        "Biaya lain-lain pembelian"}
+	                                    </Text>
+	                                  </FormControl>
+	                                  <FormControl>
+	                                    <FormLabel fontSize="sm">
+	                                      COA Biaya Lain-lain
+	                                    </FormLabel>
+	                                    <Text
+	                                      fontWeight="medium"
+	                                      overflowWrap="anywhere"
+	                                    >
+	                                      {selectedPurchase.other_cost_account
+	                                        ? `${selectedPurchase.other_cost_account.code} - ${selectedPurchase.other_cost_account.name}`
+	                                        : "Default 6106"}
+	                                    </Text>
+	                                  </FormControl>
+	                                </>
+	                              )}
+	                            </SimpleGrid>
+                            {(() => {
+                              const paymentProof =
+                                getPurchasePaymentProofRecord(selectedPurchase);
+                              if (!paymentProof) {
+                                return (
+                                  selectedPurchase.payment_method !==
+                                    "CREDIT" && (
+                                    <Alert mt={4} status="warning">
+                                      <AlertIcon />
+                                      <AlertDescription>
+                                        Bukti pembayaran bank belum diunggah.
+                                      </AlertDescription>
+                                    </Alert>
+                                  )
+                                );
+                              }
+                              const proofReviewStatus = (
+                                paymentProof.payment_proof_review_status ||
+                                "PENDING"
+                              ).toUpperCase();
+                              const canReviewPaymentProof =
+                                proofReviewStatus === "PENDING" &&
+                                (roleNorm === "admin" ||
+                                  isFinanceManagerRole(roleNorm));
+
+                              return (
+                                <Box
+                                  mt={4}
+                                  p={3}
+                                  borderWidth="1px"
+                                  borderRadius="md"
+                                  borderColor={borderColor}
+                                  bg={notesBoxBg}
+                                >
+                                  <HStack
+                                    justify="space-between"
+                                    align="start"
+                                    spacing={3}
+                                    flexWrap="wrap"
+                                  >
+                                    <Box minW={0} flex="1">
+                                      <HStack spacing={2} mb={1}>
+                                        <Icon as={FiFileText} />
+                                        <Text fontWeight="semibold">
+                                          Bukti Pembayaran Bank
+                                        </Text>
+                                      </HStack>
+                                      <Text
+                                        fontSize="sm"
+                                        color={textSecondary}
+                                        maxW="100%"
+                                        overflowWrap="anywhere"
+                                        wordBreak="break-word"
+                                        noOfLines={3}
+                                      >
+                                        {paymentProof.payment_proof_file_name ||
+                                          paymentProof.payment_number}
+                                      </Text>
+                                      {paymentProof.payment_proof_uploaded_at && (
+                                        <Text
+                                          fontSize="xs"
+                                          color={textSecondary}
+                                          mt={1}
+                                        >
+                                          Diunggah{" "}
+                                          {new Date(
+                                            paymentProof.payment_proof_uploaded_at,
+                                          ).toLocaleString("id-ID")}
+                                        </Text>
+                                      )}
+                                      <Badge
+                                        mt={2}
+                                        colorScheme={
+                                          proofReviewStatus === "APPROVED"
+                                            ? "green"
+                                            : proofReviewStatus === "REJECTED"
+                                              ? "red"
+                                              : "yellow"
+                                        }
+                                      >
+                                        {proofReviewStatus}
+                                      </Badge>
+                                    </Box>
+                                    <VStack
+                                      align={{ base: "stretch", sm: "flex-end" }}
+                                      spacing={2}
+                                      minW={{ base: "100%", sm: "auto" }}
+                                    >
+                                      <Button
+                                        size="sm"
+                                        colorScheme="green"
+                                        variant="outline"
+                                        leftIcon={<FiDownload />}
+                                        onClick={() =>
+                                          handleDownloadPaymentProof(paymentProof)
+                                        }
+                                      >
+                                        Download
+                                      </Button>
+                                      {canReviewPaymentProof && (
+                                        <HStack spacing={2} flexWrap="wrap">
+                                          <Button
+                                            size="xs"
+                                            colorScheme="green"
+                                            leftIcon={<FiCheckCircle />}
+                                            isLoading={
+                                              reviewingPaymentProofId ===
+                                              paymentProof.id
+                                            }
+                                            onClick={() =>
+                                              handleReviewPaymentProofForPurchase(
+                                                paymentProof,
+                                                "APPROVED",
+                                              )
+                                            }
+                                          >
+                                            Approve Bukti
+                                          </Button>
+                                          <Button
+                                            size="xs"
+                                            colorScheme="red"
+                                            variant="outline"
+                                            leftIcon={<FiXCircle />}
+                                            isLoading={
+                                              reviewingPaymentProofId ===
+                                              paymentProof.id
+                                            }
+                                            onClick={() =>
+                                              handleReviewPaymentProofForPurchase(
+                                                paymentProof,
+                                                "REJECTED",
+                                              )
+                                            }
+                                          >
+                                            Reject
+                                          </Button>
+                                        </HStack>
+                                      )}
+                                    </VStack>
+                                  </HStack>
+                                </Box>
+                              );
+                            })()}
+                            {renderExistingPurchasePaymentProofUpload(
+                              selectedPurchase,
+                            )}
                           </Box>
                         )}
 
@@ -6512,6 +7124,82 @@ const PurchasesPage: React.FC = () => {
                                     Dikapitalisasi ke inventory valuation/HPP.
                                   </FormHelperText>
                                 </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">
+                                    Biaya Lain-lain
+                                  </FormLabel>
+                                  <CurrencyInput
+                                    value={
+                                      parseFloat(formData.other_cost_amount) ||
+                                      0
+                                    }
+                                    onChange={(value) =>
+                                      setFormData({
+                                        ...formData,
+                                        other_cost_amount: value.toString(),
+                                      })
+                                    }
+                                    placeholder="0"
+                                    size="sm"
+                                    min={0}
+                                  />
+                                  <FormHelperText fontSize="xs">
+                                    Contoh: materai, admin bank, biaya tambahan
+                                    non-pengiriman.
+                                  </FormHelperText>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontSize="sm">
+                                    Keterangan Biaya Lain-lain
+                                  </FormLabel>
+                                  <Input
+                                    value={formData.other_cost_description}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        other_cost_description: e.target.value,
+                                      })
+                                    }
+                                    placeholder="Contoh: Biaya materai"
+                                    size="sm"
+                                  />
+                                </FormControl>
+
+                                {canSelectAccountFromCOA && (
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      Akun Biaya Lain-lain
+                                    </FormLabel>
+                                    <Select
+                                      value={formData.other_cost_account_id}
+                                      onChange={(e) =>
+                                        setFormData({
+                                          ...formData,
+                                          other_cost_account_id: e.target.value,
+                                        })
+                                      }
+                                      size="sm"
+                                      placeholder="Default 6106"
+                                      disabled={loadingExpenseAccounts}
+                                    >
+                                      {otherCostExpenseAccounts.map(
+                                        (account) => (
+                                          <option
+                                            key={account.id}
+                                            value={account.id?.toString()}
+                                          >
+                                            {account.code} - {account.name}
+                                          </option>
+                                        ),
+                                      )}
+                                    </Select>
+                                    <FormHelperText fontSize="xs">
+                                      Kosongkan untuk memakai default 6106.
+                                    </FormHelperText>
+                                  </FormControl>
+                                )}
                               </SimpleGrid>
                             </Box>
 
@@ -6675,6 +7363,9 @@ const PurchasesPage: React.FC = () => {
                                       ppnAmount + otherAdditions;
                                     const freightCost =
                                       parseFloat(formData.freight_cost) || 0;
+                                    const otherCostAmount =
+                                      parseFloat(formData.other_cost_amount) ||
+                                      0;
 
                                     const pph21Amount =
                                       (discountedSubtotal *
@@ -6700,6 +7391,7 @@ const PurchasesPage: React.FC = () => {
                                     const grossBeforePPh =
                                       discountedSubtotal +
                                       freightCost +
+                                      otherCostAmount +
                                       totalAdditions;
                                     const finalTotal =
                                       grossBeforePPh - totalDeductions;
@@ -6751,6 +7443,12 @@ const PurchasesPage: React.FC = () => {
                                             <Text color={statColors.green}>
                                               + Freight / Pengiriman:{" "}
                                               {formatCurrency(freightCost)}
+                                            </Text>
+                                          )}
+                                          {otherCostAmount > 0 && (
+                                            <Text color={statColors.green}>
+                                              + Biaya Lain-lain:{" "}
+                                              {formatCurrency(otherCostAmount)}
                                             </Text>
                                           )}
                                           {parseFloat(formData.pph21_rate) >
@@ -6998,6 +7696,7 @@ const PurchasesPage: React.FC = () => {
                                 </FormHelperText>
                               </FormControl>
                             )}
+                          {renderPaymentProofUpload(selectedPurchase)}
                         </CardBody>
                       </Card>
                     </VStack>
@@ -8469,13 +9168,113 @@ const PurchasesPage: React.FC = () => {
                                       size="sm"
                                       min={0}
                                     />
+                                  <FormHelperText
+                                    fontSize="xs"
+                                    color={helperTextColor}
+                                  >
+                                    Dikapitalisasi ke inventory valuation/HPP.
+                                  </FormHelperText>
+                                </FormControl>
+
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      Biaya Lain-lain
+                                    </FormLabel>
+                                    <CurrencyInput
+                                      value={
+                                        parseFloat(
+                                          formData.other_cost_amount,
+                                        ) || 0
+                                      }
+                                      onChange={(value) =>
+                                        setFormData({
+                                          ...formData,
+                                          other_cost_amount: value.toString(),
+                                        })
+                                      }
+                                      placeholder="0"
+                                      size="sm"
+                                      min={0}
+                                    />
                                     <FormHelperText
                                       fontSize="xs"
                                       color={helperTextColor}
                                     >
-                                      Dikapitalisasi ke inventory valuation/HPP.
+                                      Contoh: materai, admin bank, biaya tambahan
+                                      non-pengiriman.
                                     </FormHelperText>
                                   </FormControl>
+
+                                  <FormControl>
+                                    <FormLabel fontSize="sm">
+                                      Keterangan Biaya Lain-lain
+                                    </FormLabel>
+                                    <Input
+                                      value={formData.other_cost_description}
+                                      onChange={(e) =>
+                                        setFormData({
+                                          ...formData,
+                                          other_cost_description:
+                                            e.target.value,
+                                        })
+                                      }
+                                      placeholder="Contoh: Biaya materai"
+                                      size="sm"
+                                      bg={inputBg}
+                                      color={inputTextColor}
+                                      borderColor={inputBorderColor}
+                                      _hover={{ borderColor: inputHoverBorder }}
+                                      _focusVisible={fieldFocusStyles}
+                                      _placeholder={{
+                                        color: inputPlaceholderColor,
+                                      }}
+                                    />
+                                  </FormControl>
+
+                                  {canSelectAccountFromCOA && (
+                                    <FormControl>
+                                      <FormLabel fontSize="sm">
+                                        Akun Biaya Lain-lain
+                                      </FormLabel>
+                                      <Select
+                                        value={formData.other_cost_account_id}
+                                        onChange={(e) =>
+                                          setFormData({
+                                            ...formData,
+                                            other_cost_account_id:
+                                              e.target.value,
+                                          })
+                                        }
+                                        size="sm"
+                                        placeholder="Default 6106"
+                                        disabled={loadingExpenseAccounts}
+                                        bg={inputBg}
+                                        color={inputTextColor}
+                                        borderColor={inputBorderColor}
+                                        _hover={{
+                                          borderColor: inputHoverBorder,
+                                        }}
+                                        _focusVisible={fieldFocusStyles}
+                                      >
+                                        {otherCostExpenseAccounts.map(
+                                          (account) => (
+                                            <option
+                                              key={account.id}
+                                              value={account.id?.toString()}
+                                            >
+                                              {account.code} - {account.name}
+                                            </option>
+                                          ),
+                                        )}
+                                      </Select>
+                                      <FormHelperText
+                                        fontSize="xs"
+                                        color={helperTextColor}
+                                      >
+                                        Kosongkan untuk memakai default 6106.
+                                      </FormHelperText>
+                                    </FormControl>
+                                  )}
                                 </SimpleGrid>
                               </Box>
 
@@ -8687,6 +9486,10 @@ const PurchasesPage: React.FC = () => {
                                         ppnAmount + otherAdditions;
                                       const freightCost =
                                         parseFloat(formData.freight_cost) || 0;
+                                      const otherCostAmount =
+                                        parseFloat(
+                                          formData.other_cost_amount,
+                                        ) || 0;
 
                                       const pph21Amount =
                                         (discountedSubtotal *
@@ -8712,6 +9515,7 @@ const PurchasesPage: React.FC = () => {
                                       const grossBeforePPh =
                                         discountedSubtotal +
                                         freightCost +
+                                        otherCostAmount +
                                         totalAdditions;
                                       const finalTotal =
                                         grossBeforePPh - totalDeductions;
@@ -8769,6 +9573,14 @@ const PurchasesPage: React.FC = () => {
                                               <Text color={statColors.green}>
                                                 + Freight / Pengiriman:{" "}
                                                 {formatCurrency(freightCost)}
+                                              </Text>
+                                            )}
+                                            {otherCostAmount > 0 && (
+                                              <Text color={statColors.green}>
+                                                + Biaya Lain-lain:{" "}
+                                                {formatCurrency(
+                                                  otherCostAmount,
+                                                )}
                                               </Text>
                                             )}
                                             {parseFloat(formData.pph21_rate) >
@@ -9028,6 +9840,7 @@ const PurchasesPage: React.FC = () => {
                                   </FormHelperText>
                                 </FormControl>
                               )}
+                            {renderPaymentProofUpload(null)}
                           </CardBody>
                         </Card>
                       )}
@@ -10255,6 +11068,69 @@ const PurchasesPage: React.FC = () => {
                             </FormControl>
                             <FormControl>
                               <FormLabel fontSize="sm">
+                                Biaya Lain-lain
+                              </FormLabel>
+                              <CurrencyInput
+                                value={
+                                  parseFloat(
+                                    accountingCOAForm.other_cost_amount,
+                                  ) || 0
+                                }
+                                onChange={(value) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    other_cost_amount: value.toString(),
+                                  }))
+                                }
+                                placeholder="0"
+                                size="sm"
+                                min={0}
+                              />
+                            </FormControl>
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                Keterangan Biaya Lain-lain
+                              </FormLabel>
+                              <Input
+                                value={accountingCOAForm.other_cost_description}
+                                onChange={(e) =>
+                                  setAccountingCOAForm((prev) => ({
+                                    ...prev,
+                                    other_cost_description: e.target.value,
+                                  }))
+                                }
+                                placeholder="Contoh: Biaya materai"
+                              />
+                            </FormControl>
+                            {canSelectAccountFromCOA && (
+                              <FormControl>
+                                <FormLabel fontSize="sm">
+                                  Akun Biaya Lain-lain
+                                </FormLabel>
+                                <Select
+                                  value={accountingCOAForm.other_cost_account_id}
+                                  onChange={(e) =>
+                                    setAccountingCOAForm((prev) => ({
+                                      ...prev,
+                                      other_cost_account_id: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Default 6106"
+                                  disabled={loadingExpenseAccounts}
+                                >
+                                  {otherCostExpenseAccounts.map((account) => (
+                                    <option
+                                      key={account.id}
+                                      value={account.id?.toString()}
+                                    >
+                                      {account.code} - {account.name}
+                                    </option>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                            )}
+                            <FormControl>
+                              <FormLabel fontSize="sm">
                                 PPh 21 Rate (%)
                               </FormLabel>
                               <Input
@@ -10721,7 +11597,7 @@ const PurchasesPage: React.FC = () => {
                         >
                           Konfigurasi Pajak
                         </Text>
-                        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                           <FormControl>
                             <FormLabel fontSize="sm">PPN Rate (%)</FormLabel>
                             <Input
@@ -10788,6 +11664,78 @@ const PurchasesPage: React.FC = () => {
                               diposting.
                             </FormHelperText>
                           </FormControl>
+                          <FormControl>
+                            <FormLabel fontSize="sm">Biaya Lain-lain</FormLabel>
+                            <CurrencyInput
+                              value={
+                                parseFloat(financeTaxForm.other_cost_amount) ||
+                                0
+                              }
+                              onChange={(value) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  other_cost_amount: value.toString(),
+                                }))
+                              }
+                              placeholder="0"
+                              size="sm"
+                              min={0}
+                            />
+                            <FormHelperText fontSize="xs">
+                              Contoh: materai, admin bank, biaya tambahan
+                              non-pengiriman.
+                            </FormHelperText>
+                          </FormControl>
+                          <FormControl>
+                            <FormLabel fontSize="sm">
+                              Keterangan Biaya Lain-lain
+                            </FormLabel>
+                            <Input
+                              value={financeTaxForm.other_cost_description}
+                              onChange={(e) =>
+                                setFinanceTaxForm((prev) => ({
+                                  ...prev,
+                                  other_cost_description: e.target.value,
+                                }))
+                              }
+                              placeholder="Contoh: Biaya materai"
+                              _hover={{ borderColor: inputHoverBorder }}
+                              _focus={{
+                                borderColor: inputFocusBorder,
+                                boxShadow: inputFocusShadow,
+                              }}
+                            />
+                          </FormControl>
+                          {canSelectAccountFromCOA && (
+                            <FormControl>
+                              <FormLabel fontSize="sm">
+                                Akun Biaya Lain-lain
+                              </FormLabel>
+                              <Select
+                                value={financeTaxForm.other_cost_account_id}
+                                onChange={(e) =>
+                                  setFinanceTaxForm((prev) => ({
+                                    ...prev,
+                                    other_cost_account_id: e.target.value,
+                                  }))
+                                }
+                                placeholder="Default 6106"
+                                disabled={loadingExpenseAccounts}
+                              >
+                                {otherCostExpenseAccounts.map((account) => (
+                                  <option
+                                    key={account.id}
+                                    value={account.id?.toString()}
+                                  >
+                                    {account.code} - {account.name}
+                                  </option>
+                                ))}
+                              </Select>
+                              <FormHelperText fontSize="xs">
+                                Kosongkan untuk memakai default 6106.
+                              </FormHelperText>
+                            </FormControl>
+                          )}
                           <FormControl>
                             <FormLabel fontSize="sm">PPh 21 Rate (%)</FormLabel>
                             <Input

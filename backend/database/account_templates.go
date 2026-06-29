@@ -119,6 +119,7 @@ func getServiceAccounts() []models.Account {
 		{Code: "6102", Name: "BEBAN SEWA", Type: models.AccountTypeExpense, Category: models.CategoryOperatingExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "6103", Name: "BEBAN UTILITAS", Type: models.AccountTypeExpense, Category: models.CategoryOperatingExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "6104", Name: "BEBAN PENYUSUTAN", Type: models.AccountTypeExpense, Category: models.CategoryDepreciationExp, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "6106", Name: "BEBAN MATERAI & BIAYA LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryAdministrativeExp, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER INCOME (7xxx - pure REVENUE)
 		{Code: "7000", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 1, IsHeader: true, IsActive: true},
@@ -168,6 +169,7 @@ func getTradingAccounts() []models.Account {
 		{Code: "6102", Name: "BEBAN ADMINISTRASI & UMUM", Type: models.AccountTypeExpense, Category: models.CategoryAdministrativeExp, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "6103", Name: "BEBAN PENYUSUTAN", Type: models.AccountTypeExpense, Category: models.CategoryDepreciationExp, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "6105", Name: "BEBAN GAJI & TUNJANGAN", Type: models.AccountTypeExpense, Category: models.CategoryOperatingExpense, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "6106", Name: "BEBAN MATERAI & BIAYA LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryAdministrativeExp, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER INCOME (7xxx - pure REVENUE)
 		{Code: "7000", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 1, IsHeader: true, IsActive: true},
@@ -217,6 +219,7 @@ func getManufacturingAccounts() []models.Account {
 		{Code: "6000", Name: "BEBAN OPERASIONAL", Type: models.AccountTypeExpense, Category: models.CategoryOperatingExpense, Level: 1, IsHeader: true, IsActive: true},
 		{Code: "6101", Name: "BEBAN PENJUALAN", Type: models.AccountTypeExpense, Category: models.CategorySellingExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "6102", Name: "BEBAN ADMINISTRASI & UMUM", Type: models.AccountTypeExpense, Category: models.CategoryAdministrativeExp, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "6106", Name: "BEBAN MATERAI & BIAYA LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryAdministrativeExp, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER INCOME (7xxx - pure REVENUE)
 		{Code: "7000", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 1, IsHeader: true, IsActive: true},

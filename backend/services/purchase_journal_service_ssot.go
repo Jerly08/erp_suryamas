@@ -248,6 +248,24 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 		}
 	}
 
+	// 2b. DEBIT SIDE - Other purchase costs such as stamp duty/admin/document fees.
+	if purchase.OtherCostAmount > 0 {
+		otherCostAccount, err := s.getPurchaseOtherCostAccount(dbToUse, purchase)
+		if err != nil {
+			return err
+		}
+		description := strings.TrimSpace(purchase.OtherCostDescription)
+		if description == "" {
+			description = "Biaya lain-lain pembelian"
+		}
+		lines = append(lines, PurchaseJournalLineRequest{
+			AccountID:    uint64(otherCostAccount.ID),
+			DebitAmount:  decimal.NewFromFloat(purchase.OtherCostAmount),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("%s - %s", description, purchase.Code),
+		})
+	}
+
 	// 3. CREDIT SIDE - Based on payment method
 	var creditAccount *models.Account
 	var err error
@@ -317,7 +335,7 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 
 	// Calculate vendor payment/payable amount. Purchase PPh is withheld from the
 	// vendor payment and posted separately as tax payable.
-	vendorCredit := subtotal + purchase.PPNAmount
+	vendorCredit := subtotal + purchase.PPNAmount + purchase.OtherCostAmount
 
 	// Handle withholding taxes (reduce the credit amount) - use configured account
 	if purchase.PPh21Amount > 0 {
@@ -648,4 +666,35 @@ func (s *PurchaseJournalServiceSSOT) getInventoryAccount(db *gorm.DB) (*models.A
 	}
 
 	return nil, fmt.Errorf("inventory account not found (tried configured, 1103*, 1301)")
+}
+
+func (s *PurchaseJournalServiceSSOT) getPurchaseOtherCostAccount(db *gorm.DB, purchase *models.Purchase) (*models.Account, error) {
+	if purchase.OtherCostAccountID != nil && *purchase.OtherCostAccountID > 0 {
+		var selected models.Account
+		if err := db.First(&selected, *purchase.OtherCostAccountID).Error; err != nil {
+			return nil, fmt.Errorf("COA biaya lain-lain pembelian tidak ditemukan: %v", err)
+		}
+		if selected.IsHeader || !strings.EqualFold(strings.TrimSpace(selected.Type), models.AccountTypeExpense) {
+			return nil, fmt.Errorf("COA biaya lain-lain pembelian harus akun EXPENSE non-header")
+		}
+		return &selected, nil
+	}
+
+	preferredCodes := []string{"6106", "8102", "6102"}
+	for _, code := range preferredCodes {
+		var account models.Account
+		if err := db.Where("code = ? AND type = ? AND is_header = ? AND is_active = ? AND deleted_at IS NULL", code, models.AccountTypeExpense, false, true).
+			First(&account).Error; err == nil {
+			return &account, nil
+		}
+	}
+
+	var fallback models.Account
+	if err := db.Where("type = ? AND is_header = ? AND is_active = ? AND deleted_at IS NULL", models.AccountTypeExpense, false, true).
+		Order("code ASC").
+		First(&fallback).Error; err == nil {
+		return &fallback, nil
+	}
+
+	return nil, fmt.Errorf("COA default biaya lain-lain pembelian tidak ditemukan")
 }

@@ -32,6 +32,16 @@ export interface PurchaseRequestPaymentSummary {
   method?: string;
   reference?: string;
   payment_id?: number | null;
+  payment_proof_file_name?: string;
+  payment_proof_file_path?: string;
+  payment_proof_file_size?: number;
+  payment_proof_mime_type?: string;
+  payment_proof_uploaded_by?: number | null;
+  payment_proof_uploaded_at?: string | null;
+  payment_proof_review_status?: string;
+  payment_proof_reviewed_by?: number | null;
+  payment_proof_reviewed_at?: string | null;
+  payment_proof_review_notes?: string;
   payment?: {
     id: number;
     code: string;

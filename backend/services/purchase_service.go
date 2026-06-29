@@ -204,6 +204,7 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	coaReadOnlyUser := s.isPurchaseCOAReadOnlyUser(userID)
 	if coaReadOnlyUser {
 		request.CreditAccountID = nil
+		request.OtherCostAccountID = nil
 		for i := range request.Items {
 			request.Items[i].ExpenseAccountID = 0
 		}
@@ -222,6 +223,9 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := s.validatePurchaseOtherCostAccount(request.OtherCostAccountID, request.OtherCostAmount); err != nil {
+		return nil, err
 	}
 
 	// Generate purchase code
@@ -252,15 +256,18 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 			}
 			return *request.PPNRate
 		}(),
-		OtherTaxAdditions:  request.OtherTaxAdditions,
-		PPh21Rate:          getPPhRateFromPointer(request.PPh21Rate),
-		PPh23Rate:          getPPhRateFromPointer(request.PPh23Rate),
-		OtherTaxDeductions: request.OtherTaxDeductions,
-		FreightCost:        request.FreightCost,
-		Status:             models.PurchaseStatusDraft,
-		Notes:              request.Notes,
-		ApprovalStatus:     models.PurchaseApprovalNotStarted,
-		RequiresApproval:   false,
+		OtherTaxAdditions:    request.OtherTaxAdditions,
+		PPh21Rate:            getPPhRateFromPointer(request.PPh21Rate),
+		PPh23Rate:            getPPhRateFromPointer(request.PPh23Rate),
+		OtherTaxDeductions:   request.OtherTaxDeductions,
+		FreightCost:          request.FreightCost,
+		OtherCostAmount:      request.OtherCostAmount,
+		OtherCostDescription: strings.TrimSpace(request.OtherCostDescription),
+		OtherCostAccountID:   request.OtherCostAccountID,
+		Status:               models.PurchaseStatusDraft,
+		Notes:                request.Notes,
+		ApprovalStatus:       models.PurchaseApprovalNotStarted,
+		RequiresApproval:     false,
 		// Initialize payment tracking fields
 		PaidAmount:        0,
 		OutstandingAmount: 0, // Will be set after total calculation
@@ -399,6 +406,19 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	if request.FreightCost != nil {
 		purchase.FreightCost = *request.FreightCost
 	}
+	if request.OtherCostAmount != nil {
+		purchase.OtherCostAmount = *request.OtherCostAmount
+	}
+	if request.OtherCostDescription != nil {
+		purchase.OtherCostDescription = strings.TrimSpace(*request.OtherCostDescription)
+	}
+	if request.OtherCostAccountID != nil {
+		if *request.OtherCostAccountID == 0 {
+			purchase.OtherCostAccountID = nil
+		} else {
+			purchase.OtherCostAccountID = request.OtherCostAccountID
+		}
+	}
 	// Update payment method fields
 	if request.PaymentMethod != nil {
 		purchase.PaymentMethod = getPaymentMethod(strings.ToUpper(strings.TrimSpace(*request.PaymentMethod)))
@@ -416,6 +436,7 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	coaReadOnlyUser := s.isPurchaseCOAReadOnlyUser(userID)
 	if coaReadOnlyUser {
 		purchase.CreditAccountID = nil
+		purchase.OtherCostAccountID = nil
 		if len(request.Items) > 0 {
 			for i := range request.Items {
 				request.Items[i].ExpenseAccountID = 0
@@ -435,6 +456,9 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := s.validatePurchaseOtherCostAccount(purchase.OtherCostAccountID, purchase.OtherCostAmount); err != nil {
+		return nil, err
 	}
 
 	// Update items if provided
@@ -1603,6 +1627,25 @@ func (s *PurchaseService) validatePurchaseCreditAccount(accountID uint) error {
 	return nil
 }
 
+func (s *PurchaseService) validatePurchaseOtherCostAccount(accountID *uint, amount float64) error {
+	if amount <= 0 || accountID == nil || *accountID == 0 {
+		return nil
+	}
+
+	account, err := s.accountRepo.FindByID(context.TODO(), *accountID)
+	if err != nil || account == nil {
+		return fmt.Errorf("COA biaya lain-lain %d tidak ditemukan", *accountID)
+	}
+	if account.IsHeader {
+		return fmt.Errorf("COA %s - %s adalah akun header dan tidak bisa dipakai untuk biaya lain-lain", account.Code, account.Name)
+	}
+	if !strings.EqualFold(strings.TrimSpace(account.Type), models.AccountTypeExpense) {
+		return fmt.Errorf("COA %s - %s harus bertipe EXPENSE untuk biaya lain-lain", account.Code, account.Name)
+	}
+
+	return nil
+}
+
 func (s *PurchaseService) UpdatePurchaseFinalReviewConfig(purchaseID uint, request models.PurchaseFinalReviewConfigRequest, userID uint) (*models.Purchase, error) {
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
 	if err != nil {
@@ -1646,6 +1689,19 @@ func (s *PurchaseService) UpdatePurchaseFinalReviewConfig(purchaseID uint, reque
 	if request.FreightCost != nil {
 		purchase.FreightCost = *request.FreightCost
 	}
+	if request.OtherCostAmount != nil {
+		purchase.OtherCostAmount = *request.OtherCostAmount
+	}
+	if request.OtherCostDescription != nil {
+		purchase.OtherCostDescription = strings.TrimSpace(*request.OtherCostDescription)
+	}
+	if request.OtherCostAccountID != nil {
+		if *request.OtherCostAccountID == 0 {
+			purchase.OtherCostAccountID = nil
+		} else {
+			purchase.OtherCostAccountID = request.OtherCostAccountID
+		}
+	}
 	if request.PPNRate != nil {
 		purchase.PPNRate = *request.PPNRate
 	}
@@ -1663,6 +1719,9 @@ func (s *PurchaseService) UpdatePurchaseFinalReviewConfig(purchaseID uint, reque
 	}
 	if request.Notes != nil {
 		purchase.Notes = *request.Notes
+	}
+	if err := s.validatePurchaseOtherCostAccount(purchase.OtherCostAccountID, purchase.OtherCostAmount); err != nil {
+		return nil, err
 	}
 
 	purchase.BankAccountID, purchase.CreditAccountID, err = s.normalizePurchasePaymentConfiguration(
@@ -1688,6 +1747,9 @@ func (s *PurchaseService) UpdatePurchaseFinalReviewConfig(purchaseID uint, reque
 			"CreditAccountID",
 			"PaymentReference",
 			"FreightCost",
+			"OtherCostAmount",
+			"OtherCostDescription",
+			"OtherCostAccountID",
 			"SubtotalBeforeDiscount",
 			"ItemDiscountAmount",
 			"OrderDiscountAmount",
@@ -1906,6 +1968,9 @@ func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, u
 			Where("id = ?", purchaseID).
 			Update("status", models.PurchaseStatusPendingFinalApproval).Error
 		return nil, fmt.Errorf("final approval tersimpan, tetapi posting purchase gagal: %v", err)
+	}
+	if err := s.markPurchasePaymentProofReviewed(purchaseID, userID, models.PurchasePaymentProofApproved, comments); err != nil {
+		fmt.Printf("?? Warning: Failed to mark purchase payment proof reviewed: %v\n", err)
 	}
 
 	return s.GetPurchaseByID(purchaseID)
@@ -3205,6 +3270,8 @@ func (s *PurchaseService) GetPurchasePayments(purchaseID uint) ([]models.Purchas
 	err := s.db.Where("purchase_id = ?", purchaseID).
 		Preload("CashBank").
 		Preload("User").
+		Preload("PaymentProofUploader").
+		Preload("PaymentProofReviewer").
 		Order("date DESC").
 		Find(&payments).Error
 
@@ -3213,6 +3280,230 @@ func (s *PurchaseService) GetPurchasePayments(purchaseID uint) ([]models.Purchas
 	}
 
 	return payments, nil
+}
+
+func (s *PurchaseService) AttachPurchasePaymentProof(
+	purchaseID uint,
+	userID uint,
+	userRole string,
+	fileName string,
+	filePath string,
+	fileSize int64,
+	mimeType string,
+) (*models.PurchasePayment, error) {
+	if strings.TrimSpace(fileName) == "" || strings.TrimSpace(filePath) == "" {
+		return nil, errors.New("payment proof file is required")
+	}
+
+	if !s.db.Migrator().HasTable(&models.PurchasePayment{}) {
+		if err := s.db.AutoMigrate(&models.PurchasePayment{}); err != nil {
+			return nil, err
+		}
+	}
+
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return nil, fmt.Errorf("purchase not found: %v", err)
+	}
+	if !isImmediatePayment(purchase.PaymentMethod) {
+		return nil, errors.New("bukti pembayaran bank hanya untuk pembelian dengan pembayaran langsung")
+	}
+	if purchase.BankAccountID == nil {
+		return nil, errors.New("cash/bank account must be selected before uploading payment proof")
+	}
+
+	if err := s.ensureImmediatePurchasePaymentRecord(purchase); err != nil {
+		return nil, fmt.Errorf("failed to prepare purchase payment record: %w", err)
+	}
+
+	now := time.Now()
+	reviewStatus := models.PurchasePaymentProofPending
+	var reviewedBy *uint
+	var reviewedAt *time.Time
+	reviewNotes := ""
+	if models.IsFinanceManagerRole(userRole) && s.isPurchaseFinalizedForRequester(purchase.Status) {
+		reviewStatus = models.PurchasePaymentProofApproved
+		reviewedBy = &userID
+		reviewedAt = &now
+		reviewNotes = "Bukti pembayaran bank diunggah oleh Finance Manager setelah final approval"
+	}
+
+	var payment models.PurchasePayment
+	if err := s.db.Where("purchase_id = ? AND payment_id IS NULL AND deleted_at IS NULL", purchaseID).
+		Order("created_at DESC").
+		First(&payment).Error; err != nil {
+		return nil, fmt.Errorf("purchase payment record not found: %v", err)
+	}
+
+	updates := map[string]interface{}{
+		"payment_proof_file_name":     strings.TrimSpace(fileName),
+		"payment_proof_file_path":     strings.TrimSpace(filePath),
+		"payment_proof_file_size":     fileSize,
+		"payment_proof_mime_type":     strings.TrimSpace(mimeType),
+		"payment_proof_uploaded_by":   userID,
+		"payment_proof_uploaded_at":   now,
+		"payment_proof_review_status": reviewStatus,
+		"payment_proof_reviewed_by":   reviewedBy,
+		"payment_proof_reviewed_at":   reviewedAt,
+		"payment_proof_review_notes":  reviewNotes,
+		"updated_at":                  now,
+	}
+	if err := s.db.Model(&payment).Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("failed to attach payment proof: %w", err)
+	}
+
+	if err := s.db.Preload("CashBank").
+		Preload("User").
+		Preload("PaymentProofUploader").
+		Preload("PaymentProofReviewer").
+		First(&payment, payment.ID).Error; err != nil {
+		return nil, err
+	}
+	return &payment, nil
+}
+
+func (s *PurchaseService) GetPurchasePaymentProofForDownload(paymentID uint, userID uint, userRole string) (*models.PurchasePayment, error) {
+	var payment models.PurchasePayment
+	err := s.db.
+		Preload("Purchase").
+		Preload("Purchase.PurchaseRequest").
+		Preload("PaymentProofUploader").
+		Preload("PaymentProofReviewer").
+		First(&payment, paymentID).Error
+	if err != nil {
+		return nil, fmt.Errorf("payment proof not found: %v", err)
+	}
+	if strings.TrimSpace(payment.PaymentProofFilePath) == "" {
+		return nil, errors.New("bukti pembayaran bank belum diunggah")
+	}
+
+	role := models.NormalizeRole(userRole)
+	if models.CanViewAllTransactionData(role) || role == models.RoleAdmin || role == models.RoleDirector {
+		return &payment, nil
+	}
+	if payment.Purchase.UserID == userID {
+		return &payment, nil
+	}
+
+	canDownloadFromPR, err := s.userCanAccessPaymentProofFromPurchaseRequest(payment.PurchaseID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if canDownloadFromPR && s.isPurchaseFinalizedForRequester(payment.Purchase.Status) {
+		if strings.ToUpper(strings.TrimSpace(payment.PaymentProofReviewStatus)) != models.PurchasePaymentProofApproved {
+			return nil, errors.New("bukti pembayaran bank belum disetujui Finance Manager")
+		}
+		return &payment, nil
+	}
+
+	return nil, errors.New("access denied: you can only download payment proof for your own finalized purchase request")
+}
+
+func (s *PurchaseService) ReviewPurchasePaymentProof(paymentID uint, reviewerID uint, reviewerRole string, status string, notes string) (*models.PurchasePayment, error) {
+	role := models.NormalizeRole(reviewerRole)
+	if !models.IsFinanceManagerRole(role) && role != models.RoleAdmin {
+		return nil, errors.New("hanya Finance Manager yang dapat mereview bukti pembayaran bank")
+	}
+
+	status = strings.ToUpper(strings.TrimSpace(status))
+	switch status {
+	case models.PurchasePaymentProofApproved, models.PurchasePaymentProofRejected:
+	default:
+		return nil, errors.New("status review bukti pembayaran harus APPROVED atau REJECTED")
+	}
+	if status == models.PurchasePaymentProofRejected && strings.TrimSpace(notes) == "" {
+		return nil, errors.New("catatan wajib diisi saat menolak bukti pembayaran bank")
+	}
+
+	var payment models.PurchasePayment
+	if err := s.db.Preload("Purchase").First(&payment, paymentID).Error; err != nil {
+		return nil, fmt.Errorf("payment proof not found: %v", err)
+	}
+	if strings.TrimSpace(payment.PaymentProofFilePath) == "" {
+		return nil, errors.New("bukti pembayaran bank belum diunggah")
+	}
+	if !s.isPurchaseFinalizedForRequester(payment.Purchase.Status) {
+		return nil, errors.New("review bukti pembayaran susulan hanya untuk purchase yang sudah final")
+	}
+
+	now := time.Now()
+	if err := s.db.Model(&payment).Updates(map[string]interface{}{
+		"payment_proof_review_status": status,
+		"payment_proof_reviewed_by":   reviewerID,
+		"payment_proof_reviewed_at":   now,
+		"payment_proof_review_notes":  strings.TrimSpace(notes),
+		"updated_at":                  now,
+	}).Error; err != nil {
+		return nil, fmt.Errorf("failed to review payment proof: %w", err)
+	}
+
+	if err := s.db.Preload("Purchase").
+		Preload("CashBank").
+		Preload("User").
+		Preload("PaymentProofUploader").
+		Preload("PaymentProofReviewer").
+		First(&payment, payment.ID).Error; err != nil {
+		return nil, err
+	}
+
+	return &payment, nil
+}
+
+func (s *PurchaseService) markPurchasePaymentProofReviewed(purchaseID uint, reviewerID uint, status string, notes string) error {
+	now := time.Now()
+	return s.db.Model(&models.PurchasePayment{}).
+		Where("purchase_id = ? AND payment_proof_file_path <> '' AND deleted_at IS NULL", purchaseID).
+		Updates(map[string]interface{}{
+			"payment_proof_review_status": strings.TrimSpace(status),
+			"payment_proof_reviewed_by":   reviewerID,
+			"payment_proof_reviewed_at":   now,
+			"payment_proof_review_notes":  strings.TrimSpace(notes),
+			"updated_at":                  now,
+		}).Error
+}
+
+func (s *PurchaseService) userCanAccessPaymentProofFromPurchaseRequest(purchaseID uint, userID uint) (bool, error) {
+	var count int64
+	err := s.db.Raw(`
+		SELECT COUNT(1)
+		FROM purchase_requests pr
+		WHERE pr.requester_id = ?
+			AND pr.deleted_at IS NULL
+			AND (
+				pr.id = (
+					SELECT purchase_request_id
+					FROM purchases
+					WHERE id = ? AND deleted_at IS NULL
+				)
+				OR EXISTS (
+					SELECT 1
+					FROM purchase_request_items pri
+					WHERE pri.purchase_request_id = pr.id
+						AND pri.purchase_id = ?
+						AND pri.deleted_at IS NULL
+				)
+				OR EXISTS (
+					SELECT 1
+					FROM purchase_items pi
+					JOIN purchase_request_items pri
+						ON pri.id = pi.purchase_request_item_id
+						AND pri.deleted_at IS NULL
+					WHERE pi.purchase_id = ?
+						AND pi.deleted_at IS NULL
+						AND pri.purchase_request_id = pr.id
+				)
+			)
+	`, userID, purchaseID, purchaseID, purchaseID).Scan(&count).Error
+	return count > 0, err
+}
+
+func (s *PurchaseService) isPurchaseFinalizedForRequester(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case models.PurchaseStatusApproved, models.PurchaseStatusCompleted, models.PurchaseStatusPaid:
+		return true
+	default:
+		return false
+	}
 }
 
 // isImmediatePayment checks if payment method requires immediate payment

@@ -25,6 +25,9 @@ export interface PurchaseCreateRequest {
   discount?: number;
   tax?: number;
   freight_cost?: number;
+  other_cost_amount?: number;
+  other_cost_description?: string;
+  other_cost_account_id?: number;
   notes?: string;
   items: PurchaseItemRequest[]; // backend expects `items`
   request_priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
@@ -42,6 +45,9 @@ export interface PurchaseFinalReviewConfigRequest {
   ppn_rate?: number;
   other_tax_additions?: number;
   freight_cost?: number;
+  other_cost_amount?: number;
+  other_cost_description?: string;
+  other_cost_account_id?: number;
   pph21_rate?: number;
   pph23_rate?: number;
   other_tax_deductions?: number;
@@ -153,6 +159,15 @@ export interface Purchase {
   pph_payment_journal_entry_id?: number | null;
   tax?: number;
   freight_cost?: number;
+  other_cost_amount?: number;
+  other_cost_description?: string;
+  other_cost_account_id?: number | null;
+  other_cost_account?: {
+    id: number;
+    code: string;
+    name: string;
+    type?: string;
+  } | null;
   tax_amount: number;
   total_amount: number; // grand total
   // Payment tracking fields
@@ -181,6 +196,7 @@ export interface Purchase {
   purchase_request?: PurchaseRequestSummary | null;
   project?: ProjectSummary | null;
   purchase_items?: PurchaseItem[];
+  purchase_payments?: PurchasePayment[];
   approval_request?: {
     id: number;
     status: string;
@@ -251,6 +267,16 @@ export interface PurchasePayment {
   cash_bank_id?: number;
   user_id: number;
   payment_id?: number;
+  payment_proof_file_name?: string;
+  payment_proof_file_path?: string;
+  payment_proof_file_size?: number;
+  payment_proof_mime_type?: string;
+  payment_proof_uploaded_by?: number;
+  payment_proof_uploaded_at?: string;
+  payment_proof_review_status?: "PENDING" | "APPROVED" | "REJECTED" | string;
+  payment_proof_reviewed_by?: number;
+  payment_proof_reviewed_at?: string;
+  payment_proof_review_notes?: string;
   created_at: string;
   updated_at: string;
 
@@ -258,6 +284,8 @@ export interface PurchasePayment {
   cash_bank?: any;
   user?: any;
   payment?: any;
+  payment_proof_uploader?: any;
+  payment_proof_reviewer?: any;
 }
 
 export interface PurchaseForPayment {
@@ -475,6 +503,62 @@ class PurchaseService {
       API_ENDPOINTS.PURCHASES_PAYMENTS(purchaseId),
     );
     return response.data;
+  }
+
+  async uploadPaymentProof(
+    purchaseId: number,
+    file: File,
+  ): Promise<PurchasePayment> {
+    const formData = new FormData();
+    formData.append("payment_proof", file);
+
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_PAYMENT_PROOF(purchaseId),
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 30000,
+      },
+    );
+    return response.data?.payment ?? response.data;
+  }
+
+  async reviewPaymentProof(
+    purchasePaymentId: number,
+    payload: { status: "APPROVED" | "REJECTED"; notes?: string },
+  ): Promise<PurchasePayment> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_PAYMENT_PROOF_REVIEW(purchasePaymentId),
+      payload,
+    );
+    return response.data?.payment ?? response.data;
+  }
+
+  async downloadPaymentProof(
+    purchasePaymentId: number,
+    fallbackName = "bukti-pembayaran",
+    fromPurchaseRequest = false,
+  ): Promise<void> {
+    const endpoint = fromPurchaseRequest
+      ? API_ENDPOINTS.PURCHASE_REQUEST_PAYMENT_PROOF_DOWNLOAD(purchasePaymentId)
+      : API_ENDPOINTS.PURCHASES_PAYMENT_PROOF_DOWNLOAD(purchasePaymentId);
+    const response = await api.get(endpoint, { responseType: "blob" });
+    const disposition = response.headers?.["content-disposition"] || "";
+    const filenameMatch =
+      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+      disposition.match(/filename="?([^"]+)"?/i);
+    const filename = filenameMatch?.[1]
+      ? decodeURIComponent(filenameMatch[1])
+      : fallbackName;
+
+    const url = window.URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   }
 
   // Helper method to check if purchase can receive payment
