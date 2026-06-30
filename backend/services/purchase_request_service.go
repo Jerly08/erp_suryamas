@@ -15,6 +15,7 @@ type PurchaseRequestService interface {
 	GetPurchaseRequests(userID uint, userRole string, department string, status string, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error)
 	GetPurchaseRequestByID(id uint, userID uint, userRole string) (*models.PurchaseRequest, error)
 	UpdatePurchaseRequestProject(id uint, userID uint, userRole string, payload models.PurchaseRequestProjectUpdatePayload) (*models.PurchaseRequest, error)
+	UpdatePurchaseRequestInvoiceTerms(id uint, userID uint, userRole string, payload models.PurchaseRequestInvoiceTermsUpdatePayload) (*models.PurchaseRequest, error)
 	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
 	ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error)
 	RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error)
@@ -63,6 +64,19 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 		if err := s.db.Where("id = ? AND type = ?", *payload.VendorID, models.ContactTypeVendor).First(&vendor).Error; err != nil {
 			return nil, fmt.Errorf("invalid vendor id: %d", *payload.VendorID)
 		}
+		if payload.PaymentTermsDays == nil && vendor.PaymentTerms >= 0 {
+			terms := vendor.PaymentTerms
+			payload.PaymentTermsDays = &terms
+		}
+	}
+
+	invoiceReceivedDate, paymentTermsDays, dueDate, err := normalizePurchaseRequestInvoiceTerms(
+		payload.VendorInvoiceReceivedDate,
+		payload.PaymentTermsDays,
+		payload.DueDate,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	for _, rawItem := range payload.Items {
@@ -105,17 +119,20 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 	}
 
 	pr := &models.PurchaseRequest{
-		RequesterID:          userID,
-		Department:           strings.TrimSpace(payload.Department),
-		Title:                strings.TrimSpace(payload.Title),
-		ProjectID:            payload.ProjectID,
-		VendorID:             payload.VendorID,
-		TotalEstimatedAmount: totalEstimatedAmount,
-		Status:               models.PRStatusPendingApproval,
-		CurrentApprovalStage: initialStage,
-		ApprovalRevision:     1,
-		Notes:                payload.Notes,
-		Items:                items,
+		RequesterID:               userID,
+		Department:                strings.TrimSpace(payload.Department),
+		Title:                     strings.TrimSpace(payload.Title),
+		ProjectID:                 payload.ProjectID,
+		VendorID:                  payload.VendorID,
+		VendorInvoiceReceivedDate: invoiceReceivedDate,
+		PaymentTermsDays:          paymentTermsDays,
+		DueDate:                   dueDate,
+		TotalEstimatedAmount:      totalEstimatedAmount,
+		Status:                    models.PRStatusPendingApproval,
+		CurrentApprovalStage:      initialStage,
+		ApprovalRevision:          1,
+		Notes:                     payload.Notes,
+		Items:                     items,
 	}
 
 	if err := s.repo.Create(pr); err != nil {
@@ -130,6 +147,43 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 	s.notifyPurchaseRequestCreated(pr)
 
 	return s.repo.GetByID(pr.ID)
+}
+
+func normalizePurchaseRequestInvoiceTerms(invoiceReceivedDate *time.Time, paymentTermsDays *int, dueDate *time.Time) (*time.Time, *int, *time.Time, error) {
+	normalizedInvoiceReceivedDate := normalizeDatePointer(invoiceReceivedDate)
+	normalizedDueDate := normalizeDatePointer(dueDate)
+
+	var normalizedPaymentTermsDays *int
+	if paymentTermsDays != nil {
+		if *paymentTermsDays < 0 {
+			return nil, nil, nil, fmt.Errorf("payment_terms_days cannot be negative")
+		}
+		if *paymentTermsDays > 3650 {
+			return nil, nil, nil, fmt.Errorf("payment_terms_days cannot exceed 3650 days")
+		}
+		terms := *paymentTermsDays
+		normalizedPaymentTermsDays = &terms
+	}
+
+	if normalizedDueDate == nil && normalizedInvoiceReceivedDate != nil && normalizedPaymentTermsDays != nil {
+		calculatedDueDate := normalizedInvoiceReceivedDate.AddDate(0, 0, *normalizedPaymentTermsDays)
+		normalizedDueDate = &calculatedDueDate
+	}
+
+	if normalizedInvoiceReceivedDate != nil && normalizedDueDate != nil && normalizedDueDate.Before(*normalizedInvoiceReceivedDate) {
+		return nil, nil, nil, fmt.Errorf("due_date cannot be before vendor_invoice_received_date")
+	}
+
+	return normalizedInvoiceReceivedDate, normalizedPaymentTermsDays, normalizedDueDate, nil
+}
+
+func normalizeDatePointer(value *time.Time) *time.Time {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+
+	normalized := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
+	return &normalized
 }
 
 func (s *purchaseRequestService) GetPurchaseRequests(userID uint, userRole string, department string, status string, availableForPurchase bool, currentPurchaseID uint) ([]models.PurchaseRequest, error) {
@@ -184,6 +238,137 @@ func (s *purchaseRequestService) UpdatePurchaseRequestProject(id uint, userID ui
 	}
 
 	return s.repo.GetByID(pr.ID)
+}
+
+func (s *purchaseRequestService) UpdatePurchaseRequestInvoiceTerms(id uint, userID uint, userRole string, payload models.PurchaseRequestInvoiceTermsUpdatePayload) (*models.PurchaseRequest, error) {
+	if !canUpdatePurchaseRequestProject(userRole) {
+		return nil, fmt.Errorf("only finance staff, accounting, finance manager, or admin can update purchase request invoice terms")
+	}
+
+	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
+	if err != nil {
+		return nil, err
+	}
+
+	if pr.Status == models.PRStatusRejected || pr.Status == models.PRStatusCompleted {
+		return nil, fmt.Errorf("purchase request invoice terms cannot be updated in current status: %s", pr.Status)
+	}
+
+	invoiceReceivedDate, paymentTermsDays, dueDate, err := normalizePurchaseRequestInvoiceTerms(
+		payload.VendorInvoiceReceivedDate,
+		payload.PaymentTermsDays,
+		payload.DueDate,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	linkedPurchases, err := s.getLinkedPurchasesForPurchaseRequest(pr.ID)
+	if err != nil {
+		return nil, err
+	}
+	requiresDueDate := false
+	for _, purchase := range linkedPurchases {
+		if purchaseRequiresDueDate(purchase) {
+			requiresDueDate = true
+			break
+		}
+	}
+	if requiresDueDate && dueDate == nil {
+		return nil, fmt.Errorf("due_date is required because purchase request %s is already linked to a purchase", pr.PRNumber)
+	}
+	if !requiresDueDate && payload.DueDate == nil {
+		dueDate = nil
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		for _, purchase := range linkedPurchases {
+			if dueDate != nil && purchaseRequiresDueDate(purchase) && !canSyncPurchaseDueDateFromPurchaseRequest(purchase.Status) {
+				return fmt.Errorf("purchase %s sudah melewati tahap koreksi due date (status: %s)", purchase.Code, purchase.Status)
+			}
+		}
+
+		if err := tx.Model(&models.PurchaseRequest{}).
+			Where("id = ?", pr.ID).
+			Updates(map[string]interface{}{
+				"vendor_invoice_received_date": invoiceReceivedDate,
+				"payment_terms_days":           paymentTermsDays,
+				"due_date":                     dueDate,
+			}).Error; err != nil {
+			return err
+		}
+
+		if dueDate != nil {
+			for _, purchase := range linkedPurchases {
+				if !purchaseRequiresDueDate(purchase) {
+					continue
+				}
+				if err := tx.Model(&models.Purchase{}).
+					Where("id = ?", purchase.ID).
+					Update("due_date", *dueDate).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetByID(pr.ID)
+}
+
+func (s *purchaseRequestService) getLinkedPurchasesForPurchaseRequest(purchaseRequestID uint) ([]models.Purchase, error) {
+	var purchases []models.Purchase
+	err := s.db.Raw(`
+		SELECT DISTINCT p.*
+		FROM purchases p
+		WHERE p.deleted_at IS NULL
+			AND p.status <> ?
+			AND (
+				p.purchase_request_id = ?
+				OR EXISTS (
+					SELECT 1
+					FROM purchase_request_items pri
+					WHERE pri.purchase_request_id = ?
+						AND pri.purchase_id = p.id
+						AND pri.deleted_at IS NULL
+				)
+				OR EXISTS (
+					SELECT 1
+					FROM purchase_items pi
+					JOIN purchase_request_items pri
+						ON pri.id = pi.purchase_request_item_id
+						AND pri.deleted_at IS NULL
+					WHERE pi.purchase_id = p.id
+						AND pi.deleted_at IS NULL
+						AND pri.purchase_request_id = ?
+				)
+			)
+		ORDER BY p.id ASC
+	`, models.PurchaseStatusCancelled, purchaseRequestID, purchaseRequestID, purchaseRequestID).Scan(&purchases).Error
+
+	return purchases, err
+}
+
+func purchaseRequiresDueDate(purchase models.Purchase) bool {
+	method := strings.ToUpper(strings.TrimSpace(purchase.PaymentMethod))
+	return method == "" || method == models.PurchasePaymentCredit
+}
+
+func canSyncPurchaseDueDateFromPurchaseRequest(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case models.PurchaseStatusDraft,
+		models.PurchaseStatusPending,
+		models.PurchaseStatusPendingApproval,
+		models.PurchaseStatusPendingAccounting,
+		models.PurchaseStatusPendingFinalApproval:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error) {

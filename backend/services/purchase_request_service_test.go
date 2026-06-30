@@ -4,6 +4,7 @@ import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -88,6 +89,88 @@ func seedPurchaseRequestTestVendor(t *testing.T, db *gorm.DB, suffix string) mod
 	require.NoError(t, db.Create(&vendor).Error)
 
 	return vendor
+}
+
+func TestCreatePurchaseRequestCalculatesDueDateFromVendorInvoiceDate(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "requester-invoice-date", models.RoleFinanceStaff)
+	vendor := seedPurchaseRequestTestVendor(t, db, "DUE")
+	product := seedPurchaseRequestTestProduct(t, db, "DUE")
+	invoiceReceivedDate := time.Date(2026, time.June, 10, 0, 0, 0, 0, time.UTC)
+	termsDays := 14
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department:                "Finance",
+		VendorID:                  &vendor.ID,
+		VendorInvoiceReceivedDate: &invoiceReceivedDate,
+		PaymentTermsDays:          &termsDays,
+		Items: []models.PurchaseRequestItemPayload{
+			{
+				ProductID:      product.ID,
+				Quantity:       1,
+				EstimatedPrice: 100000,
+			},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.NotNil(t, pr.VendorInvoiceReceivedDate)
+	require.NotNil(t, pr.PaymentTermsDays)
+	require.NotNil(t, pr.DueDate)
+	require.Equal(t, invoiceReceivedDate, *pr.VendorInvoiceReceivedDate)
+	require.Equal(t, termsDays, *pr.PaymentTermsDays)
+	require.Equal(t, invoiceReceivedDate.AddDate(0, 0, termsDays), *pr.DueDate)
+}
+
+func TestUpdatePurchaseRequestInvoiceTermsAllowsImmediateLinkedPurchaseWithoutDueDate(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	financeManager := seedPurchaseRequestTestUser(t, db, "fm-immediate-due-date", models.RoleFinanceManager)
+	vendor := seedPurchaseRequestTestVendor(t, db, "IMMEDIATE")
+	product := seedPurchaseRequestTestProduct(t, db, "IMMEDIATE")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Finance",
+		VendorID:   &vendor.ID,
+		Items: []models.PurchaseRequestItemPayload{
+			{
+				ProductID:      product.ID,
+				Quantity:       1,
+				EstimatedPrice: 100000,
+			},
+		},
+	}, financeManager.ID, financeManager.Role)
+	require.NoError(t, err)
+
+	purchase := models.Purchase{
+		Code:              "PO-IMMEDIATE-PR",
+		VendorID:          vendor.ID,
+		UserID:            financeManager.ID,
+		Status:            models.PurchaseStatusApproved,
+		PaymentMethod:     models.PurchasePaymentTransfer,
+		PurchaseRequestID: &pr.ID,
+	}
+	require.NoError(t, db.Create(&purchase).Error)
+
+	invoiceReceivedDate := time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC)
+	termsDays := 14
+
+	updated, err := service.UpdatePurchaseRequestInvoiceTerms(pr.ID, financeManager.ID, financeManager.Role, models.PurchaseRequestInvoiceTermsUpdatePayload{
+		VendorInvoiceReceivedDate: &invoiceReceivedDate,
+		PaymentTermsDays:          &termsDays,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.VendorInvoiceReceivedDate)
+	require.NotNil(t, updated.PaymentTermsDays)
+	require.Nil(t, updated.DueDate)
+
+	var persistedPurchase models.Purchase
+	require.NoError(t, db.First(&persistedPurchase, purchase.ID).Error)
+	require.True(t, persistedPurchase.DueDate.IsZero())
 }
 
 func TestCreatePurchaseRequestByFinanceManagerStartsAtFinanceManagerStage(t *testing.T) {

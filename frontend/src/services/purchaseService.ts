@@ -116,6 +116,9 @@ export interface PurchaseRequestSummary {
   request_number?: string;
   title?: string;
   department?: string;
+  vendor_invoice_received_date?: string | null;
+  payment_terms_days?: number | null;
+  due_date?: string | null;
   project?: {
     id: number;
     code: string;

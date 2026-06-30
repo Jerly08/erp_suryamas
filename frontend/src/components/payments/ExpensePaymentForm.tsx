@@ -187,6 +187,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const [contacts, setContacts] = useState<SelectContact[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
   const [liabilityAccounts, setLiabilityAccounts] = useState<AccountCatalogItem[]>([]);
+  const [employeeLoanAccounts, setEmployeeLoanAccounts] = useState<AccountCatalogItem[]>([]);
   const [defaultExpenseAccountId, setDefaultExpenseAccountId] = useState<number | null>(null);
   const [defaultExpenseAccountLabel, setDefaultExpenseAccountLabel] = useState('');
   const [cashBanks, setCashBanks] = useState<CashBank[]>([]);
@@ -241,13 +242,17 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     : 0;
   const netPayment = amount - pphAmount;
 
-  const selectedAccount = [...expenseAccounts, ...liabilityAccounts].find(
+  const selectedAccount = [...expenseAccounts, ...liabilityAccounts, ...employeeLoanAccounts].find(
     acc => acc.id === Number(selectedAccountId)
   );
   const selectedLiabilityAccount = liabilityAccounts.find(
     acc => acc.id === Number(selectedAccountId)
   );
+  const selectedEmployeeLoanAccount = employeeLoanAccounts.find(
+    acc => acc.id === Number(selectedAccountId)
+  );
   const isSelectedLiabilityAccount = !!selectedLiabilityAccount;
+  const isSelectedEmployeeLoanAccount = !!selectedEmployeeLoanAccount;
   const isPayrollPPhAccount = selectedAccount?.code === '2102-003';
   const selectedPayrollRun = openPayrollPPh.find((payroll) => payroll.id === selectedPayrollRunId);
   const selectedLiabilityBalance = Number(selectedLiabilityAccount?.balance || 0);
@@ -409,16 +414,16 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   }, [isOpen, initialData, setValue, reset]);
 
   useEffect(() => {
-    if (!isSelectedLiabilityAccount && enablePPH) {
+    if (!isSelectedLiabilityAccount && !isSelectedEmployeeLoanAccount && enablePPH) {
       return;
     }
 
-    if (isSelectedLiabilityAccount && enablePPH) {
+    if ((isSelectedLiabilityAccount || isSelectedEmployeeLoanAccount) && enablePPH) {
       setValue('enable_pph', false);
       setValue('pph_type', '');
       setValue('pph_rate', 0);
     }
-  }, [isSelectedLiabilityAccount, enablePPH, setValue]);
+  }, [isSelectedLiabilityAccount, isSelectedEmployeeLoanAccount, enablePPH, setValue]);
 
   useEffect(() => {
     if (!selectedAccount) {
@@ -551,6 +556,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       const liabilityData = await accountService.getAccountCatalog(token, 'LIABILITY');
       const activeLiabilityAccounts = filterActiveLeafAccounts(liabilityData);
 
+      const assetData = await accountService.getAccountCatalog(token, 'ASSET');
+      const activeEmployeeLoanAccounts = filterActiveLeafAccounts(assetData).filter((account) => {
+        const label = `${account.code} ${account.name}`.toLowerCase();
+        return account.code === '1107-001' || (label.includes('pinjaman') && label.includes('karyawan'));
+      });
+
       const fallbackExpenseAccount =
         activeExpenseAccounts[0] || activeLiabilityAccounts[0] || null;
       setDefaultExpenseAccountId(fallbackExpenseAccount?.id || null);
@@ -565,6 +576,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       );
       setLiabilityAccounts(
         canSelectExpenseAccountFromCOA ? activeLiabilityAccounts : [],
+      );
+      setEmployeeLoanAccounts(
+        canSelectExpenseAccountFromCOA ? activeEmployeeLoanAccounts : [],
       );
 
       // Load cash/bank accounts that can be used for payments
@@ -617,6 +631,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
       if (isSelectedLiabilityAccount && data.enable_pph) {
         throw new Error('Pemotongan PPh hanya untuk akun beban langsung. Untuk pelunasan hutang/liability, matikan opsi PPh.');
+      }
+      if (isSelectedEmployeeLoanAccount && data.enable_pph) {
+        throw new Error('Pemotongan PPh tidak berlaku untuk pencairan pinjaman karyawan.');
       }
 
       if (isPayrollPPhAccount) {
@@ -802,7 +819,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiBookOpen} />
-                        <Text>Expense / Liability Account</Text>
+                        <Text>Expense / Liability / Pinjaman Karyawan</Text>
                         <Tooltip label={t('payments.form.expenseAccountTooltip')}>
                           <Icon as={FiInfo} boxSize={3} color={textColor} />
                         </Tooltip>
@@ -846,6 +863,18 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                               ))}
                             </>
                           )}
+                          {employeeLoanAccounts.length > 0 && (
+                            <>
+                              <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
+                                ── Pinjaman Karyawan ──
+                              </option>
+                              {employeeLoanAccounts.map(account => (
+                                <option key={account.id} value={account.id}>
+                                  {account.code} - {account.name} | Saldo: {formatIDR(Number(account.balance || 0))}
+                                </option>
+                              ))}
+                            </>
+                          )}
                         </Select>
                       ) : (
                         <Box
@@ -868,7 +897,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormErrorMessage>{errors.expense_account_id?.message}</FormErrorMessage>
                     <FormHelperText color={textColor}>
                       {canSelectExpenseAccountFromCOA
-                        ? 'Gunakan akun beban untuk pembayaran langsung, atau akun kewajiban bila pelunasan perlu mengurangi liability tertentu.'
+                        ? 'Gunakan akun beban untuk pembayaran langsung, akun kewajiban untuk pelunasan liability, atau Pinjaman Karyawan untuk mencairkan pinjaman ke karyawan.'
                         : 'User ini tidak memilih COA manual. Sistem akan memakai akun beban default.'}
                     </FormHelperText>
                   </FormControl>
@@ -935,6 +964,23 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                             Saya konfirmasi ini pembayaran dimuka/lebih bayar liability.
                           </Checkbox>
                         )}
+                      </VStack>
+                    </Box>
+                  )}
+
+                  {isSelectedEmployeeLoanAccount && (
+                    <Box width="full" p={3} borderRadius="md" bg={selectedAccountBg} borderWidth={1} borderColor={borderColor}>
+                      <VStack spacing={2} align="stretch" fontSize="sm">
+                        <HStack justify="space-between">
+                          <Text color={textColor}>Saldo pinjaman karyawan tercatat</Text>
+                          <Text fontWeight="bold">{formatIDR(Number(selectedEmployeeLoanAccount.balance || 0))}</Text>
+                        </HStack>
+                        <Alert status="info" borderRadius="md" py={2}>
+                          <AlertIcon />
+                          <AlertDescription fontSize="sm">
+                            Jurnal pencairan: Debit {selectedEmployeeLoanAccount.code} - {selectedEmployeeLoanAccount.name} dan Credit kas/bank. Pelunasan lewat payroll akan mengkredit akun ini.
+                          </AlertDescription>
+                        </Alert>
                       </VStack>
                     </Box>
                   )}
@@ -1185,7 +1231,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                         <input
                           id="enable-pph"
                           type="checkbox"
-                          disabled={isSelectedLiabilityAccount}
+                          disabled={isSelectedLiabilityAccount || isSelectedEmployeeLoanAccount}
                           checked={field.value}
                           onChange={(e) => {
                             field.onChange(e.target.checked);
@@ -1199,11 +1245,13 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       )}
                     />
                   </FormControl>
-                  {isSelectedLiabilityAccount && (
+                  {(isSelectedLiabilityAccount || isSelectedEmployeeLoanAccount) && (
                     <Alert status="info" borderRadius="md" py={2}>
                       <AlertIcon />
                       <AlertDescription fontSize="sm">
-                        PPh withholding dimatikan karena akun yang dipilih adalah liability. Untuk setoran hutang PPh, gunakan nominal pembayaran saja tanpa potongan PPh tambahan.
+                        {isSelectedEmployeeLoanAccount
+                          ? 'PPh withholding dimatikan karena akun yang dipilih adalah Pinjaman Karyawan. Form ini mencatat pencairan pinjaman, bukan beban kena potong.'
+                          : 'PPh withholding dimatikan karena akun yang dipilih adalah liability. Untuk setoran hutang PPh, gunakan nominal pembayaran saja tanpa potongan PPh tambahan.'}
                       </AlertDescription>
                     </Alert>
                   )}

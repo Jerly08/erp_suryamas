@@ -74,3 +74,37 @@ func TestValidateExpensePaymentAccountUsageSkipsExpenseAccounts(t *testing.T) {
 
 	require.NoError(t, err)
 }
+
+func TestEmployeeLoanReceivableAccountIsAllowedForExpensePayment(t *testing.T) {
+	account := models.Account{
+		Code: "1107-001",
+		Name: "PINJAMAN KARYAWAN",
+		Type: models.AccountTypeAsset,
+	}
+
+	require.True(t, isAllowedExpensePaymentAccount(account))
+	require.NoError(t, validateExpensePaymentAccountUsage(account, 150000, 0, false))
+}
+
+func TestEmployeeLoanReceivableAccountRejectsPPhWithholding(t *testing.T) {
+	account := models.Account{
+		Code: "1107-001",
+		Name: "PINJAMAN KARYAWAN",
+		Type: models.AccountTypeAsset,
+	}
+
+	err := validateExpensePaymentAccountUsage(account, 150000, 1000, false)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PPh withholding")
+}
+
+func TestOtherAssetAccountIsNotAllowedForExpensePayment(t *testing.T) {
+	account := models.Account{
+		Code: "1102-001",
+		Name: "PIUTANG USAHA",
+		Type: models.AccountTypeAsset,
+	}
+
+	require.False(t, isAllowedExpensePaymentAccount(account))
+}

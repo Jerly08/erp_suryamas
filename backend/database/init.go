@@ -51,6 +51,7 @@ func InitializeDatabase(db *gorm.DB) {
 
 	// Backfill finalized PR budget totals to exclude rejected item rows
 	PurchaseRequestBudgetTotalMigration(db)
+	PurchaseRequestInvoiceDueDateMigration(db)
 
 	// Fix sales balance issues
 	SalesBalanceFixMigration(db)

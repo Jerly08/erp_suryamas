@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -153,6 +154,37 @@ func (c *PurchaseRequestController) UpdateProject(ctx *gin.Context) {
 	userRole := ctx.GetString("role")
 
 	pr, err := c.service.UpdatePurchaseRequestProject(uint(id), userID, userRole, payload)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, pr)
+}
+
+func (c *PurchaseRequestController) UpdateInvoiceTerms(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestInvoiceTermsUpdatePayload
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := validatePurchaseRequestInvoiceTerms(payload.VendorInvoiceReceivedDate, payload.PaymentTermsDays, payload.DueDate); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+
+	pr, err := c.service.UpdatePurchaseRequestInvoiceTerms(uint(id), userID, userRole, payload)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -308,6 +340,10 @@ func validatePurchaseRequestPayload(payload models.PurchaseRequestCreatePayload)
 		return fmt.Errorf("title cannot exceed 255 characters")
 	}
 
+	if err := validatePurchaseRequestInvoiceTerms(payload.VendorInvoiceReceivedDate, payload.PaymentTermsDays, payload.DueDate); err != nil {
+		return err
+	}
+
 	if len(payload.Items) == 0 {
 		return fmt.Errorf("items are required")
 	}
@@ -322,6 +358,22 @@ func validatePurchaseRequestPayload(payload models.PurchaseRequestCreatePayload)
 		if item.EstimatedPrice < 0 {
 			return fmt.Errorf("estimated_price cannot be negative for item %d", index+1)
 		}
+	}
+
+	return nil
+}
+
+func validatePurchaseRequestInvoiceTerms(invoiceReceivedDate *time.Time, paymentTermsDays *int, dueDate *time.Time) error {
+	if paymentTermsDays != nil {
+		if *paymentTermsDays < 0 {
+			return fmt.Errorf("payment_terms_days cannot be negative")
+		}
+		if *paymentTermsDays > 3650 {
+			return fmt.Errorf("payment_terms_days cannot exceed 3650 days")
+		}
+	}
+	if invoiceReceivedDate != nil && dueDate != nil && !invoiceReceivedDate.IsZero() && !dueDate.IsZero() && dueDate.Before(*invoiceReceivedDate) {
+		return fmt.Errorf("due_date cannot be before vendor_invoice_received_date")
 	}
 
 	return nil

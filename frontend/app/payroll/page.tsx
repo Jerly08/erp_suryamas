@@ -111,7 +111,9 @@ const getPayrollItemBPJS = (item: PayrollItem) => {
   return Number(item.bpjs || 0);
 };
 
-const getPayrollItemNetPay = (item: PayrollItem) => Math.max(0, Number(item.base_salary || 0) + getPayrollItemBonus(item) - getPayrollItemBPJS(item) - Number(item.other_deduction || 0));
+const getPayrollItemEmployeeLoanDeduction = (item: PayrollItem) => Number(item.employee_loan_deduction || 0);
+
+const getPayrollItemNetPay = (item: PayrollItem) => Math.max(0, Number(item.base_salary || 0) + getPayrollItemBonus(item) - getPayrollItemBPJS(item) - Number(item.other_deduction || 0) - getPayrollItemEmployeeLoanDeduction(item));
 
 const recalculatePayrollItem = (item: PayrollItem): PayrollItem => {
   const bpjs = getPayrollItemBPJS(item);
@@ -136,6 +138,7 @@ const recalculatePayrollImportPreview = (preview: PayrollImportPreview, items: P
     total_bonus: items.reduce((sum, item) => sum + getPayrollItemBonus(item), 0),
     total_pph: items.reduce((sum, item) => sum + Number(item.pph || 0), 0),
     total_bpjs: items.reduce((sum, item) => sum + getPayrollItemBPJS(item), 0),
+    total_employee_loan_deduction: items.reduce((sum, item) => sum + getPayrollItemEmployeeLoanDeduction(item), 0),
     total_overall: items.reduce((sum, item) => sum + getPayrollItemNetPay(item), 0),
   },
 });
@@ -286,6 +289,7 @@ const payrollImportHeaders = [
   'BPJS KESEHATAN 1%',
   'PROPORTIONAL',
   'OTHER DEDUCTION',
+  'DEDUCTION (PINJAMAN KARYAWAN)',
   'NET PAY',
 ];
 
@@ -309,8 +313,10 @@ export default function PayrollPage() {
   const [selectedPayroll, setSelectedPayroll] = useState<PayrollRun | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
+  const [employeeLoanAccounts, setEmployeeLoanAccounts] = useState<AccountCatalogItem[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [selectedExpenseAccount, setSelectedExpenseAccount] = useState<string>('');
+  const [selectedEmployeeLoanAccount, setSelectedEmployeeLoanAccount] = useState<string>('');
   const [postingDate, setPostingDate] = useState(currentMonthRange().payment_date);
   const [rejectReason, setRejectReason] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -405,10 +411,16 @@ export default function PayrollPage() {
       const token = window.localStorage.getItem('token') || '';
 
       const expenseData = await accountService.getAccountCatalog(token, 'EXPENSE');
+      const assetData = await accountService.getAccountCatalog(token, 'ASSET');
 
       const filteredExpenses = filterActiveLeafAccounts(expenseData);
+      const filteredEmployeeLoanAccounts = filterActiveLeafAccounts(assetData).filter((acc) => {
+        const label = `${acc.code} ${acc.name}`.toLowerCase();
+        return acc.code === '1107-001' || (label.includes('pinjaman') && label.includes('karyawan'));
+      });
 
       setExpenseAccounts(filteredExpenses);
+      setEmployeeLoanAccounts(filteredEmployeeLoanAccounts);
 
       const defaultExpense = filteredExpenses.find((acc) => acc.name.toLowerCase().includes('gaji') || acc.name.toLowerCase().includes('salary'))
         || filteredExpenses.find((acc) => acc.code === '6105' || acc.code === '5101-001' || acc.code === '5201' || acc.code === '6101');
@@ -416,6 +428,11 @@ export default function PayrollPage() {
         setSelectedExpenseAccount(defaultExpense.id.toString());
       } else if (filteredExpenses.length > 0) {
         setSelectedExpenseAccount(filteredExpenses[0].id.toString());
+      }
+
+      const defaultEmployeeLoanAccount = filteredEmployeeLoanAccounts.find((acc) => acc.code === '1107-001') || filteredEmployeeLoanAccounts[0];
+      if (defaultEmployeeLoanAccount) {
+        setSelectedEmployeeLoanAccount(defaultEmployeeLoanAccount.id.toString());
       }
     } catch (error) {
       console.error('Failed to load accounts for approval:', error);
@@ -430,9 +447,10 @@ export default function PayrollPage() {
       bonus: acc.bonus + Number(payroll.total_bonus || 0),
       pph: acc.pph + Number(payroll.total_pph || 0),
       bpjs: acc.bpjs + Number(payroll.total_bpjs || 0),
+      employeeLoan: acc.employeeLoan + Number(payroll.total_employee_loan_deduction || 0),
       overall: acc.overall + Number(payroll.total_overall || 0),
     }),
-    { salary: 0, bonus: 0, pph: 0, bpjs: 0, overall: 0 },
+    { salary: 0, bonus: 0, pph: 0, bpjs: 0, employeeLoan: 0, overall: 0 },
   );
 
   const updateImportPreviewItem = (index: number, field: keyof PayrollItem, value: string | number) => {
@@ -586,6 +604,7 @@ export default function PayrollPage() {
     setSelectedPayroll(payroll);
     setRejectReason('');
     setSelectedExpenseAccount('');
+    setSelectedEmployeeLoanAccount('');
     setPostingDate((payroll.payment_date || payroll.period_end || '').slice(0, 10));
     detailModal.onOpen();
 
@@ -819,10 +838,14 @@ export default function PayrollPage() {
     try {
       const payload: {
         expense_account_id?: number;
+        employee_loan_account_id?: number;
         posting_date?: string;
       } = {};
       if (selectedExpenseAccount) {
         payload.expense_account_id = Number(selectedExpenseAccount);
+      }
+      if (Number(selectedPayroll.total_employee_loan_deduction || 0) > 0 && selectedEmployeeLoanAccount) {
+        payload.employee_loan_account_id = Number(selectedEmployeeLoanAccount);
       }
       payload.posting_date = postingDate;
 
@@ -924,7 +947,7 @@ export default function PayrollPage() {
               </Alert>
             )}
 
-            <SimpleGrid columns={{ base: 1, md: 2, xl: 5 }} spacing={4}>
+            <SimpleGrid columns={{ base: 1, md: 2, xl: 6 }} spacing={4}>
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
                   <Stat>
@@ -964,9 +987,18 @@ export default function PayrollPage() {
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
                   <Stat>
+                    <StatLabel>Pinjaman Karyawan</StatLabel>
+                    <StatNumber color="cyan.600">{formatCurrency(totals.employeeLoan)}</StatNumber>
+                    <StatHelpText>Deduction payroll terfilter</StatHelpText>
+                  </Stat>
+                </CardBody>
+              </Card>
+              <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                <CardBody>
+                  <Stat>
                     <StatLabel>Total Net Salary</StatLabel>
                     <StatNumber color="blue.600">{formatCurrency(totals.overall)}</StatNumber>
-                    <StatHelpText>Salary + bonus - BPJS/potongan lain</StatHelpText>
+                    <StatHelpText>Salary + bonus - BPJS/potongan lain/pinjaman</StatHelpText>
                   </Stat>
                 </CardBody>
               </Card>
@@ -1007,6 +1039,7 @@ export default function PayrollPage() {
                           <Th>Status PPh21</Th>
                           <Th isNumeric>Total BPJS</Th>
                           <Th>Status BPJS</Th>
+                          <Th isNumeric>Pinjaman Karyawan</Th>
                           <Th isNumeric>Net Salary</Th>
                           <Th>Status Gaji</Th>
                           <Th>Status</Th>
@@ -1045,6 +1078,7 @@ export default function PayrollPage() {
                                 )}
                               </VStack>
                             </Td>
+                            <Td isNumeric>{formatCurrency(Number(payroll.total_employee_loan_deduction || 0))}</Td>
                             <Td isNumeric fontWeight="bold" color="blue.600">
                               {formatCurrency(payroll.total_overall)}
                             </Td>
@@ -1083,7 +1117,7 @@ export default function PayrollPage() {
                         ))}
                         {payrollRuns.length === 0 && (
                           <Tr>
-                            <Td colSpan={canSeeEmployeeDetail ? 13 : 12}>
+                            <Td colSpan={canSeeEmployeeDetail ? 14 : 13}>
                               <Flex py={10} align="center" justify="center" direction="column" gap={2} color={mutedText}>
                                 <Icon as={FiFileText} boxSize={8} />
                                 <Text>Belum ada data payroll untuk filter ini.</Text>
@@ -1211,7 +1245,7 @@ export default function PayrollPage() {
 
                   {importPreview && (
                     <>
-                      <SimpleGrid columns={{ base: 1, md: 2, xl: 6 }} spacing={4}>
+                      <SimpleGrid columns={{ base: 1, md: 2, xl: 7 }} spacing={4}>
                         <Card variant="outline">
                           <CardBody>
                             <Stat>
@@ -1250,6 +1284,14 @@ export default function PayrollPage() {
                             <Stat>
                               <StatLabel>Total BPJS</StatLabel>
                               <StatNumber color="purple.500">{formatCurrency(importPreview.summary.total_bpjs)}</StatNumber>
+                            </Stat>
+                          </CardBody>
+                        </Card>
+                        <Card variant="outline">
+                          <CardBody>
+                            <Stat>
+                              <StatLabel>Pinjaman Karyawan</StatLabel>
+                              <StatNumber color="cyan.600">{formatCurrency(Number(importPreview.summary.total_employee_loan_deduction || 0))}</StatNumber>
                             </Stat>
                           </CardBody>
                         </Card>
@@ -1296,6 +1338,7 @@ export default function PayrollPage() {
                                 <Th isNumeric>BPJS Kes.</Th>
                                 <Th isNumeric>Proportional</Th>
                                 <Th isNumeric>Other Deduction</Th>
+                                <Th isNumeric>Deduction (Pinjaman Karyawan)</Th>
                                 <Th isNumeric>Net Salary</Th>
                               </Tr>
                             </Thead>
@@ -1328,6 +1371,9 @@ export default function PayrollPage() {
                                   </Td>
                                   <Td isNumeric>{formatCurrency(item.proportional || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.other_deduction || 0)}</Td>
+                                  <Td isNumeric minW="150px">
+                                    <CurrencyInput size="sm" value={item.employee_loan_deduction || 0} onChange={(value) => updateImportPreviewItem(index, 'employee_loan_deduction', value)} showLabel={false} min={0} />
+                                  </Td>
                                   <Td isNumeric fontWeight="bold" color="blue.600">
                                     {formatCurrency(getPayrollItemNetPay(item))}
                                   </Td>
@@ -1374,7 +1420,7 @@ export default function PayrollPage() {
                   </Flex>
                 ) : selectedPayroll ? (
                   <VStack align="stretch" spacing={5}>
-                    <SimpleGrid columns={{ base: 1, md: 2, xl: 6 }} spacing={4}>
+                    <SimpleGrid columns={{ base: 1, md: 2, xl: 7 }} spacing={4}>
                       <Card variant="outline">
                         <CardBody>
                           <Stat>
@@ -1421,6 +1467,15 @@ export default function PayrollPage() {
                               <Badge colorScheme={bpjsPaymentStatusColor(getBPJSPaymentStatus(selectedPayroll))}>{bpjsPaymentStatusLabel(getBPJSPaymentStatus(selectedPayroll))}</Badge>
                               {' '}Paid {formatCurrency(Number(selectedPayroll.bpjs_paid_amount || 0))} | Sisa {formatCurrency(getBPJSRemainingAmount(selectedPayroll))}
                             </StatHelpText>
+                          </Stat>
+                        </CardBody>
+                      </Card>
+                      <Card variant="outline">
+                        <CardBody>
+                          <Stat>
+                            <StatLabel>Pinjaman Karyawan</StatLabel>
+                            <StatNumber color="cyan.600">{formatCurrency(Number(selectedPayroll.total_employee_loan_deduction || 0))}</StatNumber>
+                            <StatHelpText>Kredit ke COA pinjaman saat approval</StatHelpText>
                           </Stat>
                         </CardBody>
                       </Card>
@@ -1478,6 +1533,7 @@ export default function PayrollPage() {
                               <Th isNumeric>BPJS Kes.</Th>
                               <Th isNumeric>Proportional</Th>
                               <Th isNumeric>Other Deduction</Th>
+                              <Th isNumeric>Deduction (Pinjaman Karyawan)</Th>
                               <Th isNumeric>Net Salary</Th>
                             </Tr>
                           </Thead>
@@ -1509,6 +1565,7 @@ export default function PayrollPage() {
                                 <Td isNumeric>{formatCurrency(item.bpjs_kesehatan || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.proportional || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.other_deduction || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.employee_loan_deduction || 0)}</Td>
                                 <Td isNumeric fontWeight="bold">
                                   {formatCurrency(getPayrollItemNetPay(item))}
                                 </Td>
@@ -1535,9 +1592,9 @@ export default function PayrollPage() {
 
                         <Alert status="info" borderRadius="lg" mb={4}>
                           <AlertIcon />
-                          <AlertDescription>Approval hanya memposting beban dan kewajiban payroll. Kas/bank baru berkurang saat tombol Pay Salary atau Pay PPh dijalankan.</AlertDescription>
+                          <AlertDescription>Approval hanya memposting beban, kewajiban payroll, dan kredit Pinjaman Karyawan bila ada. Kas/bank baru berkurang saat tombol Pay Salary, Pay BPJS, atau Pay PPh dijalankan.</AlertDescription>
                         </Alert>
-                        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4} mb={4}>
+                        <SimpleGrid columns={{ base: 1, md: Number(selectedPayroll.total_employee_loan_deduction || 0) > 0 ? 3 : 2 }} spacing={4} mb={4}>
                           <FormControl isRequired>
                             <FormLabel fontSize="sm" fontWeight="medium">
                               Akun Beban Gaji (Debit)
@@ -1554,6 +1611,28 @@ export default function PayrollPage() {
                               </Select>
                             )}
                           </FormControl>
+
+                          {Number(selectedPayroll.total_employee_loan_deduction || 0) > 0 && (
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Akun Pinjaman Karyawan (Credit)
+                              </FormLabel>
+                              {accountsLoading ? (
+                                <Spinner size="sm" />
+                              ) : (
+                                <Select value={selectedEmployeeLoanAccount} onChange={(e) => setSelectedEmployeeLoanAccount(e.target.value)} bg={inputBg} placeholder="Pilih COA pinjaman karyawan">
+                                  {employeeLoanAccounts.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>
+                                      {acc.code} - {acc.name}
+                                    </option>
+                                  ))}
+                                </Select>
+                              )}
+                              <Text fontSize="xs" color={mutedText} mt={1}>
+                                Total kredit: {formatCurrency(Number(selectedPayroll.total_employee_loan_deduction || 0))}
+                              </Text>
+                            </FormControl>
+                          )}
 
                           <FormControl isRequired>
                             <FormLabel fontSize="sm" fontWeight="medium">

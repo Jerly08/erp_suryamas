@@ -299,6 +299,9 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		if purchase.ProjectID == nil && pr.ProjectID != nil {
 			purchase.ProjectID = pr.ProjectID
 		}
+		if purchase.DueDate.IsZero() && pr.DueDate != nil && getPaymentMethod(purchase.PaymentMethod) == models.PurchasePaymentCredit {
+			purchase.DueDate = *pr.DueDate
+		}
 
 		// Menghitung Base Net Amount (Subtotal - Diskon) tanpa PPN dan Pajak Lainnya
 		netPurchaseAmount := purchase.SubtotalBeforeDiscount - purchase.Discount

@@ -236,7 +236,32 @@ func isPaymentAwaitingPostingReview(payment *models.Payment) bool {
 	return payment.Status == models.PaymentStatusPendingFinalReview
 }
 
+func isEmployeeLoanReceivableAccount(account models.Account) bool {
+	if account.Type != models.AccountTypeAsset {
+		return false
+	}
+	code := strings.TrimSpace(account.Code)
+	if strings.EqualFold(code, "1107-001") {
+		return true
+	}
+	name := strings.ToLower(strings.TrimSpace(account.Name))
+	return strings.Contains(name, "pinjaman") && strings.Contains(name, "karyawan")
+}
+
+func isAllowedExpensePaymentAccount(account models.Account) bool {
+	return account.Type == models.AccountTypeExpense ||
+		account.Type == models.AccountTypeLiability ||
+		isEmployeeLoanReceivableAccount(account)
+}
+
 func validateExpensePaymentAccountUsage(account models.Account, amount, pphAmount float64, allowLiabilityOverpayment bool) error {
+	if isEmployeeLoanReceivableAccount(account) {
+		if pphAmount > 0 {
+			return fmt.Errorf("PPh withholding tidak berlaku untuk pencairan Pinjaman Karyawan")
+		}
+		return nil
+	}
+
 	if account.Type != models.AccountTypeLiability {
 		return nil
 	}
@@ -326,8 +351,8 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		if err := tx.First(&expenseAccount, req.ExpenseAccountID).Error; err != nil {
 			return fmt.Errorf("expense account not found: %w", err)
 		}
-		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
-			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		if !isAllowedExpensePaymentAccount(expenseAccount) {
+			return fmt.Errorf("expense payment account must be EXPENSE, LIABILITY, or PINJAMAN KARYAWAN asset, got %s", expenseAccount.Type)
 		}
 		if err := validateExpensePaymentAccountUsage(expenseAccount, req.Amount, req.PPHAmount, req.AllowLiabilityOverpayment); err != nil {
 			return err
@@ -529,8 +554,8 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 		if err := tx.First(&expenseAccount, req.ExpenseAccountID).Error; err != nil {
 			return fmt.Errorf("expense account not found: %w", err)
 		}
-		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
-			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		if !isAllowedExpensePaymentAccount(expenseAccount) {
+			return fmt.Errorf("expense payment account must be EXPENSE, LIABILITY, or PINJAMAN KARYAWAN asset, got %s", expenseAccount.Type)
 		}
 		if err := validateExpensePaymentAccountUsage(expenseAccount, req.Amount, req.PPHAmount, req.AllowLiabilityOverpayment); err != nil {
 			return err
@@ -690,8 +715,8 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 		if err := tx.First(&expenseAccount, expenseAccountID).Error; err != nil {
 			return fmt.Errorf("expense account not found: %w", err)
 		}
-		if expenseAccount.Type != models.AccountTypeExpense && expenseAccount.Type != models.AccountTypeLiability {
-			return fmt.Errorf("expense payment account must be EXPENSE or LIABILITY, got %s", expenseAccount.Type)
+		if !isAllowedExpensePaymentAccount(expenseAccount) {
+			return fmt.Errorf("expense payment account must be EXPENSE, LIABILITY, or PINJAMAN KARYAWAN asset, got %s", expenseAccount.Type)
 		}
 		allowLiabilityOverpayment := models.HasExpenseLiabilityOverpaymentReference(payment.Reference)
 		if err := validateExpensePaymentAccountUsage(expenseAccount, payment.Amount, payment.PPHAmount, allowLiabilityOverpayment); err != nil {

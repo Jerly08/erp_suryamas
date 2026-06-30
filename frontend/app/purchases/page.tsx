@@ -407,6 +407,11 @@ const formatDateForInput = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+const getDateInputValue = (value?: string | null) => {
+  if (!value || value.startsWith("0001-01-01")) return "";
+  return value.split("T")[0];
+};
+
 const getCurrentMonthPurchaseRange = () => {
   const now = new Date();
   return {
@@ -7859,13 +7864,27 @@ const PurchasesPage: React.FC = () => {
                                       );
                                     const selectedPrTitle =
                                       getPurchaseRequestTitle(selectedPr);
+                                    const selectedPrVendorId =
+                                      selectedPr?.vendor_id ??
+                                      selectedPr?.vendor?.id ??
+                                      null;
 
                                     setFormData((prev) => ({
                                       ...prev,
                                       purchase_request_id: selectedPrId,
+                                      vendor_id:
+                                        selectedPrId && selectedPrVendorId
+                                          ? selectedPrVendorId.toString()
+                                          : prev.vendor_id,
                                       project_id: selectedPr?.project_id
                                         ? selectedPr.project_id.toString()
                                         : prev.project_id,
+                                      due_date:
+                                        selectedPrId && selectedPr?.due_date
+                                          ? getDateInputValue(
+                                              selectedPr.due_date,
+                                            )
+                                          : prev.due_date,
                                       items: selectedPrId
                                         ? purchaseItemsFromPr
                                         : prev.items.filter(

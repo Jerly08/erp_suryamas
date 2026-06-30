@@ -60,6 +60,7 @@ func main() {
 
 	// Auto migrate models
 	database.AutoMigrate(db)
+	database.PurchaseRequestInvoiceDueDateMigration(db)
 
 	// Run auto SQL migrations (including Bank Mandiri fix)
 	if err := database.RunAutoMigrations(db); err != nil {

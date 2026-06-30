@@ -20,6 +20,7 @@ export interface Contact {
   code?: string;
   name: string;
   type: "CUSTOMER" | "VENDOR" | "EMPLOYEE";
+  payment_terms?: number;
   is_active?: boolean;
 }
 
@@ -75,6 +76,8 @@ export interface PurchaseRequestItem {
     id: number;
     code: string;
     status: string;
+    payment_method?: string;
+    due_date?: string;
     paid_amount: number;
     outstanding_amount: number;
     total_amount: number;
@@ -106,6 +109,9 @@ export interface PurchaseRequest {
   title?: string;
   project_id: number | null;
   vendor_id: number | null;
+  vendor_invoice_received_date?: string | null;
+  payment_terms_days?: number | null;
+  due_date?: string | null;
   total_estimated_amount: number;
   status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "COMPLETED";
   current_approval_stage?:
@@ -157,6 +163,9 @@ export interface PurchaseRequestCreatePayload {
   title?: string;
   project_id?: number | null;
   vendor_id?: number | null;
+  vendor_invoice_received_date?: string | null;
+  payment_terms_days?: number | null;
+  due_date?: string | null;
   notes?: string;
   items: PurchaseRequestItemPayload[];
 }
@@ -178,6 +187,12 @@ export interface PurchaseRequestReviewPayload {
 
 export interface PurchaseRequestProjectUpdatePayload {
   project_id?: number | null;
+}
+
+export interface PurchaseRequestInvoiceTermsUpdatePayload {
+  vendor_invoice_received_date?: string | null;
+  payment_terms_days?: number | null;
+  due_date?: string | null;
 }
 
 const BASE_URL = "/api/v1/purchase-requests";
@@ -272,6 +287,14 @@ export const purchaseRequestService = {
     payload: PurchaseRequestProjectUpdatePayload,
   ): Promise<PurchaseRequest> => {
     const response = await api.put(`${BASE_URL}/${id}/project`, payload);
+    return response.data;
+  },
+
+  updateInvoiceTerms: async (
+    id: number,
+    payload: PurchaseRequestInvoiceTermsUpdatePayload,
+  ): Promise<PurchaseRequest> => {
+    const response = await api.put(`${BASE_URL}/${id}/invoice-terms`, payload);
     return response.data;
   },
 

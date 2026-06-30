@@ -73,7 +73,7 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	row := []interface{}{
 		"2026-06-25", "26/05/2026 to 25/06/2026", 22, "KIS-001", "Head Office", "IT", "Payroll", "1122334455",
 		"Budi Santoso", "Backend Developer", 10000000, 300000, 0, 500000, 250000, 200000, 100287,
-		100000, 0, 50000, 0,
+		100000, 0, 50000, 125000, 0,
 	}
 	for columnIndex, value := range row {
 		cell, err := excelize.CoordinatesToCellName(columnIndex+1, 2)
@@ -89,7 +89,7 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create thousands number style: %v", err)
 	}
-	if err := workbook.SetCellStyle("Salary", "K2", "U2", numberStyle); err != nil {
+	if err := workbook.SetCellStyle("Salary", "K2", "V2", numberStyle); err != nil {
 		t.Fatalf("failed to apply thousands number style: %v", err)
 	}
 
@@ -136,6 +136,9 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	if response.Data.SuggestedPaymentDate != "2026-06-25" {
 		t.Fatalf("suggested payment date = %q, expected 2026-06-25", response.Data.SuggestedPaymentDate)
 	}
+	if response.Data.Summary.TotalEmployeeLoanDeduction != 125000 {
+		t.Fatalf("summary employee loan deduction = %.2f, expected 125000", response.Data.Summary.TotalEmployeeLoanDeduction)
+	}
 	if response.Data.SuggestedPeriodStart != "2026-05-26" || response.Data.SuggestedPeriodEnd != "2026-06-25" {
 		t.Fatalf("suggested period = %q to %q, expected 2026-05-26 to 2026-06-25", response.Data.SuggestedPeriodStart, response.Data.SuggestedPeriodEnd)
 	}
@@ -153,7 +156,8 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 		{name: "bpjs jp", actual: item.BPJSTKJP, expected: 100287},
 		{name: "bpjs kesehatan", actual: item.BPJSKesehatan, expected: 100000},
 		{name: "other deduction", actual: item.OtherDeduction, expected: 50000},
-		{name: "net pay", actual: item.NetPay, expected: 10349713},
+		{name: "employee loan deduction", actual: item.EmployeeLoanDeduction, expected: 125000},
+		{name: "net pay", actual: item.NetPay, expected: 10224713},
 	}
 	for _, assertion := range assertions {
 		if assertion.actual != assertion.expected {
@@ -188,8 +192,12 @@ func TestDownloadPayrollImportTemplateMatchesRequestedHeaderOrder(t *testing.T) 
 	require.NoError(t, err)
 	highlightedAttendanceStyle, err := workbook.GetCellStyle("Salary", "L1")
 	require.NoError(t, err)
+	highlightedEmployeeLoanStyle, err := workbook.GetCellStyle("Salary", "U1")
+	require.NoError(t, err)
 	require.NotEqual(t, standardHeaderStyle, highlightedPaymentDateStyle)
 	require.NotEqual(t, standardHeaderStyle, highlightedAttendanceStyle)
+	require.NotEqual(t, standardHeaderStyle, highlightedEmployeeLoanStyle)
+	require.Equal(t, "DEDUCTION (PINJAMAN KARYAWAN)", rows[0][20])
 
 	paymentViaExample, err := workbook.GetCellValue("Salary", "G2")
 	require.NoError(t, err)
@@ -435,6 +443,31 @@ func TestPayrollItemTotalsDoNotReduceNetPayByPPh21(t *testing.T) {
 	}
 }
 
+func TestValidatePayrollEmployeeLoanAccountOnlyAllowsEmployeeLoanAsset(t *testing.T) {
+	validDefault := models.Account{
+		Code:     "1107-001",
+		Name:     "PINJAMAN KARYAWAN",
+		Type:     models.AccountTypeAsset,
+		IsActive: true,
+	}
+	validNamedAccount := models.Account{
+		Code:     "1107-099",
+		Name:     "PIUTANG PINJAMAN KARYAWAN",
+		Type:     models.AccountTypeAsset,
+		IsActive: true,
+	}
+	unrelatedAsset := models.Account{
+		Code:     "1102-001",
+		Name:     "PIUTANG USAHA",
+		Type:     models.AccountTypeAsset,
+		IsActive: true,
+	}
+
+	require.NoError(t, validatePayrollEmployeeLoanAccount(validDefault))
+	require.NoError(t, validatePayrollEmployeeLoanAccount(validNamedAccount))
+	require.Error(t, validatePayrollEmployeeLoanAccount(unrelatedAsset))
+}
+
 func TestCreatePayrollRunRejectsRangeOverlappingClosedPeriod(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := setupPayrollApprovalTestDB(t)
@@ -647,8 +680,9 @@ func TestPayrollAccountingPostsAccrualSalaryAndPPhOnDifferentDates(t *testing.T)
 	pphPayable := models.Account{Code: "2102-003", Name: "HUTANG PPH PASAL 21", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, IsActive: true}
 	salaryPayable := models.Account{Code: "2103-001", Name: "UTANG GAJI", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, IsActive: true}
 	deductionPayable := models.Account{Code: "2103-002", Name: "UTANG BPJS & POTONGAN PAYROLL", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, IsActive: true}
+	employeeLoanAccount := models.Account{Code: "1107-001", Name: "PINJAMAN KARYAWAN", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, IsActive: true}
 	bankGL := models.Account{Code: "1101-005", Name: "BANK - OCBC", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, IsActive: true}
-	for _, account := range []*models.Account{&salaryExpense, &pphExpense, &pphPayable, &salaryPayable, &deductionPayable, &bankGL} {
+	for _, account := range []*models.Account{&salaryExpense, &pphExpense, &pphPayable, &salaryPayable, &deductionPayable, &employeeLoanAccount, &bankGL} {
 		requireCreate(account)
 	}
 	bank := models.CashBank{Code: "BANK-OCBC", Name: "BANK - OCBC", Type: models.CashBankTypeBank, AccountID: bankGL.ID, Currency: "IDR", Balance: 100000000, BookBalanceIDR: 100000000, LastExchangeRate: 1, IsActive: true, AllowDirectTransactions: true}
@@ -668,7 +702,7 @@ func TestPayrollAccountingPostsAccrualSalaryAndPPhOnDifferentDates(t *testing.T)
 		PayrollNumber: "PAY/2026/06/DIFF-DATES", PeriodStart: periodStart, PeriodEnd: periodEnd,
 		PaymentDate: &plannedSalaryDate, Status: models.PayrollStatusPendingApproval,
 		TotalSalary: 37500000, TotalBonus: 3700000, TotalPPh: 950000, TotalBPJS: 1480287,
-		TotalOverall: 39669713, PPhPaymentStatus: models.PayrollPPhPaymentStatusUnpaid,
+		TotalEmployeeLoanDeduction: 750000, TotalOverall: 38919713, PPhPaymentStatus: models.PayrollPPhPaymentStatusUnpaid,
 		SalaryPaymentStatus: models.PayrollSalaryPaymentStatusUnpaid, BPJSPaymentStatus: models.PayrollSalaryPaymentStatusUnpaid,
 		PPhRecognitionDate: &periodEnd, CreatedByID: hrUser.ID,
 	}
@@ -703,6 +737,8 @@ func TestPayrollAccountingPostsAccrualSalaryAndPPhOnDifferentDates(t *testing.T)
 	require.Equal(t, "2026-06-15", accrual.EntryDate.Format("2006-01-02"))
 	require.NotNil(t, approved.PPhRecognitionDate)
 	require.Equal(t, "2026-06-15", approved.PPhRecognitionDate.Format("2006-01-02"))
+	require.NotNil(t, approved.EmployeeLoanAccountID)
+	require.Equal(t, employeeLoanAccount.ID, *approved.EmployeeLoanAccountID)
 	assertJournalLine := func(journal models.SSOTJournalEntry, accountID uint, debit, credit float64) {
 		t.Helper()
 		for _, line := range journal.Lines {
@@ -716,14 +752,15 @@ func TestPayrollAccountingPostsAccrualSalaryAndPPhOnDifferentDates(t *testing.T)
 	}
 	assertJournalLine(accrual, salaryExpense.ID, 41200000, 0)
 	assertJournalLine(accrual, pphExpense.ID, 950000, 0)
-	assertJournalLine(accrual, salaryPayable.ID, 0, 39669713)
+	assertJournalLine(accrual, salaryPayable.ID, 0, 38919713)
 	assertJournalLine(accrual, pphPayable.ID, 0, 950000)
 	assertJournalLine(accrual, deductionPayable.ID, 0, 1530287)
+	assertJournalLine(accrual, employeeLoanAccount.ID, 0, 750000)
 	for _, line := range accrual.Lines {
 		require.NotEqual(t, uint64(bankGL.ID), line.AccountID, "accrual must not touch bank")
 	}
 
-	salaryBody := fmt.Sprintf(`{"payment_date":"2026-06-20","amount":39669713,"cash_bank_id":%d,"reference":"SAL-JUN-2026"}`, bank.ID)
+	salaryBody := fmt.Sprintf(`{"payment_date":"2026-06-20","amount":38919713,"cash_bank_id":%d,"reference":"SAL-JUN-2026"}`, bank.ID)
 	salaryRecorder := call("/api/v1/payroll/pay-salary", salaryBody, controller.PayPayrollSalary)
 	if salaryRecorder.Code != http.StatusOK {
 		t.Fatalf("salary payment expected 200, got %d: %s", salaryRecorder.Code, salaryRecorder.Body.String())
@@ -746,7 +783,7 @@ func TestPayrollAccountingPostsAccrualSalaryAndPPhOnDifferentDates(t *testing.T)
 	require.Equal(t, models.PayrollSalaryPaymentStatusPaid, finalRun.SalaryPaymentStatus)
 	require.Equal(t, models.PayrollPPhPaymentStatusPaid, finalRun.PPhPaymentStatus)
 	require.Equal(t, models.PayrollSalaryPaymentStatusPaid, finalRun.BPJSPaymentStatus)
-	require.InDelta(t, 39669713, finalRun.SalaryPaidAmount, 0.01)
+	require.InDelta(t, 38919713, finalRun.SalaryPaidAmount, 0.01)
 	require.InDelta(t, 1480287, finalRun.BPJSPaidAmount, 0.01)
 	require.InDelta(t, 950000, finalRun.PPhPaidAmount, 0.01)
 
@@ -764,15 +801,15 @@ func TestPayrollAccountingPostsAccrualSalaryAndPPhOnDifferentDates(t *testing.T)
 	require.NoError(t, db.Preload("Lines").First(&salaryJournal, settlements[0].JournalEntryID).Error)
 	require.NoError(t, db.Preload("Lines").First(&bpjsJournal, settlements[1].JournalEntryID).Error)
 	require.NoError(t, db.Preload("Lines").First(&pphJournal, settlements[2].JournalEntryID).Error)
-	assertJournalLine(salaryJournal, salaryPayable.ID, 39669713, 0)
-	assertJournalLine(salaryJournal, bankGL.ID, 0, 39669713)
+	assertJournalLine(salaryJournal, salaryPayable.ID, 38919713, 0)
+	assertJournalLine(salaryJournal, bankGL.ID, 0, 38919713)
 	assertJournalLine(bpjsJournal, deductionPayable.ID, 1480287, 0)
 	assertJournalLine(bpjsJournal, bankGL.ID, 0, 1480287)
 	assertJournalLine(pphJournal, pphPayable.ID, 950000, 0)
 	assertJournalLine(pphJournal, bankGL.ID, 0, 950000)
 
 	require.NoError(t, db.First(&bank, bank.ID).Error)
-	require.InDelta(t, 57900000, bank.Balance, 0.01)
+	require.InDelta(t, 58650000, bank.Balance, 0.01)
 
 	duplicateBPJSRecorder := call("/api/v1/payroll/pay-bpjs", bpjsBody, controller.PayPayrollBPJS)
 	require.Equal(t, http.StatusBadRequest, duplicateBPJSRecorder.Code)

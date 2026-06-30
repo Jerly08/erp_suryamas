@@ -44,6 +44,7 @@ export interface PayrollItem {
   bpjs_kesehatan?: number;
   proportional?: number;
   other_deduction?: number;
+  employee_loan_deduction?: number;
   net_pay?: number;
   notes?: string;
 }
@@ -60,7 +61,9 @@ export interface PayrollRun {
   total_bonus: number;
   total_pph: number;
   total_bpjs: number;
+  total_employee_loan_deduction?: number;
   total_overall: number;
+  employee_loan_account_id?: number | null;
   salary_payment_status?: PayrollSalaryPaymentStatus | '';
   salary_paid_amount?: number;
   salary_payment_date?: string | null;
@@ -140,6 +143,7 @@ export interface PayrollImportPreview {
     total_bonus: number;
     total_pph: number;
     total_bpjs: number;
+    total_employee_loan_deduction?: number;
     total_overall: number;
   };
   warnings: string[];

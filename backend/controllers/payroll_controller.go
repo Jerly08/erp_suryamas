@@ -90,36 +90,41 @@ func payrollResponse(run models.PayrollRun, detailAllowed bool) models.PayrollRu
 }
 
 var payrollImportHeaderAliases = map[string]string{
-	"paymentdate":         "payment_date",
-	"paymentperiod":       "payment_period",
-	"workingday":          "working_day",
-	"employeeid":          "employee_code",
-	"workunit":            "work_unit",
-	"paymentvia":          "payment_via",
-	"accno":               "account_no",
-	"accountno":           "account_no",
-	"div":                 "division",
-	"division":            "division",
-	"employeename":        "employee_name",
-	"position":            "position",
-	"basicsalary":         "base_salary",
-	"attendanceallowance": "attendance_allowance",
-	"attendance":          "attendance_allowance",
-	"compensationpkwt":    "compensation_pkwt",
-	"overtime":            "overtime",
-	"bpjstkjht2":          "bpjs_tk_jht",
-	"bpjstkjht":           "bpjs_tk_jht",
-	"bpjstkjp1":           "bpjs_tk_jp",
-	"bpjstkjp":            "bpjs_tk_jp",
-	"bpjskesehatan1":      "bpjs_kesehatan",
-	"bpjskesehatan":       "bpjs_kesehatan",
-	"proportional":        "proportional",
-	"otherdeduction":      "other_deduction",
-	"netpay":              "net_pay",
-	"pph":                 "pph",
-	"pph21":               "pph",
-	"pph21terutang":       "pph",
-	"incometax":           "pph",
+	"paymentdate":               "payment_date",
+	"paymentperiod":             "payment_period",
+	"workingday":                "working_day",
+	"employeeid":                "employee_code",
+	"workunit":                  "work_unit",
+	"paymentvia":                "payment_via",
+	"accno":                     "account_no",
+	"accountno":                 "account_no",
+	"div":                       "division",
+	"division":                  "division",
+	"employeename":              "employee_name",
+	"position":                  "position",
+	"basicsalary":               "base_salary",
+	"attendanceallowance":       "attendance_allowance",
+	"attendance":                "attendance_allowance",
+	"compensationpkwt":          "compensation_pkwt",
+	"overtime":                  "overtime",
+	"bpjstkjht2":                "bpjs_tk_jht",
+	"bpjstkjht":                 "bpjs_tk_jht",
+	"bpjstkjp1":                 "bpjs_tk_jp",
+	"bpjstkjp":                  "bpjs_tk_jp",
+	"bpjskesehatan1":            "bpjs_kesehatan",
+	"bpjskesehatan":             "bpjs_kesehatan",
+	"proportional":              "proportional",
+	"otherdeduction":            "other_deduction",
+	"deductionpinjamankaryawan": "employee_loan_deduction",
+	"pinjamankaryawan":          "employee_loan_deduction",
+	"employeeloan":              "employee_loan_deduction",
+	"employeeloandeduction":     "employee_loan_deduction",
+	"loandeduction":             "employee_loan_deduction",
+	"netpay":                    "net_pay",
+	"pph":                       "pph",
+	"pph21":                     "pph",
+	"pph21terutang":             "pph",
+	"incometax":                 "pph",
 }
 
 var requiredPayrollImportColumns = []string{
@@ -163,6 +168,7 @@ var payrollImportTemplateHeaders = []string{
 	"BPJS KESEHATAN 1%",
 	"PROPORTIONAL",
 	"OTHER DEDUCTION",
+	"DEDUCTION (PINJAMAN KARYAWAN)",
 	"NET PAY",
 }
 
@@ -177,7 +183,7 @@ func payrollCalculatedNetPay(item *models.PayrollItemCreateRequest) float64 {
 	if item == nil {
 		return 0
 	}
-	return roundPayrollMoney(payrollItemGross(item) - item.BPJS - item.OtherDeduction)
+	return roundPayrollMoney(payrollItemGross(item) - item.BPJS - item.OtherDeduction - item.EmployeeLoanDeduction)
 }
 
 func normalizePayrollImportHeader(value string) string {
@@ -526,6 +532,40 @@ func resolvePayrollDeductionPayableAccount(tx *gorm.DB) (*models.Account, error)
 	return nil, fmt.Errorf("akun Utang BPJS & Potongan Payroll (2103-002) tidak ditemukan")
 }
 
+func resolvePayrollEmployeeLoanAccount(tx *gorm.DB) (*models.Account, error) {
+	if account, err := resolvePayrollAccountByCodes(tx, "1107-001"); err == nil {
+		return account, nil
+	}
+
+	var account models.Account
+	if err := tx.
+		Where("deleted_at IS NULL AND is_active = ? AND is_header = ? AND type = ? AND LOWER(name) LIKE ? AND LOWER(name) LIKE ?",
+			true,
+			false,
+			models.AccountTypeAsset,
+			"%pinjaman%",
+			"%karyawan%",
+		).
+		Order("code ASC").
+		First(&account).Error; err == nil {
+		return &account, nil
+	}
+
+	return nil, fmt.Errorf("akun Pinjaman Karyawan (1107-001) tidak ditemukan")
+}
+
+func validatePayrollEmployeeLoanAccount(account models.Account) error {
+	if !account.IsActive || account.IsHeader || account.Type != models.AccountTypeAsset {
+		return fmt.Errorf("akun Pinjaman Karyawan harus akun detail aset yang aktif")
+	}
+	code := strings.TrimSpace(account.Code)
+	name := strings.ToLower(strings.TrimSpace(account.Name))
+	if !strings.EqualFold(code, "1107-001") && !(strings.Contains(name, "pinjaman") && strings.Contains(name, "karyawan")) {
+		return fmt.Errorf("akun Pinjaman Karyawan harus menggunakan COA 1107-001 atau akun aset Pinjaman Karyawan")
+	}
+	return nil
+}
+
 func resolvePayrollPPh21ExpenseAccount(tx *gorm.DB, fallback *models.Account) (*models.Account, error) {
 	if account, err := resolvePayrollAccountByCodes(tx, "9101"); err == nil {
 		return account, nil
@@ -552,8 +592,8 @@ func resolvePayrollPPh21ExpenseAccount(tx *gorm.DB, fallback *models.Account) (*
 	return nil, fmt.Errorf("akun Beban PPh 21 tidak ditemukan")
 }
 
-func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models.PayrollRun, userID uint, customExpenseAccountID *uint, recognitionDate time.Time) (*uint64, error) {
-	if run == nil || (run.TotalOverall <= 0.01 && run.TotalPPh <= 0.01) {
+func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models.PayrollRun, userID uint, customExpenseAccountID *uint, customEmployeeLoanAccountID *uint, recognitionDate time.Time) (*uint64, error) {
+	if run == nil || (run.TotalSalary+run.TotalBonus+run.TotalPPh <= 0.01) {
 		return nil, nil
 	}
 
@@ -598,11 +638,34 @@ func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models
 
 	var deductionPayableAccount *models.Account
 	grossSalary := roundPayrollMoney(run.TotalSalary + run.TotalBonus)
-	withheldDeductions := roundPayrollMoney(grossSalary - run.TotalOverall)
+	employeeLoanDeduction := roundPayrollMoney(run.TotalEmployeeLoanDeduction)
+	withheldDeductions := roundPayrollMoney(grossSalary - run.TotalOverall - employeeLoanDeduction)
+	if withheldDeductions < 0 {
+		withheldDeductions = 0
+	}
 	if withheldDeductions > 0.01 {
 		deductionPayableAccount, err = resolvePayrollDeductionPayableAccount(tx)
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	var employeeLoanAccount *models.Account
+	if employeeLoanDeduction > 0.01 {
+		if customEmployeeLoanAccountID != nil && *customEmployeeLoanAccountID > 0 {
+			var acc models.Account
+			if err = tx.First(&acc, *customEmployeeLoanAccountID).Error; err != nil {
+				return nil, fmt.Errorf("akun Pinjaman Karyawan kustom tidak ditemukan: %w", err)
+			}
+			if err = validatePayrollEmployeeLoanAccount(acc); err != nil {
+				return nil, err
+			}
+			employeeLoanAccount = &acc
+		} else {
+			employeeLoanAccount, err = resolvePayrollEmployeeLoanAccount(tx)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -650,6 +713,15 @@ func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models
 		})
 	}
 
+	if employeeLoanDeduction > 0.01 && employeeLoanAccount != nil {
+		lines = append(lines, services.JournalLineRequest{
+			AccountID:    uint64(employeeLoanAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(employeeLoanDeduction),
+			Description:  fmt.Sprintf("Pelunasan Pinjaman Karyawan via Payroll Periode %s", run.PayrollNumber),
+		})
+	}
+
 	journalService := services.NewUnifiedJournalService(tx)
 	journalEntry, err := journalService.CreateJournalEntryWithTx(tx, &services.JournalEntryRequest{
 		EntryDate:   recognitionDate,
@@ -692,6 +764,7 @@ func (c *PayrollController) GetPayrollRuns(ctx *gin.Context) {
 		Preload("CreatedBy").
 		Preload("ApprovedBy").
 		Preload("RejectedBy").
+		Preload("EmployeeLoanAccount").
 		Order("created_at DESC")
 
 	if status := strings.TrimSpace(ctx.Query("status")); status != "" {
@@ -722,7 +795,7 @@ func (c *PayrollController) GetPayrollRun(ctx *gin.Context) {
 	role := ctx.GetString("role")
 	detailAllowed := canViewPayrollDetail(role)
 
-	query := c.db.Preload("CreatedBy").Preload("ApprovedBy").Preload("RejectedBy")
+	query := c.db.Preload("CreatedBy").Preload("ApprovedBy").Preload("RejectedBy").Preload("EmployeeLoanAccount")
 	if detailAllowed {
 		query = query.Preload("Items", func(db *gorm.DB) *gorm.DB {
 			return db.Order("id ASC")
@@ -783,13 +856,15 @@ func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
 	dateStyle, _ := workbook.NewStyle(&excelize.Style{
 		NumFmt: 14,
 	})
-	workbook.SetCellStyle(sheetName, "A1", "U1", headerStyle)
+	workbook.SetCellStyle(sheetName, "A1", "V1", headerStyle)
 	workbook.SetCellStyle(sheetName, "A1", "B1", highlightHeaderStyle)
 	workbook.SetCellStyle(sheetName, "L1", "L1", highlightHeaderStyle)
+	workbook.SetCellStyle(sheetName, "U1", "U1", highlightHeaderStyle)
 	workbook.SetRowHeight(sheetName, 1, 34)
-	workbook.SetColWidth(sheetName, "A", "U", 18)
+	workbook.SetColWidth(sheetName, "A", "V", 18)
 	workbook.SetColWidth(sheetName, "B", "B", 24)
 	workbook.SetColWidth(sheetName, "L", "L", 24)
+	workbook.SetColWidth(sheetName, "U", "U", 28)
 
 	// Light sample values help HR keep the expected data shape without saving real employee data.
 	workbook.SetCellValue(sheetName, "A2", time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC))
@@ -933,25 +1008,26 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		}
 
 		item := models.PayrollItemCreateRequest{
-			EmployeeName:        employeeName,
-			EmployeeCode:        employeeCode,
-			WorkingDay:          getPayrollImportNumber(row, headerIndex, "working_day"),
-			WorkUnit:            getPayrollImportValue(row, headerIndex, "work_unit"),
-			PaymentVia:          getPayrollImportValue(row, headerIndex, "payment_via"),
-			AccountNo:           getPayrollImportValue(row, headerIndex, "account_no"),
-			Division:            getPayrollImportValue(row, headerIndex, "division"),
-			Position:            getPayrollImportValue(row, headerIndex, "position"),
-			BaseSalary:          baseSalary,
-			AttendanceAllowance: getPayrollImportNumber(row, headerIndex, "attendance_allowance"),
-			CompensationPKWT:    getPayrollImportNumber(row, headerIndex, "compensation_pkwt"),
-			Overtime:            getPayrollImportNumber(row, headerIndex, "overtime"),
-			PPh:                 getPayrollImportNumber(row, headerIndex, "pph"),
-			BPJSTKJHT:           getPayrollImportNumber(row, headerIndex, "bpjs_tk_jht"),
-			BPJSTKJP:            getPayrollImportNumber(row, headerIndex, "bpjs_tk_jp"),
-			BPJSKesehatan:       getPayrollImportNumber(row, headerIndex, "bpjs_kesehatan"),
-			Proportional:        getPayrollImportNumber(row, headerIndex, "proportional"),
-			OtherDeduction:      getPayrollImportNumber(row, headerIndex, "other_deduction"),
-			NetPay:              netPay,
+			EmployeeName:          employeeName,
+			EmployeeCode:          employeeCode,
+			WorkingDay:            getPayrollImportNumber(row, headerIndex, "working_day"),
+			WorkUnit:              getPayrollImportValue(row, headerIndex, "work_unit"),
+			PaymentVia:            getPayrollImportValue(row, headerIndex, "payment_via"),
+			AccountNo:             getPayrollImportValue(row, headerIndex, "account_no"),
+			Division:              getPayrollImportValue(row, headerIndex, "division"),
+			Position:              getPayrollImportValue(row, headerIndex, "position"),
+			BaseSalary:            baseSalary,
+			AttendanceAllowance:   getPayrollImportNumber(row, headerIndex, "attendance_allowance"),
+			CompensationPKWT:      getPayrollImportNumber(row, headerIndex, "compensation_pkwt"),
+			Overtime:              getPayrollImportNumber(row, headerIndex, "overtime"),
+			PPh:                   getPayrollImportNumber(row, headerIndex, "pph"),
+			BPJSTKJHT:             getPayrollImportNumber(row, headerIndex, "bpjs_tk_jht"),
+			BPJSTKJP:              getPayrollImportNumber(row, headerIndex, "bpjs_tk_jp"),
+			BPJSKesehatan:         getPayrollImportNumber(row, headerIndex, "bpjs_kesehatan"),
+			Proportional:          getPayrollImportNumber(row, headerIndex, "proportional"),
+			OtherDeduction:        getPayrollImportNumber(row, headerIndex, "other_deduction"),
+			EmployeeLoanDeduction: getPayrollImportNumber(row, headerIndex, "employee_loan_deduction"),
+			NetPay:                netPay,
 		}
 		payrollImportItemTotals(&item)
 
@@ -961,6 +1037,7 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		response.Summary.TotalBonus += item.Bonus
 		response.Summary.TotalPPh += item.PPh
 		response.Summary.TotalBPJS += item.BPJS
+		response.Summary.TotalEmployeeLoanDeduction += item.EmployeeLoanDeduction
 		response.Summary.TotalOverall += item.NetPay
 	}
 
@@ -1058,42 +1135,44 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 			reqItem.AttendanceAllowance < 0 ||
 			reqItem.CompensationPKWT < 0 || reqItem.Overtime < 0 || reqItem.BPJSTKJHT < 0 ||
 			reqItem.BPJSTKJP < 0 || reqItem.BPJSKesehatan < 0 || reqItem.Proportional < 0 ||
-			reqItem.OtherDeduction < 0 || reqItem.NetPay < 0 {
+			reqItem.OtherDeduction < 0 || reqItem.EmployeeLoanDeduction < 0 || reqItem.NetPay < 0 {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nilai payroll tidak boleh negatif"})
 			return
 		}
 
 		item := models.PayrollItem{
-			EmployeeName:        strings.TrimSpace(reqItem.EmployeeName),
-			EmployeeCode:        strings.TrimSpace(reqItem.EmployeeCode),
-			WorkingDay:          reqItem.WorkingDay,
-			WorkUnit:            strings.TrimSpace(reqItem.WorkUnit),
-			PaymentVia:          strings.TrimSpace(reqItem.PaymentVia),
-			AccountNo:           strings.TrimSpace(reqItem.AccountNo),
-			Division:            strings.TrimSpace(reqItem.Division),
-			Department:          strings.TrimSpace(reqItem.Department),
-			Position:            strings.TrimSpace(reqItem.Position),
-			BaseSalary:          reqItem.BaseSalary,
-			Bonus:               reqItem.Bonus,
-			AttendanceAllowance: reqItem.AttendanceAllowance,
-			CompensationPKWT:    reqItem.CompensationPKWT,
-			Overtime:            reqItem.Overtime,
-			PPh:                 reqItem.PPh,
-			BPJS:                reqItem.BPJS,
-			BPJSTKJHT:           reqItem.BPJSTKJHT,
-			BPJSTKJP:            reqItem.BPJSTKJP,
-			BPJSKesehatan:       reqItem.BPJSKesehatan,
-			Proportional:        reqItem.Proportional,
-			OtherDeduction:      reqItem.OtherDeduction,
-			NetPay:              reqItem.NetPay,
-			Notes:               strings.TrimSpace(reqItem.Notes),
+			EmployeeName:          strings.TrimSpace(reqItem.EmployeeName),
+			EmployeeCode:          strings.TrimSpace(reqItem.EmployeeCode),
+			WorkingDay:            reqItem.WorkingDay,
+			WorkUnit:              strings.TrimSpace(reqItem.WorkUnit),
+			PaymentVia:            strings.TrimSpace(reqItem.PaymentVia),
+			AccountNo:             strings.TrimSpace(reqItem.AccountNo),
+			Division:              strings.TrimSpace(reqItem.Division),
+			Department:            strings.TrimSpace(reqItem.Department),
+			Position:              strings.TrimSpace(reqItem.Position),
+			BaseSalary:            reqItem.BaseSalary,
+			Bonus:                 reqItem.Bonus,
+			AttendanceAllowance:   reqItem.AttendanceAllowance,
+			CompensationPKWT:      reqItem.CompensationPKWT,
+			Overtime:              reqItem.Overtime,
+			PPh:                   reqItem.PPh,
+			BPJS:                  reqItem.BPJS,
+			BPJSTKJHT:             reqItem.BPJSTKJHT,
+			BPJSTKJP:              reqItem.BPJSTKJP,
+			BPJSKesehatan:         reqItem.BPJSKesehatan,
+			Proportional:          reqItem.Proportional,
+			OtherDeduction:        reqItem.OtherDeduction,
+			EmployeeLoanDeduction: reqItem.EmployeeLoanDeduction,
+			NetPay:                reqItem.NetPay,
+			Notes:                 strings.TrimSpace(reqItem.Notes),
 		}
 
 		run.TotalSalary += item.BaseSalary
 		run.TotalBonus += item.Bonus
 		run.TotalPPh += item.PPh
 		run.TotalBPJS += item.BPJS
+		run.TotalEmployeeLoanDeduction += item.EmployeeLoanDeduction
 		run.TotalOverall += item.NetPay
 		run.Items = append(run.Items, item)
 	}
@@ -1138,8 +1217,9 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 	}
 
 	var req struct {
-		ExpenseAccountID *uint  `json:"expense_account_id"`
-		PostingDate      string `json:"posting_date"`
+		ExpenseAccountID      *uint  `json:"expense_account_id"`
+		EmployeeLoanAccountID *uint  `json:"employee_loan_account_id"`
+		PostingDate           string `json:"posting_date"`
 	}
 	_ = ctx.ShouldBindJSON(&req) // Ignore EOF/errors to remain backward compatible
 
@@ -1206,8 +1286,23 @@ func (c *PayrollController) ApprovePayrollRun(ctx *gin.Context) {
 	updates["pph_recognition_date"] = recognitionDate
 	run.PPhRecognitionDate = &recognitionDate
 
-	if (run.TotalOverall > 0.01 || run.TotalPPh > 0.01) && run.PPhPayableJournalEntryID == nil {
-		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, req.ExpenseAccountID, recognitionDate)
+	if run.TotalEmployeeLoanDeduction > 0.01 {
+		employeeLoanAccountID := req.EmployeeLoanAccountID
+		if employeeLoanAccountID == nil || *employeeLoanAccountID == 0 {
+			account, err := resolvePayrollEmployeeLoanAccount(tx)
+			if err != nil {
+				tx.Rollback()
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			employeeLoanAccountID = &account.ID
+		}
+		updates["employee_loan_account_id"] = *employeeLoanAccountID
+		run.EmployeeLoanAccountID = employeeLoanAccountID
+	}
+
+	if (run.TotalSalary+run.TotalBonus+run.TotalPPh > 0.01) && run.PPhPayableJournalEntryID == nil {
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, req.ExpenseAccountID, run.EmployeeLoanAccountID, recognitionDate)
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{
@@ -1421,7 +1516,7 @@ func (c *PayrollController) PayPayrollPPh(ctx *gin.Context) {
 		return
 	}
 	if run.PPhPayableJournalEntryID == nil {
-		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, recognitionDate)
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, nil, recognitionDate)
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{
@@ -1688,7 +1783,7 @@ func (c *PayrollController) PayPayrollBPJS(ctx *gin.Context) {
 		return
 	}
 	if run.PPhPayableJournalEntryID == nil {
-		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, recognitionDate)
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, nil, recognitionDate)
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{
@@ -1922,7 +2017,7 @@ func (c *PayrollController) PayPayrollSalary(ctx *gin.Context) {
 			respondPayrollClosedPeriod(ctx, err)
 			return
 		}
-		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, recognitionDate)
+		journalID, err := c.createPayrollAccrualJournal(tx, &run, userID, nil, nil, recognitionDate)
 		if err != nil {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Gagal membuat jurnal pengakuan payroll", "details": err.Error()})

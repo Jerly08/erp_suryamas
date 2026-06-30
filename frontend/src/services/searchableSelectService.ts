@@ -10,6 +10,7 @@ export interface Contact {
   email?: string;
   phone?: string;
   address?: string;
+  payment_terms?: number;
   is_active: boolean;
   created_at: string;
   updated_at: string;

@@ -154,6 +154,36 @@ func TestGetStandardCOATradingIncludesPayrollExpenseAccount(t *testing.T) {
 	t.Fatal("expected trading COA to include payroll expense account 6105")
 }
 
+func TestGetStandardCOAIncludesEmployeeLoanReceivableAccounts(t *testing.T) {
+	companyTypes := []string{
+		models.CompanyTypeService,
+		models.CompanyTypeTrading,
+		models.CompanyTypeManufacturing,
+	}
+
+	for _, companyType := range companyTypes {
+		coa := GetStandardCOA(companyType)
+		indexed := make(map[string]models.Account, len(coa))
+		for _, account := range coa {
+			indexed[account.Code] = account
+		}
+
+		parent, exists := indexed["1107"]
+		require.True(t, exists, "expected company type %s to include 1107", companyType)
+		require.Equal(t, "PIUTANG LAIN-LAIN", parent.Name)
+		require.Equal(t, models.AccountTypeAsset, parent.Type)
+		require.Equal(t, models.CategoryCurrentAsset, parent.Category)
+		require.True(t, parent.IsHeader)
+
+		employeeLoan, exists := indexed["1107-001"]
+		require.True(t, exists, "expected company type %s to include 1107-001", companyType)
+		require.Equal(t, "PINJAMAN KARYAWAN", employeeLoan.Name)
+		require.Equal(t, models.AccountTypeAsset, employeeLoan.Type)
+		require.Equal(t, models.CategoryCurrentAsset, employeeLoan.Category)
+		require.False(t, employeeLoan.IsHeader)
+	}
+}
+
 func TestProfitLossCOAAlignmentMigrationBackfills4101AndAddsDedicatedAccounts(t *testing.T) {
 	db := setupDatabaseTestDB(t)
 

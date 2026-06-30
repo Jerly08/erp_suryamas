@@ -16,6 +16,10 @@ type PurchaseRequest struct {
 	ProjectID   *uint  `json:"project_id" gorm:"index"` // Optional tracking cost center
 	VendorID    *uint  `json:"vendor_id" gorm:"index"`  // Optional preferred/target vendor
 
+	VendorInvoiceReceivedDate *time.Time `json:"vendor_invoice_received_date" gorm:"column:vendor_invoice_received_date"`
+	PaymentTermsDays          *int       `json:"payment_terms_days" gorm:"column:payment_terms_days"`
+	DueDate                   *time.Time `json:"due_date" gorm:"column:due_date;index"`
+
 	TotalEstimatedAmount float64 `json:"total_estimated_amount" gorm:"type:decimal(15,2);default:0"`
 	Status               string  `json:"status" gorm:"size:30;default:'DRAFT'"` // DRAFT, PENDING_APPROVAL, APPROVED, REJECTED
 	CurrentApprovalStage string  `json:"current_approval_stage" gorm:"size:30;default:'FINANCE_STAFF'"`
@@ -135,12 +139,15 @@ const (
 
 // Request DTOs
 type PurchaseRequestCreatePayload struct {
-	Department string                       `json:"department"`
-	Title      string                       `json:"title"`
-	ProjectID  *uint                        `json:"project_id"`
-	VendorID   *uint                        `json:"vendor_id"`
-	Notes      string                       `json:"notes"`
-	Items      []PurchaseRequestItemPayload `json:"items" binding:"required,min=1"`
+	Department                string                       `json:"department"`
+	Title                     string                       `json:"title"`
+	ProjectID                 *uint                        `json:"project_id"`
+	VendorID                  *uint                        `json:"vendor_id"`
+	VendorInvoiceReceivedDate *time.Time                   `json:"vendor_invoice_received_date"`
+	PaymentTermsDays          *int                         `json:"payment_terms_days"`
+	DueDate                   *time.Time                   `json:"due_date"`
+	Notes                     string                       `json:"notes"`
+	Items                     []PurchaseRequestItemPayload `json:"items" binding:"required,min=1"`
 }
 
 type PurchaseRequestItemPayload struct {
@@ -164,4 +171,10 @@ type PurchaseRequestReviewPayload struct {
 
 type PurchaseRequestProjectUpdatePayload struct {
 	ProjectID *uint `json:"project_id"`
+}
+
+type PurchaseRequestInvoiceTermsUpdatePayload struct {
+	VendorInvoiceReceivedDate *time.Time `json:"vendor_invoice_received_date"`
+	PaymentTermsDays          *int       `json:"payment_terms_days"`
+	DueDate                   *time.Time `json:"due_date"`
 }

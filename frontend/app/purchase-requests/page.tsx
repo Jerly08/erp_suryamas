@@ -159,6 +159,7 @@ export default function PurchaseRequestsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
   const [isUpdatingProject, setIsUpdatingProject] = useState(false);
+  const [isUpdatingInvoiceTerms, setIsUpdatingInvoiceTerms] = useState(false);
   const [pendingAdditionalDocuments, setPendingAdditionalDocuments] = useState<
     File[]
   >([]);
@@ -199,6 +200,9 @@ export default function PurchaseRequestsPage() {
     useState<PurchaseRequest | null>(null);
   const [reviewReason, setReviewReason] = useState("");
   const [projectUpdateId, setProjectUpdateId] = useState("");
+  const [invoiceTermsUpdateReceivedDate, setInvoiceTermsUpdateReceivedDate] =
+    useState("");
+  const [invoiceTermsUpdateDays, setInvoiceTermsUpdateDays] = useState("");
   const [reviewNeedsDirectorApproval, setReviewNeedsDirectorApproval] =
     useState(false);
   const [reviewDecisions, setReviewDecisions] = useState<
@@ -211,6 +215,9 @@ export default function PurchaseRequestsPage() {
   const [department, setDepartment] = useState("");
   const [projectId, setProjectId] = useState("");
   const [vendorId, setVendorId] = useState("");
+  const [vendorInvoiceReceivedDate, setVendorInvoiceReceivedDate] =
+    useState("");
+  const [paymentTermsDays, setPaymentTermsDays] = useState("30");
   const [notes, setNotes] = useState("");
   const [documents, setDocuments] = useState<File[]>([]);
   const [items, setItems] = useState<PurchaseRequestFormItem[]>([
@@ -266,11 +273,192 @@ export default function PurchaseRequestsPage() {
     }
   };
 
+  const formatDateInputValue = (date: Date) => {
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, "0");
+    const day = `${date.getDate()}`.padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const normalizeDateInputValue = (value?: string | null) => {
+    if (!value || value.startsWith("0001-01-01")) return "";
+
+    const trimmedValue = value
+      .trim()
+      .replace(/[\u200e\u200f\u202a-\u202e]/g, "");
+    const isoMatch = trimmedValue.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    }
+
+    const localizedMatch = trimmedValue.match(
+      /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/,
+    );
+    const numericParts = trimmedValue.match(/\d+/g) || [];
+    if (!localizedMatch && numericParts.length < 3) return "";
+
+    const [firstPart, secondPart, thirdPart] = localizedMatch
+      ? [localizedMatch[1], localizedMatch[2], localizedMatch[3]]
+      : numericParts;
+    if (!firstPart || !secondPart || !thirdPart) return "";
+
+    const firstNumber = Number(firstPart);
+    const secondNumber = Number(secondPart);
+    const thirdNumber = Number(thirdPart);
+    const isYearFirst = firstPart.length === 4;
+    const day = isYearFirst ? thirdNumber : firstNumber;
+    const month = secondNumber;
+    const year = isYearFirst ? firstNumber : thirdNumber;
+    const parsedDate = new Date(year, month - 1, day);
+    if (
+      parsedDate.getFullYear() !== year ||
+      parsedDate.getMonth() !== month - 1 ||
+      parsedDate.getDate() !== day
+    ) {
+      return "";
+    }
+
+    return formatDateInputValue(parsedDate);
+  };
+
+  const formatDateInputDisplayValue = (value?: string | null) => {
+    const normalizedValue = normalizeDateInputValue(value);
+    if (!normalizedValue) return "";
+
+    const [year, month, day] = normalizedValue.split("-").map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString("id-ID", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  };
+
+  const formatInvoiceDateFieldValue = (value: string) => {
+    return formatDateInputDisplayValue(value) || value.trim();
+  };
+
+  const addDaysToDateInput = (dateValue: string, dayCount: number) => {
+    if (!dateValue || !Number.isFinite(dayCount) || dayCount < 0) return "";
+
+    const normalizedDateValue = normalizeDateInputValue(dateValue);
+    if (!normalizedDateValue) return "";
+
+    const [year, month, day] = normalizedDateValue.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    date.setDate(date.getDate() + dayCount);
+    return formatDateInputValue(date);
+  };
+
+  const getCalculatedDueDateInput = (
+    invoiceReceivedDate: string,
+    termsDaysValue: string,
+  ) => {
+    if (!invoiceReceivedDate || termsDaysValue.trim() === "") return "";
+
+    const termsDays = Number(termsDaysValue);
+    if (!Number.isInteger(termsDays) || termsDays < 0) return "";
+
+    return addDaysToDateInput(invoiceReceivedDate, termsDays);
+  };
+
+  const buildInvoiceTermsPayload = (
+    invoiceReceivedDate: string,
+    termsDaysValue: string,
+    includeNulls = false,
+    includeDueDate = true,
+  ) => {
+    const normalizedInvoiceReceivedDate =
+      normalizeDateInputValue(invoiceReceivedDate);
+    const dueDate = includeDueDate
+      ? getCalculatedDueDateInput(
+          normalizedInvoiceReceivedDate,
+          termsDaysValue,
+        )
+      : "";
+    const termsDays =
+      termsDaysValue.trim() === "" ? null : Number(termsDaysValue);
+
+    return {
+      vendor_invoice_received_date: normalizedInvoiceReceivedDate
+        ? `${normalizedInvoiceReceivedDate}T00:00:00Z`
+        : includeNulls
+          ? null
+          : undefined,
+      payment_terms_days:
+        termsDays !== null && Number.isFinite(termsDays)
+          ? termsDays
+          : includeNulls
+            ? null
+            : undefined,
+      due_date: dueDate
+        ? `${dueDate}T00:00:00Z`
+        : includeNulls
+          ? null
+          : undefined,
+    };
+  };
+
+  const validateInvoiceTermsInput = (
+    termsDaysValue: string,
+    invoiceReceivedDate: string,
+    requireDueDate = false,
+  ) => {
+    const normalizedInvoiceReceivedDate =
+      normalizeDateInputValue(invoiceReceivedDate);
+
+    if (
+      requireDueDate &&
+      (!normalizedInvoiceReceivedDate || termsDaysValue.trim() === "")
+    ) {
+      return "Isi tanggal terima invoice vendor dan termin pembayaran agar due date bisa dihitung.";
+    }
+
+    if (termsDaysValue.trim() === "") return null;
+
+    const termsDays = Number(termsDaysValue);
+    if (!Number.isInteger(termsDays) || termsDays < 0) {
+      return "Termin pembayaran harus berupa angka hari 0 atau lebih.";
+    }
+    if (termsDays > 3650) {
+      return "Termin pembayaran tidak boleh lebih dari 3650 hari.";
+    }
+    if (invoiceReceivedDate && !normalizedInvoiceReceivedDate) {
+      return "Tanggal terima invoice vendor belum valid.";
+    }
+    if (
+      requireDueDate &&
+      !getCalculatedDueDateInput(normalizedInvoiceReceivedDate, termsDaysValue)
+    ) {
+      return "Due date belum bisa dihitung dari tanggal terima invoice dan termin.";
+    }
+    if (
+      normalizedInvoiceReceivedDate &&
+      !getCalculatedDueDateInput(normalizedInvoiceReceivedDate, termsDaysValue)
+    ) {
+      return "Due date belum bisa dihitung dari tanggal terima invoice dan termin.";
+    }
+
+    return null;
+  };
+
+  const handleVendorChange = (nextVendorId: string) => {
+    setVendorId(nextVendorId);
+
+    const selectedVendor = vendors.find(
+      (vendor) => vendor.id.toString() === nextVendorId,
+    );
+    if (selectedVendor?.payment_terms !== undefined) {
+      setPaymentTermsDays(selectedVendor.payment_terms.toString());
+    }
+  };
+
   const handleOpenCreate = () => {
     setTitle("");
     setDepartment(userDepartment);
     setProjectId("");
     setVendorId("");
+    setVendorInvoiceReceivedDate("");
+    setPaymentTermsDays("30");
     setNotes("");
     setDocuments([]);
     setItems([createEmptyPurchaseRequestItem()]);
@@ -539,13 +727,31 @@ export default function PurchaseRequestsPage() {
       });
     }
 
+    const invoiceTermsError = validateInvoiceTermsInput(
+      paymentTermsDays,
+      vendorInvoiceReceivedDate,
+    );
+    if (invoiceTermsError) {
+      return toast({
+        title: "Tanggal invoice vendor belum valid",
+        description: invoiceTermsError,
+        status: "warning",
+        duration: 4000,
+      });
+    }
+
     try {
       setIsSubmitting(true);
+      const invoiceTermsPayload = buildInvoiceTermsPayload(
+        vendorInvoiceReceivedDate,
+        paymentTermsDays,
+      );
       const payload: PurchaseRequestCreatePayload = {
         title: title.trim() || undefined,
         department,
         project_id: projectId ? parseInt(projectId) : undefined,
         vendor_id: vendorId ? parseInt(vendorId) : undefined,
+        ...invoiceTermsPayload,
         notes,
         items: items.map((item) => ({
           product_id:
@@ -618,6 +824,166 @@ export default function PurchaseRequestsPage() {
     if (firstItemName?.trim()) return firstItemName.trim();
 
     return pr?.notes?.trim() || "-";
+  };
+
+  const getInvoiceTermsDaysInputValue = (pr?: PurchaseRequest | null) => {
+    if (pr?.payment_terms_days != null) {
+      return pr.payment_terms_days.toString();
+    }
+    if (pr?.vendor?.payment_terms != null) {
+      return pr.vendor.payment_terms.toString();
+    }
+    return "";
+  };
+
+  const normalizePurchasePaymentMethod = (paymentMethod?: string | null) =>
+    (paymentMethod || "CREDIT").trim().toUpperCase();
+
+  const purchaseRequiresDueDate = (
+    purchase?: PurchaseRequestItem["purchase"] | null,
+  ) => normalizePurchasePaymentMethod(purchase?.payment_method) === "CREDIT";
+
+  const formatDisplayDate = (value?: string | null) => {
+    if (!value || value.startsWith("0001-01-01")) return "";
+
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) return "";
+
+    return parsedDate.toLocaleDateString("id-ID");
+  };
+
+  const getPurchaseDueDateSummary = (pr?: PurchaseRequest | null) => {
+    const purchaseRequestDueDate = formatDisplayDate(pr?.due_date);
+    const purchaseByID = new Map<
+      number,
+      NonNullable<PurchaseRequestItem["purchase"]>
+    >();
+    const purchaseIDs = new Set<number>();
+
+    (pr?.items || []).forEach((item) => {
+      if (item.purchase?.id) {
+        purchaseByID.set(item.purchase.id, item.purchase);
+        purchaseIDs.add(item.purchase.id);
+      } else if (item.purchase_id) {
+        purchaseIDs.add(item.purchase_id);
+      }
+    });
+
+    const dueDateEntries = Array.from(purchaseByID.values())
+      .map((purchase) => ({
+        purchaseId: purchase.id,
+        purchaseCode: purchase.code,
+        dueDate: purchase.due_date,
+        displayDate: formatDisplayDate(purchase.due_date),
+      }))
+      .filter((entry) => Boolean(entry.displayDate))
+      .sort(
+        (a, b) =>
+          new Date(a.dueDate || "").getTime() -
+          new Date(b.dueDate || "").getTime(),
+      );
+    const linkedPurchases = Array.from(purchaseByID.values());
+    const hasUnknownPurchaseMethod =
+      purchaseIDs.size > 0 && linkedPurchases.length === 0;
+    const requiresDueDate =
+      hasUnknownPurchaseMethod || linkedPurchases.some(purchaseRequiresDueDate);
+
+    return {
+      purchaseRequestDueDate,
+      hasPurchase: purchaseIDs.size > 0,
+      requiresDueDate,
+      dueDateEntries,
+      missingDueDateCount: Math.max(0, purchaseIDs.size - dueDateEntries.length),
+    };
+  };
+
+  const renderPurchaseDueDate = (
+    pr?: PurchaseRequest | null,
+    compact = false,
+  ) => {
+    const summary = getPurchaseDueDateSummary(pr);
+
+    if (summary.hasPurchase && !summary.requiresDueDate) {
+      return (
+        <Badge colorScheme="gray" variant="subtle">
+          Tidak diperlukan
+        </Badge>
+      );
+    }
+
+    if (summary.purchaseRequestDueDate) {
+      return (
+        <Flex direction="column" gap={1} align="flex-start">
+          <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
+            {summary.purchaseRequestDueDate}
+          </Text>
+          {!compact && (
+            <Text fontSize="xs" color={mutedTextColor}>
+              Dari PR
+            </Text>
+          )}
+        </Flex>
+      );
+    }
+
+    if (!summary.hasPurchase) {
+      return <Badge colorScheme="gray">Belum ada due date</Badge>;
+    }
+
+    if (summary.dueDateEntries.length === 0) {
+      if (
+        summary.requiresDueDate &&
+        pr?.payment_terms_days != null &&
+        !pr.vendor_invoice_received_date
+      ) {
+        return (
+          <Badge colorScheme="yellow" variant="subtle">
+            {compact ? "Butuh tgl invoice" : "Belum ada tanggal invoice"}
+          </Badge>
+        );
+      }
+
+      return (
+        <Badge colorScheme="yellow" variant="subtle">
+          Belum ada due date
+        </Badge>
+      );
+    }
+
+    const firstDueDate = summary.dueDateEntries[0];
+    const tooltipLabel = summary.dueDateEntries
+      .map(
+        (entry) =>
+          `${entry.purchaseCode || `Purchase #${entry.purchaseId}`}: ${
+            entry.displayDate
+          }`,
+      )
+      .join(", ");
+
+    return (
+      <Flex direction="column" gap={1} align="flex-start">
+        <Tooltip label={tooltipLabel} placement="top" hasArrow>
+          <Text fontSize="sm" fontWeight="medium" whiteSpace="nowrap">
+            {firstDueDate.displayDate}
+          </Text>
+        </Tooltip>
+        {!compact && firstDueDate.purchaseCode && (
+          <Text fontSize="xs" color={mutedTextColor}>
+            {firstDueDate.purchaseCode}
+          </Text>
+        )}
+        {summary.dueDateEntries.length > 1 && (
+          <Badge colorScheme="blue" variant="subtle">
+            +{summary.dueDateEntries.length - 1} due date
+          </Badge>
+        )}
+        {!compact && summary.missingDueDateCount > 0 && (
+          <Badge colorScheme="yellow" variant="subtle">
+            {summary.missingDueDateCount} belum ada due date
+          </Badge>
+        )}
+      </Flex>
+    );
   };
 
   const getPurchaseRealizationSummary = (pr?: PurchaseRequest | null) => {
@@ -1044,12 +1410,70 @@ export default function PurchaseRequestsPage() {
     }
   };
 
+  const handleUpdateInvoiceTerms = async () => {
+    if (!selectedRequest) return;
+
+    const dueDateSummary = getPurchaseDueDateSummary(selectedRequest);
+    const invoiceTermsError = validateInvoiceTermsInput(
+      invoiceTermsUpdateDays,
+      invoiceTermsUpdateReceivedDate,
+      dueDateSummary.requiresDueDate,
+    );
+    if (invoiceTermsError) {
+      return toast({
+        title: "Tanggal invoice vendor belum valid",
+        description: invoiceTermsError,
+        status: "warning",
+        duration: 4000,
+      });
+    }
+
+    try {
+      setIsUpdatingInvoiceTerms(true);
+      const updated = await purchaseRequestService.updateInvoiceTerms(
+        selectedRequest.id,
+        buildInvoiceTermsPayload(
+          invoiceTermsUpdateReceivedDate,
+          invoiceTermsUpdateDays,
+          true,
+          dueDateSummary.requiresDueDate,
+        ),
+      );
+      setSelectedRequest(updated);
+      setInvoiceTermsUpdateReceivedDate(
+        formatDateInputDisplayValue(updated.vendor_invoice_received_date),
+      );
+      setInvoiceTermsUpdateDays(getInvoiceTermsDaysInputValue(updated));
+      await fetchData();
+      toast({
+        title: "Due date PR berhasil diperbarui",
+        status: "success",
+        duration: 3000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal memperbarui due date PR",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsUpdatingInvoiceTerms(false);
+    }
+  };
+
   const handleView = async (pr: PurchaseRequest) => {
     try {
       setLoading(true);
       const detail = await purchaseRequestService.getById(pr.id);
       setSelectedRequest(detail);
       setProjectUpdateId(detail.project_id?.toString() || "");
+      setInvoiceTermsUpdateReceivedDate(
+        formatDateInputDisplayValue(detail.vendor_invoice_received_date),
+      );
+      setInvoiceTermsUpdateDays(
+        getInvoiceTermsDaysInputValue(detail),
+      );
       setPendingAdditionalDocuments([]);
       initializeReviewForm(detail);
       onViewOpen();
@@ -1097,6 +1521,12 @@ export default function PurchaseRequestsPage() {
         const detail = await purchaseRequestService.getById(requestId);
         setSelectedRequest(detail);
         setProjectUpdateId(detail.project_id?.toString() || "");
+        setInvoiceTermsUpdateReceivedDate(
+          formatDateInputDisplayValue(detail.vendor_invoice_received_date),
+        );
+        setInvoiceTermsUpdateDays(
+          getInvoiceTermsDaysInputValue(detail),
+        );
         initializeReviewForm(detail);
         onViewOpen();
       } catch {
@@ -1369,6 +1799,25 @@ export default function PurchaseRequestsPage() {
   };
 
   const selectedRequestSummary = getReviewSummary(selectedRequest, true);
+  const selectedRequestDueDateSummary =
+    getPurchaseDueDateSummary(selectedRequest);
+  const createDueDatePreview = getCalculatedDueDateInput(
+    vendorInvoiceReceivedDate,
+    paymentTermsDays,
+  );
+  const invoiceTermsUpdateDueDatePreview =
+    selectedRequestDueDateSummary.requiresDueDate
+      ? getCalculatedDueDateInput(
+          invoiceTermsUpdateReceivedDate,
+          invoiceTermsUpdateDays,
+        )
+      : "";
+  const canEditSelectedRequestInvoiceTerms = Boolean(
+    selectedRequest &&
+      canEdit("purchase_requests") &&
+      selectedRequest.status !== "COMPLETED" &&
+      selectedRequest.status !== "REJECTED",
+  );
 
   return (
     <ProtectedModule module="purchase_requests">
@@ -1518,23 +1967,24 @@ export default function PurchaseRequestsPage() {
 	                    <Th>Vendor Name</Th>
 	                    <Th>Departemen/Proyek</Th>
 	                    <Th>Tgl Pengajuan</Th>
-	                    <Th isNumeric>Estimasi Anggaran</Th>
-	                    <Th>Progress</Th>
-	                    <Th>Realisasi</Th>
-	                    <Th>Status</Th>
-	                    <Th textAlign="center">Aksi</Th>
-	                  </Tr>
+		                    <Th isNumeric>Estimasi Anggaran</Th>
+		                    <Th>Progress</Th>
+		                    <Th>Realisasi</Th>
+		                    <Th>Due Date</Th>
+		                    <Th>Status</Th>
+		                    <Th textAlign="center">Aksi</Th>
+		                  </Tr>
                 </Thead>
                 <Tbody>
 	                  {loading ? (
 	                    <Tr>
-	                      <Td colSpan={11} textAlign="center" py={4}>
+	                      <Td colSpan={12} textAlign="center" py={4}>
 	                        Memuat...
 	                      </Td>
 	                    </Tr>
 	                  ) : filteredRequests.length === 0 ? (
 	                    <Tr>
-	                      <Td colSpan={11} textAlign="center" py={4}>
+	                      <Td colSpan={12} textAlign="center" py={4}>
 	                        Tidak ada pengajuan ditemukan
 	                      </Td>
 	                    </Tr>
@@ -1593,10 +2043,13 @@ export default function PurchaseRequestsPage() {
 	                            </Badge>
 	                          )}
 	                        </Td>
-	                        <Td minW="260px">
-	                          {renderPaymentProofRealization(pr, true)}
-	                        </Td>
-	                        <Td>{getStatusBadge(pr)}</Td>
+		                        <Td minW="260px">
+		                          {renderPaymentProofRealization(pr, true)}
+		                        </Td>
+		                        <Td minW="150px">
+		                          {renderPurchaseDueDate(pr, true)}
+		                        </Td>
+		                        <Td>{getStatusBadge(pr)}</Td>
                         <Td>
                           <Flex justify="center" gap={2}>
                             <Tooltip label="Lihat Detail">
@@ -1763,13 +2216,13 @@ export default function PurchaseRequestsPage() {
                 </FormControl>
                 <FormControl>
                   <FormLabel color={textColor}>Vendor Name</FormLabel>
-                  <Select
-                    placeholder="-- Pilih Vendor (Opsional) --"
-                    value={vendorId}
-                    onChange={(e) => setVendorId(e.target.value)}
-                    bg={inputBg}
-                    borderColor={inputBorderColor}
-                    color={textColor}
+	                  <Select
+	                    placeholder="-- Pilih Vendor (Opsional) --"
+	                    value={vendorId}
+	                    onChange={(e) => handleVendorChange(e.target.value)}
+	                    bg={inputBg}
+	                    borderColor={inputBorderColor}
+	                    color={textColor}
                     _hover={{ borderColor: inputBorderColor }}
                     _focusVisible={fieldFocusStyles}
                   >
@@ -1778,11 +2231,68 @@ export default function PurchaseRequestsPage() {
                         {vendor.name}
                         {vendor.code ? ` - ${vendor.code}` : ""}
                       </option>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl>
-                  <FormLabel color={textColor}>Tautkan Ke Proyek</FormLabel>
+	                    ))}
+	                  </Select>
+	                </FormControl>
+	                <FormControl>
+	                  <FormLabel color={textColor}>
+	                    Tanggal Terima Invoice Vendor
+	                  </FormLabel>
+	                  <Input
+	                    type="text"
+	                    inputMode="numeric"
+	                    placeholder="dd/mm/yyyy"
+	                    value={vendorInvoiceReceivedDate}
+	                    onChange={(e) =>
+	                      setVendorInvoiceReceivedDate(e.currentTarget.value)
+	                    }
+	                    onBlur={(e) =>
+	                      setVendorInvoiceReceivedDate(
+	                        formatInvoiceDateFieldValue(e.currentTarget.value),
+	                      )
+	                    }
+	                    bg={inputBg}
+	                    borderColor={inputBorderColor}
+	                    color={textColor}
+	                    _hover={{ borderColor: inputBorderColor }}
+	                    _focusVisible={fieldFocusStyles}
+	                  />
+	                </FormControl>
+	                <FormControl>
+	                  <FormLabel color={textColor}>Termin Pembayaran</FormLabel>
+	                  <Input
+	                    type="number"
+	                    min={0}
+	                    value={paymentTermsDays}
+	                    onChange={(e) =>
+	                      setPaymentTermsDays(
+	                        e.target.value.replace(/[^0-9]/g, ""),
+	                      )
+	                    }
+	                    placeholder="Contoh: 30"
+	                    bg={inputBg}
+	                    borderColor={inputBorderColor}
+	                    color={textColor}
+	                    _hover={{ borderColor: inputBorderColor }}
+	                    _focusVisible={fieldFocusStyles}
+	                    _placeholder={{ color: mutedTextColor }}
+	                  />
+	                  <Text fontSize="xs" color={mutedTextColor} mt={1}>
+	                    Hari sejak invoice vendor diterima.
+	                  </Text>
+	                </FormControl>
+	                <FormControl>
+	                  <FormLabel color={textColor}>Due Date</FormLabel>
+	                  <Input
+	                    value={formatDateInputDisplayValue(createDueDatePreview) || "-"}
+	                    isReadOnly
+	                    bg={inputBg}
+	                    borderColor={inputBorderColor}
+	                    color={textColor}
+	                  />
+	                </FormControl>
+	                <FormControl>
+	                  <FormLabel color={textColor}>Tautkan Ke Proyek</FormLabel>
                   <Select
                     placeholder="-- Pilih Proyek (Opsional) --"
                     value={projectId}
@@ -2223,17 +2733,131 @@ export default function PurchaseRequestsPage() {
 	                      {new Date(selectedRequest.created_at).toLocaleString()}
 	                    </Text>
 	                  </Box>
-	                  <Box>
-	                    <Text fontSize="sm" color={mutedTextColor}>
-	                      Realisasi Pembelian/Pembayaran
-	                    </Text>
-	                    <Box mt={1}>
-	                      {renderPaymentProofRealization(selectedRequest)}
-	                    </Box>
-		                  </Box>
-	                  {getStageLabel(selectedRequest) && (
-                    <Box>
-                      <Text fontSize="sm" color={mutedTextColor}>
+		                  <Box>
+		                    <Text fontSize="sm" color={mutedTextColor}>
+		                      Realisasi Pembelian/Pembayaran
+		                    </Text>
+		                    <Box mt={1}>
+		                      {renderPaymentProofRealization(selectedRequest)}
+		                    </Box>
+			                  </Box>
+		                  <Box>
+		                    <Text fontSize="sm" color={mutedTextColor}>
+		                      Due Date Pembayaran
+		                    </Text>
+			                    <Box mt={1}>
+			                      {renderPurchaseDueDate(selectedRequest)}
+			                    </Box>
+			                    {(selectedRequest.vendor_invoice_received_date ||
+			                      selectedRequest.payment_terms_days != null) && (
+			                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
+			                        Invoice diterima{" "}
+			                        {formatDisplayDate(
+			                          selectedRequest.vendor_invoice_received_date,
+			                        ) || "-"}
+			                        {selectedRequest.payment_terms_days != null
+			                          ? `, termin ${selectedRequest.payment_terms_days} hari`
+			                          : ""}
+			                      </Text>
+			                    )}
+			                  </Box>
+			                  {canEditSelectedRequestInvoiceTerms && (
+			                    <Box gridColumn={{ base: "auto", md: "1 / -1" }}>
+			                      <Text fontSize="sm" color={mutedTextColor} mb={2}>
+			                        Koreksi Due Date PR
+			                      </Text>
+			                      <Grid
+			                        templateColumns={{
+			                          base: "1fr",
+			                          md: "1.2fr 1fr 1fr auto",
+			                        }}
+			                        gap={2}
+			                        alignItems="end"
+			                      >
+			                        <FormControl>
+			                          <FormLabel fontSize="xs" color={mutedTextColor}>
+			                            Tgl Terima Invoice
+			                          </FormLabel>
+			                          <Input
+			                            type="text"
+			                            inputMode="numeric"
+			                            placeholder="dd/mm/yyyy"
+			                            size="sm"
+			                            value={invoiceTermsUpdateReceivedDate}
+			                            onChange={(e) =>
+			                              setInvoiceTermsUpdateReceivedDate(
+			                                e.currentTarget.value,
+			                              )
+			                            }
+			                            onBlur={(e) =>
+			                              setInvoiceTermsUpdateReceivedDate(
+			                                formatInvoiceDateFieldValue(
+			                                  e.currentTarget.value,
+			                                ),
+			                              )
+			                            }
+			                            bg={inputBg}
+			                            borderColor={inputBorderColor}
+			                            color={textColor}
+			                            _hover={{ borderColor: inputBorderColor }}
+			                            _focusVisible={fieldFocusStyles}
+			                          />
+			                        </FormControl>
+			                        <FormControl>
+			                          <FormLabel fontSize="xs" color={mutedTextColor}>
+			                            Termin (hari)
+			                          </FormLabel>
+			                          <Input
+			                            type="number"
+			                            min={0}
+			                            size="sm"
+			                            value={invoiceTermsUpdateDays}
+			                            onChange={(e) =>
+			                              setInvoiceTermsUpdateDays(
+			                                e.target.value.replace(/[^0-9]/g, ""),
+			                              )
+			                            }
+			                            bg={inputBg}
+			                            borderColor={inputBorderColor}
+			                            color={textColor}
+			                            _hover={{ borderColor: inputBorderColor }}
+			                            _focusVisible={fieldFocusStyles}
+			                          />
+			                        </FormControl>
+			                        <FormControl>
+			                          <FormLabel fontSize="xs" color={mutedTextColor}>
+			                            Due Date
+			                          </FormLabel>
+			                          <Input
+			                            size="sm"
+			                            value={
+			                              selectedRequestDueDateSummary.requiresDueDate
+			                                ? formatDateInputDisplayValue(
+			                                    invoiceTermsUpdateDueDatePreview,
+			                                  ) || "-"
+			                                : "Tidak diperlukan"
+			                            }
+			                            isReadOnly
+			                            bg={inputBg}
+			                            borderColor={inputBorderColor}
+			                            color={textColor}
+			                          />
+			                        </FormControl>
+			                        <Button
+			                          leftIcon={<FiCheck />}
+			                          size="sm"
+			                          colorScheme="blue"
+			                          onClick={handleUpdateInvoiceTerms}
+			                          isLoading={isUpdatingInvoiceTerms}
+			                        >
+			                          Simpan
+			                        </Button>
+			                      </Grid>
+			                    </Box>
+			                  )}
+			                  {getStageLabel(selectedRequest) && (
+		                    <Box>
+	                      <Text fontSize="sm" color={mutedTextColor}>
                         Tahap Review
                       </Text>
                       <Text fontWeight="medium">
@@ -2491,12 +3115,19 @@ export default function PurchaseRequestsPage() {
                           <Td verticalAlign="top">
                             {getDecisionBadge(it.approval_status)}
                           </Td>
-                          <Td verticalAlign="top" whiteSpace="nowrap">
-                            {it.purchase_id ? (
-                              <Badge colorScheme="blue">Sudah Dipilih</Badge>
-                            ) : (
-                              <Badge colorScheme="gray">Belum Dipakai</Badge>
-                            )}
+	                          <Td verticalAlign="top" whiteSpace="nowrap">
+	                            {it.purchase_id ? (
+	                              <Flex direction="column" gap={1} align="flex-start">
+	                                <Badge colorScheme="blue">Sudah Dipilih</Badge>
+	                                {formatDisplayDate(it.purchase?.due_date) && (
+	                                  <Text fontSize="xs" color={mutedTextColor}>
+	                                    Due {formatDisplayDate(it.purchase?.due_date)}
+	                                  </Text>
+	                                )}
+	                              </Flex>
+	                            ) : (
+	                              <Badge colorScheme="gray">Belum Dipakai</Badge>
+	                            )}
                           </Td>
                           {canCurrentUserReviewRequest(selectedRequest) && (
                             <Td verticalAlign="top">
